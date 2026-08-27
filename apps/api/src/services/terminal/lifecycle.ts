@@ -12,7 +12,6 @@ import {
   attachWorkstreamRuntimeResource,
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
-import { regionalDatabase } from "../workstream-runtime-database";
 import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
@@ -310,12 +309,12 @@ export async function reconcileDueTerminalSandbox(
  */
 export function createTerminalFinalDiffPreserver(
   env: Env,
-  provider: TerminalSandboxProvider,
+  provider: Pick<TerminalSandboxProvider, "runUtilityCommand">,
   workspaceId: string,
   workstreamId: string,
 ): (providerSandboxId: string, generation: number) => Promise<void> {
   return async (providerSandboxId, generation) => {
-    const regional = regionalDatabase(env);
+    const workspace = env.DB;
     const terminal = createTerminalPortFactory(env)(workspaceId, workstreamId);
     if (await terminal.finalDiffResourceId()) return;
     const result = await provider.runUtilityCommand(providerSandboxId, {
@@ -342,7 +341,7 @@ export function createTerminalFinalDiffPreserver(
     const digest = await sha256Hex(bytes);
     const timestamp = new Date().toISOString();
     const objectRef = `${env.AVALON_REGION}/${workspaceId}/resources/${resourceId}/terminal-final-diff/${digest}`;
-    await regional.prepare(
+    await workspace.prepare(
       `INSERT OR IGNORE INTO resource_object_deletion_outbox
        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
        VALUES (?, ?, ?, 'original', ?, ?)`,
@@ -351,7 +350,7 @@ export function createTerminalFinalDiffPreserver(
       httpMetadata: { contentType: summaryOnly ? "text/plain" : "text/x-diff" },
       customMetadata: { source: "terminal", sandboxGeneration: String(generation) },
     });
-    const resourceStatement = regional.prepare(
+    const resourceStatement = workspace.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
           content_ref, content_sha256, metadata_json, last_hydrated_at, attachment_status,
@@ -371,14 +370,13 @@ export function createTerminalFinalDiffPreserver(
         timestamp,
         timestamp,
       );
-    const cleanupStatement = regional.prepare(
+    const cleanupStatement = workspace.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
       ).bind(workspaceId, objectRef);
-    // Three writes, three authorities, and no batch spans them: the resource is
-    // the workspace's, the link is the object's, and the outbox row is
-    // regional. The link runs after the resource is durable, so a failure
-    // between them leaves a capturable diff rather than a resource id pointing
-    // at nothing.
+    // The resource and its object-cleanup outbox are WorkspaceDO authority;
+    // the link is the work-stream object's. The link runs after the resource
+    // is durable, so a failure between them leaves a capturable diff rather
+    // than a resource id pointing at nothing.
     //
     // The one-batch arm that used to sit here ran only when no workspace
     // runtime database was installed, which production requires before request
@@ -407,7 +405,7 @@ export function createTerminalFinalDiffPreserver(
  */
 export function createTerminalWorkspaceBackup(
   env: Env,
-  provider: TerminalSandboxProvider,
+  provider: Pick<TerminalSandboxProvider, "readFile" | "runUtilityCommand">,
   input: {
     workspaceId: string;
     workstreamId: string;
@@ -422,9 +420,9 @@ export function createTerminalWorkspaceBackup(
   return createWorkspaceBackup();
 
   async function createWorkspaceBackup(): Promise<TerminalWorkspaceBackup | null> {
-    const regional = regionalDatabase(env);
+    const workspace = env.DB;
     const providerResourceId = `terminal-workspace-backup:${input.toolCallId}`;
-    const existing = await env.DB.prepare(
+    const existing = await workspace.prepare(
       `SELECT id, title, mime_type, content_sha256, metadata_json, created_at
          FROM resources
         WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
@@ -523,7 +521,7 @@ export function createTerminalWorkspaceBackup(
     const createdAt = new Date().toISOString();
     const title = `Terminal backup before ${input.repositoryFullName}`;
     const objectRef = `${env.AVALON_REGION}/${input.workspaceId}/resources/${resourceId}/terminal-workspace-backup/${actualSha256}`;
-    await regional.prepare(
+    await workspace.prepare(
       `INSERT OR IGNORE INTO resource_object_deletion_outbox
        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
        VALUES (?, ?, ?, 'original', ?, ?)`,
@@ -532,7 +530,7 @@ export function createTerminalWorkspaceBackup(
       httpMetadata: { contentType: "application/gzip" },
       customMetadata: { source: "terminal_repository_replacement", sandboxGeneration: String(input.generation) },
     });
-    const resourceStatement = regional.prepare(
+    const resourceStatement = workspace.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
           content_ref, content_sha256, metadata_json, last_hydrated_at, attachment_status,
@@ -557,11 +555,11 @@ export function createTerminalWorkspaceBackup(
         createdAt,
         createdAt,
       );
-    const cleanupStatement = regional.prepare(
+    const cleanupStatement = workspace.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
       ).bind(input.workspaceId, objectRef);
-    // Same three authorities, same order, and the same retired one-batch arm as
-    // the final-diff preserver above.
+    // Same two authorities and ordering as the final-diff preserver: resource
+    // and outbox via WorkspaceDO, followed by the WorkstreamDO link.
     {
       await resourceStatement.run();
       await (inObjectResourceAttacher ?? ((attachment) =>
