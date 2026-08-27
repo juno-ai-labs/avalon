@@ -89,7 +89,7 @@ async function cloudflareRequest(credentials, path, options = {}, fetcher = fetc
   return envelope;
 }
 
-async function listNamespaces(credentials, fetcher) {
+export async function listNamespaces(credentials, fetcher = fetch) {
   const namespaces = [];
   const seen = new Set();
   for (let page = 1; ; page += 1) {
@@ -122,7 +122,7 @@ async function listQueues(credentials, fetcher) {
   return Array.isArray(envelope.result) ? envelope.result : [];
 }
 
-async function listStoredObjects(credentials, namespaceId, fetcher) {
+export async function listStoredObjects(credentials, namespaceId, fetcher = fetch) {
   const objects = [];
   const seenObjects = new Set();
   const seenCursors = new Set();
@@ -150,7 +150,7 @@ async function listStoredObjects(credentials, namespaceId, fetcher) {
   }
 }
 
-async function classifyRegionalObjects(resource, objectIds, probeUrl, fetcher) {
+export async function classifyRegionalObjects(resource, objectIds, probeUrl, fetcher = fetch) {
   const response = await fetcher(probeUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

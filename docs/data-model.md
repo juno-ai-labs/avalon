@@ -117,6 +117,15 @@ latest conversation turns, unread attention anchors, sequence ranges, active
 activities, exact loop reconstruction, provider-boundary verification, and
 compaction lookup.
 
+The one-time pre-v27 backfill adds ordering/reference rows but does not move
+payload ownership. Legacy participant content and structured tool summaries
+remain owned by `parts`; exact legacy checkpoint arrays remain owned by
+`compaction_checkpoints`. Canonical facts hold stable references to those rows,
+and normal transcript/checkpoint reads hydrate through the reference. The
+singleton `legacy_transcript_backfills` receipt records the v27 cutover time,
+source digest/counts, pre-write PITR bookmark, and the explicit absence of
+reconstructable historical Bind state.
+
 `WorkspaceDO` is the relational authority for workspace product state and
 cross-work-stream serving. It stores connector/product configuration, Terminal
 policy revisions, automations/digests/schedules, resource/note/watch/memory
@@ -779,6 +788,26 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-26 — Legacy transcript projections preserve single payload ownership
+
+**What changed:** pre-v27 participant and compaction rows can be projected into
+the canonical sequence/checkpoint indexes while their existing object-local
+rows remain the sole payload owners. A v28 receipt makes the source set,
+recovery bookmark, and unavailable Bind-history boundary inspectable.
+
+**Why:** retained participant order and checkpoint arrays are useful canonical
+facts, but copying them would violate the transcript's one-owner invariant and
+aggregate participant rows cannot recreate exact provider order.
+
+**Considered and rejected:** duplicate payload rows in the new substrate and a
+synthetic pre-v27 Bind generation. The first creates competing truth; the second
+claims fidelity the source cannot prove.
+
+**Consequences:** legacy owner rows referenced by a completed receipt are
+immutable history. Readers may join them only through explicit canonical
+reference facts, and future cleanup must first move ownership atomically rather
+than deleting or silently copying those rows.
 
 ### 2026-08-26 — Transcript facts own bytes while two projections own order
 

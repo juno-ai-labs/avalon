@@ -12,7 +12,8 @@ type LocalOnlyTranscriptOperation =
   | "appendPreparedParticipantMessage"
   | "participantTurn"
   | "participantTurnForTool"
-  | "range";
+  | "range"
+  | "backfillLegacyTranscript";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
 
