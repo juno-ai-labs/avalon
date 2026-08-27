@@ -887,6 +887,7 @@ misrouted product statement now fails because the table or column is absent.
 - **No publish path asks D1 anything.** Losing workspace access is carried by the queue in [`access-revocation.md`](access-revocation.md) and by nothing else — no object polls, revalidates on a timer, or re-reads `workspace_members` before sending. Putting a D1 query back on a publish path is where the waterline ordering bug came from, and the transcript feed would pay it per token frame. An object enforcing its *own* SQL — `canRead`, `product.canRead` — is not that: it is synchronous, local, and answers a question no queue message carries.
 - **D1 workspace membership is rechecked for every workspace subscribe/command and every WorkstreamDO/SubstreamAgent/BlockDashboardAgent admission.** Admission is where authorization is decided, and it is decided fresh every time; no long-lived ticket or attachment is continuing authority for a new write. What an admitted socket then holds is ended by the revocation queue, not by re-asking.
 - **A product request names its auth principal, and each is verified against the fact that owns it.** (An *auth* principal — who is asking — is distinct from the run's `ExecutionPrincipal`, which names whose authority a run spends.) A login session (`principal` absent) is re-verified against its `sessions` row joined to membership, which is what makes a revoked login stop working mid-flight. A connector principal (`principal: "connector"`, connector ingress only) has no session row — its standing authority is the connector link, verified by the Worker on the very message being delivered — so the object re-checks membership alone (`connectorPrincipalAuth`) and refuses staleness as `connector_member_revoked`. Sockets never carry a connector principal; tickets are issued to login sessions only.
+- **Participant removal leaves an active reader.** Any authorized current reader may remove themself or another participant, but the target check, active count, and state change share one object-local transaction. A client-side disabled action is only presentation; without the authority check, two racing removals could leave a private work stream nobody can open.
 - **Legacy D1 product rows do not exist and are never a fallback.** Fallback would silently split authority after an object failure.
 
 ## Boundary
@@ -922,6 +923,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Encoded transcript page would exceed 900 KB | The agent shortens the page toward the requested boundary and returns an adjusted continuation cursor. A single defensive oversize message produces a correlated `message_page_too_large` error instead of an oversized frame. |
 | Historical-page read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
 | Schema v32 finds an unverified legacy payload owner | Constructor activation fails with `transcript_payload_retirement_not_verified`; every legacy row remains intact and the object serves nothing until an operator completes ownership transfer under the pre-retirement Worker. |
+| Participant removal targets the final active participant | The object returns `409 workstream_participant_required` and leaves the participant active. The desktop disables the action when its current snapshot already shows only one participant, but that is not the authority fence. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | RPC or Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders WorkspaceDO state and delivery receipts. |
 | A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
@@ -965,7 +967,9 @@ ticket replay, and the read-only child socket.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
 mentions and attachment descriptors in an opening message, and member-authored
-elicitation answers. `test-workers/message-authority.test.ts` and
+elicitation answers. `test-workers/unseen-workstream-state.test.ts` covers
+self-removal, removal of another participant by a member, and the transactional
+final-participant refusal on real Durable Object SQLite. `test-workers/message-authority.test.ts` and
 `test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
 atomicity and malformed object-boundary inputs; the runtime suite proves a
 subscribed socket receives a typed external append without reconnecting.
@@ -1273,6 +1277,29 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-27 — Participant removal preserves one reader
+
+**What changed:** `removeParticipant` now treats the room as collaborative:
+any authorized current reader can remove themself or another participant. It
+returns a changed witness, publishes only for a real removal, and refuses the
+final active participant inside the same synchronous SQLite transaction.
+
+**Why:** The desktop had no way to reach the existing removal route, and that
+route could transition the sole participant to removed. For a personal work
+stream, that creates durable content with no remaining reader and no in-product
+way to recover it.
+
+**Considered and rejected:** Keeping owner/admin authority for removing another
+participant. A work-stream room is governed by its current readers, who already
+share the ability to add participants; workspace roles govern workspace
+membership instead. Also rejected relying on the modal's disabled final action,
+because stale snapshots and concurrent clients are outside its control.
+
+**Consequences:** The object is the final-participant fence, and callers surface
+`workstream_participant_required` without retrying. A no-op removal emits no
+`participant_removed` event. A successful removal still uses the existing local
+publication path to close readers whose personal-work-stream access was removed.
 
 ### 2026-08-27 — Canonical transcript ownership becomes the only runtime path
 

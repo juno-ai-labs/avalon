@@ -2071,11 +2071,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(participant);
       }
       if (request.operation === "remove_participant") {
-        await this.product.removeParticipant(current, request.userId);
-        await this.publishLocalProductEvent(identity, {
-          type: "participant_removed",
-          userId: request.userId,
-        });
+        const removed = await this.product.removeParticipant(current, request.userId);
+        if (removed) {
+          await this.publishLocalProductEvent(identity, {
+            type: "participant_removed",
+            userId: request.userId,
+          });
+        }
         return jsonResponse({ ok: true });
       }
       if (request.operation === "attach_resource") {
