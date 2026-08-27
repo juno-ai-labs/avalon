@@ -161,6 +161,7 @@ async function fixture(input?: {
     clearGitHubReadAccess: vi.fn(async () => undefined),
     readFile: vi.fn(async () => backupBytes),
     writeFile: vi.fn(),
+    runUtilityCommand: vi.fn(),
     runCommand: vi.fn(async (_sandbox, command) => ({
       exitCode: 0,
       stdout: command.taskName.includes("cleanup")
@@ -170,6 +171,11 @@ async function fixture(input?: {
     })),
     publishGitBundle: vi.fn(),
   };
+  const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
+  provider.runUtilityCommand = vi.fn((id, command) => utilityImplementation(id, {
+    ...command,
+    taskName: command.operation === "lifecycle.backup_cleanup" ? "cleanup" : "terminal-utility",
+  }));
   const catalog: TerminalRepositoryCatalogGateway = {
     resolveRepository: vi.fn(async () => ({
       id: 41,
@@ -273,13 +279,13 @@ describe("Terminal model repository selection", () => {
     });
     expect(payloadPut).toHaveBeenCalledOnce();
     expect(residentResourceAttacher).toHaveBeenCalledOnce();
-    const archiveCommand = vi.mocked(provider.runCommand).mock.calls.find(([, command]) => (
-      command.taskName.includes("workspace-backup") && !command.taskName.includes("cleanup")
+    const archiveCommand = vi.mocked(provider.runUtilityCommand).mock.calls.find(([, command]) => (
+      command.operation === "lifecycle.backup"
     ))?.[1].command;
     expect(archiveCommand).toContain("git bundle create");
     expect(archiveCommand).toContain("--exclude='*/.git'");
     expect(archiveCommand).toContain("--exclude='*/node_modules'");
-    expect(provider.runCommand).toHaveBeenCalledBefore(vi.mocked(provider.deleteSandbox));
+    expect(provider.runUtilityCommand).toHaveBeenCalledBefore(vi.mocked(provider.deleteSandbox));
     expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
     expect(workstreamObjectGet(
       objectStore,
@@ -434,7 +440,7 @@ describe("Terminal model repository selection", () => {
          VALUES (1, 'daytona', ?, 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
         state, Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
       );
-      vi.mocked(provider.runCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
+      vi.mocked(provider.runUtilityCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
 
       await expect(selector.checkout(context, {
         repositoryFullName: "acme/widget",
