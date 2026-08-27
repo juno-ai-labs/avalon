@@ -298,3 +298,72 @@ describe('InspectorRail details', () => {
   });
 
 });
+
+describe('resource detail content preview', () => {
+  const note: WorkstreamResource = {
+    id: 'resource-note',
+    title: 'Q3 board deck',
+    resourceType: 'document',
+    mimeType: 'text/markdown',
+    contentAvailable: true,
+    watchEnabled: false,
+    watchStatus: 'unsupported',
+    currentVersion: 2,
+    relationshipType: 'context',
+    direction: 'artifact',
+  };
+
+  function openDetail(resource: WorkstreamResource, loadResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>) {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          {...(loadResourceContent ? { loadResourceContent } : {})}
+          workstream={{ ...workstream, resources: [resource] }}
+        />
+      </Tooltip.Provider>,
+    );
+    act(() => { useUiStore.getState().inspect({ type: 'resource', id: resource.id }); });
+  }
+
+  it('renders the resource content beneath its metadata, so a citation is not a dead end', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['## Findings\n\nRevenue grew 40%.']));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-note', expect.anything());
+    // Beneath the metadata, not instead of it.
+    expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  it('renders a document\'s bytes as written, never through the model-text repair', async () => {
+    // The repair rewrites what a *model* wrote. A stored document is a file, and
+    // rewriting its bytes on the way to a reader is not this app's business.
+    const loadResourceContent = vi.fn(async () => new Blob(['Cost is $\\rightarrow$ 40.']));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/Cost is/u)).toHaveTextContent('Cost is $\\rightarrow$ 40.'));
+  });
+
+  it('shows nothing but metadata for a resource with no stored content', () => {
+    const loadResourceContent = vi.fn();
+    openDetail({ ...note, contentAvailable: false }, loadResourceContent);
+
+    expect(loadResourceContent).not.toHaveBeenCalled();
+    expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  it('says the preview is unavailable rather than leaving the panel half-drawn', async () => {
+    const loadResourceContent = vi.fn(async () => { throw new Error('resource_content_unavailable'); });
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  it('does not try to render an image or a binary as text', () => {
+    const loadResourceContent = vi.fn();
+    openDetail({ ...note, mimeType: 'image/png', title: 'Screenshot.png' }, loadResourceContent);
+
+    expect(loadResourceContent).not.toHaveBeenCalled();
+  });
+});
