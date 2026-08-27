@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   deleteDraftResource: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkOpportunities: vi.fn(),
+  getProjects: vi.fn(),
   recordWorkOpportunityImpressions: vi.fn(),
   dismissWorkOpportunity: vi.fn(),
   startWorkOpportunity: vi.fn(),
@@ -127,6 +128,24 @@ function renderScreen(): QueryClient {
   return queryClient;
 }
 
+function renderProjectScreen(projectId: string): QueryClient {
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
+  });
+  render(
+    <Tooltip.Provider>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/projects/${projectId}/workstreams/new`]}>
+          <Routes>
+            <Route element={<NewWorkstreamScreen projectId="route" workspace={workspace} />} path="/projects/:projectId/workstreams/new" />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </Tooltip.Provider>,
+  );
+  return queryClient;
+}
+
 describe('New work-stream home', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -151,6 +170,7 @@ describe('New work-stream home', () => {
     };
     workspaceSocket.listWorkstreams.mockResolvedValue(directoryPage);
     api.getWorkOpportunities.mockResolvedValue([]);
+    api.getProjects.mockResolvedValue({ waterline: 0, items: [] });
     api.recordWorkOpportunityImpressions.mockResolvedValue(undefined);
     api.dismissWorkOpportunity.mockResolvedValue(undefined);
     api.startWorkOpportunity.mockResolvedValue(createdWorkstream);
@@ -193,6 +213,46 @@ describe('New work-stream home', () => {
     expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
     expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
     expect(screen.queryByText('Broken connector')).not.toBeInTheDocument();
+  });
+
+  it('given a project work stream needing attention, when the row renders, then its project icon sits in the row', async () => {
+    api.getProjects.mockResolvedValue({
+      waterline: 1,
+      items: [{
+        id: '00000000-0000-7000-8000-0000000000f2',
+        name: 'Hiring',
+        iconKey: 'briefcase',
+        colorKey: 'blue',
+        scope: 'personal',
+        status: 'active',
+        presentationRevision: 1,
+        audienceGeneration: 1,
+        lifecycleGeneration: 1,
+        participants: [],
+        workstreamIds: ['waiting'],
+        defaultResourceIds: [],
+        createdAt: '2026-08-27T00:00:00.000Z',
+        updatedAt: '2026-08-27T00:00:00.000Z',
+      }],
+    });
+    renderScreen();
+
+    const attention = await screen.findByRole('region', { name: 'Needs attention' });
+    expect(await within(attention).findByRole('img', { name: 'Projects: Hiring' })).toBeVisible();
+  });
+
+  it('given a project launcher, when the first message is submitted, then it omits home sections and sends the project gate', async () => {
+    const projectId = '00000000-0000-7000-8000-0000000000f2';
+    renderProjectScreen(projectId);
+
+    expect(await screen.findByRole('heading', { name: 'New project work stream' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
+    const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({ projectId })));
   });
 
   it('lists a work stream this person has never opened, newest activity first', async () => {

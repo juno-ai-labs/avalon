@@ -81,6 +81,8 @@ export const ProjectSummarySchema = z.object({
   audienceGeneration: z.number().int().positive(),
   lifecycleGeneration: z.number().int().positive(),
   participants: z.array(ProjectParticipantSchema),
+  workstreamIds: z.array(z.string().uuid()).default([]),
+  defaultResourceIds: z.array(z.string().uuid()).default([]),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
 }).strict();
@@ -100,6 +102,12 @@ export const UpdateProjectPresentationRequestSchema = z.object({
   colorKey: ProjectColorKeySchema,
 }).strict();
 export type UpdateProjectPresentationRequest = z.infer<typeof UpdateProjectPresentationRequestSchema>;
+
+export const UpdateProjectAudienceRequestSchema = z.object({
+  scope: ProjectScopeSchema,
+  participantUserIds: z.array(z.string().uuid()).min(1),
+}).strict();
+export type UpdateProjectAudienceRequest = z.infer<typeof UpdateProjectAudienceRequestSchema>;
 
 export const ReorderProjectsRequestSchema = z.object({
   projectIds: z.array(ProjectIdSchema),

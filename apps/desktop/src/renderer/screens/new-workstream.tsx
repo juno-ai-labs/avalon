@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type ProjectSummary } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronRight, Plus } from 'lucide-react';
@@ -30,6 +30,7 @@ import { ComposerInput } from '../components/composer-input';
 import { Avatar, AvatarStack, RallyMark, Badge, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { MessageBlock } from '../components/workstream-blocks';
+import { ProjectIconPile } from '../components/project-sidebar-section';
 
 interface CreateWorkstreamInput {
   attachmentIds: string[];
@@ -210,7 +211,7 @@ const WorkSuggestedPrompts = withSuggestedPrompts<{
   },
 }));
 
-function AttentionWorkstreamRow({ workstream }: { workstream: WorkstreamSummary }): React.JSX.Element {
+function AttentionWorkstreamRow({ projects, workstream }: { projects: ProjectSummary[]; workstream: WorkstreamSummary }): React.JSX.Element {
   const summary = workstream.preview ?? workstream.objective ?? workstream.automationName;
   return (
     <NavLink className="waiting-workstream-row" to={`/workstreams/${workstream.id}`}>
@@ -219,6 +220,7 @@ function AttentionWorkstreamRow({ workstream }: { workstream: WorkstreamSummary 
           same ranking the sidebar dot uses, so one work stream does not show
           two different markers on two screens. */}
       <StatusDot status={workstreamMarkerStatus(workstream)} />
+      <ProjectIconPile projects={projects.filter((project) => project.workstreamIds.includes(workstream.id))} />
       <span className="waiting-workstream-copy">
         <strong>{workstream.title}</strong>
         {summary && <span>{summary}</span>}
@@ -335,6 +337,12 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   // The same list the sidebar shows, from the same cache entry, so a realtime
   // update lands on both at once.
   const workstreams = useWorkstreamsQuery();
+  const projects = useQuery({
+    queryKey: ['projects'],
+    queryFn: ({ signal }) => api!.getProjects(signal),
+    enabled: Boolean(api),
+    staleTime: 30_000,
+  });
   const opportunities = useQuery({
     queryKey: ['work-opportunities'],
     queryFn: ({ signal }) => api!.getWorkOpportunities(signal),
@@ -374,6 +382,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         openingMessageLength: input.openingMessage.length,
       });
       return trace.step('create_request', () => api!.createWorkstream({
+        ...(owningProjectId ? { projectId: owningProjectId } : {}),
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
         ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
@@ -718,7 +727,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
                 <section className="waiting-workstreams" aria-labelledby="attention-workstreams-heading">
                   <h2 id="attention-workstreams-heading">Needs attention</h2>
                   <div className="waiting-workstream-list">
-                    {attentionWorkstreams.map((workstream) => <AttentionWorkstreamRow key={workstream.id} workstream={workstream} />)}
+                    {attentionWorkstreams.map((workstream) => <AttentionWorkstreamRow key={workstream.id} projects={projects.data?.items ?? []} workstream={workstream} />)}
                   </div>
                 </section>
               )}
