@@ -90,6 +90,38 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
+  it("does not reap an expired nonterminal run during transcript backfill", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, legacy_attempt_id,
+         lease_owner, lease_expires_at, heartbeat_at, created_at, updated_at)
+        VALUES ('expired-running-run', '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'expired-attempt',
+                'expired-owner', 0, 0, 1, 1)`);
+    });
+
+    await runInDurableObject(stub, async (instance, state) => {
+      await expect(instance.backfillLegacyTranscript({
+        objectId: id.toString(),
+        operatorRunId: "00000000-0000-7000-8000-000000000715",
+        cutoverVersion: 27,
+      })).rejects.toThrow("legacy_transcript_backfill_not_quiescent");
+      expect(state.storage.sql.exec<{ status: string; terminalized_at: number | null }>(
+        `SELECT status, terminalized_at FROM runs WHERE run_id = 'expired-running-run'`,
+      ).one()).toEqual({ status: "running", terminalized_at: null });
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count
+        FROM legacy_transcript_backfills`).one().count).toBe(0);
+    });
+  });
+
   it("refuses to renumber while a client holds an immutable transcript snapshot", async () => {
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
