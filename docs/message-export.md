@@ -58,10 +58,18 @@ Both formats share a stylesheet built around the class names `MarkdownBody`
 emits, so the two stay in step by construction: a class added there is a missing
 rule here, visible the first time a card is looked at.
 
-Two things on the card are drawn rather than reproduced: the code block's copy
-button is hidden, and a task list's checkboxes are redrawn as marks. A picture of
-a control is a lie, and a greyed system checkbox reads as broken rather than as a
-task that is not done.
+Three things on the card are drawn rather than reproduced: the code block's copy
+button is hidden, a task list's checkboxes are redrawn as marks, and a citation
+keeps its shape but loses everything that promises interaction — the footnote
+pill's hover popover and the embed card's chevron are both `display: none`. A
+picture of a control is a lie, a greyed system checkbox reads as broken rather
+than as a task that is not done, and a hover popover printed into a PNG is a grey
+box over the text with no way to dismiss it.
+
+The chip and the embed keep their shape rather than flattening to text, so a
+reader recognises the thing they clicked in the app. The pill stays a plain
+numbered superscript, which is what a citation degrades to everywhere outside
+Rally's renderer anyway.
 
 The colours are the light inverse of the application's, with one deliberate
 exception — a code block stays dark. The highlighter writes its colours as inline
@@ -126,6 +134,10 @@ The chain recovers from a rejected export rather than wedging behind it.
   built out of a model's words; it gets a scheme of its own, no preload, no Node,
   and a policy that forbids script. Serving it from `app://rallywithai` would put it
   inside the renderer's origin for the sake of one fewer scheme.
+- **Every class `MarkdownBody` emits has a rule here.** It is not enough to be
+  true today: the miss is invisible until somebody opens a saved card, which is
+  the wrong place to find out. A parameterised test in `message-export.test.ts`
+  names each citation class and fails the build when one has no rule.
 - **A file name is validated, never sanitized.** The name is derived from message
   text, and text a model wrote reaches `showSaveDialog` as a default path.
   Rejecting is checkable; sanitizing invites the argument about whether the
@@ -249,6 +261,26 @@ Two traps:
   `../lib/platform` mock, or the buttons throw on render.
 
 ## Changelog
+
+### 2026-08-27 — The card styles citations
+
+**What changed:** Rules for the citation chip, the embed card, the footnote pill
+and the identity card, written for a light card. The pill's popover and the
+card's chevron are hidden. A parameterised test names every citation class the
+renderer emits and fails when one has no rule here.
+
+**Why:** The card shares `MarkdownBody`'s markup and none of its stylesheet, so
+each new class arrived here unstyled — and this document already recorded that
+the miss shows up as an unstyled element in the first card anybody looks at,
+which is a long way from the change that caused it. Citations added eleven
+classes at once, which made "somebody will notice" a worse bet than usual.
+
+**Consequences:** The guard is the interesting part, not the rules. It turns a
+whole category of drift — a class added to the renderer with no rule written
+here — into a build failure, which is what this document had been asking for in
+prose since the stylesheet split. It does not check that a rule is *good*, only
+that one exists; the card is still read from a real capture, as everything
+visible here is.
 
 ### 2026-08-25 — The export scheme is rallywithai-export://
 

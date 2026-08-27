@@ -1,3 +1,4 @@
+import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { normalizeModelMarkdown, normalizeModelText } from "@rally/contracts/model-markdown";
 
 import { escapeHtml } from "./resend";
@@ -82,7 +83,24 @@ export function markdownToEmailHtml(markdown: string): string {
   // result — so the TeX repair applies unconditionally. An email that one day
   // carries a person's words verbatim needs an opt-out here first, the way
   // `MarkdownBody` grew one for the human bubble.
-  return blocksFromMarkdown(normalizeModelMarkdown(markdown)).map(renderBlock).join("\n");
+  return blocksFromMarkdown(forEmail(markdown)).map(renderBlock).join("\n");
+}
+
+/**
+ * A model's Markdown, made safe for a surface with no renderer of ours in it.
+ *
+ * Citations first, TeX second, and the order matters: the citation rewrite
+ * reads link and footnote syntax, and the TeX repair escapes Markdown
+ * punctuation in what it unwraps — a `\[` manufactured there would stop looking
+ * like the link the rewrite has to find.
+ *
+ * Without the rewrite all three leaks are live today, not hypothetical: the
+ * HTML path links only `http(s)` targets, so a `resource://` link passes
+ * through as literal bracket syntax; the text path appends whatever target it
+ * is handed; and neither part has any footnote handling at all.
+ */
+function forEmail(markdown: string): string {
+  return normalizeModelMarkdown(rewriteCitationsAsPlainText(markdown));
 }
 
 /**
@@ -97,8 +115,10 @@ export function markdownToEmailHtml(markdown: string): string {
 export function markdownToEmailText(markdown: string): string {
   // The plain-text entry point, deliberately: nothing below parses Markdown,
   // so an escape manufactured by `normalizeModelMarkdown` would reach the
-  // reader as a literal backslash.
-  markdown = normalizeModelText(markdown);
+  // reader as a literal backslash. The citation rewrite still runs first — its
+  // output is Markdown that `stripInlineMarks` below then reduces, and a
+  // footnote marker it did not remove would reach the reader as `[^1]`.
+  markdown = normalizeModelText(rewriteCitationsAsPlainText(markdown));
   const lines: string[] = [];
   let fenced = false;
   for (const raw of markdown.replace(/\r\n/gu, "\n").split("\n")) {
@@ -140,7 +160,7 @@ export function markdownToEmailText(markdown: string): string {
  * anything.
  */
 export function markdownToEmailPreheader(markdown: string, limit = 160): string {
-  const plain = normalizeModelText(markdown)
+  const plain = normalizeModelText(rewriteCitationsAsPlainText(markdown))
     .replace(/\r\n/gu, "\n")
     .replace(/^\s{0,3}(?:```|~~~).*$/gmu, " ")
     .replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gmu, " ")
