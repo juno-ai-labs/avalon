@@ -18,7 +18,7 @@
   --faint: #a3a196;
   --hair: rgba(17, 18, 16, 0.13);
   --hair-strong: rgba(17, 18, 16, 0.22);
-  --volt: #cedc00;
+  --volt: #ccff00;
   --volt-bright: #e2ef1e;
   --volt-deep: #99a300;
   --night: #131410;
@@ -43,7 +43,7 @@ a { color: inherit; text-decoration: none; }
 a, button { -webkit-tap-highlight-color: transparent; }
 img { max-width: 100%; }
 h1, h2, p { margin: 0; text-wrap: pretty; }
-::selection { background: rgba(206, 220, 0, 0.5); }
+::selection { background: rgba(204, 255, 0, 0.5); }
 :focus-visible { outline: 2px solid var(--volt-deep); outline-offset: 4px; }
 .study-verge :focus-visible { outline-color: var(--volt); }
 
@@ -211,7 +211,7 @@ h1, h2, p { margin: 0; text-wrap: pretty; }
 .merge-mid::before { background: rgba(240, 239, 232, 0.28); bottom: 12.5%; content: ""; left: calc(50% - 0.5px); position: absolute; top: 12.5%; width: 1px; }
 .merge-mid::after { animation: draw-stream 600ms var(--ease-out) 500ms both; background: var(--volt); border-radius: 1px; content: ""; height: 2px; left: 50%; position: absolute; top: calc(50% - 1px); transform-origin: left; width: calc(50% + 64px); }
 @keyframes draw-stream { from { transform: scaleX(0); } }
-.merge-pulse { animation: travel 6s linear 1.4s infinite; background: var(--volt); border-radius: 50%; box-shadow: 0 0 12px rgba(206, 220, 0, 0.8); height: 6px; left: calc(50% - 3px); opacity: 0; position: absolute; top: calc(50% - 3px); width: 6px; }
+.merge-pulse { animation: travel 6s linear 1.4s infinite; background: var(--volt); border-radius: 50%; box-shadow: 0 0 12px rgba(204, 255, 0, 0.8); height: 6px; left: calc(50% - 3px); opacity: 0; position: absolute; top: calc(50% - 3px); width: 6px; }
 @keyframes travel { 0%, 78% { opacity: 0; transform: translateX(0); } 80% { opacity: 1; } 96% { opacity: 1; transform: translateX(88px); } 100% { opacity: 0; transform: translateX(96px); } }
 .merge-out { background: var(--night-panel); border: 1px solid rgba(240, 239, 232, 0.22); border-left: 2px solid var(--volt); border-radius: 10px; flex: 1; margin-left: 64px; padding: 14px 16px; }
 .merge-out p { color: var(--volt); font-family: var(--mono); font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase; }
