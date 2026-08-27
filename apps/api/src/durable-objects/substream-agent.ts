@@ -226,7 +226,12 @@ const SocketAttachmentSchema = z.object({
   afterSequence: z.number().int().nonnegative(),
   subscribed: z.boolean().default(false),
   /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
-  snapshotInFlight: z.boolean().default(false)
+  snapshotInFlight: z.boolean().default(false),
+  transcriptSnapshot: z.object({
+    snapshotId: z.string().min(1),
+    snapshotThrough: z.number().int().nonnegative(),
+    snapshotAtUtc: z.string().datetime({ offset: true }),
+  }).nullable().default(null),
 });
 
 const BroadcastRequestSchema = z.object({
@@ -3123,7 +3128,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
     try {
-      const result = this.transcript.range(request.request.snapshotId, request.request.range);
+      const fence = attachment.transcriptSnapshot;
+      if (!fence || fence.snapshotId !== request.request.snapshotId) {
+        this.sendResyncRequired(socket, sequence, "snapshot_expired");
+        return;
+      }
+      const result = this.transcript.range(fence, request.request.range);
       socket.send(JSON.stringify(ServerSocketEventSchema.parse({
         type: "transcript_range",
         sequence,
@@ -3796,7 +3806,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence,
       subscribed: false,
-      snapshotInFlight: false
+      snapshotInFlight: false,
+      transcriptSnapshot: null,
     };
 
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
@@ -4169,7 +4180,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private sendResyncRequired(
     socket: WebSocket,
     currentSequence: number,
-    reason: "history_unavailable" | "sequence_ahead",
+    reason: "history_unavailable" | "snapshot_expired" | "sequence_ahead",
   ): void {
     const event = ServerSocketEventSchema.parse({
       type: "resync_required",
@@ -4288,6 +4299,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         "rally.snapshot.trims": trims,
       });
       socket.send(encoded);
+      const currentAttachment = this.readAttachment(socket);
+      if (currentAttachment) {
+        socket.serializeAttachment({
+          ...currentAttachment,
+          transcriptSnapshot: {
+            snapshotId: transcript.snapshotId,
+            snapshotThrough: transcript.snapshotThrough,
+            snapshotAtUtc: transcript.snapshotAtUtc,
+          },
+        } satisfies SocketAttachment);
+      }
       return true;
     } catch {
       span.setError("snapshot_unavailable");

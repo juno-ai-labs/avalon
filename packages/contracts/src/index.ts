@@ -2416,7 +2416,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
-    reason: z.enum(["history_unavailable", "sequence_ahead"]),
+    reason: z.enum(["history_unavailable", "snapshot_expired", "sequence_ahead"]),
     latestSequence: z.number().int().nonnegative(),
     /** Preserves an in-flight response while canonical REST state is refreshed. */
     activeStreams: ActiveStreamCheckpointsSchema.default([]),

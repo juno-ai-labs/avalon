@@ -12,7 +12,7 @@ type TextMessageInput = Omit<Message, 'messageType' | 'text'> & { text: string }
 type ToolEventMessageInput = Omit<Message, 'messageType' | 'toolEvent'> & { toolEvent: ToolEventData };
 type ElicitationMessageInput = Omit<Message, 'messageType' | 'elicitation'> & { elicitation: ElicitationData };
 
-const activityReceiptMonotonic = new Map<string, {
+const activityReceiptMonotonic = new WeakMap<TranscriptActivity, {
   intervalId: string;
   revision: number;
   elapsedMsAtSnapshot: number;
@@ -122,6 +122,11 @@ export function orderedTranscriptMessages(
     if (!current || current.revision < turn.revision) turns.set(turn.transcriptSequence, turn);
   }
   const activities = new Map(snapshot.activities.map((activity) => [activity.activityId, activity]));
+  const messageOrder = new Map<string, {
+    turnSequence: number;
+    position: number;
+    tieBreaker: string;
+  }>();
   const orderedTurns = [...turns.values()].sort(
     (left, right) => left.transcriptSequence - right.transcriptSequence,
   );
@@ -130,12 +135,16 @@ export function orderedTranscriptMessages(
       .slice()
       .sort((left, right) => left.blockIndex - right.blockIndex)
       .map((block): Message => {
-        const sequenceNumber = turn.transcriptSequence * 1_000 + block.blockIndex;
+        messageOrder.set(block.blockId, {
+          turnSequence: turn.transcriptSequence,
+          position: block.blockIndex * 2,
+          tieBreaker: block.blockId,
+        });
         const base = {
           id: block.blockId,
           transcriptTurnId: turn.turnId,
           workstreamId,
-          sequenceNumber,
+          sequenceNumber: 0,
           attentionSequenceNumber: turn.attentionOrdinal,
           authorType: turn.actor === 'assistant' ? 'agent' as const : turn.actor,
           createdAt: turn.createdAtUtc,
@@ -205,7 +214,7 @@ export function orderedTranscriptMessages(
       id: activity.activityId,
       transcriptTurnId: lastTurn.turnId,
       workstreamId,
-      sequenceNumber: lastTurn.transcriptSequence * 1_000 + 999,
+      sequenceNumber: 0,
       attentionSequenceNumber: null,
       authorType: 'agent',
       messageType: 'thought',
@@ -219,6 +228,11 @@ export function orderedTranscriptMessages(
         activeVerb: 'working',
         completedVerb: 'worked',
       },
+    });
+    messageOrder.set(activity.activityId, {
+      turnSequence: lastTurn.transcriptSequence,
+      position: (Math.max(-1, ...lastTurn.blocks.map((block) => block.blockIndex)) + 1) * 2,
+      tieBreaker: activity.activityId,
     });
   }
   for (const activity of snapshot.activities) {
@@ -239,7 +253,7 @@ export function orderedTranscriptMessages(
       id: activity.activityId,
       transcriptTurnId: lastTurn.turnId,
       workstreamId,
-      sequenceNumber: lastTurn.transcriptSequence * 1_000 + lastToolIndex + 1,
+      sequenceNumber: 0,
       attentionSequenceNumber: null,
       authorType: 'agent',
       messageType: 'thought',
@@ -254,8 +268,21 @@ export function orderedTranscriptMessages(
         completedVerb: `${activity.label} worked`,
       },
     });
+    messageOrder.set(activity.activityId, {
+      turnSequence: lastTurn.transcriptSequence,
+      position: lastToolIndex * 2 + 1,
+      tieBreaker: activity.activityId,
+    });
   }
-  return messages.sort((left, right) => left.sequenceNumber - right.sequenceNumber);
+  return messages
+    .sort((left, right) => {
+      const leftOrder = messageOrder.get(left.id)!;
+      const rightOrder = messageOrder.get(right.id)!;
+      return leftOrder.turnSequence - rightOrder.turnSequence
+        || leftOrder.position - rightOrder.position
+        || leftOrder.tieBreaker.localeCompare(rightOrder.tieBreaker);
+    })
+    .map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
 /**
@@ -376,14 +403,32 @@ export function mergeRealtimeTranscriptTurn(
         endExclusive: turn.transcriptSequence + 1,
       },
       turns: [turn],
+      activities: [],
     });
   }
   return {
     ...snapshot,
-    snapshotThrough: Math.max(snapshot.snapshotThrough, turn.transcriptSequence),
     eventSequence: Math.max(snapshot.eventSequence, eventSequence),
     ranges,
     activeTurns: snapshot.activeTurns.filter((candidate) => candidate.turnId !== turn.turnId),
+  };
+}
+
+export function mergeTranscriptRange(
+  snapshot: WorkstreamTranscriptSnapshot,
+  range: WorkstreamTranscriptSnapshot['ranges'][number],
+): WorkstreamTranscriptSnapshot {
+  const activities = new Map(snapshot.activities.map((activity) => [activity.activityId, activity]));
+  for (const activity of range.activities) {
+    const current = activities.get(activity.activityId);
+    if (!current || current.revision < activity.revision) activities.set(activity.activityId, activity);
+  }
+  const mergedActivities = [...activities.values()];
+  return {
+    ...snapshot,
+    ranges: [...snapshot.ranges, range],
+    activities: mergedActivities,
+    activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
   };
 }
 
@@ -424,14 +469,14 @@ function activityTiming(activity: TranscriptActivity | undefined): {
   const active = activity.intervals.find((interval) => interval.stoppedAtUtc === null);
   if (!active) return { durationMs: activityDuration(activity) };
   const elapsedMsAtSnapshot = active.elapsedMsAtSnapshot ?? 0;
-  const cached = activityReceiptMonotonic.get(activity.activityId);
+  const cached = activityReceiptMonotonic.get(activity);
   const receivedAt = cached
     && cached.intervalId === active.intervalId
     && cached.revision === active.revision
     && cached.elapsedMsAtSnapshot === elapsedMsAtSnapshot
     ? cached.receivedAt
     : performance.now();
-  activityReceiptMonotonic.set(activity.activityId, {
+  activityReceiptMonotonic.set(activity, {
     intervalId: active.intervalId,
     revision: active.revision,
     elapsedMsAtSnapshot,
