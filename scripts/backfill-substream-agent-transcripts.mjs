@@ -6,7 +6,7 @@
  * each regional namespace binding. Every result, including the pre-write PITR
  * bookmark, is written to a mode-0600 local receipt before this command exits.
  */
-import { rename, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 
 import { isEntryPoint } from './entry-point.mjs';
 import {
@@ -40,12 +40,17 @@ function parseArguments(argv) {
     eu: Number(value('--expected-eu')),
     global: Number(value('--expected-global')),
   };
-  if (apply && (expected.eu !== 3 || expected.global !== 389)) {
-    throw new Error('apply_requires_expected_eu_3_and_global_389');
+  const regions = region === 'all' ? REGIONS : [region];
+  if (apply && regions.some((selected) => !Number.isSafeInteger(expected[selected]))) {
+    throw new Error('apply_requires_explicit_expected_counts');
+  }
+  if (apply && regions.some((selected) =>
+    expected[selected] !== (selected === 'eu' ? 3 : 389))) {
+    throw new Error('apply_requires_reviewed_expected_counts');
   }
   const allowed = new Set([
     '--apply', '--region', '--jurisdiction-probe-url', '--expected-eu',
-    '--expected-global', '--receipt',
+    '--expected-global', '--receipt', '--eu-target-ids', '--global-target-ids',
   ]);
   const unknown = args.find((argument) => {
     const key = argument.includes('=') ? argument.slice(0, argument.indexOf('=')) : argument;
@@ -57,7 +62,37 @@ function parseArguments(argv) {
     expected,
     probeUrl,
     receiptPath: value('--receipt'),
-    regions: region === 'all' ? REGIONS : [region],
+    regions,
+    targetPaths: {
+      eu: value('--eu-target-ids'),
+      global: value('--global-target-ids'),
+    },
+  };
+}
+
+async function authoritativeTargets(path, eligibleObjectIds, region) {
+  if (!path) return { targetObjectIds: eligibleObjectIds, excludedObjects: 0 };
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf8'));
+  } catch {
+    throw new Error(`${region}_target_ids_invalid`);
+  }
+  if (!Array.isArray(parsed)) throw new Error(`${region}_target_ids_invalid`);
+  const targetObjectIds = [];
+  const seen = new Set();
+  const eligible = new Set(eligibleObjectIds);
+  for (const objectId of parsed) {
+    if (typeof objectId !== 'string' || !/^[a-f0-9]{64}$/u.test(objectId)
+      || seen.has(objectId) || !eligible.has(objectId)) {
+      throw new Error(`${region}_target_ids_invalid`);
+    }
+    seen.add(objectId);
+    targetObjectIds.push(objectId);
+  }
+  return {
+    targetObjectIds,
+    excludedObjects: eligibleObjectIds.length - targetObjectIds.length,
   };
 }
 
@@ -141,19 +176,26 @@ export async function backfillSubstreamAgentTranscripts({
     const classified = await classifyRegionalObjects(
       { region }, stored, options.probeUrl, fetcher,
     );
-    return { region, namespaceId, stored: stored.length, ...classified };
+    const targets = await authoritativeTargets(
+      options.targetPaths[region],
+      classified.eligibleObjectIds,
+      region,
+    );
+    return { region, namespaceId, stored: stored.length, ...classified, ...targets };
   }));
   const counts = Object.fromEntries(inventories.map((inventory) => [inventory.region, {
     stored: inventory.stored,
     eligible: inventory.eligibleObjectIds.length,
+    targeted: inventory.targetObjectIds.length,
+    excluded: inventory.excludedObjects,
     skipped: inventory.skippedObjects,
   }]));
   logger.log(JSON.stringify({ mode: options.apply ? 'apply' : 'dry-run', regions: counts }, null, 2));
   if (!options.apply) return { mode: 'dry-run', regions: counts };
   for (const inventory of inventories) {
-    if (inventory.eligibleObjectIds.length !== options.expected[inventory.region]) {
+    if (inventory.targetObjectIds.length !== options.expected[inventory.region]) {
       throw new Error(
-        `${inventory.region}_eligible_count_${inventory.eligibleObjectIds.length}`
+        `${inventory.region}_target_count_${inventory.targetObjectIds.length}`
         + `_expected_${options.expected[inventory.region]}`,
       );
     }
@@ -170,8 +212,8 @@ export async function backfillSubstreamAgentTranscripts({
   };
   await persistReceipt(receiptPath, receipt);
   for (const inventory of inventories) {
-    for (let index = 0; index < inventory.eligibleObjectIds.length; index += BATCH_SIZE) {
-      const objectIds = inventory.eligibleObjectIds.slice(index, index + BATCH_SIZE);
+    for (let index = 0; index < inventory.targetObjectIds.length; index += BATCH_SIZE) {
+      const objectIds = inventory.targetObjectIds.slice(index, index + BATCH_SIZE);
       const rows = await invokeBackfill(
         options.probeUrl,
         inventory.region,
@@ -185,7 +227,7 @@ export async function backfillSubstreamAgentTranscripts({
         operatorRunId,
         region: inventory.region,
         completed: receipt.regions[inventory.region].length,
-        expected: inventory.eligibleObjectIds.length,
+        expected: inventory.targetObjectIds.length,
       }));
     }
   }
