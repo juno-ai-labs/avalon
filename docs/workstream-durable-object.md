@@ -66,6 +66,7 @@ serve workspace product state or transcripts after cutover.
 | `scripts/eslint-rules/durable-object-sql-storage.mjs` | Rejects Durable Object `get`, `put`, `delete`, `list`, and async `transaction` KV calls, including aliases. |
 | `scripts/eslint-rules/durable-object-region-routing.mjs` | Rejects direct/aliased namespace construction and use of the low-level region-only resolver. |
 | `scripts/eslint-rules/durable-object-native-rpc.mjs` | Rejects internal Durable Object `fetch()` calls; HTTP `fetch()` remains for WebSocket upgrades and genuine HTTP flows. |
+| `scripts/eslint-rules/durable-object-sync-transaction.mjs` | Rejects explicit or type-resolvable Promise-returning callbacks passed to `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`. |
 | `packages/db/migrations/0043_hypersight.sql` | Immutable deployed HyperSight baseline; its complete filename is the migration identity and must not change. |
 | `packages/db/migrations/0078_rename_hypersight_to_block_dashboard.sql` | Forward-only rename from the deployed `hypersight_*` D1 vocabulary to internal `block_dashboard_*` identifiers. |
 | `packages/db/migrations/0079_workstream_do_authority_cutover.sql` | Maintenance control, routes, import receipts, identity anchors, and permanent legacy-product/pin writer fences. |
@@ -102,6 +103,16 @@ and requires its canonical SHA-256 to equal the array about to be sent.
 Compaction atomically records the private checkpoint, generation replacement,
 and safe status transition. Two compactions therefore create two immutable
 events while the current loop head advances twice.
+
+Anything that can yield while constructing a transcript payload is prepared
+before `commitRuntimeMutation`. Its callback is synchronous: it inserts the
+prepared canonical fact, advances transcript and root state, and derives the
+regional directory effect within the same `transactionSync` commit. Returning
+an async storage method's Promise from that callback does not extend the
+transaction; it lets the projection commit before the method's post-`await`
+writes. Preparation therefore carries immutable inputs into the callback, which
+re-checks the attempt, lease, authority generation, or source revision that may
+have changed while preparation was in flight.
 
 Schema v28 supports one explicit projection backfill for retained pre-v27
 history. The v27 migration receipt supplies the cutover fence. The operation
@@ -889,6 +900,7 @@ misrouted product statement now fails because the table or column is absent.
 - **Workspace presence is ephemeral, attachment-backed, and viewer-scoped.** WorkspaceDO validates the reported work stream against its local directory, omits the receiving user, and never persists a presence table or sends a workspace-wide personal-work-stream map.
 - **Every Durable Object persists through explicit SQL.** KV calls create invisible schema and bypass migration, constraints, inspection, and lint.
 - **Room sequence and active text commit atomically.** Advancing only the cursor loses streamed text after eviction.
+- **No synchronous product transaction callback may return a Promise.** This includes `transactionSync`, `commitRuntimeMutation`, and `commitWithRegionalEffects`, whether the Promise is visible as `async` or hidden behind a helper. Prepare asynchronous transcript material first, then commit only synchronous SQLite work and revalidate its fences inside the transaction.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
 - **A steering record names the targeted run.** A generic “steer next” flag can stop an unrelated future run.
 - **Compaction results cannot cover rows above their input fence.** Otherwise a message accepted during summarization disappears from model context.
@@ -934,6 +946,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | A part predates the typed writer's ordered-turn projection | The authorized compatibility message page keeps the row visible and identity-matched in the desktop. This is not a durable backfill; the overlay must remain until a bounded historical repair has populated the ordered projection. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | RPC or Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders WorkspaceDO state and delivery receipts. |
+| A synchronous transaction callback returns a Promise | The callback finishes before the Promise continuation, so SQLite can commit an incomplete state transition and later writes can escape the transaction. Prepare all yielding work first; the commit callback performs only synchronous SQLite and revalidates its fences. |
 | WorkspaceDO, parent, or Queue unavailable | The source outbox remains pending and alarms retry with bounded backoff. User transcript commits are not rolled back. |
 | Crash between `initialize`'s root commit and its effect commit | The work stream exists and the retry replays it, but the invited participants' activity event and notification are lost permanently — the replay re-enqueues directory effects only, and a hand-add of somebody already active is a no-op, so nothing recovers them. Deliberate: the alternative wedges the create. |
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
@@ -1001,6 +1014,12 @@ errors, scroll threshold/anchor preservation, compaction reconciliation, and
 HyperSight full-checkpoint replacement. `scripts/durable-object-native-rpc.test.mjs`
 proves the custom lint rule rejects direct, computed, aliased, optional, and
 typed-stub internal fetches without flagging unrelated HTTP clients.
+`scripts/durable-object-sync-transaction.test.mjs` proves explicit async and
+type-resolvable indirect Promise callbacks are rejected at all three
+synchronous transaction boundaries while ordinary synchronous SQL remains
+valid. Dynamically dispatched calls whose return has been erased to `unknown`
+or `any` still require review; the rule cannot reconstruct discarded type
+information.
 `test/runtime-components.test.ts` covers US/EU resolution, location-hint
 arguments, local workerd behavior, and jurisdiction mismatch rejection.
 `pnpm test:scripts` covers the ESLint rule's direct, computed, optional, aliased,
@@ -1270,6 +1289,30 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-27 — Async transcript preparation stays outside product commits
+
+**What changed:** Transcript-producing paths prepare payload hashes and other
+yielding material before `commitRuntimeMutation`, then insert the canonical
+payload, transcript/root state, and regional projection in one synchronous
+SQLite callback. The invariant, failure mode, review limit, and custom lint
+coverage are now explicit in this module document.
+
+**Why:** Four newly asynchronous storage operations were dynamically dispatched
+from a callback whose declared result was `unknown`. Returning their Promises
+from `commitRuntimeMutation` let `transactionSync` finish before their
+post-`await` writes, so related facts no longer shared one atomic commit.
+
+**Considered and rejected:** Allowing async methods to prepare lazily from
+inside the callback, and treating an ESLint check as a complete proof. The
+platform does not extend `transactionSync` for a returned Promise, and static
+analysis cannot recover a Promise return after a dynamic cast erases it to
+`unknown`.
+
+**Consequences:** New message-producing operations expose separate async
+prepare and synchronous commit phases. The linter catches explicit and
+type-resolvable indirect Promise returns; reviewers must still inspect dynamic
+`.call()`/`.apply()` paths and refuse type erasure at the boundary.
 
 ### 2026-08-27 — Replacement instances resume the attempt their predecessor fenced
 
