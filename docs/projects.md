@@ -205,6 +205,50 @@ duplicate because the consumer rechecks target generations.
 
 ## Changelog
 
+### 2026-08-27 — Project creation lands on its result
+
+**What changed:** The New project dialog now waits for the create mutation,
+inserts its returned project into the socket-owned directory cache, and then
+opens that project's dashboard with its sidebar row selected and accordion
+expanded. Clicking the selected row again closes the accordion. Needs attention
+rows now reserve a project-facepile track and pin their time and chevron to
+explicit columns whether or not a project or automation source is present.
+
+**Why:** Successful creation previously left the person on the screen behind the
+dialog, even though the server had returned the complete project. Separately,
+the optional project pile became an extra anonymous grid child, shifting the
+title into a content-sized track and moving the chevron away from the common
+right edge.
+
+**Considered and rejected:** Navigating before the create response, waiting for
+a later socket snapshot to discover the new ID, and compensating for the pile
+with negative margins. The mutation response already carries the authoritative
+ID and presentation, while explicit grid tracks express the row relationship
+without depending on which optional children render.
+
+**Consequences:** Project creation callbacks return `ProjectSummary`; the dialog
+does not navigate on a rejected mutation. Every Needs attention row renders an
+empty project slot when it has no memberships so conditional content cannot
+renumber the remaining tracks.
+
+### 2026-08-27 — New projects start neutral
+
+**What changed:** The New project dialog now selects gray for the initial icon
+color and restores gray whenever the dialog is closed and reopened.
+
+**Why:** A neutral default leaves color as an intentional project choice rather
+than suggesting that every new project begins in the blue category.
+
+**Considered and rejected:** Keeping blue as the historical implementation
+default. It remained valid in the palette, but no longer matched the intended
+starting presentation.
+
+**Consequences:** Creation-flow behavior checks must treat gray as selected and
+render every icon preview with the gray project color until the person chooses
+another swatch. Projects whose creators leave the palette untouched share the
+same gray icon, trading automatic color distinction for a neutral starting
+point.
+
 ### 2026-08-27 — Project editing moves onto the owning surfaces
 
 **What changed:** The project icon opens the shared icon/color grid, the name
