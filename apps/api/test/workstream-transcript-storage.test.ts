@@ -14,7 +14,7 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-function open(): {
+function open(options: { getCurrentBookmark?: () => Promise<string> } = {}): {
   transcript: WorkstreamTranscriptStorage;
   sql: SqlStorage;
   database: DatabaseSync;
@@ -24,6 +24,7 @@ function open(): {
   const sql = createTestSqlStorage(database);
   const binding = createCloudflareTestBinding<DurableObjectStorage>({
     getAlarm: async () => null,
+    getCurrentBookmark: options.getCurrentBookmark ?? (async () => "bookmark-before-backfill"),
     setAlarm: async () => undefined,
     transactionSync: <T,>(body: () => T): T => {
       database.exec("BEGIN IMMEDIATE");
@@ -89,6 +90,291 @@ function assistant(revision: number, turn: number, content: string, toolCount = 
 }
 
 describe("canonical ordered work-stream transcript", () => {
+  it("records and reconciles an empty legacy source without inventing history", async () => {
+    const { transcript, sql } = open();
+    const first = await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000000",
+      cutoverVersion: 27,
+    });
+    expect(first).toMatchObject({
+      applied: true,
+      verified: true,
+      sourcePartCount: 0,
+      sourceCheckpointCount: 0,
+      participantTurnCount: 0,
+      checkpointProjectionCount: 0,
+    });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM bind_loop_heads`).one().count).toBe(0);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(1);
+  });
+
+  it("refuses to renumber a participant transcript while a run can still write", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, created_at, updated_at)
+      VALUES ('active-run', '0', 'running', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000006",
+      cutoverVersion: 27,
+    })).rejects.toThrow("legacy_transcript_backfill_not_quiescent");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
+  });
+
+  it("backfills after a needs-input run has yielded execution", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, terminalized_at,
+       created_at, updated_at)
+      VALUES ('yielded-run', '0', 'needs_input', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-00000000000a",
+      cutoverVersion: 27,
+    })).resolves.toMatchObject({ applied: true, verified: true });
+  });
+
+  it("refuses to backfill a mutable pending legacy tool card", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, role, kind, author_type, content,
+       client_message_id, effect_intent_id, tool_name, tool_mode, tool_status,
+       visibility, pinned, message_type, structured_content_json, created_at, updated_at)
+      VALUES ('pending-tool', '0', 1, 'assistant', 'tool_call', 'agent', '',
+              'tool:pending-tool', 'pending-tool', 'search', 'read', 'pending',
+              'people', 0, 'tool', '{"invocation":{"status":"pending"}}', 0, 0)`);
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-00000000000b",
+      cutoverVersion: 27,
+    })).rejects.toThrow("legacy_transcript_backfill_not_quiescent");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
+  });
+
+  it("backfills legacy participant order before post-cutover turns and replays idempotently", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+       author_user_id, content, client_message_id, visibility, pinned, message_type,
+       created_at, updated_at)
+      VALUES
+      ('legacy-human', '0', 4, 1, 'user', 'text', 'member', 'user-1', 'First',
+       'legacy-human-client', 'both', 0, 'text', 0, 0),
+      ('legacy-agent', '0', 9, 2, 'assistant', 'text', 'agent', NULL, 'Second',
+       'legacy-agent-client', 'both', 0, 'text', 0, 0)`);
+    await transcript.appendParticipantMessage({
+      turnId: "post-cutover",
+      actor: "human",
+      authorUserId: "user-2",
+      text: "Later",
+      createdAtUtc: new Date(NOW).toISOString(),
+      attentionOrdinal: 3,
+    });
+
+    const first = await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000001",
+      cutoverVersion: 27,
+    });
+    expect(first).toMatchObject({
+      applied: true,
+      verified: true,
+      preBackfillBookmark: "bookmark-before-backfill",
+      sourcePartCount: 2,
+      participantTurnCount: 2,
+      bindHistoryStatus: "not_reconstructable_from_legacy_aggregate_rows",
+    });
+    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
+      .ranges[0]!.turns.map((turn) => [turn.transcriptSequence, turn.turnId])).toEqual([
+      [1, "legacy-human"],
+      [2, "legacy-agent"],
+      [3, "post-cutover"],
+    ]);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM bind_loop_heads`).one().count).toBe(0);
+
+    const replay = await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000002",
+      cutoverVersion: 27,
+    });
+    expect(replay).toMatchObject({ applied: false, verified: true, operatorRunId:
+      "00000000-0000-7000-8000-000000000001" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(3);
+  });
+
+  it("hydrates an exact legacy tool card through its canonical source reference", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+       content, client_message_id, effect_intent_id, tool_name, tool_mode, tool_status,
+       visibility, pinned, message_type, structured_content_json, created_at, updated_at)
+      VALUES ('legacy-tool', '0', 1, NULL, 'assistant', 'tool_call', 'agent', '',
+       'tool:legacy-tool', 'legacy-tool', 'search', 'read', 'completed', 'people', 0,
+       'tool', ?, 0, 1)`, JSON.stringify({ invocation: {
+        id: "legacy-tool",
+        toolCallId: "provider-call",
+        toolName: "search",
+        plugin: { pluginId: "plugin_search" },
+        status: "completed",
+        inputSummary: "query",
+        outputSummary: "result",
+        error: null,
+      } }));
+
+    await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000003",
+      cutoverVersion: 27,
+    });
+    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
+      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject({
+      type: "tool",
+      toolCallId: "legacy:legacy-tool",
+      pluginId: "plugin_search",
+      toolName: "search",
+      status: "completed",
+      participantSafeInput: "query",
+      participantSafeResult: "result",
+    });
+    expect(sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
+      `SELECT payload.payload_json FROM transcript_payloads payload
+       JOIN transcript_facts fact ON fact.payload_id = payload.payload_id
+       WHERE fact.fact_id = 'legacy-tool:legacy-tool'`,
+    ).one().payload_json).not.toContain("result");
+  });
+
+  it("references exact legacy compaction messages without fabricating a Bind state", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, created_at, updated_at)
+      VALUES ('legacy-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+    const messages = [{ role: "user", content: "exact checkpoint" }];
+    sql.exec(`INSERT INTO compaction_checkpoints
+      (projection_key, execution_principal_key, resource_visibility_fingerprint,
+       checkpoint_template_version, run_id, compacted_through_sequence,
+       messages_json, summary, model, context_tokens_before_compaction,
+       context_window_tokens, input_tokens, output_tokens, cost_micros,
+       created_at, updated_at)
+      VALUES ('projection', 'workspace:one', 'inventory:0', 1, 'legacy-run', 7,
+              ?, 'summary', 'model', 100, 1000, 10, 2, 30, 0, 0)`, JSON.stringify(messages));
+
+    const outcome = await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000005",
+      cutoverVersion: 27,
+    });
+    expect(outcome).toMatchObject({ sourceCheckpointCount: 1, checkpointProjectionCount: 1 });
+    const checkpoint = transcript.compactionCheckpoint({ executionPrincipalKey: "workspace:one" });
+    expect(JSON.parse(checkpoint!.messages_json)).toEqual(messages);
+    expect(checkpoint!.summary).toBe("summary");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM bind_loop_heads`).one().count).toBe(0);
+    expect(sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
+      `SELECT payload.payload_json FROM transcript_payloads payload
+       JOIN transcript_facts fact ON fact.payload_id = payload.payload_id
+       WHERE fact.fact_kind = 'legacy_compaction_checkpoint_reference'`,
+    ).one().payload_json).not.toContain("exact checkpoint");
+  });
+
+  it("aborts atomically if the legacy source moves while its hashes are prepared", async () => {
+    let releaseBookmark!: () => void;
+    const bookmark = new Promise<string>((resolve) => { releaseBookmark = () => resolve("bookmark"); });
+    const { transcript, sql } = open({ getCurrentBookmark: () => bookmark });
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+       author_user_id, content, client_message_id, visibility, pinned, message_type,
+       created_at, updated_at)
+      VALUES ('legacy', '0', 1, 1, 'user', 'text', 'member', 'user-1', 'Before',
+       'legacy-client', 'both', 0, 'text', 0, 0)`);
+    const pending = transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000004",
+      cutoverVersion: 27,
+    });
+    await Promise.resolve();
+    sql.exec(`UPDATE parts SET content = 'After', updated_at = 1 WHERE id = 'legacy'`);
+    releaseBookmark();
+    await expect(pending).rejects.toThrow("legacy_transcript_source_moved");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
+  });
+
+  it("rejects a partial legacy participant projection instead of mixing states", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, role, kind, author_type, author_user_id,
+       content, client_message_id, visibility, pinned, message_type, created_at, updated_at)
+      VALUES ('partial', '0', 1, 'user', 'text', 'member', 'user-1', 'Legacy',
+              'partial-client', 'both', 0, 'text', 0, 0)`);
+    await transcript.appendParticipantMessage({
+      turnId: "partial",
+      actor: "human",
+      authorUserId: "user-1",
+      text: "Legacy",
+      createdAtUtc: new Date(NOW).toISOString(),
+      attentionOrdinal: null,
+    });
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000007",
+      cutoverVersion: 27,
+    })).rejects.toThrow("legacy_transcript_partial_participant_projection");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
+  });
+
+  it("fails replay reconciliation if a referenced legacy owner changes", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, role, kind, author_type, author_user_id,
+       content, client_message_id, visibility, pinned, message_type, created_at, updated_at)
+      VALUES ('immutable-owner', '0', 1, 'user', 'text', 'member', 'user-1', 'Before',
+              'immutable-owner-client', 'both', 0, 'text', 0, 0)`);
+    await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000008",
+      cutoverVersion: 27,
+    });
+    sql.exec(`UPDATE parts SET content = 'After', updated_at = 1 WHERE id = 'immutable-owner'`);
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000009",
+      cutoverVersion: 27,
+    })).rejects.toThrow("legacy_transcript_backfill_reconciliation_failed");
+  });
+
   it("stores assistant text and tool plans once while both projections reference canonical facts", async () => {
     const { transcript, sql } = open();
     await transcript.commitBindTransition(initialize(), NOW);
