@@ -821,7 +821,11 @@ invoke the deployed `SubstreamAgent` transcript-backfill RPC for exactly the
 reviewed regional fleet. It persists each object's PITR bookmark, source and
 projection counts, reconciliation result, and error to a mode-0600 local
 receipt. Apply rejects inventory drift before mutation; a complete replay is the
-fleet audit.
+fleet audit. Before a first-time object receipt, the RPC invokes only the
+terminal-run residual-receipt phase of the existing reaper; it cannot expire or
+terminalize a nonterminal root or child. A successfully repaired tool lifecycle is
+part of the source subsequently hashed and projected; any repair failure aborts
+that object, and receipt replay remains read-only.
 
 **Why:** waking the fleet installed schema v27 but did not project existing
 participant/checkpoint facts into the new canonical indexes. This is content
@@ -841,9 +845,11 @@ are distinct operations. Content apply requires explicit fleet-count witnesses,
 regional classification, an authoritative target set when the namespace also
 contains unrelated regional objects, durable object-local atomic receipts, protected local
 recovery evidence, nonzero exit on any unverified object, and a full idempotent
-replay before completion. An object with an open tool receipt behind a pending
-legacy card or a connected transcript snapshot is ineligible for the mutating
-pass; the fleet command must record the failure and retry after settlement or
+replay before completion. The first mutating pass may invoke only the
+established terminal-run residual-receipt repair before it captures the source;
+it may not bypass or weaken the subsequent quiescence fence. An object with a
+still-open tool receipt or a connected transcript snapshot is ineligible; the
+fleet command must record the failure and retry after settlement or
 disconnection, preserving both the source digest and every client's immutable
 sequence fence. An orphaned historical pending card has no future writer and is
 therefore retained as `started`, not treated as live execution.
