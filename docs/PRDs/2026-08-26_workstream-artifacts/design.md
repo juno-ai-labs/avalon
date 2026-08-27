@@ -242,6 +242,63 @@ own sandboxing PRD before any pane executes anything (PRD non-goal 7).
 The classification registry's natural-language kinds already include
 `markdown`; later types extend classification, not the ledger.
 
+### The identified platform path for reactive artifacts
+
+For the realtime/reactive end of that spectrum — an artifact that is a
+live mini-app or dashboard rather than a rendered document — the platform
+mechanism is now identified, so the future PRD starts from a named shape
+rather than a search. Cloudflare's **Dynamic Workers** run arbitrary code
+specified at runtime in a sandboxed Worker whose composition the caller
+controls — which bindings it receives, with outbound network access
+interceptable or blocked, and custom resource limits — and **Durable
+Object Facets** let a deployed Durable Object act as a supervisor that
+loads a Durable Object class from a Dynamic Worker and runs it as a
+child: `ctx.facets.get(name, callback)`, the callback supplying the class
+via the Worker Loader API, with the facet given "its own isolated SQLite
+database" that "is fully isolated from the supervisor's database", plus
+`abort` and `delete` lifecycle control. Cloudflare's own framing names
+Rally's exact case: "useful when you want dynamically-generated code —
+for example, code written by an AI agent — to have persistent storage,
+without giving it direct access to a Durable Object namespace." (Both
+pages read 2026-08-27, page-dated 2026-04-21; per house practice these
+claims are dated because the platform surface moves.)
+
+The mapping onto Rally's architecture, sketched for that future PRD to
+verify rather than decided here:
+
+- **The supervisor is a work-stream-scoped Durable Object** — the
+  work-stream family already runs a supervised child per HyperSight
+  block, and a reactive artifact's host is the same shape: a parent that
+  controls admission, forwards participant traffic in, and holds the
+  socket contract the pane connects through. Jurisdiction is inherited
+  from the parent object, so regional residency comes for free.
+- **The version ledger is the deploy history.** An app artifact's code is
+  version-ledger content like any other artifact's Markdown: immutable
+  per version, so "run V4" is a reproducible facet cold-start from stored
+  content, and rolling back is loading the prior version. The multi-file
+  bundle an app implies is the collection question above.
+- **Facet storage is runtime state, a new concept the model keeps
+  distinct.** The facet's isolated SQLite is the *running* artifact's
+  state — poll votes, dashboard filters, whatever the app keeps — and is
+  not version history. Whether state survives a code revision or resets
+  with it is that PRD's product decision; the separation of ledger
+  (content history) from facet database (live state) is what makes the
+  question askable at all.
+- **The security posture is the supervisor's, by construction.**
+  Agent-written artifact code gets no bindings it is not handed, no
+  namespace access, and no network unless granted — the fence is the
+  platform primitive, not a Rally invention. What remains genuinely
+  Rally's to argue in that PRD is the product contract: the brief
+  forbids a "user-authored workflow runtime", and an agent-authored
+  interactive artifact serving participants is adjacent enough that the
+  clause must be confronted, not assumed away.
+
+Nothing in this changes V1, and that is the point of recording it: the
+V1 model already carries everything this future needs — type identity on
+the object, immutable versioned content, collections as the multi-file
+answer — so reactive artifacts are a renderer, a supervisor, and a
+security PRD away, with no migration of what V1 wrote.
+
 ## External documents: snapshot now, subscription later
 
 V1 behavior, unchanged from today's attachment contract: an external
