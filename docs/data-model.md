@@ -828,12 +828,17 @@ leaving a private work stream with no person able to open or repair it.
 **Considered and rejected:** Restricting removal of another participant to
 workspace owners and admins. Participation is the room's collaborative audience,
 not workspace administration, and every current reader can already add somebody
-to it. Also rejected a client-only final-participant guard, because an older or
-racing client could still empty the authoritative room.
+to it. At workspace scope that means every active workspace member; at personal
+scope it means the current participants, including an invitee removing the
+creator. Also rejected a client-only final-participant guard, because an older
+or racing client could still empty the authoritative room.
 
 **Consequences:** Every removal caller must handle
 `workstream_participant_required`. The desktop disables the known-final action
 for immediacy, while the object remains the concurrency-safe enforcement point.
+The one-participant floor applies to both scopes as a stable participant
+lifecycle invariant: a workspace-visible stream stays readable without
+participants, but does not acquire a separate zero-participant state.
 Removing a person from a personal work stream revokes their access, including
 when that person created it. Active-project work streams keep their project
 audience fence at the regional service boundary, and the object closes revoked

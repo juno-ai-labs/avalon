@@ -1075,7 +1075,9 @@ describe('AddParticipantDialog', () => {
     fireEvent.click(remove);
     expect(onRemove).toHaveBeenCalledWith(adam);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Jordan to work stream' }));
+    // The whole nonparticipant row remains the add target; only an existing
+    // participant's row delegates its action to the ellipsis control.
+    fireEvent.click(screen.getByText('Jordan'));
     expect(onAdd).toHaveBeenCalledWith(jordan);
   });
 

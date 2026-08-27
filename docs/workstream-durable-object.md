@@ -1294,16 +1294,21 @@ way to recover it.
 
 **Considered and rejected:** Keeping owner/admin authority for removing another
 participant. A work-stream room is governed by its current readers, who already
-share the ability to add participants; workspace roles govern workspace
-membership instead. Also rejected relying on the modal's disabled final action,
-because stale snapshots and concurrent clients are outside its control.
+share the ability to add participants; that is every active workspace member at
+workspace scope and the current participants at personal scope, including an
+invitee removing the creator. Workspace roles govern workspace membership
+instead. Also rejected relying on the modal's disabled final action, because
+stale snapshots and concurrent clients are outside its control.
 
 **Consequences:** The object is the final-participant fence, and callers surface
 `workstream_participant_required` without retrying. A target with no participant
 row emits no event; an already-removed target republishes so a failed or
 response-lost first attempt can complete realtime convergence. Socket access is
 revoked synchronously from the committed participant fact, so publication
-failure cannot extend a removed reader's transcript access.
+failure cannot extend a removed reader's transcript access. The one-participant
+floor deliberately applies at both scopes, even though workspace visibility
+would still make a zero-participant stream readable, so participant lifecycle
+does not gain a second empty state.
 
 ### 2026-08-27 — Canonical transcript ownership becomes the only runtime path
 
