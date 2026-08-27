@@ -982,6 +982,7 @@ describe('AddParticipantDialog', () => {
           error="A participant is not an active workspace member"
           members={[member('member-1', 'Adam', 'active')]}
           onAdd={vi.fn()}
+          onRemove={vi.fn()}
           onOpenChange={vi.fn()}
           open
           pending={false}
@@ -1006,6 +1007,7 @@ describe('AddParticipantDialog', () => {
             member('member-3', 'Suspended', 'suspended'),
           ]}
           onAdd={onAdd}
+          onRemove={vi.fn()}
           onOpenChange={vi.fn()}
           open
           pending={false}
@@ -1028,6 +1030,7 @@ describe('AddParticipantDialog', () => {
           current={[]}
           members={[member('member-1', 'Unstated')]}
           onAdd={vi.fn()}
+          onRemove={vi.fn()}
           onOpenChange={vi.fn()}
           open
           pending={false}
@@ -1036,6 +1039,70 @@ describe('AddParticipantDialog', () => {
     );
 
     expect(screen.getByRole('button', { name: /Unstated/u })).toBeTruthy();
+  });
+
+  it('shows participants beside addable members and gives participants a destructive menu', () => {
+    const adam = member('member-1', 'Adam', 'active');
+    const katherine = member('member-2', 'Katherine', 'active');
+    const suspendedKatherine = member('member-2', 'Katherine', 'suspended');
+    const jordan = member('member-3', 'Jordan', 'active');
+    const onAdd = vi.fn();
+    const onRemove = vi.fn();
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[adam, katherine]}
+          members={[adam, suspendedKatherine, jordan]}
+          onAdd={onAdd}
+          onRemove={onRemove}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByRole('button', { name: 'Add Jordan to work stream' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Katherine participant actions' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Add Adam to work stream' })).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const remove = screen.getByRole('menuitem', { name: 'Remove from work stream' });
+    expect(remove).toHaveClass('menu-item-danger');
+    fireEvent.click(remove);
+    expect(onRemove).toHaveBeenCalledWith(adam);
+
+    // The whole nonparticipant row remains the add target; only an existing
+    // participant's row delegates its action to the ellipsis control.
+    fireEvent.click(screen.getByText('Jordan'));
+    expect(onAdd).toHaveBeenCalledWith(jordan);
+  });
+
+  it('keeps the final participant visible but disables removing them', () => {
+    const adam = member('member-1', 'Adam', 'active');
+    render(
+      <Tooltip.Provider>
+        <AddParticipantDialog
+          current={[adam]}
+          members={[adam]}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onOpenChange={vi.fn()}
+          open
+          pending={false}
+        />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Adam participant actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(screen.getByRole('menuitem', { name: 'Remove from work stream' }))
+      .toHaveAttribute('data-disabled');
   });
 });
 
