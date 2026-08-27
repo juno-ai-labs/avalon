@@ -357,6 +357,56 @@ ${syntax}
   }
   .mention-chip-avatar { display: none; }
   .mention-text-fallback { color: #3d3f33; font-weight: 560; }
+  /* Citations. On a saved card these are pictures of citations, not controls:
+     the button chrome and the pointer cursor the application gives them mean
+     nothing in a PNG, and the popover a pill carries is not in this markup at
+     all — the tooltip renders into a portal outside the exported subtree. */
+  .citation-chip, .citation-card, .citation-pill {
+    background: none;
+    border: 0;
+    color: inherit;
+    font: inherit;
+    margin: 0;
+    padding: 0;
+    text-align: left;
+  }
+  .citation-chip {
+    align-items: center;
+    background: #eceade;
+    border-radius: 999px;
+    color: #3d3f33;
+    display: inline-flex;
+    font-size: 0.92em;
+    font-weight: 560;
+    gap: 4px;
+    padding: 0 7px;
+  }
+  .citation-chip-icon { display: none; }
+  .citation-card {
+    align-items: center;
+    background: #f1efe5;
+    border: 1px solid #dcd9c9;
+    border-radius: 8px;
+    display: flex;
+    gap: 10px;
+    margin: 12px 0;
+    padding: 10px 12px;
+  }
+  .citation-card-icon { display: none; }
+  .citation-card-body strong { display: block; font-size: 13.5px; font-weight: 640; }
+  .citation-card-body small { color: #6b6d5e; font-size: 11.5px; }
+  .citation-pill {
+    background: #e3e6c4;
+    border-radius: 999px;
+    color: #3d3f33;
+    display: inline-block;
+    font-size: 0.68em;
+    font-weight: 640;
+    margin: 0 1px;
+    padding: 0.25em 0.45em;
+    vertical-align: super;
+  }
+  .citation-text-fallback { color: #3d3f33; }
   /* Paged output only: a heading stranded at the foot of a page reads as a
      heading for nothing, and a table split across pages loses its header. */
   blockquote, table, .markdown-code-block { break-inside: avoid-page; }

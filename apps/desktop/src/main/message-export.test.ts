@@ -212,6 +212,22 @@ describe('the exported document', () => {
     expect(html).toMatch(/\.markdown-code-language\s*\{[^}]*\bdisplay:\s*block;/u);
   });
 
+  // The card shares `MarkdownBody`'s markup but none of the application's CSS,
+  // so a class introduced there has no rule here until somebody writes one —
+  // and the miss shows up as an unstyled element in the first saved card
+  // anyone looks at. These are the three citation forms.
+  it('styles every citation form, which shares the markup but not the stylesheet', () => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    for (const selector of ['.citation-chip', '.citation-card', '.citation-pill', '.citation-text-fallback']) {
+      expect(html).toContain(selector);
+    }
+    // A chip is a labelled span on a page, not a control: the card is a
+    // picture, so a button's chrome and a pointer cursor are noise in it.
+    expect(html).toMatch(/\.citation-chip[^{]*\{[^}]*\bbackground:/u);
+    expect(html).toMatch(/\.citation-pill[^{]*\{[^}]*\bvertical-align:\s*super;/u);
+  });
+
   it('splashes two different messages differently and the same message the same way', () => {
     const splash = (contentHtml: string): string =>
       messageExportDocument({ format: 'image', contentHtml, logoDataUrl: LOGO })
