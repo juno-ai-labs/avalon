@@ -772,7 +772,7 @@ it does not shape the cost of any run somebody means to make.
 
 ### 2026-08-27 — Completed transcript operators retired after ownership transfer
 
-**What changed:** Schema v31 consumes the verified per-object transfer state and
+**What changed:** Schema v32 consumes the verified per-object transfer state and
 then removes the legacy tables, receipts, operator RPCs, package commands, and
 fleet script. The jurisdiction probe returns only classification/resolution.
 
@@ -781,7 +781,7 @@ migration paths after their source tables disappear creates misleading and
 untestable operational surface.
 
 **Consequences:** Deployment order is the stack order: complete and verify the
-v30 fleet transfer, then deploy v31. A v31 object with unverified retained source
+v30 fleet transfer, then deploy v32. A v32 object with unverified retained source
 data refuses to migrate instead of deleting it.
 
 ### 2026-08-27 — Payload ownership transfer is a second receipted fleet pass

@@ -94,7 +94,7 @@ export class WorkstreamResourceStorage {
    * object, which is why it can be one read of the object's own rows.
    *
    * The `substream_id = '0'` predicate is this class's convention rather than a
-   * live branch — every query over `parts` carries it, and only the main child
+   * live branch — every query over `workstream_message_records` carries it, and only the main child
    * is ever written. It is uncovered by a spec for that reason: a fixture that
    * exercised it would be asserting on a substream nothing creates.
    */

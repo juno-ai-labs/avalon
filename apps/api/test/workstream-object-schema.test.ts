@@ -179,7 +179,7 @@ describe("the Workstream Durable Object relational schema", () => {
     try {
       applyDurableObjectSqliteMigrations({
         storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 31),
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 32),
         component: "workstream",
         workerVersionId: "worker-before-retirement",
         now: 1_000,
@@ -193,7 +193,8 @@ describe("the Workstream Durable Object relational schema", () => {
           (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
         VALUES
           ('message-payload', 'shared', 'application/json',
-           '{"content":"Hello","role":"user","structuredContent":null}', 'message-hash', 1, 1),
+           '{"content":"Hello","role":"user","structuredContent":{"answer":42}}',
+           'message-hash', 1, 1),
           ('checkpoint-payload', 'model', 'application/json',
            '{"compactedThroughSequence":2,"messages":[{"content":"Summary","role":"user"}],"model":"test/model","summary":"Summary"}',
            'checkpoint-hash', 1, 2),
@@ -207,9 +208,9 @@ describe("the Workstream Durable Object relational schema", () => {
         INSERT INTO parts
           (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
            author_user_id, content, client_message_id, visibility, pinned, message_type,
-           created_at, updated_at)
+           structured_content_json, created_at, updated_at)
         VALUES ('message-1', '0', 1, 1, 'user', 'text', 'member', 'user-1', 'Hello',
-                'client-1', 'both', 0, 'text', 1, 1);
+                'client-1', 'both', 0, 'text', '{"answer":42}', 1, 1);
         INSERT INTO workstream_message_records
           (message_id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind,
            author_type, author_user_id, client_message_id, visibility, pinned, message_type,
@@ -246,8 +247,13 @@ describe("the Workstream Durable Object relational schema", () => {
       applyWorkstreamObjectSchema(storage, "worker-after-retirement", 2_000);
 
       expect(database.prepare(
-        `SELECT content FROM workstream_message_details WHERE id = 'message-1'`,
-      ).get()).toEqual({ content: "Hello" });
+        `SELECT content, structured_content_json
+           FROM workstream_message_details WHERE id = 'message-1'`,
+      ).get()).toEqual({ content: "Hello", structured_content_json: '{"answer":42}' });
+      expect(database.prepare(
+        `SELECT name FROM sqlite_master
+          WHERE type = 'index' AND name = 'workstream_message_records_sequence_idx'`,
+      ).get()).toEqual({ name: "workstream_message_records_sequence_idx" });
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM transcript_compaction_checkpoints`,
       ).get()).toEqual({ count: 1 });
@@ -271,7 +277,7 @@ describe("the Workstream Durable Object relational schema", () => {
     try {
       applyDurableObjectSqliteMigrations({
         storage,
-        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 31),
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 32),
         component: "workstream",
         workerVersionId: "worker-before-retirement",
         now: 1_000,

@@ -418,8 +418,9 @@ export class WorkstreamHarnessRunStorage {
    * Composed rather than reimplemented, because publishing a run's final
    * message is one transaction that has to touch two authorities' tables. The
    * decision is this one's — whether the attempt may still speak — and the
-   * transcript row belongs to the class that owns `parts`, so `parts` still has
-   * exactly one writer. Both wrap the same `DurableObjectStorage`, so the
+   * transcript row belongs to the class that owns `workstream_message_records`,
+   * so that record still has exactly one writer. Both wrap the same
+   * `DurableObjectStorage`, so the
    * nested `transactionSync` is the same transaction rather than a second one.
    */
   private readonly messages: WorkstreamMessageStorage;

@@ -17,7 +17,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 31;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 32;
 
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
@@ -1887,7 +1887,7 @@ function identityAuthorityPromotion(): string[] {
   );
 }
 
-/** Drops the frozen runtime views whose backing transcript tables retire in v31. */
+/** Drops the frozen runtime views whose backing transcript tables retire in v32. */
 function transcriptPayloadRetirementGuardDrops(): string[] {
   return [
     "transcript_payload_guard_receipt",
@@ -1982,9 +1982,11 @@ function transcriptPayloadRetirementGuards(): string[] {
            AND (EXISTS (
              SELECT fullkey, type, atom FROM json_tree(part.structured_content_json)
              EXCEPT
-             SELECT fullkey, type, atom FROM json_tree(payload.payload_json, '$.structuredContent')
+             SELECT fullkey, type, atom
+               FROM json_tree(json_extract(payload.payload_json, '$.structuredContent'))
            ) OR EXISTS (
-             SELECT fullkey, type, atom FROM json_tree(payload.payload_json, '$.structuredContent')
+             SELECT fullkey, type, atom
+               FROM json_tree(json_extract(payload.payload_json, '$.structuredContent'))
              EXCEPT
              SELECT fullkey, type, atom FROM json_tree(part.structured_content_json)
            ))
@@ -3006,9 +3008,9 @@ export function applyWorkstreamObjectSchema(
       `SELECT COALESCE(MAX(version), 0) AS version FROM _sql_schema_migrations`,
     ).one().version)
     : 0;
-  const retiringTranscript = currentVersion < 31;
+  const retiringTranscript = currentVersion < 32;
   if (retiringTranscript) {
-    // v31 swaps the verified canonical record table under existing local FKs.
+    // v32 swaps the verified canonical record table under existing local FKs.
     // SQLite must preserve the old FK target names across the first rename;
     // the final rename rewrites them to the canonical table before the runner's
     // mandatory foreign_key_check. This happens outside the migration
