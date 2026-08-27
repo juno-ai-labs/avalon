@@ -276,7 +276,11 @@ const ResourceListItemSchema = z.object({
   provider: z.string(),
   mimeType: MimeTypeSchema,
   sizeBytes: NonNegativeIntegerSchema,
-  relationshipType: z.string(),
+  relationshipType: z.enum([
+    "attachment", "message_attachment", "origin", "generated",
+    "suggested_activity", "inbound_email", "context",
+  ]),
+  direction: z.enum(["source", "artifact"]),
   attachedAt: z.string().datetime({ offset: true }),
   messageAttachment: z.boolean(),
   attachmentKind: AttachmentKindSchema,

@@ -961,6 +961,145 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
        ADD COLUMN processing_orchestrator TEXT
        CHECK (processing_orchestrator IS NULL OR processing_orchestrator IN ('queue', 'workflow'))`,
   ],
+}, {
+  version: 13,
+  description: "retain every semantic resource revision and its regional R2 objects",
+  statements: [
+    `ALTER TABLE resources
+       ADD COLUMN current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version >= 1)`,
+    `CREATE TABLE resource_versions (
+      resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+      workspace_id TEXT NOT NULL,
+      version INTEGER NOT NULL CHECK (version >= 1),
+      connection_id TEXT,
+      resource_type TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      provider_resource_id TEXT,
+      title TEXT NOT NULL,
+      mime_type TEXT,
+      content_ref TEXT,
+      canonical_url TEXT,
+      metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
+      last_hydrated_at TEXT,
+      uploaded_by_user_id TEXT,
+      attachment_status TEXT NOT NULL CHECK (attachment_status IN ('draft', 'attached')),
+      model_content_ref TEXT,
+      model_mime_type TEXT,
+      model_content_sha256 TEXT,
+      model_metadata_json TEXT CHECK (model_metadata_json IS NULL OR json_valid(model_metadata_json)),
+      content_sha256 TEXT,
+      model_content_status TEXT CHECK (model_content_status IN ('pending', 'processing', 'ready', 'failed', 'unsupported')),
+      model_content_extractor_version TEXT,
+      model_content_character_count INTEGER CHECK (model_content_character_count IS NULL OR model_content_character_count >= 0),
+      model_content_extracted_at TEXT,
+      model_content_error_code TEXT,
+      captured_at TEXT NOT NULL,
+      PRIMARY KEY (resource_id, version)
+    ) STRICT`,
+    `CREATE INDEX resource_versions_workspace_idx
+       ON resource_versions(workspace_id, resource_id, version DESC)`,
+    `INSERT INTO resource_versions
+       (resource_id, workspace_id, version, connection_id, resource_type, provider,
+        provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+        last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+        model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+        model_content_status, model_content_extractor_version, model_content_character_count,
+        model_content_extracted_at, model_content_error_code, captured_at)
+     SELECT id, workspace_id, 1, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, updated_at
+       FROM resources`,
+    `CREATE TRIGGER resource_versions_workspace_identity_insert
+       BEFORE INSERT ON resource_versions
+       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER resource_versions_workspace_identity_update
+       BEFORE UPDATE OF workspace_id ON resource_versions
+       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER resources_create_initial_version
+       AFTER INSERT ON resources BEGIN
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at)
+         VALUES
+           (NEW.id, NEW.workspace_id, NEW.current_version, NEW.connection_id, NEW.resource_type, NEW.provider,
+            NEW.provider_resource_id, NEW.title, NEW.mime_type, NEW.content_ref, NEW.canonical_url, NEW.metadata_json,
+            NEW.last_hydrated_at, NEW.uploaded_by_user_id, NEW.attachment_status, NEW.model_content_ref,
+            NEW.model_mime_type, NEW.model_content_sha256, NEW.model_metadata_json, NEW.content_sha256,
+            NEW.model_content_status, NEW.model_content_extractor_version, NEW.model_content_character_count,
+            NEW.model_content_extracted_at, NEW.model_content_error_code, NEW.updated_at);
+       END`,
+    `CREATE TRIGGER resources_create_semantic_version
+       AFTER UPDATE OF connection_id, resource_type, provider, provider_resource_id, title,
+         mime_type, content_ref, canonical_url, metadata_json, last_hydrated_at,
+         uploaded_by_user_id, attachment_status, content_sha256 ON resources
+       WHEN NEW.current_version = OLD.current_version BEGIN
+         UPDATE resources SET current_version = OLD.current_version + 1 WHERE id = NEW.id;
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at)
+         SELECT id, workspace_id, current_version, connection_id, resource_type, provider,
+                provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+                last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+                model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+                model_content_status, model_content_extractor_version, model_content_character_count,
+                model_content_extracted_at, model_content_error_code, updated_at
+           FROM resources WHERE id = NEW.id;
+       END`,
+    `CREATE TRIGGER resources_sync_current_version_derivative
+       AFTER UPDATE OF model_content_ref, model_mime_type, model_content_sha256,
+         model_metadata_json, model_content_status, model_content_extractor_version,
+         model_content_character_count, model_content_extracted_at, model_content_error_code
+       ON resources
+       WHEN NEW.connection_id IS OLD.connection_id
+        AND NEW.resource_type IS OLD.resource_type
+        AND NEW.provider IS OLD.provider
+        AND NEW.provider_resource_id IS OLD.provider_resource_id
+        AND NEW.title IS OLD.title
+        AND NEW.mime_type IS OLD.mime_type
+        AND NEW.content_ref IS OLD.content_ref
+        AND NEW.canonical_url IS OLD.canonical_url
+        AND NEW.metadata_json IS OLD.metadata_json
+        AND NEW.last_hydrated_at IS OLD.last_hydrated_at
+        AND NEW.uploaded_by_user_id IS OLD.uploaded_by_user_id
+        AND NEW.attachment_status IS OLD.attachment_status
+        AND NEW.content_sha256 IS OLD.content_sha256 BEGIN
+         UPDATE resource_versions
+            SET model_content_ref = NEW.model_content_ref,
+                model_mime_type = NEW.model_mime_type,
+                model_content_sha256 = NEW.model_content_sha256,
+                model_metadata_json = NEW.model_metadata_json,
+                model_content_status = NEW.model_content_status,
+                model_content_extractor_version = NEW.model_content_extractor_version,
+                model_content_character_count = NEW.model_content_character_count,
+                model_content_extracted_at = NEW.model_content_extracted_at,
+                model_content_error_code = NEW.model_content_error_code
+          WHERE resource_id = NEW.id AND version = NEW.current_version;
+       END`,
+    `CREATE TRIGGER resource_versions_enqueue_objects_before_delete
+       BEFORE DELETE ON resource_versions BEGIN
+         INSERT OR IGNORE INTO resource_object_deletion_outbox
+           (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+           SELECT OLD.content_ref, OLD.workspace_id, OLD.resource_id, 'original', datetime('now'), datetime('now')
+            WHERE OLD.content_ref IS NOT NULL;
+         INSERT OR IGNORE INTO resource_object_deletion_outbox
+           (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+           SELECT OLD.model_content_ref, OLD.workspace_id, OLD.resource_id, 'derivative', datetime('now'), datetime('now')
+            WHERE OLD.model_content_ref IS NOT NULL;
+       END`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {

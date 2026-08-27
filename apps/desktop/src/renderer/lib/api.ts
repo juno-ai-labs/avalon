@@ -24,6 +24,7 @@ import {
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
   ResourceSchema as WireResourceSchema,
+  WorkstreamResourceSchema as WireWorkstreamResourceSchema,
   ToolInvocationSchema as WireToolInvocationSchema,
   type ViewerSchema as WireViewerSchema,
   WorkspaceMemberSchema as WireWorkspaceMemberSchema,
@@ -47,6 +48,7 @@ import {
   type Elicitation as WireElicitation,
   type Message as WireMessage,
   type Resource as WireResource,
+  type WorkstreamResource as WireWorkstreamResource,
   type User as WireUser,
   type Workstream as WireWorkstream,
   type WorkstreamBatchFilter,
@@ -331,7 +333,7 @@ export function mapViewer(viewer: z.infer<typeof WireViewerSchema>): Participant
   return { ...mapUser(viewer.user), viewing: true };
 }
 
-export function mapResource(resource: WireResource): WorkstreamResource {
+export function mapResource(resource: WireResource | WireWorkstreamResource): WorkstreamResource {
   return {
     id: resource.id,
     title: resource.title,
@@ -344,6 +346,9 @@ export function mapResource(resource: WireResource): WorkstreamResource {
     updatedAt: resource.updatedAt,
     contentAvailable: resource.contentAvailable,
     sizeBytes: resource.sizeBytes,
+    currentVersion: resource.currentVersion,
+    relationshipType: 'relationshipType' in resource ? resource.relationshipType : 'attachment',
+    direction: 'direction' in resource ? resource.direction : 'source',
   };
 }
 
@@ -1697,7 +1702,7 @@ export class RallyApi {
     await this.request(`/workstreams/${encodeURIComponent(id)}/resources`, {
       method: 'POST',
       body: { resourceId },
-      schema: WireResourceSchema,
+      schema: WireWorkstreamResourceSchema,
     });
     return this.getWorkstream(id);
   }

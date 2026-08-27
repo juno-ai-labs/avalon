@@ -121,7 +121,7 @@ function attachResource(store: DatabaseSync, resourceId: string): void {
     `INSERT INTO workstream_resource_links
        (resource_id, attached_by_user_id, watch_enabled, relationship_type,
         resource_json, attached_at, updated_at)
-     VALUES (?, NULL, 0, 'attached', '{}', 1, 1)
+     VALUES (?, NULL, 0, 'attachment', '{}', 1, 1)
      ON CONFLICT(resource_id) DO NOTHING`,
   ).run(resourceId);
 }

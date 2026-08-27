@@ -173,6 +173,9 @@ export interface WorkstreamResource {
   updatedAt?: string;
   contentAvailable?: boolean;
   sizeBytes?: number;
+  currentVersion: number;
+  relationshipType: 'attachment' | 'message_attachment' | 'origin' | 'generated' | 'suggested_activity' | 'inbound_email' | 'context';
+  direction: 'source' | 'artifact';
 }
 
 export interface MessageAttachment {

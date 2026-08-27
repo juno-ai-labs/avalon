@@ -3,7 +3,8 @@ import {
   ElicitationSchema,
   MessageSchema,
   ParticipantSchema,
-  ResourceSchema,
+  WorkstreamResourceSchema,
+  type ResourceRelationshipType,
   WorkstreamDetailSchema,
   WorkstreamTranscriptSnapshotSchema,
   WorkstreamSchema,
@@ -12,7 +13,7 @@ import {
   asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
-  type Resource,
+  type WorkstreamResource,
   type Workstream,
   type WorkstreamDetail,
   type WorkstreamTranscriptSnapshot,
@@ -110,7 +111,7 @@ export interface WorkstreamRuntimeResourceAttachment {
   workstreamId: string;
   resourceId: string;
   attachedByUserId: string | null;
-  relationshipType?: string;
+  relationshipType?: ResourceRelationshipType;
 }
 
 export type WorkstreamRuntimeResourceAttacher = (
@@ -280,8 +281,8 @@ export class WorkstreamObjectClient {
     await this.request({ operation: "remove_participant", userId });
   }
 
-  async attachResource(resourceId: string): Promise<Resource> {
-    return ResourceSchema.parse(await this.request({ operation: "attach_resource", resourceId }));
+  async attachResource(resourceId: string): Promise<WorkstreamResource> {
+    return WorkstreamResourceSchema.parse(await this.request({ operation: "attach_resource", resourceId }));
   }
 
   async detachResource(resourceId: string): Promise<void> {

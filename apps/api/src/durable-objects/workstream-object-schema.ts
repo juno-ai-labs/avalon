@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 30;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 31;
 
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
@@ -1731,6 +1731,34 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
              end_offset = excluded.end_offset,
              attention_ordinal = excluded.attention_ordinal;
          END`,
+    ],
+  },
+  {
+    version: 31,
+    description: "constrain resource relationships to the source and artifact direction vocabulary",
+    statements: [
+      `CREATE TABLE workstream_resource_links_v31 (
+        resource_id TEXT PRIMARY KEY,
+        attached_by_user_id TEXT,
+        watch_enabled INTEGER NOT NULL CHECK (watch_enabled IN (0, 1)),
+        relationship_type TEXT NOT NULL CHECK (relationship_type IN (
+          'attachment', 'message_attachment', 'origin', 'generated',
+          'suggested_activity', 'inbound_email', 'context'
+        )),
+        resource_json TEXT NOT NULL CHECK (json_valid(resource_json)),
+        attached_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `INSERT INTO workstream_resource_links_v31
+         (resource_id, attached_by_user_id, watch_enabled, relationship_type,
+          resource_json, attached_at, updated_at)
+       SELECT resource_id, attached_by_user_id, watch_enabled, relationship_type,
+              resource_json, attached_at, updated_at
+         FROM workstream_resource_links`,
+      `DROP TABLE workstream_resource_links`,
+      `ALTER TABLE workstream_resource_links_v31 RENAME TO workstream_resource_links`,
+      `CREATE INDEX workstream_resource_links_relation_idx
+         ON workstream_resource_links(relationship_type, attached_at, resource_id)`,
     ],
   },
 ];

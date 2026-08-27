@@ -11,6 +11,9 @@ describe("resource object cleanup", () => {
       CREATE TABLE resources (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
       );
+      CREATE TABLE resource_versions (
+        resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+      );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
@@ -51,6 +54,9 @@ describe("resource object cleanup", () => {
     database.exec(`
       CREATE TABLE resources (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+      );
+      CREATE TABLE resource_versions (
+        resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
@@ -102,6 +108,9 @@ describe("resource object cleanup", () => {
       CREATE TABLE resources (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
       );
+      CREATE TABLE resource_versions (
+        resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+      );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
@@ -125,6 +134,36 @@ describe("resource object cleanup", () => {
     expect(deleteObject).not.toHaveBeenCalled();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
       .toEqual({ count: 0 });
+    database.close();
+  });
+
+  it("cancels deletion while an historical version still references the object", async () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec(`
+      CREATE TABLE resources (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+      );
+      CREATE TABLE resource_versions (
+        resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+      );
+      CREATE TABLE resource_object_deletion_outbox (
+        object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO resources (id, workspace_id, content_ref, model_content_ref)
+      VALUES ('resource-current', 'workspace-one', 'regional/current', NULL);
+      INSERT INTO resource_versions (resource_id, workspace_id, content_ref, model_content_ref)
+      VALUES ('resource-current', 'workspace-one', 'regional/historical', NULL);
+      INSERT INTO resource_object_deletion_outbox
+        (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+      VALUES ('regional/historical', 'workspace-one', 'resource-current', 'original', '2026-08-12', '2026-08-12');
+    `);
+    const deleteObject = vi.fn(async () => undefined);
+    const env = createTestEnv({ DB: sqliteD1(database), PAYLOADS: { delete: deleteObject } });
+
+    expect(await reapDeletedResourceObjects(env)).toBe(1);
+    expect(deleteObject).not.toHaveBeenCalled();
     database.close();
   });
 });

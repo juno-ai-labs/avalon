@@ -56,7 +56,7 @@ function resource(
     model_content_claimed_at: null,
     model_content_claim_id: null,
     model_content_error_code: null,
-    relationship_type: "explicit",
+    relationship_type: "attachment",
     attached_at: AS_OF,
     message_attachment: messageAttachment ? 1 : 0,
     attached_watch_enabled: 0,
@@ -77,7 +77,7 @@ function seedResourceLink(
     `INSERT INTO workstream_resource_links
        (resource_id, attached_by_user_id, watch_enabled, relationship_type,
         resource_json, attached_at, updated_at)
-     VALUES (?, NULL, 0, 'explicit', '{}', ?, ?)`,
+     VALUES (?, NULL, 0, 'attachment', '{}', ?, ?)`,
   ).run(input.resourceId, Date.parse(AS_OF), Date.parse(AS_OF));
   if (!input.onMessage) return;
   store.prepare(
