@@ -47,8 +47,10 @@ export interface TerminalPullRequest {
 }
 
 export interface TerminalGitHubPublicationGateway {
-  mintWriteToken(selection: TerminalRepositorySelection, signal: AbortSignal): Promise<{ accessToken: string }>;
-  revokeWriteToken(accessToken: string): Promise<void>;
+  mintWriteToken(
+    selection: TerminalRepositorySelection,
+    signal: AbortSignal,
+  ): Promise<{ accessToken: string; expiresAt: string }>;
   verifyRepositoryIdentity(selection: TerminalRepositorySelection, accessToken: string, signal: AbortSignal): Promise<void>;
   getRef(selection: TerminalRepositorySelection, ref: string, accessToken: string, signal: AbortSignal): Promise<string | null>;
   findPullRequest(selection: TerminalRepositorySelection, accessToken: string, signal: AbortSignal): Promise<TerminalPullRequest | null>;
@@ -358,7 +360,7 @@ export async function admitTerminalPublicationGrant(
 async function runInspection(
   provider: TerminalSandboxProvider,
   sandboxId: string,
-  operation: "status" | "branch" | "head" | "ancestry" | "paths" | "push",
+  operation: "status" | "branch" | "head" | "ancestry" | "paths",
   command: string,
   timeoutMs = 60_000,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -367,6 +369,19 @@ async function runInspection(
     command,
     cwd: "/workspace",
     timeoutMs,
+  });
+}
+
+async function runPublishStep(
+  provider: TerminalSandboxProvider,
+  sandboxId: string,
+  command: string,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return provider.runUtilityCommand(sandboxId, {
+    operation: "repository.publish.push",
+    command,
+    cwd: "/workspace",
+    timeoutMs: 180_000,
   });
 }
 
@@ -498,9 +513,23 @@ export function createTerminalRepositoryPublisher(
         throw new TerminalToolError("publication_not_authorized", "The participant who requested publication no longer belongs to this work stream. Stop and ask a current participant to request publication.");
       }
       const token = await gateway.mintWriteToken(selection, context.signal);
-      try {
-        await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
-        const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
+      await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
+      // Publication is the one point in a run that must guarantee the mounted
+      // Git credential remains valid for the complete remote mutation. Reuse
+      // the freshly minted publication token instead of rechecking or rotating
+      // the sandbox credential before every ordinary Terminal operation.
+      await provider.configureGitHubReadAccess(sandbox.providerSandboxId, {
+        gitBasicCredential: btoa(`x-access-token:${token.accessToken}`),
+        ghToken: token.accessToken,
+      });
+      await terminal.recordRepositoryBootstrap({
+        generation: sandbox.generation,
+        readTokenExpiresAt: Date.parse(token.expiresAt),
+        repositoryFullName: selection.repositoryFullName,
+        baseSha: selection.baseSha,
+        now: Date.now(),
+      });
+      const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
         const consumed = await terminal.consumePublicationGrant({
           grantId: grant.grantId,
           effectIntentId,
@@ -522,25 +551,37 @@ export function createTerminalRepositoryPublisher(
           now: Date.now(),
         });
         try {
+          // A missing ref and an empty successful ls-remote result are both the
+          // empty string, so first publication passes the same SHA fence.
           const expectedOld = expectedOldSha ?? "";
           const repositoryUrl = `https://github.com/${selection.repositoryFullName}.git`;
-          const push = await runInspection(provider, sandbox.providerSandboxId, "push", [
+          // A per-publication alias outranks any model-authored broad URL
+          // rewrite without putting the credential in the command. The fixed
+          // config also prevents Git from adding tags to the exact refspec.
+          const repositoryUrlAlias = `rally-publish-${publicationId}://repository`;
+          const insteadOf = `url.${repositoryUrl}.insteadOf=${repositoryUrlAlias}`;
+          const pushInsteadOf = `url.${repositoryUrl}.pushInsteadOf=${repositoryUrlAlias}`;
+          const push = await runPublishStep(provider, sandbox.providerSandboxId, [
             "set -euo pipefail",
             "publish_stage=remote_verify",
             "trap 'rally_status=$?; if [ \"$rally_status\" -ne 0 ]; then printf \"RALLY_PUBLISH_FAILED_STAGE=%s\\n\" \"$publish_stage\"; fi; exit \"$rally_status\"' EXIT",
-            `remote_sha=$(git ls-remote ${shellQuote(repositoryUrl)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)`,
+            `remote_sha=$(git -c ${shellQuote(insteadOf)} ls-remote ${shellQuote(repositoryUrlAlias)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)`,
             `test "$remote_sha" = ${shellQuote(expectedOld)}`,
             "publish_stage=remote_push",
-            `git -c core.hooksPath=/dev/null push ${shellQuote(repositoryUrl)} ${shellQuote(`${headSha}:refs/heads/${selection.headRef}`)}`,
+            `git -c ${shellQuote(insteadOf)} -c ${shellQuote(pushInsteadOf)} -c core.hooksPath=/dev/null -c push.followTags=false push ${shellQuote(repositoryUrlAlias)} ${shellQuote(`${headSha}:refs/heads/${selection.headRef}`)}`,
             "publish_stage=post_push_verify",
-            `test "$(git ls-remote ${shellQuote(repositoryUrl)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)" = ${shellQuote(headSha)}`,
+            `test "$(git -c ${shellQuote(insteadOf)} ls-remote ${shellQuote(repositoryUrlAlias)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)" = ${shellQuote(headSha)}`,
             "trap - EXIT",
             "printf 'published\\n'",
-          ].join("\n"), 180_000);
+          ].join("\n"));
           if (push.exitCode !== 0) {
             const output = `${push.stdout}\n${push.stderr}`;
             const stage = /^RALLY_PUBLISH_FAILED_STAGE=([a-z_]+)$/mu.exec(output)?.[1] ?? "unknown_stage";
-            throw new Error(`Trusted Git publication failed at ${stage} with exit code ${push.exitCode}`);
+            throw new TerminalToolError(
+              "provider_publication_failed",
+              `Trusted Git publication failed at ${stage} with exit code ${push.exitCode}`,
+              { stage, exitCode: push.exitCode },
+            );
           }
           let pullRequest = await gateway.findPullRequest(selection, token.accessToken, context.signal);
           let outcome: "created" | "updated" = "created";
@@ -587,12 +628,6 @@ export function createTerminalRepositoryPublisher(
           });
           throw error;
         }
-      } finally {
-        // GitHub cannot scope an installation token to one branch. The exact
-        // ref is enforced above, and the one-repository write token is revoked
-        // as soon as the trusted publication attempt finishes.
-        await gateway.revokeWriteToken(token.accessToken).catch(() => undefined);
-      }
     },
   };
 }
@@ -663,16 +698,6 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
   }
   return {
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
-    async revokeWriteToken(accessToken) {
-      const response = await fetch(`${api}/installation/token`, {
-        method: "DELETE",
-        headers: githubHeaders(accessToken),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok && response.status !== 404) {
-        throw new Error(`GitHub write-token revocation failed (${response.status})`);
-      }
-    },
     async mintWriteToken(selection, signal) {
       const config = githubConnectorConfig(env);
       if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
@@ -684,13 +709,21 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
         headers: githubHeaders(jwt),
         body: JSON.stringify({
           repositories: [repositoryName],
-          permissions: { contents: "write", pull_requests: "write", metadata: "read" },
+          permissions: {
+            contents: "write",
+            pull_requests: "write",
+            metadata: "read",
+            actions: "read",
+            checks: "read",
+          },
         }),
         signal,
       });
       const value = await githubResponse(response);
-      if (typeof value.token !== "string" || !value.token) throw new TerminalToolError("github_unavailable", "GitHub did not return a scoped installation token.");
-      return { accessToken: value.token };
+      if (typeof value.token !== "string" || !value.token || typeof value.expires_at !== "string") {
+        throw new TerminalToolError("github_unavailable", "GitHub did not return a scoped installation token and expiry.");
+      }
+      return { accessToken: value.token, expiresAt: value.expires_at };
     },
     async getRef(selection, ref, accessToken, signal) {
       const encodedRef = ref.split("/").map(encodeURIComponent).join("/");

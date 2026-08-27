@@ -559,7 +559,9 @@ second Daytona sandbox, builds and transfers a Git bundle, uploads another
 credential, or boots a second Git environment. Fixed safe stage markers and the
 durable publication/PR convergence receipt remain. The direct command uses the
 validated repository URL rather than mutable local remote configuration and
-disables repository-local Git hooks for the Rally-authored push.
+uses a per-publication URL alias that outranks broad model-authored Git URL
+rewrites. It disables repository-local Git hooks and automatic follow-tag pushes
+for the Rally-authored exact-ref push.
 
 **Why:** Two merged production repairs changed secret injection and then process
 environment injection in the disposable publisher, but the same live typed
@@ -578,10 +580,13 @@ have already validated the exact committed head.
 
 **Consequences:** Typed publication now pays one direct `process.executeCommand`
 against the warm sandbox and one GitHub API token boundary for remote fencing
-and convergent PR mutation. The full-access checkout credential remains the
-remote Git authorization boundary for both standard Git and typed publication;
-read-only selections still fail before any push. A failed direct push keeps the
-same ambiguity receipt and reports `remote_verify`, `remote_push`,
+and convergent PR mutation. Immediately before that remote mutation, Rally
+mounts the freshly minted publication token into the already-authorized sandbox
+and records its expiry. The token remains the sandbox credential after the PR
+operation, so later ordinary Git/`gh` commands do not inherit a revoked token;
+there is no repeated credential check on ordinary tools. Read-only selections
+still fail before token minting or any push. A failed direct push keeps the same
+ambiguity receipt and reports `remote_verify`, `remote_push`,
 `post_push_verify`, or `unknown_stage` without retrying the remote write.
 
 ### 2026-08-27 — Trusted publication launches from uploaded payloads
