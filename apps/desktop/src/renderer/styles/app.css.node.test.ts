@@ -61,6 +61,13 @@ describe('work-stream launch surface geometry', () => {
     const launching = rule('.workstream-launch-screen.is-launching > .launch-header');
     const destinationRows = rule('.workstream-screen');
 
+    // `rule()` returns null for a selector that is not in the file, and
+    // `toContain` on null fails as "expected null to include …" — which names
+    // neither the selector nor the fact that the rule is gone. Reformatting a
+    // rule onto more lines is enough to produce it, so every assertion on a
+    // rule's contents below says first that the rule is there.
+    expect(launching).not.toBeNull();
+    expect(destinationRows).not.toBeNull();
     expect(launching).toContain('height: 55px;');
     expect(destinationRows).toContain('grid-template-rows: 55px minmax(0, 1fr) auto;');
   });
@@ -73,6 +80,12 @@ describe('work-stream launch surface geometry', () => {
     ['.workstream-launch-screen.is-launching .composer-stack', ['max-width']],
     ['.workstream-launch-screen.is-launching .launch-composer', ['background', 'border-color', 'border-radius']],
   ])('states no geometry of its own in %s', (selector, forbidden) => {
+    // The one `rule()` consumer with no null guard, deliberately: these three
+    // selectors are absent from the stylesheet today — the split is written as
+    // `:not(.is-launching)` rules on the resting state instead — and absence is
+    // exactly the property this test is named after. Asserting the rule exists
+    // here would assert the opposite. It does mean these rows pass while the
+    // classes they name are only ever spelled in this file.
     const declarations = rule(selector);
     if (declarations === null) return;
     for (const property of forbidden) {
@@ -83,7 +96,10 @@ describe('work-stream launch surface geometry', () => {
   // The hand-off keeps the home content mounted for exactly as long as the
   // stylesheet spends fading it, and the two are declared in different files.
   it('fades the home content over the span the screen keeps it mounted for', () => {
-    expect(rule('.launch-home-layer.is-leaving')).toContain('animation: launch-home-leave 190ms');
+    const leaving = rule('.launch-home-layer.is-leaving');
+
+    expect(leaving).not.toBeNull();
+    expect(leaving).toContain('animation: launch-home-leave 190ms');
   });
 });
 
@@ -92,45 +108,140 @@ describe('member picker controls', () => {
     const copy = rule(
       '.member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),\n.member-action-list button > span:not(.avatar)',
     );
+    const checkbox = rule('.member-checkbox');
 
+    expect(copy).not.toBeNull();
+    expect(checkbox).not.toBeNull();
     expect(copy).toContain('flex: 1;');
-    expect(rule('.member-checkbox')).toContain('flex: 0 0 16px;');
+    expect(checkbox).toContain('flex: 0 0 16px;');
   });
 
   it('mirrors focus from the transparent native input onto the visible checkbox', () => {
-    expect(rule('.member-picker-row:has(input:focus-visible) .member-checkbox'))
-      .toContain('outline: 2px solid var(--av-sys-color-focus-quiet);');
+    const mirrored = rule('.member-picker-row:has(input:focus-visible) .member-checkbox');
+
+    expect(mirrored).not.toBeNull();
+    expect(mirrored).toContain('outline: 2px solid var(--av-sys-color-focus-quiet);');
+  });
+});
+
+/**
+ * Chromium's `::-webkit-scrollbar` styling (below, 9px) opts these scrollers
+ * into classic space-consuming scrollbars, so the moment their content
+ * crosses one viewport the scrollbar pops in and shifts whatever is centered
+ * inside them — the transcript column, the sidebar's row width, the settings
+ * pane, the automation builder's 996px column, a note's 760px article. Each of
+ * these is tall enough, on an ordinary screen, to reach that point in normal
+ * use, so each reserves its gutter up front rather than having it appear
+ * mid-session.
+ *
+ * This list is the registry of that judgement — the standing call is recorded
+ * in `docs/assumptions.md`, and a scroller judged *not* to qualify is left out
+ * of it with a comment at its own rule saying why. A row here therefore means
+ * somebody decided the scroller reaches a viewport; the absence of one means
+ * somebody decided it does not.
+ */
+describe('scrollbar gutter reservation on the always-tall scrollers', () => {
+  it.each([
+    ['.transcript-scroll'],
+    ['.sidebar-scroll'],
+    ['.rail-scroll'],
+    ['.settings-navigation'],
+    ['.settings-content-scroll'],
+    ['.new-workstream-home'],
+    ['.automation-overview-scroll'],
+    ['.new-automation-screen'],
+    ['.note-detail-scroll'],
+    ['.note-transcript-scroll'],
+  ])('reserves a stable gutter on %s', (selector) => {
+    const declarations = rule(selector);
+
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain('scrollbar-gutter: stable;');
+    // And that the rule is still a scroll container. `scrollbar-gutter` is
+    // inert on an element that does not scroll, so a rule that loses its
+    // `overflow` keeps a declaration that now reserves nothing — which reads,
+    // here and in the file, exactly like one that still works.
+    expect(declarations).toMatch(/overflow(-[xy])?: (auto|scroll);/u);
+  });
+});
+
+/**
+ * `.rail-scroll` backs both the inspector rail and the HyperSight
+ * (block-dashboard) rail — `inspector-rail.tsx` and `block-dashboard-panel.tsx`
+ * both render a `.rail-scroll` div — and containment used to be declared only
+ * for the HyperSight variant, via `.block-dashboard-rail .rail-scroll`.
+ *
+ * What that containment does, precisely, because the obvious reading is wrong:
+ * scroll chaining walks the *ancestor* chain, and neither of these scrollers
+ * has a scrollable ancestor to chain into. `.rail-surface` and `.sidebar` are
+ * `position: fixed`, and `html`, `body` and `#root` are all `overflow: hidden`.
+ * Scrolling past either edge could not have scrolled the transcript or the
+ * workspace underneath it, and adding containment did not stop it doing so.
+ * What `contain` suppresses is the other half of the property: the viewport's
+ * own overscroll affordance — Chromium's rubber-band or glow — at the end of
+ * the scroller.
+ *
+ * Why only the HyperSight rail carried it was never written down, and this
+ * consolidation is not the repair of a defect anybody observed: it makes the
+ * two rails identical, and gives the sidebar the same treatment, so that the
+ * next person reading either rule finds one answer rather than two.
+ */
+describe('overscroll containment on the shared rail and sidebar scrollers', () => {
+  it.each([['.rail-scroll'], ['.sidebar-scroll']])('contains overscroll on %s', (selector) => {
+    const declarations = rule(selector);
+
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain('overscroll-behavior: contain;');
+  });
+
+  // Read off the selector preludes rather than searched for in the whole file,
+  // for the reason spelled out at the markdown guard below. `not.toContain` on
+  // the raw stylesheet was both. Under-strict: it misses
+  // `.block-dashboard-rail > .rail-scroll`, an `:is()` form, and a selector
+  // broken across lines, every one of which is the override it exists to
+  // forbid. And over-strict: `preludes()` strips comments, but a raw substring
+  // search does not, so a comment in the stylesheet explaining why the override
+  // was removed would have failed it — which makes the one place the reasoning
+  // belongs the one place it could not be written.
+  it('declares it on the shared rule rather than a HyperSight-only override', () => {
+    expect(preludes().filter((prelude) => /\.block-dashboard-rail\b[^,]*\.rail-scroll\b/u.test(prelude)))
+      .toEqual([]);
   });
 });
 
 describe('raised popover interaction states', () => {
   it('highlights ordinary menu rows and preserves the danger override', () => {
-    expect(rule('.menu-content')).toContain(
-      'background: var(--av-sys-color-surface-raised);',
-    );
-    expect(rule('.menu-item[data-highlighted]')).toContain(
-      'background: var(--av-sys-color-surface-raised-hover);',
-    );
-    expect(rule('.menu-item-danger[data-highlighted]')).toContain(
-      'background: var(--av-sys-color-danger-tint);',
-    );
+    const content = rule('.menu-content');
+    const highlighted = rule('.menu-item[data-highlighted]');
+    const danger = rule('.menu-item-danger[data-highlighted]');
+
+    expect(content).not.toBeNull();
+    expect(highlighted).not.toBeNull();
+    expect(danger).not.toBeNull();
+    expect(content).toContain('background: var(--av-sys-color-surface-raised);');
+    expect(highlighted).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    expect(danger).toContain('background: var(--av-sys-color-danger-tint);');
   });
 
   it('highlights command rows against the raised command popover', () => {
-    expect(rule('.command-popover')).toContain(
-      'background: var(--av-sys-color-surface-raised);',
-    );
-    expect(rule(
+    const popover = rule('.command-popover');
+    const rows = rule(
       '.command-popover > button:hover,\n'
       + '.command-popover > button:focus-visible,\n'
       + '.command-popover > button.is-selected',
-    )).toContain('background: var(--av-sys-color-surface-raised-hover);');
+    );
+
+    expect(popover).not.toBeNull();
+    expect(rows).not.toBeNull();
+    expect(popover).toContain('background: var(--av-sys-color-surface-raised);');
+    expect(rows).toContain('background: var(--av-sys-color-surface-raised-hover);');
   });
 });
 
 describe('work-stream participant presence', () => {
   it('draws a tokenized Tailwind-style ping and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
+    expect(ping).not.toBeNull();
     expect(ping).toContain('animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;');
     expect(ping).toContain('background: color-mix(');
     expect(ping).toContain('var(--av-sys-color-success-base)');
@@ -159,9 +270,12 @@ describe('work-stream participant presence', () => {
  */
 describe('system message clamp', () => {
   it('clamps a closed system row to the line count the row declares', () => {
-    expect(rule('.system-message')).toContain('--system-message-lines: 5;');
+    const row = rule('.system-message');
+    expect(row).not.toBeNull();
+    expect(row).toContain('--system-message-lines: 5;');
 
     const closed = rule('.system-message-text:not([data-expanded])');
+    expect(closed).not.toBeNull();
     expect(closed).toContain('display: -webkit-box;');
     expect(closed).toContain('-webkit-line-clamp: var(--system-message-lines);');
     expect(closed).toContain('overflow: hidden;');
@@ -174,7 +288,10 @@ describe('system message clamp', () => {
   // collapsed onto two wrapped lines. That is short enough never to reach the
   // clamp, so the row this feature most exists for was the one it skipped.
   it('keeps the newlines a system message was written with', () => {
-    expect(rule('.system-message-text')).toContain('white-space: pre-wrap;');
+    const text = rule('.system-message-text');
+
+    expect(text).not.toBeNull();
+    expect(text).toContain('white-space: pre-wrap;');
   });
 
   // The open row is bounded too. Without a ceiling, opening a 120,000-character
@@ -182,6 +299,7 @@ describe('system message clamp', () => {
   // the control that closes it a screen or more below the reader's pointer.
   it('bounds an open system row instead of letting it run', () => {
     const open = rule('.system-message-text[data-expanded]');
+    expect(open).not.toBeNull();
     expect(open).toContain('max-height: 320px;');
     expect(open).toContain('overflow-y: auto;');
   });
@@ -189,9 +307,10 @@ describe('system message clamp', () => {
 
 describe('attachment lightbox', () => {
   it('keeps plain attachment text visibly monospace', () => {
-    expect(rule('.attachment-lightbox-text')).toContain(
-      'font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;',
-    );
+    const text = rule('.attachment-lightbox-text');
+
+    expect(text).not.toBeNull();
+    expect(text).toContain('font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;');
   });
 });
 
@@ -225,7 +344,10 @@ describe('markdown list markers', () => {
     ['.markdown-body :is(ul, ol) :is(ul, ol) ul', 'square'],
     ['.markdown-body ol', 'decimal'],
   ])('draws %s with %s', (selector, style) => {
-    expect(rule(selector)).toContain(`list-style: ${style};`);
+    const declarations = rule(selector);
+
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain(`list-style: ${style};`);
   });
 
   // Depth is counted in list ancestors of either kind. Selectors that counted
@@ -241,13 +363,19 @@ describe('markdown list markers', () => {
   // The one list that should keep the reset: its items carry checkboxes, and a
   // bullet beside each one is the reason this exception was written.
   it('leaves a task list without markers', () => {
-    expect(rule('.markdown-body .contains-task-list')).toContain('list-style: none;');
+    const taskList = rule('.markdown-body .contains-task-list');
+
+    expect(taskList).not.toBeNull();
+    expect(taskList).toContain('list-style: none;');
   });
 
   // A marker is drawn inside the indent, so restoring the one without the other
   // puts an ordered list's numbers against the edge.
   it('indents the lists it draws markers on', () => {
-    expect(rule('.markdown-body ul,\n.markdown-body ol')).toContain('padding-left');
+    const geometry = rule('.markdown-body ul,\n.markdown-body ol');
+
+    expect(geometry).not.toBeNull();
+    expect(geometry).toContain('padding-left');
   });
 
   // And the guard that keeps the single container honest. Both of these host
