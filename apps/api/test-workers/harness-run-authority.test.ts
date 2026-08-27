@@ -127,7 +127,7 @@ describe("harness-run authority on real workerd", () => {
     expect(result.value).toEqual({ outcome: "published", sequenceNumber: 1 });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
-        `SELECT content FROM parts WHERE id = 'final-message-1'`,
+        `SELECT content FROM workstream_message_details WHERE id = 'final-message-1'`,
       ).one().content).toBe("The work is complete.");
       expect(state.storage.sql.exec(
         `SELECT event_type FROM run_lifecycle_events WHERE event_id = 'final-message-event-1'`,
