@@ -1282,8 +1282,10 @@ directory write at all.
 
 **What changed:** `removeParticipant` now treats the room as collaborative:
 any authorized current reader can remove themself or another participant. It
-returns a changed witness, publishes only for a real removal, and refuses the
-final active participant inside the same synchronous SQLite transaction.
+returns an explicit removal outcome, refuses the final active participant
+inside the same synchronous SQLite transaction, and closes newly unauthorized
+local sockets before fallible event publication. A retry of an already-removed
+participant republishes the idempotent removal event.
 
 **Why:** The desktop had no way to reach the existing removal route, and that
 route could transition the sole participant to removed. For a personal work
@@ -1297,9 +1299,11 @@ membership instead. Also rejected relying on the modal's disabled final action,
 because stale snapshots and concurrent clients are outside its control.
 
 **Consequences:** The object is the final-participant fence, and callers surface
-`workstream_participant_required` without retrying. A no-op removal emits no
-`participant_removed` event. A successful removal still uses the existing local
-publication path to close readers whose personal-work-stream access was removed.
+`workstream_participant_required` without retrying. A target with no participant
+row emits no event; an already-removed target republishes so a failed or
+response-lost first attempt can complete realtime convergence. Socket access is
+revoked synchronously from the committed participant fact, so publication
+failure cannot extend a removed reader's transcript access.
 
 ### 2026-08-27 — Canonical transcript ownership becomes the only runtime path
 
