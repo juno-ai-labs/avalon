@@ -1063,6 +1063,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     cutoverVersion: 27;
   }): Promise<LegacyTranscriptBackfillOutcome> {
     await this.initialized;
+    if (this.externalSubstreamId() !== "0") {
+      throw new Error("legacy_transcript_backfill_requires_main_substream");
+    }
     if (input.objectId !== this.state.id.toString()) {
       throw new Error(`legacy_transcript_backfill_object_mismatch:${input.objectId}`);
     }
