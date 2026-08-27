@@ -195,7 +195,10 @@ hash-checked RPCs rather than cross-object SQL joins.
   checks, resource reads, Suggested Work, and contextual routing all use that
   same rule. Creation seats the creator, but `created_by_user_id` is attribution,
   not a permanent authorization grant: `removeParticipant` revokes a creator in
-  exactly the same way it revokes anybody else.
+  exactly the same way it revokes anybody else. Any current reader may remove
+  themself or another participant, but the object commits removal only while at
+  least one other active participant remains; a work stream never has an empty
+  participant room.
 - **Cross-work-stream content moves from a source audience to an equal or
   narrower target audience.** Workspace activity may enter a workspace work
   stream or a private work stream a particular member may read. Suggested Work
@@ -809,6 +812,37 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-27 — Participant removal cannot empty a work stream
+
+**What changed:** The authoritative work-stream transition lets any current
+reader remove themself or another participant, but rejects removal of the final
+active participant. The membership check, active count, and removal are one
+object-local SQLite transaction.
+
+**Why:** The participant picker previously hid people who were already in the
+room, so the existing removal endpoint was unreachable from the product. Making
+that action visible also exposed that the endpoint could remove the only reader,
+leaving a private work stream with no person able to open or repair it.
+
+**Considered and rejected:** Restricting removal of another participant to
+workspace owners and admins. Participation is the room's collaborative audience,
+not workspace administration, and every current reader can already add somebody
+to it. At workspace scope that means every active workspace member; at personal
+scope it means the current participants, including an invitee removing the
+creator. Also rejected a client-only final-participant guard, because an older
+or racing client could still empty the authoritative room.
+
+**Consequences:** Every removal caller must handle
+`workstream_participant_required`. The desktop disables the known-final action
+for immediacy, while the object remains the concurrency-safe enforcement point.
+The one-participant floor applies to both scopes as a stable participant
+lifecycle invariant: a workspace-visible stream stays readable without
+participants, but does not acquire a separate zero-participant state.
+Removing a person from a personal work stream revokes their access, including
+when that person created it. Active-project work streams keep their project
+audience fence at the regional service boundary, and the object closes revoked
+local sockets before fallible realtime publication.
 
 ### 2026-08-27 — Canonical transcript records become the sole payload owner
 

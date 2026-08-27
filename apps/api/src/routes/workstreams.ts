@@ -366,8 +366,7 @@ workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValida
 });
 workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", participantParam), async (c) => {
   const param = c.req.valid("param");
-  const client = await authoritativeWorkstreamClient(c, param.id);
-  await client.removeParticipant(param.userId);
+  await new WorkstreamService(c.env, getAuth(c)).removeParticipant(param.id, param.userId);
   return c.body(null, 204);
 });
 workstreamRoutes.post("/:id/resources", zValidator("param", idParam), zValidator("json", resourceBody), async (c) => {

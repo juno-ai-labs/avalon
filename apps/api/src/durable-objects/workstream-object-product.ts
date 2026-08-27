@@ -1944,21 +1944,45 @@ export class WorkstreamObjectProductService {
     ];
   }
 
-  async removeParticipant(auth: AuthContext, userId: string): Promise<void> {
+  async removeParticipant(
+    auth: AuthContext,
+    userId: string,
+  ): Promise<"removed" | "already_removed" | "not_found"> {
     await this.authorize(auth);
-    if (userId !== auth.userId && auth.role !== "owner" && auth.role !== "admin") {
-      throw new ApiError(403, "participant_removal_denied", "You can only remove yourself from this work stream");
-    }
     const now = Date.now();
-    await this.objectStore.commitWithRegionalEffects(
-      (sql) => sql.exec(
-        `UPDATE participants SET status = 'removed', removed_at = ?,
+    const { result: outcome } = await this.objectStore.commitWithRegionalEffects(
+      (sql) => {
+        const target = first(sql.exec<{ status: "active" | "removed" }>(
+          `SELECT status FROM participants WHERE user_id = ?`,
+          userId,
+        ));
+        if (!target) return "not_found" as const;
+        // A DELETE whose first response was lost or whose local publication
+        // failed must be able to replay the idempotent removal event.
+        if (target.status === "removed") return "already_removed" as const;
+        const active = first(sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
+        ))?.count ?? 0;
+        if (active <= 1) {
+          throw new ApiError(
+            409,
+            "workstream_participant_required",
+            "At least one participant must remain in this work stream",
+          );
+        }
+        sql.exec(
+          `UPDATE participants SET status = 'removed', removed_at = ?,
                  participant_epoch = participant_epoch + 1, updated_at = ?
-          WHERE user_id = ? AND status = 'active'`,
-        now, now, userId,
-      ),
-      () => [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }],
+           WHERE user_id = ? AND status = 'active'`,
+          now, now, userId,
+        );
+        return "removed" as const;
+      },
+      (_sql, result) => result === "removed"
+        ? [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }]
+        : [],
     );
+    return outcome;
   }
 
   async attachResource(auth: AuthContext, resourceId: string): Promise<WorkstreamResource> {

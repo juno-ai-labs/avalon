@@ -229,6 +229,7 @@ export function AddParticipantDialog({
   open,
   pending,
   onAdd,
+  onRemove,
   onOpenChange,
 }: {
   current: WorkspaceMember[];
@@ -237,14 +238,20 @@ export function AddParticipantDialog({
   open: boolean;
   pending: boolean;
   onAdd: (member: WorkspaceMember) => void;
+  onRemove: (member: WorkspaceMember) => void;
   onOpenChange: (open: boolean) => void;
 }): React.JSX.Element {
-  const currentIds = new Set(current.map((member) => member.id));
+  const currentById = new Map(current.map((member) => [member.id, member]));
+  const activeMembers = members.filter((member) => (member.status ?? 'active') === 'active');
+  const activeMemberIds = new Set(activeMembers.map((member) => member.id));
   // A membership that is not active is one the work-stream endpoint refuses,
   // so offering it here would only produce a failure the person cannot act on.
-  const available = members.filter((member) => (
-    !currentIds.has(member.id) && (member.status ?? 'active') === 'active'
-  ));
+  // Still retain any current participant missing from the active roster: the
+  // work-stream object is authoritative for who is already in this room.
+  const listed = [
+    ...activeMembers.map((member) => currentById.get(member.id) ?? member),
+    ...current.filter((member) => !activeMemberIds.has(member.id)),
+  ];
   return (
     <Modal
       description="Opening or viewing never adds someone as a participant. Add them explicitly here."
@@ -253,19 +260,55 @@ export function AddParticipantDialog({
       title="Add a participant"
     >
       {error ? <InlineError>{error}</InlineError> : null}
-      {available.length === 0 ? (
-        <EmptyState title="Everyone is already here" description="There are no other workspace members to add." />
-      ) : (
-        <div className="member-action-list">
-          {available.map((member) => (
-            <button disabled={pending} key={member.id} onClick={() => onAdd(member)} type="button">
+      <div className="member-action-list">
+        {listed.map((member) => {
+          const isParticipant = currentById.has(member.id);
+          if (!isParticipant) {
+            return (
+              <button
+                aria-label={`Add ${member.name} to work stream`}
+                className="member-action-row"
+                disabled={pending}
+                key={member.id}
+                onClick={() => onAdd(member)}
+                type="button"
+              >
+                <Avatar member={member} size="medium" />
+                <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
+              </button>
+            );
+          }
+          return (
+            <div className="member-action-row" key={member.id}>
               <Avatar member={member} size="medium" />
               <span><strong>{member.name}</strong><small>{member.email}</small></span>
-              {pending ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}
-            </button>
-          ))}
-        </div>
-      )}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton
+                    disabled={pending}
+                    label={`${member.name} participant actions`}
+                    showTooltip={false}
+                  >
+                    {pending ? <LoaderCircle className="spin" size={15} /> : <Ellipsis size={16} />}
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content align="end" className="menu-content" sideOffset={6}>
+                    <DropdownMenu.Item
+                      className="menu-item menu-item-danger"
+                      disabled={current.length <= 1 || pending}
+                      onSelect={() => onRemove(member)}
+                    >
+                      Remove from work stream
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            </div>
+          );
+        })}
+      </div>
     </Modal>
   );
 }
@@ -1466,6 +1509,23 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
+  const removeParticipant = useMutation({
+    mutationFn: (member: WorkspaceMember) => api!.removeParticipant(id, member.id),
+    onSuccess: (_result, member) => {
+      const previous = queryClient.getQueryData<WorkstreamDetail>(['workstream', id]);
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current ? {
+        ...current,
+        participants: current.participants.filter((participant) => participant.id !== member.id),
+      } : current);
+      void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
+      if (member.id === session?.user.id && previous?.scope === 'personal') {
+        setParticipantDialogOpen(false);
+        queryClient.removeQueries({ queryKey: ['workstream', id], exact: true });
+        void navigate('/workstreams/new', { replace: true });
+      }
+    },
+  });
+
   // The header renames in place, so both the open detail and the sidebar list
   // have to show the new title without a refetch round trip.
   const renameWorkstream = useMutation({
@@ -2129,18 +2189,28 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <AddParticipantDialog
         current={displayedDetail.participants}
-        error={addParticipant.error?.message}
+        error={addParticipant.error?.message ?? removeParticipant.error?.message}
         members={members.data ?? []}
-        onAdd={(member) => addParticipant.mutate(member)}
+        onAdd={(member) => {
+          removeParticipant.reset();
+          addParticipant.mutate(member);
+        }}
+        onRemove={(member) => {
+          addParticipant.reset();
+          removeParticipant.mutate(member);
+        }}
         onOpenChange={(next) => {
           // A refused add is only worth showing while the dialog that provoked
           // it is open. Reopening starts clean rather than reporting the last
           // attempt as though it were this one.
-          if (!next) addParticipant.reset();
+          if (!next) {
+            addParticipant.reset();
+            removeParticipant.reset();
+          }
           setParticipantDialogOpen(next);
         }}
         open={participantDialogOpen}
-        pending={addParticipant.isPending}
+        pending={addParticipant.isPending || removeParticipant.isPending}
       />
       <AddResourceDialog
         current={displayedDetail.resources}

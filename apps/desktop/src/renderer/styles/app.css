@@ -2375,16 +2375,17 @@ pre {
 .member-picker-list,
 .member-action-list { display: grid; gap: 4px; }
 .member-picker-row,
-.member-action-list button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); display: flex; gap: 10px; min-height: 48px; padding: 7px 9px; position: relative; text-align: left; width: 100%; }
+.member-action-row { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); display: flex; gap: 10px; min-height: 48px; padding: 7px 9px; position: relative; text-align: left; width: 100%; }
 .member-picker-row:hover,
-.member-action-list button:hover { background: var(--av-sys-color-surface-raised); }
+.member-action-row:hover { background: var(--av-sys-color-surface-raised); }
 .member-picker-row > input { opacity: 0; position: absolute; }
 .member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),
-.member-action-list button > span:not(.avatar) { display: flex; flex: 1; flex-direction: column; }
+.member-action-row > span:not(.avatar) { display: flex; flex: 1; flex-direction: column; }
 .member-picker-row strong,
 .member-action-list strong { font-size: 12px; }
 .member-picker-row small,
 .member-action-list small { color: var(--av-sys-color-text-muted); font-size: 10.5px; }
+.member-action-row > .icon-button { flex: 0 0 auto; }
 .member-checkbox { border: 1px solid var(--av-ref-color-line-5); border-radius: var(--av-sys-size-radius-xs); flex: 0 0 16px; height: 16px; width: 16px; }
 .member-picker-row:has(input:focus-visible) .member-checkbox { outline: 2px solid var(--av-sys-color-focus-quiet); outline-offset: 2px; }
 .member-picker-row:has(input:checked) .member-checkbox { background: var(--av-sys-color-accent-base); border-color: var(--av-sys-color-accent-base); box-shadow: inset 0 0 0 3px var(--av-ref-color-neutral-1); }
