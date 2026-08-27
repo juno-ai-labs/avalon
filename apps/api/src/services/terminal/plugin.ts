@@ -303,6 +303,16 @@ export async function createAvalonTerminalPlugin(
             repositoryPreparationCode = await prepareRepositoryForActivation(runtimeContext, sandbox);
           });
         });
+        // A selected repository that could not be prepared must be revalidated
+        // by the first ordinary tool. Keep activation successful so
+        // checkout_repository remains available, but do not let the shared
+        // acquisition promise bypass revoked authorization or stale checkout
+        // state. With no repository selected, the sandbox itself is fully
+        // prepared and remains the warm first-tool path.
+        if (repositoryPreparationCode !== null
+          && repositoryPreparationCode !== "repository_not_configured") {
+          runtime.discardPreparation(terminalContext);
+        }
         const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "info", "terminal_plugin_activation_finished", {
           workspace_id: context.workspaceId,
