@@ -52,7 +52,7 @@ Settings also offers **Google Mail + Calendar** and **Google Drive + Docs + Shee
 
 ## Brand
 
-The canonical woven Rally mark is generated into `assets/brand/rally-mark.png` and copied to desktop and site surfaces by `scripts/generate-brand-assets.py`. The macOS app uses the native Icon Composer asset at `apps/desktop/resources/icon.icon`, allowing the system to own its enclosure, effects, and appearance treatment; a generated ICNS remains only for the DMG volume. Read the desktop application icon documentation before changing the artwork. Brand primary is `#CEDC00`; secondary is `#47C7FC`.
+The public site's pages render the redesigned vector mark (`apps/site/public/brand/rally-mark.svg`, plus a thicker-stroke small cut), and `assets/brand/rally-mark.png` plus the provider-manifest URL `/brand/rally-mark.png` were re-rendered from that vector. The generator `scripts/generate-brand-assets.py` still holds the earlier woven mark in its source mask — do not rerun it until the mask is redrawn from the new vector, or it will regress both PNGs; the desktop icons, favicon, and social card carry the woven mark until that regeneration. The macOS app uses the native Icon Composer asset at `apps/desktop/resources/icon.icon`, allowing the system to own its enclosure, effects, and appearance treatment; a generated ICNS remains only for the DMG volume. Read the desktop application icon documentation before changing the artwork. Brand primary is `#CCFF00`; secondary is `#47C7FC`.
 
 ## Quality commands
 
