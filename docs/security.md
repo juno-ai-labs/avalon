@@ -233,8 +233,9 @@ that capability only from the primary application window, validates the URL
 against configured regional `ws`/`wss` origins and the declared control/feed
 route shape, rejects credentials, query, and fragment, requires the public
 ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
-renderer cannot choose a header or turn the broker into an arbitrary network
-client. Runtime URL schemas likewise name their
+renderer chooses only the validated ticket subprotocol offer that becomes
+`Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
+into an arbitrary network client. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
 because it accepts non-web schemes such as `javascript:` and `data:` while hiding
@@ -678,7 +679,9 @@ or close WorkstreamDO control and SubstreamAgent feed sockets through typed IPC.
 Main parses every input, confines the URL to a configured regional socket
 origin and the route shape declared by the socket kind, requires the ticket
 sentinel, supplies the application Origin, and terminates all sockets on
-renderer navigation or destruction. Settings and Meeting renderers are denied.
+renderer navigation, destruction, or process exit. The Node transport resolves
+proxies through Electron and includes operating-system CA roots. Settings and
+Meeting renderers are denied.
 
 **Why:** Moving these two handshake types out of Chromium removes its
 same-endpoint connection queue, but a generic main-process WebSocket bridge
@@ -693,7 +696,8 @@ broader than the authenticated ticket endpoints it replaces.
 **Consequences:** New brokered socket purposes require an explicit kind and
 path-validation branch. Tickets remain renderer-visible because the existing
 ticket protocol needs them, but main never logs protocols or URLs and no ticket
-is placed in a URL.
+is placed in a URL. Unsupported proxy directives fail the connection rather
+than falling back to a direct route that could bypass network policy.
 
 Shipped in #341.
 

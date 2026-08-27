@@ -160,6 +160,10 @@ serialize a swarm; the control and feed ticket requests and handshakes do not
 await one another. Main-to-renderer events use one bridge listener and an O(1)
 socket-ID lookup rather than broadcasting every frame to every warmed adapter.
 Browser development continues to use native WebSockets.
+The Node broker resolves every new destination through Electron's system/PAC
+proxy configuration and trusts both Node's bundled roots and the operating
+system CA store. Moving handshakes out of Chromium therefore does not opt the
+work-stream swarm out of managed-network routing or locally installed trust.
 While the HyperSight panel is visible it additionally maintains one direct socket per
 configured block. Switching away keeps the exact metadata/feed socket pair
 mounted for at least five minutes, so returning to a recently viewed work stream
@@ -580,6 +584,29 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-26 — Node socket transport retains Electron network policy
+
+**What changed:** The work-stream socket broker now resolves proxies through
+Electron and includes operating-system CA roots, tears down owners when a
+renderer process exits, validates browser-compatible close codes and UTF-8
+reason length, and fails closed if the native close call throws.
+
+**Why:** Independent handshakes remove Chromium's endpoint queue, but raw Node
+defaults do not automatically inherit Electron's proxy selection or platform
+trust. Lifecycle and close-frame edges also need to preserve the invariant that
+no socket remains addressable after its owner or close operation fails.
+
+**Considered and rejected:** Separate Chromium sessions preserve browser
+networking but duplicate session state and reintroduce the complexity the raw
+transport broker was chosen to avoid. Silently falling back to a direct
+connection after an unsupported proxy directive would bypass network policy.
+
+**Consequences:** A proxy-resolution failure is a connection failure rather
+than a direct-network fallback. Browser and broker close validation now agree,
+and renderer crashes release their socket swarm immediately.
+
+Shipped in #341.
 
 ### 2026-08-26 — Electron opens work-stream socket swarms outside Chromium's endpoint lock
 

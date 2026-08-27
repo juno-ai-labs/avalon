@@ -44,6 +44,7 @@
     "electron-updater": "6.8.9",
     "lucide-react": "latest",
     "prism-react-renderer": "^2.4.1",
+    "proxy-agent": "8.0.2",
     "react": "latest",
     "react-dom": "latest",
     "react-hook-form": "latest",

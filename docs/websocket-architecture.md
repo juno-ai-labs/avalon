@@ -28,7 +28,7 @@ protocol inside each Durable Object.
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Presents a browser-shaped socket to both work-stream hooks and maps Electron sockets onto one socket-ID-multiplexed preload listener. Browser development falls back to the native `WebSocket` constructor. |
 | `apps/desktop/src/common/realtime-socket.ts` | Defines the closed IPC schemas for opening, sending, closing, and receiving brokered socket events. |
 | `apps/desktop/src/preload/index.ts` | Exposes only the typed broker operations to the sandboxed renderer and validates events arriving from main. |
-| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Node `ws` connections, validates every destination, supplies the Rally application Origin, relays events, and terminates sockets with their renderer owner. |
+| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Node `ws` connections, validates every destination, follows Electron's system/PAC proxy resolution and operating-system CA trust, supplies the Rally application Origin, relays events, and terminates sockets with their renderer owner. |
 | `apps/api/src/routes/socket.ts` | Receives public WebSocket upgrades and sends each accepted request through the correct regional Durable Object namespace. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies purpose-specific socket tickets and constructs the clean upgrade subrequest. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API. |
@@ -76,7 +76,9 @@ proactive work-stream swarm.
 ### Selecting the swarm
 
 `AppShell` derives one background set from the current WorkspaceDO-owned
-directory:
+directory. The first workspace sync includes every visible running row in
+addition to its 250-row recent page, so an old active run cannot fall outside
+the client's candidate set:
 
 - every pinned work stream;
 - the five most recently active unpinned work streams; and
@@ -108,7 +110,10 @@ Node `ws` client. Open, message, error, and close events return over a single
 preload subscription and are routed in O(1) time by socket ID. The existing
 renderer hooks therefore retain ownership of protocol parsing, caches,
 heartbeats, reconnect jitter, replay, and telemetry; main owns raw transport
-only.
+only. Main asks Electron to resolve the destination through the configured
+system or PAC proxy and gives Node both its bundled and operating-system CA
+roots. The broker therefore avoids Chromium's handshake queue without silently
+bypassing a managed network or interception certificate.
 
 In browser development, the same adapter uses the native `WebSocket`
 constructor. That path preserves development compatibility but does not provide
@@ -140,8 +145,11 @@ frame advances cached state; transport warmth is never treated as authority.
 
 Normal route changes do not destroy a retained owner. A full main-frame
 navigation, reload, or window close calls `closeOwner` with the renderer's
-`webContents` ID and terminates every Node socket belonging to it. An ordinary
-socket close removes that socket ID from both main and renderer routing tables.
+`webContents` ID and terminates every Node socket belonging to it. A renderer
+crash performs the same owner teardown. An ordinary socket close removes that
+socket ID from both main and renderer routing tables; invalid close codes or
+oversized UTF-8 reasons are rejected before IPC and a native close exception
+terminates and forgets the affected socket.
 Server access revocation remains terminal and prevents the affected state
 machine from reconnecting.
 
@@ -226,9 +234,9 @@ open transport as success.
   with command admission and server persistence.
 - **The renderer cannot turn the broker into a general network client.** Main
   must continue to validate the configured regional origin, exact route shape,
-  declared kind, clean URL, and ticket sentinel, and must supply the Origin
-  itself. Weakening this gives compromised renderer content arbitrary Node
-  networking authority.
+  declared kind, clean URL, and constrained ticket subprotocol offer, and must
+  supply the Origin itself. Weakening this gives compromised renderer content
+  arbitrary Node networking authority.
 - **A renderer owns every brokered socket it opens.** Send and close operations
   key by both `webContents` ID and socket UUID, so one window cannot address
   another window's connection and teardown cannot strand sockets.
@@ -270,7 +278,10 @@ move WorkspaceDO, HyperSight block, or dictation transport into Node.
   ID.
 - **The main process or renderer exits:** operating-system socket teardown is the
   final backstop, and explicit owner teardown terminates connections during a
-  managed navigation or close.
+  managed navigation, close, or renderer-process crash.
+- **The system proxy or trusted CA changes:** each new connection resolves its
+  proxy through Electron; application restart rebuilds the broker with the
+  current bundled and operating-system CA roots.
 - **Many work streams qualify:** every pin and every running work stream is
   intentionally included, plus five recent unpinned rows and retained pairs.
   This architecture adds no unmeasured defensive cap; changing that product
@@ -368,6 +379,35 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-08-26 — Broker hardening preserves managed networks and complete prewarm discovery
+
+**What changed:** Node-owned work-stream sockets now use Electron's system/PAC
+proxy resolution and the operating-system CA roots, renderer crashes terminate
+their owned sockets, and malformed close frames cannot strand an addressable
+broker entry. The initial WorkspaceDO directory payload now supplements its
+recent page with every visible running work stream, including runs older than
+the 250-row page. The adapter ignores open/message events after close begins,
+and the ticket-provenance lint rule follows aliased and namespace imports.
+
+**Why:** Parallel Node handshakes must not bypass enterprise network policy, and
+proactive warming cannot cover “every running work stream” if candidate
+discovery itself stops at a pagination boundary. Review also identified process
+and protocol edges that could leave transport state inconsistent after a crash
+or invalid close attempt.
+
+**Considered and rejected:** Returning the sockets to Chromium would restore its
+proxy behavior but also restore the endpoint handshake serialization this
+architecture removes. Treating the first 250 rows as an intentional cap was
+also rejected because running is a live product state, not a recency guess.
+
+**Consequences:** Proxy resolution occurs for each new connection, CA roots are
+captured when the broker is created, and the initial sidebar page can exceed
+250 rows. Its combined pins-and-running response has no separate guessed cap;
+the recent portion remains cursor-bounded. Future connection targets must
+preserve both the discovery guarantee and owner teardown paths.
+
+Shipped in #341.
 
 ### 2026-08-26 — Proactive expansion requires user intent and bounded reasoning
 

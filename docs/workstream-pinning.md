@@ -82,7 +82,9 @@ order is not reachable by pointer alone. Plain arrows are left to move focus.
 In Electron, every pinned row also keeps its WorkstreamDO control socket and
 substream `0` feed socket proactively connected. It joins the active work
 stream, the five most recently active unpinned rows, and any running work stream
-in the socket pool; pin order does not sequence their handshakes.
+in the socket pool; pin order does not sequence their handshakes. WorkspaceDO
+supplements the first 250-row recent page with every visible running row, so an
+older active run is not omitted from that pool by pagination.
 
 Holding Command overlays `⌘1` through `⌘9` on one continuous row order: pinned
 work streams first in their manual order, followed by recent work streams and
@@ -273,7 +275,9 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 **What changed:** Every pinned work stream now participates in Electron's
 background realtime pool with both its WorkstreamDO control connection and
 substream `0` feed connection. The same pool retains the five most recently
-active unpinned rows and any other running work stream.
+active unpinned rows and any other running work stream. WorkspaceDO supplements
+its first recent page with all visible running rows so pagination cannot hide a
+connection target.
 
 **Why:** A pin is the user's durable declaration that a work stream should be
 immediately reachable. Warming only the visible row or only its metadata still
