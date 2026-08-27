@@ -212,7 +212,9 @@ renames inline, the participant face pile opens the shared people picker, and
 scope changes through a confirming live dropdown. Default resources use a
 right-aligned modal picker. Project navigation expands its accordion, sidebar
 plus actions align without painted hover containers, and Add to project uses a
-reusable nested-menu component with a selected checkmark.
+reusable nested-menu component with a selected checkmark. The creation form
+uses the shared dropdown and themed text field, and its icon grid previews the
+currently selected project color across every icon.
 
 **Why:** One Settings dialog hid unrelated actions behind an extra step and
 made a partially saved multi-mutation form possible. The inline resource

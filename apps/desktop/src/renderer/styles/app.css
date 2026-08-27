@@ -715,6 +715,9 @@ pre {
 .project-icon-pile-item { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-subtle); border-radius: 50%; display: inline-flex; height: 20px; justify-content: center; width: 20px; }
 .project-icon-pile-item + .project-icon-pile-item { margin-left: -6px; }
 .project-create-form { display: grid; gap: 18px; }
+.project-create-form .form-field > input { background: var(--av-sys-color-surface-sunken); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-default); font: inherit; outline: 0; padding: 9px 10px; width: 100%; }
+.project-create-form .form-field > input:focus { border-color: var(--av-ref-color-line-6); box-shadow: var(--av-sys-focus-ring-quiet); }
+.project-create-form .dropdown-select-trigger { width: 100%; }
 .project-create-form fieldset,
 .project-appearance-picker fieldset { border: 0; margin: 0; padding: 0; }
 .project-create-form legend,
