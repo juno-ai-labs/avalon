@@ -274,9 +274,10 @@ streams. Project settings in the project space provide the same fields for
 later editing, plus participants.
 
 Name, icon, and color are presentation only. Editing them does not change the
-project's propagation generation or invalidate an in-flight audience, resource,
-membership, start, archive, or restore operation. Each of those operations
-fences the narrower configuration generations it actually depends on.
+project's audience, lifecycle, per-membership, or per-default generations or
+invalidate an in-flight audience, resource, membership, start, archive, or
+restore operation. Each operation fences only the configuration generations it
+actually depends on.
 
 When the person may read at least one archiving, archived, restoring, or
 restore-cancelling project, the **New project** dialog footer also offers
@@ -690,6 +691,15 @@ one of the member work streams is refused until the person has been added to
 the project and this operation has completed. An empty project has no targets,
 so the participant becomes active in the creating transaction.
 
+A failed addition also offers **Cancel participant addition**. Cancellation
+changes the audience operation to `cancelling`, prevents unclaimed targets from
+being claimed, and waits for every live target lease to settle or expire. The
+final transaction changes the never-active `adding` participant to `removed`,
+marks the operation `cancelled`, and releases the project fence. Participants
+already added to individual work streams stay there as ordinary work-stream
+participants; cancellation removes their project access but does not pretend
+that an already-applied audience expansion was rolled back.
+
 Removing a participant from a personal project starts with the same
 authorization and final-reader checks whether or not the project has work
 streams. The caller may remove themself; removing somebody else fails with
@@ -763,6 +773,14 @@ will make them a participant, and the scope transaction seats them before
 narrowing. The command can therefore never create a personal project with no
 reader or make its work streams private as a side effect. Widening an empty
 project completes in the creating transaction.
+
+A failed widening also offers **Cancel scope change**. It uses the same
+`cancelling` state and live-lease barrier: unclaimed targets stop, live claims
+settle or expire, and only then does the final transaction clear the pending
+workspace scope, leave the project personal, mark the operation `cancelled`,
+and release the project fence. Work streams already widened to workspace scope
+remain workspace-scoped. That is a safe monotonic effect, and the project does
+not advertise workspace access because its own scope never became active.
 
 While one of these audience operations is unfinished, `WorkspaceDO` refuses a
 second participant addition or project-scope change and any add, move,
@@ -891,11 +909,14 @@ meaningless local `workspace_id` column.
   `restoring`, or `cancelling_restore`), optional `archived_at` and
   `archived_by_user_id`, `created_by_user_id`,
   `created_at`, `updated_at`, a monotonic `presentation_revision`, and a
-  separate monotonic `propagation_generation`. Name, icon, and color edits
-  advance only presentation revision. Scope, participant, default, membership,
-  and lifecycle changes advance the propagation generation used by audience
-  and resource fences. `normalized_name` is unique among projects in every
-  lifecycle state so restoring a project cannot collide with a newer name.
+  monotonic `audience_generation` and `lifecycle_generation`. Name, icon, and
+  color edits advance only presentation revision. Scope and participant changes
+  advance the audience generation. Archive, restore, and cancellation lifecycle
+  transitions advance the lifecycle generation. Membership and default rows
+  own their narrower generations; changing one membership never invalidates an
+  operation for a different work stream. `normalized_name` is unique among
+  projects in every lifecycle state so restoring a project cannot collide with
+  a newer name.
   `icon_key` is restricted to the 25 V1 keys; `icon_color_key` is restricted to
   the 12 V1 project-color keys.
 - `project_participants` owns `adding`, `active`, `removing`, and `removed`
@@ -906,8 +927,12 @@ meaningless local `workspace_id` column.
   active participant to zero; pending additions do not satisfy that invariant.
 - `project_audience_operations` owns one durable root for a `participant_add`,
   `participant_remove`, or `scope_widen`. It stores the operation and project
-  IDs, actor, expected project propagation generation, optional participant and
-  pending scope, and `pending`, `running`, `failed`, or `applied` state.
+  IDs, actor, expected project lifecycle and audience generations, optional
+  participant and pending scope, and `pending`, `running`, `failed`,
+  `cancelling`, `applied`, or `cancelled` state. Cancelling an addition removes
+  the never-active participant after live claims finish; cancelling a widening
+  clears its pending scope. Neither path reverses audience already applied to a
+  work stream.
 - `project_audience_targets` owns one receipt per operation and member work
   stream. It stores the operation, project, participant when applicable, and
   work-stream IDs; expected membership and audience generations; and
@@ -924,14 +949,16 @@ meaningless local `workspace_id` column.
   state. One nonterminal reservation per work stream blocks a project mutation
   from invalidating the guard before `WorkstreamDO` records its effect receipt.
 - `project_workstreams` owns `project_id`, `workstream_id`, who added it, when
-  it was added, the admitted project/work-stream audience generations, and the
-  `joining`, `active`, or `leaving` admission state. Per-resource receipt state
+  it was added, a monotonic `membership_generation`, the admitted project and
+  work-stream audience generations, and the `joining`, `active`, or `leaving`
+  admission state. Per-resource receipt state
   lives in `project_resource_applications`; the project space reads both sources
   for bulk progress. Its primary key is `(project_id, workstream_id)`. There is
   deliberately no uniqueness constraint on `workstream_id`.
 - `project_membership_operations` owns a staged add, move, or removal. It stores
   the operation, work-stream, optional source and destination project IDs;
-  expected project propagation, membership, audience, and default generations;
+  expected destination lifecycle and audience generations, that membership's
+  generation, and each captured default row's generation;
   `configuring`, `ready`, `cancelling`, `applied`, `failed`, or `cancelled`
   state; its audience target; and the resource-application set. One nonterminal
   operation reserves the work stream. The destination becomes active and the
@@ -939,8 +966,9 @@ meaningless local `workspace_id` column.
   receipt or removal barrier is satisfied.
 - `project_workstream_starts` owns the resumable gate for a work stream created
   from a project. It stores a stable start-operation ID; project, work-stream,
-  substream, run, and target-gate IDs; prerequisite audience and resource
-  generations plus the project propagation generation; `configuring`,
+  substream, run, and target-gate IDs; the project lifecycle and audience
+  generations, draft membership generation, and each captured default row and
+  application generation; `configuring`,
   `ready_to_dispatch`, `dispatching`, `active`, `failed`, `cancelling`, or
   `cancelled` state; and the finalization attempt and receipt. The last
   prerequisite receipt and transition to `ready_to_dispatch` commit together.
@@ -950,14 +978,16 @@ meaningless local `workspace_id` column.
   viewer preference, not shared project state, and is never broadcast to other
   users.
 - `project_default_resources` owns one `active` or `removing` row per
-  `(project_id, resource_id)` plus attribution and attachment time.
+  `(project_id, resource_id)` plus a monotonic `default_generation`, attribution,
+  and attachment time.
 - `project_resource_applications` is both the durable enqueue intent and the
   idempotent receipt for one generated application. It owns a stable
   `application_id`; one monotonic `application_generation` sequence per
   `(project_id, resource_id, workstream_id)` tuple, starting at 1 for that
   tuple's first application; the three subject IDs; the expected project
-  propagation generation and membership, default-resource, and audience
-  generations; `pending`, `queued`, `applying`, `reconciling`, `applied`,
+  lifecycle and audience generations, that work stream's membership generation,
+  and that default row's generation; `pending`, `queued`, `applying`,
+  `reconciling`, `applied`,
   `superseded`, or `failed` state; and the delivery attempt or authority-issued
   claim lease used by that state. A uniqueness rule over the three subject IDs and
   `application_generation` deduplicates Queue publication and delivery without
@@ -972,11 +1002,13 @@ meaningless local `workspace_id` column.
   `superseded` state. A target fails only after all of its current publication
   rows prove terminal and no effect claim is live.
 - `project_restore_operations` owns resumable restore work. It records the
-  project propagation generation, requester, `running`, `failed`, `cancelling`,
-  `applied`, or `cancelled` state, and each member work stream's audience and
-  resource readiness. A restore changes `archived` to `restoring` only after its
-  full safety preflight and changes it to `active` only after all targets
-  acknowledge readiness. Cancellation holds `cancelling_restore` and the
+  project lifecycle and audience generations, requester, `running`, `failed`,
+  `cancelling`, `applied`, or `cancelled` state, and each member work stream's
+  captured membership generation, audience readiness, and per-default
+  generations and resource readiness. A restore changes `archived` to
+  `restoring` only after its full safety preflight and changes it to `active`
+  only after all targets acknowledge readiness. Cancellation holds
+  `cancelling_restore` and the
   work-stream reservations until every live claim settles or expires; only then
   does a cancelled operation leave the project archived.
 
@@ -1156,7 +1188,7 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
    do not disclose an archived project to somebody who cannot read it. A reader
    may open an archived conflict and edit its name, icon, or color without
    restoring it. Presentation edits advance a separate revision and do not
-   invalidate propagation receipts.
+   invalidate lifecycle, audience, membership, default, or application receipts.
 2. Projects render immediately below **Actions** and above **Pinned** in the
    current person's fixed server-owned order. Dragging a project between project
    rows persists that order across devices without changing another person's
@@ -1284,11 +1316,15 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
     converge through the regional project-audience Queue. Project access or
     workspace scope becomes active only after all retained targets acknowledge
     the enlarged audience; failed targets remain visible and retryable without
-    replaying successful effects. Default-resource mutations cannot interleave
-    with this convergence, and participant addition or scope widening cannot
-    start while a default-resource application is unfinished. Participant
-    removal remains immediate and replaces any resource applications that its
-    audience change superseded. An exhausted audience failure-consumer message
+    replaying successful effects. Either failed operation can also be cancelled:
+    cancellation blocks new claims, waits for live leases, removes a never-active
+    `adding` participant or clears a pending workspace scope, keeps audience
+    effects already applied to individual work streams, and releases
+    `project_busy` only in its terminal transaction. Default-resource mutations
+    cannot interleave with this convergence, and participant addition or scope
+    widening cannot start while a default-resource application is unfinished.
+    Participant removal remains immediate and replaces any resource applications
+    that its audience change superseded. An exhausted audience failure-consumer message
     is likewise preserved in a passive regional terminal DLQ for visible,
     idempotent operational replay, while authority-owned alarm reconciliation
     remains able to settle the target after the configured primary delivery is
