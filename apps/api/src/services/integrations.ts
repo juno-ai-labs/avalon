@@ -229,7 +229,7 @@ import {
   loadAutomationMemoryTableContext,
 } from "./memory-table-service";
 import { workstreamRunLimits } from "./workstream-run-policy";
-import { TERMINAL_PLUGIN_ID } from "./terminal/contract";
+import { parseTerminalRegionConfiguration, TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
 import type { WorkstreamRuntimeResourceAttacher } from "./workstream-object-client";
 import { requireOpenWorkstreamAuthority } from "./workstream-authority";
@@ -4669,6 +4669,30 @@ async function loadAutomationResultDelivery(
     left.channel.localeCompare(right.channel) || left.destination.localeCompare(right.destination));
 }
 
+/**
+ * Whether this run can land a document as a work-stream resource.
+ *
+ * Two conditions, and the second is the one worth reading twice. The first is
+ * availability: the terminal workspace is what a document is written in, and
+ * where the region has none the guidance would be a procedure the run cannot
+ * follow. The second is where the result is read. A run whose answer leaves
+ * through a delivery path — an automation's frozen destinations, a scheduled
+ * digest's delivery, an inbound email's reply, a Slack thread — delivers a
+ * final message and nothing else, so a document in the rail would be named to
+ * someone with no way to open it. Those origins keep today's inline answer
+ * until their delivery paths can carry a reference to one.
+ *
+ * Delegated child runs need no clause here: they are given their own system
+ * prompt, which this section is not part of.
+ */
+function runPublishesDocuments(env: Env, input: WorkstreamWorkflowInput): boolean {
+  if (parseTerminalRegionConfiguration(env).capability !== "supported") return false;
+  return !input.automationSubscriptionId
+    && !input.digestDeliveryId
+    && !input.slackOrigin
+    && input.reason !== "inbound_email";
+}
+
 async function loadRunPromptContext(
   env: Env,
   input: WorkstreamWorkflowInput,
@@ -4853,6 +4877,7 @@ async function loadRunPromptContext(
       title: workstream.title,
       objective: workstream.objective,
       executionAuthority: input.executionPrincipal.type,
+      documentPublishing: runPublishesDocuments(env, input),
       ...(input.slackOrigin ? { slackOrigin: input.slackOrigin } : {}),
       ...(automationContext ? { automation: automationContext } : {}),
     }),
