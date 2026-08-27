@@ -854,7 +854,7 @@ R2 cleanup must treat every retained version as live until the resource is delet
 
 ### 2026-08-27 — WorkspaceDO gains project authority
 
-**What changed:** WorkspaceDO schema version 13 adds projects, participants,
+**What changed:** WorkspaceDO schema version 14 adds projects, participants,
 per-person project order, and a project-directory waterline with closed
 presentation checks and independent revisions.
 

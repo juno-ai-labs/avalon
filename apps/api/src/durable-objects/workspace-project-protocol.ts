@@ -15,7 +15,6 @@ import { z } from "zod";
 
 export const WorkspaceProjectErrorCodeSchema = z.enum([
   "project_access_denied",
-  "project_name_conflict",
   "project_not_found",
   "project_restore_conflict",
 ]);

@@ -14,10 +14,8 @@ import {
 
 import {
   WorkspaceProjectDirectoryResultSchema,
-  ProjectDefaultResourceQueueMessageSchema,
   WorkspaceProjectDefaultResultSchema,
   WorkspaceProjectMutationResultSchema,
-  type WorkspaceProjectDefaultTarget,
   type WorkspaceProjectErrorCode,
 } from "../durable-objects/workspace-project-protocol";
 import { workspaceDOName } from "../durable-objects/names";
@@ -31,9 +29,6 @@ import { ResourceService } from "./resource-service";
 function projectError(code: WorkspaceProjectErrorCode): ApiError {
   if (code === "project_access_denied") {
     return new ApiError(403, code, "You no longer have access to this workspace");
-  }
-  if (code === "project_name_conflict") {
-    return new ApiError(409, code, "A project with that name already exists");
   }
   if (code === "project_restore_conflict") {
     return new ApiError(409, code, "Resolve the work-stream project conflict before restoring this project");
@@ -86,7 +81,6 @@ export class ProjectService {
       }),
     );
     if (!result.ok) throw projectError(result.code);
-    await this.publishDefaultTargets(result.targets);
     return result.project;
   }
 
@@ -121,9 +115,17 @@ export class ProjectService {
       .filter((participant) => participant.state === "active")
       .map((participant) => participant.userId));
     const requestedParticipants = new Set(input.participantUserIds);
-    for (const resourceId of current.defaultResourceIds) {
-      await this.assertResourceAudience(resourceId, input.scope, [...requestedParticipants]);
+    const removedParticipantIds = [...currentParticipants]
+      .filter((userId) => !requestedParticipants.has(userId));
+    if (removedParticipantIds.some((userId) => userId !== this.auth.userId)
+      && this.auth.role !== "owner" && this.auth.role !== "admin") {
+      throw new ApiError(403, "participant_removal_denied", "Only a workspace owner or admin can remove another project participant");
     }
+    await this.assertResourcesAudience(
+      current.defaultResourceIds,
+      input.scope,
+      [...requestedParticipants],
+    );
     const workstreams = new WorkstreamService(this.env, this.auth);
     for (const workstreamId of current.workstreamIds) {
       if (input.scope === "workspace") {
@@ -131,6 +133,9 @@ export class ProjectService {
       } else {
         for (const userId of requestedParticipants) {
           if (!currentParticipants.has(userId)) await workstreams.addParticipant(workstreamId, userId);
+        }
+        for (const userId of removedParticipantIds) {
+          await workstreams.removeParticipant(workstreamId, userId, { projectEffect: true });
         }
       }
     }
@@ -160,6 +165,12 @@ export class ProjectService {
     if (!await new WorkstreamDirectoryService(this.env, this.auth).visible(workstreamId)) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
+    const current = (await this.list()).items.find((project) => project.id === projectId);
+    if (!current) throw projectError("project_not_found");
+    if (current.workstreamIds.includes(workstreamId)) return current;
+    const workstreams = new WorkstreamService(this.env, this.auth);
+    const workstream = current.scope === "personal" ? await workstreams.get(workstreamId) : null;
+    if (workstream) this.assertPersonalProjectWorkstreamAudience(current, workstream);
     const workspace = await this.workspace();
     const plan = await workspace.prepareProjectMembership({
       workspaceId: this.auth.workspaceId,
@@ -179,7 +190,9 @@ export class ProjectService {
       sourceDetached: plan.sourceDetached,
     };
     try {
-      const workstreams = new WorkstreamService(this.env, this.auth);
+      if (workstream && plan.project.scope === "personal") {
+        this.assertPersonalProjectWorkstreamAudience(plan.project, workstream);
+      }
       if (plan.project.scope === "workspace") {
         await workstreams.update(workstreamId, { scope: "workspace" });
       } else {
@@ -205,8 +218,8 @@ export class ProjectService {
     await new ResourceService(this.env, this.auth).get(resourceId);
     const project = (await this.list()).items.find((candidate) => candidate.id === projectId);
     if (!project) throw projectError("project_not_found");
-    await this.assertResourceAudience(
-      resourceId,
+    await this.assertResourcesAudience(
+      [resourceId],
       project.scope,
       project.participants.filter((participant) => participant.state === "active").map((participant) => participant.userId),
     );
@@ -219,7 +232,6 @@ export class ProjectService {
       }),
     );
     if (!result.ok) throw projectError(result.code);
-    await this.publishDefaultTargets(result.targets);
     return result.project;
   }
 
@@ -249,8 +261,8 @@ export class ProjectService {
     return result.project;
   }
 
-  private async assertResourceAudience(
-    resourceId: string,
+  private async assertResourcesAudience(
+    resourceIds: readonly string[],
     scope: "personal" | "workspace",
     participantUserIds: string[],
   ): Promise<void> {
@@ -260,33 +272,38 @@ export class ProjectService {
           WHERE workspace_id = ? AND status = 'active' ORDER BY user_id`,
       ).bind(this.auth.workspaceId).all<{ user_id: string }>()).results.map((row) => row.user_id)
       : participantUserIds;
-    for (const userId of new Set(readerIds)) {
-      try {
-        // ResourceService routes product reads through WorkspaceDO and applies
-        // every connector, note, upload, and inbound-email visibility rule.
-        // Reusing it avoids a parallel audience model and any query of the
-        // retired D1 product tables.
-        await new ResourceService(this.env, { ...this.auth, userId: asUserId(userId) }).get(resourceId);
-      } catch (error) {
-        if (!(error instanceof ApiError) || error.status !== 404) throw error;
-        throw new ApiError(422, "project_resource_audience_mismatch", "Every project participant must be able to read a default resource");
-      }
+    const uniqueReaderIds = [...new Set(readerIds)];
+    for (const resourceId of resourceIds) {
+      await Promise.all(uniqueReaderIds.map(async (userId) => {
+        try {
+          // ResourceService routes product reads through WorkspaceDO and applies
+          // every connector, note, upload, and inbound-email visibility rule.
+          // Reusing it avoids a parallel audience model and any query of the
+          // retired D1 product tables.
+          await new ResourceService(this.env, { ...this.auth, userId: asUserId(userId) }).get(resourceId);
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 404) throw error;
+          throw new ApiError(422, "project_resource_audience_mismatch", "Every project participant must be able to read a default resource");
+        }
+      }));
     }
   }
 
-  private async publishDefaultTargets(
-    targets: WorkspaceProjectDefaultTarget[],
-  ): Promise<void> {
-    for (let index = 0; index < targets.length; index += 100) {
-      await this.env.ACTIVITY_QUEUE.sendBatch(targets.slice(index, index + 100).map((target) => ({
-        body: ProjectDefaultResourceQueueMessageSchema.parse({
-          type: "project_default_resource",
-          region: this.env.AVALON_REGION,
-          workspaceId: this.auth.workspaceId,
-          requestedByUserId: this.auth.userId,
-          ...target,
-        }),
-      })));
+  private assertPersonalProjectWorkstreamAudience(
+    project: ProjectSummary,
+    workstream: Awaited<ReturnType<WorkstreamService["get"]>>,
+  ): void {
+    const projectParticipantIds = new Set(project.participants
+      .filter((participant) => participant.state === "active")
+      .map((participant) => participant.userId));
+    const hasExtraReader = workstream.participants
+      .some((participant) => !projectParticipantIds.has(participant.user.id));
+    if (workstream.scope !== "personal" || hasExtraReader) {
+      throw new ApiError(
+        409,
+        "project_workstream_audience_mismatch",
+        "Make the work stream personal and add each of its participants to the project first",
+      );
     }
   }
 

@@ -4,6 +4,8 @@ import {
   IdSchema,
   MESSAGE_MAX_CHARACTERS,
   MESSAGE_TOO_LONG_MESSAGE,
+  PROJECT_COLOR_KEYS,
+  PROJECT_ICON_KEYS,
   UserIdSchema,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -11,6 +13,7 @@ import {
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
+  WorkspaceProjectSnapshotEventSchema,
   WorkspaceSidebarListEventSchema,
   WorkspaceSidebarSchema,
   WorkspaceWorkstreamPageEventSchema,
@@ -27,6 +30,7 @@ import {
   type AutomationSummary,
   type WorkspaceSidebar,
   type NoteSummary,
+  type ProjectSnapshot,
   type Workstream,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
@@ -76,6 +80,7 @@ import {
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
+  scheduledAlarmRetryDelay,
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
@@ -291,6 +296,7 @@ import {
   type WorkspaceProjectWorkstreamConstraintResult,
 } from "./workspace-project-protocol";
 import { WorkspaceProjectStorage } from "./workspace-project-storage";
+import { publishProjectDefaultResourceTargets } from "./workspace-project-default-publication";
 import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
@@ -523,6 +529,10 @@ const WORKSPACE_SCHEDULE_ALARM_KINDS: readonly WorkspaceScheduleTargetKind[] = [
 
 function isWorkspaceScheduleAlarmKind(kind: string): kind is WorkspaceScheduleTargetKind {
   return (WORKSPACE_SCHEDULE_ALARM_KINDS as readonly string[]).includes(kind);
+}
+
+function projectRegistrySql(values: readonly string[]): string {
+  return values.map((value) => `'${value.replaceAll("'", "''")}'`).join(", ");
 }
 
 export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigration[] = [{
@@ -1142,18 +1152,9 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `CREATE TABLE projects (
       project_id TEXT PRIMARY KEY,
       name TEXT NOT NULL CHECK (length(trim(name)) > 0),
-      normalized_name TEXT NOT NULL UNIQUE CHECK (length(normalized_name) > 0),
-      icon_key TEXT NOT NULL CHECK (icon_key IN (
-        'briefcase', 'target', 'calendar-days', 'list-checks', 'clipboard-list',
-        'file-text', 'folder', 'lightbulb', 'star', 'flag', 'rocket',
-        'chart-no-axes-combined', 'calculator', 'coins', 'users', 'user-search',
-        'handshake', 'megaphone', 'palette', 'image', 'pen-tool', 'package',
-        'building-2', 'globe-2', 'heart'
-      )),
-      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (
-        'gray', 'brown', 'red', 'orange', 'yellow', 'green', 'teal', 'cyan',
-        'blue', 'indigo', 'purple', 'pink'
-      )),
+      normalized_name TEXT NOT NULL CHECK (length(normalized_name) > 0),
+      icon_key TEXT NOT NULL CHECK (icon_key IN (${projectRegistrySql(PROJECT_ICON_KEYS)})),
+      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (${projectRegistrySql(PROJECT_COLOR_KEYS)})),
       scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
       status TEXT NOT NULL CHECK (status IN (
         'active', 'archiving', 'archived', 'restoring', 'cancelling_restore'
@@ -1250,6 +1251,42 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     ) STRICT`,
     `CREATE INDEX project_default_resource_targets_pending_idx
       ON project_default_resource_targets(state, project_id, resource_id, workstream_id)`,
+  ],
+}, {
+  version: 17,
+  description: "publish project default-resource targets through a durable outbox",
+  statements: [
+    `CREATE TABLE project_default_resource_publications (
+      project_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      default_generation INTEGER NOT NULL CHECK (default_generation > 0),
+      workstream_id TEXT NOT NULL,
+      membership_generation INTEGER NOT NULL CHECK (membership_generation > 0),
+      requested_by_user_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'accepted')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      next_attempt_at INTEGER NOT NULL CHECK (next_attempt_at >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      accepted_at INTEGER CHECK (accepted_at IS NULL OR accepted_at >= 0),
+      PRIMARY KEY (project_id, resource_id, default_generation, workstream_id, membership_generation),
+      FOREIGN KEY (project_id, resource_id, default_generation, workstream_id, membership_generation)
+        REFERENCES project_default_resource_targets(
+          project_id, resource_id, default_generation, workstream_id, membership_generation
+        ) ON DELETE CASCADE
+    ) STRICT`,
+    `CREATE INDEX project_default_resource_publications_due_idx
+      ON project_default_resource_publications(state, next_attempt_at, project_id, resource_id)`,
+    `INSERT INTO project_default_resource_publications (
+       project_id, resource_id, default_generation, workstream_id, membership_generation,
+       requested_by_user_id, state, attempts, next_attempt_at, created_at, updated_at, accepted_at
+     )
+     SELECT target.project_id, target.resource_id, target.default_generation, target.workstream_id,
+            target.membership_generation, project.creator_user_id, 'pending', 0,
+            target.updated_at, target.created_at, target.updated_at, NULL
+       FROM project_default_resource_targets target
+       JOIN projects project ON project.project_id = target.project_id
+      WHERE target.state = 'pending'`,
   ],
 }];
 
@@ -1962,16 +1999,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   /**
    * Everything this object wakes for that is not a stored entry.
    *
-   * Only the activity-event retention sweep: it is derived from the oldest row
-   * in a table this object writes constantly, so an entry would be rewritten on
-   * every event. Product work, schedules, watches, maintenance passes, and
-   * Terminal deadlines are all entries, each with its own retry gate.
+   * Activity retention and project-default publication are derived from their
+   * authoritative rows. Product work, schedules, watches, maintenance passes,
+   * and Terminal deadlines are stored entries with their own retry gates.
    */
   protected override nextDerivedAlarmCandidates(): readonly number[] {
     const oldest = this.state.storage.sql.exec<{ created_at: number | null }>(
       `SELECT MIN(created_at) AS created_at FROM workspace_activity_events`,
     ).one().created_at;
-    return oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS];
+    const publication = this.projectStorage().nextDefaultPublicationDueAt();
+    return [
+      ...(oldest === null ? [] : [Number(oldest) + ACTIVITY_EVENT_RETENTION_MS]),
+      ...(publication === null ? [] : [publication]),
+    ];
   }
 
   /**
@@ -1982,10 +2022,29 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * moves with every event this workspace records.
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
+    const workspaceId = this.workspaceId();
+    if (workspaceId) {
+      await this.instrumentWorkspaceAlarmPhase("project_default_publish", undefined, async () => {
+        try {
+          await publishProjectDefaultResourceTargets({
+            storage: this.projectStorage(),
+            queue: this.env.ACTIVITY_QUEUE,
+            workspaceId,
+            region: this.env.AVALON_REGION,
+            now,
+            retryAt: (attempt) => now + scheduledAlarmRetryDelay(attempt),
+          });
+        } catch (error) {
+          logWarn(this.env, "project_default_publication_failed", {
+            workspace_id: workspaceId,
+            reason: error instanceof Error ? error.message : "unknown",
+          });
+        }
+      });
+    }
     await this.instrumentWorkspaceAlarmPhase("activity_reap", undefined, async () => {
       this.reapExpiredActivityEvents(now);
     });
-    const workspaceId = this.workspaceId();
     // Re-derive the whole index before this alarm ends, exactly as the object
     // that used to own it did. A target that just fired has advanced its own
     // canonical row — `runSchedule` writes the next `next_run_at`,
@@ -2482,9 +2541,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().create(request, uuidV7());
-    return WorkspaceProjectMutationResultSchema.parse(project
-      ? { ok: true, project }
-      : { ok: false, code: "project_name_conflict" });
+    this.publishProjectSnapshot();
+    return WorkspaceProjectMutationResultSchema.parse({ ok: true, project });
   }
 
   async listProjects(input: WorkspaceProjectListRequest): Promise<WorkspaceProjectDirectoryResult> {
@@ -2521,6 +2579,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().archive(request);
+    if (project) this.publishProjectSnapshot();
     return WorkspaceProjectMutationResultSchema.parse(project
       ? { ok: true, project }
       : { ok: false, code: "project_not_found" });
@@ -2534,11 +2593,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().restore(request);
-    return WorkspaceProjectDefaultResultSchema.parse(project === "conflict"
+    const result = WorkspaceProjectDefaultResultSchema.parse(project === "conflict"
       ? { ok: false, code: "project_restore_conflict" }
       : project
         ? { ok: true, project: project.project, targets: project.targets }
         : { ok: false, code: "project_not_found" });
+    if (result.ok) this.publishProjectSnapshot();
+    if (result.ok && result.targets.length > 0) await this.armNextAlarm();
+    return result;
   }
 
   async reorderProjects(
@@ -2550,10 +2612,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       return { ok: false, code: "project_access_denied" };
     }
-    return WorkspaceProjectDirectoryResultSchema.parse({
+    const result = WorkspaceProjectDirectoryResultSchema.parse({
       ok: true,
       directory: this.projectStorage().reorder(request.userId, request.order.projectIds),
     });
+    this.publishProjectSnapshot();
+    return result;
   }
 
   async updateProjectPresentation(
@@ -2566,11 +2630,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().updatePresentation(request);
+    if (project !== false) this.publishProjectSnapshot();
     return WorkspaceProjectMutationResultSchema.parse(project === false
       ? { ok: false, code: "project_not_found" }
-      : project === null
-        ? { ok: false, code: "project_name_conflict" }
-        : { ok: true, project });
+      : { ok: true, project });
   }
 
   async updateProjectAudience(input: WorkspaceProjectAudienceRequest): Promise<WorkspaceProjectMutationResult> {
@@ -2587,6 +2650,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().updateAudience(request);
+    if (project) this.publishProjectSnapshot();
     return WorkspaceProjectMutationResultSchema.parse(project
       ? { ok: true, project }
       : { ok: false, code: "project_not_found" });
@@ -2601,9 +2665,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       return { ok: false, code: "project_access_denied" };
     }
-    return WorkspaceProjectMembershipPlanResultSchema.parse(
+    const result = WorkspaceProjectMembershipPlanResultSchema.parse(
       this.projectStorage().prepareMembership(request),
     );
+    if (result.ok) this.publishProjectSnapshot();
+    return result;
   }
 
   async projectWorkstreamConstraints(
@@ -2633,6 +2699,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().finalizeMembership(request);
+    if (project) this.publishProjectSnapshot();
     return WorkspaceProjectMutationResultSchema.parse(project
       ? { ok: true, project }
       : { ok: false, code: "project_not_found" });
@@ -2648,6 +2715,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().cancelMembership(request);
+    if (project) this.publishProjectSnapshot();
     return WorkspaceProjectMutationResultSchema.parse(project
       ? { ok: true, project }
       : { ok: false, code: "project_not_found" });
@@ -2667,6 +2735,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.projectId,
       request.workstreamId,
     );
+    if (project) this.publishProjectSnapshot();
     return WorkspaceProjectMutationResultSchema.parse(project
       ? { ok: true, project }
       : { ok: false, code: "project_not_found" });
@@ -2681,9 +2750,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
       return { ok: false, code: "project_access_denied" };
     }
-    return WorkspaceProjectDefaultResultSchema.parse(
+    const result = WorkspaceProjectDefaultResultSchema.parse(
       this.projectStorage().addDefaultResource(request),
     );
+    if (result.ok) this.publishProjectSnapshot();
+    if (result.ok && result.targets.length > 0) await this.armNextAlarm();
+    return result;
   }
 
   async removeProjectDefaultResource(
@@ -2696,6 +2768,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       return { ok: false, code: "project_access_denied" };
     }
     const project = this.projectStorage().removeDefaultResource(request);
+    if (project) this.publishProjectSnapshot();
     return WorkspaceProjectMutationResultSchema.parse(project
       ? { ok: true, project }
       : { ok: false, code: "project_not_found" });
@@ -2720,6 +2793,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return this.projectStorage().completeDefaultTarget(request);
+  }
+
+  async recordProjectDefaultTargetFailure(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().recordDefaultTargetFailure(request, "resource_attach_failed");
+  }
+
+  async failProjectDefaultTarget(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().failDefaultTarget(request, "project_no_active_participant");
   }
 
   /**
@@ -5014,7 +5101,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         waterline: this.sidebarListWaterline("notes"),
         items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
       },
-      projects: this.projectStorage().list(attachment.userId),
+      projects: this.projectSnapshot(attachment.userId),
     });
   }
 
@@ -5066,6 +5153,40 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         // sidebar again, so a socket that missed this list is not left stale.
       }
     }
+  }
+
+  /**
+   * Re-send both project lists to every subscribed socket, shaped for its user.
+   *
+   * Project presentation, audience, membership, resource, lifecycle, and order
+   * all share the WorkspaceDO project waterline. Sending the complete pair
+   * means an audience removal is represented by absence for the removed person,
+   * and a reconnect can install exactly the same authoritative state.
+   */
+  private publishProjectSnapshot(): void {
+    const occurredAt = new Date().toISOString();
+    // An open workspace socket is the authorization. Access revocation closes
+    // it through the one shared revocation path; do not add a D1 read here.
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      try {
+        socket.send(JSON.stringify(WorkspaceProjectSnapshotEventSchema.parse({
+          type: "workspace_project_snapshot",
+          occurredAt,
+          projects: this.projectSnapshot(attachment.userId),
+        })));
+      } catch {
+        // Reconnect receives this same snapshot in the subscribe payload.
+      }
+    }
+  }
+
+  private projectSnapshot(userId: string): ProjectSnapshot {
+    return {
+      active: this.projectStorage().list(userId),
+      inactive: this.projectStorage().listInactive(userId),
+    };
   }
 
   private async publishDirectorySync(workspaceId: string): Promise<void> {

@@ -1,6 +1,7 @@
 import { CreateWorkstreamRequestSchema, asWorkstreamId } from "@rally/contracts";
 import type {
   ExecutionPrincipal,
+  ProjectSummary,
   Scope,
   SlackOriginContext,
   SlackSearchAuthorization,
@@ -15,7 +16,10 @@ import { workstreamImportHash } from "../durable-objects/workstream-import-hash"
 import {
   WorkspaceProjectMutationResultSchema,
 } from "../durable-objects/workspace-project-protocol";
-import type { WorkspaceProjectMembershipSettleRequestSchema } from "../durable-objects/workspace-project-protocol";
+import type {
+  WorkspaceProjectMembershipPlanResult,
+  WorkspaceProjectMembershipSettleRequestSchema,
+} from "../durable-objects/workspace-project-protocol";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
@@ -87,6 +91,95 @@ interface CreateOptions {
    * the whole diagnosis. See `docs/performance-tracing.md`.
    */
   span?: FlowSpan;
+}
+
+/** Derive a project-start audience without allowing the launcher to widen a personal project. */
+export function resolveProjectWorkstreamAudience(
+  project: ProjectSummary,
+  requestedParticipantUserIds: readonly string[],
+): { scope: Scope; participantUserIds: string[] } {
+  if (project.scope === "workspace") {
+    return { scope: "workspace", participantUserIds: [...new Set(requestedParticipantUserIds)] };
+  }
+  const projectParticipantUserIds = project.participants
+    .filter((participant) => participant.state === "active")
+    .map((participant) => participant.userId);
+  const allowed = new Set(projectParticipantUserIds);
+  if (requestedParticipantUserIds.some((userId) => !allowed.has(userId))) {
+    throw new ApiError(
+      409,
+      "project_workstream_audience_mismatch",
+      "Add that person to the project before starting this work stream",
+    );
+  }
+  return { scope: "personal", participantUserIds: projectParticipantUserIds };
+}
+
+interface ReplayProjectWorkspace {
+  prepareProjectMembership(input: {
+    workspaceId: AuthContext["workspaceId"];
+    userId: AuthContext["userId"];
+    projectId: ProjectSummary["id"];
+    workstreamId: ReturnType<typeof asWorkstreamId>;
+  }): Promise<WorkspaceProjectMembershipPlanResult>;
+  finalizeProjectMembership(
+    input: z.infer<typeof WorkspaceProjectMembershipSettleRequestSchema>,
+  ): Promise<unknown>;
+  cancelProjectMembership(
+    input: z.infer<typeof WorkspaceProjectMembershipSettleRequestSchema>,
+  ): Promise<unknown>;
+}
+
+/** Reconcile the project side effect that is outside the D1 create receipt. */
+export async function reconcileReplayedProjectMembership(input: {
+  workspace: ReplayProjectWorkspace;
+  client: Pick<WorkstreamObjectClient, "update" | "addParticipant" | "attachResource">;
+  auth: AuthContext;
+  projectId: ProjectSummary["id"];
+  workstreamId: ReturnType<typeof asWorkstreamId>;
+  workstream: {
+    scope: Scope;
+    participants: Array<{ user: { id: string } }>;
+  };
+}): Promise<void> {
+  const plan = await input.workspace.prepareProjectMembership({
+    workspaceId: input.auth.workspaceId,
+    userId: input.auth.userId,
+    projectId: input.projectId,
+    workstreamId: input.workstreamId,
+  });
+  if (!plan.ok) throw new ApiError(404, plan.code, "The project is unavailable");
+  const settle = {
+    workspaceId: input.auth.workspaceId,
+    userId: input.auth.userId,
+    projectId: input.projectId,
+    workstreamId: input.workstreamId,
+    membershipGeneration: plan.membershipGeneration,
+    sourceProjectId: plan.sourceProjectId,
+    sourceDetached: plan.sourceDetached,
+  };
+  try {
+    const currentParticipantIds = input.workstream.participants.map((participant) => participant.user.id);
+    resolveProjectWorkstreamAudience(plan.project, currentParticipantIds);
+    if (plan.project.scope === "workspace" && input.workstream.scope !== "workspace") {
+      await input.client.update({ scope: "workspace" });
+    }
+    for (const participant of plan.project.participants) {
+      if (participant.state === "active" && !currentParticipantIds.includes(participant.userId)) {
+        await input.client.addParticipant(participant.userId);
+      }
+    }
+    for (const resourceId of plan.project.defaultResourceIds) await input.client.attachResource(resourceId);
+    const membership = WorkspaceProjectMutationResultSchema.parse(
+      await input.workspace.finalizeProjectMembership(settle),
+    );
+    if (!membership.ok) {
+      throw new ApiError(409, membership.code, "The project changed while the work stream was being prepared");
+    }
+  } catch (error) {
+    await input.workspace.cancelProjectMembership(settle).catch(() => undefined);
+    throw error;
+  }
 }
 
 /** Regional creation coordinator; the new WorkstreamDO owns product state. */
@@ -178,11 +271,27 @@ export class WorkstreamObjectCreationService {
       "0",
       options.span !== undefined,
     );
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
     if (receipt.state === "completed" && receipt.message_id && receipt.harness_run_id) {
       // A replayed create is a different latency question from a first one, so
       // it is labelled rather than folded into the same distribution.
       span.setAttributes({ "rally.create.path": "replayed_receipt" });
       const workstream = await span.step("workstream.create.replayed_detail.read", () => client.get());
+      if (body.projectId) {
+        await reconcileReplayedProjectMembership({
+          workspace,
+          client,
+          auth: this.auth,
+          projectId: body.projectId,
+          workstreamId: asWorkstreamId(receipt.workstream_id),
+          workstream,
+        });
+      }
       return {
         workstream,
         messageId: receipt.message_id,
@@ -191,12 +300,6 @@ export class WorkstreamObjectCreationService {
     }
     span.setAttributes({ "rally.create.path": "fresh" });
 
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
-    );
     let scope = requestedScope;
     let participantUserIds = body.participantUserIds;
     let originResourceIds = options.originResourceIds ?? [];
@@ -211,13 +314,9 @@ export class WorkstreamObjectCreationService {
       if (!plan.ok) {
         throw new ApiError(404, plan.code, "The project is unavailable");
       }
-      scope = plan.project.scope;
-      participantUserIds = [...new Set([
-        ...body.participantUserIds,
-        ...plan.project.participants
-          .filter((participant) => participant.state === "active")
-          .map((participant) => participant.userId),
-      ])];
+      const projectAudience = resolveProjectWorkstreamAudience(plan.project, body.participantUserIds);
+      scope = projectAudience.scope;
+      participantUserIds = projectAudience.participantUserIds;
       originResourceIds = [...new Set([...originResourceIds, ...plan.project.defaultResourceIds])];
       projectSettle = {
         workspaceId: this.auth.workspaceId,

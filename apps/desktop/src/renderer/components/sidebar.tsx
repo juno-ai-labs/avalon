@@ -57,6 +57,7 @@ import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-stor
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
+import { ContextNestedMenu } from './nested-menu';
 
 interface SidebarProps {
   workspace: Workspace;
@@ -661,26 +662,20 @@ function WorkstreamRow({
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
           {projects.length > 0 && (
-            <ContextMenu.Sub>
-              <ContextMenu.SubTrigger className="menu-item">
-                <FileStack aria-hidden="true" size={16} /> Add to project
-                <ChevronDown aria-hidden="true" className="menu-submenu-arrow" size={14} />
-              </ContextMenu.SubTrigger>
-              <ContextMenu.Portal>
-                <ContextMenu.SubContent className="menu-content sidebar-context-menu" sideOffset={4}>
-                  {projects.map((project) => (
-                    <ContextMenu.Item
-                      className="menu-item"
-                      disabled={project.workstreamIds.includes(workstream.id)}
-                      key={project.id}
-                      onSelect={() => onAddToProject(project.id, workstream.id)}
-                    >
-                      <ProjectIcon project={project} /> {project.name}
-                    </ContextMenu.Item>
-                  ))}
-                </ContextMenu.SubContent>
-              </ContextMenu.Portal>
-            </ContextMenu.Sub>
+            <ContextNestedMenu
+              icon={<FileStack aria-hidden="true" size={16} />}
+              label="Add to project"
+              options={projects.map((project) => {
+                const selected = project.workstreamIds.includes(workstream.id);
+                return {
+                  id: project.id,
+                  label: project.name,
+                  icon: <ProjectIcon project={project} />,
+                  selected,
+                  ...(!selected ? { onSelect: () => onAddToProject(project.id, workstream.id) } : {}),
+                };
+              })}
+            />
           )}
           {/* Named for the state it moves to, the way the note item is. Private
               is not ownership: everyone left in the work stream can still read

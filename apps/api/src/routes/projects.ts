@@ -25,12 +25,6 @@ const resourceBody = z.object({ resourceId: IdSchema }).strict();
 
 export const projectRoutes = new Hono<HonoAppEnv>();
 
-projectRoutes.get("/", async (c) =>
-  c.json(ProjectDirectorySchema.parse(await new ProjectService(c.env, getAuth(c)).list())),
-);
-projectRoutes.get("/inactive", async (c) =>
-  c.json(ProjectDirectorySchema.parse(await new ProjectService(c.env, getAuth(c)).listInactive())),
-);
 projectRoutes.post("/", zValidator("json", CreateProjectRequestSchema), async (c) =>
   c.json(ProjectSummarySchema.parse(
     await new ProjectService(c.env, getAuth(c)).create(c.req.valid("json")),

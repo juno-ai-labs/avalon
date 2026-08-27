@@ -1,4 +1,10 @@
-import { asProjectId, asUserId, asWorkspaceId, ProjectSummarySchema } from "@rally/contracts";
+import {
+  asProjectId,
+  asUserId,
+  asWorkspaceId,
+  ProjectSummarySchema,
+  type WorkstreamId,
+} from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
@@ -33,13 +39,19 @@ const project = ProjectSummarySchema.parse({
   updatedAt: "2026-08-27T00:00:00.000Z",
 });
 
-function environment(regionalSql: string[]): Env {
+function environment(regionalSql: string[], targets: Array<{
+  projectId: typeof projectId;
+  resourceId: string;
+  defaultGeneration: number;
+  workstreamId: WorkstreamId;
+  membershipGeneration: number;
+}> = []): { env: Env; sendBatch: ReturnType<typeof vi.fn> } {
   const stub = {
     listProjects: async () => ({ ok: true, directory: { items: [project], waterline: 1 } }),
     addProjectDefaultResource: async () => ({
       ok: true,
       project: { ...project, defaultResourceIds: [resourceId] },
-      targets: [],
+      targets,
     }),
     executeRuntimeSql: async () => ({
       status: 200,
@@ -82,19 +94,21 @@ function environment(regionalSql: string[]): Env {
       });
     },
   });
-  return createTestEnv({
-    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ sendBatch: vi.fn() }),
+  const sendBatch = vi.fn().mockRejectedValue(new Error("queue_unavailable"));
+  return { env: createTestEnv({
+    ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ sendBatch }),
     APP_ENV: "test",
     AVALON_REGION: "global",
     DB: database,
     WORKSPACE_DOS: namespace,
-  });
+  }), sendBatch };
 }
 
 describe("project default resource audience", () => {
   it("given post-retirement storage, when a readable resource becomes a default, then its audience is checked through WorkspaceDO", async () => {
     const regionalSql: string[] = [];
-    const service = new ProjectService(environment(regionalSql), {
+    const { env } = environment(regionalSql);
+    const service = new ProjectService(env, {
       sessionId: "session",
       userId,
       workspaceId,
@@ -106,5 +120,29 @@ describe("project default resource audience", () => {
 
     expect(updated.defaultResourceIds).toEqual([resourceId]);
     expect(regionalSql.some((sql) => /\b(resources|notes|connector_connections)\b/iu.test(sql))).toBe(false);
+  });
+
+  it("given Queue publication is temporarily unavailable, when a default is committed, then the request succeeds and WorkspaceDO retains publication ownership", async () => {
+    const regionalSql: string[] = [];
+    const target = {
+      projectId,
+      resourceId,
+      defaultGeneration: 1,
+      workstreamId: (await import("@rally/contracts")).asWorkstreamId("00000000-0000-7000-8000-000000000004"),
+      membershipGeneration: 1,
+    };
+    const { env, sendBatch } = environment(regionalSql, [target]);
+    const service = new ProjectService(env, {
+      sessionId: "session",
+      userId,
+      workspaceId,
+      region: "global",
+      role: "owner",
+    });
+
+    await expect(service.addDefaultResource(projectId, resourceId)).resolves.toMatchObject({
+      defaultResourceIds: [resourceId],
+    });
+    expect(sendBatch).not.toHaveBeenCalled();
   });
 });

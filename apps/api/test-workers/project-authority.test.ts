@@ -4,7 +4,12 @@ import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import {
+  WorkspaceProjectSnapshotEventSchema,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+} from "@rally/contracts";
 
 import { workspaceDOName } from "../src/durable-objects/names";
 
@@ -28,6 +33,18 @@ async function establishWorkspace(): Promise<void> {
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
+      id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
+      required_serving_contract_version INTEGER NOT NULL,
+      serving_contract_version INTEGER NOT NULL
+    )`),
+    env.DB.prepare(`INSERT OR REPLACE INTO workstream_authority_control
+      (id, phase, generation, required_serving_contract_version, serving_contract_version)
+      VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, region) VALUES (?, 'global')`)
       .bind(WORKSPACE_ID),
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
@@ -39,6 +56,14 @@ async function establishWorkspace(): Promise<void> {
     env.DB.prepare(`INSERT OR REPLACE INTO workspace_members
       (workspace_id, user_id, status, role) VALUES (?, ?, 'removed', 'member')`)
       .bind(WORKSPACE_ID, INACTIVE),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(`project-session-${OWNER}`, OWNER, WORKSPACE_ID),
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions
+      (id, user_id, workspace_id, region, revoked_at, expires_at)
+      VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+      .bind(`project-session-${MEMBER}`, MEMBER, WORKSPACE_ID),
   ]);
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await runInDurableObject(workspace(), (_instance, state) => {
@@ -59,6 +84,32 @@ async function seedMembership(projectId: string, workstreamId: string): Promise<
       workstreamId,
     );
   });
+}
+
+function nextMessage(socket: WebSocket): Promise<MessageEvent> {
+  return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
+}
+
+async function connectProjectViewer(userId: string, suffix: string): Promise<WebSocket> {
+  const response = await workspace().fetch("https://workspace.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-placement-affinity": "wnam",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": `project-session-${userId}`,
+      "x-rally-socket-ticket-id": `00000000-0000-7000-8000-${suffix.padStart(12, "0")}`,
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  if (response.status !== 101 || !response.webSocket) {
+    throw new Error(`workspace socket rejected: ${response.status} ${await response.text()}`);
+  }
+  response.webSocket.accept();
+  const initial = nextMessage(response.webSocket);
+  response.webSocket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+  await initial;
+  return response.webSocket;
 }
 
 beforeEach(async () => {
@@ -90,6 +141,56 @@ describe("WorkspaceDO project authority", () => {
 
     await expect(workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
       .resolves.toMatchObject({ ok: true, directory: { items: [{ name: "Close" }] } });
+  });
+
+  it("given two subscribed members, when one changes project visibility, then both receive their own canonical snapshot", async () => {
+    const ownerSocket = await connectProjectViewer(OWNER, "921");
+    const memberSocket = await connectProjectViewer(MEMBER, "922");
+    try {
+      const ownerCreated = nextMessage(ownerSocket);
+      const memberCreated = nextMessage(memberSocket);
+      const created = await create("Shared hiring", "workspace");
+      if (!created.ok) throw new Error("project_fixture_failed");
+      expect(WorkspaceProjectSnapshotEventSchema.parse(
+        JSON.parse(String((await ownerCreated).data)),
+      ).projects.active.items).toEqual([expect.objectContaining({ name: "Shared hiring" })]);
+      expect(WorkspaceProjectSnapshotEventSchema.parse(
+        JSON.parse(String((await memberCreated).data)),
+      ).projects.active.items).toEqual([expect.objectContaining({ name: "Shared hiring" })]);
+
+      const ownerChanged = nextMessage(ownerSocket);
+      const memberChanged = nextMessage(memberSocket);
+      await expect(workspace().updateProjectAudience({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        projectId: created.project.id,
+        audience: { scope: "personal", participantUserIds: [OWNER] },
+      })).resolves.toMatchObject({ ok: true });
+      expect(WorkspaceProjectSnapshotEventSchema.parse(
+        JSON.parse(String((await ownerChanged).data)),
+      ).projects.active.items).toEqual([expect.objectContaining({ scope: "personal" })]);
+      expect(WorkspaceProjectSnapshotEventSchema.parse(
+        JSON.parse(String((await memberChanged).data)),
+      ).projects.active.items).toEqual([]);
+    } finally {
+      ownerSocket.close(1000, "test complete");
+      memberSocket.close(1000, "test complete");
+    }
+  });
+
+  it("given personal projects with separate readers, when their names match, then both can exist without a visibility probe", async () => {
+    const first = await create("Hiring");
+    expect(first).toMatchObject({ ok: true });
+    await expect(workspace().createProject({
+      workspaceId: WORKSPACE_ID,
+      userId: MEMBER,
+      project: { name: "Hiring", iconKey: "briefcase", colorKey: "blue", scope: "personal" },
+    })).resolves.toMatchObject({ ok: true });
+
+    await expect(workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: OWNER }))
+      .resolves.toMatchObject({ ok: true, directory: { items: [{ name: "Hiring" }] } });
+    await expect(workspace().listProjects({ workspaceId: WORKSPACE_ID, userId: MEMBER }))
+      .resolves.toMatchObject({ ok: true, directory: { items: [{ name: "Hiring" }] } });
   });
 
   it("given shared projects, when one viewer reorders, then another viewer keeps their server order", async () => {
@@ -282,6 +383,33 @@ describe("WorkspaceDO project authority", () => {
       ...added.targets[0]!,
     };
     await expect(workspace().projectDefaultTargetCurrent(message)).resolves.toBe(true);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      const publication = state.storage.sql.exec<{ state: string; requested_by_user_id: string }>(
+        `SELECT state, requested_by_user_id FROM project_default_resource_publications
+          WHERE project_id = ? AND resource_id = ?`,
+        created.project.id,
+        resourceId,
+      ).one();
+      expect(publication.requested_by_user_id).toBe(OWNER);
+      // The real alarm may run before this inspection. Either state proves the
+      // durable row exists; the publisher unit test owns reject-and-retry.
+      expect(["pending", "accepted"]).toContain(publication.state);
+    });
+
+    await expect(workspace().recordProjectDefaultTargetFailure(message)).resolves.toBe(true);
+    await expect(workspace().failProjectDefaultTarget(message)).resolves.toBe(true);
+    await runInDurableObject(workspace(), (_instance, state) => {
+      expect(state.storage.sql.exec<{ state: string; attempts: number; last_error_code: string }>(
+        `SELECT state, attempts, last_error_code FROM project_default_resource_targets
+          WHERE project_id = ? AND resource_id = ?`,
+        created.project.id,
+        resourceId,
+      ).one()).toEqual({
+        state: "terminal",
+        attempts: 2,
+        last_error_code: "project_no_active_participant",
+      });
+    });
 
     await workspace().removeProjectDefaultResource({
       workspaceId: WORKSPACE_ID,

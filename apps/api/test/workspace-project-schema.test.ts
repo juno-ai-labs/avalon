@@ -12,7 +12,7 @@ import { PROJECT_COLOR_KEYS, PROJECT_ICON_KEYS } from "@rally/contracts";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const PROJECT_SCHEMA_VERSION = 15;
+const PROJECT_SCHEMA_VERSION = 16;
 
 function apply(database: DatabaseSync, through: number, after = 0): void {
   database.exec("PRAGMA foreign_keys = ON");
@@ -71,7 +71,27 @@ describe("the WorkspaceDO project authority migration", () => {
     })).toThrow();
   });
 
-  it("given an existing workspace object, when version 13 applies, then earlier state survives", () => {
+  it("given the shared icon and color registries, when every choice is persisted, then the WorkspaceDO constraint accepts all of them", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, PROJECT_SCHEMA_VERSION);
+    for (const [index, iconKey] of PROJECT_ICON_KEYS.entries()) {
+      expect(() => insertProject(database, {
+        projectId: `icon-${index}`,
+        iconKey,
+        normalizedName: `icon-${index}`,
+      })).not.toThrow();
+    }
+    for (const [index, colorKey] of PROJECT_COLOR_KEYS.entries()) {
+      expect(() => insertProject(database, {
+        projectId: `color-${index}`,
+        colorKey,
+        normalizedName: `color-${index}`,
+      })).not.toThrow();
+    }
+    database.close();
+  });
+
+  it("given an existing project authority, when the publication outbox migration applies, then earlier state survives", () => {
     const database = new DatabaseSync(":memory:");
     apply(database, PROJECT_SCHEMA_VERSION - 1);
     database.prepare(
@@ -88,7 +108,7 @@ describe("the WorkspaceDO project authority migration", () => {
     expect(database.prepare("SELECT name FROM projects").all()).toEqual([{ name: "Hiring" }]);
   });
 
-  it("given a normalized project name, when the same name differs only by case, then creation conflicts", () => {
+  it("given private projects with separate audiences, when their names match, then no hidden name is leaked through a conflict", () => {
     const database = new DatabaseSync(":memory:");
     apply(database, PROJECT_SCHEMA_VERSION);
     insertProject(database);
@@ -97,7 +117,8 @@ describe("the WorkspaceDO project authority migration", () => {
       projectId: "00000000-0000-7000-8000-0000000000b6",
       name: " HIRING ",
       normalizedName: "hiring",
-    })).toThrow();
+      creatorUserId: "00000000-0000-7000-8000-0000000000b9",
+    })).not.toThrow();
   });
 
   it("given one work stream, when two historical project memberships exist, then the schema keeps both", () => {

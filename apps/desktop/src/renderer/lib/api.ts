@@ -1161,14 +1161,6 @@ export class RallyApi {
     return page.items;
   }
 
-  getProjects(signal?: AbortSignal): Promise<ProjectDirectory> {
-    return this.request('/projects', { schema: WireProjectDirectorySchema, signal });
-  }
-
-  getInactiveProjects(signal?: AbortSignal): Promise<ProjectDirectory> {
-    return this.request('/projects/inactive', { schema: WireProjectDirectorySchema, signal });
-  }
-
   createProject(input: CreateProjectRequest): Promise<ProjectSummary> {
     return this.request('/projects', {
       method: 'POST',

@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { CreateProjectRequest, ProjectDirectory, WorkstreamBatchFilter } from '@rally/contracts';
+import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkstreamBatchFilter } from '@rally/contracts';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useProjectDirectories } from '../lib/use-project-directories';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
@@ -32,6 +33,21 @@ export const RUNNING_HARNESS_STATUSES: ReadonlySet<WorkstreamSummary['harnessSta
   'scheduled', 'running', 'needs_input',
 ]);
 export const PROACTIVE_RECENT_WORKSTREAM_COUNT = 5;
+
+/** Upsert a mutation response without duplicating an earlier socket push. */
+export function upsertProjectDirectory(
+  current: ProjectDirectory | undefined,
+  project: ProjectSummary,
+): ProjectDirectory {
+  return {
+    // A REST response does not advance the socket receiver's ledger. The next
+    // authoritative socket snapshot still has to be accepted at this version.
+    waterline: current?.waterline ?? 0,
+    items: current?.items.some((item) => item.id === project.id)
+      ? current.items.map((item) => item.id === project.id ? project : item)
+      : [...(current?.items ?? []), project],
+  };
+}
 
 export function backgroundRealtimeWorkstreamIds(
   activeWorkstreamId: string | null,
@@ -229,24 +245,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     return true;
   };
   const notes = useSocketOwnedList<NoteSummary>(['notes']);
-  const projects = useQuery({
-    queryKey: ['projects'],
-    queryFn: ({ signal }) => {
-      if (!api) throw new Error('Your session is no longer active. Sign in again.');
-      return api.getProjects(signal);
-    },
-    enabled: Boolean(api),
-    staleTime: 30_000,
-  });
-  const inactiveProjects = useQuery({
-    queryKey: ['projects-inactive'],
-    queryFn: ({ signal }) => {
-      if (!api) throw new Error('Your session is no longer active. Sign in again.');
-      return api.getInactiveProjects(signal);
-    },
-    enabled: Boolean(api),
-    staleTime: 30_000,
-  });
+  const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const featureFlags = useClientFeatureFlags(api);
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
@@ -486,11 +485,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onCreateProject={async (input: CreateProjectRequest) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           const created = await api.createProject(input);
-          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => ({
-            waterline: Math.max(current?.waterline ?? 0, created.presentationRevision),
-            items: [...(current?.items ?? []), created],
-          }));
-          void queryClient.invalidateQueries({ queryKey: ['projects'] });
+          queryClient.setQueryData<ProjectDirectory>(
+            ['projects'],
+            (current) => upsertProjectDirectory(current, created),
+          );
         }}
         onAddWorkstreamToProject={async (projectId, workstreamId) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
@@ -502,7 +500,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
               workstreamIds: project.workstreamIds.filter((id) => id !== workstreamId),
             }),
           } : current);
-          void queryClient.invalidateQueries({ queryKey: ['projects'] });
         }}
         onReorderProjects={async (projectIds) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
@@ -511,11 +508,17 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         }}
         onRestoreProject={async (projectId) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
-          await api.restoreProject(projectId);
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: ['projects'] }),
-            queryClient.invalidateQueries({ queryKey: ['projects-inactive'] }),
-          ]);
+          const restored = await api.restoreProject(projectId);
+          queryClient.setQueryData<ProjectDirectory>(['projects-inactive'], (current) => current ? {
+            ...current,
+            items: current.items.filter((project) => project.id !== restored.id),
+          } : current);
+          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+            ...current,
+            items: current.items.some((project) => project.id === restored.id)
+              ? current.items.map((project) => project.id === restored.id ? restored : project)
+              : [...current.items, restored],
+          } : current);
         }}
         onSignOut={() => {
           void signOut().catch(() => undefined);
