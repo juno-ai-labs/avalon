@@ -1173,10 +1173,10 @@ describe("publishing a run's final message", () => {
     return opened;
   }
 
-  it("appends the transcript row and records that it did, in one transaction", () => {
+  it("appends the transcript row and records that it did, in one transaction", async () => {
     const { storage, sql } = claimed();
 
-    expect(storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
+    expect(await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
       .toEqual({ outcome: "published", sequenceNumber: 1 });
     expect(sql.exec(
       `SELECT author_type, message_type, content, client_message_id, produced_by_run_id
@@ -1196,10 +1196,10 @@ describe("publishing a run's final message", () => {
       .toMatchObject({ event_type: "final_message_persisted", status: "completed" });
   });
 
-  it("moves the transcript counters the append consumed", () => {
+  it("moves the transcript counters the append consumed", async () => {
     const { storage, sql } = claimed();
 
-    storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
+    await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
 
     // The routed batch's third statement also assigned
     // `latest_attention_sequence_number`, which was never a column — the view
@@ -1215,10 +1215,10 @@ describe("publishing a run's final message", () => {
     });
   });
 
-  it("refuses an attempt that no longer holds the run", () => {
+  it("refuses an attempt that no longer holds the run", async () => {
     const { storage, sql } = claimed();
 
-    expect(storage.publishFinalMessage({
+    expect(await storage.publishFinalMessage({
       ...fence, runId: RUN, owner: "someone-else", ...publish,
     })).toEqual({ outcome: "ownership_lost" });
     expect(sql.exec(`SELECT COUNT(*) AS count FROM parts WHERE id = ?`, publish.messageId).one())
@@ -1226,33 +1226,33 @@ describe("publishing a run's final message", () => {
     expect(storage.lifecycleEvent({ runId: RUN, eventKey: "final_message" })).toBeUndefined();
   });
 
-  it("refuses an ordinary publish once cancellation was requested", () => {
+  it("refuses an ordinary publish once cancellation was requested", async () => {
     const { storage, sql } = claimed();
     sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, RUN);
 
     // A run asked to stop must not go on to report a completed answer.
-    expect(storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
+    expect(await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
       .toEqual({ outcome: "ownership_lost" });
   });
 
-  it("lets a stopped run publish what it had already written", () => {
+  it("lets a stopped run publish what it had already written", async () => {
     const { storage, sql } = claimed();
     sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, RUN);
 
     // The member asked it to stop, not to vanish: whatever the model had
     // produced by then is still theirs to read. Same exemption, and the same
     // reason, as `assertHarnessToolSettlementOwned`.
-    expect(storage.publishFinalMessage({
+    expect(await storage.publishFinalMessage({
       ...fence, runId: RUN, ...publish,
       hostOutcomeStatus: "stopped", allowCancellationRequested: true,
     })).toMatchObject({ outcome: "published" });
   });
 
-  it("replays rather than writing a second message for the same run", () => {
+  it("replays rather than writing a second message for the same run", async () => {
     const { storage, sql } = claimed();
-    storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
+    await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
 
-    expect(storage.publishFinalMessage({
+    expect(await storage.publishFinalMessage({
       ...fence, runId: RUN, ...publish,
       messageId: "00000000-0000-7000-8000-0000000000c2",
       lifecycleEventId: "event-final-2",

@@ -67,10 +67,10 @@ function message(overrides: Record<string, unknown> = {}) {
 }
 
 describe("appending to the transcript", () => {
-  it("takes one sequence number and one attention ordinal, and moves both counters", () => {
+  it("takes one sequence number and one attention ordinal, and moves both counters", async () => {
     const { storage, sql } = open();
 
-    expect(storage.appendMessage(message())).toEqual({
+    expect(await storage.appendMessage(message())).toEqual({
       outcome: "appended",
       messageId: "message-1",
       sequenceNumber: 1,
@@ -100,16 +100,16 @@ describe("appending to the transcript", () => {
     }]);
   });
 
-  it("answers a redelivery with the row the first delivery wrote", () => {
+  it("answers a redelivery with the row the first delivery wrote", async () => {
     const { storage, sql } = open();
-    storage.appendMessage(message());
+    await storage.appendMessage(message());
 
     // Every transcript write here is keyed by an id derived from what caused it
     // — a Slack delivery, a harness run, a digest — so a redelivery naming the
     // same id is ordinary. The routed statement expressed this as
     // `ON CONFLICT(workstream_id, client_message_id) DO NOTHING` and then
     // re-read the table to find out what had happened.
-    expect(storage.appendMessage(message({ messageId: "message-2", text: "again" })))
+    expect(await storage.appendMessage(message({ messageId: "message-2", text: "again" })))
       .toEqual({ outcome: "replayed", messageId: "message-1", sequenceNumber: 1 });
     expect(sql.exec(`SELECT COUNT(*) AS n FROM parts`).one().n).toBe(1);
     // And the counters do not move for a message that was not written.
@@ -117,17 +117,17 @@ describe("appending to the transcript", () => {
       .toBe(2);
   });
 
-  it("maps each author vocabulary onto the role and author the object stores", () => {
+  it("maps each author vocabulary onto the role and author the object stores", async () => {
     const { storage, sql } = open();
-    storage.appendMessage(message({ authorType: "agent", authorUserId: null }));
-    storage.appendMessage(message({
+    await storage.appendMessage(message({ authorType: "agent", authorUserId: null }));
+    await storage.appendMessage(message({
       messageId: "message-2",
       clientMessageId: "client-2",
       authorType: "external",
       authorUserId: null,
       externalActorJson: JSON.stringify({ provider: "slack", displayName: "Ana" }),
     }));
-    storage.appendMessage(message({
+    await storage.appendMessage(message({
       messageId: "message-3",
       clientMessageId: "client-3",
       authorType: "system",
@@ -145,9 +145,9 @@ describe("appending to the transcript", () => {
       ]);
   });
 
-  it("reads a message back in the vocabulary the retired view projected", () => {
+  it("reads a message back in the vocabulary the retired view projected", async () => {
     const { storage } = open();
-    storage.appendMessage(message());
+    await storage.appendMessage(message());
 
     // `member` comes back as `human`, and `content` as `text_content`. Callers
     // still speak the view's names; what changed is that nothing translates
@@ -165,23 +165,23 @@ describe("appending to the transcript", () => {
 
 describe("the windows a reader asks for", () => {
   /** A transcript with one of each type the two readers disagree about. */
-  function mixed(storage: WorkstreamMessageStorage): void {
-    storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", messageType: "text", text: "First" }));
-    storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", messageType: "system", text: "Host notice", now: NOW + 1_000 }));
-    storage.upsertToolMessage({
+  async function mixed(storage: WorkstreamMessageStorage): Promise<void> {
+    await storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", messageType: "text", text: "First" }));
+    await storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", messageType: "system", text: "Host notice", now: NOW + 1_000 }));
+    await storage.upsertToolMessage({
       messageId: "m3",
       clientMessageId: "c3",
       structuredContentJson: JSON.stringify({ invocation: { toolName: "t", status: "completed" } }),
       createdAt: NOW + 2_000,
       editedAt: null,
     });
-    storage.appendMessage(message({ messageId: "m4", clientMessageId: "c4", messageType: "text", text: "  ", now: NOW + 3_000 }));
-    storage.appendMessage(message({ messageId: "m5", clientMessageId: "c5", messageType: "text", text: "Last", now: NOW + 4_000 }));
+    await storage.appendMessage(message({ messageId: "m4", clientMessageId: "c4", messageType: "text", text: "  ", now: NOW + 3_000 }));
+    await storage.appendMessage(message({ messageId: "m5", clientMessageId: "c5", messageType: "text", text: "Last", now: NOW + 4_000 }));
   }
 
-  it("answers naming's question and the description's differently, from the same rows", () => {
+  it("answers naming's question and the description's differently, from the same rows", async () => {
     const { storage } = open();
-    mixed(storage);
+    await mixed(storage);
 
     // Naming names an `include`: only what someone typed. The host notice and
     // the tool card are both excluded, and so is the whitespace-only message —
@@ -196,9 +196,9 @@ describe("the windows a reader asks for", () => {
       .map((row) => row.id)).toEqual(["m1", "m2", "m5"]);
   });
 
-  it("reads the newest end in reading order, and bounds what it counts", () => {
+  it("reads the newest end in reading order, and bounds what it counts", async () => {
     const { storage } = open();
-    mixed(storage);
+    await mixed(storage);
 
     // The description takes the most recent messages and renders them oldest
     // first. Selecting `DESC` and reversing is the only way to do both.
@@ -217,9 +217,9 @@ describe("the windows a reader asks for", () => {
     })).toBe(1);
   });
 
-  it("finds a message at a transcript position", () => {
+  it("finds a message at a transcript position", async () => {
     const { storage } = open();
-    mixed(storage);
+    await mixed(storage);
 
     // The HyperSight context fence names a sequence number and needs the row
     // that holds it, to prove the frozen boundary it was dispatched with still
@@ -228,9 +228,9 @@ describe("the windows a reader asks for", () => {
     expect(storage.messageAtSequence({ sequenceNumber: 99 })).toBeUndefined();
   });
 
-  it("answers Terminal's admission check only for a participant's own message", () => {
+  it("answers Terminal's admission check only for a participant's own message", async () => {
     const { storage, sql } = open();
-    storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", authorUserId: "user-1" }));
+    await storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", authorUserId: "user-1" }));
     sql.exec(
       `INSERT INTO participants
          (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -256,10 +256,10 @@ describe("the windows a reader asks for", () => {
       .toBeUndefined();
   });
 
-  it("counts the attachments on the opening message only", () => {
+  it("counts the attachments on the opening message only", async () => {
     const { storage, sql } = open();
-    storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1" }));
-    storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", now: NOW + 1_000 }));
+    await storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1" }));
+    await storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", now: NOW + 1_000 }));
     for (const [part, resource, position] of [["m1", "r1", 0], ["m1", "r2", 1], ["m2", "r3", 0]] as const) {
       sql.exec(
         `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
@@ -282,10 +282,10 @@ describe("a tool card in the transcript", () => {
     invocation: { toolName: "linear.issue.get", status },
   });
 
-  it("takes a sequence number but no attention ordinal, and leaves the people clock", () => {
+  it("takes a sequence number but no attention ordinal, and leaves the people clock", async () => {
     const { storage, sql } = open();
 
-    expect(storage.upsertToolMessage({
+    expect(await storage.upsertToolMessage({
       messageId: "invocation-1",
       clientMessageId: "tool:invocation-1",
       structuredContentJson: card("pending"),
@@ -316,9 +316,9 @@ describe("a tool card in the transcript", () => {
     }]);
   });
 
-  it("refreshes the card in place when the call settles, without taking a second position", () => {
+  it("refreshes the card in place when the call settles, without taking a second position", async () => {
     const { storage, sql } = open();
-    storage.upsertToolMessage({
+    await storage.upsertToolMessage({
       messageId: "invocation-1",
       clientMessageId: "tool:invocation-1",
       structuredContentJson: card("pending"),
@@ -330,7 +330,7 @@ describe("a tool card in the transcript", () => {
     // leave a member with two rows for one tool call, which is why the routed
     // statement guarded its counter update on the insert having actually taken
     // the position it was about to consume.
-    expect(storage.upsertToolMessage({
+    expect(await storage.upsertToolMessage({
       messageId: "invocation-1",
       clientMessageId: "tool:invocation-1",
       structuredContentJson: card("completed"),
@@ -340,6 +340,24 @@ describe("a tool card in the transcript", () => {
     expect(sql.exec(`SELECT COUNT(*) AS n FROM parts`).one().n).toBe(1);
     expect(sql.exec(`SELECT tool_status, edited_at FROM parts`).toArray())
       .toEqual([{ tool_status: "completed", edited_at: NOW + 5_000 }]);
+    expect(sql.exec(
+      `SELECT tool_name, tool_mode, tool_status, edited_at
+         FROM workstream_message_records WHERE message_id = 'invocation-1'`,
+    ).toArray()).toEqual([{
+      tool_name: "linear.issue.get",
+      tool_mode: "read",
+      tool_status: "completed",
+      edited_at: NOW + 5_000,
+    }]);
+    expect(JSON.parse(sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
+      `SELECT payload.payload_json
+         FROM workstream_message_records record
+         JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE record.message_id = 'invocation-1'`,
+    ).one().payload_json)).toMatchObject({
+      structuredContent: { invocation: { status: "completed" } },
+    });
 
     // The work stream's own clock moves and its two counters do not. The
     // retired trigger's counter update ran on the conflict path too — its guard
@@ -356,9 +374,9 @@ describe("a tool card in the transcript", () => {
     }]);
   });
 
-  it("treats a started call as still pending, as the retired trigger did", () => {
+  it("treats a started call as still pending, as the retired trigger did", async () => {
     const { storage, sql } = open();
-    storage.upsertToolMessage({
+    await storage.upsertToolMessage({
       messageId: "invocation-1",
       clientMessageId: "tool:invocation-1",
       structuredContentJson: card("started"),
@@ -375,9 +393,9 @@ describe("a tool card in the transcript", () => {
 });
 
 describe("reading a page of transcript", () => {
-  function seed(storage: WorkstreamMessageStorage, count: number): void {
+  async function seed(storage: WorkstreamMessageStorage, count: number): Promise<void> {
     for (let index = 1; index <= count; index += 1) {
-      storage.appendMessage(message({
+      await storage.appendMessage(message({
         messageId: `message-${index}`,
         clientMessageId: `client-${index}`,
         text: `line ${index}`,
@@ -386,9 +404,9 @@ describe("reading a page of transcript", () => {
     }
   }
 
-  it("pages backward but answers in reading order", () => {
+  it("pages backward but answers in reading order", async () => {
     const { storage } = open();
-    seed(storage, 5);
+    await seed(storage, 5);
 
     // Selected newest-first so the limit takes the *latest* page, answered
     // oldest-first so a caller can render it. The routed reader did that
@@ -400,9 +418,9 @@ describe("reading a page of transcript", () => {
       .map((row) => row.text_content)).toEqual(["line 4", "line 5"]);
   });
 
-  it("reads mentions and attachments for a page in one query each", () => {
+  it("reads mentions and attachments for a page in one query each", async () => {
     const { storage, sql } = open();
-    seed(storage, 2);
+    await seed(storage, 2);
     sql.exec(
       `INSERT INTO part_mentions
          (part_id, mention_index, mention_kind, target_user_id, connector_type,

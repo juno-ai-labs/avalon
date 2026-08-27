@@ -47,7 +47,7 @@ function agent(): DurableObjectStub {
       "global",
       WORKSPACE_ID,
       WORKSTREAM_ID,
-      asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "1")}`),
+      asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`),
     ),
   ));
 }
@@ -112,6 +112,34 @@ describe("message authority on real workerd", () => {
       expect(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM projection_keys WHERE projection_key = 'common'`,
       ).one().count).toBe(1);
+    });
+  });
+
+  it("prepares a tool payload before atomically committing its card and projection", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+    const createdAt = 1_787_000_010_000;
+
+    const result = await messages(stub, "upsertToolMessage", {
+      messageId: "tool-1",
+      clientMessageId: "tool:tool-1",
+      structuredContentJson: JSON.stringify({
+        invocation: { toolName: "search", status: "pending" },
+      }),
+      createdAt,
+      editedAt: null,
+    });
+
+    expect(result.value).toEqual({ outcome: "appended", sequenceNumber: 1 });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT tool_status FROM workstream_message_records WHERE message_id = 'tool-1'`,
+      ).one().tool_status).toBe("pending");
+      const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM durable_outbox WHERE partition_key = 'common'`,
+      ).one().payload_json) as { effect: { updatedAt: string } };
+      expect(envelope.effect.updatedAt).toBe(new Date(createdAt).toISOString());
     });
   });
 

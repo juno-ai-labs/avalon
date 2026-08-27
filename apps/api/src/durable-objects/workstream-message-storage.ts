@@ -39,6 +39,13 @@
  */
 
 import { boundParameterChunks } from "./bound-parameters";
+import {
+  insertWorkstreamMessageRecord,
+  prepareWorkstreamMessageRecord,
+  type PreparedWorkstreamMessageRecord,
+  type WorkstreamMessageRecordInput,
+  WorkstreamTranscriptStorage,
+} from "./workstream-transcript-storage";
 
 /** One transcript row, in the vocabulary the retired view projected. */
 export interface MessageRow extends Record<string, SqlStorageValue> {
@@ -96,6 +103,19 @@ export interface MessageAuthorRow extends Record<string, SqlStorageValue> {
 export type MessageAppendOutcome =
   | { outcome: "appended"; messageId: string; sequenceNumber: number }
   | { outcome: "replayed"; messageId: string; sequenceNumber: number };
+
+export interface UpsertToolMessageInput {
+  messageId: string;
+  clientMessageId: string;
+  structuredContentJson: string;
+  createdAt: number;
+  editedAt: number | null;
+}
+
+export type MessageAppendInput = Omit<
+  WorkstreamMessageRecordInput,
+  "sequenceNumber" | "attentionOrdinal" | "messageType"
+> & { messageType: "text" | "system" | "elicitation" };
 
 const MESSAGE_COLUMNS = `part.id, part.client_message_id,
         CASE part.author_type WHEN 'member' THEN 'human' WHEN 'agent' THEN 'agent'
@@ -446,19 +466,21 @@ export class WorkstreamMessageStorage {
    * consumed, and the people clock always moves — a `'tool'` slipping through
    * would write a row the retired trigger would have branched away from.
    */
-  appendMessage(input: {
-    messageId: string;
-    clientMessageId: string;
-    authorType: "human" | "agent" | "external" | "system";
-    authorUserId: string | null;
-    externalActorJson: string | null;
-    messageType: "text" | "system" | "elicitation";
-    text: string;
-    structuredContentJson: string | null;
-    producedByRunId: string | null;
-    now: number;
-  }): MessageAppendOutcome {
-    return this.storage.transactionSync(() => {
+  async prepareMessage(input: MessageAppendInput): Promise<PreparedWorkstreamMessageRecord> {
+    return prepareWorkstreamMessageRecord({
+      ...input,
+      sequenceNumber: 0,
+      attentionOrdinal: null,
+    });
+  }
+
+  async appendMessage(input: MessageAppendInput): Promise<MessageAppendOutcome> {
+    const prepared = await this.prepareMessage(input);
+    return this.storage.transactionSync(() => this.appendPreparedMessage(prepared));
+  }
+
+  appendPreparedMessage(prepared: PreparedWorkstreamMessageRecord): MessageAppendOutcome {
+      const { input } = prepared;
       const existing = this.messageByClientId({ clientMessageId: input.clientMessageId });
       if (existing) {
         return {
@@ -509,13 +531,35 @@ export class WorkstreamMessageStorage {
         input.now,
         input.now,
       );
+      prepared.input.sequenceNumber = root.next_sequence_number;
+      prepared.input.attentionOrdinal = attention;
+      if (input.messageType === "tool" || input.messageType === "suggestion") {
+        throw new Error("participant_message_type_not_appendable");
+      }
+      new WorkstreamTranscriptStorage(this.storage).appendPreparedParticipantMessage({
+        input: {
+          turnId: input.messageId,
+          actor: input.authorType === "agent" ? "assistant" : input.authorType,
+          authorUserId: input.authorUserId,
+          clientMessageId: input.clientMessageId,
+          messageType: input.messageType,
+          text: input.text,
+          structuredContentJson: input.structuredContentJson,
+          externalActorJson: input.externalActorJson,
+          producedByRunId: input.producedByRunId,
+          messageSequenceNumber: root.next_sequence_number,
+          createdAtUtc: new Date(input.now).toISOString(),
+          attentionOrdinal: attention,
+        },
+        fact: prepared.fact,
+        occurredAt: input.now,
+      });
       this.#advanceCounters(false, input.now);
       return {
         outcome: "appended" as const,
         messageId: input.messageId,
         sequenceNumber: root.next_sequence_number,
       };
-    });
   }
 
   /**
@@ -540,15 +584,46 @@ export class WorkstreamMessageStorage {
    * so NULL is what production has stored for every tool card there is. Giving
    * the card its run would be a change, and belongs to whoever needs it.
    */
-  upsertToolMessage(input: {
-    messageId: string;
-    clientMessageId: string;
-    structuredContentJson: string;
-    createdAt: number;
-    editedAt: number | null;
-  }): { outcome: "appended" | "refreshed"; sequenceNumber: number } {
-    return this.storage.transactionSync(() => {
-      // Guarded on `message_type = 'tool'` in the *lookup*, not only in the
+  async prepareToolMessage(
+    input: UpsertToolMessageInput,
+  ): Promise<PreparedWorkstreamMessageRecord> {
+    return prepareWorkstreamMessageRecord({
+      messageId: input.messageId,
+      clientMessageId: input.clientMessageId,
+      authorType: "agent",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "tool",
+      text: "",
+      structuredContentJson: input.structuredContentJson,
+      producedByRunId: null,
+      role: "assistant",
+      kind: "tool_call",
+      effectIntentId: input.messageId,
+      toolName: toolNameOf(input.structuredContentJson),
+      toolMode: "read",
+      toolStatus: toolStatusOf(input.structuredContentJson),
+      visibility: "people",
+      sequenceNumber: 0,
+      attentionOrdinal: null,
+      createdAt: input.createdAt,
+      editedAt: input.editedAt,
+      now: input.editedAt ?? input.createdAt,
+    });
+  }
+
+  async upsertToolMessage(
+    input: UpsertToolMessageInput,
+  ): Promise<{ outcome: "appended" | "refreshed"; sequenceNumber: number }> {
+    const prepared = await this.prepareToolMessage(input);
+    return this.storage.transactionSync(() => this.upsertPreparedToolMessage(input, prepared));
+  }
+
+  upsertPreparedToolMessage(
+    input: UpsertToolMessageInput,
+    prepared: PreparedWorkstreamMessageRecord,
+  ): { outcome: "appended" | "refreshed"; sequenceNumber: number } {
+    // Guarded on `message_type = 'tool'` in the *lookup*, not only in the
       // update, so the answer is about a row that exists. The routed
       // `DO UPDATE … WHERE parts.message_type = 'tool'` matched nothing when a
       // non-tool row held this id and still reported a write; here that case
@@ -556,13 +631,13 @@ export class WorkstreamMessageStorage {
       // path production takes — the id is the invocation's own UUIDv7 and no
       // message carries it — so this is about the operation answering truly
       // rather than about a state to handle.
-      const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
+    const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
         `SELECT sequence_number FROM parts
           WHERE substream_id = '0' AND id = ? AND message_type = 'tool'`,
         input.messageId,
-      ));
-      if (existing) {
-        this.sql.exec(
+    ));
+    if (existing) {
+      this.sql.exec(
           `UPDATE parts
               SET structured_content_json = ?, tool_status = ?, edited_at = ?, updated_at = ?
             WHERE id = ? AND substream_id = '0' AND message_type = 'tool'`,
@@ -572,18 +647,20 @@ export class WorkstreamMessageStorage {
           input.editedAt ?? input.createdAt,
           input.messageId,
         );
+      prepared.input.sequenceNumber = existing.sequence_number;
+      insertWorkstreamMessageRecord(this.sql, prepared);
         // What the trigger's counter update did on the conflict path: the work
         // stream's own clock moves, its sequence and attention counters do not.
-        this.sql.exec(
+      this.sql.exec(
           `UPDATE workstream SET updated_at = ? WHERE id = 1`,
           input.editedAt ?? input.createdAt,
         );
-        return { outcome: "refreshed" as const, sequenceNumber: existing.sequence_number };
-      }
-      const sequence = this.sql.exec<{ next_sequence_number: number } & Record<string, SqlStorageValue>>(
+      return { outcome: "refreshed" as const, sequenceNumber: existing.sequence_number };
+    }
+    const sequence = this.sql.exec<{ next_sequence_number: number } & Record<string, SqlStorageValue>>(
         `SELECT next_sequence_number FROM workstream WHERE id = 1`,
-      ).one().next_sequence_number;
-      this.sql.exec(
+    ).one().next_sequence_number;
+    this.sql.exec(
         `INSERT INTO parts
            (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
             author_user_id, external_actor_json, content, client_message_id, effect_intent_id,
@@ -602,9 +679,10 @@ export class WorkstreamMessageStorage {
         input.createdAt,
         input.editedAt ?? input.createdAt,
       );
-      this.#advanceCounters(true, input.createdAt);
-      return { outcome: "appended" as const, sequenceNumber: sequence };
-    });
+    prepared.input.sequenceNumber = sequence;
+    insertWorkstreamMessageRecord(this.sql, prepared);
+    this.#advanceCounters(true, input.createdAt);
+    return { outcome: "appended" as const, sequenceNumber: sequence };
   }
 
   /**
@@ -665,7 +743,9 @@ function toolNameOf(structuredContentJson: string | null): string | null {
  * mapping and not an obvious one: a tool the model has begun is still a card a
  * member is waiting on.
  */
-function toolStatusOf(structuredContentJson: string | null): string | null {
+function toolStatusOf(
+  structuredContentJson: string | null,
+): "pending" | "completed" | "failed" | "ambiguous" | null {
   if (!structuredContentJson) return "completed";
   const parsed = JSON.parse(structuredContentJson) as {
     invocation?: { status?: unknown };

@@ -154,10 +154,12 @@ import {
   type MessageOperationRequest,
   MessageOperationRequestSchema,
   mutatesTranscript,
+  UpsertToolMessageInputSchema,
 } from "./workstream-message-protocol";
 import {
   expireLocalAttemptLeasesFromPreviousInstance,
   previousInstanceRecoveryOwner,
+  type PublishFinalMessageInput,
   WorkstreamHarnessRunStorage,
 } from "./workstream-harness-run-storage";
 import {
@@ -1167,6 +1169,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
+  /** Operator-only transfer of legacy payload ownership into canonical facts. */
+  async transferLegacyTranscriptPayloadOwnership(input: {
+    objectId: string;
+    operatorRunId: string;
+  }) {
+    await this.initialized;
+    if (this.externalSubstreamId() !== "0") {
+      throw new Error("legacy_transcript_payload_transfer_requires_main_substream");
+    }
+    if (input.objectId !== this.state.id.toString()) {
+      throw new Error(`legacy_transcript_payload_transfer_object_mismatch:${input.objectId}`);
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(input.operatorRunId)) {
+      throw new Error("legacy_transcript_payload_transfer_run_id_invalid");
+    }
+    return this.transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: input.operatorRunId,
+    });
+  }
+
   async abandonPreCutoverRunsForTranscriptBackfill(input: {
     objectId: string;
     operatorRunId: string;
@@ -1350,7 +1373,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     );
     if (refusal) return refusal;
     const method = this.toolReceipts[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const value = method.apply(this.toolReceipts, parsed.data.args);
+    const value = await method.apply(this.toolReceipts, parsed.data.args);
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -1439,37 +1462,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return { status: 400, payload: { ok: false, error: "invalid_scheduling_operation" } };
     }
     const parsedElicitationInput = elicitationInput?.data ?? null;
-    const preparedTranscript = parsedElicitationInput
-      ? await this.transcript.prepareParticipantMessage({
-        turnId: parsedElicitationInput.messageId,
-        actor: parsed.data.operation === "openElicitation" ? "assistant" : "external",
-        authorUserId: null,
-        createdAtUtc: new Date(parsedElicitationInput.now).toISOString(),
-        attentionOrdinal: null,
-      })
+    const preparedElicitationMessage = parsedElicitationInput
+      ? "runId" in parsedElicitationInput
+        ? await this.scheduling.prepareOpenElicitationMessage(parsedElicitationInput)
+        : await this.scheduling.prepareExternalElicitationAnswerMessage(parsedElicitationInput)
       : null;
-    const value = mutates || preparedTranscript
+    const value = mutates || preparedElicitationMessage
       ? await this.product.commitRuntimeMutation(
         () => {
-          const result = method.apply(this.scheduling, parsed.data.args);
-          if (preparedTranscript && isPersistedElicitationOutcome(result)) {
-            const row = this.messages.message({ messageId: preparedTranscript.input.turnId });
-            if (!row) throw new Error("participant_transcript_part_missing");
-            this.transcript.appendPreparedParticipantMessage({
-              ...preparedTranscript,
-              input: {
-                ...preparedTranscript.input,
-                attentionOrdinal: row.attention_ordinal,
-              },
-            });
+          if (preparedElicitationMessage && parsedElicitationInput) {
+            return "runId" in parsedElicitationInput
+              ? this.scheduling.openPreparedElicitation(
+                parsedElicitationInput,
+                preparedElicitationMessage,
+              )
+              : this.scheduling.answerPreparedElicitationExternally(
+                parsedElicitationInput,
+                preparedElicitationMessage,
+              );
           }
-          return result;
+          return method.apply(this.scheduling, parsed.data.args);
         },
         true,
       )
-      : method.apply(this.scheduling, parsed.data.args);
-    if (preparedTranscript && isPersistedElicitationOutcome(value)) {
-      const turn = this.transcript.participantTurn(preparedTranscript.input.turnId);
+      : await method.apply(this.scheduling, parsed.data.args);
+    if (parsedElicitationInput && isPersistedElicitationOutcome(value)) {
+      const turn = this.transcript.participantTurn(parsedElicitationInput.messageId);
       if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
     }
     if (mutates) {
@@ -1538,37 +1556,34 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (appendInput && !appendInput.success) {
       return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
     }
-    const parsedAppendInput = appendInput?.data ?? null;
-    const preparedTranscript = parsedAppendInput
-      ? await this.transcript.prepareParticipantMessage({
-        turnId: parsedAppendInput.messageId,
-        actor: parsedAppendInput.authorType === "agent" ? "assistant" : parsedAppendInput.authorType,
-        authorUserId: parsedAppendInput.authorUserId,
-        createdAtUtc: new Date(parsedAppendInput.now).toISOString(),
-        attentionOrdinal: null,
-      })
+    const toolInput = parsed.data.operation === "upsertToolMessage"
+      ? UpsertToolMessageInputSchema.safeParse(parsed.data.args[0])
       : null;
+    if (toolInput && !toolInput.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
+    }
+    const parsedAppendInput = appendInput?.data ?? null;
+    const parsedToolInput = toolInput?.data ?? null;
+    const preparedMessage = parsedAppendInput
+      ? await this.messages.prepareMessage(parsedAppendInput)
+      : parsedToolInput
+        ? await this.messages.prepareToolMessage(parsedToolInput)
+        : null;
     const value = mutates
       ? await this.product.commitRuntimeMutation(
         () => {
-          const result = method.apply(this.messages, parsed.data.args);
-          if (preparedTranscript && isAppendedMessageOutcome(result)) {
-            const row = this.messages.message({ messageId: result.messageId });
-            if (!row) throw new Error("participant_transcript_part_missing");
-            this.transcript.appendPreparedParticipantMessage({
-              ...preparedTranscript,
-              input: {
-                ...preparedTranscript.input,
-                attentionOrdinal: row.attention_ordinal,
-              },
-            });
+          if (preparedMessage && parsedAppendInput) {
+            return this.messages.appendPreparedMessage(preparedMessage);
           }
-          return result;
+          if (preparedMessage && parsedToolInput) {
+            return this.messages.upsertPreparedToolMessage(parsedToolInput, preparedMessage);
+          }
+          return method.apply(this.messages, parsed.data.args);
         },
         true,
       )
       : method.apply(this.messages, parsed.data.args);
-    if (preparedTranscript && isAppendedMessageOutcome(value)) {
+    if (preparedMessage && isAppendedMessageOutcome(value)) {
       const turn = this.transcript.participantTurn(value.messageId);
       if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
     }
@@ -1635,9 +1650,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const refusal = this.objectPortRefusal(parsed.data, "workstream_harness_run_identity_mismatch");
     if (refusal) return refusal;
     const method = this.harnessRuns[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const finalMessageInput = parsed.data.operation === "publishFinalMessage"
+      ? parsed.data.args[0] as PublishFinalMessageInput
+      : null;
+    const preparedFinalMessage = finalMessageInput
+      ? await this.harnessRuns.prepareFinalMessage(finalMessageInput)
+      : null;
     const value = mutatesRunState(parsed.data.operation)
       ? await this.product.commitRuntimeMutation(
-        () => method.apply(this.harnessRuns, parsed.data.args),
+        () => preparedFinalMessage && finalMessageInput
+          ? this.harnessRuns.publishPreparedFinalMessage(finalMessageInput, preparedFinalMessage)
+          : method.apply(this.harnessRuns, parsed.data.args),
         true,
       )
       : method.apply(this.harnessRuns, parsed.data.args);

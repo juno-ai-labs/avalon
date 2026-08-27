@@ -17,7 +17,9 @@ import type { z } from "zod";
  */
 type LocalOnlyHarnessRunOperation =
   | "abandonPreCutoverLeaseLessRuns"
-  | "preCutoverLeaseLessCleanupReceipt";
+  | "preCutoverLeaseLessCleanupReceipt"
+  | "prepareFinalMessage"
+  | "publishPreparedFinalMessage";
 export type HarnessRunOperation = Exclude<keyof WorkstreamHarnessRunStorage, LocalOnlyHarnessRunOperation>;
 
 export type HarnessRunObjectPort = ObjectPortOf<Pick<WorkstreamHarnessRunStorage, HarnessRunOperation>>;

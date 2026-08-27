@@ -14,7 +14,8 @@ type LocalOnlyTranscriptOperation =
   | "participantTurnForTool"
   | "range"
   | "hasLegacyBackfillReceipt"
-  | "backfillLegacyTranscript";
+  | "backfillLegacyTranscript"
+  | "transferLegacyTranscriptPayloadOwnership";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
 

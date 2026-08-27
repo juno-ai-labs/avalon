@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 29;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 30;
 
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
@@ -1598,6 +1598,139 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         abandoned_run_count INTEGER NOT NULL CHECK (abandoned_run_count >= 0),
         completed_at INTEGER NOT NULL
       ) STRICT`,
+    ],
+  },
+  {
+    version: 30,
+    description: "stage canonical ownership for legacy transcript payloads",
+    statements: [
+      `CREATE TABLE workstream_message_records (
+        message_id TEXT PRIMARY KEY,
+        substream_id TEXT NOT NULL REFERENCES substreams(id),
+        sequence_number INTEGER NOT NULL UNIQUE CHECK (sequence_number > 0),
+        attention_ordinal INTEGER UNIQUE CHECK (attention_ordinal IS NULL OR attention_ordinal > 0),
+        fact_id TEXT NOT NULL REFERENCES transcript_facts(fact_id),
+        turn_id TEXT,
+        turn_open_sequence INTEGER CHECK (turn_open_sequence IS NULL OR turn_open_sequence > 0),
+        part_index INTEGER CHECK (part_index IS NULL OR part_index >= 0),
+        role TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool', 'note')),
+        kind TEXT NOT NULL,
+        author_type TEXT NOT NULL CHECK (author_type IN ('member', 'agent', 'connector', 'system', 'external')),
+        author_user_id TEXT,
+        external_actor_json TEXT CHECK (external_actor_json IS NULL OR json_valid(external_actor_json)),
+        content_ref_id TEXT REFERENCES content_refs(content_ref_id),
+        content_bytes INTEGER CHECK (content_bytes IS NULL OR content_bytes > 0),
+        content_hash TEXT,
+        answers_message_id TEXT,
+        input_message_ids_json TEXT CHECK (input_message_ids_json IS NULL OR json_valid(input_message_ids_json)),
+        client_message_id TEXT,
+        effect_intent_id TEXT,
+        occurrence_key TEXT,
+        produced_by_run_id TEXT REFERENCES runs(run_id),
+        attempt_epoch INTEGER,
+        executor_event_seq INTEGER,
+        model_turn_id TEXT,
+        tool_position INTEGER,
+        delivery_intent TEXT CHECK (delivery_intent IN ('queue', 'steer')),
+        input_batch_id TEXT,
+        admission_cut_seq INTEGER,
+        tool_name TEXT,
+        tool_mode TEXT CHECK (tool_mode IN ('read', 'write')),
+        tool_status TEXT CHECK (tool_status IN ('pending', 'completed', 'failed', 'ambiguous')),
+        compacts_through_sequence INTEGER,
+        compacts_through_turn_id TEXT,
+        projected_input_hash TEXT,
+        projection_key TEXT,
+        authorization_revisions_json TEXT CHECK (
+          authorization_revisions_json IS NULL OR json_valid(authorization_revisions_json)
+        ),
+        lineage_fences_json TEXT CHECK (lineage_fences_json IS NULL OR json_valid(lineage_fences_json)),
+        terminal_reason TEXT,
+        visibility TEXT NOT NULL CHECK (visibility IN ('people', 'model', 'both', 'system')),
+        pinned INTEGER NOT NULL CHECK (pinned IN (0, 1)),
+        message_type TEXT NOT NULL,
+        edited_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+        UNIQUE(turn_id, part_index),
+        UNIQUE(produced_by_run_id, attempt_epoch, executor_event_seq)
+      ) STRICT`,
+      `CREATE UNIQUE INDEX workstream_message_records_client_message_uq
+         ON workstream_message_records(client_message_id) WHERE client_message_id IS NOT NULL`,
+      `CREATE UNIQUE INDEX workstream_message_records_effect_intent_uq
+         ON workstream_message_records(effect_intent_id) WHERE effect_intent_id IS NOT NULL`,
+      `CREATE UNIQUE INDEX workstream_message_records_occurrence_uq
+         ON workstream_message_records(occurrence_key) WHERE occurrence_key IS NOT NULL`,
+      `CREATE INDEX workstream_message_records_sequence_idx
+         ON workstream_message_records(substream_id, sequence_number)`,
+      `CREATE INDEX workstream_message_records_attention_idx
+         ON workstream_message_records(attention_ordinal) WHERE attention_ordinal IS NOT NULL`,
+      `CREATE TABLE workstream_message_attachments (
+        message_id TEXT NOT NULL REFERENCES workstream_message_records(message_id) ON DELETE CASCADE,
+        resource_id TEXT NOT NULL,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        attachment_json TEXT NOT NULL CHECK (
+          json_valid(attachment_json) AND length(attachment_json) <= 262144
+        ),
+        PRIMARY KEY(message_id, resource_id),
+        UNIQUE(message_id, position)
+      ) STRICT`,
+      `CREATE INDEX workstream_message_attachments_resource_idx
+         ON workstream_message_attachments(resource_id, message_id)`,
+      `CREATE TABLE workstream_message_mentions (
+        message_id TEXT NOT NULL REFERENCES workstream_message_records(message_id) ON DELETE CASCADE,
+        mention_index INTEGER NOT NULL CHECK (mention_index >= 0),
+        mention_kind TEXT NOT NULL CHECK (mention_kind IN ('person', 'connector')),
+        target_user_id TEXT,
+        connector_type TEXT,
+        start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
+        end_offset INTEGER NOT NULL CHECK (end_offset > start_offset),
+        attention_ordinal INTEGER NOT NULL,
+        PRIMARY KEY(message_id, mention_index),
+        CHECK (
+          (mention_kind = 'person' AND target_user_id IS NOT NULL AND connector_type IS NULL)
+          OR (mention_kind = 'connector' AND target_user_id IS NULL AND connector_type IS NOT NULL)
+        )
+      ) STRICT`,
+      `CREATE INDEX workstream_message_mentions_user_attention_idx
+         ON workstream_message_mentions(target_user_id, attention_ordinal)`,
+      `CREATE TABLE legacy_transcript_payload_transfers (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        operator_run_id TEXT NOT NULL,
+        pre_transfer_bookmark TEXT NOT NULL,
+        source_part_count INTEGER NOT NULL CHECK (source_part_count >= 0),
+        source_attachment_count INTEGER NOT NULL CHECK (source_attachment_count >= 0),
+        source_mention_count INTEGER NOT NULL CHECK (source_mention_count >= 0),
+        source_checkpoint_count INTEGER NOT NULL CHECK (source_checkpoint_count >= 0),
+        source_sha256 TEXT NOT NULL CHECK (length(source_sha256) = 64),
+        message_record_count INTEGER NOT NULL CHECK (message_record_count >= 0),
+        checkpoint_projection_count INTEGER NOT NULL CHECK (checkpoint_projection_count >= 0),
+        completed_at INTEGER NOT NULL
+      ) STRICT`,
+      `CREATE TRIGGER workstream_message_attachments_mirror_insert
+         AFTER INSERT ON part_attachments BEGIN
+           INSERT INTO workstream_message_attachments(message_id, resource_id, position, attachment_json)
+           SELECT NEW.part_id, NEW.resource_id, NEW.position, NEW.attachment_json
+            WHERE EXISTS (SELECT 1 FROM workstream_message_records WHERE message_id = NEW.part_id)
+           ON CONFLICT(message_id, resource_id) DO UPDATE SET
+             position = excluded.position, attachment_json = excluded.attachment_json;
+         END`,
+      `CREATE TRIGGER workstream_message_mentions_mirror_insert
+         AFTER INSERT ON part_mentions BEGIN
+           INSERT INTO workstream_message_mentions(
+             message_id, mention_index, mention_kind, target_user_id, connector_type,
+             start_offset, end_offset, attention_ordinal
+           ) SELECT NEW.part_id, NEW.mention_index, NEW.mention_kind, NEW.target_user_id,
+                    NEW.connector_type, NEW.start_offset, NEW.end_offset, NEW.attention_ordinal
+              WHERE EXISTS (SELECT 1 FROM workstream_message_records WHERE message_id = NEW.part_id)
+           ON CONFLICT(message_id, mention_index) DO UPDATE SET
+             mention_kind = excluded.mention_kind,
+             target_user_id = excluded.target_user_id,
+             connector_type = excluded.connector_type,
+             start_offset = excluded.start_offset,
+             end_offset = excluded.end_offset,
+             attention_ordinal = excluded.attention_ordinal;
+         END`,
     ],
   },
 ];
