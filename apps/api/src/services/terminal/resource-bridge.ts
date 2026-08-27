@@ -20,6 +20,7 @@ interface PublishedRow {
   id: string;
   title: string;
   mime_type: string | null;
+  content_ref: string | null;
   content_sha256: string | null;
   metadata_json: string;
   model_content_status: string | null;
@@ -28,6 +29,20 @@ interface PublishedRow {
 
 function fileName(path: string): string {
   return path.split("/").at(-1) || "resource";
+}
+
+/**
+ * The published path as the document's identity reads it.
+ *
+ * `terminal_publish_resource` already resolves its argument to this shape, so
+ * for a model-driven publish this is the identity function. It is applied
+ * anyway because the identity has to be one derivation rather than a promise
+ * that every caller normalized first: `docs/./plan.md` and `docs/plan.md` are
+ * the same file beneath the resource directory, and a document whose rail entry
+ * depends on which spelling a call used is the sibling problem again.
+ */
+function normalizePublishPath(path: string): string {
+  return path.split("/").filter((segment) => segment && segment !== ".").join("/");
 }
 
 function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishedResourceOutput {
@@ -58,6 +73,125 @@ function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishe
       ? row.model_content_status
       : "pending",
     createdAt: row.created_at,
+  };
+}
+
+/**
+ * Swap a republished document's content onto the row it already has.
+ *
+ * The shape is the connector re-fetch path's: pre-register the new object in
+ * the cleanup outbox, write it, then compare-and-swap the pointer against the
+ * one that was read, so a lost race deletes the object it wrote rather than
+ * overwriting a newer publish. What the swap does *not* do is destroy the old
+ * bytes — WorkspaceDO's version triggers capture the superseded state and the
+ * reaper treats a ref a version still names as active, so a revision keeps its
+ * predecessor readable instead of replacing the only copy.
+ */
+async function swapPublishedContent(input: {
+  workspace: D1Database;
+  env: Env;
+  workspaceId: string;
+  existing: PublishedRow;
+  filePath: string;
+  displayName?: string | undefined;
+  description?: string | undefined;
+  bytes: Uint8Array;
+  digest: string;
+  mimeType: string;
+  attachmentKind: string;
+  contentMode: string;
+  derivativeStatus: string;
+}): Promise<PublishedRow> {
+  const { workspace, env, workspaceId, existing, bytes, digest } = input;
+  const timestamp = nowIso();
+  const objectRef = `${env.AVALON_REGION}/${workspaceId}/resources/${existing.id}/terminal/${digest}/${newId()}`;
+  let previousMetadata: Record<string, unknown> = {};
+  try { previousMetadata = JSON.parse(existing.metadata_json) as Record<string, unknown>; } catch { /* legacy metadata */ }
+  const description = input.description ?? (typeof previousMetadata.description === "string"
+    ? previousMetadata.description
+    : undefined);
+  // A revision that names no title keeps the one participants already know the
+  // document by; renaming it silently on every republish would be worse than
+  // ignoring the argument.
+  const title = input.displayName?.trim()
+    ? [...input.displayName.trim()].slice(0, 300).join("")
+    : existing.title;
+  const metadata = JSON.stringify({
+    sourcePath: input.filePath,
+    size: bytes.byteLength,
+    attachmentKind: input.attachmentKind,
+    contentMode: input.contentMode,
+    ...(description ? { description } : {}),
+  });
+  await workspace.prepare(
+    `INSERT OR IGNORE INTO resource_object_deletion_outbox
+     (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+     VALUES (?, ?, ?, 'original', ?, ?)`,
+  ).bind(objectRef, workspaceId, existing.id, timestamp, timestamp).run();
+  await env.PAYLOADS.put(objectRef, bytes, {
+    httpMetadata: { contentType: input.mimeType },
+    customMetadata: { source: "terminal", sourcePath: input.filePath },
+  });
+  let swapped: D1Result;
+  try {
+    swapped = await workspace.prepare(
+      `UPDATE resources
+          SET title = ?, mime_type = ?, content_ref = ?, content_sha256 = ?, metadata_json = ?,
+              updated_at = ?,
+              model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
+              model_metadata_json = NULL, model_content_status = ?,
+              model_content_extractor_version = NULL, model_content_character_count = NULL,
+              model_content_extracted_at = NULL, model_content_claimed_at = NULL,
+              model_content_claim_id = NULL, model_content_error_code = NULL
+        WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
+    ).bind(
+      title,
+      input.mimeType,
+      objectRef,
+      digest,
+      metadata,
+      timestamp,
+      input.derivativeStatus,
+      existing.id,
+      workspaceId,
+      existing.content_ref,
+      existing.content_sha256,
+    ).run();
+  } catch (error) {
+    await env.PAYLOADS.delete(objectRef).catch(() => undefined);
+    throw error;
+  }
+  if ((swapped.meta.changes ?? 0) === 0) {
+    // Another publish of this document advanced the pointer first. Its content
+    // is the current one; drop the bytes this call wrote and report what the
+    // document now holds rather than clobbering the winner.
+    await env.PAYLOADS.delete(objectRef).catch(() => undefined);
+    await workspace.prepare(
+      "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+    ).bind(workspaceId, objectRef).run().catch(() => undefined);
+    const current = await workspace.prepare(
+      `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
+              model_content_status, created_at
+         FROM resources WHERE id = ? AND workspace_id = ?`,
+    ).bind(existing.id, workspaceId).first<PublishedRow>();
+    if (current) return current;
+    throw new TerminalToolError(
+      "resource_publish_failed",
+      "The published document could not be updated. Retry publish_resource with the stable final file.",
+      { reason: "Retry the same publish_resource call so Rally can reconcile its resource identity." },
+    );
+  }
+  await workspace.prepare(
+    "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+  ).bind(workspaceId, objectRef).run();
+  return {
+    ...existing,
+    title,
+    mime_type: input.mimeType,
+    content_ref: objectRef,
+    content_sha256: digest,
+    metadata_json: metadata,
+    model_content_status: input.derivativeStatus,
   };
 }
 
@@ -261,31 +395,29 @@ export function createTerminalResourceBridge(
       if (bytes.byteLength > maximum) {
         throw new TerminalToolError("resource_limit_exceeded", `The file is ${bytes.byteLength} bytes; published resources allow at most ${maximum}. Reduce or split it and retry.`, { field: "filePath", expected: `file bytes at most ${maximum}` });
       }
-      // The published resource's stable identity across a resumed run. It is
-      // the receipt the harness planned this call against, so a retry finds
-      // the row it already wrote instead of publishing a second copy.
+      // A receipt is still required before anything is written: an unplanned
+      // call has no attempt to be replaying, and refusing it here is what keeps
+      // an unreceipted publish from reaching R2 at all.
       const effectIntentId = requireTerminalEffectIntent(context, "publication");
-      const providerResourceId = `terminal:${effectIntentId}`;
-      const existing = await workspace.prepare(
-        `SELECT id, title, mime_type, content_sha256, metadata_json,
+      // The published document's stable identity is the document's own
+      // coordinates — this work stream and the path it was published from — so
+      // revising the file and publishing it again lands on the row the first
+      // publish created. Deriving it from the call instead made every identity
+      // unique per call, which recognized a replay of that one call and nothing
+      // else, so a second draft of the same file became a second document.
+      const providerResourceId = `terminal:${context.workstreamId}:${normalizePublishPath(input.filePath)}`;
+      const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at
            FROM resources
-          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`,
-      ).bind(context.workspaceId, providerResourceId).first<PublishedRow>();
-      if (existing) {
-        const linked = await createResourceObjectPort(env, context.workspaceId, context.workstreamId)
-          .isAttached({ resourceId: existing.id });
-        if (linked) return publishedOutput(existing, bytes.byteLength);
-        await attachResource({
-          workspaceId: context.workspaceId,
-          workstreamId: context.workstreamId,
-          resourceId: existing.id,
-          attachedByUserId: context.executionPrincipal.type === "user"
-            ? context.executionPrincipal.userId
-            : null,
-        });
-        return publishedOutput(existing, bytes.byteLength);
-      }
+          WHERE workspace_id = ? AND provider = 'avalon_generated' AND provider_resource_id = ?`;
+      const existing = await workspace.prepare(select)
+        .bind(context.workspaceId, providerResourceId).first<PublishedRow>();
+      // Publications that settled under the per-call identity keep it. Their
+      // attempt can still replay, and the path lookup above cannot see them, so
+      // this second lookup is what stops a replay publishing a second copy of a
+      // file this call already published.
+      const settled = existing ?? await workspace.prepare(select)
+        .bind(context.workspaceId, `terminal:${effectIntentId}`).first<PublishedRow>();
 
       const sourceName = fileName(input.filePath);
       const mimeType = verifyAttachmentMimeType(bytes, sourceName, null);
@@ -293,6 +425,50 @@ export function createTerminalResourceBridge(
       const contentMode = attachmentKind === "image" ? "view" : attachmentKind === "other" ? "unsupported" : "read";
       const derivativeStatus = attachmentKind === "other" ? "unsupported" : "pending";
       const digest = await sha256Hex(bytes);
+
+      if (settled) {
+        const relink = async () => {
+          const linked = await createResourceObjectPort(env, context.workspaceId, context.workstreamId)
+            .isAttached({ resourceId: settled.id });
+          if (linked) return;
+          await attachResource({
+            workspaceId: context.workspaceId,
+            workstreamId: context.workstreamId,
+            resourceId: settled.id,
+            attachedByUserId: context.executionPrincipal.type === "user"
+              ? context.executionPrincipal.userId
+              : null,
+          });
+        };
+        // Equal content covers both a crash-replay of a settled call and a
+        // republish that changed nothing: the stored bytes are already these
+        // bytes, so there is nothing to write. A row found only under the
+        // per-call identity is a replay by definition and is never rewritten —
+        // it keeps the identity it was published with.
+        const perCallReplay = existing === null;
+        if (perCallReplay || settled.content_sha256 === digest) {
+          await relink();
+          return publishedOutput(settled, bytes.byteLength);
+        }
+        const updated = await swapPublishedContent({
+          workspace,
+          env,
+          workspaceId: context.workspaceId,
+          existing: settled,
+          filePath: input.filePath,
+          displayName: input.displayName,
+          description: input.description,
+          bytes,
+          digest,
+          mimeType,
+          attachmentKind,
+          contentMode,
+          derivativeStatus,
+        });
+        await relink();
+        return publishedOutput(updated, bytes.byteLength);
+      }
+
       const resourceId = newId();
       const timestamp = nowIso();
       const objectRef = `${env.AVALON_REGION}/${context.workspaceId}/resources/${resourceId}/terminal/${digest}/${newId()}`;
