@@ -60,12 +60,13 @@ export default {
       let cleanup;
       try {
         const id = namespace.idFromString(objectId);
-        cleanup = await namespace.get(id).abandonPreCutoverRunsForTranscriptBackfill({
+        const object = namespace.get(id);
+        cleanup = await object.abandonPreCutoverRunsForTranscriptBackfill({
           objectId,
           operatorRunId: input.operatorRunId,
           cutoverVersion: input.cutoverVersion,
         });
-        const outcome = await namespace.get(id).backfillLegacyTranscript({
+        const outcome = await object.backfillLegacyTranscript({
           objectId,
           operatorRunId: input.operatorRunId,
           cutoverVersion: input.cutoverVersion,
