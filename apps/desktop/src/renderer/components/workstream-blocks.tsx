@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
+import { citationFootnotes, citationScheme } from '@rally/contracts/citations';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
@@ -42,6 +43,15 @@ import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { useTextClamped } from '../lib/use-text-clamped';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
+import {
+  CitationFootnoteItem,
+  CitationFootnoteSection,
+  CitationImage,
+  CitationLink,
+  CitationsProvider,
+  type CitationContext,
+  type CitationRender,
+} from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
 import { Badge, Button, InlineError } from './primitives';
 
@@ -374,10 +384,74 @@ function MentionChip({ fallbackLabel, mention, personId }: {
   );
 }
 
+/** The three schemes whose cells need the target the model actually wrote. */
+const INTERNAL_CITATION_SCHEMES: ReadonlySet<string> = new Set(['resource', 'person', 'connector']);
+
+/**
+ * Which targets bypass `defaultUrlTransform` on their way to a component.
+ *
+ * An allowlist of three schemes in two positions, and nothing wider: everything
+ * else — `javascript:`, `data:`, `file:` — keeps going through the default
+ * transform, which empties what it rejects. The position matters as much as the
+ * scheme, because `resource:` has to survive on an `img` as well as an `a`: the
+ * embed card is reached through image syntax.
+ *
+ * Passing a scheme here is not the same as rendering it. Every cell downstream
+ * emits a chip, a card, or text — never the value itself as a destination.
+ */
+function isInternalCitationTarget(url: string, key: string, tagName: string): boolean {
+  const position = (key === 'href' && tagName === 'a') || (key === 'src' && tagName === 'img');
+  return position && INTERNAL_CITATION_SCHEMES.has(citationScheme(url));
+}
+
+/**
+ * The identity cells of the citation matrix, in one place.
+ *
+ * Mentions are unchanged by citations and stay unchanged here: a `person:` href
+ * resolves against this render's `mentions`, a `connector:` one counts only when
+ * it carries this render's token, and neither is ever emitted as something with
+ * a destination. What moved is only where the decision is called from.
+ */
+function renderIdentity(
+  href: string | undefined,
+  label: React.ReactNode,
+  mentions: MessageMention[],
+  token: string,
+): React.ReactNode {
+  const personId = personIdFromHref(href);
+  if (personId) {
+    const mention = mentions.find((candidate) => (
+      candidate.type === 'person' && candidate.personId?.toLowerCase() === personId
+    ));
+    if (!mention) return <span className="mention-text-fallback">{label}</span>;
+    return <MentionChip fallbackLabel={label} mention={mention} personId={personId} />;
+  }
+  if (isConnectorHref(href)) {
+    const connectorType = connectorTypeFromHref(href, token);
+    const text = linkLabelText(label);
+    // Without this render's token the link is text someone wrote, not a
+    // mention: it neither earns a chip nor becomes something clickable.
+    if (connectorType === undefined || text === undefined) {
+      return <span className="mention-text-fallback">{label}</span>;
+    }
+    return (
+      <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
+        <span className="mention-chip-label">{text}</span>
+      </span>
+    );
+  }
+  // A `person:` target that is not an id is text a model wrote. It reaches here
+  // intact because `urlTransform` passes the whole scheme through —
+  // `defaultUrlTransform` would empty it instead, and an anchor with nothing
+  // behind it reads as a mention that opens a blank window.
+  return <span className="mention-text-fallback">{label}</span>;
+}
+
 const REMARK_PLUGINS = [remarkGfm];
 
 type MarkdownComponents = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
 type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdown>['urlTransform']>;
+type MarkdownRehypeOptions = NonNullable<React.ComponentProps<typeof ReactMarkdown>['remarkRehypeOptions']>;
 
 /** A blank line: the classic boundary between markdown blocks. */
 const BLANK_LINE = /^\s*$/u;
@@ -488,13 +562,19 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
  * makes a paced reveal affordable: each animation-frame commit re-parses only
  * the open tail, while every settled segment's element is reused untouched.
  */
-const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, source, urlTransform }: {
+const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components, rehypeOptions, source, urlTransform }: {
   components: MarkdownComponents;
+  rehypeOptions: MarkdownRehypeOptions;
   source: string;
   urlTransform: MarkdownUrlTransform;
 }): React.JSX.Element {
   return (
-    <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+    <ReactMarkdown
+      components={components}
+      remarkPlugins={REMARK_PLUGINS}
+      remarkRehypeOptions={rehypeOptions}
+      urlTransform={urlTransform}
+    >
       {source}
     </ReactMarkdown>
   );
@@ -508,8 +588,22 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
  */
 const NO_MENTIONS: MessageMention[] = [];
 
-export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = false, telemetry, verbatim = false }: {
+export function MarkdownBody({
+  children,
+  citations,
+  mentions = NO_MENTIONS,
+  streaming = false,
+  telemetry,
+  verbatim = false,
+}: {
   children: string;
+  /**
+   * How this surface resolves a cited resource and where it opens one. Absent
+   * on a surface with no work stream behind it, which is exactly the condition
+   * under which every citation degrades to the label text the message already
+   * carried.
+   */
+  citations?: CitationContext;
   mentions?: MessageMention[];
   /**
    * The message is still growing. Rendering switches to settled segments plus
@@ -536,44 +630,52 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
   const markdown = verbatim ? linked : normalizeModelMarkdown(linked);
   const messageId = telemetry?.messageId;
   const workstreamId = telemetry?.workstreamId;
+  // Footnote ids are namespaced per mounted body. GFM writes the same
+  // `fn-1`/`fnref-1` into every message otherwise, and a transcript is dozens
+  // of mounts of it — so an anchor or an ARIA reference would resolve against
+  // whichever message happened to render first.
+  const prefix = `c${token}-`;
+  // Parsed here rather than in the components' memo, because the definitions
+  // change with the text and the components must not: they are what the settled
+  // segments' memo compares by identity. The `[^` test is the fast path — the
+  // overwhelming majority of messages have no footnotes at all, and this runs on
+  // every commit of a streaming reply.
+  const footnoteSource = markdown.includes('[^') ? markdown : '';
+  const render = useMemo<CitationRender>(() => {
+    const { citations: found, definitions, referenced } = citationFootnotes(footnoteSource);
+    const numbers = new Map<string, number>();
+    for (const identifier of referenced) {
+      if (definitions.has(identifier)) numbers.set(identifier, numbers.size + 1);
+    }
+    return { ...(citations ? { citations } : {}), footnotes: found, numbers, prefix };
+  }, [citations, footnoteSource, prefix]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
   // element below reuses the whole rendered body while they hold still.
   const { components, urlTransform } = useMemo(() => ({
     components: {
-      a: ({ children: linkChildren, href, node, ...props }) => {
+      a: ({ children: linkChildren, href, node, ...props }) => (
+        <CitationLink
+          anchor={{ ...props, href }}
+          footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
+          href={href}
+          identity={() => renderIdentity(href, linkChildren, mentions, token)}
+        >{linkChildren}</CitationLink>
+      ),
+      img: ({ alt, node, src, ...props }) => {
         void node;
-        const personId = personIdFromHref(href);
-        if (personId) {
-          const mention = mentions.find((candidate) => (
-            candidate.type === 'person' && candidate.personId?.toLowerCase() === personId
-          ));
-          if (!mention) return <span className="mention-text-fallback">{linkChildren}</span>;
-          return <MentionChip fallbackLabel={linkChildren} mention={mention} personId={personId} />;
-        }
-        // A `person:` target that is not an id is text a model wrote. It
-        // reaches here intact because `urlTransform` below passes the
-        // whole scheme through — `defaultUrlTransform` would empty it
-        // instead, and an anchor with nothing behind it reads as a mention
-        // that opens a blank window.
-        if (href !== undefined && /^person:/iu.test(href)) {
-          return <span className="mention-text-fallback">{linkChildren}</span>;
-        }
-        if (isConnectorHref(href)) {
-          const connectorType = connectorTypeFromHref(href, token);
-          const label = linkLabelText(linkChildren);
-          // Without this render's token the link is text someone wrote, not a
-          // mention: it neither earns a chip nor becomes something clickable.
-          if (connectorType === undefined || label === undefined) {
-            return <span className="mention-text-fallback">{linkChildren}</span>;
-          }
-          return (
-            <span className="mention-chip mention-chip-connector" data-connector-type={connectorType}>
-              <span className="mention-chip-label">{label}</span>
-            </span>
-          );
-        }
-        return <a {...props} href={href} rel="noopener noreferrer" target="_blank">{linkChildren}</a>;
+        return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
+      },
+      li: ({ children: itemChildren, node, ...props }) => {
+        void node;
+        return <CitationFootnoteItem item={props}>{itemChildren}</CitationFootnoteItem>;
+      },
+      section: ({ children: sectionChildren, node, ...props }) => {
+        // Only the footnote section is the citation renderer's business; GFM
+        // emits no other, but a model writing raw HTML would not reach here
+        // anyway — `rehype-raw` is deliberately not configured.
+        if (node?.properties?.dataFootnotes === undefined) return <section {...props}>{sectionChildren}</section>;
+        return <CitationFootnoteSection section={props}>{sectionChildren}</CitationFootnoteSection>;
       },
       code: (properties) => (
         <MarkdownCode
@@ -585,13 +687,15 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
       table: MarkdownTable,
     } satisfies MarkdownComponents,
     urlTransform: ((url, key, node) => (
-      // Both schemes reach the `a` component intact so it can decide there;
-      // neither is ever rendered as a navigable link. The whole scheme
-      // passes, not only a well-formed id: `defaultUrlTransform` empties
-      // what it rejects, and an emptied href would reach the component as
-      // '' — indistinguishable from a link with no target, and too late
-      // for the fallback branch to know it was a mention.
-      key === 'href' && node.tagName === 'a' && (/^person:/iu.test(url) || isConnectorHref(url))
+      // Every internal scheme reaches its component intact so the citation
+      // matrix can decide there. The whole scheme passes, not only a
+      // well-formed id: `defaultUrlTransform` empties what it rejects, and an
+      // emptied target would reach the component as '' — indistinguishable
+      // from a link with no target, and too late for the cell to know which
+      // scheme it was. What the components then emit is never the raw value:
+      // an identity is a chip or inert text, and a `resource://` target is a
+      // chip, a card, or its label.
+      isInternalCitationTarget(url, key, node.tagName)
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
@@ -599,10 +703,16 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
   // A settled body's element is reused whenever the markdown has not changed,
   // so a commit elsewhere on the screen — another message streaming at 60
   // commits a second included — skips this subtree instead of re-parsing it.
+  const rehypeOptions = useMemo<MarkdownRehypeOptions>(() => ({ clobberPrefix: prefix }), [prefix]);
   const rendered = useMemo(() => {
     if (!streaming) {
       return (
-        <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+        <ReactMarkdown
+          components={components}
+          remarkPlugins={REMARK_PLUGINS}
+          remarkRehypeOptions={rehypeOptions}
+          urlTransform={urlTransform}
+        >
           {markdown}
         </ReactMarkdown>
       );
@@ -614,17 +724,31 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
           <SettledMarkdownSegment
             components={components}
             key={index}
+            rehypeOptions={rehypeOptions}
             source={segment}
             urlTransform={urlTransform}
           />
         ))}
-        <ReactMarkdown components={components} remarkPlugins={REMARK_PLUGINS} urlTransform={urlTransform}>
+        <ReactMarkdown
+          components={components}
+          remarkPlugins={REMARK_PLUGINS}
+          remarkRehypeOptions={rehypeOptions}
+          urlTransform={urlTransform}
+        >
           {tail}
         </ReactMarkdown>
       </>
     );
-  }, [components, markdown, streaming, urlTransform]);
-  return <div className="markdown-body">{rendered}</div>;
+  }, [components, markdown, rehypeOptions, streaming, urlTransform]);
+  // The provider sits outside the memoised body deliberately: a definition that
+  // arrives mid-stream has to reach the pills, and a context update crosses a
+  // `memo` boundary where a changed prop would have re-parsed everything under
+  // it instead.
+  return (
+    <CitationsProvider value={render}>
+      <div className="markdown-body">{rendered}</div>
+    </CitationsProvider>
+  );
 }
 
 /**

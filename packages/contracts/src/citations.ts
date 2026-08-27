@@ -92,6 +92,33 @@ export function parseCitationHref(href: string | undefined): CitationTarget {
     : { scheme: "unknown" };
 }
 
+/** Which cell of the renderer matrix a target belongs to, before it is parsed. */
+export type CitationScheme = CitationTarget["scheme"];
+
+/**
+ * The cell a link target dispatches to — its *prefix*, not its validity.
+ *
+ * `parseCitationHref` answers "what is this, if anything"; this answers "who
+ * renders it". They differ on exactly one input and the difference is the whole
+ * point: a malformed `resource://has space` parses as unknown, but it must still
+ * reach the resource cell, because that cell is the one that knows a broken
+ * citation degrades to its label text. Routed to the unknown cell instead it
+ * would keep react-markdown's default — an anchor carrying a raw
+ * `resource://` target into the DOM, which is the one outcome the scheme
+ * allowlist exists to prevent.
+ *
+ * The unknown cell is deliberately not "render as text": it is where `mailto:`,
+ * `tel:` and every other target the default transform already handles keep the
+ * behavior they have today.
+ */
+export function citationScheme(href: string | undefined): CitationScheme {
+  if (href === undefined) return "unknown";
+  if (/^https?:\/\//iu.test(href)) return "external";
+  if (/^person:/iu.test(href)) return "person";
+  if (/^connector:/u.test(href)) return "connector";
+  return RESOURCE_SCHEME.test(href) ? "resource" : "unknown";
+}
+
 /** A footnote definition that qualified as a citation under the pinned grammar. */
 export interface FootnoteCitation {
   /** The link's own text — what the pill's popover names the source. */
@@ -110,6 +137,18 @@ export interface CitationFootnotes {
   readonly definitions: ReadonlyMap<string, string>;
   /** Identifiers referenced in the body, in order of first reference. */
   readonly referenced: readonly string[];
+}
+
+/**
+ * A footnote identifier as GFM matches it, and as it appears in the DOM.
+ *
+ * `[^Rev]` and `[^rev]` are the same footnote to the parser, and the anchor it
+ * emits is lowercased either way. Keying by the raw label instead would leave
+ * the renderer looking up `Rev` against an id that says `rev` and quietly
+ * showing a classic footnote where a pill belonged.
+ */
+function normalizeFootnoteIdentifier(label: string): string {
+  return label.toLowerCase();
 }
 
 /** `[^label]: content`, at the start of a line. */
@@ -160,7 +199,7 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
 
     const definition = FOOTNOTE_DEFINITION.exec(line);
     if (definition) {
-      open = definition[1]!;
+      open = normalizeFootnoteIdentifier(definition[1]!);
       // A repeated identifier keeps the first definition, which is what a GFM
       // parser does with one; the second would otherwise silently win here and
       // disagree with what the renderer shows.
@@ -180,7 +219,7 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
       open = null;
     }
     for (const match of line.matchAll(FOOTNOTE_REFERENCE)) {
-      const identifier = match[1]!;
+      const identifier = normalizeFootnoteIdentifier(match[1]!);
       if (!referenced.includes(identifier)) referenced.push(identifier);
     }
   }
