@@ -81,6 +81,176 @@ describe('Ace Hono application', () => {
     expect(cloudflare).not.toHaveBeenCalled();
   });
 
+  it('lists only the model flags Ace knows how to explain and edit', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({
+      success: true,
+      result: [
+        { key: 'agent-model-workstream', variations: { current: { model: 'x-ai/grok-4.3', fallbackModels: [] } } },
+        { key: 'meeting-recording-enabled', variations: { off: false, on: true } },
+        { key: 'agent-model-unregistered', variations: { current: { model: 'unknown/model', fallbackModels: [] } } },
+      ],
+    }));
+
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/models',
+    ), env({ CLOUDFLARE_ACCOUNT_ID: 'account', FLAGSHIP_APP_ID: 'app', CLOUDFLARE_FLAGSHIP_API_TOKEN: 'secret' }), {
+      waitUntil: vi.fn(),
+    } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ flags: [{
+      key: 'agent-model-workstream',
+      variations: { current: { model: 'x-ai/grok-4.3', fallbackModels: [] } },
+    }] });
+  });
+
+  it('validates exact model ids against OpenRouter without sending the Flagship credential', async () => {
+    const openrouter = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/x-ai/grok-4.3/endpoints')) {
+        return Response.json({ data: { id: 'x-ai/grok-4.3', endpoints: [{ provider_name: 'xAI' }] } });
+      }
+      if (url.endsWith('/missing/model/endpoints')) return new Response(null, { status: 404 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/models/validate',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
+        body: JSON.stringify({ modelIds: ['x-ai/grok-4.3', 'missing/model'] }),
+      },
+    ), env({ CLOUDFLARE_FLAGSHIP_API_TOKEN: 'must-not-leak' }), {
+      waitUntil: vi.fn(),
+    } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ models: [
+      { modelId: 'x-ai/grok-4.3', valid: true },
+      { modelId: 'missing/model', valid: false },
+    ] });
+    expect(openrouter).toHaveBeenCalledTimes(2);
+    for (const [, init] of openrouter.mock.calls) {
+      expect(new Headers(init?.headers).has('Authorization')).toBe(false);
+    }
+  });
+
+  it('updates the default model route without dropping staged variations or targeting rules', async () => {
+    const stagedRouting = { model: 'google/gemini-3.6-flash', fallbackModels: ['x-ai/grok-4.3'] };
+    const rules = [{
+      priority: 1,
+      conditions: [{ attribute: 'workspaceId', operator: 'equals', value: 'workspace-id' }],
+      serve_variation: 'next',
+    }];
+    const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('https://openrouter.ai/api/v1/models/')) {
+        const modelId = url.slice('https://openrouter.ai/api/v1/models/'.length, -'/endpoints'.length);
+        return Response.json({ data: { id: modelId, endpoints: [{ provider_name: 'test' }] } });
+      }
+      if (url.endsWith('/flags/agent-model-workstream') && init?.method === 'PUT') {
+        return Response.json({
+          success: true,
+          result: { key: 'agent-model-workstream', default_variation: 'current' },
+        });
+      }
+      if (url.endsWith('/flags/agent-model-workstream')) {
+        return Response.json({
+          success: true,
+          result: {
+            key: 'agent-model-workstream',
+            description: 'Work-stream agent OpenRouter models',
+            enabled: true,
+            default_variation: 'current',
+            variations: {
+              current: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+              next: stagedRouting,
+            },
+            rules,
+            type: 'json',
+          },
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const request = new Request('https://ace.internal.rallywith.ai/api/models/workstream', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
+      body: JSON.stringify({
+        role: 'workstream',
+        routing: { model: 'custom/primary', fallbackModels: ['custom/first', 'custom/second'] },
+      }),
+    });
+
+    const response = await worker.fetch!(request, env({
+      CLOUDFLARE_ACCOUNT_ID: 'account',
+      FLAGSHIP_APP_ID: 'app',
+      CLOUDFLARE_FLAGSHIP_API_TOKEN: 'secret',
+    }), { waitUntil: vi.fn() } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://api.cloudflare.com/client/v4/accounts/account/flagship/apps/app/flags/agent-model-workstream',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer secret' }) }),
+    );
+    const [, writeInit] = fetch.mock.calls.find(([input, init]) => (
+      String(input).includes('api.cloudflare.com') && init?.method === 'PUT'
+    ))!;
+    expect(JSON.parse(String(writeInit?.body))).toEqual({
+      key: 'agent-model-workstream',
+      description: 'Work-stream agent OpenRouter models',
+      enabled: true,
+      default_variation: 'current',
+      variations: {
+        current: { model: 'custom/primary', fallbackModels: ['custom/first', 'custom/second'] },
+        next: stagedRouting,
+      },
+      rules,
+      type: 'json',
+    });
+  });
+
+  it('rejects an unavailable OpenRouter model before reading or writing Flagship', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 404 }));
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/models/workstream',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
+        body: JSON.stringify({
+          role: 'workstream',
+          routing: { model: 'missing/model', fallbackModels: [] },
+        }),
+      },
+    ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_openrouter_models',
+      invalidModelIds: ['missing/model'],
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(fetch.mock.calls[0]![0])).toContain('openrouter.ai');
+  });
+
+  it('rejects a model write whose role does not match its path', async () => {
+    const cloudflare = vi.spyOn(globalThis, 'fetch');
+    const response = await worker.fetch!(new Request(
+      'https://ace.internal.rallywith.ai/api/models/workstream',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://ace.internal.rallywith.ai' },
+        body: JSON.stringify({
+          role: 'meeting_notes',
+          routing: { model: 'custom/primary', fallbackModels: [] },
+        }),
+      },
+    ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
+
+    expect(response.status).toBe(400);
+    expect(cloudflare).not.toHaveBeenCalled();
+  });
+
   it('rejects a cross-origin Queue peek before it reaches Cloudflare', async () => {
     const cloudflare = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch!(new Request(

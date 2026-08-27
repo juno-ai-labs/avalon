@@ -1,6 +1,12 @@
 import { ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
-import { MANAGED_FLAGS, ManagedFlagUpdateSchema } from '../src/protocol';
+import {
+  MANAGED_FLAGS,
+  MANAGED_MODELS,
+  MODEL_CHOICES,
+  ManagedFlagUpdateSchema,
+  ManagedModelUpdateSchema,
+} from '../src/protocol';
 
 describe('Ace managed flag protocol', () => {
   it('keeps every application boolean explicit about its enabled state', () => {
@@ -68,5 +74,57 @@ describe('Ace managed flag protocol', () => {
 
     expect(ManagedFlagUpdateSchema.safeParse(flag(nested(5))).success).toBe(true);
     expect(ManagedFlagUpdateSchema.safeParse(flag(nested(6))).success).toBe(false);
+  });
+});
+
+describe('Ace managed model protocol', () => {
+  it('catalogs every model-using role with its concrete Flagship key', () => {
+    expect(MANAGED_MODELS.map(({ role, key }) => ({ role, key }))).toEqual([
+      { role: 'workstream', key: 'agent-model-workstream' },
+      { role: 'addressing_classifier', key: 'agent-model-addressing-classifier' },
+      { role: 'inline_child', key: 'agent-model-inline-child' },
+      { role: 'workstream_description', key: 'agent-model-workstream-description' },
+      { role: 'workstream_naming', key: 'agent-model-workstream-naming' },
+      { role: 'automation_compiler', key: 'agent-model-automation-compiler' },
+      { role: 'meeting_notes', key: 'agent-model-meeting-notes' },
+      { role: 'activity_structured', key: 'agent-model-activity-structured' },
+      { role: 'work_opportunity_admission', key: 'agent-model-work-opportunity-admission' },
+      { role: 'work_opportunity_ranking', key: 'agent-model-work-opportunity-ranking' },
+      { role: 'block_dashboard', key: 'agent-model-block-dashboard' },
+    ]);
+    expect(MANAGED_MODELS.map((model) => model.rank)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
+    expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
+    expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);
+  });
+
+  it('suggests the checked-in classifier model as well as the reviewed pin list', () => {
+    expect(MODEL_CHOICES).toContain('google/gemini-2.5-flash-lite');
+    expect(MODEL_CHOICES).toContain('x-ai/grok-4.3');
+  });
+
+  it('accepts a free-text primary and preserves the ordered fallback array', () => {
+    expect(ManagedModelUpdateSchema.parse({
+      role: 'workstream_description',
+      routing: {
+        model: ' custom/provider-primary ',
+        fallbackModels: ['custom/first', ' custom/second '],
+      },
+    })).toEqual({
+      role: 'workstream_description',
+      routing: {
+        model: 'custom/provider-primary',
+        fallbackModels: ['custom/first', 'custom/second'],
+      },
+    });
+  });
+
+  it('rejects blank primary and fallback entries', () => {
+    expect(ManagedModelUpdateSchema.safeParse({
+      role: 'workstream', routing: { model: ' ', fallbackModels: [] },
+    }).success).toBe(false);
+    expect(ManagedModelUpdateSchema.safeParse({
+      role: 'workstream', routing: { model: 'x-ai/grok-4.3', fallbackModels: [' '] },
+    }).success).toBe(false);
   });
 });

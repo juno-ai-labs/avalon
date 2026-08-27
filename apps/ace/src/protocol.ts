@@ -1,5 +1,145 @@
-import { ProductFeatureFlagKeySchema } from '@rally/contracts';
+import { AGENT_MODEL_OVERRIDES, ProductFeatureFlagKeySchema } from '@rally/contracts';
 import { z } from 'zod';
+
+export const MODEL_CHOICES = [
+  ...AGENT_MODEL_OVERRIDES,
+  // The small classifier/structured default is not in the work-stream pin
+  // selector above, but it is a first-class option for Ace's fleet routing.
+  'google/gemini-2.5-flash-lite',
+] as const;
+
+/**
+ * Ace cannot discover model roles from the deployed Worker: Flagship stores
+ * only opaque flag keys and route-plan values. This catalog is deliberately
+ * hard-coded from every role in `apps/api/src/services/agent-model-flags.ts`
+ * and the call sites behind it, so the operator sees what a model actually
+ * does rather than an internal enum name.
+ */
+export const MANAGED_MODELS = [
+  {
+    rank: 1,
+    rankReason: 'Core path · every main run',
+    role: 'workstream',
+    key: 'agent-model-workstream',
+    label: 'Work-stream agent',
+    description: 'Runs the main participant-visible work stream and the structured attachment-summary pass: reasons over transcripts, calls tools, and streams answers.',
+    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 2,
+    rankReason: 'Critical path · message admission',
+    role: 'addressing_classifier',
+    key: 'agent-model-addressing-classifier',
+    label: 'Addressing classifier',
+    description: 'Decides whether a message is for the agent, people, both, or uncertain before a work-stream run starts.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 3,
+    rankReason: 'Core path · delegated work',
+    role: 'inline_child',
+    key: 'agent-model-inline-child',
+    label: 'Inline subagent',
+    description: 'Runs a bounded read-only child task delegated by a work-stream agent and returns the result to its parent.',
+    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 4,
+    rankReason: 'Frequent · terminal runs',
+    role: 'workstream_description',
+    key: 'agent-model-workstream-description',
+    label: 'Work-stream description',
+    description: 'Re-evaluates the derived one-line description after terminal runs and rewrites it only when the work stream changed purpose.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 5,
+    rankReason: 'Frequent · new work streams',
+    role: 'workstream_naming',
+    key: 'agent-model-workstream-naming',
+    label: 'Work-stream naming',
+    description: 'Creates the short work-stream title from the opening request while the creator waits.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 6,
+    rankReason: 'Core path · automation setup',
+    role: 'automation_compiler',
+    key: 'agent-model-automation-compiler',
+    label: 'Automation architect',
+    description: 'Turns an automation setup conversation into the saved automation definition, schedule, scope, and delivery plan.',
+    defaultRouting: { model: 'x-ai/grok-4.5', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 7,
+    rankReason: 'Focused · live and final passes',
+    role: 'meeting_notes',
+    key: 'agent-model-meeting-notes',
+    label: 'Meeting notes',
+    description: 'Produces the live and final meeting-note passes from captured transcript segments.',
+    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 8,
+    rankReason: 'Background · connector activity',
+    role: 'activity_structured',
+    key: 'agent-model-activity-structured',
+    label: 'Activity classifier',
+    description: 'Turns connector activity into the structured semantic signal used to match activity-triggered automations.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 9,
+    rankReason: 'Background · candidate creation',
+    role: 'work_opportunity_admission',
+    key: 'agent-model-work-opportunity-admission',
+    label: 'Suggested-work admission',
+    description: 'Decides whether recent unclaimed activity should become a personal or workspace suggestion and drafts its candidate.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 10,
+    rankReason: 'Background · per-person ordering',
+    role: 'work_opportunity_ranking',
+    key: 'agent-model-work-opportunity-ranking',
+    label: 'Suggested-work ranking',
+    description: 'Orders admitted suggestions for one person, accounting for freshness and impressions before storing the visible set.',
+    defaultRouting: { model: 'google/gemini-2.5-flash-lite', fallbackModels: ['google/gemini-3.6-flash'] },
+  },
+  {
+    rank: 11,
+    rankReason: 'Specialized · dashboard refreshes',
+    role: 'block_dashboard',
+    key: 'agent-model-block-dashboard',
+    label: 'HyperSight block',
+    description: 'Refreshes one shared read-only Markdown dashboard block from a reproducible interval of the work-stream transcript.',
+    defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: [] },
+  },
+] as const;
+
+export const ManagedModelRoleSchema = z.enum(MANAGED_MODELS.map((model) => model.role) as [
+  (typeof MANAGED_MODELS)[number]['role'],
+  ...(typeof MANAGED_MODELS)[number]['role'][],
+]);
+export type ManagedModelRole = z.infer<typeof ManagedModelRoleSchema>;
+
+export const AgentModelRoutingSchema = z.object({
+  model: z.string().trim().min(1),
+  fallbackModels: z.array(z.string().trim().min(1)),
+}).strict();
+
+export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
+
+export const ManagedModelUpdateSchema = z.object({
+  role: ManagedModelRoleSchema,
+  routing: AgentModelRoutingSchema,
+}).strict();
+
+export type ManagedModelUpdate = z.infer<typeof ManagedModelUpdateSchema>;
+
+export const ModelValidationRequestSchema = z.object({
+  modelIds: z.array(z.string().trim().min(1)),
+}).strict();
 
 /**
  * `defaultVariation` is the one fact `apps/ace/scripts/deploy.mjs` and the
