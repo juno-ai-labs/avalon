@@ -1392,16 +1392,31 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         fact_id TEXT PRIMARY KEY,
         fact_kind TEXT NOT NULL,
         payload_id TEXT NOT NULL REFERENCES transcript_payloads(payload_id),
+        origin_kind TEXT NOT NULL CHECK (
+          origin_kind IN ('canonical', 'protocol', 'derived', 'system_projection')
+        ),
+        source_kind TEXT,
+        source_id TEXT,
+        source_revision INTEGER,
         run_id TEXT,
         turn_id TEXT,
         tool_call_id TEXT,
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        CHECK ((source_kind IS NULL) = (source_id IS NULL)),
+        CHECK (source_revision IS NULL OR source_revision >= 0),
+        CHECK (
+          (origin_kind IN ('canonical', 'protocol') AND source_id IS NULL)
+          OR (origin_kind IN ('derived', 'system_projection') AND source_id IS NOT NULL)
+        )
       ) STRICT`,
       `CREATE INDEX transcript_facts_turn_idx
          ON transcript_facts(turn_id, fact_kind, created_at)`,
       `CREATE INDEX transcript_facts_tool_idx
          ON transcript_facts(tool_call_id, fact_kind, created_at)
          WHERE tool_call_id IS NOT NULL`,
+      `CREATE INDEX transcript_facts_source_idx
+         ON transcript_facts(source_kind, source_id, source_revision)
+         WHERE source_id IS NOT NULL`,
       `CREATE TABLE participant_transcript_turns (
         transcript_sequence INTEGER PRIMARY KEY CHECK (transcript_sequence > 0),
         turn_id TEXT NOT NULL UNIQUE,

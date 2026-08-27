@@ -1,5 +1,12 @@
 export type BindLoopMessage = Readonly<Record<string, unknown>>;
 
+export interface BindLoopMessageOrigin {
+  originKind: "canonical" | "protocol" | "derived";
+  sourceKind: string | null;
+  sourceId: string | null;
+  sourceRevision: number | null;
+}
+
 export interface BindSystemProjection {
   revision: number;
   rendererVersion: string;
@@ -18,6 +25,7 @@ export type BindLoopTransition =
       generation: 1;
       systemProjection: BindSystemProjection;
       nonSystemMessages: readonly BindLoopMessage[];
+      nonSystemMessageOrigins: readonly BindLoopMessageOrigin[];
     }
   | BindLoopTransitionBase & {
       kind: "system_projection_changed";
@@ -95,6 +103,9 @@ export function applyBindLoopTransition(
   if (transition.kind === "state_initialized") {
     if (previous !== null || transition.stateRevision !== 1) {
       throw new Error("bind_loop_initialization_out_of_order");
+    }
+    if (transition.nonSystemMessageOrigins.length !== transition.nonSystemMessages.length) {
+      throw new Error("bind_loop_message_origin_count_mismatch");
     }
     return {
       loopId: transition.loopId,

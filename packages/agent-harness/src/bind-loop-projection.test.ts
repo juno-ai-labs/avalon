@@ -23,6 +23,12 @@ function initialized(): BindLoopProjectionState {
     stateRevision: 1,
     systemProjection: system,
     nonSystemMessages: [{ role: "user", content: "Start" }],
+    nonSystemMessageOrigins: [{
+      originKind: "derived",
+      sourceKind: "participant_turn",
+      sourceId: "message-1",
+      sourceRevision: 1,
+    }],
   });
 }
 

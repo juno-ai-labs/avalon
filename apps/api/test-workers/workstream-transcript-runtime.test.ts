@@ -32,6 +32,12 @@ describe("work-stream transcript on workerd SQLite", () => {
           message: { role: "system", content: "System" },
         },
         nonSystemMessages: [{ role: "user", content: "Question" }],
+        nonSystemMessageOrigins: [{
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: "message-1",
+          sourceRevision: 1,
+        }],
       });
       await transcript.commitBindTransition({
         kind: "assistant_accepted",
@@ -56,6 +62,22 @@ describe("work-stream transcript on workerd SQLite", () => {
         .toEqual(["text", "tool"]);
       expect(transcript.readBindProjection("run-workerd")?.nonSystemMessages.map((message) => message.role))
         .toEqual(["user", "assistant"]);
+      expect(state.storage.sql.exec<{
+        origin_kind: string;
+        source_kind: string | null;
+        source_id: string | null;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT fact.origin_kind, fact.source_kind, fact.source_id
+           FROM bind_loop_state_messages projected
+           JOIN transcript_facts fact ON fact.fact_id = projected.fact_id
+          WHERE projected.loop_id = 'run-workerd'
+            AND projected.state_revision = 2
+            AND projected.message_position = 1`,
+      ).one()).toMatchObject({
+        origin_kind: "derived",
+        source_kind: "participant_turn",
+        source_id: "message-1",
+      });
 
       await transcript.appendParticipantMessage({
         turnId: "after-fence",
