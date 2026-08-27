@@ -104,6 +104,14 @@ export type MessageAppendOutcome =
   | { outcome: "appended"; messageId: string; sequenceNumber: number }
   | { outcome: "replayed"; messageId: string; sequenceNumber: number };
 
+export interface UpsertToolMessageInput {
+  messageId: string;
+  clientMessageId: string;
+  structuredContentJson: string;
+  createdAt: number;
+  editedAt: number | null;
+}
+
 export type MessageAppendInput = Omit<
   WorkstreamMessageRecordInput,
   "sequenceNumber" | "attentionOrdinal" | "messageType"
@@ -576,14 +584,10 @@ export class WorkstreamMessageStorage {
    * so NULL is what production has stored for every tool card there is. Giving
    * the card its run would be a change, and belongs to whoever needs it.
    */
-  async upsertToolMessage(input: {
-    messageId: string;
-    clientMessageId: string;
-    structuredContentJson: string;
-    createdAt: number;
-    editedAt: number | null;
-  }): Promise<{ outcome: "appended" | "refreshed"; sequenceNumber: number }> {
-    const prepared = await prepareWorkstreamMessageRecord({
+  async prepareToolMessage(
+    input: UpsertToolMessageInput,
+  ): Promise<PreparedWorkstreamMessageRecord> {
+    return prepareWorkstreamMessageRecord({
       messageId: input.messageId,
       clientMessageId: input.clientMessageId,
       authorType: "agent",
@@ -602,10 +606,24 @@ export class WorkstreamMessageStorage {
       visibility: "people",
       sequenceNumber: 0,
       attentionOrdinal: null,
+      createdAt: input.createdAt,
+      editedAt: input.editedAt,
       now: input.editedAt ?? input.createdAt,
     });
-    return this.storage.transactionSync(() => {
-      // Guarded on `message_type = 'tool'` in the *lookup*, not only in the
+  }
+
+  async upsertToolMessage(
+    input: UpsertToolMessageInput,
+  ): Promise<{ outcome: "appended" | "refreshed"; sequenceNumber: number }> {
+    const prepared = await this.prepareToolMessage(input);
+    return this.storage.transactionSync(() => this.upsertPreparedToolMessage(input, prepared));
+  }
+
+  upsertPreparedToolMessage(
+    input: UpsertToolMessageInput,
+    prepared: PreparedWorkstreamMessageRecord,
+  ): { outcome: "appended" | "refreshed"; sequenceNumber: number } {
+    // Guarded on `message_type = 'tool'` in the *lookup*, not only in the
       // update, so the answer is about a row that exists. The routed
       // `DO UPDATE … WHERE parts.message_type = 'tool'` matched nothing when a
       // non-tool row held this id and still reported a write; here that case
@@ -613,13 +631,13 @@ export class WorkstreamMessageStorage {
       // path production takes — the id is the invocation's own UUIDv7 and no
       // message carries it — so this is about the operation answering truly
       // rather than about a state to handle.
-      const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
+    const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
         `SELECT sequence_number FROM parts
           WHERE substream_id = '0' AND id = ? AND message_type = 'tool'`,
         input.messageId,
-      ));
-      if (existing) {
-        this.sql.exec(
+    ));
+    if (existing) {
+      this.sql.exec(
           `UPDATE parts
               SET structured_content_json = ?, tool_status = ?, edited_at = ?, updated_at = ?
             WHERE id = ? AND substream_id = '0' AND message_type = 'tool'`,
@@ -629,20 +647,20 @@ export class WorkstreamMessageStorage {
           input.editedAt ?? input.createdAt,
           input.messageId,
         );
-        prepared.input.sequenceNumber = existing.sequence_number;
-        insertWorkstreamMessageRecord(this.sql, prepared);
+      prepared.input.sequenceNumber = existing.sequence_number;
+      insertWorkstreamMessageRecord(this.sql, prepared);
         // What the trigger's counter update did on the conflict path: the work
         // stream's own clock moves, its sequence and attention counters do not.
-        this.sql.exec(
+      this.sql.exec(
           `UPDATE workstream SET updated_at = ? WHERE id = 1`,
           input.editedAt ?? input.createdAt,
         );
-        return { outcome: "refreshed" as const, sequenceNumber: existing.sequence_number };
-      }
-      const sequence = this.sql.exec<{ next_sequence_number: number } & Record<string, SqlStorageValue>>(
+      return { outcome: "refreshed" as const, sequenceNumber: existing.sequence_number };
+    }
+    const sequence = this.sql.exec<{ next_sequence_number: number } & Record<string, SqlStorageValue>>(
         `SELECT next_sequence_number FROM workstream WHERE id = 1`,
-      ).one().next_sequence_number;
-      this.sql.exec(
+    ).one().next_sequence_number;
+    this.sql.exec(
         `INSERT INTO parts
            (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
             author_user_id, external_actor_json, content, client_message_id, effect_intent_id,
@@ -661,11 +679,10 @@ export class WorkstreamMessageStorage {
         input.createdAt,
         input.editedAt ?? input.createdAt,
       );
-      prepared.input.sequenceNumber = sequence;
-      insertWorkstreamMessageRecord(this.sql, prepared);
-      this.#advanceCounters(true, input.createdAt);
-      return { outcome: "appended" as const, sequenceNumber: sequence };
-    });
+    prepared.input.sequenceNumber = sequence;
+    insertWorkstreamMessageRecord(this.sql, prepared);
+    this.#advanceCounters(true, input.createdAt);
+    return { outcome: "appended" as const, sequenceNumber: sequence };
   }
 
   /**

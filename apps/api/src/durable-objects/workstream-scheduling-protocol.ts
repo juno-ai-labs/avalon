@@ -44,7 +44,12 @@ export const AnswerElicitationExternallyInputSchema = z.object({
  * other three authorities have no operation that has to leave the object's own
  * alarm index and sidebar projection consistent with the row it just wrote.
  */
-export type SchedulingOperation = keyof WorkstreamSchedulingStorage;
+type LocalOnlySchedulingOperation =
+  | "prepareOpenElicitationMessage"
+  | "openPreparedElicitation"
+  | "prepareExternalElicitationAnswerMessage"
+  | "answerPreparedElicitationExternally";
+export type SchedulingOperation = Exclude<keyof WorkstreamSchedulingStorage, LocalOnlySchedulingOperation>;
 
 export type SchedulingObjectPort = ObjectPortOf<WorkstreamSchedulingStorage>;
 

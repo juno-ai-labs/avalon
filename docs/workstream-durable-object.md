@@ -1318,7 +1318,11 @@ dual-populates live message writes, and exposes a main-substream-only operator
 RPC that transfers retained message/checkpoint payload ownership under one
 object-local transaction. The operation captures a real PITR bookmark, hashes
 and re-reads the complete source, refuses active writers or immutable client
-snapshots, and records a replay-verifiable receipt.
+snapshots, and records a replay-verifiable receipt. Message payload hashes are
+prepared before entering the synchronous SQLite mutation, so tool-card writes,
+elicitations, and final assistant messages commit their canonical fact and
+regional directory effect atomically. Terminal residual-receipt repair uses the
+same prepare-then-commit boundary when it refreshes a visible tool card.
 
 **Why:** The earlier range/index backfill was deliberately projection-only.
 Deleting the old tables after it would delete the only copy of historical text,
@@ -1332,8 +1336,12 @@ fleet witness or an atomic failure boundary.
 transfer before the stacked retirement release. Post-cutover compaction facts
 retain their existing identities, historical checkpoint arrays remain exact,
 and participant compaction status/activity edges are not synthesized or
-rewritten. The cleanup migration must abort rather than drop data when the
-verified receipt or canonical references are incomplete.
+rewritten. An unowned legacy checkpoint requires the backfill receipt even when
+there are no legacy message rows. Mutable tool metadata and participant-safe
+tool summaries must remain consistent with their canonical payload after both
+ordinary settlement and terminal repair. The cleanup migration must abort
+rather than drop data when the verified receipt or canonical references are
+incomplete.
 
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 
