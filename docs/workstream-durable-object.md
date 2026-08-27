@@ -93,6 +93,26 @@ Compaction atomically records the private checkpoint, generation replacement,
 and safe status transition. Two compactions therefore create two immutable
 events while the current loop head advances twice.
 
+Schema v28 supports one explicit projection backfill for retained pre-v27
+history. The v27 migration receipt supplies the cutover fence. The operation
+orders every participant-visible legacy `parts` row by its existing
+`sequence_number`, inserts that prefix ahead of any post-cutover canonical
+suffix, and adds canonical references to exact legacy compaction checkpoints.
+It does not copy text, tool summaries/results, or checkpoint arrays: the old
+rows remain their sole payload owners and the normal canonical reader hydrates
+through the stable references. Aggregate legacy rows cannot reproduce Bind's
+exact provider array, so the operation creates no historical Bind head/message
+and records that limitation explicitly rather than inventing interleaving.
+
+The data operation is an object-owned RPC, not constructor work. It requires a
+main-feed (`external_substream_id = '0'`) authority and a quiescent writer,
+captures a real pre-write PITR bookmark, hashes and prepares
+the source outside the transaction, then re-reads the entire source inside the
+single SQLite transaction that shifts sequences, inserts projections, and
+commits the one-row receipt. Movement, partial state, or a uniqueness conflict
+rolls back everything. Replay recomputes the digest and reconciles exact counts
+and prefix order before returning `verified`.
+
 Participant history is read through snapshot-fenced half-open ranges. Opening
 creates one fence and returns the first-unread conversation turn with up to five
 conversation turns on either side, plus the latest five conversation turns.
@@ -1208,6 +1228,41 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-26 — Legacy transcript rows gain faithful canonical projections
+
+**What changed:** schema v28 adds one receipt for the explicit pre-v27
+transcript backfill. A guarded `SubstreamAgent` RPC projects the exact retained
+participant order and compaction checkpoints into the canonical range/checkpoint
+indexes, shifts a post-cutover suffix atomically, records a pre-write PITR
+bookmark and full source digest, and reconciles every replay. Legacy payloads
+remain in their existing owning rows; canonical facts store only stable source
+references. Historical Bind state is explicitly unavailable.
+
+**Why:** the v27 breaking cutover created the correct durable substrate but did
+not make existing work-stream rows visible through it. The old `parts` table
+does preserve participant-visible order and the old checkpoint table preserves
+exact replacement arrays, so discarding those facts would be unnecessary data
+loss. It does not preserve the sequence of private messages Bind consumed, so a
+backfill cannot truthfully create that projection.
+
+**Considered and rejected:** copying legacy payloads into new fact payloads,
+because that creates two owners for identical semantic data; rebuilding Bind
+history from aggregate assistant text or the Global inference archive, because
+neither is an exact object-local continuation ledger; and performing the scan in
+the constructor, because unbounded content work would put every ordinary object
+wake on the migration path.
+
+**What a future change has to respect:** source rows referenced by a completed
+receipt are immutable transcript owners. A backfill must be quiescent,
+object-local, atomic with its receipt, PITR-recoverable, and replay-reconciled.
+Quiescence includes both mutable pending legacy tools and connected clients
+holding immutable transcript snapshots: later tool settlement would invalidate
+the recorded source digest, while prefix insertion would change an open fence's
+sequence meaning. An already committed replay is read-only and does not require
+disconnection.
+It may never claim exact historical Bind state unless a byte-faithful source for
+that loop boundary exists.
 
 ### 2026-08-26 — Foreground presence is explicit on the workspace socket
 

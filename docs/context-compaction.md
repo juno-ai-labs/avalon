@@ -137,6 +137,14 @@ Immutable private replay remains in `transcript_compaction_checkpoints`; safe
 participant history remains in `participant_transcript_turns` plus the activity
 interval. Two compactions produce two identities and two timings.
 
+For checkpoints created before the canonical transcript cutover, the v28
+backfill inserts an indexed `legacy_compaction_checkpoint_reference` fact rather
+than copying `messages_json` or `summary`. The canonical checkpoint reader joins
+that reference to the exact old owner. This preserves historical continuation
+bytes and the one-owner invariant, but it does not create a historical Bind
+generation or a participant compaction status that the old runtime never
+stored.
+
 ## Invariants
 
 - **A compaction carries nothing from the conversation verbatim.** The
@@ -271,6 +279,25 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-08-26 — Pre-cutover checkpoints are projected by exact reference
+
+**What changed:** the transcript backfill can expose every retained legacy
+checkpoint through the canonical checkpoint index while leaving its exact
+message array and summary in the existing owning row.
+
+**Why:** those arrays are exact continuation evidence worth preserving, unlike
+the aggregate participant feed, but copying them into a new payload would create
+two owners for the same private protocol datum.
+
+**Considered and rejected:** payload duplication and converting checkpoint
+arrays into synthetic Bind states. A checkpoint is an exact replacement prefix,
+not proof of every provider boundary that preceded it.
+
+**Consequences:** canonical checkpoint reads may hydrate a legacy reference;
+the referenced owner must remain immutable. Historical compaction lifecycle
+status remains absent unless it was independently stored, and no backfill may
+invent it from checkpoint timestamps.
 
 ### 2026-08-26 — Compaction replacement and safe status commit together
 
