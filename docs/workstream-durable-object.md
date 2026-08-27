@@ -48,6 +48,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/block-dashboard-protocol.ts` | Runtime-validated WorkstreamDO control, block dispatch, result, and maintenance-import contracts. |
 | `apps/api/src/durable-objects/rpc-result.ts` | Shared typed native-RPC status/body envelope used where former internal HTTP handlers must preserve status semantics without `stub.fetch()`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Normalized `SubstreamAgent` schema and append-only schema versions. |
+| `apps/api/src/durable-objects/workstream-transcript-storage.ts`, `workstream-transcript-protocol.ts` | Canonical transcript facts, participant and exact Bind-loop orderings, snapshot-fenced ranges, activity intervals, compaction replacement, and the typed object port. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Product transactions, message/run admission, read waterlines, compaction inputs, and local regional-effect creation. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
@@ -72,6 +73,48 @@ serve workspace product state or transcripts after cutover.
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
 
 ## How it works
+
+### Ordered transcript authority
+
+Main `SubstreamAgent("0")` owns one canonical transcript substrate. Semantic
+payloads and facts are stored once; two projections reference them:
+`transcript_sequence` orders participant-visible conversation turns and safe
+status entries, while `loop_sequence` orders the exact protocol messages Bind
+consumes. Participant rows and Bind rows are indexes over shared facts, not two
+transcript sources. Projection-only content is separate only when it is truly
+different, such as a participant-safe tool summary versus an exact tool result
+or a safe compaction status versus the private replacement.
+
+Every Bind transition is committed before the adapter returns the accepted
+assistant or tool-result message to Bind. At every provider boundary the host
+reconstructs the exact array, including the freshly rendered system message,
+and requires its canonical SHA-256 to equal the array about to be sent.
+Compaction atomically records the private checkpoint, generation replacement,
+and safe status transition. Two compactions therefore create two immutable
+events while the current loop head advances twice.
+
+Participant history is read through snapshot-fenced half-open ranges. Opening
+creates one fence and returns the first-unread conversation turn with up to five
+conversation turns on either side, plus the latest five conversation turns.
+The admitted feed socket keeps that fence in its hibernation attachment, so it
+survives object eviction but disappears with the reader session instead of
+accumulating in an append-only table or depending on an arbitrary TTL.
+Safe status entries inside either sequence span are included without counting
+against those conversation limits. Each answer reports the interval it
+inspected even when no row was returned, so the desktop can distinguish an
+empty covered interval from an unknown gap. Range, unread-anchor, latest-tail,
+active-activity, and exact-loop reads have query-shape indexes in the object
+schema.
+
+Activity edges are durable and nestable: response, assistant turn, plugin,
+tool call, thinking, and compaction activities carry UTC interval boundaries,
+monotonic revisions, and a snapshot-time elapsed baseline for active intervals.
+Opening returns only lifecycle rows referenced by its two loaded islands and
+active turns, plus active ancestry. Later range replies carry the lifecycle rows
+their turns reference, and interval hydration is one bulk query rather than one
+query per historical activity. No clock ticks are streamed. An admitted socket or REST boot performs one
+participant authorization decision and reuses it for all transcript slices and
+hydration; socket session validation remains the separate connection check.
 
 ### Object hierarchy and identity
 
@@ -1202,6 +1245,34 @@ REST read/write or recovery path. The
 direct same-object broadcast is designed for the latency target,
 but production percentiles still require measurement; a future telemetry change
 must not include workspace membership or presence sets in analytics payloads.
+
+### 2026-08-26 — Canonical facts gain participant and exact Bind orderings
+
+**What changed:** `SubstreamAgent` now stores canonical transcript facts with a
+participant-visible turn projection and a restricted exact Bind-loop projection.
+It serves snapshot-fenced half-open ranges, dual unread/latest opening islands,
+nested activity intervals, provider-boundary hashes, and atomic compaction
+replacement/status records through one typed local authority.
+
+**Why:** Flat `parts` and aggregate final assistant messages could not preserve
+the order in which Bind produced text, tool calls, later text, and parallel tool
+lifecycle updates. They also could not prove a downloaded range was empty
+rather than missing, or reconstruct Bind's private post-healing/post-compaction
+message array exactly after recovery.
+
+**Considered and rejected:** Copying participant text into a second transcript,
+deriving historical interleaving from aggregate rows, and authorizing every
+returned block. Human text remains owned by its participant part and referenced
+by the transcript fact; model and participant projections share facts where the
+payload is identical; admission is constant per external read.
+
+**Consequences:** Main-feed readers must use transcript ranges and stable turn
+and block identities. Automation-wizard rendering is unchanged. Schema changes
+must preserve the single-owner fact invariant, both monotonic sequence domains,
+provider-boundary equality, same-fence dual boot ranges, and the indexes that
+make those reads bounded. A socket attachment, not durable history, owns each
+reader's range fence; activity payload growth must remain proportional to loaded
+turns and active ancestry rather than work-stream lifetime.
 
 ### 2026-08-26 — Group actions use one generic filter and queued per-stream updates
 

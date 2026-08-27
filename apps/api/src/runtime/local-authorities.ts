@@ -66,6 +66,7 @@ export interface LocalWorkstreamAuthorities {
   message?: LocalAuthorityExecutor;
   resource?: LocalAuthorityExecutor;
   scheduling?: LocalAuthorityExecutor;
+  transcript?: LocalAuthorityExecutor;
   // Terminal's own executor predates this registry and already answers by
   // throwing its typed failure rather than returning one, so it keeps that
   // shape and its port keeps reading it.
