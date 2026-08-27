@@ -11,7 +11,8 @@ type LocalOnlyTranscriptOperation =
   | "prepareParticipantMessage"
   | "appendPreparedParticipantMessage"
   | "participantTurn"
-  | "participantTurnForTool";
+  | "participantTurnForTool"
+  | "range";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
 
@@ -24,7 +25,6 @@ const DISPATCHED_OPERATIONS = [
   "upsertToolLifecycle",
   "upsertActivity",
   "createOpeningSnapshot",
-  "range",
   "readBindProjection",
   "reserveCompactionStatus",
   "setParticipantTurnAttentionOrdinal",

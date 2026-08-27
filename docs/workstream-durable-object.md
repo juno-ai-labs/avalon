@@ -96,6 +96,9 @@ events while the current loop head advances twice.
 Participant history is read through snapshot-fenced half-open ranges. Opening
 creates one fence and returns the first-unread conversation turn with up to five
 conversation turns on either side, plus the latest five conversation turns.
+The admitted feed socket keeps that fence in its hibernation attachment, so it
+survives object eviction but disappears with the reader session instead of
+accumulating in an append-only table or depending on an arbitrary TTL.
 Safe status entries inside either sequence span are included without counting
 against those conversation limits. Each answer reports the interval it
 inspected even when no row was returned, so the desktop can distinguish an
@@ -106,7 +109,10 @@ schema.
 Activity edges are durable and nestable: response, assistant turn, plugin,
 tool call, thinking, and compaction activities carry UTC interval boundaries,
 monotonic revisions, and a snapshot-time elapsed baseline for active intervals.
-No clock ticks are streamed. An admitted socket or REST boot performs one
+Opening returns only lifecycle rows referenced by its two loaded islands and
+active turns, plus active ancestry. Later range replies carry the lifecycle rows
+their turns reference, and interval hydration is one bulk query rather than one
+query per historical activity. No clock ticks are streamed. An admitted socket or REST boot performs one
 participant authorization decision and reuses it for all transcript slices and
 hydration; socket session validation remains the separate connection check.
 
@@ -1263,7 +1269,9 @@ payload is identical; admission is constant per external read.
 and block identities. Automation-wizard rendering is unchanged. Schema changes
 must preserve the single-owner fact invariant, both monotonic sequence domains,
 provider-boundary equality, same-fence dual boot ranges, and the indexes that
-make those reads bounded.
+make those reads bounded. A socket attachment, not durable history, owns each
+reader's range fence; activity payload growth must remain proportional to loaded
+turns and active ancestry rather than work-stream lifetime.
 
 ### 2026-08-26 — Group actions use one generic filter and queued per-stream updates
 

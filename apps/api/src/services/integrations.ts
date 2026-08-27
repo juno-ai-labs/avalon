@@ -2137,6 +2137,7 @@ export async function runWorkstreamHarness(
   const pendingAssistantTools = new Map<string, number>();
   const failedPluginActivities = new Set<string>();
   const failedAssistantActivities = new Set<string>();
+  const registeredTranscriptTools = new Set<string>();
   const transcriptToolPosition = (toolCallId: string): {
     callIndex: number;
     turnId: string;
@@ -2332,6 +2333,39 @@ export async function runWorkstreamHarness(
     substreamId: input.substreamId ?? "0",
   });
   const orderedTranscript = createTranscriptObjectPort(env, input.workspaceId, input.workstreamId);
+  const ensureTranscriptToolParents = async (event: {
+    toolCallId: string;
+    pluginId: string;
+  }): Promise<void> => {
+    if (blockDashboardRun || registeredTranscriptTools.has(event.toolCallId)) return;
+    const position = transcriptToolPosition(event.toolCallId);
+    const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
+    if (!pluginActivityRevisions.has(plugin.revisionKey)) {
+      pluginActivityRevisions.set(plugin.revisionKey, 1);
+      const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
+        .find((candidate) => candidate.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+      await orderedTranscript.upsertActivity({
+        activityId: plugin.activityId,
+        parentActivityId: plugin.parentActivityId,
+        scope: "plugin",
+        subjectId: event.pluginId,
+        callIndex: position.callIndex,
+        label: pluginLabel,
+        action: "start",
+        revision: 1,
+        occurredAtUtc: new Date().toISOString(),
+      });
+    }
+    registeredTranscriptTools.add(event.toolCallId);
+    pendingPluginTools.set(
+      plugin.revisionKey,
+      (pendingPluginTools.get(plugin.revisionKey) ?? 0) + 1,
+    );
+    pendingAssistantTools.set(
+      position.turnId,
+      (pendingAssistantTools.get(position.turnId) ?? 0) + 1,
+    );
+  };
   let preparedCompactionVisibilityFingerprint: string | null = null;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
   if (!blockDashboardRun) {
@@ -3040,30 +3074,7 @@ export async function runWorkstreamHarness(
               const position = transcriptToolPosition(event.toolCallId);
               const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
               const pluginActivityId = plugin.activityId;
-              const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
-                .find((plugin) => plugin.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
-              if (!pluginActivityRevisions.has(plugin.revisionKey)) {
-                pluginActivityRevisions.set(plugin.revisionKey, 1);
-                await orderedTranscript.upsertActivity({
-                  activityId: pluginActivityId,
-                  parentActivityId: plugin.parentActivityId,
-                  scope: "plugin",
-                  subjectId: event.pluginId,
-                  callIndex: position.callIndex,
-                  label: pluginLabel,
-                  action: "start",
-                  revision: 1,
-                  occurredAtUtc: new Date().toISOString(),
-                });
-              }
-              pendingPluginTools.set(
-                plugin.revisionKey,
-                (pendingPluginTools.get(plugin.revisionKey) ?? 0) + 1,
-              );
-              pendingAssistantTools.set(
-                position.turnId,
-                (pendingAssistantTools.get(position.turnId) ?? 0) + 1,
-              );
+              await ensureTranscriptToolParents(event);
               await orderedTranscript.upsertToolLifecycle({
                 toolCallId: event.toolCallId,
                 pluginId: event.pluginId,
@@ -3145,6 +3156,7 @@ export async function runWorkstreamHarness(
               const pluginActivityId = plugin.activityId;
               const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
                 .find((plugin) => plugin.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+              await ensureTranscriptToolParents(event);
               await orderedTranscript.upsertToolLifecycle({
                 toolCallId: event.toolCallId,
                 pluginId: event.pluginId,
@@ -3272,6 +3284,7 @@ export async function runWorkstreamHarness(
               const pluginActivityId = plugin.activityId;
               const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
                 .find((plugin) => plugin.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+              await ensureTranscriptToolParents(event);
               await orderedTranscript.upsertToolLifecycle({
                 toolCallId: event.toolCallId,
                 pluginId: event.pluginId,

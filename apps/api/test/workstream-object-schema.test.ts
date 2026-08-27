@@ -85,7 +85,6 @@ const EXPECTED_TABLES = [
   "transcript_counters",
   "transcript_facts",
   "transcript_payloads",
-  "transcript_snapshots",
   "workstream",
   "workstream_resource_links",
   "workstream_wakeups",

@@ -28,6 +28,12 @@ interface FactMaterial {
   toolCallId: string | null;
 }
 
+interface PreparedFact extends FactMaterial {
+  canonical: string;
+  hash: string;
+  payloadId: string;
+}
+
 interface MessageProjectionRow extends Record<string, SqlStorageValue> {
   message_position: number;
   fact_id: string;
@@ -104,7 +110,7 @@ export interface ParticipantMessageInput {
 
 export interface PreparedParticipantMessage {
   input: ParticipantMessageInput;
-  fact: FactMaterial;
+  fact: PreparedFact;
   occurredAt: number;
 }
 
@@ -155,7 +161,8 @@ export class WorkstreamTranscriptStorage {
       for (const fact of facts.materials) this.insertFact(fact, now);
       this.writeBindState(transition, next, facts.factIds, now);
       if (transition.kind === "assistant_accepted") {
-        this.projectAssistantTurn(transition, facts.appendedFactId!, now);
+        if (!facts.appendedFactId) throw new Error("assistant_projection_fact_missing");
+        this.projectAssistantTurn(transition, facts.appendedFactId, now);
       }
     });
   }
@@ -187,7 +194,7 @@ export class WorkstreamTranscriptStorage {
       ? this.messageRows(transition.loopId, previous.stateRevision)
       : [];
     const facts = await this.materializeProjectionFacts(transition, next, previousRows);
-    const checkpointFact: FactMaterial = {
+    const checkpointMaterial: FactMaterial = {
       factId: `${transition.compactionEventId}:checkpoint`,
       factKind: "compaction_checkpoint",
       audience: "model",
@@ -196,7 +203,7 @@ export class WorkstreamTranscriptStorage {
       turnId: null,
       toolCallId: null,
     };
-    const statusFact: FactMaterial = {
+    const statusMaterial: FactMaterial = {
       factId: `${transition.compactionEventId}:status`,
       factKind: "compaction_status",
       audience: "participant",
@@ -205,9 +212,9 @@ export class WorkstreamTranscriptStorage {
       turnId: transition.compactionEventId,
       toolCallId: null,
     };
-    await Promise.all([
-      this.prepareFact(checkpointFact),
-      this.prepareFact(statusFact),
+    const [checkpointFact, statusFact] = await Promise.all([
+      this.prepareFact(checkpointMaterial),
+      this.prepareFact(statusMaterial),
     ]);
 
     this.storage.transactionSync(() => {
@@ -292,7 +299,7 @@ export class WorkstreamTranscriptStorage {
   }): Promise<void> {
     const now = Date.parse(input.occurredAtUtc);
     if (!Number.isFinite(now)) throw new Error("invalid_compaction_timestamp");
-    const fact: FactMaterial = {
+    const material: FactMaterial = {
       factId: `${input.compactionEventId}:status`,
       factKind: "compaction_status",
       audience: "participant",
@@ -301,7 +308,7 @@ export class WorkstreamTranscriptStorage {
       turnId: input.compactionEventId,
       toolCallId: null,
     };
-    await this.prepareFact(fact);
+    const fact = await this.prepareFact(material);
     this.storage.transactionSync(() => {
       this.insertFact(fact, now);
       this.insertParticipantStatus({
@@ -382,7 +389,7 @@ export class WorkstreamTranscriptStorage {
   async prepareParticipantMessage(input: ParticipantMessageInput): Promise<PreparedParticipantMessage> {
     const now = Date.parse(input.createdAtUtc);
     if (!Number.isFinite(now)) throw new Error("invalid_participant_message_timestamp");
-    const fact: FactMaterial = {
+    const material: FactMaterial = {
       factId: `${input.turnId}:message`,
       factKind: "participant_message",
       audience: "shared",
@@ -393,7 +400,7 @@ export class WorkstreamTranscriptStorage {
       turnId: input.turnId,
       toolCallId: null,
     };
-    await this.prepareFact(fact);
+    const fact = await this.prepareFact(material);
     return { input, fact, occurredAt: now };
   }
 
@@ -444,13 +451,28 @@ export class WorkstreamTranscriptStorage {
     occurredAtUtc: string;
   }): Promise<void> {
     const now = Date.parse(input.occurredAtUtc);
+    if (!Number.isFinite(now)) throw new Error("invalid_tool_lifecycle_timestamp");
+    const existingBlock = this.sql.exec<{
+      payload_json: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT payload.payload_json
+         FROM participant_transcript_blocks block
+         JOIN transcript_facts fact ON fact.fact_id = block.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE block.tool_call_id = ?`,
+      input.toolCallId,
+    ).toArray()[0];
+    if (!existingBlock) throw new Error("participant_tool_plan_missing");
+    const previousPayload = JSON.parse(existingBlock.payload_json) as Record<string, unknown>;
     const payload = {
-      participantSafeInput: input.participantSafeInput ?? null,
+      participantSafeInput: input.participantSafeInput
+        ?? previousPayload.participantSafeInput
+        ?? null,
       participantSafeResult: input.participantSafeResult ?? null,
       error: input.error ?? null,
       status: input.status,
     };
-    const fact: FactMaterial = {
+    const material: FactMaterial = {
       factId: `${input.toolCallId}:participant:${input.status}`,
       factKind: "participant_tool_lifecycle",
       audience: "participant",
@@ -459,7 +481,7 @@ export class WorkstreamTranscriptStorage {
       turnId: null,
       toolCallId: input.toolCallId,
     };
-    await this.prepareFact(fact);
+    const fact = await this.prepareFact(material);
     this.storage.transactionSync(() => {
       this.insertFact(fact, now);
       const block = this.sql.exec<{
@@ -601,20 +623,15 @@ export class WorkstreamTranscriptStorage {
         `SELECT event_sequence FROM realtime_state WHERE id = 1`,
       ).toArray()[0];
       const eventSequence = realtime ? Number(realtime.event_sequence) : 0;
-      this.sql.exec(
-        `INSERT INTO transcript_snapshots
-           (snapshot_id, snapshot_through, event_sequence, snapshot_at)
-         VALUES (?, ?, ?, ?)`,
-        snapshotId,
-        snapshotThrough,
-        eventSequence,
-        now,
-      );
       const opening = this.openingRanges(
         snapshotId,
         snapshotThrough,
+        now,
         input.unreadHighWaterAttentionOrdinal,
       );
+      const activeTurns = this.activeTurns(snapshotThrough);
+      const openingTurns = opening.ranges.flatMap((range) => range.turns);
+      const activities = this.activitiesForTurns([...openingTurns, ...activeTurns], now, true);
       return {
         snapshotId,
         snapshotThrough,
@@ -623,33 +640,33 @@ export class WorkstreamTranscriptStorage {
         unreadAnchorSequence: opening.unreadAnchorSequence,
         unreadReason: opening.unreadReason,
         ranges: opening.ranges,
-        activities: this.allActivities(now),
-        activeActivities: this.activeActivities(now),
-        activeTurns: this.activeTurns(snapshotThrough),
+        activities,
+        activeActivities: activities.filter((activity) => activity.state === "active"),
+        activeTurns,
       };
     });
   }
 
   range(
-    snapshotId: string,
+    snapshot: Pick<WorkstreamTranscriptSnapshot, "snapshotId" | "snapshotThrough" | "snapshotAtUtc">,
     requested: TranscriptRange,
     purpose: TranscriptRangeResult["purpose"] = "requested",
+    includeActivities = true,
   ): TranscriptRangeResult {
-    const snapshot = this.sql.exec<{
-      snapshot_through: number;
-    } & Record<string, SqlStorageValue>>(
-      `SELECT snapshot_through FROM transcript_snapshots WHERE snapshot_id = ?`,
-      snapshotId,
-    ).toArray()[0];
-    if (!snapshot) throw new Error("transcript_snapshot_expired");
-    const upper = Number(snapshot.snapshot_through) + 1;
+    const snapshotAt = Date.parse(snapshot.snapshotAtUtc);
+    if (!Number.isFinite(snapshotAt)) throw new Error("invalid_transcript_snapshot_timestamp");
+    const upper = snapshot.snapshotThrough + 1;
     const startInclusive = Math.min(Math.max(1, requested.startInclusive), upper);
     const endExclusive = Math.min(Math.max(startInclusive, requested.endExclusive), upper);
+    const turns = this.turnsInRange(startInclusive, endExclusive);
     return {
       purpose,
       requested,
       covered: { startInclusive, endExclusive },
-      turns: this.turnsInRange(startInclusive, endExclusive),
+      turns,
+      activities: includeActivities
+        ? this.activitiesForTurns(turns, snapshotAt)
+        : [],
     };
   }
 
@@ -729,12 +746,18 @@ export class WorkstreamTranscriptStorage {
   private openingRanges(
     snapshotId: string,
     snapshotThrough: number,
+    snapshotAt: number,
     unreadAttentionOrdinal: number | null,
   ): {
     ranges: TranscriptRangeResult[];
     unreadAnchorSequence: number | null;
     unreadReason: "no_unread" | "anchor_unavailable" | null;
   } {
+    const fence = {
+      snapshotId,
+      snapshotThrough,
+      snapshotAtUtc: new Date(snapshotAt).toISOString(),
+    };
     if (snapshotThrough === 0) {
       return {
         ranges: [],
@@ -818,15 +841,15 @@ export class WorkstreamTranscriptStorage {
       && unreadRange.startInclusive === latestRange.startInclusive
       && unreadRange.endExclusive === latestRange.endExclusive) {
       return {
-        ranges: [this.range(snapshotId, unreadRange, "unread_and_latest")],
+        ranges: [this.range(fence, unreadRange, "unread_and_latest", false)],
         unreadAnchorSequence,
         unreadReason: null,
       };
     }
     return {
       ranges: [
-        ...(unreadRange ? [this.range(snapshotId, unreadRange, "unread" as const)] : []),
-        ...(latestRange ? [this.range(snapshotId, latestRange, "latest" as const)] : []),
+        ...(unreadRange ? [this.range(fence, unreadRange, "unread" as const, false)] : []),
+        ...(latestRange ? [this.range(fence, latestRange, "latest" as const, false)] : []),
       ],
       unreadAnchorSequence,
       unreadReason: unreadAttentionOrdinal === null
@@ -901,23 +924,54 @@ export class WorkstreamTranscriptStorage {
     ));
   }
 
-  private activeActivities(snapshotAt: number): TranscriptActivity[] {
-    const rows = this.sql.exec<ActivityRow>(
-      `SELECT activity_id, parent_activity_id, scope, subject_id, call_index,
-              label, lifecycle_state, revision
-         FROM transcript_activities WHERE lifecycle_state = 'active'
-         ORDER BY parent_activity_id, call_index, created_at`,
-    ).toArray();
-    return sortActivities(rows.map((row) => this.hydrateActivity(row, snapshotAt)));
+  private activitiesForTurns(
+    turns: TranscriptTurn[],
+    snapshotAt: number,
+    includeActive = false,
+  ): TranscriptActivity[] {
+    const activityIds = new Set<string>();
+    for (const turn of turns) {
+      if (turn.activityId) activityIds.add(turn.activityId);
+      for (const block of turn.blocks) {
+        if ("activityId" in block && block.activityId) activityIds.add(block.activityId);
+      }
+    }
+    return this.activitiesForIds([...activityIds], snapshotAt, includeActive);
   }
 
-  private allActivities(snapshotAt: number): TranscriptActivity[] {
-    return sortActivities(this.sql.exec<ActivityRow>(
-      `SELECT activity_id, parent_activity_id, scope, subject_id, call_index,
-              label, lifecycle_state, revision
-         FROM transcript_activities
-         ORDER BY created_at, parent_activity_id, call_index`,
-    ).toArray().map((row) => this.hydrateActivity(row, snapshotAt)));
+  private activitiesForIds(
+    activityIds: string[],
+    snapshotAt: number,
+    includeActive: boolean,
+  ): TranscriptActivity[] {
+    if (activityIds.length === 0 && !includeActive) return [];
+    const idPlaceholders = activityIds.map(() => "?").join(", ");
+    const seedClauses = [
+      ...(activityIds.length > 0
+        ? [`SELECT activity_id FROM transcript_activities WHERE activity_id IN (${idPlaceholders})`]
+        : []),
+      ...(includeActive
+        ? ["SELECT activity_id FROM transcript_activities WHERE lifecycle_state = 'active'"]
+        : []),
+    ];
+    const rows = this.sql.exec<ActivityRow>(
+      `WITH RECURSIVE selected(activity_id) AS (
+         ${seedClauses.join(" UNION ")}
+         UNION
+         SELECT activity.parent_activity_id
+           FROM transcript_activities activity
+           JOIN selected ON selected.activity_id = activity.activity_id
+          WHERE activity.parent_activity_id IS NOT NULL
+       )
+       SELECT activity.activity_id, activity.parent_activity_id, activity.scope,
+              activity.subject_id, activity.call_index, activity.label,
+              activity.lifecycle_state, activity.revision
+         FROM transcript_activities activity
+         JOIN selected ON selected.activity_id = activity.activity_id
+        ORDER BY activity.created_at, activity.parent_activity_id, activity.call_index`,
+      ...activityIds,
+    ).toArray();
+    return this.hydrateActivities(rows, snapshotAt);
   }
 
   private activity(activityId: string): TranscriptActivity | null {
@@ -927,16 +981,26 @@ export class WorkstreamTranscriptStorage {
          FROM transcript_activities WHERE activity_id = ?`,
       activityId,
     ).toArray()[0];
-    return row ? this.hydrateActivity(row) : null;
+    return row ? this.hydrateActivities([row], Date.now())[0] ?? null : null;
   }
 
-  private hydrateActivity(row: ActivityRow, snapshotAt = Date.now()): TranscriptActivity {
+  private hydrateActivities(rows: ActivityRow[], snapshotAt: number): TranscriptActivity[] {
+    if (rows.length === 0) return [];
+    const placeholders = rows.map(() => "?").join(", ");
     const intervals = this.sql.exec<IntervalRow>(
       `SELECT activity_id, interval_id, started_at, stopped_at, duration_ms, revision
-         FROM transcript_activity_intervals WHERE activity_id = ? ORDER BY started_at`,
-      row.activity_id,
+         FROM transcript_activity_intervals
+        WHERE activity_id IN (${placeholders})
+        ORDER BY activity_id, started_at`,
+      ...rows.map((row) => row.activity_id),
     ).toArray();
-    return {
+    const intervalsByActivity = new Map<string, IntervalRow[]>();
+    for (const interval of intervals) {
+      const current = intervalsByActivity.get(interval.activity_id) ?? [];
+      current.push(interval);
+      intervalsByActivity.set(interval.activity_id, current);
+    }
+    return sortActivities(rows.map((row) => ({
       activityId: row.activity_id,
       parentActivityId: row.parent_activity_id,
       scope: row.scope as TranscriptActivity["scope"],
@@ -944,7 +1008,7 @@ export class WorkstreamTranscriptStorage {
       callIndex: row.call_index === null ? null : Number(row.call_index),
       label: row.label,
       state: row.lifecycle_state as TranscriptActivity["state"],
-      intervals: intervals.map((interval) => ({
+      intervals: (intervalsByActivity.get(row.activity_id) ?? []).map((interval) => ({
         intervalId: interval.interval_id,
         startedAtUtc: new Date(Number(interval.started_at)).toISOString(),
         stoppedAtUtc: interval.stopped_at === null ? null : new Date(Number(interval.stopped_at)).toISOString(),
@@ -955,35 +1019,36 @@ export class WorkstreamTranscriptStorage {
         revision: Number(interval.revision),
       })),
       revision: Number(row.revision),
-    };
+    })));
   }
 
   private async materializeProjectionFacts(
     transition: BindLoopTransition,
     next: BindLoopProjectionState,
     previousRows: MessageProjectionRow[],
-  ): Promise<{ materials: FactMaterial[]; factIds: string[]; appendedFactId: string | null }> {
+  ): Promise<{ materials: PreparedFact[]; factIds: string[]; appendedFactId: string | null }> {
     const nextMessages = projectBindLoopMessages(next);
     const reusable = new Map<string, string[]>();
     for (const row of previousRows) {
       const key = JSON.stringify(JSON.parse(row.payload_json));
       reusable.set(key, [...(reusable.get(key) ?? []), row.fact_id]);
     }
-    const materials: FactMaterial[] = [];
+    const materials: PreparedFact[] = [];
     const factIds: string[] = [];
     let appendedFactId: string | null = null;
     for (let position = 0; position < nextMessages.length; position += 1) {
       const message = nextMessages[position]!;
       const key = JSON.stringify(message);
-      const reuse = reusable.get(key)?.shift();
-      if (reuse) {
-        factIds.push(reuse);
-        continue;
-      }
       const suffix = position === nextMessages.length - 1
         && ["assistant_accepted", "tool_result_accepted", "protocol_user_appended"].includes(transition.kind)
         ? transition.kind
         : `message:${position}`;
+      const reuse = reusable.get(key)?.shift();
+      if (reuse) {
+        factIds.push(reuse);
+        if (suffix === "assistant_accepted") appendedFactId = reuse;
+        continue;
+      }
       const factId = `${transition.loopId}:state:${transition.stateRevision}:${suffix}`;
       const material: FactMaterial = {
         factId,
@@ -994,8 +1059,8 @@ export class WorkstreamTranscriptStorage {
         turnId: "turnId" in transition ? transition.turnId : null,
         toolCallId: "toolCallId" in transition ? transition.toolCallId : null,
       };
-      await this.prepareFact(material);
-      materials.push(material);
+      const prepared = await this.prepareFact(material);
+      materials.push(prepared);
       factIds.push(factId);
       if (suffix === "assistant_accepted") appendedFactId = factId;
     }
@@ -1200,30 +1265,29 @@ export class WorkstreamTranscriptStorage {
     ).toArray();
   }
 
-  private async prepareFact(fact: FactMaterial): Promise<void> {
+  private async prepareFact(fact: FactMaterial): Promise<PreparedFact> {
     const canonical = canonicalJson(fact.payload);
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
     const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    Object.assign(fact, {
-      _canonical: canonical,
-      _hash: hash,
-      _payloadId: `payload:${fact.audience}:${hash}`,
-    });
+    return {
+      ...fact,
+      canonical,
+      hash,
+      payloadId: `payload:${fact.audience}:${hash}`,
+    };
   }
 
-  private insertFact(fact: FactMaterial, now: number): void {
-    const prepared = fact as FactMaterial & { _canonical: string; _hash: string; _payloadId: string };
-    if (!prepared._canonical) throw new Error("transcript_fact_not_prepared");
+  private insertFact(fact: PreparedFact, now: number): void {
     this.sql.exec(
       `INSERT INTO transcript_payloads
          (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
        VALUES (?, ?, 'application/json', ?, ?, ?, ?)
        ON CONFLICT(audience, payload_sha256, byte_length) DO NOTHING`,
-      prepared._payloadId,
+      fact.payloadId,
       fact.audience,
-      prepared._canonical,
-      prepared._hash,
-      new TextEncoder().encode(prepared._canonical).byteLength,
+      fact.canonical,
+      fact.hash,
+      new TextEncoder().encode(fact.canonical).byteLength,
       now,
     );
     this.sql.exec(
@@ -1233,7 +1297,7 @@ export class WorkstreamTranscriptStorage {
        ON CONFLICT(fact_id) DO NOTHING`,
       fact.factId,
       fact.factKind,
-      prepared._payloadId,
+      fact.payloadId,
       fact.runId,
       fact.turnId,
       fact.toolCallId,
@@ -1312,6 +1376,8 @@ function hydrateBlock(row: BlockRow): TranscriptBlock {
 }
 
 function participantShareable(message: BindLoopMessage): boolean {
+  // New provider/protocol roles remain model-only until their participant
+  // visibility has been reviewed explicitly.
   return message.role === "assistant";
 }
 
@@ -1328,11 +1394,15 @@ function activityState(action: ActivityEdge["action"]): TranscriptActivity["stat
 }
 
 function sortActivities(activities: TranscriptActivity[]): TranscriptActivity[] {
+  const activityIds = new Set(activities.map((activity) => activity.activityId));
   const byParent = new Map<string | null, TranscriptActivity[]>();
   for (const activity of activities) {
-    const siblings = byParent.get(activity.parentActivityId) ?? [];
+    const parentId = activity.parentActivityId && activityIds.has(activity.parentActivityId)
+      ? activity.parentActivityId
+      : null;
+    const siblings = byParent.get(parentId) ?? [];
     siblings.push(activity);
-    byParent.set(activity.parentActivityId, siblings);
+    byParent.set(parentId, siblings);
   }
   const ordered: TranscriptActivity[] = [];
   const visit = (parentId: string | null): void => {
@@ -1355,6 +1425,7 @@ function canonicalJson(value: unknown): string {
 
 function sortJson(value: unknown): unknown {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (value === undefined) throw new Error("transcript_non_json_value");
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error("transcript_non_finite_number");
     return value;

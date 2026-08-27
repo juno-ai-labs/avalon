@@ -65,7 +65,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         createdAtUtc: new Date().toISOString(),
         attentionOrdinal: 1,
       });
-      expect(transcript.range(snapshot.snapshotId, { startInclusive: 1, endExclusive: 10 }).covered)
+      expect(transcript.range(snapshot, { startInclusive: 1, endExclusive: 10 }).covered)
         .toEqual({ startInclusive: 1, endExclusive: 2 });
     });
   });
