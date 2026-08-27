@@ -147,7 +147,7 @@ describe("the transcript the harness reads", () => {
       `INSERT INTO workstream_resource_links
          (resource_id, attached_by_user_id, watch_enabled, relationship_type,
           resource_json, attached_at, updated_at)
-       VALUES ('resource-1', NULL, 0, 'explicit', ?, ?, ?)`,
+       VALUES ('resource-1', NULL, 0, 'attachment', ?, ?, ?)`,
       JSON.stringify({
         id: "resource-1",
         title: "notes.md",

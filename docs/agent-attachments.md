@@ -203,6 +203,10 @@ duplicating bytes. Detachment and deletion therefore follow the existing
 inventory revision, derivative, replay-dependency, and cleanup rules. Command
 logs and expiry diffs use the same generated-resource shape. The sandbox bridge
 itself is documented in [`terminal-workspaces.md`](terminal-workspaces.md).
+Generated Terminal publications attach with relationship `generated`, so the
+work-stream contract exposes them as `direction: artifact`. A subsequent
+semantic update to an existing resource advances its WorkspaceDO version rather
+than replacing the only readable state.
 
 ### Regional lifecycle
 
@@ -216,10 +220,11 @@ is failed rather than an empty success.
 Writers pre-register each generation-unique object in
 `resource_object_deletion_outbox` before its R2 write. A successful pointer
 compare-and-swap cancels the new object's pending deletion and enqueues the former
-pointer. Deleting a resource—not merely detaching one relationship—enqueues its
-current original and derivative. Scheduled cleanup reaps at most 100 references
-per pass; a failed R2 deletion increments bounded retry metadata and remains
-queued.
+pointer. `resource_versions` retains the original and derivative refs selected by
+every semantic version; cleanup treats those historical refs as active. Deleting
+a resource—not merely detaching one relationship—enqueues every retained original
+and derivative. Scheduled cleanup reaps at most 100 references per pass; a failed
+R2 deletion increments bounded retry metadata and remains queued.
 
 ### Reusable derivatives
 
@@ -409,7 +414,11 @@ tests use an explicit clock value; do not replace it with sleeps or retries.
 
 WorkspaceDO `resources` owns original and current model refs plus original SHA-256,
 derivative status, extractor version, readable-character count, extraction time,
-bounded error code, and fenced claim ID/time.
+bounded error code, fenced claim ID/time, and the current semantic version.
+WorkspaceDO `resource_versions` owns numbered snapshots and every historical
+original/model R2 ref. `GET /resources/:id/versions` lists them; the version and
+its original or model content remain addressable through the corresponding
+version endpoints after current content advances.
 WorkspaceDO `resource_object_deletion_outbox` owns failed, superseded, and deleted regional
 objects until bounded cleanup succeeds.
 SubstreamAgent `attachment_tool_receipts` maps completed read, search, view, and summary
@@ -467,6 +476,25 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-27 — Resource versions retain prior originals and model derivatives
+
+**What changed:** WorkspaceDO snapshots every semantic resource state, exposes
+the complete ordered history and both content representations, and protects all
+historical refs from the R2 reaper. Work-stream resource discovery now reports a
+derived `source` or `artifact` direction.
+
+**Why:** Terminal publication, provider refresh, notes, and other resource
+writers need monotonic history rather than an overwritten pointer, while
+direction belongs to the relationship that introduced the resource.
+
+**Considered and rejected:** Versioning derivative claim transitions would make
+processing noise look like content history. Keeping fixed note object keys would
+silently overwrite bytes still named by an older version.
+
+**Consequences:** Semantic writes increment `current_version`; derivative
+materialization enriches that version. Note R2 keys include their content hash,
+and cleanup must authorize deletion against both current and historical refs.
 
 ### 2026-08-26 — Ordered transcript snapshots retain message attachments
 

@@ -68,6 +68,9 @@ export const resourceSchema = z
     watchEnabled: z.boolean().default(false),
     watchStatus: z.enum(['watching', 'paused', 'unsupported', 'error']).default('paused'),
     updatedAt: z.string().optional(),
+    currentVersion: z.number().int().positive().default(1),
+    relationshipType: z.enum(['attachment', 'message_attachment', 'origin', 'generated', 'suggested_activity', 'inbound_email', 'context']).default('attachment'),
+    direction: z.enum(['source', 'artifact']).default('source'),
   })
   .passthrough();
 

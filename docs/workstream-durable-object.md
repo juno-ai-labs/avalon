@@ -1060,7 +1060,7 @@ already have committed across the object boundary.
 | `workspace_sandbox_network_policies`, `workspace_sandbox_network_domains`, `workspace_sandbox_network_policy_mutations` | Terminal network/egress authority, current verified revision, domain set, and complete preview/confirm/result history. Substream terminal state stores only the applied revision and rechecks this object before reuse. |
 | `automation_templates`, `automation_template_versions`, `automation_subscriptions`, `automation_runs`, `automation_resources`, `automation_delivery_targets`, `automation_email_receipts`, `automation_email_rate_windows` | Complete workspace automation definition, immutable versions, draft/active lifecycle, trigger/run state, resource links, inbound-email receipts/rate windows, and frozen delivery configuration. Work-stream IDs are opaque references into child authority. |
 | `digest_schedules`, `digest_schedule_times`, `digest_delivery_targets`, `digest_deliveries`, `schedules` | User digest configuration/cursor/history plus the canonical due-work index for digests, automations, and connector polling. This object's own alarm reads them directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). |
-| `resources`, `resource_watches`, `automation_resources` | Workspace resource metadata and workspace-level attachment/watch relationships. `content_ref` and derivative refs point to regional R2; each SubstreamAgent separately owns its work-stream link and resource inventory revision. |
+| `resources`, `resource_versions`, `resource_watches`, `automation_resources` | Workspace resource metadata, monotonic semantic history, and workspace-level attachment/watch relationships. Every numbered version retains its original and derivative regional R2 refs; each SubstreamAgent separately owns its work-stream link and resource inventory revision. |
 | `resource_object_deletion_outbox`, `note_resource_deletion_outbox` | Durable lifecycle ownership for original, derivative, receipt, and note-linked R2 refs. Deletion bytes is a regional side effect performed only after an object-owned outbox claim. |
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
 | `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys — so this object validates no scope owner, and migration 0036's four owner rules, dropped by 0090 along with the D1 tables, are now held only by `resolveMemoryAccess`. |
@@ -1164,7 +1164,7 @@ join crosses an object boundary.
 | `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
 | `compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints are immutable per projection/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
-| `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources, the authorization revision every relationship change advances (compat-routed changes included), and operational suggestion overlays. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
+| `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `suggested_activity`, `inbound_email`, or `context`), the authorization revision every relationship change advances, and operational suggestion overlays. `generated` derives artifact direction; every other value derives source direction. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
 | `block_dashboard_configuration_versions`, `block_dashboard_block_runs`, `block_dashboard_user_preferences` | Source-runtime compatibility records used by the Bind harness and maintenance import. WorkstreamDO is the post-cutover product authority for configuration, published run state, and viewer preference. |
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
@@ -1385,6 +1385,23 @@ tool summaries must remain consistent with their canonical payload after both
 ordinary settlement and terminal repair. The cleanup migration must abort
 rather than drop data when the verified receipt or canonical references are
 incomplete.
+
+### 2026-08-27 — Resource history stays in WorkspaceDO and direction stays on the child link
+
+**What changed:** WorkspaceDO schema v13 adds numbered `resource_versions` and
+SubstreamAgent schema v31 rebuilds `workstream_resource_links` with the closed
+relationship CHECK. Contracts derive source/artifact direction from that link.
+
+**Why:** Historical bytes are shared workspace resource state, but whether those
+bytes entered or were generated is specific to one work stream.
+
+**Considered and rejected:** A resource-level direction column would collapse
+two authorities. A free-text relationship would let new values bypass the
+derived-direction contract.
+
+**Consequences, and what a future change has to respect:** New relationship
+values require a migration and a direction decision. Resource deletion and R2
+cleanup must account for every version; link changes never own resource bytes.
 
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 

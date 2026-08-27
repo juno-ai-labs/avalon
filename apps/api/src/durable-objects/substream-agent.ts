@@ -5,6 +5,7 @@ import {
   ClientSocketEventSchema,
   IdSchema,
   PersonalSocketEventSchema,
+  ResourceRelationshipTypeSchema,
   SubstreamIdSchema,
   UserIdSchema,
   type Region,
@@ -276,7 +277,7 @@ const RuntimeResourceRequestSchema = z.object({
   workstreamId: IdSchema,
   resourceId: IdSchema,
   attachedByUserId: IdSchema.nullable(),
-  relationshipType: z.string().min(1).max(80).optional(),
+  relationshipType: ResourceRelationshipTypeSchema.optional(),
 }).strict();
 const RuntimeSuggestionRequestSchema = z.object({
   workspaceId: IdSchema,

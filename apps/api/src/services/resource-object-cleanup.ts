@@ -40,8 +40,14 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId?: string)
       const active = await env.DB.prepare(
         `SELECT 1 AS active FROM resources
           WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
+         UNION ALL
+         SELECT 1 AS active FROM resource_versions
+          WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
          LIMIT 1`,
       ).bind(
+        object.workspace_id,
+        object.object_ref,
+        object.object_ref,
         object.workspace_id,
         object.object_ref,
         object.object_ref,

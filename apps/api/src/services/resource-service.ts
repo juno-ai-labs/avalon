@@ -1,5 +1,5 @@
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
-import { classifyAttachmentKind, type ConnectorManifest } from "@rally/contracts";
+import { classifyAttachmentKind, type ConnectorManifest, type ResourceRevision } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
@@ -267,6 +267,46 @@ export class ResourceService {
     if (typeof resource.content_ref !== "string") throw new ApiError(404, "resource_content_unavailable", "Resource content has not been hydrated");
     const object = await this.env.PAYLOADS.get(resource.content_ref);
     if (!object) throw new ApiError(404, "resource_content_unavailable", "Stored resource content was not found");
+    return resourceObjectResponse(object);
+  }
+
+  async versions(id: string): Promise<ResourceRevision[]> {
+    await this.loadResource(id);
+    const result = await this.env.DB.prepare(
+      `SELECT * FROM resource_versions
+        WHERE resource_id = ? AND workspace_id = ?
+        ORDER BY version DESC`,
+    ).bind(id, this.auth.workspaceId).all<Record<string, unknown>>();
+    return result.results.map(toResourceRevision);
+  }
+
+  async version(id: string, version: number): Promise<ResourceRevision> {
+    await this.loadResource(id);
+    const row = await this.env.DB.prepare(
+      `SELECT * FROM resource_versions
+        WHERE resource_id = ? AND workspace_id = ? AND version = ?`,
+    ).bind(id, this.auth.workspaceId, version).first<Record<string, unknown>>();
+    if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
+    return toResourceRevision(row);
+  }
+
+  async versionContent(
+    id: string,
+    version: number,
+    representation: "original" | "model",
+  ): Promise<Response> {
+    await this.loadResource(id);
+    const column = representation === "model" ? "model_content_ref" : "content_ref";
+    const row = await this.env.DB.prepare(
+      `SELECT ${column} AS object_ref FROM resource_versions
+        WHERE resource_id = ? AND workspace_id = ? AND version = ?`,
+    ).bind(id, this.auth.workspaceId, version).first<{ object_ref: string | null }>();
+    if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
+    if (!row.object_ref) {
+      throw new ApiError(404, "resource_version_content_unavailable", "This representation is unavailable for the resource version");
+    }
+    const object = await this.env.PAYLOADS.get(row.object_ref);
+    if (!object) throw new ApiError(404, "resource_version_content_unavailable", "Stored resource version content was not found");
     return resourceObjectResponse(object);
   }
 
@@ -639,6 +679,25 @@ function toResource(row: Record<string, unknown>) {
     watchEnabled, watchStatus: row.connection_id == null ? "unsupported" : watchEnabled ? "watching" : "paused",
     lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     contentAvailable: row.content_ref != null,
+    sizeBytes: Math.max(0, Number(parseJson<Record<string, unknown>>(row.metadata_json, {}).size ?? 0)),
+    currentVersion: Math.max(1, Number(row.current_version ?? 1)),
+  };
+}
+
+function toResourceRevision(row: Record<string, unknown>): ResourceRevision {
+  return {
+    resourceId: String(row.resource_id),
+    version: Math.max(1, Number(row.version)),
+    title: truncateUtf16Safe(String(row.title), 300),
+    resourceType: String(row.resource_type),
+    provider: String(row.provider),
+    providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
+    mimeType: row.mime_type == null ? null : truncateUtf16Safe(String(row.mime_type), 160),
+    canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+    lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at),
+    createdAt: String(row.captured_at),
+    contentAvailable: row.content_ref != null,
+    modelContentAvailable: row.model_content_ref != null,
     sizeBytes: Math.max(0, Number(parseJson<Record<string, unknown>>(row.metadata_json, {}).size ?? 0)),
   };
 }
