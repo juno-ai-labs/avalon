@@ -118,7 +118,10 @@ receives R2 credentials or a signed R2 URL.
 `AVALON_RESOURCE_DIR` into regional R2, creates a normal generated `resources`
 row, attaches it to the work stream, and uses the existing cleanup outbox. The
 published bytes do not enter model context. The resource inventory and existing
-attachment tools become the durable participant/model surface.
+attachment tools become the durable participant/model surface — though the
+desktop rail today lists a published resource without rendering its content, so
+the participant half is not yet delivered ([`agent-harness.md`](agent-harness.md),
+Failure modes and limits).
 
 A published file's identity is the document's own coordinates — the work stream
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
@@ -228,6 +231,13 @@ personless; it is not duplicated into these product events.
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
   caller's unauthorized input, so a mismatch destroys and reprovisions it.
+- **A published document's identity is the work stream plus its normalized
+  publish path, and that derivation is frozen once documents exist.** Changing
+  the normalization, or how `publish_resource` resolves a path against
+  `AVALON_RESOURCE_DIR`, re-keys every published document: each one's next
+  republish mints a sibling instead of updating it, silently and with no failing
+  test, because a test that publishes and republishes within one run sees only
+  one derivation. Widen it only with a migration of the stored identities.
 - **Loading Terminal never allocates provider compute.** Discovery is common
   and execution is exceptional; allocating at load would turn model routing
   mistakes into cost and persistent state.
@@ -276,6 +286,11 @@ network proxy, or a general GitHub administration surface.
   probe. The emergency switch keeps the plugin and its complete tool family
   discoverable, but new executions fail closed with `sandbox_unavailable` while
   retained work remains available for lifecycle reconciliation.
+- A republish that loses the content compare-and-swap to a concurrent one
+  deletes the bytes it wrote and reports what the document now holds, rather
+  than clobbering the winner. The model is handed a successful result whose
+  hash is not the bytes it published, so a revision can be dropped without a
+  run-visible signal.
 - An opted-in but incomplete Daytona environment degrades to `unsupported`
   instead of failing Worker startup. This keeps ordinary local development
   usable without provider credentials; a complete but malformed configuration

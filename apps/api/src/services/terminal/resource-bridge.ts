@@ -1,4 +1,4 @@
-import { AttachmentKindSchema, classifyAttachmentKind } from "@rally/contracts";
+import { AttachmentKindSchema, classifyAttachmentKind, ResourceSchema } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../../env";
@@ -43,6 +43,30 @@ function fileName(path: string): string {
  */
 function normalizePublishPath(path: string): string {
   return path.split("/").filter((segment) => segment && segment !== ".").join("/");
+}
+
+/**
+ * A published document's identity, bounded by the contract that publishes it.
+ *
+ * The path half is model-chosen and the tool accepts 4,096 characters of it,
+ * while `ResourceSchema` bounds `providerResourceId` at 500 — so the readable
+ * form is only safe while it fits. It is not a cosmetic overflow: the identity
+ * is projected into `GET /workstreams/:id` and `GET /resources`, so one row
+ * past the bound stops the work stream opening at all and fails the workspace's
+ * resource list, and nothing in the product deletes a published row to recover.
+ *
+ * Past the bound the path is replaced by its digest rather than truncated.
+ * Truncating would map two different long paths onto one document; the digest
+ * keeps identity one-to-one with the path, which is the whole point of scoping
+ * it to the path. `metadata_json.sourcePath` still carries the readable value.
+ */
+const PUBLISHED_IDENTITY_MAXIMUM = ResourceSchema.shape.providerResourceId.unwrap().maxLength ?? 500;
+
+async function publishedResourceIdentity(workstreamId: string, filePath: string): Promise<string> {
+  const readable = `terminal:${workstreamId}:${normalizePublishPath(filePath)}`;
+  if (readable.length <= PUBLISHED_IDENTITY_MAXIMUM) return readable;
+  const digest = await sha256Hex(new TextEncoder().encode(normalizePublishPath(filePath)));
+  return `terminal:${workstreamId}:sha256:${digest}`;
 }
 
 function publishedOutput(row: PublishedRow, sizeBytes: number): TerminalPublishedResourceOutput {
@@ -132,7 +156,7 @@ async function swapPublishedContent(input: {
     httpMetadata: { contentType: input.mimeType },
     customMetadata: { source: "terminal", sourcePath: input.filePath },
   });
-  let swapped: D1Result;
+  let swapped: PublishedRow | null;
   try {
     swapped = await workspace.prepare(
       `UPDATE resources
@@ -143,7 +167,9 @@ async function swapPublishedContent(input: {
               model_content_extractor_version = NULL, model_content_character_count = NULL,
               model_content_extracted_at = NULL, model_content_claimed_at = NULL,
               model_content_claim_id = NULL, model_content_error_code = NULL
-        WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
+        WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?
+      RETURNING id, title, mime_type, content_ref, content_sha256, metadata_json,
+                model_content_status, created_at`,
     ).bind(
       title,
       input.mimeType,
@@ -156,19 +182,31 @@ async function swapPublishedContent(input: {
       workspaceId,
       existing.content_ref,
       existing.content_sha256,
-    ).run();
-  } catch (error) {
+    ).first<PublishedRow>();
+  } catch {
+    // The insert path below converts its failures the same way; a raw D1 error
+    // here would reach the model as the generic terminal_tool_failed with no
+    // retry guidance, for the same operation.
     await env.PAYLOADS.delete(objectRef).catch(() => undefined);
-    throw error;
+    throw new TerminalToolError(
+      "resource_publish_failed",
+      "The published document could not be updated. Retry publish_resource with the stable final file.",
+      { reason: "Retry the same publish_resource call so Rally can reconcile its resource identity." },
+    );
   }
-  if ((swapped.meta.changes ?? 0) === 0) {
+  // The row itself is the witness, not a write counter. `meta.changes` on a
+  // WorkspaceDO-routed statement is workerd's physical `rowsWritten`, which this
+  // UPDATE inflates through three version triggers — see
+  // `docs/durable-object-sqlite.md`, which requires a returned witness here.
+  if (swapped?.content_ref !== objectRef) {
     // Another publish of this document advanced the pointer first. Its content
     // is the current one; drop the bytes this call wrote and report what the
     // document now holds rather than clobbering the winner.
+    // Best-effort delete, and the outbox row deliberately stays: it is the only
+    // durable record that these bytes need collecting, and the reaper re-checks
+    // both `resources` and `resource_versions` before it acts. Dropping the row
+    // after a failed delete would leak the object permanently.
     await env.PAYLOADS.delete(objectRef).catch(() => undefined);
-    await workspace.prepare(
-      "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-    ).bind(workspaceId, objectRef).run().catch(() => undefined);
     const current = await workspace.prepare(
       `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
               model_content_status, created_at
@@ -181,18 +219,14 @@ async function swapPublishedContent(input: {
       { reason: "Retry the same publish_resource call so Rally can reconcile its resource identity." },
     );
   }
+  // `resources_track_original_after_update` already cancelled this object's
+  // pending deletion inside the same statement and enqueued the superseded one,
+  // which `resource_versions` then keeps alive. This delete is the belt for a
+  // caller whose schema predates those triggers.
   await workspace.prepare(
     "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
   ).bind(workspaceId, objectRef).run();
-  return {
-    ...existing,
-    title,
-    mime_type: input.mimeType,
-    content_ref: objectRef,
-    content_sha256: digest,
-    metadata_json: metadata,
-    model_content_status: input.derivativeStatus,
-  };
+  return swapped;
 }
 
 export function createTerminalResourceBridge(
@@ -405,7 +439,8 @@ export function createTerminalResourceBridge(
       // publish created. Deriving it from the call instead made every identity
       // unique per call, which recognized a replay of that one call and nothing
       // else, so a second draft of the same file became a second document.
-      const providerResourceId = `terminal:${context.workstreamId}:${normalizePublishPath(input.filePath)}`;
+      const providerResourceId = input.providerResourceId
+        ?? await publishedResourceIdentity(context.workstreamId, input.filePath);
       const select = `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at
            FROM resources
