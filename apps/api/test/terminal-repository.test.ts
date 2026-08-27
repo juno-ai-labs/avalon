@@ -140,10 +140,9 @@ function fixture(message = "Please publish these changes and open a pull request
       if (input.command.includes("branch --show-current")) return { exitCode: 0, stdout: `${HEAD_REF}\n`, stderr: "" };
       if (input.command.includes("rev-parse HEAD")) return { exitCode: 0, stdout: `${HEAD}\n`, stderr: "" };
       if (input.command.includes("diff --name-only")) return { exitCode: 0, stdout: "src/app.ts\n", stderr: "" };
-      if (input.command.includes("git bundle create")) return { exitCode: 0, stdout: "3\n", stderr: "" };
+      if (input.command.includes("core.hooksPath=/dev/null push")) return { exitCode: 0, stdout: "published\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     }),
-    publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
   const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, input) => utilityImplementation(id, {
@@ -152,12 +151,18 @@ function fixture(message = "Please publish these changes and open a pull request
   }));
   const context: HarnessToolContext = {
     workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "publish-call",
-    // The publication's durable identity: the bundle path, the grant it
-    // consumes, and its `terminal_publications` row all key to this.
+    // The publication's durable identity: the grant it consumes and its
+    // `repository_publications` row both key to this.
     effectIntentId: I,
     executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
   };
   return { database, objectStore, env, gateway, provider, context };
+}
+
+function publicationPushes(provider: TerminalSandboxProvider) {
+  return vi.mocked(provider.runUtilityCommand).mock.calls.filter(
+    ([, input]) => input.operation === "repository.publish.push",
+  );
 }
 
 describe("Terminal repository publication", () => {
@@ -337,11 +342,13 @@ describe("Terminal repository publication", () => {
       publishedSha: HEAD, outcome: "created",
       pullRequest: { number: 9, url: "https://github.com/owner/repo/pull/9", title: "Ship it", state: "open" },
     });
-    expect(provider.publishGitBundle).toHaveBeenCalledWith(expect.objectContaining({
-      bundle: new Uint8Array([1, 2, 3]), repositoryFullName: "owner/repo",
-      baseSha: BASE, headSha: HEAD, headRef: HEAD_REF, expectedOldSha: null,
-      githubBasicCredential: btoa("x-access-token:write-token"),
-    }));
+    expect(publicationPushes(provider)).toEqual([["sandbox", expect.objectContaining({
+      operation: "repository.publish.push",
+      cwd: "/workspace",
+      timeoutMs: 180_000,
+      command: expect.stringContaining(`git -c core.hooksPath=/dev/null push 'https://github.com/owner/repo.git' '${HEAD}:refs/heads/${HEAD_REF}'`),
+    })]]);
+    expect(provider.readFile).not.toHaveBeenCalled();
     expect(gateway.createPullRequest).toHaveBeenCalledOnce();
     expect(gateway.revokeWriteToken).toHaveBeenCalledOnce();
     expect(gateway.verifyRepositoryIdentity).toHaveBeenCalledWith(
@@ -362,7 +369,7 @@ describe("Terminal repository publication", () => {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
       authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).resolves.toMatchObject({ outcome: "unchanged", publishedSha: HEAD });
-    expect(provider.publishGitBundle).toHaveBeenCalledOnce();
+    expect(publicationPushes(provider)).toHaveLength(1);
     expect(workstreamObjectGet(
       objectStore,
       "SELECT COUNT(*) AS count FROM repository_publications WHERE effect_intent_id = ?",
@@ -386,8 +393,37 @@ describe("Terminal repository publication", () => {
     }, provider)).rejects.toMatchObject({ code: "tool_receipt_missing" });
     // The receipt is what makes a publication replayable. Without it nothing
     // may reach GitHub, or a retry opens a second pull request.
-    expect(provider.publishGitBundle).not.toHaveBeenCalled();
+    expect(publicationPushes(provider)).toHaveLength(0);
     expect(gateway.createPullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { stdout: "RALLY_PUBLISH_FAILED_STAGE=remote_push\n", stage: "remote_push" },
+    { stdout: "", stage: "unknown_stage" },
+  ])("reports direct publication failure stage $stage", async ({ stdout, stage }) => {
+    const failed = fixture();
+    await admitTerminalPublicationGrant(failed.env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+    const runUtility = vi.mocked(failed.provider.runUtilityCommand);
+    const defaultImplementation = runUtility.getMockImplementation()!;
+    runUtility.mockImplementation(async (sandboxId, input) => input.operation === "repository.publish.push"
+      ? { exitCode: 1, stdout, stderr: "push failed\n" }
+      : defaultImplementation(sandboxId, input));
+
+    await expect(createTerminalRepositoryPublisher(failed.env, failed.gateway).publishBranchAndPr(
+      failed.context,
+      { title: "Ship", body: "" },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      failed.provider,
+    )).rejects.toThrow(`Trusted Git publication failed at ${stage} with exit code 1`);
+    expect(failed.gateway.createPullRequest).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      failed.objectStore,
+      "SELECT state FROM repository_publications WHERE effect_intent_id = ?",
+      I,
+    )).toEqual({ state: "ambiguous" });
   });
 
   it("publishes later commits from the same authorized run to the existing open PR", async () => {
@@ -441,9 +477,9 @@ describe("Terminal repository publication", () => {
       publishedSha: SECOND_HEAD,
       pullRequest: { number: 9, title: "Ship it again" },
     });
-    expect(provider.publishGitBundle).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      headSha: SECOND_HEAD,
-      expectedOldSha: HEAD,
+    expect(publicationPushes(provider)).toHaveLength(2);
+    expect(publicationPushes(provider)[1]?.[1]).toEqual(expect.objectContaining({
+      command: expect.stringContaining(`test "$remote_sha" = '${HEAD}'`),
     }));
     expect(gateway.createPullRequest).toHaveBeenCalledOnce();
     expect(gateway.updatePullRequest).toHaveBeenCalledOnce();
@@ -518,7 +554,7 @@ describe("Terminal repository publication", () => {
       code: "publication_policy_denied",
       message: expect.stringContaining("GitHub Actions workflow"),
     });
-    expect(workflow.provider.publishGitBundle).not.toHaveBeenCalled();
+    expect(publicationPushes(workflow.provider)).toHaveLength(0);
   });
 
   it("revalidates current work-stream participation immediately before minting a write token", async () => {

@@ -18,7 +18,6 @@ import type { TerminalRepositoryPublisher } from "./runtime";
 import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
 import { createIdentityObjectPort } from "../../runtime/identity-port";
 
-const MAX_BUNDLE_BYTES = 50 * 1_048_576;
 const MAX_CHANGED_PATHS = 500;
 
 function shellQuote(value: string): string {
@@ -359,14 +358,15 @@ export async function admitTerminalPublicationGrant(
 async function runInspection(
   provider: TerminalSandboxProvider,
   sandboxId: string,
-  operation: "status" | "branch" | "head" | "ancestry" | "paths" | "bundle",
+  operation: "status" | "branch" | "head" | "ancestry" | "paths" | "push",
   command: string,
+  timeoutMs = 60_000,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return provider.runUtilityCommand(sandboxId, {
     operation: `repository.publish.${operation}`,
     command,
     cwd: "/workspace",
-    timeoutMs: 60_000,
+    timeoutMs,
   });
 }
 
@@ -485,23 +485,6 @@ export function createTerminalRepositoryPublisher(
       if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
         throw new TerminalToolError("publication_policy_denied", "Terminal cannot publish GitHub Actions workflow changes. Remove `.github/workflows/` changes and ask a coding workflow with elevated review to publish them.");
       }
-      const bundlePath = `/workspace/.rally/publications/${effectIntentId}.bundle`;
-      const bundle = await runInspection(
-        provider,
-        sandbox.providerSandboxId,
-        "bundle",
-        `mkdir -p /workspace/.rally/publications && git bundle create ${shellQuote(bundlePath)} ${shellQuote(`refs/heads/${selection.headRef}`)} && stat -c %s -- ${shellQuote(bundlePath)}`,
-      );
-      if (bundle.exitCode !== 0) throw new TerminalToolError("publication_conflict", "Git could not create the bounded publication bundle. Verify the branch ref and retry.", { reason: "Verify the fixed branch ref and committed objects before retrying." });
-      const bundleSize = Number(bundle.stdout.trim());
-      if (!Number.isSafeInteger(bundleSize) || bundleSize <= 0 || bundleSize > MAX_BUNDLE_BYTES) {
-        throw new TerminalToolError("limit_exceeded", `The Git bundle is ${bundle.stdout.trim() || "an unknown size"}; publication requires a nonempty bundle at most ${MAX_BUNDLE_BYTES} bytes. Reduce large committed files and retry.`);
-      }
-      const bundleBytes = await provider.readFile(sandbox.providerSandboxId, bundlePath);
-      if (bundleBytes.byteLength === 0 || bundleBytes.byteLength > MAX_BUNDLE_BYTES) {
-        throw new TerminalToolError("limit_exceeded", `The Git bundle is ${bundleBytes.byteLength} bytes; publication requires a nonempty bundle at most ${MAX_BUNDLE_BYTES}. Reduce large committed files and retry.`);
-      }
-
       if (context.executionPrincipal.type !== "user") {
         throw new TerminalToolError("publication_not_authorized", "Publication requires a current human work-stream participant. Stop and ask a participant to request publication.");
       }
@@ -539,16 +522,26 @@ export function createTerminalRepositoryPublisher(
           now: Date.now(),
         });
         try {
-          const published = await provider.publishGitBundle({
-            operationId: publicationId,
-            bundle: bundleBytes,
-            repositoryFullName: selection.repositoryFullName,
-            baseSha: selection.baseSha,
-            headSha,
-            headRef: selection.headRef,
-            expectedOldSha,
-            githubBasicCredential: btoa(`x-access-token:${token.accessToken}`),
-          });
+          const expectedOld = expectedOldSha ?? "";
+          const repositoryUrl = `https://github.com/${selection.repositoryFullName}.git`;
+          const push = await runInspection(provider, sandbox.providerSandboxId, "push", [
+            "set -euo pipefail",
+            "publish_stage=remote_verify",
+            "trap 'rally_status=$?; if [ \"$rally_status\" -ne 0 ]; then printf \"RALLY_PUBLISH_FAILED_STAGE=%s\\n\" \"$publish_stage\"; fi; exit \"$rally_status\"' EXIT",
+            `remote_sha=$(git ls-remote ${shellQuote(repositoryUrl)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)`,
+            `test "$remote_sha" = ${shellQuote(expectedOld)}`,
+            "publish_stage=remote_push",
+            `git -c core.hooksPath=/dev/null push ${shellQuote(repositoryUrl)} ${shellQuote(`${headSha}:refs/heads/${selection.headRef}`)}`,
+            "publish_stage=post_push_verify",
+            `test "$(git ls-remote ${shellQuote(repositoryUrl)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)" = ${shellQuote(headSha)}`,
+            "trap - EXIT",
+            "printf 'published\\n'",
+          ].join("\n"), 180_000);
+          if (push.exitCode !== 0) {
+            const output = `${push.stdout}\n${push.stderr}`;
+            const stage = /^RALLY_PUBLISH_FAILED_STAGE=([a-z_]+)$/mu.exec(output)?.[1] ?? "unknown_stage";
+            throw new Error(`Trusted Git publication failed at ${stage} with exit code ${push.exitCode}`);
+          }
           let pullRequest = await gateway.findPullRequest(selection, token.accessToken, context.signal);
           let outcome: "created" | "updated" = "created";
           if (pullRequest) {
@@ -560,12 +553,12 @@ export function createTerminalRepositoryPublisher(
           } else {
             pullRequest = await gateway.createPullRequest(selection, token.accessToken, input, context.signal);
           }
-          if (pullRequest.state !== "open" || pullRequest.headSha !== published.publishedSha) {
+          if (pullRequest.state !== "open" || pullRequest.headSha !== headSha) {
             throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Rally can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Rally can reconcile the branch and pull request." });
           }
           await terminal.completePublication({
             effectIntentId,
-            publishedSha: published.publishedSha,
+            publishedSha: headSha,
             pullRequestNumber: pullRequest.number,
             pullRequestUrl: pullRequest.url,
             now: Date.now(),
@@ -575,7 +568,7 @@ export function createTerminalRepositoryPublisher(
             baseRef: selection.baseRef,
             headRef: selection.headRef,
             commitSha: headSha,
-            publishedSha: published.publishedSha,
+            publishedSha: headSha,
             outcome,
             pullRequest: {
               number: pullRequest.number,
