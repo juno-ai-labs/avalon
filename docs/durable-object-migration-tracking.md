@@ -821,8 +821,9 @@ invoke the deployed `SubstreamAgent` transcript-backfill RPC for exactly the
 reviewed regional fleet. It persists each object's PITR bookmark, source and
 projection counts, reconciliation result, and error to a mode-0600 local
 receipt. Apply rejects inventory drift before mutation; a complete replay is the
-fleet audit. Before a first-time object receipt, the RPC invokes the existing
-terminal-run residual-receipt repair. A successfully repaired tool lifecycle is
+fleet audit. Before a first-time object receipt, the RPC invokes only the
+terminal-run residual-receipt phase of the existing reaper; it cannot expire or
+terminalize a nonterminal root or child. A successfully repaired tool lifecycle is
 part of the source subsequently hashed and projected; any repair failure aborts
 that object, and receipt replay remains read-only.
 
