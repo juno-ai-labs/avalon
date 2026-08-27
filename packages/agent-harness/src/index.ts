@@ -39,6 +39,7 @@ export {
   projectBindLoopMessages,
   verifyBindProviderBoundary,
   type BindLoopMessage,
+  type BindLoopMessageOrigin,
   type BindLoopProjectionState,
   type BindLoopTransition,
   type BindProviderBoundary,
@@ -96,6 +97,15 @@ export interface ModelMessage {
   name?: string;
   tool_call_id?: string;
   tool_calls?: ModelToolCall[];
+  /** Durable source of an exact model-facing wrapper; never sent to a provider. */
+  provenance?: ModelMessageProvenance;
+}
+
+export interface ModelMessageProvenance {
+  originKind: "canonical" | "protocol" | "derived";
+  sourceKind: string | null;
+  sourceId: string | null;
+  sourceRevision: number | null;
 }
 
 export interface OpenRouterInferencePayload {

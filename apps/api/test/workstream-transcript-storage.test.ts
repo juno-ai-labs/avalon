@@ -57,6 +57,12 @@ function initialize(): BindLoopTransition {
     stateRevision: 1,
     systemProjection,
     nonSystemMessages: [{ role: "user", content: "Question" }],
+    nonSystemMessageOrigins: [{
+      originKind: "derived",
+      sourceKind: "participant_turn",
+      sourceId: "message-1",
+      sourceRevision: 1,
+    }],
   };
 }
 
@@ -103,6 +109,84 @@ describe("canonical ordered work-stream transcript", () => {
     ).one().root_fact_id).toBe(assistantFactId);
     expect(sql.exec(`SELECT COUNT(*) AS count FROM transcript_payloads
       WHERE payload_json LIKE '%Before tools%'`).one().count).toBe(1);
+  });
+
+  it("stores typed provenance for exact model-facing derivatives without copying participant ownership", async () => {
+    const { transcript, sql } = open();
+    await transcript.commitBindTransition(initialize(), NOW);
+    await transcript.commitBindTransition(assistant(2, 1, "Answer"), NOW + 1);
+    await transcript.commitBindTransition({
+      kind: "tool_result_accepted",
+      loopId: "run-1",
+      generation: 1,
+      stateRevision: 3,
+      turnId: "run-1:turn:1",
+      toolCallId: "run-1:turn:1:tool:0",
+      callIndex: 0,
+      message: { role: "tool", tool_call_id: "provider-1-0", content: "{\"ok\":true}" },
+    }, NOW + 2);
+
+    const rows = sql.exec<{
+      fact_kind: string;
+      origin_kind: string;
+      source_kind: string | null;
+      source_id: string | null;
+      source_revision: number | null;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT fact.fact_kind, fact.origin_kind, fact.source_kind, fact.source_id,
+              fact.source_revision
+         FROM bind_loop_state_messages projected
+         JOIN transcript_facts fact ON fact.fact_id = projected.fact_id
+        WHERE projected.loop_id = 'run-1' AND projected.state_revision = 3
+        ORDER BY projected.message_position`,
+    ).toArray();
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        fact_kind: "system_projection",
+        origin_kind: "system_projection",
+        source_kind: "system_prompt_inputs",
+        source_id: "input-1",
+        source_revision: 1,
+      }),
+      expect.objectContaining({
+        fact_kind: "model_message",
+        origin_kind: "derived",
+        source_kind: "participant_turn",
+        source_id: "message-1",
+        source_revision: 1,
+      }),
+      expect.objectContaining({
+        fact_kind: "model_message",
+        origin_kind: "canonical",
+        source_kind: null,
+        source_id: null,
+        source_revision: null,
+      }),
+      expect.objectContaining({
+        fact_kind: "model_message",
+        origin_kind: "derived",
+        source_kind: "tool_receipt",
+        source_id: "run-1:turn:1:tool:0",
+        source_revision: 0,
+      }),
+    ]);
+  });
+
+  it("rejects derivative facts without a durable source identity", () => {
+    const { database } = open();
+    database.prepare(
+      `INSERT INTO transcript_payloads
+         (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+       VALUES ('payload-test', 'model', 'application/json', '{}', 'hash', 2, ?)`,
+    ).run(NOW);
+    expect(() => database.prepare(
+      `INSERT INTO transcript_facts
+         (fact_id, fact_kind, payload_id, origin_kind, source_kind, source_id,
+          source_revision, run_id, turn_id, tool_call_id, created_at)
+       VALUES ('fact-test', 'model_message', 'payload-test', 'derived', NULL, NULL,
+               NULL, 'run-1', NULL, NULL, ?)`,
+    ).run(NOW)).toThrow(/CHECK constraint failed/u);
   });
 
   it("keeps parallel tool lifecycle updates in declared call order regardless of settle order", async () => {

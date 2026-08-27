@@ -99,7 +99,12 @@ blocks inside a turn. `bind_loop_states` and `bind_loop_state_messages` assign
 the exact provider-facing state revision and `loop_sequence`, including private
 protocol messages and compaction replacements. Both projections reference
 `transcript_facts`; identical payloads are not independently copied merely to
-serve another ordering.
+serve another ordering. Each fact also records whether it is canonical,
+protocol-only, a model-facing derivative, or a system projection. Derivatives
+must carry a typed source identity and optional source revision; system
+projections point to the exact prompt-input hash and renderer revision. These
+fields are fact metadata rather than a second payload copy, and the source index
+makes the ownership trail directly inspectable.
 
 The admitted feed socket's hibernation attachment owns its half-open range
 snapshot fence and room event waterline; there is no append-only snapshot table
@@ -782,7 +787,9 @@ participant turn/block ordering, exact Bind-loop states and boundary hashes,
 nested activity intervals, and compaction replacement records. Each admitted
 feed socket keeps its current range fence in its hibernation attachment, and
 range replies carry only the lifecycle rows referenced by their turns plus
-required ancestry.
+required ancestry. Facts classify canonical, protocol-only, derived, and system
+projection origins; every derivative carries its typed durable source identity,
+and source provenance is indexed without copying the source payload.
 
 **Why:** Participant rendering and provider continuation have different
 visibility and ordering domains, but duplicating their common text would create
@@ -797,8 +804,9 @@ TTL: socket-owned fences are naturally bounded by the reader session.
 
 **What a future change has to respect:** One semantic datum has one owner.
 Projection rows may add only ordering, visibility, and lifecycle metadata unless
-their payload is genuinely different. Both sequence domains are monotonic and
-provider-boundary hash equality is fail-closed.
+their payload is genuinely different. A genuinely different model-facing
+wrapper must point back to its source fact or record. Both sequence domains are
+monotonic and provider-boundary hash equality is fail-closed.
 
 ### 2026-08-26 — Connector processing ownership becomes Queue-native
 

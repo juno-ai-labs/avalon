@@ -954,6 +954,17 @@ semantic differences: participant-safe tool summary versus exact model-facing
 tool result, compaction status versus private replacement, and render-safe
 content versus provider continuation metadata.
 
+Every canonical fact records `origin_kind`. `canonical` and `protocol` facts
+have no source identity; `derived` facts require non-empty `source_kind` and
+`source_id` plus an optional non-negative `source_revision`; system projection
+facts use the separate `system_projection` kind and identify their prompt-input
+hash and renderer revision. These are provenance fields on the fact, not copied
+payload bytes or a third ordering projection. The authority indexes
+`(source_kind, source_id, source_revision)` so ownership audits and replay
+diagnostics do not scan the fact ledger. Provider adapters must strip provenance
+metadata before network serialization and prove that the provider-boundary hash
+still covers only the exact model message array.
+
 For every accepted transition, the authority creates any new canonical fact
 records and every required participant/Bind ordering or lifecycle row in one
 object-local SQLite transaction. A failure in either projection rolls back the

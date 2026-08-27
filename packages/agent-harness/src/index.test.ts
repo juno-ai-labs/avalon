@@ -1635,16 +1635,30 @@ describe("agent harness", () => {
   });
 
   it("persists and hash-verifies the exact Bind array before and after a provider turn", async () => {
-    const fetcher = vi.fn(async () => streamResponse([{
-      model: "test/model",
-      choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
-      usage: { prompt_tokens: 4, completion_tokens: 1 },
-    }])) as typeof fetch;
+    let providerBody: Record<string, unknown> | null = null;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      providerBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 4, completion_tokens: 1 },
+      }]);
+    }) as typeof fetch;
     const transitions: BindLoopTransition[] = [];
     const boundaries: BindProviderBoundary[] = [];
 
     const outcome = await runHarness({
       ...runInput(fetcher),
+      messages: [{
+        role: "user",
+        content: "Do the work",
+        provenance: {
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: "message-1",
+          sourceRevision: 1,
+        },
+      }],
       onBindLoopTransition: async (transition) => { transitions.push(transition); },
       onBindProviderBoundary: async (boundary) => { boundaries.push(boundary); },
     });
@@ -1664,6 +1678,18 @@ describe("agent harness", () => {
       }),
     ]);
     expect(boundaries[0]!.projectedHash).toBe(boundaries[0]!.bindHash);
+    const initialized = transitions[0];
+    expect(initialized?.kind).toBe("state_initialized");
+    if (initialized?.kind === "state_initialized") {
+      expect(initialized.nonSystemMessageOrigins).toEqual([{
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: "message-1",
+        sourceRevision: 1,
+      }]);
+    }
+    expect(JSON.stringify(providerBody)).not.toContain("provenance");
+    expect(JSON.stringify(providerBody)).not.toContain("participant_turn");
   });
 
   it("does not let Bind accept an assistant message whose durable transition failed", async () => {
@@ -4496,11 +4522,18 @@ describe("agent harness", () => {
       return streamResponse([{ choices: [{ delta: { content: "healed" }, finish_reason: "stop" }] }]);
     }) as typeof fetch;
     const issues: Array<{ kind: string; healed?: boolean }> = [];
+    const transitions: BindLoopTransition[] = [];
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       messages: [
-        { role: "user", content: "First request" },
+        {
+          role: "user",
+          content: "First request",
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "first", sourceRevision: 1,
+          },
+        },
         {
           role: "assistant",
           content: null,
@@ -4509,11 +4542,28 @@ describe("agent harness", () => {
             type: "function",
             function: { name: "missing_tool", arguments: "{}" },
           }],
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "dropped", sourceRevision: 2,
+          },
         },
-        { role: "tool", tool_call_id: "orphan-call", content: "{}" },
-        { role: "user", content: "Continue without the stale call" },
+        {
+          role: "tool",
+          tool_call_id: "orphan-call",
+          content: "{}",
+          provenance: {
+            originKind: "derived", sourceKind: "tool_receipt", sourceId: "orphan", sourceRevision: null,
+          },
+        },
+        {
+          role: "user",
+          content: "Continue without the stale call",
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "last", sourceRevision: 4,
+          },
+        },
       ],
       onTranscriptIssues: (found) => { issues.push(...found); },
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "healed" });
@@ -4523,6 +4573,11 @@ describe("agent harness", () => {
     ]));
     expect(requestBodies[0]!.messages.some((message) => message.tool_call_id === "orphan-call")).toBe(false);
     expect(JSON.stringify(requestBodies[0]!.messages)).not.toContain("dangling-call");
+    const initialized = transitions.find((transition) => transition.kind === "state_initialized");
+    expect(initialized?.kind === "state_initialized" ? initialized.nonSystemMessageOrigins : []).toEqual([
+      expect.objectContaining({ sourceId: "first" }),
+      expect.objectContaining({ sourceId: "last" }),
+    ]);
   });
 
   it("normalizes what the compiler said the person asked for", () => {
