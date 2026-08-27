@@ -205,6 +205,27 @@ duplicate because the consumer rechecks target generations.
 
 ## Changelog
 
+### 2026-08-27 — Direct participant removal keeps the project audience fence
+
+**What changed:** The work-stream participant DELETE route now goes through
+`WorkstreamService.removeParticipant`, so an active project refuses a direct
+audience change and reserves participant convergence for the project mutation.
+
+**Why:** The service already carried the project constraint, but the regional
+HTTP route constructed `WorkstreamObjectClient` directly. The new participant
+management UI made that bypass reachable by every current reader of a project
+work stream.
+
+**Considered and rejected:** Duplicating the WorkspaceDO project lookup in the
+route or inside the child work-stream object. The service is the existing
+orchestrator for this cross-object rule; copying project authority into the
+child would give two objects an answer to the same audience question.
+
+**Consequences:** Direct removal from an active project returns
+`project_audience_managed_by_project`. Project-driven removals continue through
+the explicit `projectEffect` path after the project service has applied its role
+and audience checks.
+
 ### 2026-08-27 — Project creation lands on its result
 
 **What changed:** The New project dialog now waits for the create mutation,

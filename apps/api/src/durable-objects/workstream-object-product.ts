@@ -1944,16 +1944,22 @@ export class WorkstreamObjectProductService {
     ];
   }
 
-  async removeParticipant(auth: AuthContext, userId: string): Promise<boolean> {
+  async removeParticipant(
+    auth: AuthContext,
+    userId: string,
+  ): Promise<"removed" | "already_removed" | "not_found"> {
     await this.authorize(auth);
     const now = Date.now();
-    const { result: removed } = await this.objectStore.commitWithRegionalEffects(
+    const { result: outcome } = await this.objectStore.commitWithRegionalEffects(
       (sql) => {
-        const target = first(sql.exec<{ one: number }>(
-          `SELECT 1 AS one FROM participants WHERE user_id = ? AND status = 'active'`,
+        const target = first(sql.exec<{ status: "active" | "removed" }>(
+          `SELECT status FROM participants WHERE user_id = ?`,
           userId,
         ));
-        if (!target) return false;
+        if (!target) return "not_found" as const;
+        // A DELETE whose first response was lost or whose local publication
+        // failed must be able to replay the idempotent removal event.
+        if (target.status === "removed") return "already_removed" as const;
         const active = first(sql.exec<{ count: number }>(
           `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
         ))?.count ?? 0;
@@ -1970,13 +1976,13 @@ export class WorkstreamObjectProductService {
            WHERE user_id = ? AND status = 'active'`,
           now, now, userId,
         );
-        return true;
+        return "removed" as const;
       },
-      (_sql, changed) => changed
+      (_sql, result) => result === "removed"
         ? [{ partitionKey: `user:${userId}`, effect: this.userEffect(this.root(), userId) }]
         : [],
     );
-    return removed;
+    return outcome;
   }
 
   async attachResource(auth: AuthContext, resourceId: string): Promise<WorkstreamResource> {

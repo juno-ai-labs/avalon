@@ -16,7 +16,11 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import {
+  asWorkspaceId,
+  asWorkstreamId,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
+} from "@rally/contracts";
 
 import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
 import {
@@ -30,6 +34,13 @@ const CREATOR_ID = "00000000-0000-7000-8000-0000000007b3";
 const CREATOR_SESSION_ID = "00000000-0000-7000-8000-0000000007b4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000007b5";
 const INVITEE_SESSION_ID = "00000000-0000-7000-8000-0000000007b6";
+
+type TestableSubstreamAgent = {
+  publishLocalProductEvent(
+    attachment: { workspaceId: string; workstreamId: string },
+    event: Record<string, unknown>,
+  ): Promise<void>;
+};
 
 const AUTH = {
   sessionId: CREATOR_SESSION_ID,
@@ -138,6 +149,50 @@ async function startWorkstream(stub: DurableObjectStub, participantUserIds: stri
     },
   });
   expect(opened.status).toBe(200);
+}
+
+async function connectParticipant(
+  stub: DurableObjectStub,
+  userId: string,
+  sessionId: string,
+  ticketId: string,
+): Promise<WebSocket> {
+  const response = await stub.fetch("https://object.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-workstream-id": WORKSTREAM_ID,
+      "x-rally-substream-id": "0",
+      "x-rally-user-id": userId,
+      "x-rally-session-id": sessionId,
+      "x-rally-socket-ticket-id": ticketId,
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  expect(response.status).toBe(101);
+  const socket = response.webSocket!;
+  socket.accept();
+  const snapshot = new Promise<MessageEvent>((resolve) =>
+    socket.addEventListener("message", resolve, { once: true }));
+  socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0, publishPresence: false }));
+  await snapshot;
+  return socket;
+}
+
+function nextClose(socket: WebSocket): Promise<CloseEvent> {
+  return new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));
+}
+
+function nextEvent(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const onMessage = (message: MessageEvent) => {
+      const event = JSON.parse(String(message.data)) as Record<string, unknown>;
+      if (event.type !== type) return;
+      socket.removeEventListener("message", onMessage);
+      resolve(event);
+    };
+    socket.addEventListener("message", onMessage);
+  });
 }
 
 /**
@@ -304,5 +359,58 @@ describe("a work stream nobody has shown this person yet", () => {
       error: "workstream_participant_required",
     });
     expect(await participantStatus(stub, CREATOR_ID)).toBe("active");
+  });
+
+  it("closes revoked sockets and republishes removal when the first local event fails", async () => {
+    const stub = agentStub();
+    await startWorkstream(stub, [INVITEE_ID]);
+    const creatorSocket = await connectParticipant(
+      stub,
+      CREATOR_ID,
+      CREATOR_SESSION_ID,
+      "00000000-0000-7000-8000-0000000007c1",
+    );
+    const inviteeSocket = await connectParticipant(
+      stub,
+      INVITEE_ID,
+      INVITEE_SESSION_ID,
+      "00000000-0000-7000-8000-0000000007c2",
+    );
+
+    await runInDurableObject(stub, (instance) => {
+      const testable = instance as unknown as TestableSubstreamAgent;
+      const publish = testable.publishLocalProductEvent.bind(instance);
+      let first = true;
+      testable.publishLocalProductEvent = async (attachment, event) => {
+        if (first) {
+          first = false;
+          throw new Error("injected_local_event_failure");
+        }
+        await publish(attachment, event);
+      };
+    });
+
+    const closed = nextClose(inviteeSocket);
+    const first = await product(stub, {
+      operation: "remove_participant",
+      auth: AUTH,
+      userId: INVITEE_ID,
+    });
+    expect(first.status).toBe(500);
+    expect(await participantStatus(stub, INVITEE_ID)).toBe("removed");
+    expect((await closed).code).toBe(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE);
+
+    const replayed = nextEvent(creatorSocket, "participant_removed");
+    const retry = await product(stub, {
+      operation: "remove_participant",
+      auth: AUTH,
+      userId: INVITEE_ID,
+    });
+    expect(retry.status).toBe(200);
+    await expect(replayed).resolves.toMatchObject({
+      type: "participant_removed",
+      userId: INVITEE_ID,
+    });
+    creatorSocket.close(1000, "test complete");
   });
 });

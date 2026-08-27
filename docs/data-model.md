@@ -835,7 +835,9 @@ racing client could still empty the authoritative room.
 `workstream_participant_required`. The desktop disables the known-final action
 for immediacy, while the object remains the concurrency-safe enforcement point.
 Removing a person from a personal work stream revokes their access, including
-when that person created it.
+when that person created it. Active-project work streams keep their project
+audience fence at the regional service boundary, and the object closes revoked
+local sockets before fallible realtime publication.
 
 ### 2026-08-27 — Canonical transcript records become the sole payload owner
 
