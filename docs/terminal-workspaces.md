@@ -392,10 +392,12 @@ projection. Command arguments are never interpolated into a host shell. The
 Daytona SDK is reachable only through the regional adapter.
 
 The Daytona project credential stays a Worker secret. GitHub installation tokens
-are minted just in time, narrowed to the selected repository and operation,
-mounted through host-scoped Daytona placeholders, rotated, and removed on
-revocation/expiry. The trusted publisher uses a separate ephemeral sandbox and
-credential. Logs include IDs, state, error code, duration, and byte counts—not
+are minted just in time and narrowed to the selected repository and operation.
+Read credentials remain mounted through host-scoped Daytona placeholders and
+are rotated or removed on revocation/expiry. The trusted publisher keeps the
+write credential out of the agent sandbox: it passes that credential only to
+the single Git process in a separate ephemeral sandbox and deletes that sandbox
+afterward. Logs include IDs, state, error code, duration, and byte counts—not
 commands, output, diffs, tokens, or resource contents.
 
 The account-level `avalon_terminal_operations` Analytics Engine dataset is even
@@ -544,6 +546,36 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-27 — Trusted publication pays one credential boundary
+
+**What changed:** The ephemeral trusted publisher now passes its short-lived,
+repository-scoped GitHub credential directly to the one fixed Git process
+instead of creating, listing, mounting, and deleting a separate Daytona Secret
+for every publication. The process emits a content-free stage marker on failure,
+which turns Daytona's otherwise opaque `exitCode=-1` into a safe publication
+phase while keeping command output and credentials out of logs and tool results.
+
+**Why:** Production verification reached the correct fixed work-stream branch,
+created a clean commit, and then failed inside the fresh publisher sandbox with
+`Trusted Git publication failed with exit code -1`. Repository checkout and a
+standard push from the prepared agent sandbox both succeeded, isolating the
+failure to the publisher's extra secret lifecycle. The write credential is
+already short-lived and repository-scoped, and the publisher sandbox is already
+single-purpose and ephemeral; another persisted provider-secret boundary paid
+four control-plane requests without creating an additional product authority.
+
+**Considered and rejected:** Passing the write credential into the agent
+sandbox would remove the publisher entirely but expose it to participant code
+and retained processes. Keeping the Daytona Secret lifecycle and merely adding
+retries would preserve the failing boundary and repeat an external write whose
+outcome may be ambiguous.
+
+**What a future change has to respect:** The write token may enter only the
+fresh publisher process environment, never the agent sandbox, provider logs, or
+durable state. Publication must still verify the bundle, base ancestry, expected
+remote SHA, pushed SHA, participant authority, and convergent receipt before it
+reports success.
 
 ### 2026-08-27 — Terminal preservation follows resource authority into WorkspaceDO
 
