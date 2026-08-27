@@ -30,6 +30,7 @@ export type TerminalUtilityOperation =
   | "file.read_page"
   | "file.replace"
   | "file.apply_patch"
+  | "file.temp_cleanup"
   | "resource.publish.inspect_before"
   | "resource.publish.inspect_after"
   | "resource.import.inspect"
