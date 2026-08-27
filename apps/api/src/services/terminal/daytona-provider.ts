@@ -969,14 +969,20 @@ export function createDaytonaTerminalProvider(
           labels: { "rally.publisher": input.operationId },
         }, { timeout: 60 }));
         if (!publisher.fs || !publisher.process) throw new Error("The Daytona publisher sandbox is missing required services");
-        await measureRequest("file.upload", () => publisher!.fs!.uploadFile(Buffer.from(input.bundle), "/workspace/publication.bundle", 120), { bytes: input.bundle.byteLength });
+        if (!publisher.process.executeCommand) throw new Error("The Daytona publisher sandbox cannot execute commands");
         const repositoryUrl = `https://github.com/${input.repositoryFullName}.git`;
         const expectedOld = input.expectedOldSha ?? "";
-        const command = [
+        const credentialPath = "/workspace/.rally-git-credential";
+        const quotedCredentialPath = shellQuote(credentialPath);
+        const scriptPath = "/workspace/rally-publish.sh";
+        const script = [
           "set -euo pipefail",
           "publish_stage=environment",
-          "trap 'rally_status=$?; if [ \"$rally_status\" -ne 0 ]; then printf \"RALLY_PUBLISH_FAILED_STAGE=%s\\n\" \"$publish_stage\"; fi; exit \"$rally_status\"' EXIT",
+          `trap 'rally_status=$?; rm -f "${credentialPath}"; if [ "$rally_status" -ne 0 ]; then printf "RALLY_PUBLISH_FAILED_STAGE=%s\\n" "$publish_stage"; fi; exit "$rally_status"' EXIT`,
           "export GIT_CONFIG_NOSYSTEM=1 HOME=/tmp/rally-publisher-home",
+          "export GIT_CONFIG_COUNT=1",
+          `export GIT_CONFIG_KEY_0=${shellQuote(`http.${repositoryUrl}.extraheader`)}`,
+          `export GIT_CONFIG_VALUE_0="Authorization: Basic $(cat ${quotedCredentialPath})"`,
           "publish_stage=git_ca",
           ...terminalGitCaSetupCommands({ required: true }),
           "publish_stage=repository_init",
@@ -996,18 +1002,35 @@ export function createDaytonaTerminalProvider(
           `git -C /workspace/repository.git push origin ${shellQuote(`${input.headSha}:refs/heads/${input.headRef}`)}`,
           "publish_stage=post_push_verify",
           `test "$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)" = ${shellQuote(input.headSha)}`,
+          `rm -f ${quotedCredentialPath}`,
           "trap - EXIT",
           "printf 'published\\n'",
         ].join("\n");
-        if (!publisher.process.executeCommand) throw new Error("The Daytona publisher sandbox cannot execute commands");
+        const credential = Buffer.from(input.githubBasicCredential);
+        const publisherScript = Buffer.from(script);
+        const uploadResults = await Promise.allSettled([
+          measureRequest("file.upload", () => publisher!.fs!.uploadFile(
+            Buffer.from(input.bundle),
+            "/workspace/publication.bundle",
+            120,
+          ), { bytes: input.bundle.byteLength }),
+          measureRequest("file.upload", () => publisher!.fs!.uploadFile(
+            credential,
+            credentialPath,
+            120,
+          ), { bytes: credential.byteLength }),
+          measureRequest("file.upload", () => publisher!.fs!.uploadFile(
+            publisherScript,
+            scriptPath,
+            120,
+          ), { bytes: publisherScript.byteLength }),
+        ]);
+        const uploadFailure = uploadResults.find((result) => result.status === "rejected");
+        if (uploadFailure?.status === "rejected") throw uploadFailure.reason;
         const result = await measureRequest("process.execute_utility", () => publisher!.process!.executeCommand!(
-          `bash -lc ${shellQuote(command)}`,
+          `/bin/bash ${scriptPath}`,
           "/workspace",
-          {
-            GIT_CONFIG_COUNT: "1",
-            GIT_CONFIG_KEY_0: `http.${repositoryUrl}.extraheader`,
-            GIT_CONFIG_VALUE_0: `Authorization: Basic ${input.githubBasicCredential}`,
-          },
+          undefined,
           180,
         ));
         if ((result.exitCode ?? 1) !== 0) {

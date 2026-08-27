@@ -548,6 +548,36 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-27 — Trusted publication launches from uploaded payloads
+
+**What changed:** The fresh private publisher now receives its Git bundle,
+short-lived credential, and fixed publication script as three concurrent file
+uploads. Its one direct process call executes the uploaded script without a
+per-command environment payload. The script keeps the credential out of Git
+configuration, removes the credential file on success or failure, and retains
+the fixed safe stage markers. Cleanup waits for every concurrent upload to
+settle before deleting the publisher sandbox, including when a sibling upload
+has already failed.
+
+**Why:** Production Daytona returned `exitCode: -1` with no output before the
+first script marker whenever the direct process request carried the Git
+configuration environment. That made the operation both fail and report only
+`unknown_stage`; the same sandbox had already accepted file uploads, so the
+fragile boundary was process-environment injection rather than sandbox setup or
+Git publication.
+
+**Considered and rejected:** Reintroducing Daytona Secret lifecycle calls,
+putting the credential in the command string, or retrying the ambiguous
+publication. Those choices respectively restore the latency and provider bug
+removed by the prior change, expose the credential to command telemetry, or risk
+repeating a remote write.
+
+**Consequences:** Publication pays one parallel upload boundary plus one short
+direct command in its disposable publisher sandbox. The credential exists only
+in that isolated sandbox for the duration of the script and is deleted by the
+script and again with the sandbox. A pre-script command-launch failure remains
+`unknown_stage`; every script failure names its fixed stage.
+
 ### 2026-08-27 — Trusted publication pays one credential boundary
 
 **What changed:** The ephemeral trusted publisher now passes its short-lived,
