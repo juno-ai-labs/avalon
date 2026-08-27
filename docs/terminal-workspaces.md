@@ -549,7 +549,11 @@ update lag before changing the default.
 
 **What changed:** The explicit Terminal `load_plugin` path now acquires the
 work-stream sandbox and prepares a selected repository before exposing the nine
-tools. Repairable repository failures are deferred so checkout remains visible.
+tools. Repairable repository failures are deferred so checkout remains visible;
+a selected repository that failed preparation is removed from the shared
+preparation cache so ordinary tools revalidate it before touching retained
+files. A missing selection keeps the sandbox warm because there is no repository
+authorization to recheck.
 Restored activation hints skip preparation and retain first-tool acquisition.
 Explicit preparation populates the same per-run promise used by every tool, so
 the first tool does not reacquire or bootstrap the selected repository again.
@@ -572,8 +576,10 @@ the only repair operation.
 **Consequences:** Explicit load may take the bounded acquisition-plus-repository
 budget, but the first Terminal tool should be warm. Activation remains
 convergent and cancellation-fenced; provider details remain out of the model and
-traces. Performance comparisons must count `load_plugin` plus the first tool,
-not claim a faster tool by moving cold setup outside the measured boundary.
+traces. A revoked or stale selected repository cannot reuse activation's sandbox
+cache, while `checkout_repository` remains available to repair the selection.
+Performance comparisons must count `load_plugin` plus the first tool, not claim
+a faster tool by moving cold setup outside the measured boundary.
 
 ### 2026-08-27 — Direct utilities, request tracing, and setup pay once
 
