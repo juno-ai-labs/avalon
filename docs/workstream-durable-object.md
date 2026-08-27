@@ -105,7 +105,8 @@ exact provider array, so the operation creates no historical Bind head/message
 and records that limitation explicitly rather than inventing interleaving.
 
 The data operation is an object-owned RPC, not constructor work. It requires a
-quiescent writer, captures a real pre-write PITR bookmark, hashes and prepares
+main-feed (`external_substream_id = '0'`) authority and a quiescent writer,
+captures a real pre-write PITR bookmark, hashes and prepares
 the source outside the transaction, then re-reads the entire source inside the
 single SQLite transaction that shifts sequences, inserts projections, and
 commits the one-row receipt. Movement, partial state, or a uniqueness conflict

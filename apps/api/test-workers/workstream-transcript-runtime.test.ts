@@ -14,6 +14,25 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000702");
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
+  it("refuses to create a successful no-op receipt for an auxiliary substream", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName("auxiliary-substream-backfill-test");
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(`INSERT INTO substream_agent_identity
+        (id, external_substream_id, created_at, updated_at)
+        VALUES (1, '00000000-0000-7000-8000-000000000703', 0, 0)`);
+      await expect(instance.backfillLegacyTranscript({
+        objectId: id.toString(),
+        operatorRunId: "00000000-0000-7000-8000-000000000700",
+        cutoverVersion: 27,
+      })).rejects.toThrow("legacy_transcript_backfill_requires_main_substream");
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count
+        FROM legacy_transcript_backfills`).one().count).toBe(0);
+    });
+  });
+
   it("backfills through the production RPC with a real PITR bookmark and reconciles replay", async () => {
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),

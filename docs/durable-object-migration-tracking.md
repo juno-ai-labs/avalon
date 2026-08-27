@@ -759,6 +759,10 @@ goes through `hono/html` escaping.
   successful fleet pass: all 392 eligible objects must report `applied=false`
   and `verified=true`. Legacy unrestricted IDs remain explicit skips because a
   regional binding cannot address them; this operation never crosses regions.
+  The object RPC also requires `external_substream_id = '0'`. An auxiliary
+  substream fails visibly without writing an empty success receipt; if one
+  appears in a future inventory, the operator must separate it from the
+  reviewed main-feed target rather than increasing the witness count.
 
 ## Performance and cost
 

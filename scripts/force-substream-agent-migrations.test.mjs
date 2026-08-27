@@ -81,6 +81,15 @@ test('dry-run inventories stored objects without sending migration commands', as
   assert.equal(fixture.requests.some(({ url }) => url.pathname.endsWith('/messages/batch')), false);
 });
 
+test('rejects a non-HTTP jurisdiction probe URL before inventory', async () => {
+  await assert.rejects(forceSubstreamAgentMigrations({
+    argv: ['--jurisdiction-probe-url=not-a-url'],
+    environment,
+    fetcher: async () => { throw new Error('inventory_must_not_run'); },
+    logger: { log() {} },
+  }), /jurisdiction-probe-url must be an HTTP URL/u);
+});
+
 test('apply batches only stored object ids and waits for the regional queue to drain', async () => {
   const stored = Array.from({ length: 101 }, (_, index) => objectId(index + 1));
   const fixture = fixtureFetch({ globalObjects: [...stored, objectId(999)] });
