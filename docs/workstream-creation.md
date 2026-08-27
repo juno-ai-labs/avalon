@@ -71,8 +71,9 @@ Three things animate, and they are the whole transition:
   7px into place on a 70ms stagger, so the transcript reads as being built rather
   than revealed.
 
-Nothing here is bespoke motion: `prefers-reduced-motion` is cut globally at the
-end of `app.css`, which flattens all of it to a single 0.001ms iteration.
+Nothing here is bespoke motion: `prefers-reduced-motion` is cut globally by the
+`*, *::before, *::after` kill-switch block in `app.css`, which flattens every
+duration *and every delay* to a single 0.001ms iteration.
 
 The composer's `@` control opens the same inline mention list the work-stream
 and automation composers use — the workspace's members, walked with the arrow
@@ -393,6 +394,44 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-27 — The reduced-motion cut now zeroes delay, not only duration
+
+**What changed:** The global `*, *::before, *::after` rule of the
+`@media (prefers-reduced-motion: reduce)` kill switch in `app.css` now sets
+`animation-delay: 0.001ms !important;` and
+`transition-delay: 0.001ms !important;` alongside the duration zeroing it
+already did.
+
+**Why:** `.launch-arrival` — the opening turn and work timer rising into place —
+staggers in from `opacity: 0` with `animation-delay: calc(var(--arrival-index,
+0) * 70ms + 60ms)` and a `both` fill, so it is the *delay*, not the animation,
+that holds each row invisible before it starts. Zeroing only the duration left
+the two arrival rows blank for their full 60ms and 130ms holds under reduced
+motion — which is exactly the motion "What moves" above already claimed was
+cut. The kill switch predates this document and had never been checked against
+a delay-based animation.
+
+**Considered and rejected:** A `.launch-arrival`-specific override, since this
+stagger was the animation found to be affected. Rejected because the global
+block exists precisely so a new staggered or delayed animation added later is
+covered automatically; a local override only this class carries would need to be
+copied by whatever adds the next one, which is the failure this fix removes
+rather than repeats.
+
+**Consequences:** "flattens all of it" in *What moves* is now actually
+enforced rather than aspirational. Any future animation that leans on
+`animation-delay` or `transition-delay` for sequencing is covered by the same
+global rule and does not need its own reduced-motion carve-out — provided the
+delay is declared in CSS; motion driven from script (an explicit `behavior`
+option, a `setTimeout` hold) is out of the cascade's reach and has to read the
+preference itself, per the same-day entry in
+[`transcript-scrolling.md`](transcript-scrolling.md). `app.css.node.test.ts`
+pins both declarations, and pins that the kill switch owns the only
+`!important` delays in the stylesheet, so neither a change to the block nor a
+higher-specificity delay can reopen the hole silently.
+
+Shipped in [#376](https://github.com/juno-ai-labs/avalon/pull/376).
 
 ### 2026-08-27 — The composer owns IME composition, so no host has to
 
