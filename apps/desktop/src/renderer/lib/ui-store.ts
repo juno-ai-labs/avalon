@@ -26,6 +26,15 @@ interface UiState {
   setRailVariant: (variant: RailVariant) => void;
   setRailWidth: (width: number) => void;
   inspect: (inspector: RailInspector | null) => void;
+  /**
+   * Opens the context rail on one resource's detail, in that order.
+   *
+   * The order is the whole reason this is an action rather than two calls at
+   * the call site: `openRail` deliberately clears the inspector, so a selection
+   * made first is wiped by the panel opening after it. A citation chip, an
+   * embed card, and a footnote pill all navigate here.
+   */
+  openResource: (resourceId: string) => void;
   // HyperSight and the inspector rail share the right sidebar slot, and only
   // one of them is ever open. Which one is open is a personal, per-work-stream
   // preference the API owns, so the work-stream screen mirrors it here for the
@@ -136,6 +145,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ railWidth });
   },
   inspect: (inspector) => set({ inspector }),
+  openResource: (resourceId) => set({
+    railOpen: true,
+    railVariant: 'context',
+    inspector: { type: 'resource', id: resourceId },
+  }),
   setBlockDashboardOpen: (blockDashboardOpen) => set({ blockDashboardOpen }),
   setBlockDashboardWidth: (width) => {
     const blockDashboardWidth = clampRailWidth(width);

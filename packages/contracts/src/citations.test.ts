@@ -21,10 +21,14 @@ describe("parseCitationTarget", () => {
       .toEqual({ kind: "resource", resourceId: "mute-windows-prd" });
   });
 
+  // `invalid` rather than `unknown`, and the difference carries: the model meant
+  // a citation, so the label is shown as text and the raw syntax never survives.
+  // A scheme this module does not own answers `unknown`, which leaves whatever
+  // the surface already did with it alone.
   it("refuses a target outside the safe alphabet rather than dressing it as a resource", () => {
-    expect(parseCitationTarget("resource://../../etc/passwd")).toEqual({ kind: "unknown" });
-    expect(parseCitationTarget("resource://")).toEqual({ kind: "unknown" });
-    expect(parseCitationTarget("resource://id?v=3")).toEqual({ kind: "unknown" });
+    expect(parseCitationTarget("resource://../../etc/passwd")).toEqual({ kind: "invalid" });
+    expect(parseCitationTarget("resource://")).toEqual({ kind: "invalid" });
+    expect(parseCitationTarget("resource://id?v=3")).toEqual({ kind: "invalid" });
   });
 
   it("classifies the schemes that name openable content and the ones that name identities", () => {
@@ -39,6 +43,7 @@ describe("parseCitationTarget", () => {
 
   it("treats every other scheme, and no scheme at all, as text", () => {
     expect(parseCitationTarget("javascript:alert(1)")).toEqual({ kind: "unknown" });
+    expect(parseCitationTarget("mention:018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0")).toEqual({ kind: "unknown" });
     expect(parseCitationTarget("file:///etc/passwd")).toEqual({ kind: "unknown" });
     expect(parseCitationTarget("#section")).toEqual({ kind: "unknown" });
     expect(parseCitationTarget(undefined)).toEqual({ kind: "unknown" });
@@ -190,6 +195,11 @@ describe("rewriteCitationsForPlainDelivery", () => {
 
   it("leaves a reference with no definition as the literal text a renderer would show", () => {
     expect(rewriteCitationsForPlainDelivery("A claim.[^missing]")).toBe("A claim.[^missing]");
+  });
+
+  it("reduces a malformed citation too, so no raw scheme syntax can leave Rally", () => {
+    expect(rewriteCitationsForPlainDelivery("See [A doc](resource://../../etc/passwd)."))
+      .toBe("See A doc.");
   });
 
   it("is a no-op on an answer that cites nothing", () => {

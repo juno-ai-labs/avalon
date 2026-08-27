@@ -43,6 +43,9 @@ export type CitationTarget =
   | { kind: "resource"; resourceId: string }
   | { kind: "external"; url: string }
   | { kind: "identity"; scheme: "person" | "connector" }
+  /** A citation scheme with a target that is not one: a chip that cannot open. */
+  | { kind: "invalid" }
+  /** Not a citation at all — whatever the surface already does with it stands. */
   | { kind: "unknown" };
 
 /**
@@ -72,7 +75,11 @@ export function parseCitationTarget(href: string | undefined): CitationTarget {
   const resource = RESOURCE_HREF.exec(href);
   if (resource) {
     const resourceId = resource[1] ?? "";
-    return RESOURCE_ID.test(resourceId) ? { kind: "resource", resourceId } : { kind: "unknown" };
+    // `invalid`, not `unknown`: the model *meant* a citation here, so the label
+    // has to be shown as text rather than left as raw syntax. A scheme this
+    // module does not own is a different answer, and the renderer treats it as
+    // one — it renders whatever it rendered before citations existed.
+    return RESOURCE_ID.test(resourceId) ? { kind: "resource", resourceId } : { kind: "invalid" };
   }
   if (/^https?:\/\//iu.test(href)) return { kind: "external", url: href };
   if (/^person:/iu.test(href)) return { kind: "identity", scheme: "person" };
@@ -274,9 +281,13 @@ export function rewriteCitationsForPlainDelivery(markdown: string): string {
  * the model wrote them.
  */
 function reduceResourceLinks(value: string): string {
-  return value.replace(INLINE_LINK, (match, bang: string, label: string, href: string) => (
-    parseCitationTarget(href).kind === "resource" ? (label || href) : match
-  ));
+  return value.replace(INLINE_LINK, (match, bang: string, label: string, href: string) => {
+    const kind = parseCitationTarget(href).kind;
+    // A malformed target is reduced too. It cannot open anything anywhere, and
+    // leaving it is leaving raw `resource://` syntax in somebody's inbox, which
+    // is the exact leak this rewrite exists to close.
+    return kind === "resource" || kind === "invalid" ? (label || "") : match;
+  });
 }
 
 /** The source with every footnote definition line removed. */

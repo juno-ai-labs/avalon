@@ -2562,6 +2562,42 @@ pre {
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Citations. A chip is a mention chip's sibling in shape and its opposite in
+   behaviour: a mention names an identity and never navigates, a citation names
+   openable content and does. Both are `button`s here, so the reset that strips
+   a button's own chrome is stated once and inherited by all three forms. */
+.citation-chip,
+.citation-card,
+.citation-pill { appearance: none; background: none; border: 0; color: inherit; cursor: pointer; font: inherit; margin: 0; text-align: left; }
+.citation-chip:disabled,
+.citation-pill:disabled { cursor: default; }
+.citation-chip { align-items: center; background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); border-radius: var(--av-sys-size-radius-pill); box-sizing: border-box; color: var(--av-sys-color-brand-ink); display: inline-flex; font-size: 0.92em; font-weight: 560; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 8px 1px 6px; vertical-align: middle; white-space: nowrap; }
+.citation-chip:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 18%, transparent); }
+.citation-chip-icon { align-items: center; display: inline-flex; flex: 0 0 auto; opacity: 0.8; }
+.citation-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The embed card. Block-level because the image syntax that produces it is
+   block-level by the model's own habit, which is the whole reason that syntax
+   was chosen: the card lands between sentences rather than inside one. */
+.citation-card { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-subtle); border-radius: var(--av-sys-size-radius-md); display: flex; gap: 10px; margin: 12px 0; max-width: 100%; padding: 10px 12px; width: 100%; }
+.citation-card:not(.citation-card-identity):hover { border-color: color-mix(in srgb, var(--av-sys-color-brand-base) 40%, transparent); }
+.citation-card-identity { cursor: default; }
+.citation-card-icon { align-items: center; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 auto; }
+.citation-card-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.citation-card-body strong { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-card-body small { color: var(--av-sys-color-text-muted); font-size: 11.5px; text-transform: capitalize; }
+/* The grounding pill: a numbered marker that sits after the punctuation it
+   supports and costs the message no vertical space, which is the frustration
+   this whole family of work exists to fix. */
+.citation-pill { align-items: center; background: color-mix(in srgb, var(--av-sys-color-brand-base) 14%, transparent); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-brand-ink); display: inline-flex; font-size: 0.68em; font-weight: 640; justify-content: center; line-height: 1; margin: 0 1px; min-width: 1.55em; padding: 0.25em 0.45em; vertical-align: super; }
+.citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); }
+.citation-popover { display: flex; flex-direction: column; gap: 3px; max-width: 280px; text-align: left; }
+.citation-popover-source { font-weight: 600; }
+.citation-popover-note { opacity: 0.8; }
+.citation-popover-action { opacity: 0.7; text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; }
+/* An unresolvable citation is the label the message already carried, and
+   nothing else: no affordance, and nothing the text did not already say. */
+.citation-text-fallback { color: inherit; }
 /* Markers are restated because Tailwind's preflight sets `list-style: none` on
    every `ol` and `ul`, and nothing took it back — the rules around this set the
    indent a marker needs and a colour for a marker that was not being drawn, so
