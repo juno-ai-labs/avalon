@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HttpUrlSchema } from "./url-schemas";
 
 const UtcTimestampSchema = z.string().datetime({ offset: true });
 
@@ -29,6 +30,23 @@ export const TranscriptTextBlockSchema = z.object({
   blockIndex: z.number().int().nonnegative(),
   text: z.string(),
   streaming: z.boolean(),
+  mentions: z.array(z.object({
+    type: z.enum(["person", "connector"]),
+    userId: z.string().nullable(),
+    connectorType: z.string().nullable(),
+    startOffset: z.number().int().nonnegative(),
+    endOffset: z.number().int().positive(),
+  })).optional(),
+  attachments: z.array(z.object({
+    id: z.string().uuid(),
+    fileName: z.string().min(1).max(300),
+    mimeType: z.string().min(1).max(160),
+    sizeBytes: z.number().int().nonnegative(),
+    contentAvailable: z.boolean(),
+    createdAt: UtcTimestampSchema,
+  })).optional(),
+  messageType: z.enum(["text", "system", "elicitation", "suggestion"]).optional(),
+  structuredContent: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 export const TranscriptToolBlockSchema = z.object({
@@ -70,6 +88,14 @@ export const TranscriptTurnSchema = z.object({
   entryKind: z.enum(["conversation", "status"]),
   actor: z.enum(["human", "assistant", "external", "system"]),
   authorUserId: z.string().nullable(),
+  clientMessageId: z.string().max(120).nullable().optional(),
+  externalActor: z.object({
+    provider: z.string().min(1).max(80),
+    providerAccountId: z.string().min(1).max(200),
+    providerUserId: z.string().min(1).max(200),
+    displayName: z.string().min(1).max(180),
+    avatarUrl: HttpUrlSchema.nullable(),
+  }).nullable().optional(),
   attentionOrdinal: z.number().int().positive().nullable(),
   createdAtUtc: UtcTimestampSchema,
   revision: z.number().int().positive(),

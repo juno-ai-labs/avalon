@@ -49,6 +49,8 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/rpc-result.ts` | Shared typed native-RPC status/body envelope used where former internal HTTP handlers must preserve status semantics without `stub.fetch()`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Normalized `SubstreamAgent` schema and append-only schema versions. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts`, `workstream-transcript-protocol.ts` | Canonical transcript facts, participant and exact Bind-loop orderings, snapshot-fenced ranges, activity intervals, compaction replacement, and the typed object port. |
+| `packages/contracts/src/workstream-transcript.ts` | Socket-safe ordered turn, block, mention, attachment, external-actor, range, and activity schemas. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | Flattens ordered blocks into participant-visible rows and reconciles them with the authorized compatibility message page. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Product transactions, message/run admission, read waterlines, compaction inputs, and local regional-effect creation. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
@@ -84,6 +86,14 @@ consumes. Participant rows and Bind rows are indexes over shared facts, not two
 transcript sources. Projection-only content is separate only when it is truly
 different, such as a participant-safe tool summary versus an exact tool result
 or a safe compaction status versus the private replacement.
+
+Participant turns retain the source part's client identity, author user or
+validated external actor, and message type. Each participant text block hydrates
+its canonical mentions, ordered message-local attachment descriptors, and
+validated structured content from the same `parts` row and its relationship
+tables. The transcript carries presentation-safe metadata, not resource bytes or
+mutable profile snapshots; the desktop resolves stable person IDs and maps the
+descriptors into its existing participant message renderer.
 
 Every Bind transition is committed before the adapter returns the accepted
 assistant or tool-result message to Bind. At every provider boundary the host
@@ -921,6 +931,7 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Transcript page requested | The agent accepts an opaque before/after cursor, defaults to 200 rows, and rejects limits above 250. A per-socket request has a 15-second desktop timeout and is queued again after reconnect without advancing the room cursor. |
 | Encoded transcript page would exceed 900 KB | The agent shortens the page toward the requested boundary and returns an adjusted continuation cursor. A single defensive oversize message produces a correlated `message_page_too_large` error instead of an oversized frame. |
 | Historical-page read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
+| A part predates the typed writer's ordered-turn projection | The authorized compatibility message page keeps the row visible and identity-matched in the desktop. This is not a durable backfill; the overlay must remain until a bounded historical repair has populated the ordered projection. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | RPC or Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders WorkspaceDO state and delivery receipts. |
 | WorkspaceDO, parent, or Queue unavailable | The source outbox remains pending and alarms retry with bounded backoff. User transcript commits are not rolled back. |
@@ -962,7 +973,14 @@ run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
 ticket replay, and the read-only child socket.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
-mentions in an opening message, and it is where the
+mentions and attachment descriptors in an opening message, and member-authored
+elicitation answers. `test-workers/message-authority.test.ts` and
+`test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
+atomicity and malformed object-boundary inputs; the runtime suite proves a
+subscribed socket receives a typed external append without reconnecting.
+`apps/desktop/src/renderer/lib/transcript.test.ts` covers author, mention, and
+attachment flattening, routed identity bridging, and elicitation collapse. The
+participant-notification suite is also where the
 one trap in asserting on effects is recorded: **never read the child's own
 `durable_outbox`.** A commit arms the child's alarm for the current instant and
 the alarm forwards and then deletes, so any assertion against that table races
@@ -1353,6 +1371,81 @@ recent directory remains paged, but pins and live states are complete on the
 first response.
 
 Shipped in #341.
+
+### 2026-08-26 — Opening a work stream no longer clears its sidebar description
+
+**What changed:** Electron now maps the direct WorkstreamDO metadata snapshot's
+standing `description` to the sidebar subtitle, matching the WorkspaceDO
+directory path. The row renderer also falls back to that description when a
+resident cache entry carries an empty legacy `preview`.
+
+**Why:** WorkstreamDO still carries `description` and `preview` as distinct
+metadata fields, but newly created object-owned work streams do not populate the
+legacy preview. The workspace socket correctly seeded the sidebar from
+`description`; selecting the row opened the direct socket, whose newer common
+waterline replaced that subtitle with the empty preview. The result looked like
+the description was deleted only for the active work stream even though the
+authoritative description remained intact.
+
+**Considered and rejected:** Backfilling `preview` from transcript text. The
+sidebar is documented to show the standing description, not a last-message
+excerpt, and coupling this repair to transcript projection would preserve two
+competing values for one surface. Removing the metadata field is a separate
+contract migration; this change makes the two current socket readers agree.
+
+**Consequences, and what a future change has to respect:** A common-state update
+from either socket must produce the same `WorkstreamSummary.preview` value for
+the sidebar. An empty legacy preview must not outrank a non-empty description.
+
+### 2026-08-26 — Ordered transcript reads preserve participant message semantics
+
+**What changed:** Participant transcript text blocks now bulk hydrate the
+canonical mentions, attachment descriptors, message type, and render-safe
+structured content stored beside their source part. Turns also expose their
+client-message identity and validated external actor. The desktop resolves human
+authors and person mentions through the workspace roster, using the routed
+message's already-authorized identity while that row is present, preserves
+attachment tiles, and reconstructs system, elicitation, suggestion, and
+external-message rendering. Message-port appends and scheduling's elicitation
+messages join their part write to the ordered projection in the same
+object-local transaction and publish the committed turn to subscribed readers.
+
+**Why:** The ordered-transcript cutover projected the human author's ID but
+dropped it while flattening a turn for the renderer, and did not project mention
+or attachment rows at all. Every human message consequently rendered as an unrelated
+“Workspace member,” used its message ID as a new accent identity, failed the
+signed-in-user comparison, and reduced canonical person links to plain text.
+Uploaded images were still in R2 and linked to the part, but their tiles vanished
+as soon as the ordered snapshot replaced the optimistic message. Slack actor
+identity and client reconciliation keys were also lost, while system and
+elicitation writers that still append through typed object ports did not enter
+the ordered projection. Mention attention and notification effects were still
+committed correctly; these were read/projection losses of already durable facts.
+
+**Considered and rejected:** Copying display names or avatars into the durable
+transcript projection. Those are mutable workspace identity attributes, while
+the transcript already stores the stable author and mention user IDs and the
+desktop already owns a roster query; the authorized message page bridges
+presentation while that roster loads or no longer contains a historical member.
+Also rejected was reconstructing attachment
+tiles from the work-stream resource rail: that relationship does not say which
+message displayed the file or its position. The object returns the durable IDs,
+offsets, frozen per-message descriptors, and validated structured fields; the
+reader resolves only current person presentation data.
+
+**Consequences, and what a future change has to respect:** Any participant
+transcript replacement for `Message` must preserve its complete participant-
+visible semantics, not only visible text. Author IDs determine own-versus-
+coworker layout and stable person color; mention IDs determine chips independently
+of notification delivery; attachment links determine message-local tiles; type
+and structured content determine specialized rows. Assistant output remains on
+the canonical Bind projection and must not also be appended through the legacy
+final-message path. A transcript contract change must compare its hydrated shape
+with the existing message-page mapper and cover both real object snapshots and
+the desktop flattening boundary. Rows written during a deployment that omitted
+the ordered projection remain readable through the identity-matched message
+overlay; that compatibility path is not a durable backfill and must remain until
+a historical repair has completed.
 
 ### 2026-08-26 — Foreground presence is explicit on the workspace socket
 

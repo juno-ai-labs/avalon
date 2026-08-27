@@ -20,6 +20,7 @@ import { asSubstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
 import type { SchedulingObjectPort } from "../src/durable-objects/workstream-scheduling-protocol";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
 import { ObjectPortError } from "../src/runtime/object-port";
 import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
@@ -429,6 +430,12 @@ describe("scheduling authority on real workerd", () => {
         next_sequence_number: 2,
         next_attention_ordinal: 2,
       });
+      const transcript = new WorkstreamTranscriptStorage(state.storage)
+        .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
+      expect(transcript.ranges[0]!.turns[0]).toMatchObject({
+        actor: "assistant",
+        blocks: [{ type: "text", messageType: "elicitation" }],
+      });
     });
   });
 
@@ -465,6 +472,14 @@ describe("scheduling authority on real workerd", () => {
         { client_message_id: `elicitation:${ELICITATION}` },
         { client_message_id: "event:first" },
       ]);
+      const transcript = new WorkstreamTranscriptStorage(state.storage)
+        .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
+      expect(transcript.ranges[0]!.turns[1]).toMatchObject({
+        actor: "external",
+        clientMessageId: "event:first",
+        externalActor: JSON.parse(ACTOR) as unknown,
+        blocks: [{ type: "text", messageType: "elicitation" }],
+      });
     });
   });
 
@@ -482,6 +497,23 @@ describe("scheduling authority on real workerd", () => {
 
     expect(status).toBe(400);
     expect(body).toMatchObject({ error: "invalid_scheduling_operation" });
+  });
+
+  it("refuses malformed elicitation arguments at the object boundary", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      seedWorkstreamRoot(state);
+      seedRun(state);
+    });
+
+    const result = await scheduling(stub, "openElicitation", { ...elicitation(), now: null });
+
+    expect(result).toMatchObject({ status: 400, error: "invalid_scheduling_operation" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM elicitation_requests`).one().count)
+        .toBe(0);
+    });
   });
 });
 

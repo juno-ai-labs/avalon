@@ -147,6 +147,18 @@ export function workstreamRunTiming(
   return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
 }
 
+/** An admitted run is already work, even before its Workflow starts. */
+export function workstreamShowsReadyState(
+  transcriptLength: number,
+  hasActiveElicitation: boolean,
+  status: HarnessStatus,
+): boolean {
+  return transcriptLength === 0
+    && !hasActiveElicitation
+    && status !== 'scheduled'
+    && status !== 'running';
+}
+
 interface OrderedTimingSnapshot {
   activities: readonly Pick<TranscriptActivity, 'activityId' | 'parentActivityId' | 'scope' | 'subjectId'>[];
   ranges: readonly { turns: readonly Pick<TranscriptTurn, 'activityId'>[] }[];
@@ -1201,7 +1213,12 @@ export function WorkstreamScreen(): React.JSX.Element {
     [orderedTranscript.data],
   );
   const transcript = useMemo(() => {
-    const ordered = orderedTranscriptMessages(orderedTranscript.data, id);
+    const ordered = orderedTranscriptMessages(
+      orderedTranscript.data,
+      id,
+      members.data ?? [],
+      routedMessages ?? [],
+    );
     const transient = transientMessagesWithoutCanonicalMatch(ordered, routedMessages ?? []);
     const lastAnchor = ordered.reduce(
       (maximum, message) => Math.max(maximum, message.sequenceNumber),
@@ -1217,7 +1234,7 @@ export function WorkstreamScreen(): React.JSX.Element {
           : message.realtimeOrder,
       })),
     ]);
-  }, [id, orderedTranscript.data, routedMessages]);
+  }, [id, members.data, orderedTranscript.data, routedMessages]);
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -1994,7 +2011,11 @@ export function WorkstreamScreen(): React.JSX.Element {
               it, and inviting the person to start it is both wrong and the
               opposite of what the timer below says. The turn arrives moments
               later; until then the timer is the whole of the state. */}
-          {visibleTranscript.length === 0 && !activeElicitation && !runTiming?.active ? (
+          {workstreamShowsReadyState(
+            visibleTranscript.length,
+            Boolean(activeElicitation),
+            detail.harnessStatus,
+          ) ? (
             <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
           ) : (
             <div

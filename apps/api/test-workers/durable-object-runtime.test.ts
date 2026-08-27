@@ -5273,6 +5273,79 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
+  it("publishes a routed participant turn to a subscribed viewer without a reconnect", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000141",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    await runInDurableObject(stub, (_instance, state) => {
+      const server = state.getWebSockets()[0]!;
+      server.serializeAttachment({
+        ...(server.deserializeAttachment() as Record<string, unknown>),
+        subscribed: true,
+      });
+    });
+
+    try {
+      const delivered = nextMessageOfType(socket, "transcript_turn_upserted");
+      const append = await stub.fetch("https://substream.test/internal/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          operation: "appendMessage",
+          args: [{
+            messageId: "00000000-0000-7000-8000-000000000142",
+            clientMessageId: "routed-live-message",
+            authorType: "external",
+            authorUserId: null,
+            externalActorJson: JSON.stringify({ provider: "slack", displayName: "Release bot" }),
+            messageType: "text",
+            text: "The deploy finished.",
+            structuredContentJson: null,
+            producedByRunId: null,
+            now: Date.parse("2026-08-26T20:00:00.000Z"),
+          }],
+        }),
+      });
+      expect(append.status).toBe(200);
+      expect(await append.json()).toMatchObject({ ok: true, value: { outcome: "appended" } });
+      expect(await delivered).toMatchObject({
+        type: "transcript_turn_upserted",
+        turn: {
+          turnId: "00000000-0000-7000-8000-000000000142",
+          clientMessageId: "routed-live-message",
+          actor: "external",
+          blocks: [{ type: "text", text: "The deploy finished." }],
+        },
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("pages a subscribed feed in both directions without advancing the shared room cursor", async () => {
     await seedOpenAuthority();
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(

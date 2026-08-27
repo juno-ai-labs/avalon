@@ -1,11 +1,14 @@
-import type {
-  TranscriptActivity,
-  TranscriptBlock,
-  TranscriptRange,
-  TranscriptRangeResult,
-  TranscriptTurn,
-  WorkstreamTranscriptSnapshot,
+import {
+  ExternalActorSchema,
+  type ExternalActor,
+  type TranscriptActivity,
+  type TranscriptBlock,
+  type TranscriptRange,
+  type TranscriptRangeResult,
+  type TranscriptTurn,
+  type WorkstreamTranscriptSnapshot,
 } from "@rally/contracts";
+import { truncateUtf16Safe } from "@rally/contracts/text";
 import {
   applyBindLoopTransition,
   BIND_LOOP_PROJECTOR_VERSION,
@@ -53,6 +56,8 @@ interface TurnRow extends Record<string, SqlStorageValue> {
   entry_kind: string;
   actor: string;
   author_user_id: string | null;
+  client_message_id: string | null;
+  external_actor_json: string | null;
   activity_id: string | null;
   attention_ordinal: number | null;
   revision: number;
@@ -72,7 +77,29 @@ interface BlockRow extends Record<string, SqlStorageValue> {
   lifecycle_state: string | null;
   activity_id: string | null;
   part_content: string | null;
+  part_message_type: string | null;
   part_structured_content_json: string | null;
+}
+
+interface TranscriptMentionRow extends Record<string, SqlStorageValue> {
+  part_id: string;
+  mention_kind: "person" | "connector";
+  target_user_id: string | null;
+  connector_type: string | null;
+  start_offset: number;
+  end_offset: number;
+}
+
+interface TranscriptAttachmentRow extends Record<string, SqlStorageValue> {
+  part_id: string;
+  resource_id: string;
+  position: number;
+  title: string | null;
+  mime_type: string | null;
+  content_ref: string | null;
+  metadata_json: string | null;
+  attachment_json: string;
+  attached_at: number;
 }
 
 interface ActivityRow extends Record<string, SqlStorageValue> {
@@ -111,7 +138,6 @@ export interface ParticipantMessageInput {
   turnId: string;
   actor: "human" | "assistant" | "external" | "system";
   authorUserId: string | null;
-  text: string;
   createdAtUtc: string;
   attentionOrdinal: number | null;
 }
@@ -1205,12 +1231,13 @@ export class WorkstreamTranscriptStorage {
   private turnsInRange(startInclusive: number, endExclusive: number): TranscriptTurn[] {
     if (endExclusive <= startInclusive) return [];
     const turns = this.sql.exec<TurnRow>(
-      `SELECT transcript_sequence, turn_id, entry_kind, actor, author_user_id,
-              activity_id, attention_ordinal, revision, created_at
-         FROM participant_transcript_turns
-        INDEXED BY participant_transcript_sequence_idx
-        WHERE transcript_sequence >= ? AND transcript_sequence < ?
-        ORDER BY transcript_sequence`,
+      `SELECT turn.transcript_sequence, turn.turn_id, turn.entry_kind, turn.actor,
+              turn.author_user_id, part.client_message_id, part.external_actor_json,
+              turn.activity_id, turn.attention_ordinal, turn.revision, turn.created_at
+         FROM participant_transcript_turns AS turn INDEXED BY participant_transcript_sequence_idx
+         LEFT JOIN parts part ON part.id = turn.turn_id
+        WHERE turn.transcript_sequence >= ? AND turn.transcript_sequence < ?
+        ORDER BY turn.transcript_sequence`,
       startInclusive,
       endExclusive,
     ).toArray();
@@ -1220,7 +1247,7 @@ export class WorkstreamTranscriptStorage {
       `SELECT block.turn_id, block.block_id, block.block_index, block.block_kind,
               payload.payload_json, block.tool_call_id, block.plugin_id,
               block.tool_name, block.call_index, block.lifecycle_state, block.activity_id
-              , part.content AS part_content,
+              , part.content AS part_content, part.message_type AS part_message_type,
               part.structured_content_json AS part_structured_content_json
          FROM participant_transcript_blocks block
          JOIN transcript_facts fact ON fact.fact_id = block.fact_id
@@ -1230,9 +1257,46 @@ export class WorkstreamTranscriptStorage {
         ORDER BY block.turn_id, block.block_index`,
       ...turns.map((turn) => turn.turn_id),
     ).toArray();
+    const mentions = this.sql.exec<TranscriptMentionRow>(
+      `SELECT part_id, mention_kind, target_user_id, connector_type,
+              start_offset, end_offset
+         FROM part_mentions
+        WHERE part_id IN (${placeholders})
+        ORDER BY part_id, mention_index`,
+      ...turns.map((turn) => turn.turn_id),
+    ).toArray();
+    const mentionsByTurn = new Map<string, TranscriptMentionRow[]>();
+    for (const mention of mentions) {
+      const current = mentionsByTurn.get(mention.part_id) ?? [];
+      current.push(mention);
+      mentionsByTurn.set(mention.part_id, current);
+    }
+    const attachments = this.sql.exec<TranscriptAttachmentRow>(
+      `SELECT attachment.part_id, attachment.resource_id, attachment.position,
+              json_extract(link.resource_json, '$.title') AS title,
+              json_extract(link.resource_json, '$.mimeType') AS mime_type,
+              json_extract(link.resource_json, '$.contentRef') AS content_ref,
+              json_extract(link.resource_json, '$.metadata') AS metadata_json,
+              attachment.attachment_json, link.attached_at
+         FROM part_attachments attachment
+         JOIN workstream_resource_links link ON link.resource_id = attachment.resource_id
+        WHERE attachment.part_id IN (${placeholders})
+        ORDER BY attachment.part_id, attachment.position`,
+      ...turns.map((turn) => turn.turn_id),
+    ).toArray();
+    const attachmentsByTurn = new Map<string, TranscriptAttachmentRow[]>();
+    for (const attachment of attachments) {
+      const current = attachmentsByTurn.get(attachment.part_id) ?? [];
+      current.push(attachment);
+      attachmentsByTurn.set(attachment.part_id, current);
+    }
     const blocksByTurn = new Map<string, TranscriptBlock[]>();
     for (const block of blocks) {
-      const hydrated = hydrateBlock(block);
+      const hydrated = hydrateBlock(
+        block,
+        mentionsByTurn.get(block.turn_id) ?? [],
+        attachmentsByTurn.get(block.turn_id) ?? [],
+      );
       const current = blocksByTurn.get(block.turn_id) ?? [];
       current.push(hydrated);
       blocksByTurn.set(block.turn_id, current);
@@ -1243,6 +1307,8 @@ export class WorkstreamTranscriptStorage {
       entryKind: turn.entry_kind as TranscriptTurn["entryKind"],
       actor: turn.actor as TranscriptTurn["actor"],
       authorUserId: turn.author_user_id,
+      clientMessageId: turn.client_message_id,
+      externalActor: parseExternalActor(turn.external_actor_json),
       attentionOrdinal: turn.attention_ordinal === null ? null : Number(turn.attention_ordinal),
       createdAtUtc: new Date(Number(turn.created_at)).toISOString(),
       revision: Number(turn.revision),
@@ -1865,7 +1931,11 @@ export class WorkstreamTranscriptStorage {
   }
 }
 
-function hydrateBlock(row: BlockRow): TranscriptBlock {
+function hydrateBlock(
+  row: BlockRow,
+  mentions: readonly TranscriptMentionRow[],
+  attachments: readonly TranscriptAttachmentRow[],
+): TranscriptBlock {
   const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
   if (row.block_kind === "text") {
     return {
@@ -1874,6 +1944,34 @@ function hydrateBlock(row: BlockRow): TranscriptBlock {
       blockIndex: Number(row.block_index),
       text: typeof payload.content === "string" ? payload.content : row.part_content ?? "",
       streaming: false,
+      mentions: mentions.map((mention) => ({
+        type: mention.mention_kind,
+        userId: mention.target_user_id,
+        connectorType: mention.connector_type,
+        startOffset: Number(mention.start_offset),
+        endOffset: Number(mention.end_offset),
+      })),
+      attachments: attachments.map((attachment) => {
+        const metadata = parseJson<{ size?: unknown }>(attachment.metadata_json, {});
+        const attachmentMetadata = parseJson<{ attachedAt?: unknown }>(attachment.attachment_json, {});
+        const attachedAt = typeof attachmentMetadata.attachedAt === "string"
+          && Number.isFinite(Date.parse(attachmentMetadata.attachedAt))
+          ? attachmentMetadata.attachedAt
+          : new Date(Number(attachment.attached_at)).toISOString();
+        const size = Number(metadata.size ?? 0);
+        return {
+          id: attachment.resource_id,
+          fileName: truncateUtf16Safe(attachment.title ?? attachment.resource_id, 300),
+          mimeType: truncateUtf16Safe(attachment.mime_type || "application/octet-stream", 160),
+          sizeBytes: Number.isFinite(size) ? Math.max(0, Math.trunc(size)) : 0,
+          contentAvailable: attachment.content_ref !== null,
+          createdAt: attachedAt,
+        };
+      }),
+      messageType: isParticipantMessageType(row.part_message_type)
+        ? row.part_message_type
+        : "text",
+      structuredContent: parseStructuredContent(row.part_structured_content_json),
     };
   }
   if (row.block_kind === "thinking") {
@@ -1917,6 +2015,33 @@ function hydrateBlock(row: BlockRow): TranscriptBlock {
       : legacyToolError(legacyInvocation),
     activityId: row.activity_id,
   };
+}
+
+function parseJson<T>(value: string | null, fallback: T): T {
+  if (value === null) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function parseExternalActor(value: string | null): ExternalActor | null {
+  const parsed = ExternalActorSchema.safeParse(parseJson(value, null));
+  return parsed.success ? parsed.data : null;
+}
+
+function parseStructuredContent(value: string | null): Record<string, unknown> | null {
+  const parsed = parseJson<unknown>(value, null);
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
+}
+
+function isParticipantMessageType(
+  value: string | null,
+): value is "text" | "system" | "elicitation" | "suggestion" {
+  return value === "text" || value === "system" || value === "elicitation" || value === "suggestion";
 }
 
 function participantShareable(message: BindLoopMessage): boolean {
