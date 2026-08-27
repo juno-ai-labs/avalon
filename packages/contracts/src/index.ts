@@ -3282,6 +3282,7 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
   "expected",
   "available",
   "reconnectRequired",
+  "retryable",
   "retryAfterMs",
   "actualMimeType",
   "attachmentKind",
@@ -3325,6 +3326,7 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
         ? { valid: true, value }
         : { valid: false };
     case "reconnectRequired":
+    case "retryable":
       return typeof value === "boolean" ? { valid: true, value } : { valid: false };
     case "retryAfterMs":
       return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 86_400_000

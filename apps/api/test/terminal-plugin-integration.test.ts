@@ -6,6 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 import { withLocalWorkstreamAuthorities } from "../src/runtime/local-authorities";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import {
+  TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
+} from "../src/services/terminal/contract";
+import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
+import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
+import { createAvalonTerminalPlugin } from "../src/services/terminal/plugin";
+import type { TerminalGitHubReadGateway } from "../src/services/terminal/repository";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import type { DatabaseSync } from "node:sqlite";
@@ -24,6 +31,9 @@ const W = asWorkspaceId("30000000-0000-4000-8000-000000000001");
 const S = asWorkstreamId("30000000-0000-4000-8000-000000000002");
 const R = asHarnessRunId("30000000-0000-4000-8000-000000000003");
 const U = asUserId("30000000-0000-4000-8000-000000000004");
+const CONNECTION = "30000000-0000-4000-8000-000000000005";
+const BASE = "a".repeat(40);
+const HEAD_REF = "rally/workstream-30000000";
 
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
@@ -75,6 +85,75 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
   return { database, objectStore, env, input };
 }
 
+function provider(): TerminalSandboxProvider {
+  return {
+    createSandbox: vi.fn(async (request) => ({
+      id: `sandbox-${request.generation}`,
+      name: request.stableName,
+      state: "running" as const,
+      domainAllowList: request.domainAllowList,
+    })),
+    getSandbox: vi.fn(async (name) => ({
+      id: "sandbox-existing",
+      name,
+      state: "running" as const,
+      domainAllowList: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+    })),
+    startSandbox: vi.fn(async () => undefined),
+    stopSandbox: vi.fn(async () => undefined),
+    archiveSandbox: vi.fn(async () => undefined),
+    deleteSandbox: vi.fn(async () => undefined),
+    updateNetworkPolicy: vi.fn(async () => undefined),
+    configureGitHubReadAccess: vi.fn(async () => undefined),
+    clearGitHubReadAccess: vi.fn(async () => undefined),
+    readFile: vi.fn(async () => new Uint8Array()),
+    writeFile: vi.fn(async () => undefined),
+    runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
+    runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
+    cleanupCommand: vi.fn(async () => undefined),
+    publishGitBundle: vi.fn(async (request) => ({ publishedSha: request.headSha })),
+  };
+}
+
+function selectRepository(
+  database: ReturnType<typeof preRetirementProductSqliteDatabase>,
+  objectStore: DatabaseSync,
+): void {
+  database.exec(`
+    INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+       display_name, granted_scopes_json, model_plugin_id, status, config_json, created_at, updated_at)
+    VALUES ('${CONNECTION}', '${W}', 'github', 'workspace', NULL, '123', 'GitHub',
+            '["github.contents.read","github.pull_requests.read"]', 'plugin_github', 'healthy',
+            '{"githubRepositoryAccess":{"version":1,"revision":1,"mode":"all_repositories","defaultAccess":"full_access","repositories":[]}}',
+            '2026-08-13', '2026-08-13');
+  `);
+  workstreamObjectRun(
+    objectStore,
+    `INSERT INTO terminal_repository
+       (id, connection_id, repository_id, repository_full_name, base_ref, base_sha,
+        head_ref, state, selected_by_user_id, remote_access, created_at, updated_at)
+     VALUES (1, ?, 42, 'owner/repo', 'main', ?, ?, 'selected', ?, 'read_only', ?, ?)`,
+    CONNECTION,
+    BASE,
+    HEAD_REF,
+    U,
+    Date.parse("2026-08-13T00:00:00.000Z"),
+    Date.parse("2026-08-13T00:00:00.000Z"),
+  );
+}
+
+function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
+  return {
+    mintRepositoryToken: vi.fn(async () => ({
+      accessToken: "read-token",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    })),
+    verifyRepositoryIdentity: vi.fn(async () => undefined),
+    resolveBaseRef: vi.fn(async () => baseSha),
+  };
+}
+
 describe("Terminal Bind integration", () => {
   it("registers the complete deferred plugin without allocating a sandbox", async () => {
     const { objectStore, env, input } = fixture("supported");
@@ -87,6 +166,93 @@ describe("Terminal Bind integration", () => {
       "checkout_repository", "import_resource", "publish_resource", "publish_branch_and_pr",
     ]);
     expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace")).toEqual({ count: 0 });
+  });
+
+  it("starts the sandbox when Terminal activates, before any Terminal tool executes", async () => {
+    const { objectStore, env, input } = fixture("supported");
+    const sandboxProvider = provider();
+    const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
+      provider: sandboxProvider,
+    });
+
+    expect(plugin?.onActivate).toBeTypeOf("function");
+    expect(plugin?.activationTimeoutMs).toBe(TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS);
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM terminal_workspace"))
+      .toEqual({ count: 0 });
+
+    await plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    });
+
+    expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT lifecycle_state, sandbox_id FROM terminal_workspace",
+    )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-1" });
+  });
+
+  it("prepares a selected repository during activation", async () => {
+    const { database, objectStore, env, input } = fixture("supported");
+    selectRepository(database, objectStore);
+    const sandboxProvider = provider();
+    const githubReadGateway = readGateway();
+    const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
+      provider: sandboxProvider,
+      readGateway: githubReadGateway,
+    });
+
+    await plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    });
+
+    expect(githubReadGateway.mintRepositoryToken).toHaveBeenCalledOnce();
+    expect(sandboxProvider.configureGitHubReadAccess).toHaveBeenCalledWith("sandbox-1", {
+      gitBasicCredential: btoa("x-access-token:read-token"),
+      ghToken: "read-token",
+    });
+    expect(sandboxProvider.runUtilityCommand).toHaveBeenCalledWith(
+      "sandbox-1",
+      expect.objectContaining({
+        operation: "repository.bootstrap",
+        command: expect.stringContaining("clone --no-checkout 'https://github.com/owner/repo.git'"),
+        timeoutMs: 180_000,
+      }),
+    );
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT bootstrapped_sandbox_generation FROM terminal_repository",
+    )).toEqual({ bootstrapped_sandbox_generation: 1 });
+  });
+
+  it("keeps checkout available when selected-repository preparation needs repair", async () => {
+    const { database, objectStore, env, input } = fixture("supported");
+    selectRepository(database, objectStore);
+    const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
+      provider: provider(),
+      readGateway: readGateway("b".repeat(40)),
+    });
+
+    await expect(plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    })).resolves.toBeUndefined();
+
+    expect(plugin?.tools.map((tool) => tool.definition.name)).toContain("checkout_repository");
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT bootstrapped_sandbox_generation FROM terminal_repository",
+    )).toEqual({ bootstrapped_sandbox_generation: null });
   });
 
   it("threads the resident object's Terminal boundaries through plugin setup", async () => {
@@ -174,6 +340,14 @@ describe("Terminal Bind integration", () => {
     const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
     expect(plugin?.tools).toHaveLength(9);
+    await expect(plugin!.onActivate!({
+      workspaceId: W, workstreamId: S, harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
+    })).rejects.toMatchObject({
+      name: "HarnessPluginActivationError",
+      message: "Wait for an operator to re-enable Terminal before trying another tool.",
+      retryable: false,
+    });
     await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
       { filePath: "README.md" },
       {

@@ -15,6 +15,7 @@ import {
   classifyAddressingHeuristically,
   compileAutomation,
   composeBeforeToolCallHooks,
+  HarnessPluginActivationError,
   memberSafeHarnessFailureMessage,
   OpenRouterClient,
   openRouterProviderError,
@@ -26,6 +27,7 @@ import {
   type BindProviderBoundary,
   type HarnessEvent,
   type HarnessPlugin,
+  type HarnessPluginActivationContext,
   type HarnessTool,
   type HarnessToolContext,
   type InferenceAttemptEvent,
@@ -3519,6 +3521,16 @@ describe("agent harness", () => {
     }) as typeof fetch;
     const order: string[] = [];
     const events: HarnessEvent[] = [];
+    const onActivate = vi.fn(async (context: HarnessPluginActivationContext) => {
+      expect(context).toMatchObject({
+        workspaceId: "workspace-1",
+        workstreamId: "workstream-1",
+        harnessRunId: "run-1",
+        executionPrincipal: { type: "user", userId: "00000000-0000-4000-8000-000000000001" },
+      });
+      expect(context.signal.aborted).toBe(false);
+      order.push("activate");
+    });
     const plugin: HarnessPlugin = {
       canonicalId: "connection:github-1",
       modelId: "plugin_github",
@@ -3528,6 +3540,8 @@ describe("agent harness", () => {
       description: "Search authorized GitHub repositories.",
       systemMessage: "Use GitHub search only when repository context is relevant.",
       preload: false,
+      onActivate,
+      activationTimeoutMs: 20_000,
       tools: [{
         definition: {
           name: "search",
@@ -3553,7 +3567,8 @@ describe("agent harness", () => {
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "done", toolCalls: 2 });
-    expect(order).toEqual(["persist:connection:github-1", "execute"]);
+    expect(order).toEqual(["activate", "persist:connection:github-1", "execute"]);
+    expect(onActivate).toHaveBeenCalledOnce();
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain("gh1_search");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("Use GitHub search only");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("connection:github-1");
@@ -3598,6 +3613,210 @@ describe("agent harness", () => {
         idempotency: "safe",
       },
     });
+  });
+
+  it("restores a durable plugin without repeating its explicit activation hook", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+      tools?: Array<{ function: { name: string } }>;
+    }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return streamResponse([{ choices: [{ delta: { content: "ready" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const plugin = credentialPlugin("connection:restored", "restored", "Restored plugin policy");
+    const onActivate = vi.fn(async () => undefined);
+    plugin.onActivate = onActivate;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      activationHints: [plugin.canonicalId],
+      reauthorizePlugin: () => "authorized",
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "ready" });
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).toContain("restored_search");
+    expect(requestBodies[0]!.messages[0]!.content).toContain("Restored plugin policy");
+  });
+
+  it("leaves a plugin inactive and hides provider details when activation fails", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+      tools?: Array<{ function: { name: string } }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-load",
+            "load_plugin",
+            JSON.stringify({ pluginId: "plugin_broken" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "reported failure" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const plugin = credentialPlugin("connection:broken", "broken", "Broken plugin policy");
+    plugin.modelId = "plugin_broken";
+    plugin.onActivate = vi.fn(async () => { throw new Error("secret provider detail"); });
+    const persistActivation = vi.fn();
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => "authorized",
+      persistActivation,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "reported failure" });
+    expect(persistActivation).not.toHaveBeenCalled();
+    expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).not.toContain("broken_search");
+    const transcript = JSON.stringify(requestBodies[1]!.messages);
+    expect(transcript).toContain("plugin_activation_failed");
+    expect(transcript).not.toContain("secret provider detail");
+  });
+
+  it("returns only host-authored activation guidance and retry policy", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-load",
+            "load_plugin",
+            JSON.stringify({ pluginId: "plugin_disabled" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "reported guidance" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const plugin = credentialPlugin("connection:disabled", "disabled", "Disabled plugin policy");
+    plugin.modelId = "plugin_disabled";
+    plugin.onActivate = vi.fn(async () => {
+      throw new HarnessPluginActivationError(
+        "Wait for a workspace owner to re-enable this plugin.",
+        { retryable: false, cause: new Error("secret provider detail") },
+      );
+    });
+
+    await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => "authorized",
+      persistActivation: vi.fn(),
+    });
+
+    const transcript = JSON.stringify(requestBodies[1]!.messages);
+    expect(transcript).toContain("Wait for a workspace owner to re-enable this plugin.");
+    expect(transcript).toContain('\\"retryable\\":false');
+    expect(transcript).not.toContain("secret provider detail");
+  });
+
+  it("uses only the requested plugin deadline and never persists detached completion", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-load",
+            "load_plugin",
+            JSON.stringify({ pluginId: "plugin_slow" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "timed out safely" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    let finishActivation!: () => void;
+    const activationSignals: AbortSignal[] = [];
+    const plugin = credentialPlugin("connection:slow", "slow", "Slow plugin policy");
+    plugin.modelId = "plugin_slow";
+    plugin.activationTimeoutMs = 5;
+    plugin.onActivate = vi.fn(async (context) => {
+      activationSignals.push(context.signal);
+      await new Promise<void>((resolve) => { finishActivation = resolve; });
+    });
+    const unused = credentialPlugin("connection:unused", "unused", "Unused plugin policy");
+    unused.activationTimeoutMs = 60_000;
+    const persistActivation = vi.fn();
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { toolTimeoutMs: 1 }),
+      plugins: [plugin, unused],
+      reauthorizePlugin: () => "authorized",
+      persistActivation,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "timed out safely" });
+    expect(activationSignals).toHaveLength(1);
+    expect(activationSignals[0]!.aborted).toBe(true);
+    finishActivation();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(persistActivation).not.toHaveBeenCalled();
+  }, 2_000);
+
+  it("single-flights expensive activation across a burst of repeated loads", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: Array.from({ length: 8 }, (_, index) => ({
+              index,
+              id: `provider-load-${index}`,
+              type: "function" as const,
+              function: {
+                name: "load_plugin",
+                arguments: JSON.stringify({ pluginId: "plugin_burst" }),
+              },
+            })),
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "loaded once" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const plugin = credentialPlugin("connection:burst", "burst", "Burst plugin policy");
+    plugin.modelId = "plugin_burst";
+    let releaseActivation!: () => void;
+    const activationReleased = new Promise<void>((resolve) => {
+      releaseActivation = resolve;
+    });
+    plugin.onActivate = vi.fn(async () => activationReleased);
+    const persistActivation = vi.fn();
+
+    const outcomePromise = runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => "authorized",
+      persistActivation,
+    });
+    await vi.waitFor(() => expect(plugin.onActivate).toHaveBeenCalledOnce());
+    releaseActivation();
+
+    await expect(outcomePromise).resolves.toMatchObject({
+      status: "completed",
+      content: "loaded once",
+      toolCalls: 8,
+    });
+    expect(plugin.onActivate).toHaveBeenCalledOnce();
+    expect(persistActivation).toHaveBeenCalledTimes(8);
   });
 
   it("loads a provider-owned tool surface once when a deferred plugin activates", async () => {
