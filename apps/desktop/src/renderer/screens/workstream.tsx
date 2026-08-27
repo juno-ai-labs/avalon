@@ -2186,8 +2186,14 @@ export function WorkstreamScreen(): React.JSX.Element {
         current={displayedDetail.participants}
         error={addParticipant.error?.message ?? removeParticipant.error?.message}
         members={members.data ?? []}
-        onAdd={(member) => addParticipant.mutate(member)}
-        onRemove={(member) => removeParticipant.mutate(member)}
+        onAdd={(member) => {
+          removeParticipant.reset();
+          addParticipant.mutate(member);
+        }}
+        onRemove={(member) => {
+          addParticipant.reset();
+          removeParticipant.mutate(member);
+        }}
         onOpenChange={(next) => {
           // A refused add is only worth showing while the dialog that provoked
           // it is open. Reopening starts clean rather than reporting the last
