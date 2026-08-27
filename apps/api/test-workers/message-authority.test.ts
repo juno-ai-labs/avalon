@@ -24,6 +24,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { asSubstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import {
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -95,6 +96,13 @@ describe("message authority on real workerd", () => {
     expect(result.value).toMatchObject({ outcome: "appended", sequenceNumber: 1 });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(1);
+      const transcript = new WorkstreamTranscriptStorage(state.storage)
+        .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
+      expect(transcript.ranges[0]!.turns[0]).toMatchObject({
+        actor: "system",
+        clientMessageId: "client-1",
+        blocks: [{ type: "text", text: "The deploy finished.", messageType: "system" }],
+      });
       // A transcript write changes the work stream's preview and its people
       // clock, both of which the sidebar reads. The routed path republished
       // that projection because the object matched `messages` in statement
@@ -298,5 +306,37 @@ describe("message authority on real workerd", () => {
 
     expect(status).toBe(400);
     expect(body).toMatchObject({ error: "invalid_message_operation" });
+  });
+
+  it("refuses malformed append arguments at the object boundary", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+
+    const result = await messages(stub, "appendMessage", { ...append(), now: "not-a-clock" });
+
+    expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
+    });
+  });
+
+  it("refuses an append too large for the participant message contract before writing", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+
+    const result = await messages(stub, "appendMessage", {
+      ...append(),
+      text: "x".repeat(100_001),
+    });
+
+    expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
+      expect(state.storage.sql.exec(
+        `SELECT next_sequence_number FROM workstream`,
+      ).one().next_sequence_number).toBe(1);
+    });
   });
 });

@@ -1,7 +1,8 @@
 # Work-stream descriptions
 
-A work stream's description is `workstreams.objective`: the one line the sidebar
-shows under the title, the text the routing classifier reads when it decides
+A work stream's description is the WorkstreamDO's `workstream.description` (the
+desktop directory model still exposes that value through its `objective` field):
+the one line the sidebar shows under the title, the text the routing classifier reads when it decides
 whether a connector activity belongs here, and the standing context every run
 starts from. It is the shortest answer to "what is this work stream for".
 
@@ -19,6 +20,8 @@ stream forever.
 | `packages/agent-harness/src/prompts/workstream-description.ts` | The prompt and its judgment. Byte-stable and golden-hashed. |
 | `apps/api/src/durable-objects/substream-agent.ts` — run settlement | Where an evaluation is triggered from. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` — `update` | The authored-edit path that marks a person's description `authored`. |
+| `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Maps both workspace-feed and direct work-stream snapshots onto the directory model's `objective` alias. |
+| `apps/desktop/src/renderer/components/sidebar.tsx` | Preserves the last non-empty description while newer directory metadata catches up, and renders it under the title. |
 | `packages/db/migrations/0058_workstream_description_refresh.sql` | The refresh table and the one-time `description_source` backfill. |
 | `apps/api/test/workstream-description-refresh.test.ts` | Asserts against the exported constants. |
 
@@ -329,6 +332,22 @@ Four log events are emitted:
 | `workstream_description_outcome_superseded` | An evaluation finished after a person had edited the description, so its decision was discarded. Carries the decision it would have written. |
 
 ## Changelog
+
+### 2026-08-26 — Socket hand-offs do not erase the sidebar description
+
+**What changed:** Both control-socket snapshot readers now map the authoritative
+WorkstreamDO `description` into the desktop directory model's `objective` alias.
+The sidebar also refuses to replace a known description with an empty legacy
+projection while workspace and direct sockets are handing authority over.
+
+**Why:** The ordered-transcript migration moved work-stream reads to the direct
+socket, but only the workspace-feed reader populated `objective`. Opening a work
+stream could therefore replace the sidebar row with a structurally newer row
+whose description was missing, leaving the selected item title-only.
+
+**Consequences:** Every new snapshot source must preserve description identity
+even if its wire name differs from the desktop alias. Empty compatibility data
+may not erase a description already supplied by an authoritative source.
 
 ### 2026-08-24 — The provisional description is the opening line
 

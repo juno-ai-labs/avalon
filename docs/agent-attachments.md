@@ -31,7 +31,10 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/attachment-tool-receipts.ts` | Atomically binds completed attachment results to current derivative hashes and revalidates replay dependencies. |
 | `apps/api/src/services/integrations.ts` | Current message projection, work-stream resource-tool registration, and authorization-aware receipt replay. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Loads the resource set displayed in the right sidebar under note-visibility rules. |
+| `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Hydrates attachment descriptors from durable participant-turn parts into ordered transcript snapshots. |
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
+| `packages/contracts/src/workstream-transcript.ts` | Defines the attachment descriptor carried by a participant transcript text block. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | Maps canonical transcript descriptors back into the existing attachment-tile view model. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
@@ -88,6 +91,13 @@ The host also enforces that promise: if a read, search, view, or summary call
 fails or a completed multi-image view skips a requested resource, and no later
 successful content access resolves the same resource, the model receives one
 corrective turn and cannot publish attachment facts. Cursor reads attach their
+
+The person-facing ordered transcript uses the same durable relationship. The
+snapshot storage layer joins each participant text part to its ordered
+`part_attachments`, emits metadata only, and the desktop reconstructs attachment
+tiles from that descriptor. An optimistic tile may disappear only when a
+canonical turn with the same message identity has arrived; reconnect must not
+depend on the optimistic row or the resource rail to reconstruct ownership.
 resolved resource identity to structured failures so a successful restart by
 resource ID clears the same guard entry instead of leaving a tool-call-only
 false positive. A run
@@ -386,6 +396,10 @@ generic tool execution/receipt loop is owned by
 - `apps/desktop/src/renderer/components/attachments.test.tsx` covers lazy
   message-feed opening plus image, Markdown, literal text, and converted-document
   presentation.
+- `apps/api/test-workers/participant-notification.test.ts` proves a real object
+  snapshot hydrates message-local attachment descriptors from the durable part
+  relationship; `apps/desktop/src/renderer/lib/transcript.test.ts` proves those
+  descriptors survive canonical flattening and become attachment tiles.
 
 Run focused suites from their package directories through `pnpm --filter`, then
 run the repository-wide lint, typecheck, and test gates before committing. Cursor
@@ -453,6 +467,30 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-26 — Ordered transcript snapshots retain message attachments
+
+**What changed:** A participant text block now carries the message-local
+attachment descriptors hydrated in one read from `part_attachments` and the
+work stream's frozen resource links. The desktop maps those descriptors back to
+the existing attachment-tile shape when it flattens ordered turns.
+
+**Why:** The ordered-transcript migration preserved the original R2 object,
+regional resource, object-local link, and part attachment, but returned only the
+part's text. The optimistic message therefore displayed an image until the
+canonical snapshot replaced it, at which point the attachment appeared lost
+despite a successful upload and message commit.
+
+**Considered and rejected:** Recovering attachments from the resource rail or
+retaining the optimistic row indefinitely. The rail cannot recover which message
+owned a resource or its position, and an optimistic row is not durable reload
+state. The canonical part relationship is already the correct authority.
+
+**Consequences:** Participant transcript hydration must keep attachment identity,
+order, filename, MIME type, byte count, content availability, and attached time
+aligned with the message projection. The original resource remains the preview
+and retention authority; the transcript carries no bytes and creates no second
+object lifecycle.
 
 ### 2026-08-22 — Tool receipts leave the compatibility layer
 

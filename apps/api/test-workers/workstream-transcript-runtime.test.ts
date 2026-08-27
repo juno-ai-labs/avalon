@@ -451,7 +451,6 @@ describe("work-stream transcript on workerd SQLite", () => {
         turnId: "after-fence",
         actor: "human",
         authorUserId: "user-1",
-        text: "After",
         createdAtUtc: new Date().toISOString(),
         attentionOrdinal: 1,
       });

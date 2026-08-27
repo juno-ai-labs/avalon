@@ -1,4 +1,5 @@
-import type { z } from "zod";
+import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
+import { z } from "zod";
 
 import {
   type Exhaustive,
@@ -7,6 +8,30 @@ import {
   type ObjectPortOf,
 } from "./object-port-protocol";
 import type { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
+
+export const OpenElicitationInputSchema = z.object({
+  elicitationId: z.string().min(1),
+  runId: z.string().min(1),
+  prompt: z.string().max(MESSAGE_MAX_CHARACTERS),
+  responseType: z.string().min(1),
+  optionsJson: z.string(),
+  minimumSelections: z.number().int().nonnegative(),
+  maximumSelections: z.number().int().nonnegative().nullable(),
+  targetUserId: z.string().min(1).nullable(),
+  messageId: z.string().min(1),
+  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
+  now: z.number().finite(),
+}).strict();
+
+export const AnswerElicitationExternallyInputSchema = z.object({
+  elicitationId: z.string().min(1),
+  answerJson: z.string(),
+  externalActorJson: z.string(),
+  messageId: z.string().min(1),
+  clientMessageId: z.string().min(1),
+  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
+  now: z.number().finite(),
+}).strict();
 
 /**
  * The wire contract for one work stream's scheduling state.

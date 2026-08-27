@@ -1,10 +1,13 @@
-import type { ElicitationData, Message, ToolEventData } from './types';
-import type {
-  TranscriptActivity,
-  TranscriptRange,
-  TranscriptTurn,
-  WorkstreamTranscriptSnapshot,
+import type { ElicitationData, Message, ToolEventData, WorkspaceMember } from './types';
+import {
+  ActivitySuggestionSchema,
+  ElicitationSchema,
+  type TranscriptActivity,
+  type TranscriptRange,
+  type TranscriptTurn,
+  type WorkstreamTranscriptSnapshot,
 } from '@rally/contracts';
+import { elicitationMessageId, normalizeElicitation } from './elicitation';
 
 export const TRANSCRIPT_RANGE_BLOCK_SIZE = 20;
 
@@ -60,7 +63,12 @@ export function isSameLogicalMessage(left: Message, right: Message): boolean {
     left.clientMessageId === right.id
     || left.clientMessageId === right.clientMessageId
   )) return true;
-  return Boolean(right.clientMessageId && right.clientMessageId === left.id);
+  if (right.clientMessageId && right.clientMessageId === left.id) return true;
+  if (left.elicitation && right.elicitation && left.elicitation.id === right.elicitation.id) return true;
+  if (left.activitySuggestion && right.activitySuggestion
+    && left.activitySuggestion.id === right.activitySuggestion.id) return true;
+  return Boolean(left.toolEvent && right.toolEvent
+    && (left.toolEvent.toolCallId ?? left.toolEvent.id) === (right.toolEvent.toolCallId ?? right.toolEvent.id));
 }
 
 function preferLogicalMessage(existing: Message, incoming: Message): Message {
@@ -108,8 +116,17 @@ export function removeTranscriptMessage(messages: Message[] | undefined, id: str
 export function orderedTranscriptMessages(
   snapshot: WorkstreamTranscriptSnapshot | undefined,
   workstreamId: string,
+  members: readonly WorkspaceMember[] = [],
+  routed: readonly Message[] = [],
 ): Message[] {
   if (!snapshot) return [];
+  const membersById = new Map(members.map((member) => [member.id, member]));
+  const routedByClientId = new Map(routed.flatMap((message) =>
+    message.clientMessageId ? [[message.clientMessageId, message] as const] : []));
+  const routedByTurnId = new Map(routed.flatMap((message) => [
+    [message.id, message] as const,
+    ...(message.transcriptTurnId ? [[message.transcriptTurnId, message] as const] : []),
+  ]));
   const turns = new Map<number, TranscriptTurn>();
   for (const range of snapshot.ranges) {
     for (const turn of range.turns) {
@@ -135,11 +152,20 @@ export function orderedTranscriptMessages(
       .slice()
       .sort((left, right) => left.blockIndex - right.blockIndex)
       .map((block): Message => {
-        messageOrder.set(block.blockId, {
-          turnSequence: turn.transcriptSequence,
-          position: block.blockIndex * 2,
-          tieBreaker: block.blockId,
-        });
+        const rememberOrder = (messageId: string): void => {
+          // An open elicitation and its durable answer deliberately share one
+          // UI identity. Keep the question's first position while the answered
+          // representation replaces its content below.
+          if (messageOrder.has(messageId)) return;
+          messageOrder.set(messageId, {
+            turnSequence: turn.transcriptSequence,
+            position: block.blockIndex * 2,
+            tieBreaker: block.blockId,
+          });
+        };
+        const routedMessage = (turn.clientMessageId
+          ? routedByClientId.get(turn.clientMessageId)
+          : undefined) ?? routedByTurnId.get(turn.turnId);
         const base = {
           id: block.blockId,
           transcriptTurnId: turn.turnId,
@@ -147,17 +173,65 @@ export function orderedTranscriptMessages(
           sequenceNumber: 0,
           attentionSequenceNumber: turn.attentionOrdinal,
           authorType: turn.actor === 'assistant' ? 'agent' as const : turn.actor,
+          ...(turn.actor === 'human' && turn.authorUserId
+            ? { author: membersById.get(turn.authorUserId) ?? routedMessage?.author }
+            : {}),
+          ...(turn.clientMessageId ? { clientMessageId: turn.clientMessageId } : {}),
+          ...(turn.actor === 'external' && turn.externalActor
+            ? { externalActor: { ...turn.externalActor } }
+            : {}),
           createdAt: turn.createdAtUtc,
         };
         if (block.type === 'text') {
+          const structured = block.structuredContent ?? {};
+          const elicitation = ElicitationSchema.safeParse(
+            'elicitation' in structured ? structured['elicitation'] : structured,
+          );
+          const suggestion = ActivitySuggestionSchema.safeParse(
+            'suggestion' in structured ? structured['suggestion'] : structured,
+          );
+          const messageType: Message['messageType'] = block.messageType === 'suggestion'
+            ? 'activity_suggestion'
+            : block.messageType ?? 'text';
+          const messageId = elicitation.success ? elicitationMessageId(elicitation.data.id) : block.blockId;
+          rememberOrder(messageId);
           return {
             ...base,
-            messageType: 'text',
+            id: messageId,
+            messageType,
             text: block.text,
             streaming: block.streaming,
+            mentions: (block.mentions ?? []).map((mention) => {
+              const member = mention.userId ? membersById.get(mention.userId) : undefined;
+              return {
+                type: mention.type,
+                ...(mention.userId ? { personId: mention.userId } : {}),
+                ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+                ...(member ? { displayName: member.name } : {}),
+                ...(member?.avatarUrl ? { avatarUrl: member.avatarUrl } : {}),
+                startOffset: mention.startOffset,
+                endOffset: mention.endOffset,
+              };
+            }),
+            attachments: (block.attachments ?? []).map((attachment) => ({ ...attachment })),
+            ...(structured['kind'] === 'suggested_work_expansion' && typeof structured['label'] === 'string'
+              ? { contextLabel: structured['label'] }
+              : {}),
+            ...(elicitation.success ? { elicitation: normalizeElicitation(elicitation.data) } : {}),
+            ...(suggestion.success ? {
+              activitySuggestion: {
+                id: suggestion.data.id,
+                title: suggestion.data.title,
+                source: 'Activity',
+                occurredAt: suggestion.data.createdAt,
+                reason: suggestion.data.reason,
+                status: suggestion.data.status,
+              },
+            } : {}),
           };
         }
         if (block.type === 'thinking') {
+          rememberOrder(block.blockId);
           const activity = activities.get(block.activityId);
           const timing = activityTiming(activity);
           return {
@@ -176,6 +250,7 @@ export function orderedTranscriptMessages(
           };
         }
         const activity = block.activityId ? activities.get(block.activityId) : undefined;
+        rememberOrder(block.blockId);
         return {
           ...base,
           authorType: 'agent',
@@ -274,7 +349,11 @@ export function orderedTranscriptMessages(
       tieBreaker: activity.activityId,
     });
   }
-  return messages
+  const logicalMessages = messages.reduce<Message[]>(
+    (current, message) => upsertTranscriptMessage(current, message),
+    [],
+  );
+  return logicalMessages
     .sort((left, right) => {
       const leftOrder = messageOrder.get(left.id)!;
       const rightOrder = messageOrder.get(right.id)!;
@@ -295,23 +374,11 @@ export function transientMessagesWithoutCanonicalMatch(
   canonical: readonly Message[],
   routed: readonly Message[],
 ): Message[] {
-  const canonicalTurnIds = new Set(canonical.flatMap((message) =>
-    message.transcriptTurnId ? [message.transcriptTurnId] : []));
-  const canonicalToolCallIds = new Set(canonical.flatMap((message) =>
-    message.toolEvent ? [message.toolEvent.toolCallId ?? message.toolEvent.id] : []));
-  return routed.filter((message) =>
-    message.deliveryState === 'sending'
-    || (message.realtimeOrder !== undefined
-      && message.authorType === 'agent'
-      && message.messageType === 'text'
-      && (!message.transcriptTurnId || !canonicalTurnIds.has(message.transcriptTurnId)))
-    || (message.messageType !== 'text'
-      && message.messageType !== 'tool_event'
-      && message.messageType !== 'thought')
-    || (message.realtimeOrder !== undefined
-      && message.messageType === 'tool_event'
-      && (!message.toolEvent
-        || !canonicalToolCallIds.has(message.toolEvent.toolCallId ?? message.toolEvent.id))));
+  return routed.filter((message) => !canonical.some((candidate) =>
+    isSameLogicalMessage(candidate, message)
+    || candidate.transcriptTurnId === message.id
+    || (message.transcriptTurnId !== undefined
+      && candidate.transcriptTurnId === message.transcriptTurnId)));
 }
 
 /** Union the intervals the backend inspected; row presence is not coverage. */

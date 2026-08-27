@@ -271,8 +271,8 @@ describe('MessageBlock human identity', () => {
     const elicitationMessage: Message = {
       ...baseMessage,
       id: 'message-elicitation-answer',
-      authorType: 'agent',
-      author: undefined,
+      authorType: 'human',
+      author: { id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'UTC' },
       messageType: 'elicitation',
       text: '',
       elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' },
@@ -280,11 +280,28 @@ describe('MessageBlock human identity', () => {
 
     render(<MessageBlock {...actions} currentUserId="user-adam" message={elicitationMessage} />);
 
-    const response = screen.getByLabelText('Human elicitation response');
+    const response = screen.getByLabelText('Your elicitation response');
     expect(response).toHaveClass('human-message', 'own-human-message', 'elicitation-response-message');
     expect(response).not.toHaveClass('transcript-event');
     expect(screen.getByLabelText('Elicitation response')).toHaveClass('human-message-bubble');
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Compare offer vs. RSPA');
+  });
+
+  it('keeps a coworker visible on their elicitation response', () => {
+    const elicitationMessage: Message = {
+      ...baseMessage,
+      id: 'message-coworker-elicitation-answer',
+      authorType: 'human',
+      author: { id: 'user-sam', name: 'Sam', email: 'sam@example.com', timezone: 'UTC' },
+      messageType: 'elicitation',
+      text: '',
+      elicitation: { ...singleSelectElicitation, status: 'answered', answer: 'compare' },
+    };
+
+    render(<MessageBlock {...actions} currentUserId="user-adam" message={elicitationMessage} />);
+
+    expect(screen.getByLabelText('Response from Sam')).toHaveClass('coworker-message');
+    expect(screen.getByText('Sam')).toBeInTheDocument();
   });
 
   it('renders an optimistic turn as a neutral skeleton instead of previewing client text', () => {

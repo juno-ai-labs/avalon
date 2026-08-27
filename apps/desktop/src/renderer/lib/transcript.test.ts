@@ -55,6 +55,188 @@ describe('transcript messages', () => {
 });
 
 describe('ordered turn rendering', () => {
+  it('keeps a routed opening turn until its canonical ordered turn exists', () => {
+    const routed = createTextMessage({
+      ...base,
+      id: 'persisted-opening',
+      clientMessageId: 'client-opening',
+      authorType: 'human',
+      author: { id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'UTC' },
+      text: 'Start this work stream',
+    });
+
+    expect(transientMessagesWithoutCanonicalMatch([], [routed])).toEqual([routed]);
+
+    const canonical = createTextMessage({
+      ...routed,
+      id: 'persisted-opening:text:0',
+      transcriptTurnId: 'persisted-opening',
+      text: routed.text ?? '',
+    });
+    expect(transientMessagesWithoutCanonicalMatch([canonical], [routed])).toEqual([]);
+  });
+
+  it('orders and collapses an open elicitation with its durable answer', () => {
+    const elicitation = {
+      id: '00000000-0000-7000-8000-000000000111',
+      workstreamId: '00000000-0000-7000-8000-000000000112',
+      harnessRunId: '00000000-0000-7000-8000-000000000113',
+      prompt: 'Choose', responseType: 'single_select' as const,
+      options: [{ label: 'One', value: 'one', description: null }], minimumSelections: 1,
+      maximumSelections: 1, targetUserId: null, createdAt: '2026-08-26T12:00:01.000Z',
+    };
+    const turn = (
+      transcriptSequence: number,
+      turnId: string,
+      status: 'open' | 'answered',
+      actor: 'assistant' | 'human',
+    ) => ({
+      transcriptSequence, turnId, entryKind: 'conversation' as const, actor,
+      authorUserId: actor === 'human' ? 'user-adam' : null,
+      clientMessageId: `${status}:${turnId}`, externalActor: null,
+      attentionOrdinal: transcriptSequence,
+      createdAtUtc: `2026-08-26T12:00:0${transcriptSequence}.000Z`, revision: 1,
+      blocks: [{
+        type: 'text' as const, blockId: `${turnId}:text:0`, blockIndex: 0,
+        text: '', streaming: false, messageType: 'elicitation' as const,
+        structuredContent: {
+          elicitation: {
+            ...elicitation,
+            status,
+            answer: status === 'answered' ? 'one' : null,
+            answeredByUserId: status === 'answered'
+              ? '00000000-0000-7000-8000-000000000114'
+              : null,
+            answeredAt: status === 'answered' ? '2026-08-26T12:00:03.000Z' : null,
+          },
+        },
+      }],
+      activityId: null, turnManifestRef: null, manifestByteLength: null, manifestSha256: null,
+    });
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'snapshot-elicitations', snapshotThrough: 3, eventSequence: 3,
+      snapshotAtUtc: '2026-08-26T12:00:04.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 4 },
+        covered: { startInclusive: 1, endExclusive: 4 },
+        turns: [
+          {
+            transcriptSequence: 1, turnId: 'opening', entryKind: 'conversation', actor: 'human',
+            authorUserId: 'user-adam', attentionOrdinal: 1,
+            createdAtUtc: '2026-08-26T12:00:01.000Z', revision: 1,
+            blocks: [{ type: 'text', blockId: 'opening:text:0', blockIndex: 0, text: 'Start', streaming: false }],
+            activityId: null, turnManifestRef: null, manifestByteLength: null, manifestSha256: null,
+          },
+          turn(2, 'question-open', 'open', 'assistant'),
+          turn(3, 'question-answer', 'answered', 'human'),
+        ],
+        activities: [],
+      }],
+      activities: [], activeActivities: [], activeTurns: [],
+    };
+
+    const messages = orderedTranscriptMessages(snapshot, 'workstream-one', [{
+      id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'UTC',
+    }]);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      id: 'elicitation-00000000-0000-7000-8000-000000000111',
+      authorType: 'human',
+      elicitation: { id: '00000000-0000-7000-8000-000000000111', status: 'answered', answer: 'one' },
+    });
+  });
+
+  it('retains the posting member and mention identities from canonical transcript turns', () => {
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'snapshot-identity', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 'turn-human', entryKind: 'conversation',
+          actor: 'human', authorUserId: 'user-alex', attentionOrdinal: 1,
+          clientMessageId: 'client-human', externalActor: null,
+          createdAtUtc: '2026-08-26T12:00:01.000Z', revision: 1,
+          blocks: [{
+            type: 'text', blockId: 'text-human', blockIndex: 0,
+            text: 'Ask [@Morgan](person:user-morgan)', streaming: false,
+            messageType: 'text', structuredContent: null,
+            mentions: [{
+              type: 'person', userId: 'user-morgan', connectorType: null,
+              startOffset: 4, endOffset: 41,
+            }],
+            attachments: [{
+              id: '00000000-0000-7000-8000-000000000901',
+              fileName: 'sonar.png', mimeType: 'image/png', sizeBytes: 1024,
+              contentAvailable: true, createdAt: '2026-08-26T12:00:00.000Z',
+            }],
+          }],
+          activityId: null, turnManifestRef: null, manifestByteLength: null,
+          manifestSha256: null,
+        }],
+        activities: [],
+      }],
+      activities: [], activeActivities: [], activeTurns: [],
+    };
+    const members = [{
+      id: 'user-alex', name: 'Alex', email: 'alex@example.com', timezone: 'UTC',
+    }, {
+      id: 'user-morgan', name: 'Morgan', email: 'morgan@example.com',
+      avatarUrl: 'https://example.com/morgan.png', timezone: 'UTC',
+    }];
+
+    expect(orderedTranscriptMessages(snapshot, 'workstream-one', members)[0]).toMatchObject({
+      author: members[0],
+      clientMessageId: 'client-human',
+      mentions: [{
+        type: 'person', personId: 'user-morgan', displayName: 'Morgan',
+        avatarUrl: 'https://example.com/morgan.png',
+      }],
+      attachments: [{
+        id: '00000000-0000-7000-8000-000000000901',
+        fileName: 'sonar.png', mimeType: 'image/png', sizeBytes: 1024,
+        contentAvailable: true,
+      }],
+    });
+  });
+
+  it('retains an external participant identity from a canonical transcript turn', () => {
+    const externalActor = {
+      provider: 'slack', providerAccountId: 'workspace-slack', providerUserId: 'user-slack',
+      displayName: 'Taylor', avatarUrl: 'https://example.com/taylor.png',
+    };
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'snapshot-external', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 'turn-external', entryKind: 'conversation',
+          actor: 'external', authorUserId: null, clientMessageId: 'slack-event-1',
+          externalActor, attentionOrdinal: 1, createdAtUtc: '2026-08-26T12:00:01.000Z',
+          revision: 1, blocks: [{
+            type: 'text', blockId: 'text-external', blockIndex: 0, text: 'From Slack',
+            streaming: false, messageType: 'text', structuredContent: null,
+          }],
+          activityId: null, turnManifestRef: null, manifestByteLength: null,
+          manifestSha256: null,
+        }],
+        activities: [],
+      }],
+      activities: [], activeActivities: [], activeTurns: [],
+    };
+
+    expect(orderedTranscriptMessages(snapshot, 'workstream-one')[0]).toMatchObject({
+      authorType: 'external', clientMessageId: 'slack-event-1', externalActor,
+      messageType: 'text', text: 'From Slack',
+    });
+  });
+
   it('renders text, parallel tools, and following text in model order', () => {
     const snapshot: WorkstreamTranscriptSnapshot = {
       snapshotId: 'snapshot-1',

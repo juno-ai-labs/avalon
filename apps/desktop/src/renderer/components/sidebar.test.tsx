@@ -235,6 +235,30 @@ describe('Sidebar work-stream markers', () => {
     );
   });
 
+  it('keeps the description visible when a legacy preview is empty', () => {
+    const described = {
+      ...workstream('described-workstream', 'Daily competitor marketing', 'completed'),
+      objective: 'Tracks competitor positioning and campaign changes.',
+      preview: '',
+    };
+    render(
+      <MemoryRouter initialEntries={['/workstreams/described-workstream']}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[described]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Tracks competitor positioning and campaign changes.'))
+      .toBeVisible();
+  });
+
   it('does not start navigation telemetry when the active work-stream row is clicked again', () => {
     const active = workstream('active-workstream', 'Already open', 'completed');
     render(
