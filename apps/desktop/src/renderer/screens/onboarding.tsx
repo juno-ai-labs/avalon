@@ -199,6 +199,7 @@ export function RegionOnboarding(): React.JSX.Element {
               maxLength={120}
               onChange={(event) => setName(event.target.value)}
               onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
                 if (event.key === 'Enter') void continueSetup();
               }}
               placeholder="Acme"

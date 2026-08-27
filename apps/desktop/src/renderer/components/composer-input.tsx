@@ -327,6 +327,7 @@ export const ComposerInput = forwardRef<HTMLTextAreaElement, ComposerInputProps>
             }}
             onKeyDown={(event) => {
               onKeyDown?.(event);
+              if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
               if (
                 !event.defaultPrevented
                 && event.key === 'Enter'
