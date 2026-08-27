@@ -148,12 +148,61 @@ export const requireWebSocketTicketRule = {
   },
   create(context) {
     const ticketBindings = new Set();
+    const realtimeSocketBindings = new Set();
+    const realtimeSocketNamespaces = new Set();
+    const sourceCode = context.sourceCode;
+    const bindingFor = (identifier) => {
+      let scope = sourceCode.getScope(identifier);
+      while (scope) {
+        const binding = scope.set.get(identifier.name);
+        if (binding) return binding;
+        scope = scope.upper;
+      }
+      return null;
+    };
+    const isRealtimeSocketFactory = (callee) => {
+      if (callee.type === "Identifier") {
+        const binding = bindingFor(callee);
+        return binding
+          ? realtimeSocketBindings.has(binding)
+          : callee.name === "createRealtimeSocket";
+      }
+      return callee.type === "MemberExpression"
+        && propertyName(callee) === "createRealtimeSocket"
+        && callee.object.type === "Identifier"
+        && realtimeSocketNamespaces.has(bindingFor(callee.object));
+    };
+    const isTicketUrl = (argument) => (
+      argument?.type === "MemberExpression"
+      && propertyName(argument) === "url"
+      && argument.object.type === "Identifier"
+      && ticketBindings.has(bindingFor(argument.object))
+    );
     return {
+      ImportDeclaration(node) {
+        if (typeof node.source.value !== "string" || !/(?:^|\/)realtime-socket$/u.test(node.source.value)) {
+          return;
+        }
+        for (const specifier of node.specifiers) {
+          const binding = sourceCode.getDeclaredVariables(specifier)[0];
+          if (!binding) continue;
+          if (specifier.type === "ImportNamespaceSpecifier") {
+            realtimeSocketNamespaces.add(binding);
+          } else if (
+            specifier.type === "ImportSpecifier"
+            && ((specifier.imported.type === "Identifier" && specifier.imported.name === "createRealtimeSocket")
+              || (specifier.imported.type === "Literal" && specifier.imported.value === "createRealtimeSocket"))
+          ) {
+            realtimeSocketBindings.add(binding);
+          }
+        }
+      },
       VariableDeclarator(node) {
         const init = unwrapAwait(node.init);
         if (node.id.type === "Identifier" && init?.type === "CallExpression") {
           const method = propertyName(init.callee);
-          if (method && TICKET_METHODS.has(method)) ticketBindings.add(node.id.name);
+          const binding = bindingFor(node.id);
+          if (method && TICKET_METHODS.has(method) && binding) ticketBindings.add(binding);
           return;
         }
         if (
@@ -166,18 +215,18 @@ export const requireWebSocketTicketRule = {
           const source = init.arguments[0].elements[index];
           if (element?.type !== "Identifier" || source?.type !== "CallExpression") continue;
           const method = propertyName(source.callee);
-          if (method && TICKET_METHODS.has(method)) ticketBindings.add(element.name);
+          const binding = bindingFor(element);
+          if (method && TICKET_METHODS.has(method) && binding) ticketBindings.add(binding);
         }
       },
       NewExpression(node) {
         if (node.callee.type !== "Identifier" || node.callee.name !== "WebSocket") return;
-        const argument = node.arguments[0];
-        if (
-          argument?.type === "MemberExpression"
-          && propertyName(argument) === "url"
-          && argument.object.type === "Identifier"
-          && ticketBindings.has(argument.object.name)
-        ) return;
+        if (isTicketUrl(node.arguments[0])) return;
+        context.report({ node, messageId: "ticket" });
+      },
+      CallExpression(node) {
+        if (!isRealtimeSocketFactory(node.callee)) return;
+        if (isTicketUrl(node.arguments[1])) return;
         context.report({ node, messageId: "ticket" });
       },
     };

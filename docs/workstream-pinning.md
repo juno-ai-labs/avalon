@@ -79,6 +79,13 @@ so the two agree. `Alt`+`ArrowUp` / `Alt`+`ArrowDown` on a focused pinned row mo
 it one step, and each row announces its position to a screen reader, so the
 order is not reachable by pointer alone. Plain arrows are left to move focus.
 
+In Electron, every pinned row also keeps its WorkstreamDO control socket and
+substream `0` feed socket proactively connected. It joins the active work
+stream, the five most recently active unpinned rows, and any running work stream
+in the socket pool; pin order does not sequence their handshakes. WorkspaceDO
+supplements the first 250-row recent page with every visible running row, so an
+older active run is not omitted from that pool by pagination.
+
 Holding Command overlays `⌘1` through `⌘9` on one continuous row order: pinned
 work streams first in their manual order, followed by recent work streams and
 notes in the recency order already rendered below them. Pressing one of those
@@ -176,8 +183,9 @@ it repairs. Focus resting anywhere real belongs to whoever put it there.
   cursor is opaque to Electron and must be returned unchanged.
 - **At most 1,000 pins belong to one person.** The WorkspaceDO transaction counts
   every stored pin, including one currently hidden by visibility, before
-  accepting a new one. That keeps the reorder input and first-page response
-  within their shared bound.
+  accepting a new one. That bounds the pin-derived reorder and response work;
+  the independently complete live-state supplement may make the combined first
+  page larger.
 - **Pinning is gated on readability; unpinning is not.** Removing a pin is never
   a question about the work stream, and a pin that has gone dark can only be
   reached by a caller that already knows the id.
@@ -205,9 +213,10 @@ It deliberately does not:
 ## Failure modes and limits
 
 - **A person may pin at most 1,000 work streams.** The same bound applies to a
-  reorder request and keeps the first WorkspaceDO page (which carries pins in
-  addition to recent rows) under its 1,250-row contract. Pinning the 1,001st row
-  fails with `workstream_pin_limit_reached`; existing pins remain unchanged.
+  reorder request. The first WorkspaceDO page may contain all pins, at most 250
+  recent unpinned rows, and every visible live-state row; that combined response
+  intentionally has no separate guessed row cap. Pinning the 1,001st row fails
+  with `workstream_pin_limit_reached`; existing pins remain unchanged.
 - **A refused drag reverts.** The local arrangement is dropped and the section
   re-renders from what the server holds, which is what the person's other
   devices are showing. The dialog says so rather than leaving a list that
@@ -262,6 +271,51 @@ collides with itself. Positions are therefore kept unique by how they are
 allocated — `MAX(position) + 1` inside the insert — rather than by the schema.
 
 ## Changelog
+
+### 2026-08-26 — The complete live-state supplement is independent of the pin cap
+
+**What changed:** The initial WorkspaceDO directory contract no longer caps the
+combined pins, recent rows, and live-state supplement at 1,250 entries. The
+existing 1,000-pin product limit and 250-row recency cursor remain unchanged.
+
+**Why:** Every live-state row must be available for proactive sockets even when
+a workspace already has the maximum pins and recent page. Reusing the arithmetic
+sum as a parser maximum made valid product states reject the entire sync frame.
+
+**Considered and rejected:** Truncating live rows would silently violate the
+warming policy. Lowering the pin or recency limits would change unrelated
+product decisions to accommodate a transport-schema shortcut.
+
+**Consequences:** The first page can exceed 1,250 rows, while later recency pages
+remain cursor-bounded. Any future defensive payload limit needs its own measured
+product decision rather than an inferred row count.
+
+Shipped in #341.
+
+### 2026-08-26 — Pins proactively retain both work-stream sockets
+
+**What changed:** Every pinned work stream now participates in Electron's
+background realtime pool with both its WorkstreamDO control connection and
+substream `0` feed connection. The same pool retains the five most recently
+active unpinned rows and any other running work stream. WorkspaceDO supplements
+its first recent page with all visible running rows so pagination cannot hide a
+connection target.
+
+**Why:** A pin is the user's durable declaration that a work stream should be
+immediately reachable. Warming only the visible row or only its metadata still
+leaves the feed handshake and snapshot on the critical path when the pin is
+opened.
+
+**Considered and rejected:** Warming a fixed number of pins would silently make
+pin order a performance priority and invent a cap the product did not choose.
+Opening pins sequentially would recreate the cold queue this transport change
+removes.
+
+**Consequences:** Pinning and unpinning change the background connection set as
+soon as the directory cache updates. The pool still deduplicates active,
+running, recently viewed, recent-unpinned, and pinned roles by work-stream ID.
+
+Shipped in #341.
 
 ### 2026-08-20 — The imported D1 pin source is removed
 

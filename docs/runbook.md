@@ -997,10 +997,16 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
   perform application work.
-- Expect one WorkspaceDO socket per signed-in Electron renderer/workspace, plus one
-  WorkstreamDO metadata socket and one SubstreamAgent feed for every selected or
-  background-running work stream. Navigation must not reopen the WorkspaceDO
-  socket. An idle, non-running work stream should retain neither child socket.
+- Expect one native Chromium WorkspaceDO socket per signed-in Electron
+  renderer/workspace, plus one main-process Node WorkstreamDO metadata socket
+  and one substream `0` feed for the active work stream, every pin, the five most
+  recent unpinned rows, every visible live-state row, and recently viewed pairs
+  still inside retention. Navigation must not reopen the WorkspaceDO socket. An
+  idle row outside those roles should retain neither child socket. Proactive
+  feeds send `publishPresence: false`; verify “Viewing now” against WorkspaceDO
+  foreground presence rather than socket counts. Brokered frames are limited to
+  1 MB, and a failed managed-network attempt must follow Electron's remaining
+  PAC directives in order rather than inventing a direct fallback.
   While the HyperSight panel is visible, Electron also opens one direct
   hibernating socket per configured `BlockDashboardAgent`; closing the panel
   closes those block sockets, and reopening replaces from durable checkpoints.

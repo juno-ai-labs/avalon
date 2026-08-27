@@ -640,7 +640,12 @@ describe("boundary contracts", () => {
         type: "subscribe",
         afterSequence: 42
       })
-    ).toEqual({ type: "subscribe", afterSequence: 42 });
+    ).toEqual({ type: "subscribe", afterSequence: 42, publishPresence: true });
+    expect(ClientSocketEventSchema.parse({
+      type: "subscribe",
+      afterSequence: 42,
+      publishPresence: false,
+    })).toEqual({ type: "subscribe", afterSequence: 42, publishPresence: false });
     expect(ClientSocketEventSchema.parse({
       type: "create_message",
       operationId: id,
