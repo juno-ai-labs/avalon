@@ -248,6 +248,10 @@ describe('Ace Hono application', () => {
     ), env(), { waitUntil: vi.fn() } as unknown as ExecutionContext);
 
     expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: 'invalid_model_configuration',
+      message: 'The model route is incomplete or does not match the requested role.',
+    });
     expect(cloudflare).not.toHaveBeenCalled();
   });
 
