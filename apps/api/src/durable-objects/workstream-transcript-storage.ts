@@ -216,7 +216,10 @@ export interface LegacyTranscriptBackfillOutcome {
  * Every multi-row state transition is one object-local SQLite transaction.
  */
 export class WorkstreamTranscriptStorage {
-  constructor(private readonly storage: DurableObjectStorage) {}
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    private readonly hasLiveTranscriptSnapshot: () => boolean = () => false,
+  ) {}
 
   private get sql(): SqlStorage {
     return this.storage.sql;
@@ -243,6 +246,9 @@ export class WorkstreamTranscriptStorage {
   }): Promise<LegacyTranscriptBackfillOutcome> {
     const existing = this.legacyBackfillReceipt();
     if (existing) return this.verifyLegacyBackfill(existing, false);
+    if (this.hasLiveTranscriptSnapshot()) {
+      throw new Error("legacy_transcript_backfill_live_snapshot");
+    }
     const cutover = this.sql.exec<{ applied_at: number } & Record<string, SqlStorageValue>>(
       `SELECT applied_at FROM _sql_schema_migrations WHERE version = ?`,
       input.cutoverVersion,
@@ -283,6 +289,13 @@ export class WorkstreamTranscriptStorage {
     const completedAt = Date.now();
     const applied = this.storage.transactionSync(() => {
       if (this.legacyBackfillReceipt()) return false;
+      // Renumbering the canonical suffix would change the meaning of an open
+      // client's immutable snapshot fence. Re-check after the bookmark await,
+      // inside the no-await commit boundary, so a socket that opened while the
+      // source was prepared makes this attempt fail before any row moves.
+      if (this.hasLiveTranscriptSnapshot()) {
+        throw new Error("legacy_transcript_backfill_live_snapshot");
+      }
       const activeRun = this.sql.exec<{ run_id: string } & Record<string, SqlStorageValue>>(
         `SELECT run_id FROM runs
           WHERE status IN ('admitted', 'running', 'waiting', 'steering')
@@ -295,7 +308,21 @@ export class WorkstreamTranscriptStorage {
           WHERE lifecycle_state = 'active'
           LIMIT 1`,
       ).toArray()[0];
-      if (activeRun || activeActivity) throw new Error("legacy_transcript_backfill_not_quiescent");
+      const pendingLegacyTool = this.sql.exec<{
+        id: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT id FROM parts
+          WHERE substream_id = '0'
+            AND visibility IN ('people', 'both')
+            AND kind = 'tool_call'
+            AND tool_status = 'pending'
+            AND created_at <= ?
+          LIMIT 1`,
+        cutoverAppliedAt,
+      ).toArray()[0];
+      if (activeRun || activeActivity || pendingLegacyTool) {
+        throw new Error("legacy_transcript_backfill_not_quiescent");
+      }
       const currentCanonical = canonicalJson({
         parts: this.legacyParticipantParts(cutoverAppliedAt),
         checkpoints: this.legacyCompactionCheckpoints(cutoverAppliedAt),
