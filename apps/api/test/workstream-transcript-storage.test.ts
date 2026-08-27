@@ -221,6 +221,7 @@ describe("canonical ordered work-stream transcript", () => {
       turnId: "post-cutover",
       actor: "human",
       authorUserId: "user-2",
+      text: "Post-cutover",
       createdAtUtc: new Date(NOW).toISOString(),
       attentionOrdinal: 3,
     });
@@ -280,8 +281,7 @@ describe("canonical ordered work-stream transcript", () => {
       operatorRunId: "00000000-0000-7000-8000-000000000003",
       cutoverVersion: 27,
     });
-    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
-      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject({
+    const expectedCard = {
       type: "tool",
       toolCallId: "legacy:legacy-tool",
       pluginId: "plugin_search",
@@ -289,12 +289,48 @@ describe("canonical ordered work-stream transcript", () => {
       status: "completed",
       participantSafeInput: "query",
       participantSafeResult: "result",
+    };
+    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
+      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject(expectedCard);
+    await transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000013",
     });
+    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
+      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject(expectedCard);
     expect(sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
       `SELECT payload.payload_json FROM transcript_payloads payload
        JOIN transcript_facts fact ON fact.payload_id = payload.payload_id
        WHERE fact.fact_id = 'legacy-tool:legacy-tool'`,
     ).one().payload_json).not.toContain("result");
+  });
+
+  it("requires backfill before transferring a checkpoint-only legacy transcript", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, terminalized_at,
+       created_at, updated_at)
+      VALUES ('legacy-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+    sql.exec(`INSERT INTO compaction_checkpoints
+      (projection_key, execution_principal_key, resource_visibility_fingerprint,
+       checkpoint_template_version, run_id, compacted_through_sequence,
+       messages_json, summary, model, context_tokens_before_compaction,
+       context_window_tokens, input_tokens, output_tokens, cost_micros,
+       created_at, updated_at)
+      VALUES ('projection', 'workspace:one', 'inventory:0', 1, 'legacy-run', 1,
+              '[]', 'Only checkpoint', 'model', 10, 100, 1, 1, 1, 0, 0)`);
+
+    await expect(transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000014",
+    })).rejects.toThrow("legacy_transcript_payload_transfer_requires_backfill");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_payload_transfers`)
+      .one().count).toBe(0);
   });
 
   it("references exact legacy compaction messages without fabricating a Bind state", async () => {
@@ -335,6 +371,288 @@ describe("canonical ordered work-stream transcript", () => {
     ).one().payload_json).not.toContain("exact checkpoint");
   });
 
+  it("transfers message ownership and two exact compactions without changing compaction edges", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, created_at, updated_at)
+      VALUES ('legacy-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+       author_user_id, content, client_message_id, visibility, pinned, message_type,
+       structured_content_json, created_at, updated_at)
+      VALUES ('legacy-human', '0', 1, 1, 'user', 'text', 'member', 'user-1',
+              'Original text', 'legacy-human-client', 'both', 0, 'text',
+              '{"answer":42}', 0, 0)`);
+    sql.exec(`INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+      VALUES ('legacy-human', 'resource-1', 0, '{"name":"notes.md"}')`);
+    sql.exec(`INSERT INTO part_mentions
+      (part_id, mention_index, mention_kind, target_user_id, connector_type,
+       start_offset, end_offset, attention_ordinal)
+      VALUES ('legacy-human', 0, 'person', 'user-2', NULL, 0, 8, 1)`);
+    const checkpoints = [
+      {
+        sequence: 7,
+        messages: [
+          { role: "system", content: "System one" },
+          { role: "user", content: "First exact checkpoint" },
+        ],
+        summary: "First summary",
+      },
+      {
+        sequence: 15,
+        messages: [
+          { role: "system", content: "System two" },
+          { role: "assistant", content: "Second exact checkpoint" },
+          { role: "tool", tool_call_id: "call-2", content: "Exact result" },
+        ],
+        summary: "Second summary",
+      },
+    ];
+    for (const checkpoint of checkpoints) {
+      sql.exec(`INSERT INTO compaction_checkpoints
+        (projection_key, execution_principal_key, resource_visibility_fingerprint,
+         checkpoint_template_version, run_id, compacted_through_sequence,
+         messages_json, summary, model, context_tokens_before_compaction,
+         context_window_tokens, input_tokens, output_tokens, cost_micros,
+         created_at, updated_at)
+        VALUES ('projection', 'workspace:one', 'inventory:0', 1, 'legacy-run', ?,
+                ?, ?, 'model', 100, 1000, 10, 2, 30, 0, 0)`,
+      checkpoint.sequence, JSON.stringify(checkpoint.messages), checkpoint.summary);
+    }
+    await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000020",
+      cutoverVersion: 27,
+    });
+    const edgesBefore = {
+      statuses: Number(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns
+        WHERE entry_kind = 'status'`).one().count),
+      activities: Number(sql.exec(`SELECT COUNT(*) AS count FROM transcript_activities
+        WHERE scope = 'compaction'`).one().count),
+      intervals: Number(sql.exec(`SELECT COUNT(*) AS count FROM transcript_activity_intervals
+        WHERE activity_id IN (SELECT activity_id FROM transcript_activities
+          WHERE scope = 'compaction')`).one().count),
+    };
+
+    const outcome = await transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000021",
+    });
+    expect(outcome).toMatchObject({
+      applied: true,
+      verified: true,
+      sourcePartCount: 1,
+      sourceAttachmentCount: 1,
+      sourceMentionCount: 1,
+      sourceCheckpointCount: 2,
+      messageRecordCount: 1,
+      checkpointProjectionCount: 2,
+    });
+    expect(sql.exec<{
+      payload_json: string;
+      content_ref_id: string | null;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT payload.payload_json, record.content_ref_id
+         FROM workstream_message_records record
+         JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE record.message_id = 'legacy-human'`,
+    ).one()).toEqual({
+      payload_json: JSON.stringify({
+        content: "Original text",
+        role: "user",
+        structuredContent: { answer: 42 },
+      }),
+      content_ref_id: null,
+    });
+    expect(sql.exec(`SELECT turn.root_fact_id, block.fact_id, record.fact_id AS record_fact_id
+      FROM participant_transcript_turns turn
+      JOIN participant_transcript_blocks block ON block.turn_id = turn.turn_id
+      JOIN workstream_message_records record ON record.message_id = turn.turn_id
+      WHERE turn.turn_id = 'legacy-human'`).one()).toEqual({
+      root_fact_id: "legacy-human:message-record",
+      fact_id: "legacy-human:message-record",
+      record_fact_id: "legacy-human:message-record",
+    });
+    sql.exec(`UPDATE parts SET content = 'Retired copy changed' WHERE id = 'legacy-human'`);
+    expect(transcript.participantTurn("legacy-human")?.blocks[0]).toMatchObject({
+      type: "text",
+      text: "Original text",
+    });
+    sql.exec(`UPDATE parts SET content = 'Original text' WHERE id = 'legacy-human'`);
+    expect(sql.exec(`SELECT message_id, resource_id, position, attachment_json
+      FROM workstream_message_attachments`).one()).toEqual({
+      message_id: "legacy-human",
+      resource_id: "resource-1",
+      position: 0,
+      attachment_json: '{"name":"notes.md"}',
+    });
+    expect(sql.exec(`SELECT message_id, mention_index, mention_kind, target_user_id,
+      connector_type, start_offset, end_offset, attention_ordinal
+      FROM workstream_message_mentions`).one()).toEqual({
+      message_id: "legacy-human",
+      mention_index: 0,
+      mention_kind: "person",
+      target_user_id: "user-2",
+      connector_type: null,
+      start_offset: 0,
+      end_offset: 8,
+      attention_ordinal: 1,
+    });
+    for (const checkpoint of checkpoints) {
+      const payload = sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
+        `SELECT payload.payload_json
+           FROM transcript_compaction_checkpoints checkpoint
+           JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
+           JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+          WHERE checkpoint.run_id = 'legacy-run'
+            AND checkpoint.compacted_through_sequence = ?`,
+        checkpoint.sequence,
+      ).one();
+      expect(JSON.parse(payload.payload_json)).toMatchObject({
+        messages: checkpoint.messages,
+        summary: checkpoint.summary,
+      });
+    }
+    const latest = transcript.compactionCheckpoint({ executionPrincipalKey: "workspace:one" });
+    expect(latest).toMatchObject({
+      compacted_through_sequence: 15,
+      summary: "Second summary",
+    });
+    expect(JSON.parse(latest!.messages_json)).toEqual(checkpoints[1]!.messages);
+    expect({
+      statuses: Number(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns
+        WHERE entry_kind = 'status'`).one().count),
+      activities: Number(sql.exec(`SELECT COUNT(*) AS count FROM transcript_activities
+        WHERE scope = 'compaction'`).one().count),
+      intervals: Number(sql.exec(`SELECT COUNT(*) AS count FROM transcript_activity_intervals
+        WHERE activity_id IN (SELECT activity_id FROM transcript_activities
+          WHERE scope = 'compaction')`).one().count),
+    }).toEqual(edgesBefore);
+    sql.exec(`INSERT INTO transcript_payloads
+      (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+      VALUES ('canonical-only-payload', 'model', 'application/json',
+              '{"messages":[{"role":"user","content":"Canonical only"}],"summary":"Canonical only"}',
+              'canonical-only-hash', 1, 1)`);
+    sql.exec(`INSERT INTO transcript_facts
+      (fact_id, fact_kind, payload_id, origin_kind, run_id, created_at)
+      VALUES ('canonical-only-fact', 'compaction_checkpoint', 'canonical-only-payload',
+              'canonical', 'canonical-only-run', 1)`);
+    sql.exec(`INSERT INTO transcript_compaction_checkpoints
+      (checkpoint_fact_id, execution_principal_key, resource_visibility_fingerprint,
+       checkpoint_template_version, run_id, compacted_through_sequence, model,
+       context_tokens_before_compaction, context_window_tokens, input_tokens,
+       output_tokens, cost_micros, created_at, updated_at)
+      VALUES ('canonical-only-fact', 'workspace:canonical-only', 'inventory:1', 1,
+              'canonical-only-run', 99, 'model', 100, 1000, 10, 2, 30, 1, 1)`);
+    expect(await transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000022",
+    })).toMatchObject({ applied: false, verified: true,
+      operatorRunId: "00000000-0000-7000-8000-000000000021" });
+  });
+
+  it("reuses a post-cutover checkpoint fact instead of replacing its compaction identity", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, created_at, updated_at)
+      VALUES ('run-1', '0', 'completed', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+    await transcript.commitBindTransition(initialize(), NOW);
+    const compactionEventId = "run-1:compaction:1";
+    await transcript.reserveCompactionStatus({
+      compactionEventId,
+      runId: "run-1",
+      trigger: "auto",
+      occurredAtUtc: new Date(NOW + 1).toISOString(),
+    });
+    transcript.upsertActivity({
+      activityId: compactionEventId,
+      parentActivityId: null,
+      scope: "compaction",
+      subjectId: "1",
+      callIndex: 0,
+      label: "Context automatically compacting",
+      action: "start",
+      revision: 1,
+      occurredAtUtc: new Date(NOW + 1).toISOString(),
+    });
+    const checkpoint = {
+      trigger: "auto" as const,
+      summary: "Already canonical",
+      messages: [{ role: "user" as const, content: "Exact canonical checkpoint" }],
+      model: "openai/test",
+      contextTokensBeforeCompaction: 90,
+      contextWindowTokens: 100,
+      inputTokens: 10,
+      outputTokens: 2,
+      costCents: 0.01,
+    };
+    await transcript.commitBindCompaction({
+      commit: {
+        checkpoint,
+        transition: {
+          kind: "state_replaced",
+          loopId: "run-1",
+          generation: 1,
+          nextGeneration: 2,
+          stateRevision: 2,
+          systemProjection,
+          nonSystemMessages: checkpoint.messages,
+          compactionEventId,
+        },
+      },
+      continuation: {
+        executionPrincipalKey: "workspace:one",
+        resourceVisibilityFingerprint: "inventory:0",
+        checkpointTemplateVersion: 1,
+        compactedThroughSequence: 7,
+        expectedInventoryRevision: 0,
+      },
+      now: NOW + 2,
+    });
+    sql.exec(`INSERT INTO compaction_checkpoints
+      (projection_key, execution_principal_key, resource_visibility_fingerprint,
+       checkpoint_template_version, run_id, compacted_through_sequence,
+       messages_json, summary, model, context_tokens_before_compaction,
+       context_window_tokens, input_tokens, output_tokens, cost_micros,
+       created_at, updated_at)
+      VALUES ('projection', 'workspace:one', 'inventory:0', 1, 'run-1', 7,
+              ?, 'Already canonical', 'openai/test', 90, 100, 10, 2, 100, ?, ?)`,
+    JSON.stringify(checkpoint.messages), NOW + 2, NOW + 2);
+    const before = sql.exec<{ checkpoint_fact_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT checkpoint_fact_id FROM transcript_compaction_checkpoints
+        WHERE execution_principal_key = 'workspace:one'`,
+    ).one().checkpoint_fact_id;
+
+    await expect(transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000025",
+    })).resolves.toMatchObject({ applied: true, verified: true, sourceCheckpointCount: 1 });
+    expect(sql.exec<{ checkpoint_fact_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT checkpoint_fact_id FROM transcript_compaction_checkpoints
+        WHERE execution_principal_key = 'workspace:one'`,
+    ).one().checkpoint_fact_id).toBe(before);
+    expect(before).toBe(`${compactionEventId}:checkpoint`);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM transcript_facts
+      WHERE fact_kind IN ('compaction_checkpoint', 'legacy_compaction_checkpoint')`).one().count)
+      .toBe(1);
+    expect(transcript.createOpeningSnapshot({
+      unreadHighWaterAttentionOrdinal: null,
+      now: NOW + 10,
+    }).activities.filter((activity) => activity.scope === "compaction"))
+      .toEqual([expect.objectContaining({ activityId: compactionEventId, state: "completed" })]);
+  });
+
   it("aborts atomically if the legacy source moves while its hashes are prepared", async () => {
     let releaseBookmark!: () => void;
     const bookmark = new Promise<string>((resolve) => { releaseBookmark = () => resolve("bookmark"); });
@@ -360,6 +678,44 @@ describe("canonical ordered work-stream transcript", () => {
     expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
   });
 
+  it("aborts payload ownership transfer atomically if a checkpoint moves before commit", async () => {
+    let transferPhase = false;
+    let releaseBookmark!: () => void;
+    const transferBookmark = new Promise<string>((resolve) => {
+      releaseBookmark = () => resolve("transfer-bookmark");
+    });
+    const { transcript, sql } = open({
+      getCurrentBookmark: () => transferPhase
+        ? transferBookmark
+        : Promise.resolve("backfill-bookmark"),
+    });
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+       author_user_id, content, client_message_id, visibility, pinned, message_type,
+       created_at, updated_at)
+      VALUES ('legacy', '0', 1, 1, 'user', 'text', 'member', 'user-1', 'Before',
+              'legacy-client', 'both', 0, 'text', 0, 0)`);
+    await transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-000000000023",
+      cutoverVersion: 27,
+    });
+
+    transferPhase = true;
+    const pending = transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000024",
+    });
+    await Promise.resolve();
+    sql.exec(`UPDATE parts SET content = 'After', updated_at = 1 WHERE id = 'legacy'`);
+    releaseBookmark();
+    await expect(pending).rejects.toThrow("legacy_transcript_payload_transfer_source_moved");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_payload_transfers`).one().count)
+      .toBe(0);
+  });
+
   it("rejects a partial legacy participant projection instead of mixing states", async () => {
     const { transcript, sql } = open();
     sql.exec(`INSERT INTO substreams
@@ -374,6 +730,7 @@ describe("canonical ordered work-stream transcript", () => {
       turnId: "partial",
       actor: "human",
       authorUserId: "user-1",
+      text: "Canonical",
       createdAtUtc: new Date(NOW).toISOString(),
       attentionOrdinal: null,
     });
@@ -720,12 +1077,16 @@ describe("canonical ordered work-stream transcript", () => {
   });
 
   it("returns unread-centered and latest ranges from one immutable snapshot fence and exposes gaps", async () => {
-    const { transcript } = open();
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
+      VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
     for (let index = 1; index <= 30; index += 1) {
       await transcript.appendParticipantMessage({
         turnId: `message-${index}`,
         actor: "human",
         authorUserId: "user-1",
+        text: `Message ${index}`,
         createdAtUtc: new Date(NOW + index).toISOString(),
         attentionOrdinal: index,
       });
@@ -753,6 +1114,7 @@ describe("canonical ordered work-stream transcript", () => {
       turnId: "message-after-fence",
       actor: "human",
       authorUserId: "user-1",
+      text: "Not in old snapshot",
       createdAtUtc: new Date(NOW + 101).toISOString(),
       attentionOrdinal: 31,
     });
@@ -1008,11 +1370,15 @@ describe("canonical ordered work-stream transcript", () => {
   });
 
   it("uses the required indexes for unread, latest, and range queries", async () => {
-    const { transcript, database } = open();
+    const { transcript, database, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
+      VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
     await transcript.appendParticipantMessage({
       turnId: "message-1",
       actor: "human",
       authorUserId: "user-1",
+      text: "Indexed",
       createdAtUtc: new Date(NOW).toISOString(),
       attentionOrdinal: 1,
     });

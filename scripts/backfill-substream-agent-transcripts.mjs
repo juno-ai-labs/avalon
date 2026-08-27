@@ -32,6 +32,7 @@ function parseArguments(argv) {
   const value = (name) => args.find((argument) => argument.startsWith(`${name}=`))
     ?.slice(name.length + 1) ?? null;
   const apply = args.includes('--apply');
+  const payloadTransfer = args.includes('--payload-transfer');
   const region = value('--region') ?? 'all';
   if (!['all', ...REGIONS].includes(region)) throw new Error(`unsupported_region:${region}`);
   const probeUrl = value('--jurisdiction-probe-url');
@@ -49,7 +50,7 @@ function parseArguments(argv) {
     throw new Error('apply_requires_reviewed_expected_counts');
   }
   const allowed = new Set([
-    '--apply', '--region', '--jurisdiction-probe-url', '--expected-eu',
+    '--apply', '--payload-transfer', '--region', '--jurisdiction-probe-url', '--expected-eu',
     '--expected-global', '--receipt', '--eu-target-ids', '--global-target-ids',
   ]);
   const unknown = args.find((argument) => {
@@ -59,6 +60,7 @@ function parseArguments(argv) {
   if (unknown) throw new Error(`unknown_argument:${unknown}`);
   return {
     apply,
+    payloadTransfer,
     expected,
     probeUrl,
     receiptPath: value('--receipt'),
@@ -105,12 +107,19 @@ function namespaceFor(namespaces, region) {
   return matches[0].id;
 }
 
-async function invokeBackfill(probeUrl, region, objectIds, operatorRunId, fetcher) {
+async function invokeBackfill(
+  probeUrl,
+  region,
+  objectIds,
+  operatorRunId,
+  fetcher,
+  payloadTransfer = false,
+) {
   const response = await fetcher(probeUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      operation: 'backfill',
+      operation: payloadTransfer ? 'transfer-payload-ownership' : 'backfill',
       region,
       objectIds,
       operatorRunId,
@@ -144,6 +153,25 @@ async function invokeBackfill(probeUrl, region, objectIds, operatorRunId, fetche
         : { objectId: row.objectId, error: 'invalid_cleanup_outcome' };
     }
     const outcome = row.outcome;
+    if (payloadTransfer) {
+      if (outcome?.verified !== true
+        || typeof outcome.applied !== 'boolean'
+        || typeof outcome.preTransferBookmark !== 'string'
+        || outcome.preTransferBookmark.length === 0
+        || typeof outcome.sourceSha256 !== 'string'
+        || !/^[a-f0-9]{64}$/u.test(outcome.sourceSha256)
+        || !validCount(outcome.sourcePartCount)
+        || !validCount(outcome.sourceAttachmentCount)
+        || !validCount(outcome.sourceMentionCount)
+        || !validCount(outcome.sourceCheckpointCount)
+        || !validCount(outcome.messageRecordCount)
+        || !validCount(outcome.checkpointProjectionCount)
+        || outcome.sourcePartCount !== outcome.messageRecordCount
+        || outcome.sourceCheckpointCount !== outcome.checkpointProjectionCount) {
+        return { objectId: row.objectId, error: 'unverified_payload_transfer_outcome' };
+      }
+      return { objectId: row.objectId, outcome };
+    }
     const validCleanupOperator = outcome?.preCutoverCleanupOperatorRunId === null
       || (typeof outcome?.preCutoverCleanupOperatorRunId === 'string'
         && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
@@ -222,7 +250,7 @@ export async function backfillSubstreamAgentTranscripts({
 
   const operatorRunId = crypto.randomUUID();
   const receiptPath = options.receiptPath
-    ?? `/tmp/rally-legacy-transcript-backfill-${operatorRunId}.json`;
+    ?? `/tmp/rally-legacy-transcript-${options.payloadTransfer ? 'payload-transfer' : 'backfill'}-${operatorRunId}.json`;
   const receipt = {
     operatorRunId,
     startedAt: new Date().toISOString(),
@@ -239,6 +267,7 @@ export async function backfillSubstreamAgentTranscripts({
         objectIds,
         operatorRunId,
         fetcher,
+        options.payloadTransfer,
       );
       receipt.regions[inventory.region].push(...rows);
       await persistReceipt(receiptPath, receipt);
@@ -253,19 +282,29 @@ export async function backfillSubstreamAgentTranscripts({
   receipt.completedAt = new Date().toISOString();
   await persistReceipt(receiptPath, receipt);
   const failures = Object.values(receipt.regions).flat().filter((row) => row.error !== undefined);
-  if (failures.length > 0) throw new Error(`legacy_transcript_backfill_failures_${failures.length}`);
+  if (failures.length > 0) {
+    throw new Error(`legacy_transcript_${options.payloadTransfer ? 'payload_transfer' : 'backfill'}_failures_${failures.length}`);
+  }
   const totals = Object.fromEntries(Object.entries(receipt.regions).map(([region, rows]) => [region, {
     objects: rows.length,
     appliedObjects: rows.filter((row) => row.outcome.applied === true).length,
     replayedObjects: rows.filter((row) => row.outcome.applied === false).length,
     sourceParts: rows.reduce((sum, row) => sum + row.outcome.sourcePartCount, 0),
-    participantTurns: rows.reduce((sum, row) => sum + row.outcome.participantTurnCount, 0),
+    ...(options.payloadTransfer ? {
+      messageRecords: rows.reduce((sum, row) => sum + row.outcome.messageRecordCount, 0),
+      sourceAttachments: rows.reduce((sum, row) => sum + row.outcome.sourceAttachmentCount, 0),
+      sourceMentions: rows.reduce((sum, row) => sum + row.outcome.sourceMentionCount, 0),
+    } : {
+      participantTurns: rows.reduce((sum, row) => sum + row.outcome.participantTurnCount, 0),
+    }),
     sourceCheckpoints: rows.reduce((sum, row) => sum + row.outcome.sourceCheckpointCount, 0),
     checkpointProjections: rows.reduce((sum, row) => sum + row.outcome.checkpointProjectionCount, 0),
-    abandonedPreCutoverRuns: rows.reduce(
-      (sum, row) => sum + row.outcome.abandonedPreCutoverRunCount,
-      0,
-    ),
+    ...(options.payloadTransfer ? {} : {
+      abandonedPreCutoverRuns: rows.reduce(
+        (sum, row) => sum + row.outcome.abandonedPreCutoverRunCount,
+        0,
+      ),
+    }),
   }]));
   logger.log(JSON.stringify({ operatorRunId, receiptPath, regions: totals }, null, 2));
   return { mode: 'apply', operatorRunId, receiptPath, regions: totals };

@@ -25,6 +25,7 @@
 
 import { boundParameterChunks } from "./bound-parameters";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
+import type { PreparedWorkstreamMessageRecord } from "./workstream-transcript-storage";
 
 /** What a caller proved before it was allowed to write. */
 export interface AttemptFence {
@@ -33,6 +34,16 @@ export interface AttemptFence {
   owner: string;
   /** The instant the caller is asking about; a lease is live relative to it. */
   now: number;
+}
+
+export interface PublishFinalMessageInput extends AttemptFence {
+  messageId: string;
+  text: string;
+  hostOutcomeStatus: string;
+  eventPayloadJson: string;
+  lifecycleEventId: string;
+  /** A stopped run may still publish: the member asked it to stop, not to vanish. */
+  allowCancellationRequested: boolean;
 }
 
 /** Why a fenced operation refused, or that it did not. */
@@ -1387,17 +1398,36 @@ export class WorkstreamHarnessRunStorage {
    * compares it against the published terminal set. The `terminal` event
    * records the run's own state, which is the object's vocabulary.
    */
-  publishFinalMessage(input: AttemptFence & {
-    messageId: string;
-    text: string;
-    hostOutcomeStatus: string;
-    eventPayloadJson: string;
-    lifecycleEventId: string;
-    /** A stopped run may still publish: the member asked it to stop, not to vanish. */
-    allowCancellationRequested: boolean;
-  }): { outcome: "published" | "replayed"; sequenceNumber: number }
+  async prepareFinalMessage(
+    input: PublishFinalMessageInput,
+  ): Promise<PreparedWorkstreamMessageRecord> {
+    return this.messages.prepareMessage({
+      messageId: input.messageId,
+      clientMessageId: `harness:${input.runId}`,
+      authorType: "agent",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "text",
+      text: input.text,
+      structuredContentJson: null,
+      producedByRunId: input.runId,
+      now: input.now,
+    });
+  }
+
+  async publishFinalMessage(input: PublishFinalMessageInput): Promise<
+    { outcome: "published" | "replayed"; sequenceNumber: number }
+    | { outcome: "ownership_lost" }
+  > {
+    const prepared = await this.prepareFinalMessage(input);
+    return this.storage.transactionSync(() => this.publishPreparedFinalMessage(input, prepared));
+  }
+
+  publishPreparedFinalMessage(
+    input: PublishFinalMessageInput,
+    prepared: PreparedWorkstreamMessageRecord,
+  ): { outcome: "published" | "replayed"; sequenceNumber: number }
     | { outcome: "ownership_lost" } {
-    return this.storage.transactionSync(() => {
       const run = this.run({ runId: input.runId });
       if (!run
         || run.parent_tool_call_id !== null
@@ -1410,20 +1440,7 @@ export class WorkstreamHarnessRunStorage {
         || run.lease_expires_at <= input.now) {
         return { outcome: "ownership_lost" as const };
       }
-      const appended = this.messages.appendMessage({
-        messageId: input.messageId,
-        // One final message per run, named after the run. That is what makes a
-        // retry of this whole operation a replay rather than a second message.
-        clientMessageId: `harness:${input.runId}`,
-        authorType: "agent",
-        authorUserId: null,
-        externalActorJson: null,
-        messageType: "text",
-        text: input.text,
-        structuredContentJson: null,
-        producedByRunId: input.runId,
-        now: input.now,
-      });
+      const appended = this.messages.appendPreparedMessage(prepared);
       this.recordLifecycleEvent({
         eventId: input.lifecycleEventId,
         runId: input.runId,
@@ -1438,7 +1455,6 @@ export class WorkstreamHarnessRunStorage {
         outcome: appended.outcome === "appended" ? "published" as const : "replayed" as const,
         sequenceNumber: appended.sequenceNumber,
       };
-    });
   }
 
   /**

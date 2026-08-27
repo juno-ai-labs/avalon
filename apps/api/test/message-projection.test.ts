@@ -61,12 +61,12 @@ function open(): { storage: WorkstreamMessageStorage; port: MessageObjectPort; s
   return { storage, port, sql };
 }
 
-function append(
+async function append(
   storage: WorkstreamMessageStorage,
   index: number,
   overrides: Record<string, unknown> = {},
-): void {
-  storage.appendMessage({
+): Promise<void> {
+  await storage.appendMessage({
     messageId: `message-${index}`,
     clientMessageId: `client-${index}`,
     authorType: "human",
@@ -84,7 +84,7 @@ function append(
 describe("the transcript the harness reads", () => {
   it("walks backward a page at a time and hands back reading order", async () => {
     const { storage, port } = open();
-    for (let index = 1; index <= 5; index += 1) append(storage, index);
+    for (let index = 1; index <= 5; index += 1) await append(storage, index);
     const list = transcriptLister(port, IDENTITY);
 
     // The fence walk the harness does: take the newest page, then page backward
@@ -98,7 +98,7 @@ describe("the transcript the harness reads", () => {
 
   it("caps a page at the limit the repository capped it at", async () => {
     const { storage, port } = open();
-    for (let index = 1; index <= 3; index += 1) append(storage, index);
+    for (let index = 1; index <= 3; index += 1) await append(storage, index);
     const asked: Array<{ beforeSequence: number; limit: number }> = [];
     const recording: MessageObjectPort = {
       ...port,
@@ -124,7 +124,7 @@ describe("the transcript the harness reads", () => {
 
   it("assembles the author, mentions and attachments the query used to aggregate", async () => {
     const { storage, port, sql } = open();
-    append(storage, 1);
+    await append(storage, 1);
     sql.exec(
       `INSERT INTO participants
          (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -188,7 +188,7 @@ describe("the transcript the harness reads", () => {
 
   it("gives an agent message no author identity to look up", async () => {
     const { storage, port } = open();
-    append(storage, 1, { authorType: "agent", authorUserId: null });
+    await append(storage, 1, { authorType: "agent", authorUserId: null });
 
     // An agent message has no member behind it, and the retired reader's
     // `LEFT JOIN users` produced nothing for it. Reading a participant row here
@@ -199,7 +199,7 @@ describe("the transcript the harness reads", () => {
 
   it("carries an external actor through instead of an author", async () => {
     const { storage, port } = open();
-    append(storage, 1, {
+    await append(storage, 1, {
       authorType: "external",
       authorUserId: null,
       externalActorJson: JSON.stringify({
@@ -221,7 +221,7 @@ describe("the transcript the harness reads", () => {
 
   it("falls back to the author columns when the stored actor does not parse", async () => {
     const { storage, port } = open();
-    append(storage, 1, {
+    await append(storage, 1, {
       authorType: "external",
       authorUserId: null,
       externalActorJson: JSON.stringify({ provider: "slack", displayName: "Ana" }),

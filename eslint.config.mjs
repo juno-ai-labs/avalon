@@ -24,6 +24,7 @@ import {
 import { durableObjectSqlStorageRule } from "./scripts/eslint-rules/durable-object-sql-storage.mjs";
 import { durableObjectRegionRoutingRule } from "./scripts/eslint-rules/durable-object-region-routing.mjs";
 import { durableObjectNativeRpcRule } from "./scripts/eslint-rules/durable-object-native-rpc.mjs";
+import { durableObjectSyncTransactionRule } from "./scripts/eslint-rules/durable-object-sync-transaction.mjs";
 
 export default tseslint.config(
   {
@@ -61,6 +62,7 @@ export default tseslint.config(
           "durable-object-sql-storage": durableObjectSqlStorageRule,
           "durable-object-region-routing": durableObjectRegionRoutingRule,
           "durable-object-native-rpc": durableObjectNativeRpcRule,
+          "durable-object-sync-transaction": durableObjectSyncTransactionRule,
         },
       },
     },
@@ -78,6 +80,7 @@ export default tseslint.config(
     rules: {
       "rally/durable-object-region-routing": "error",
       "rally/durable-object-native-rpc": "error",
+      "rally/durable-object-sync-transaction": "error",
     },
   },
   {

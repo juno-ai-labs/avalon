@@ -22,7 +22,7 @@ import {
 } from "@rally/agent-harness";
 import { uuidV7 } from "../lib/uuid-v7";
 
-interface FactMaterial {
+export interface TranscriptFactMaterial {
   factId: string;
   factKind: string;
   audience: "shared" | "participant" | "model";
@@ -38,7 +38,7 @@ interface FactMaterial {
   toolCallId: string | null;
 }
 
-interface PreparedFact extends FactMaterial {
+export interface PreparedTranscriptFact extends TranscriptFactMaterial {
   canonical: string;
   hash: string;
   payloadId: string;
@@ -138,14 +138,50 @@ export interface ParticipantMessageInput {
   turnId: string;
   actor: "human" | "assistant" | "external" | "system";
   authorUserId: string | null;
+  clientMessageId?: string;
+  messageType?: "text" | "system" | "elicitation";
+  text: string;
+  structuredContentJson?: string | null;
+  externalActorJson?: string | null;
+  producedByRunId?: string | null;
+  messageSequenceNumber?: number;
   createdAtUtc: string;
   attentionOrdinal: number | null;
 }
 
 export interface PreparedParticipantMessage {
   input: ParticipantMessageInput;
-  fact: PreparedFact;
+  fact: PreparedTranscriptFact;
   occurredAt: number;
+}
+
+export interface WorkstreamMessageRecordInput {
+  messageId: string;
+  clientMessageId: string;
+  authorType: "human" | "agent" | "external" | "system";
+  authorUserId: string | null;
+  externalActorJson: string | null;
+  messageType: "text" | "system" | "elicitation" | "tool" | "suggestion";
+  text: string;
+  structuredContentJson: string | null;
+  producedByRunId: string | null;
+  role?: "system" | "user" | "assistant" | "tool" | "note";
+  kind?: string;
+  effectIntentId?: string | null;
+  toolName?: string | null;
+  toolMode?: "read" | "write" | null;
+  toolStatus?: "pending" | "completed" | "failed" | "ambiguous" | null;
+  visibility?: "people" | "model" | "both" | "system";
+  sequenceNumber: number;
+  attentionOrdinal: number | null;
+  createdAt?: number;
+  editedAt?: number | null;
+  now: number;
+}
+
+export interface PreparedWorkstreamMessageRecord {
+  input: WorkstreamMessageRecordInput;
+  fact: PreparedTranscriptFact;
 }
 
 export interface TranscriptCompactionContinuation {
@@ -219,6 +255,36 @@ interface LegacyBackfillReceiptRow extends Record<string, SqlStorageValue> {
   completed_at: number;
 }
 
+interface LegacyPayloadTransferPartRow extends Record<string, SqlStorageValue> {
+  id: string;
+  sequence_number: number;
+  attention_ordinal: number | null;
+  role: string;
+  author_type: string;
+  author_user_id: string | null;
+  external_actor_json: string | null;
+  content: string | null;
+  client_message_id: string | null;
+  produced_by_run_id: string | null;
+  message_type: string;
+  structured_content_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface LegacyPayloadTransferReceiptRow extends Record<string, SqlStorageValue> {
+  operator_run_id: string;
+  pre_transfer_bookmark: string;
+  source_part_count: number;
+  source_attachment_count: number;
+  source_mention_count: number;
+  source_checkpoint_count: number;
+  source_sha256: string;
+  message_record_count: number;
+  checkpoint_projection_count: number;
+  completed_at: number;
+}
+
 export interface LegacyTranscriptBackfillOutcome {
   applied: boolean;
   verified: boolean;
@@ -231,6 +297,21 @@ export interface LegacyTranscriptBackfillOutcome {
   participantTurnCount: number;
   checkpointProjectionCount: number;
   bindHistoryStatus: "not_reconstructable_from_legacy_aggregate_rows";
+  completedAt: number;
+}
+
+export interface LegacyTranscriptPayloadTransferOutcome {
+  applied: boolean;
+  verified: boolean;
+  operatorRunId: string;
+  preTransferBookmark: string;
+  sourcePartCount: number;
+  sourceAttachmentCount: number;
+  sourceMentionCount: number;
+  sourceCheckpointCount: number;
+  sourceSha256: string;
+  messageRecordCount: number;
+  checkpointProjectionCount: number;
   completedAt: number;
 }
 
@@ -503,6 +584,239 @@ export class WorkstreamTranscriptStorage {
     return this.verifyLegacyBackfill(receipt, applied);
   }
 
+  /**
+   * Move every legacy message and checkpoint payload under canonical facts.
+   *
+   * This is explicit fleet work rather than constructor SQL because hashing
+   * and reconciling the complete retained transcript is content-sized. The
+   * old tables stay in place for the first rollout only; the stacked cleanup
+   * release drops them after every authoritative object carries this receipt.
+   */
+  async transferLegacyTranscriptPayloadOwnership(input: {
+    operatorRunId: string;
+  }): Promise<LegacyTranscriptPayloadTransferOutcome> {
+    const existing = this.legacyPayloadTransferReceipt();
+    if (existing) return this.verifyLegacyPayloadTransfer(existing, false);
+    if (this.hasLiveTranscriptSnapshot()) {
+      throw new Error("legacy_transcript_payload_transfer_live_snapshot");
+    }
+    const source = this.legacyPayloadTransferSource();
+    if (!this.legacyBackfillReceipt()) {
+      const hasUnownedLegacyCheckpoint = source.checkpoints.some(
+        (checkpoint) => this.exactCanonicalCheckpointFactId(checkpoint) === null,
+      );
+      if (source.parts.length > 0 || hasUnownedLegacyCheckpoint) {
+        throw new Error("legacy_transcript_payload_transfer_requires_backfill");
+      }
+    }
+    const sourceCanonical = canonicalJson(source);
+    const sourceSha256 = await sha256(sourceCanonical);
+    const preparedParts = await Promise.all(source.parts.map(async (part) => ({
+      part,
+      prepared: await prepareWorkstreamMessageRecord({
+        messageId: part.id,
+        clientMessageId: part.client_message_id ?? `legacy:${part.id}`,
+        authorType: legacyMessageAuthorType(part.author_type),
+        authorUserId: part.author_user_id,
+        externalActorJson: part.external_actor_json,
+        messageType: legacyMessageType(part.message_type),
+        role: part.role as NonNullable<WorkstreamMessageRecordInput["role"]>,
+        text: part.content ?? "",
+        structuredContentJson: part.structured_content_json,
+        producedByRunId: part.produced_by_run_id,
+        sequenceNumber: Number(part.sequence_number),
+        attentionOrdinal: part.attention_ordinal === null
+          ? null
+          : Number(part.attention_ordinal),
+        now: Number(part.updated_at),
+      }),
+    })));
+    const preparedCheckpoints = await Promise.all(source.checkpoints.map(async (checkpoint) => {
+      const existingFactId = this.exactCanonicalCheckpointFactId(checkpoint);
+      if (existingFactId) return { checkpoint, fact: null, factId: existingFactId };
+      const fact = await prepareTranscriptFact({
+        factId: `${legacyCheckpointFactId(checkpoint)}:owned`,
+        factKind: "legacy_compaction_checkpoint",
+        audience: "model",
+        payload: {
+          messages: JSON.parse(checkpoint.messages_json) as unknown,
+          summary: checkpoint.summary,
+          model: checkpoint.model,
+          contextTokensBeforeCompaction: Number(checkpoint.context_tokens_before_compaction),
+          contextWindowTokens: Number(checkpoint.context_window_tokens),
+          inputTokens: Number(checkpoint.input_tokens),
+          outputTokens: Number(checkpoint.output_tokens),
+          costMicros: Number(checkpoint.cost_micros),
+        },
+        origin: derivedOrigin(
+          "legacy_compaction_checkpoint",
+          `${checkpoint.projection_key}:${checkpoint.run_id}:${checkpoint.compacted_through_sequence}`,
+          Number(checkpoint.checkpoint_template_version),
+        ),
+        runId: checkpoint.run_id,
+        turnId: null,
+        toolCallId: null,
+      });
+      return { checkpoint, fact, factId: fact.factId };
+    }));
+    const preTransferBookmark = await this.storage.getCurrentBookmark();
+    const completedAt = Date.now();
+    const applied = this.storage.transactionSync(() => {
+      if (this.legacyPayloadTransferReceipt()) return false;
+      if (this.hasLiveTranscriptSnapshot()) {
+        throw new Error("legacy_transcript_payload_transfer_live_snapshot");
+      }
+      const activeRun = this.sql.exec<{ run_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT run_id FROM runs
+          WHERE status IN ('admitted', 'running', 'waiting', 'steering') LIMIT 1`,
+      ).toArray()[0];
+      const activeActivity = this.sql.exec<{ activity_id: string } & Record<string, SqlStorageValue>>(
+        `SELECT activity_id FROM transcript_activities
+          WHERE lifecycle_state = 'active' LIMIT 1`,
+      ).toArray()[0];
+      const mutableTool = this.sql.exec<{ id: string } & Record<string, SqlStorageValue>>(
+        `SELECT part.id FROM parts part
+          JOIN tool_effects effect ON effect.effect_intent_id = part.effect_intent_id
+         WHERE part.kind = 'tool_call'
+           AND part.tool_status = 'pending'
+           AND effect.status IN ('admitted', 'executing')
+         LIMIT 1`,
+      ).toArray()[0];
+      if (activeRun || activeActivity || mutableTool) {
+        throw new Error("legacy_transcript_payload_transfer_not_quiescent");
+      }
+      if (canonicalJson(this.legacyPayloadTransferSource()) !== sourceCanonical) {
+        throw new Error("legacy_transcript_payload_transfer_source_moved");
+      }
+      for (const { part, prepared } of preparedParts) {
+        insertPreparedTranscriptFact(this.sql, prepared.fact, Number(part.updated_at));
+        this.sql.exec(
+          `INSERT INTO workstream_message_records
+             (message_id, substream_id, sequence_number, attention_ordinal, fact_id,
+              turn_id, turn_open_sequence, part_index, role, kind, author_type,
+              author_user_id, external_actor_json, content_ref_id, content_bytes,
+              content_hash, answers_message_id, input_message_ids_json, client_message_id,
+              effect_intent_id, occurrence_key, produced_by_run_id, attempt_epoch,
+              executor_event_seq, model_turn_id, tool_position, delivery_intent,
+              input_batch_id, admission_cut_seq, tool_name, tool_mode, tool_status,
+              compacts_through_sequence, compacts_through_turn_id, projected_input_hash,
+              projection_key, authorization_revisions_json, lineage_fences_json,
+              terminal_reason, visibility, pinned, message_type, edited_at, created_at, updated_at)
+           SELECT id, substream_id, sequence_number, attention_ordinal, ?, turn_id,
+                  turn_open_sequence, part_index, role, kind, author_type, author_user_id,
+                  external_actor_json, content_ref_id, content_bytes, content_hash,
+                  answers_part_id, input_part_ids_json, client_message_id, effect_intent_id,
+                  occurrence_key, produced_by_run_id, attempt_epoch, executor_event_seq,
+                  model_turn_id, tool_position, delivery_intent, input_batch_id,
+                  admission_cut_seq, tool_name, tool_mode, tool_status,
+                  compacts_through_sequence, compacts_through_turn_id, projected_input_hash,
+                  projection_key, authorization_revisions_json, lineage_fences_json,
+                  terminal_reason, visibility, pinned, message_type, edited_at, created_at, updated_at
+             FROM parts WHERE id = ?
+           ON CONFLICT(message_id) DO UPDATE SET fact_id = excluded.fact_id`,
+          prepared.fact.factId,
+          part.id,
+        );
+        this.sql.exec(
+          `UPDATE participant_transcript_turns
+              SET root_fact_id = ?, revision = revision + 1, updated_at = MAX(updated_at, ?)
+            WHERE turn_id = ?`,
+          prepared.fact.factId,
+          completedAt,
+          part.id,
+        );
+        this.sql.exec(
+          `UPDATE participant_transcript_blocks
+              SET fact_id = ?, revision = revision + 1, updated_at = MAX(updated_at, ?)
+            WHERE turn_id = ?`,
+          prepared.fact.factId,
+          completedAt,
+          part.id,
+        );
+      }
+      this.sql.exec(
+        `INSERT INTO workstream_message_attachments(message_id, resource_id, position, attachment_json)
+         SELECT part_id, resource_id, position, attachment_json FROM part_attachments
+         WHERE 1
+         ON CONFLICT(message_id, resource_id) DO UPDATE SET
+           position = excluded.position, attachment_json = excluded.attachment_json`,
+      );
+      this.sql.exec(
+        `INSERT INTO workstream_message_mentions
+           (message_id, mention_index, mention_kind, target_user_id, connector_type,
+            start_offset, end_offset, attention_ordinal)
+         SELECT part_id, mention_index, mention_kind, target_user_id, connector_type,
+                start_offset, end_offset, attention_ordinal
+           FROM part_mentions
+          WHERE 1
+         ON CONFLICT(message_id, mention_index) DO UPDATE SET
+           mention_kind = excluded.mention_kind,
+           target_user_id = excluded.target_user_id,
+           connector_type = excluded.connector_type,
+           start_offset = excluded.start_offset,
+           end_offset = excluded.end_offset,
+           attention_ordinal = excluded.attention_ordinal`,
+      );
+      for (const { checkpoint, fact, factId } of preparedCheckpoints) {
+        if (fact) insertPreparedTranscriptFact(this.sql, fact, Number(checkpoint.updated_at));
+        this.sql.exec(
+          `INSERT INTO transcript_compaction_checkpoints
+             (checkpoint_fact_id, execution_principal_key, resource_visibility_fingerprint,
+              checkpoint_template_version, run_id, compacted_through_sequence, model,
+              context_tokens_before_compaction, context_window_tokens, input_tokens,
+              output_tokens, cost_micros, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(execution_principal_key, run_id, compacted_through_sequence) DO UPDATE SET
+             checkpoint_fact_id = excluded.checkpoint_fact_id,
+             resource_visibility_fingerprint = excluded.resource_visibility_fingerprint,
+             checkpoint_template_version = excluded.checkpoint_template_version,
+             model = excluded.model,
+             context_tokens_before_compaction = excluded.context_tokens_before_compaction,
+             context_window_tokens = excluded.context_window_tokens,
+             input_tokens = excluded.input_tokens,
+             output_tokens = excluded.output_tokens,
+             cost_micros = excluded.cost_micros,
+             updated_at = excluded.updated_at`,
+          factId,
+          checkpoint.execution_principal_key,
+          checkpoint.resource_visibility_fingerprint,
+          checkpoint.checkpoint_template_version,
+          checkpoint.run_id,
+          checkpoint.compacted_through_sequence,
+          checkpoint.model,
+          checkpoint.context_tokens_before_compaction,
+          checkpoint.context_window_tokens,
+          checkpoint.input_tokens,
+          checkpoint.output_tokens,
+          checkpoint.cost_micros,
+          checkpoint.created_at,
+          checkpoint.updated_at,
+        );
+      }
+      this.sql.exec(
+        `INSERT INTO legacy_transcript_payload_transfers
+           (id, operator_run_id, pre_transfer_bookmark, source_part_count,
+            source_attachment_count, source_mention_count, source_checkpoint_count,
+            source_sha256, message_record_count, checkpoint_projection_count, completed_at)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        input.operatorRunId,
+        preTransferBookmark,
+        source.parts.length,
+        source.attachments.length,
+        source.mentions.length,
+        source.checkpoints.length,
+        sourceSha256,
+        preparedParts.length,
+        preparedCheckpoints.length,
+        completedAt,
+      );
+      return true;
+    });
+    const receipt = this.legacyPayloadTransferReceipt();
+    if (!receipt) throw new Error("legacy_transcript_payload_transfer_receipt_missing");
+    return this.verifyLegacyPayloadTransfer(receipt, applied);
+  }
+
   async commitBindTransition(transition: BindLoopTransition, now = Date.now()): Promise<void> {
     const previous = this.readBindProjection(transition.loopId);
     const next = applyBindLoopTransition(previous, transition);
@@ -549,7 +863,7 @@ export class WorkstreamTranscriptStorage {
       ? this.messageRows(transition.loopId, previous.stateRevision)
       : [];
     const facts = await this.materializeProjectionFacts(transition, next, previousRows);
-    const checkpointMaterial: FactMaterial = {
+    const checkpointMaterial: TranscriptFactMaterial = {
       factId: `${transition.compactionEventId}:checkpoint`,
       factKind: "compaction_checkpoint",
       audience: "model",
@@ -559,7 +873,7 @@ export class WorkstreamTranscriptStorage {
       turnId: null,
       toolCallId: null,
     };
-    const statusMaterial: FactMaterial = {
+    const statusMaterial: TranscriptFactMaterial = {
       factId: `${transition.compactionEventId}:status`,
       factKind: "compaction_status",
       audience: "participant",
@@ -656,7 +970,7 @@ export class WorkstreamTranscriptStorage {
   }): Promise<void> {
     const now = Date.parse(input.occurredAtUtc);
     if (!Number.isFinite(now)) throw new Error("invalid_compaction_timestamp");
-    const material: FactMaterial = {
+    const material: TranscriptFactMaterial = {
       factId: `${input.compactionEventId}:status`,
       factKind: "compaction_status",
       audience: "participant",
@@ -757,15 +1071,21 @@ export class WorkstreamTranscriptStorage {
   async prepareParticipantMessage(input: ParticipantMessageInput): Promise<PreparedParticipantMessage> {
     const now = Date.parse(input.createdAtUtc);
     if (!Number.isFinite(now)) throw new Error("invalid_participant_message_timestamp");
-    const material: FactMaterial = {
+    const material: TranscriptFactMaterial = {
       factId: `${input.turnId}:message`,
       factKind: "participant_message",
       audience: "shared",
-      // Human text remains owned by the canonical participant part written in
-      // the same transaction. The transcript fact names it; it does not copy it.
-      payload: { role: input.actor, partId: input.turnId },
+      payload: {
+        role: input.actor === "assistant"
+          ? "assistant"
+          : input.actor === "system" ? "system" : "user",
+        content: input.text,
+        structuredContent: input.structuredContentJson == null
+          ? null
+          : JSON.parse(input.structuredContentJson) as unknown,
+      },
       origin: canonicalOrigin(),
-      runId: null,
+      runId: input.producedByRunId ?? null,
       turnId: input.turnId,
       toolCallId: null,
     };
@@ -806,6 +1126,23 @@ export class WorkstreamTranscriptStorage {
         fact.factId,
         now,
       );
+      insertWorkstreamMessageRecord(this.sql, {
+        input: {
+          messageId: input.turnId,
+          clientMessageId: input.clientMessageId ?? input.turnId,
+          authorType: input.actor === "human" ? "human" : input.actor === "assistant" ? "agent" : input.actor,
+          authorUserId: input.authorUserId,
+          externalActorJson: input.externalActorJson ?? null,
+          messageType: input.messageType ?? "text",
+          text: input.text,
+          structuredContentJson: input.structuredContentJson ?? null,
+          producedByRunId: input.producedByRunId ?? null,
+          sequenceNumber: input.messageSequenceNumber ?? sequence,
+          attentionOrdinal: input.attentionOrdinal,
+          now,
+        },
+        fact,
+      });
       return sequence;
   }
 
@@ -841,7 +1178,7 @@ export class WorkstreamTranscriptStorage {
       error: input.error ?? null,
       status: input.status,
     };
-    const material: FactMaterial = {
+    const material: TranscriptFactMaterial = {
       factId: `${input.toolCallId}:participant:${input.status}`,
       factKind: "participant_tool_lifecycle",
       audience: "participant",
@@ -1437,14 +1774,14 @@ export class WorkstreamTranscriptStorage {
     transition: BindLoopTransition,
     next: BindLoopProjectionState,
     previousRows: MessageProjectionRow[],
-  ): Promise<{ materials: PreparedFact[]; factIds: string[]; appendedFactId: string | null }> {
+  ): Promise<{ materials: PreparedTranscriptFact[]; factIds: string[]; appendedFactId: string | null }> {
     const nextMessages = projectBindLoopMessages(next);
     const reusable = new Map<string, string[]>();
     for (const row of previousRows) {
       const key = JSON.stringify(JSON.parse(row.payload_json));
       reusable.set(key, [...(reusable.get(key) ?? []), row.fact_id]);
     }
-    const materials: PreparedFact[] = [];
+    const materials: PreparedTranscriptFact[] = [];
     const factIds: string[] = [];
     let appendedFactId: string | null = null;
     for (let position = 0; position < nextMessages.length; position += 1) {
@@ -1461,7 +1798,7 @@ export class WorkstreamTranscriptStorage {
         continue;
       }
       const factId = `${transition.loopId}:state:${transition.stateRevision}:${suffix}`;
-      const material: FactMaterial = {
+      const material: TranscriptFactMaterial = {
         factId,
         factKind: position === 0 ? "system_projection" : "model_message",
         audience: position === 0 ? "model" : participantShareable(message) ? "shared" : "model",
@@ -1677,56 +2014,19 @@ export class WorkstreamTranscriptStorage {
     ).toArray();
   }
 
-  private async prepareFact(fact: FactMaterial): Promise<PreparedFact> {
-    const canonical = canonicalJson(fact.payload);
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-    const hash = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    return {
-      ...fact,
-      canonical,
-      hash,
-      payloadId: `payload:${fact.audience}:${hash}`,
-    };
+  private async prepareFact(fact: TranscriptFactMaterial): Promise<PreparedTranscriptFact> {
+    return prepareTranscriptFact(fact);
   }
 
-  private insertFact(fact: PreparedFact, now: number): void {
-    this.sql.exec(
-      `INSERT INTO transcript_payloads
-         (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
-       VALUES (?, ?, 'application/json', ?, ?, ?, ?)
-       ON CONFLICT(audience, payload_sha256, byte_length) DO NOTHING`,
-      fact.payloadId,
-      fact.audience,
-      fact.canonical,
-      fact.hash,
-      new TextEncoder().encode(fact.canonical).byteLength,
-      now,
-    );
-    this.sql.exec(
-      `INSERT INTO transcript_facts
-         (fact_id, fact_kind, payload_id, origin_kind, source_kind, source_id,
-          source_revision, run_id, turn_id, tool_call_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(fact_id) DO NOTHING`,
-      fact.factId,
-      fact.factKind,
-      fact.payloadId,
-      fact.origin.originKind,
-      fact.origin.sourceKind,
-      fact.origin.sourceId,
-      fact.origin.sourceRevision,
-      fact.runId,
-      fact.turnId,
-      fact.toolCallId,
-      now,
-    );
+  private insertFact(fact: PreparedTranscriptFact, now: number): void {
+    insertPreparedTranscriptFact(this.sql, fact, now);
   }
 
   private messageOrigin(
     transition: BindLoopTransition,
     position: number,
     systemProjection: BindLoopProjectionState["systemProjection"],
-  ): FactMaterial["origin"] {
+  ): TranscriptFactMaterial["origin"] {
     if (position === 0) {
       return {
         originKind: "system_projection",
@@ -1813,7 +2113,250 @@ export class WorkstreamTranscriptStorage {
     ).toArray()[0];
   }
 
-  private legacyParticipantFact(part: LegacyParticipantPartRow): FactMaterial {
+  private legacyPayloadTransferSource(): {
+    parts: LegacyPayloadTransferPartRow[];
+    attachments: Array<Record<string, SqlStorageValue>>;
+    mentions: Array<Record<string, SqlStorageValue>>;
+    checkpoints: LegacyCompactionCheckpointRow[];
+  } {
+    return {
+      parts: this.sql.exec<LegacyPayloadTransferPartRow>(
+        `SELECT * FROM parts ORDER BY sequence_number, id`,
+      ).toArray(),
+      attachments: this.sql.exec<Record<string, SqlStorageValue>>(
+        `SELECT * FROM part_attachments ORDER BY part_id, position, resource_id`,
+      ).toArray(),
+      mentions: this.sql.exec<Record<string, SqlStorageValue>>(
+        `SELECT * FROM part_mentions ORDER BY part_id, mention_index`,
+      ).toArray(),
+      checkpoints: this.sql.exec<LegacyCompactionCheckpointRow>(
+        `SELECT projection_key, execution_principal_key, resource_visibility_fingerprint,
+                checkpoint_template_version, run_id, compacted_through_sequence,
+                messages_json, summary, model, context_tokens_before_compaction,
+                context_window_tokens, input_tokens, output_tokens, cost_micros,
+                created_at, updated_at
+           FROM compaction_checkpoints
+          ORDER BY execution_principal_key, run_id, compacted_through_sequence, projection_key`,
+      ).toArray(),
+    };
+  }
+
+  private legacyPayloadTransferReceipt(): LegacyPayloadTransferReceiptRow | undefined {
+    return this.sql.exec<LegacyPayloadTransferReceiptRow>(
+      `SELECT operator_run_id, pre_transfer_bookmark, source_part_count,
+              source_attachment_count, source_mention_count, source_checkpoint_count,
+              source_sha256, message_record_count, checkpoint_projection_count, completed_at
+         FROM legacy_transcript_payload_transfers WHERE id = 1`,
+    ).toArray()[0];
+  }
+
+  private exactCanonicalCheckpointFactId(
+    checkpoint: LegacyCompactionCheckpointRow,
+  ): string | null {
+    const existing = this.sql.exec<{
+      checkpoint_fact_id: string;
+      payload_json: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT checkpoint.checkpoint_fact_id, payload.payload_json
+         FROM transcript_compaction_checkpoints checkpoint
+         JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE checkpoint.execution_principal_key = ?
+          AND checkpoint.run_id = ?
+          AND checkpoint.compacted_through_sequence = ?`,
+      checkpoint.execution_principal_key,
+      checkpoint.run_id,
+      checkpoint.compacted_through_sequence,
+    ).toArray()[0];
+    if (!existing) return null;
+    const payload = JSON.parse(existing.payload_json) as Record<string, unknown>;
+    if (!("messages" in payload) || typeof payload.summary !== "string") return null;
+    return canonicalJson(payload.messages) === canonicalJson(JSON.parse(checkpoint.messages_json))
+      && payload.summary === checkpoint.summary
+      ? existing.checkpoint_fact_id
+      : null;
+  }
+
+  private async verifyLegacyPayloadTransfer(
+    receipt: LegacyPayloadTransferReceiptRow,
+    applied: boolean,
+  ): Promise<LegacyTranscriptPayloadTransferOutcome> {
+    const source = this.legacyPayloadTransferSource();
+    const records = this.sql.exec<{
+      message_id: string;
+      payload_json: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT record.message_id, payload.payload_json
+         FROM workstream_message_records record
+         JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        ORDER BY record.sequence_number, record.message_id`,
+    ).toArray();
+    const recordPayloads = new Map(records.map((row) => [row.message_id, row.payload_json]));
+    const payloadsMatch = source.parts.every((part) => {
+      const payloadJson = recordPayloads.get(part.id);
+      if (!payloadJson) return false;
+      const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+      const expectedStructured = part.structured_content_json === null
+        ? null
+        : JSON.parse(part.structured_content_json) as unknown;
+      return payload.role === part.role
+        && payload.content === (part.content ?? "")
+        && canonicalJson(payload.structuredContent ?? null) === canonicalJson(expectedStructured);
+    });
+    const scalarMismatches = Number(this.sql.exec<{
+      count: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count
+         FROM parts part
+         LEFT JOIN workstream_message_records record ON record.message_id = part.id
+        WHERE record.message_id IS NULL
+           OR record.substream_id IS NOT part.substream_id
+           OR record.sequence_number IS NOT part.sequence_number
+           OR record.attention_ordinal IS NOT part.attention_ordinal
+           OR record.turn_id IS NOT part.turn_id
+           OR record.turn_open_sequence IS NOT part.turn_open_sequence
+           OR record.part_index IS NOT part.part_index
+           OR record.role IS NOT part.role
+           OR record.kind IS NOT part.kind
+           OR record.author_type IS NOT part.author_type
+           OR record.author_user_id IS NOT part.author_user_id
+           OR record.external_actor_json IS NOT part.external_actor_json
+           OR record.content_ref_id IS NOT part.content_ref_id
+           OR record.content_bytes IS NOT part.content_bytes
+           OR record.content_hash IS NOT part.content_hash
+           OR record.answers_message_id IS NOT part.answers_part_id
+           OR record.input_message_ids_json IS NOT part.input_part_ids_json
+           OR record.client_message_id IS NOT part.client_message_id
+           OR record.effect_intent_id IS NOT part.effect_intent_id
+           OR record.occurrence_key IS NOT part.occurrence_key
+           OR record.produced_by_run_id IS NOT part.produced_by_run_id
+           OR record.attempt_epoch IS NOT part.attempt_epoch
+           OR record.executor_event_seq IS NOT part.executor_event_seq
+           OR record.model_turn_id IS NOT part.model_turn_id
+           OR record.tool_position IS NOT part.tool_position
+           OR record.delivery_intent IS NOT part.delivery_intent
+           OR record.input_batch_id IS NOT part.input_batch_id
+           OR record.admission_cut_seq IS NOT part.admission_cut_seq
+           OR record.tool_name IS NOT part.tool_name
+           OR record.tool_mode IS NOT part.tool_mode
+           OR record.tool_status IS NOT part.tool_status
+           OR record.compacts_through_sequence IS NOT part.compacts_through_sequence
+           OR record.compacts_through_turn_id IS NOT part.compacts_through_turn_id
+           OR record.projected_input_hash IS NOT part.projected_input_hash
+           OR record.projection_key IS NOT part.projection_key
+           OR record.authorization_revisions_json IS NOT part.authorization_revisions_json
+           OR record.lineage_fences_json IS NOT part.lineage_fences_json
+           OR record.terminal_reason IS NOT part.terminal_reason
+           OR record.visibility IS NOT part.visibility
+           OR record.pinned IS NOT part.pinned
+           OR record.message_type IS NOT part.message_type
+           OR record.edited_at IS NOT part.edited_at
+           OR record.created_at IS NOT part.created_at
+           OR record.updated_at IS NOT part.updated_at`,
+    ).one().count);
+    const attachmentMismatches = Number(this.sql.exec<{
+      count: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM (
+         SELECT part_id AS message_id, resource_id, position, attachment_json FROM part_attachments
+         EXCEPT
+         SELECT message_id, resource_id, position, attachment_json FROM workstream_message_attachments
+         UNION ALL
+         SELECT message_id, resource_id, position, attachment_json FROM workstream_message_attachments
+         EXCEPT
+         SELECT part_id AS message_id, resource_id, position, attachment_json FROM part_attachments
+       )`,
+    ).one().count);
+    const mentionMismatches = Number(this.sql.exec<{
+      count: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM (
+         SELECT part_id AS message_id, mention_index, mention_kind, target_user_id,
+                connector_type, start_offset, end_offset, attention_ordinal FROM part_mentions
+         EXCEPT
+         SELECT message_id, mention_index, mention_kind, target_user_id,
+                connector_type, start_offset, end_offset, attention_ordinal FROM workstream_message_mentions
+         UNION ALL
+         SELECT message_id, mention_index, mention_kind, target_user_id,
+                connector_type, start_offset, end_offset, attention_ordinal FROM workstream_message_mentions
+         EXCEPT
+         SELECT part_id AS message_id, mention_index, mention_kind, target_user_id,
+                connector_type, start_offset, end_offset, attention_ordinal FROM part_mentions
+       )`,
+    ).one().count);
+    const checkpointRows = this.sql.exec<{
+      execution_principal_key: string;
+      run_id: string;
+      compacted_through_sequence: number;
+      payload_json: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT checkpoint.execution_principal_key, checkpoint.run_id,
+              checkpoint.compacted_through_sequence, payload.payload_json
+         FROM transcript_compaction_checkpoints checkpoint
+         JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id`,
+    ).toArray();
+    const checkpointPayloads = new Map(checkpointRows.map((row) => [
+      `${row.execution_principal_key}:${row.run_id}:${row.compacted_through_sequence}`,
+      JSON.parse(row.payload_json) as Record<string, unknown>,
+    ]));
+    const checkpointsMatch = source.checkpoints.every((checkpoint) => {
+      const payload = checkpointPayloads.get(
+        `${checkpoint.execution_principal_key}:${checkpoint.run_id}:${checkpoint.compacted_through_sequence}`,
+      );
+      return payload !== undefined
+        && canonicalJson(payload.messages) === canonicalJson(JSON.parse(checkpoint.messages_json))
+        && payload.summary === checkpoint.summary;
+    });
+    const participantProjectionMismatches = Number(this.sql.exec<{
+      count: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM (
+         SELECT turn.turn_id
+           FROM participant_transcript_turns turn
+           JOIN workstream_message_records record ON record.message_id = turn.turn_id
+          WHERE turn.entry_kind = 'conversation'
+            AND turn.root_fact_id IS NOT record.fact_id
+         UNION ALL
+         SELECT block.block_id
+           FROM participant_transcript_blocks block
+           JOIN workstream_message_records record ON record.message_id = block.turn_id
+          WHERE block.fact_id IS NOT record.fact_id
+       )`,
+    ).one().count);
+    const sourceStillAtReceipt = source.parts.length === Number(receipt.source_part_count)
+      && source.attachments.length === Number(receipt.source_attachment_count)
+      && source.mentions.length === Number(receipt.source_mention_count)
+      && source.checkpoints.length === Number(receipt.source_checkpoint_count);
+    const receiptDigestMatches = !sourceStillAtReceipt
+      || await sha256(canonicalJson(source)) === receipt.source_sha256;
+    const verified = records.length === source.parts.length
+      && scalarMismatches === 0
+      && payloadsMatch
+      && participantProjectionMismatches === 0
+      && attachmentMismatches === 0
+      && mentionMismatches === 0
+      && checkpointsMatch
+      && receiptDigestMatches;
+    if (!verified) throw new Error("legacy_transcript_payload_transfer_reconciliation_failed");
+    return {
+      applied,
+      verified,
+      operatorRunId: receipt.operator_run_id,
+      preTransferBookmark: receipt.pre_transfer_bookmark,
+      sourcePartCount: Number(receipt.source_part_count),
+      sourceAttachmentCount: Number(receipt.source_attachment_count),
+      sourceMentionCount: Number(receipt.source_mention_count),
+      sourceCheckpointCount: Number(receipt.source_checkpoint_count),
+      sourceSha256: receipt.source_sha256,
+      messageRecordCount: Number(receipt.message_record_count),
+      checkpointProjectionCount: Number(receipt.checkpoint_projection_count),
+      completedAt: Number(receipt.completed_at),
+    };
+  }
+
+  private legacyParticipantFact(part: LegacyParticipantPartRow): TranscriptFactMaterial {
     const tool = legacyToolProjection(part);
     return {
       factId: tool ? `${part.id}:legacy-tool` : `${part.id}:message`,
@@ -1931,6 +2474,133 @@ export class WorkstreamTranscriptStorage {
   }
 }
 
+export async function prepareTranscriptFact(
+  fact: TranscriptFactMaterial,
+): Promise<PreparedTranscriptFact> {
+  const canonical = canonicalJson(fact.payload);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  const hash = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return {
+    ...fact,
+    canonical,
+    hash,
+    payloadId: `payload:${fact.audience}:${hash}`,
+  };
+}
+
+export function insertPreparedTranscriptFact(
+  sql: SqlStorage,
+  fact: PreparedTranscriptFact,
+  now: number,
+): void {
+  sql.exec(
+    `INSERT INTO transcript_payloads
+       (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+     VALUES (?, ?, 'application/json', ?, ?, ?, ?)
+     ON CONFLICT(audience, payload_sha256, byte_length) DO NOTHING`,
+    fact.payloadId,
+    fact.audience,
+    fact.canonical,
+    fact.hash,
+    new TextEncoder().encode(fact.canonical).byteLength,
+    now,
+  );
+  sql.exec(
+    `INSERT INTO transcript_facts
+       (fact_id, fact_kind, payload_id, origin_kind, source_kind, source_id,
+        source_revision, run_id, turn_id, tool_call_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(fact_id) DO UPDATE SET
+       payload_id = excluded.payload_id,
+       run_id = excluded.run_id,
+       turn_id = excluded.turn_id,
+       tool_call_id = excluded.tool_call_id`,
+    fact.factId,
+    fact.factKind,
+    fact.payloadId,
+    fact.origin.originKind,
+    fact.origin.sourceKind,
+    fact.origin.sourceId,
+    fact.origin.sourceRevision,
+    fact.runId,
+    fact.turnId,
+    fact.toolCallId,
+    now,
+  );
+}
+
+export async function prepareWorkstreamMessageRecord(
+  input: WorkstreamMessageRecordInput,
+): Promise<PreparedWorkstreamMessageRecord> {
+  const fact = await prepareTranscriptFact({
+    factId: `${input.messageId}:message-record`,
+    factKind: "workstream_message",
+    audience: "shared",
+    payload: {
+      role: input.role ?? modelRoleForAuthor(input.authorType),
+      content: input.text,
+      structuredContent: input.structuredContentJson === null
+        ? null
+        : JSON.parse(input.structuredContentJson) as unknown,
+    },
+    origin: canonicalOrigin(),
+    runId: input.producedByRunId,
+    turnId: input.messageId,
+    toolCallId: null,
+  });
+  return { input, fact };
+}
+
+export function insertWorkstreamMessageRecord(
+  sql: SqlStorage,
+  prepared: PreparedWorkstreamMessageRecord,
+): void {
+  const { input, fact } = prepared;
+  insertPreparedTranscriptFact(sql, fact, input.now);
+  sql.exec(
+    `INSERT INTO workstream_message_records
+       (message_id, substream_id, sequence_number, attention_ordinal, fact_id,
+        role, kind, author_type, author_user_id, external_actor_json,
+        client_message_id, effect_intent_id, produced_by_run_id, attempt_epoch,
+        tool_name, tool_mode, tool_status, visibility, pinned,
+        message_type, edited_at, created_at, updated_at)
+     VALUES (?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+             (SELECT attempt_epoch FROM runs WHERE run_id = ?), ?, ?, ?, ?, 0, ?, ?, ?, ?)
+     ON CONFLICT(message_id) DO UPDATE SET
+       fact_id = excluded.fact_id,
+       tool_name = excluded.tool_name,
+       tool_mode = excluded.tool_mode,
+       tool_status = excluded.tool_status,
+       edited_at = excluded.edited_at,
+       updated_at = excluded.updated_at`,
+    input.messageId,
+    input.sequenceNumber,
+    input.attentionOrdinal,
+    fact.factId,
+    input.role ?? (input.authorType === "human" || input.authorType === "external"
+      ? "user"
+      : input.authorType === "agent" ? "assistant" : "system"),
+    input.kind ?? "text",
+    input.authorType === "human" ? "member" : input.authorType,
+    input.authorUserId,
+    input.externalActorJson,
+    input.clientMessageId,
+    input.effectIntentId ?? null,
+    input.producedByRunId,
+    input.producedByRunId,
+    input.toolName ?? null,
+    input.toolMode ?? null,
+    input.toolStatus ?? null,
+    input.visibility ?? (input.messageType === "system" ? "people" : "both"),
+    input.messageType,
+    input.editedAt ?? null,
+    input.createdAt ?? input.now,
+    input.now,
+  );
+}
+
 function hydrateBlock(
   row: BlockRow,
   mentions: readonly TranscriptMentionRow[],
@@ -1989,9 +2659,19 @@ function hydrateBlock(
   const fn = call?.function && typeof call.function === "object"
     ? call.function as Record<string, unknown>
     : null;
-  const legacyInvocation = payload.legacyTool === true
-    ? legacyToolInvocation(row.part_structured_content_json)
+  const canonicalStructuredContent = payload.structuredContent !== null
+    && typeof payload.structuredContent === "object"
+    && !Array.isArray(payload.structuredContent)
+    ? payload.structuredContent as Record<string, unknown>
     : null;
+  const canonicalInvocation = canonicalStructuredContent?.invocation !== null
+    && typeof canonicalStructuredContent?.invocation === "object"
+    && !Array.isArray(canonicalStructuredContent.invocation)
+    ? canonicalStructuredContent.invocation as Record<string, unknown>
+    : null;
+  const legacyInvocation = canonicalInvocation ?? (payload.legacyTool === true
+    ? legacyToolInvocation(row.part_structured_content_json)
+    : null);
   const safe = payload.status ? payload : {};
   return {
     type: "tool",
@@ -2130,6 +2810,31 @@ function legacyParticipantActor(authorType: string): ParticipantMessageInput["ac
   if (authorType === "agent") return "assistant";
   if (authorType === "external" || authorType === "connector") return "external";
   return "system";
+}
+
+function legacyMessageAuthorType(
+  authorType: string,
+): WorkstreamMessageRecordInput["authorType"] {
+  if (authorType === "member") return "human";
+  if (authorType === "agent") return "agent";
+  if (authorType === "external") return "external";
+  return "system";
+}
+
+function legacyMessageType(messageType: string): WorkstreamMessageRecordInput["messageType"] {
+  if (messageType === "system") return "system";
+  if (messageType === "elicitation") return "elicitation";
+  if (messageType === "tool") return "tool";
+  if (messageType === "suggestion") return "suggestion";
+  return "text";
+}
+
+function modelRoleForAuthor(
+  authorType: WorkstreamMessageRecordInput["authorType"],
+): NonNullable<WorkstreamMessageRecordInput["role"]> {
+  if (authorType === "agent") return "assistant";
+  if (authorType === "system") return "system";
+  return "user";
 }
 
 function legacyToolProjection(part: LegacyParticipantPartRow): {

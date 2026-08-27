@@ -1,4 +1,5 @@
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
+import type { PreparedWorkstreamMessageRecord } from "./workstream-transcript-storage";
 
 /**
  * Object-local scheduling state for one work stream.
@@ -57,6 +58,30 @@ export interface ElicitationRow extends Record<string, SqlStorageValue> {
   external_actor_json: string | null;
   created_at: number;
   answered_at: number | null;
+}
+
+export interface OpenElicitationInput {
+  elicitationId: string;
+  runId: string;
+  prompt: string;
+  responseType: string;
+  optionsJson: string;
+  minimumSelections: number;
+  maximumSelections: number | null;
+  targetUserId: string | null;
+  messageId: string;
+  structuredContentJson: string;
+  now: number;
+}
+
+export interface AnswerElicitationExternallyInput {
+  elicitationId: string;
+  answerJson: string;
+  externalActorJson: string;
+  messageId: string;
+  clientMessageId: string;
+  structuredContentJson: string;
+  now: number;
 }
 
 export interface DescriptionRefreshRow extends Record<string, SqlStorageValue> {
@@ -356,20 +381,34 @@ export class WorkstreamSchedulingStorage {
    * what every stored elicitation part has, and giving them their run is a
    * change that belongs to whoever needs it.
    */
-  openElicitation(input: {
-    elicitationId: string;
-    runId: string;
-    prompt: string;
-    responseType: string;
-    optionsJson: string;
-    minimumSelections: number;
-    maximumSelections: number | null;
-    targetUserId: string | null;
-    messageId: string;
-    structuredContentJson: string;
-    now: number;
-  }): { outcome: "opened" | "exists"; sequenceNumber: number | null } {
-    return this.storage.transactionSync(() => {
+  async prepareOpenElicitationMessage(
+    input: OpenElicitationInput,
+  ): Promise<PreparedWorkstreamMessageRecord> {
+    return this.messages.prepareMessage({
+      messageId: input.messageId,
+      clientMessageId: `elicitation:${input.elicitationId}`,
+      authorType: "agent",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "elicitation",
+      text: "",
+      structuredContentJson: input.structuredContentJson,
+      producedByRunId: null,
+      now: input.now,
+    });
+  }
+
+  async openElicitation(
+    input: OpenElicitationInput,
+  ): Promise<{ outcome: "opened" | "exists"; sequenceNumber: number | null }> {
+    const prepared = await this.prepareOpenElicitationMessage(input);
+    return this.storage.transactionSync(() => this.openPreparedElicitation(input, prepared));
+  }
+
+  openPreparedElicitation(
+    input: OpenElicitationInput,
+    prepared: PreparedWorkstreamMessageRecord,
+  ): { outcome: "opened" | "exists"; sequenceNumber: number | null } {
       if (this.elicitationExistsForRun({
         elicitationId: input.elicitationId,
         runId: input.runId,
@@ -392,18 +431,7 @@ export class WorkstreamSchedulingStorage {
         input.targetUserId,
         input.now,
       );
-      const appended = this.messages.appendMessage({
-        messageId: input.messageId,
-        clientMessageId: `elicitation:${input.elicitationId}`,
-        authorType: "agent",
-        authorUserId: null,
-        externalActorJson: null,
-        messageType: "elicitation",
-        text: "",
-        structuredContentJson: input.structuredContentJson,
-        producedByRunId: null,
-        now: input.now,
-      });
+      const appended = this.messages.appendPreparedMessage(prepared);
       this.sql.exec(
         `UPDATE workstream
             SET exact_state = 'needs_input',
@@ -416,7 +444,6 @@ export class WorkstreamSchedulingStorage {
         input.now,
       );
       return { outcome: "opened" as const, sequenceNumber: appended.sequenceNumber };
-    });
   }
 
   /**
@@ -438,16 +465,36 @@ export class WorkstreamSchedulingStorage {
    * to whether any question is still open rather than to this one having been
    * answered.
    */
-  answerElicitationExternally(input: {
-    elicitationId: string;
-    answerJson: string;
-    externalActorJson: string;
-    messageId: string;
-    clientMessageId: string;
-    structuredContentJson: string;
-    now: number;
-  }): { outcome: "answered" | "already_answered"; sequenceNumber: number | null } {
-    return this.storage.transactionSync(() => {
+  async prepareExternalElicitationAnswerMessage(
+    input: AnswerElicitationExternallyInput,
+  ): Promise<PreparedWorkstreamMessageRecord> {
+    return this.messages.prepareMessage({
+      messageId: input.messageId,
+      clientMessageId: input.clientMessageId,
+      authorType: "external",
+      authorUserId: null,
+      externalActorJson: input.externalActorJson,
+      messageType: "elicitation",
+      text: "",
+      structuredContentJson: input.structuredContentJson,
+      producedByRunId: null,
+      now: input.now,
+    });
+  }
+
+  async answerElicitationExternally(
+    input: AnswerElicitationExternallyInput,
+  ): Promise<{ outcome: "answered" | "already_answered"; sequenceNumber: number | null }> {
+    const prepared = await this.prepareExternalElicitationAnswerMessage(input);
+    return this.storage.transactionSync(
+      () => this.answerPreparedElicitationExternally(input, prepared),
+    );
+  }
+
+  answerPreparedElicitationExternally(
+    input: AnswerElicitationExternallyInput,
+    prepared: PreparedWorkstreamMessageRecord,
+  ): { outcome: "answered" | "already_answered"; sequenceNumber: number | null } {
       const pending = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
         `SELECT 1 AS ok FROM elicitation_requests
           WHERE elicitation_id = ? AND status = 'pending'`,
@@ -464,20 +511,8 @@ export class WorkstreamSchedulingStorage {
         input.now,
         input.elicitationId,
       );
-      const appended = this.messages.appendMessage({
-        messageId: input.messageId,
-        clientMessageId: input.clientMessageId,
-        authorType: "external",
-        authorUserId: null,
-        externalActorJson: input.externalActorJson,
-        messageType: "elicitation",
-        text: "",
-        structuredContentJson: input.structuredContentJson,
-        producedByRunId: null,
-        now: input.now,
-      });
+      const appended = this.messages.appendPreparedMessage(prepared);
       return { outcome: "answered" as const, sequenceNumber: appended.sequenceNumber };
-    });
   }
 
   // ----------------------------------------------------- plugin activation

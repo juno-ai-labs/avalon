@@ -436,6 +436,13 @@ describe("scheduling authority on real workerd", () => {
         actor: "assistant",
         blocks: [{ type: "text", messageType: "elicitation" }],
       });
+      const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM durable_outbox WHERE partition_key = 'common'`,
+      ).one().payload_json) as { effect: { state: string; updatedAt: string } };
+      expect(envelope.effect).toMatchObject({
+        state: "needs_input",
+        updatedAt: new Date(Number(elicitation().now)).toISOString(),
+      });
     });
   });
 
