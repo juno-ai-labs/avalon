@@ -206,6 +206,8 @@ export interface InventoryNamespace {
 export interface InventoryObject {
   objectId: string;
   hasStoredData: boolean;
+  /** When the object-list page carrying this fact finished loading. */
+  observedAt?: number;
 }
 
 /**

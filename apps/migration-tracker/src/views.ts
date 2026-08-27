@@ -455,16 +455,18 @@ export function objectPage(detail: ObjectDetail): HtmlEscapedString | Promise<Ht
       </div>
     </section>
 
+    ${object.status === "empty"
+      ? html`<div class="banner">Cloudflare still enumerates this object ID, but the latest
+          inventory sweep found no stored data. It is retained as history and is not a
+          forced-migration target.</div>`
+      : ""}
+
     <section>
       <h2>Report history</h2>
       <div class="panel scroll">
         ${detail.events.length === 0
-          ? object.status === "empty"
-            ? html`<p class="empty">Cloudflare still enumerates this object ID, but the latest
-                inventory sweep found no stored data. It is retained as history and is not a
-                forced-migration target.</p>`
-            : html`<p class="empty">This object has never reported. The inventory sweep found it,
-                and it has not woken since.</p>`
+          ? html`<p class="empty">This object has never reported. The inventory sweep found it,
+              and it has not woken since.</p>`
           : eventTable(detail.events, false)}
       </div>
     </section>`;

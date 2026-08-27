@@ -126,7 +126,7 @@ export async function sweepInventory(
       objects: null,
     };
     try {
-      const listing = await listObjects(credentials, namespaceId, fetcher);
+      const listing = await listObjects(credentials, namespaceId, fetcher, now);
       namespace.objects = listing.objects;
       if (listing.truncated) truncatedNamespaces.push(namespaceId);
     } catch (error) {
@@ -202,6 +202,7 @@ async function listObjects(
   credentials: InventoryCredentials,
   namespaceId: string,
   fetcher: typeof fetch,
+  now: () => number,
 ): Promise<{ objects: InventoryObject[]; truncated: boolean }> {
   const objects: InventoryObject[] = [];
   const seen = new Set<string>();
@@ -216,10 +217,22 @@ async function listObjects(
     if (cursor) url.searchParams.set("cursor", cursor);
 
     const envelope = await request<ObjectPayload[]>(url.toString(), credentials, fetcher);
+    // This is the narrowest observation fence available from the account API:
+    // per page, immediately after its response, rather than after every
+    // namespace has been enumerated and the registry RPC finally runs.
+    const observedAt = now();
     for (const payload of envelope.result ?? []) {
-      if (typeof payload.id !== "string" || seen.has(payload.id)) continue;
+      if (typeof payload.id !== "string" || payload.id.length === 0) {
+        throw new Error("cloudflare_object_missing_id");
+      }
+      if (seen.has(payload.id)) continue;
+      if (typeof payload.hasStoredData !== "boolean") {
+        // Missing is not false. Treating an API shape change as cleared storage
+        // would silently empty the fleet and disable forced migrations.
+        throw new Error("cloudflare_object_missing_has_stored_data");
+      }
       seen.add(payload.id);
-      objects.push({ objectId: payload.id, hasStoredData: payload.hasStoredData === true });
+      objects.push({ objectId: payload.id, hasStoredData: payload.hasStoredData, observedAt });
     }
 
     cursor = envelope.result_info?.cursor ?? null;
