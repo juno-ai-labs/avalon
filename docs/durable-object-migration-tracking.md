@@ -827,7 +827,10 @@ per-object rollback bookmark and partial-failure boundary.
 are distinct operations. Content apply requires explicit fleet-count witnesses,
 regional classification, durable object-local atomic receipts, protected local
 recovery evidence, nonzero exit on any unverified object, and a full idempotent
-replay before completion.
+replay before completion. An object with a pending legacy tool or a connected
+transcript snapshot is ineligible for the mutating pass; the fleet command must
+record the failure and retry after settlement/disconnection, preserving both
+the source digest and every client's immutable sequence fence.
 
 ### 2026-08-26 — A manual SubstreamAgent fleet wake respects jurisdictions
 

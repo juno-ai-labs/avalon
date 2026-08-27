@@ -649,7 +649,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         env.APP_VERSION ?? "unknown",
         env.AVALON_REGION,
       ));
-      this.transcript = new WorkstreamTranscriptStorage(state.storage);
+      this.transcript = new WorkstreamTranscriptStorage(
+        state.storage,
+        () => this.state.getWebSockets().some((socket) =>
+          this.readAttachment(socket)?.transcriptSnapshot != null),
+      );
       this.product = new WorkstreamObjectProductService(
         state.storage,
         this.objectStore,

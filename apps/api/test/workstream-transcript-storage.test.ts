@@ -148,6 +148,27 @@ describe("canonical ordered work-stream transcript", () => {
     })).resolves.toMatchObject({ applied: true, verified: true });
   });
 
+  it("refuses to backfill a mutable pending legacy tool card", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, role, kind, author_type, content,
+       client_message_id, effect_intent_id, tool_name, tool_mode, tool_status,
+       visibility, pinned, message_type, structured_content_json, created_at, updated_at)
+      VALUES ('pending-tool', '0', 1, 'assistant', 'tool_call', 'agent', '',
+              'tool:pending-tool', 'pending-tool', 'search', 'read', 'pending',
+              'people', 0, 'tool', '{"invocation":{"status":"pending"}}', 0, 0)`);
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-00000000000b",
+      cutoverVersion: 27,
+    })).rejects.toThrow("legacy_transcript_backfill_not_quiescent");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
+  });
+
   it("backfills legacy participant order before post-cutover turns and replays idempotently", async () => {
     const { transcript, sql } = open();
     sql.exec(`INSERT INTO substreams
