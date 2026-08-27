@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
@@ -110,6 +110,33 @@ describe('SocketStatusIndicator', () => {
 });
 
 describe('AvatarStack', () => {
+  it('keeps an avatar mounted while its presence ring fades in and out', () => {
+    const members = [{
+      id: 'user-collaborator',
+      name: 'Ari Collaborator',
+      email: 'ari@rally.test',
+      timezone: 'America/Los_Angeles',
+    }];
+    const view = (presentUserIds: readonly string[] = []) => (
+      <Tooltip.Provider>
+        <AvatarStack members={members} presentUserIds={presentUserIds} />
+      </Tooltip.Provider>
+    );
+    const { container, rerender } = render(view());
+    const avatar = container.querySelector('.avatar');
+    if (!avatar) throw new Error('avatar missing before presence change');
+
+    rerender(view(['user-collaborator']));
+    expect(container.querySelector('.avatar')).toBe(avatar);
+    expect(avatar.closest('.avatar-stack-item')).toHaveClass('is-present');
+    expect(container.querySelector('.avatar-presence-ping')).not.toBeNull();
+
+    rerender(view());
+    expect(container.querySelector('.avatar')).toBe(avatar);
+    expect(avatar.closest('.avatar-stack-item')).not.toHaveClass('is-present');
+    expect(container.querySelector('.avatar-presence-ping')).toBeNull();
+  });
+
   it('explains when another participant is viewing the work stream', async () => {
     stubResizeObserver();
     const { container } = render(
@@ -146,9 +173,14 @@ describe('AvatarStack', () => {
     if (!currentItem || !collaboratorItem) throw new Error('avatar stack item missing');
 
     fireEvent.pointerMove(currentItem, { pointerType: 'mouse' });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 350)));
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(currentItem).not.toHaveAttribute('aria-describedby');
+    fireEvent.focus(currentItem);
+    expect(currentItem).not.toHaveAttribute('aria-describedby');
 
     fireEvent.pointerMove(collaboratorItem, { pointerType: 'mouse' });
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'Ari Collaborator is viewing this workstream.',
     );
