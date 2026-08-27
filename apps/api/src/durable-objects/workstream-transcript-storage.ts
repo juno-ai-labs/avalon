@@ -174,6 +174,8 @@ export interface WorkstreamMessageRecordInput {
   visibility?: "people" | "model" | "both" | "system";
   sequenceNumber: number;
   attentionOrdinal: number | null;
+  createdAt?: number;
+  editedAt?: number | null;
   now: number;
 }
 
@@ -599,8 +601,13 @@ export class WorkstreamTranscriptStorage {
       throw new Error("legacy_transcript_payload_transfer_live_snapshot");
     }
     const source = this.legacyPayloadTransferSource();
-    if (source.parts.length > 0 && !this.legacyBackfillReceipt()) {
-      throw new Error("legacy_transcript_payload_transfer_requires_backfill");
+    if (!this.legacyBackfillReceipt()) {
+      const hasUnownedLegacyCheckpoint = source.checkpoints.some(
+        (checkpoint) => this.exactCanonicalCheckpointFactId(checkpoint) === null,
+      );
+      if (source.parts.length > 0 || hasUnownedLegacyCheckpoint) {
+        throw new Error("legacy_transcript_payload_transfer_requires_backfill");
+      }
     }
     const sourceCanonical = canonicalJson(source);
     const sourceSha256 = await sha256(sourceCanonical);
@@ -2560,9 +2567,12 @@ export function insertWorkstreamMessageRecord(
         tool_name, tool_mode, tool_status, visibility, pinned,
         message_type, edited_at, created_at, updated_at)
      VALUES (?, '0', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-             (SELECT attempt_epoch FROM runs WHERE run_id = ?), ?, ?, ?, ?, 0, ?, NULL, ?, ?)
+             (SELECT attempt_epoch FROM runs WHERE run_id = ?), ?, ?, ?, ?, 0, ?, ?, ?, ?)
      ON CONFLICT(message_id) DO UPDATE SET
        fact_id = excluded.fact_id,
+       tool_name = excluded.tool_name,
+       tool_mode = excluded.tool_mode,
+       tool_status = excluded.tool_status,
        edited_at = excluded.edited_at,
        updated_at = excluded.updated_at`,
     input.messageId,
@@ -2585,7 +2595,8 @@ export function insertWorkstreamMessageRecord(
     input.toolStatus ?? null,
     input.visibility ?? (input.messageType === "system" ? "people" : "both"),
     input.messageType,
-    input.now,
+    input.editedAt ?? null,
+    input.createdAt ?? input.now,
     input.now,
   );
 }
@@ -2648,9 +2659,19 @@ function hydrateBlock(
   const fn = call?.function && typeof call.function === "object"
     ? call.function as Record<string, unknown>
     : null;
-  const legacyInvocation = payload.legacyTool === true
-    ? legacyToolInvocation(row.part_structured_content_json)
+  const canonicalStructuredContent = payload.structuredContent !== null
+    && typeof payload.structuredContent === "object"
+    && !Array.isArray(payload.structuredContent)
+    ? payload.structuredContent as Record<string, unknown>
     : null;
+  const canonicalInvocation = canonicalStructuredContent?.invocation !== null
+    && typeof canonicalStructuredContent?.invocation === "object"
+    && !Array.isArray(canonicalStructuredContent.invocation)
+    ? canonicalStructuredContent.invocation as Record<string, unknown>
+    : null;
+  const legacyInvocation = canonicalInvocation ?? (payload.legacyTool === true
+    ? legacyToolInvocation(row.part_structured_content_json)
+    : null);
   const safe = payload.status ? payload : {};
   return {
     type: "tool",

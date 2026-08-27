@@ -22,6 +22,14 @@ export const AppendMessageInputSchema = z.object({
   now: z.number().finite(),
 }).strict();
 
+export const UpsertToolMessageInputSchema = z.object({
+  messageId: z.string().min(1),
+  clientMessageId: z.string().min(1),
+  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
+  createdAt: z.number().finite(),
+  editedAt: z.number().finite().nullable(),
+}).strict();
+
 /**
  * The wire contract for one work stream's transcript.
  *
@@ -29,7 +37,11 @@ export const AppendMessageInputSchema = z.object({
  * the product service runs in the Worker. This endpoint is how they reach them,
  * in place of D1-shaped SQL rewritten onto `_runtime_messages`.
  */
-type LocalOnlyMessageOperation = "prepareMessage" | "appendPreparedMessage";
+type LocalOnlyMessageOperation =
+  | "prepareMessage"
+  | "appendPreparedMessage"
+  | "prepareToolMessage"
+  | "upsertPreparedToolMessage";
 export type MessageOperation = Exclude<keyof WorkstreamMessageStorage, LocalOnlyMessageOperation>;
 
 export type MessageObjectPort = ObjectPortOf<WorkstreamMessageStorage>;

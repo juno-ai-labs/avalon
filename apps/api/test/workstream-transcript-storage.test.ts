@@ -281,8 +281,7 @@ describe("canonical ordered work-stream transcript", () => {
       operatorRunId: "00000000-0000-7000-8000-000000000003",
       cutoverVersion: 27,
     });
-    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
-      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject({
+    const expectedCard = {
       type: "tool",
       toolCallId: "legacy:legacy-tool",
       pluginId: "plugin_search",
@@ -290,12 +289,48 @@ describe("canonical ordered work-stream transcript", () => {
       status: "completed",
       participantSafeInput: "query",
       participantSafeResult: "result",
+    };
+    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
+      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject(expectedCard);
+    await transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000013",
     });
+    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
+      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject(expectedCard);
     expect(sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
       `SELECT payload.payload_json FROM transcript_payloads payload
        JOIN transcript_facts fact ON fact.payload_id = payload.payload_id
        WHERE fact.fact_id = 'legacy-tool:legacy-tool'`,
     ).one().payload_json).not.toContain("result");
+  });
+
+  it("requires backfill before transferring a checkpoint-only legacy transcript", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, terminalized_at,
+       created_at, updated_at)
+      VALUES ('legacy-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+    sql.exec(`INSERT INTO compaction_checkpoints
+      (projection_key, execution_principal_key, resource_visibility_fingerprint,
+       checkpoint_template_version, run_id, compacted_through_sequence,
+       messages_json, summary, model, context_tokens_before_compaction,
+       context_window_tokens, input_tokens, output_tokens, cost_micros,
+       created_at, updated_at)
+      VALUES ('projection', 'workspace:one', 'inventory:0', 1, 'legacy-run', 1,
+              '[]', 'Only checkpoint', 'model', 10, 100, 1, 1, 1, 0, 0)`);
+
+    await expect(transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: "00000000-0000-7000-8000-000000000014",
+    })).rejects.toThrow("legacy_transcript_payload_transfer_requires_backfill");
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_payload_transfers`)
+      .one().count).toBe(0);
   });
 
   it("references exact legacy compaction messages without fabricating a Bind state", async () => {

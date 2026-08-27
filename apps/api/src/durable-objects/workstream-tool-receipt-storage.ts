@@ -26,6 +26,43 @@
  */
 
 import { uuidV7 } from "../lib/uuid-v7";
+import {
+  insertWorkstreamMessageRecord,
+  prepareWorkstreamMessageRecord,
+  type PreparedWorkstreamMessageRecord,
+  type WorkstreamMessageRecordInput,
+} from "./workstream-transcript-storage";
+
+interface ResidualToolPartSource extends Record<string, SqlStorageValue> {
+  id: string;
+  client_message_id: string | null;
+  author_type: string;
+  author_user_id: string | null;
+  external_actor_json: string | null;
+  content: string;
+  structured_content_json: string | null;
+  produced_by_run_id: string | null;
+  role: string;
+  kind: string;
+  effect_intent_id: string | null;
+  tool_name: string | null;
+  tool_mode: string | null;
+  tool_status: string | null;
+  visibility: string;
+  sequence_number: number;
+  attention_ordinal: number | null;
+  created_at: number;
+  output_summary: string | null;
+  canonical_record_exists: number;
+}
+
+interface PreparedResidualToolPart {
+  effectIntentId: string;
+  status: "failed" | "ambiguous";
+  sourceJson: string | null;
+  structuredContentJson: string | null;
+  prepared: PreparedWorkstreamMessageRecord | null;
+}
 
 /**
  * A plan blob's declared mode, or undefined for anything that will not parse.
@@ -39,6 +76,18 @@ function planMode(executionPlanJson: string | null): unknown {
   } catch {
     return undefined;
   }
+}
+
+function parseObject(value: string | null, errorCode: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value ?? "null") as unknown;
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Fall through to the same stable storage-boundary error as a non-object.
+  }
+  throw new Error(errorCode);
 }
 
 /** The real statuses, and the compatibility spellings they replaced. */
@@ -803,7 +852,7 @@ export class WorkstreamToolReceiptStorage {
    * the caller's own outcome, because the caller knows whether this was a
    * member stopping the work or a lease that lapsed.
    */
-  settleResidualReceipts(input: {
+  async settleResidualReceipts(input: {
     runId: string;
     attemptId: string;
     /** The phase and payload for a receipt that was not mid-write. */
@@ -828,7 +877,25 @@ export class WorkstreamToolReceiptStorage {
      */
     lease: { kind: "terminalized"; at: number };
     now: number;
-  }): { settled: number; open: number } {
+  }): Promise<{ settled: number; open: number }> {
+    const terminalized = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
+      `SELECT 1 AS ok FROM runs WHERE run_id = ? AND terminalized_at = ?`,
+      input.runId,
+      input.lease.at,
+    ));
+    if (!terminalized) {
+      return { settled: 0, open: this.#residualReceipts(input.runId).length };
+    }
+    const preparedParts = new Map((await Promise.all(this.#residualReceipts(input.runId).map(
+      (receipt) => this.#prepareResidualToolPart({
+        effectIntentId: receipt.effect_intent_id,
+        status: receipt.ambiguous === 1 ? "ambiguous" : "failed",
+        errorJson: receipt.ambiguous === 1
+          ? JSON.stringify({ code: "ambiguous_external_write", message: input.ambiguousMessage })
+          : input.errorJson,
+        settledAt: input.now,
+      }),
+    ))).map((prepared) => [prepared.effectIntentId, prepared]));
     return this.storage.transactionSync(() => {
       // The terminal stamp is the only remaining fence: the write that set it
       // also cleared `lease_owner` and `lease_expires_at`, so there is no live
@@ -847,6 +914,12 @@ export class WorkstreamToolReceiptStorage {
         const errorJson = ambiguous
           ? JSON.stringify({ code: "ambiguous_external_write", message: input.ambiguousMessage })
           : input.errorJson;
+        const preparedPart = preparedParts.get(receipt.effect_intent_id);
+        if (!preparedPart
+          || preparedPart.status !== (ambiguous ? "ambiguous" : "failed")
+          || preparedPart.sourceJson !== this.#residualToolPartSourceJson(receipt.effect_intent_id)) {
+          throw new Error("residual_tool_part_source_moved");
+        }
         const index = this.#appendCheckpoint({
           effectIntentId: receipt.effect_intent_id,
           runId: input.runId,
@@ -879,12 +952,7 @@ export class WorkstreamToolReceiptStorage {
           settledIndex,
           receipt.effect_intent_id,
         );
-        this.#projectSettledPart(
-          receipt.effect_intent_id,
-          ambiguous ? "ambiguous" : "failed",
-          errorJson,
-          input.now,
-        );
+        this.#projectSettledPart(preparedPart, ambiguous ? "ambiguous" : "failed", input.now);
         settled += 1;
       }
       // `open` is what the caller's terminal event is fenced on. It is normally
@@ -893,6 +961,107 @@ export class WorkstreamToolReceiptStorage {
       // are finished.
       return { settled, open: this.#residualReceipts(input.runId).length };
     });
+  }
+
+  async #prepareResidualToolPart(input: {
+    effectIntentId: string;
+    status: "failed" | "ambiguous";
+    errorJson: string;
+    settledAt: number;
+  }): Promise<PreparedResidualToolPart> {
+    const source = this.#residualToolPartSource(input.effectIntentId);
+    if (!source) {
+      return {
+        effectIntentId: input.effectIntentId,
+        status: input.status,
+        sourceJson: null,
+        structuredContentJson: null,
+        prepared: null,
+      };
+    }
+    const structured = parseObject(source.structured_content_json, "tool_part_structured_content_invalid");
+    const invocation = structured.invocation !== null
+      && typeof structured.invocation === "object"
+      && !Array.isArray(structured.invocation)
+      ? structured.invocation as Record<string, unknown>
+      : {};
+    const structuredContentJson = JSON.stringify({
+      ...structured,
+      invocation: {
+        ...invocation,
+        status: input.status,
+        activityName: null,
+        outputSummary: source.output_summary,
+        completedAt: new Date(input.settledAt).toISOString(),
+        error: JSON.parse(input.errorJson) as unknown,
+      },
+    });
+    if (source.canonical_record_exists !== 1) {
+      return {
+        effectIntentId: input.effectIntentId,
+        status: input.status,
+        sourceJson: JSON.stringify(source),
+        structuredContentJson,
+        prepared: null,
+      };
+    }
+    const authorType = source.author_type === "member"
+      ? "human"
+      : source.author_type as WorkstreamMessageRecordInput["authorType"];
+    const prepared = await prepareWorkstreamMessageRecord({
+      messageId: source.id,
+      clientMessageId: source.client_message_id ?? `tool:${source.id}`,
+      authorType,
+      authorUserId: source.author_user_id,
+      externalActorJson: source.external_actor_json,
+      messageType: "tool",
+      text: source.content,
+      structuredContentJson,
+      producedByRunId: source.produced_by_run_id,
+      role: source.role as NonNullable<WorkstreamMessageRecordInput["role"]>,
+      kind: source.kind,
+      effectIntentId: source.effect_intent_id,
+      toolName: source.tool_name,
+      toolMode: source.tool_mode as "read" | "write" | null,
+      toolStatus: input.status,
+      visibility: source.visibility as NonNullable<WorkstreamMessageRecordInput["visibility"]>,
+      sequenceNumber: Number(source.sequence_number),
+      attentionOrdinal: source.attention_ordinal === null
+        ? null
+        : Number(source.attention_ordinal),
+      createdAt: Number(source.created_at),
+      editedAt: input.settledAt,
+      now: input.settledAt,
+    });
+    return {
+      effectIntentId: input.effectIntentId,
+      status: input.status,
+      sourceJson: JSON.stringify(source),
+      structuredContentJson,
+      prepared,
+    };
+  }
+
+  #residualToolPartSource(effectIntentId: string): ResidualToolPartSource | undefined {
+    return first(this.sql.exec<ResidualToolPartSource>(
+      `SELECT part.id, part.client_message_id, part.author_type, part.author_user_id,
+              part.external_actor_json, part.content, part.structured_content_json,
+              part.produced_by_run_id, part.role, part.kind, part.effect_intent_id,
+              part.tool_name, part.tool_mode, part.tool_status, part.visibility,
+              part.sequence_number, part.attention_ordinal, part.created_at,
+              effect.output_summary,
+              EXISTS (SELECT 1 FROM workstream_message_records record
+                       WHERE record.message_id = part.id) AS canonical_record_exists
+         FROM parts part
+         JOIN tool_effects effect ON effect.effect_intent_id = part.id
+        WHERE part.id = ? AND part.message_type = 'tool'`,
+      effectIntentId,
+    ));
+  }
+
+  #residualToolPartSourceJson(effectIntentId: string): string | null {
+    const source = this.#residualToolPartSource(effectIntentId);
+    return source ? JSON.stringify(source) : null;
   }
 
   /** Receipts still open on a run, and whether each was mid-write. */
@@ -934,33 +1103,24 @@ export class WorkstreamToolReceiptStorage {
    * a pure deletion.
    */
   #projectSettledPart(
-    effectIntentId: string,
+    projection: PreparedResidualToolPart,
     status: "failed" | "ambiguous",
-    errorJson: string,
     settledAt: number,
   ): void {
+    if (projection.structuredContentJson === null) return;
     this.sql.exec(
       `UPDATE parts SET
-         structured_content_json = json_set(
-           parts.structured_content_json,
-           '$.invocation.status', ?1,
-           '$.invocation.activityName', json('null'),
-           '$.invocation.outputSummary', (
-             SELECT output_summary FROM tool_effects WHERE effect_intent_id = ?4
-           ),
-           '$.invocation.completedAt', ?2,
-           '$.invocation.error', json(?5)
-         ),
-         tool_status = ?1,
+         structured_content_json = ?1,
+         tool_status = ?2,
          edited_at = COALESCE(?3, parts.edited_at, parts.updated_at),
          updated_at = MAX(parts.updated_at, ?3)
        WHERE parts.id = ?4 AND parts.message_type = 'tool'`,
+      projection.structuredContentJson,
       status,
-      new Date(settledAt).toISOString(),
       settledAt,
-      effectIntentId,
-      errorJson,
+      projection.effectIntentId,
     );
+    if (projection.prepared) insertWorkstreamMessageRecord(this.sql, projection.prepared);
   }
 
   // ----------------------------------------------------------------- settle

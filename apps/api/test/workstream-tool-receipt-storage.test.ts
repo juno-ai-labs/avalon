@@ -6,6 +6,10 @@ import {
   WorkstreamToolReceiptStorage,
   type ToolReceiptFence,
 } from "../src/durable-objects/workstream-tool-receipt-storage";
+import {
+  insertWorkstreamMessageRecord,
+  prepareWorkstreamMessageRecord,
+} from "../src/durable-objects/workstream-transcript-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -924,17 +928,17 @@ describe("settling the residual receipts of a terminal run", () => {
     });
   }
 
-  it("fails a read receipt that never started talking to a provider", () => {
+  it("fails a read receipt that never started talking to a provider", async () => {
     const { storage, sql } = open();
     storage.admit(plan());
     reaped(sql);
 
-    expect(settleResidual(storage)).toEqual({ settled: 1, open: 0 });
+    await expect(settleResidual(storage)).resolves.toEqual({ settled: 1, open: 0 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "failed" }]);
   });
 
-  it("leaves a write receipt ambiguous, because the provider may have been reached", () => {
+  it("leaves a write receipt ambiguous, because the provider may have been reached", async () => {
     const { storage, sql } = open();
     storage.admit(plan({
       mode: "write",
@@ -942,12 +946,12 @@ describe("settling the residual receipts of a terminal run", () => {
     }));
     reaped(sql);
 
-    expect(settleResidual(storage)).toEqual({ settled: 1, open: 0 });
+    await expect(settleResidual(storage)).resolves.toEqual({ settled: 1, open: 0 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "ambiguous" }]);
   });
 
-  it("treats a receipt with no readable plan as possibly a write", () => {
+  it("treats a receipt with no readable plan as possibly a write", async () => {
     const { storage, sql } = open();
     storage.admit(plan());
     // The mode column says `read` for an unreadable plan; the sweep does not
@@ -957,13 +961,13 @@ describe("settling the residual receipts of a terminal run", () => {
     sql.exec(`UPDATE tool_effects SET execution_plan_json = NULL`);
     reaped(sql);
 
-    settleResidual(storage);
+    await settleResidual(storage);
 
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "ambiguous" }]);
   });
 
-  it("never touches a receipt that already settled", () => {
+  it("never touches a receipt that already settled", async () => {
     const { storage, sql } = open();
     storage.admit(plan());
     storage.complete({
@@ -973,26 +977,50 @@ describe("settling the residual receipts of a terminal run", () => {
     });
     reaped(sql);
 
-    expect(settleResidual(storage)).toEqual({ settled: 0, open: 0 });
+    await expect(settleResidual(storage)).resolves.toEqual({ settled: 0, open: 0 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "completed" }]);
   });
 
-  it("settles the tool card the member is looking at, not just the receipt", () => {
+  it("settles the tool card the member is looking at, not just the receipt", async () => {
     const { storage, sql } = open();
     storage.admit(plan());
     // A rendered tool part carrying the same id as its receipt, mid-flight.
     sql.exec(
       `INSERT INTO parts (id, substream_id, sequence_number, role, kind, author_type,
-         content, visibility, pinned, message_type, tool_name, tool_mode, tool_status,
-         structured_content_json, created_at, updated_at)
+         content, client_message_id, effect_intent_id, visibility, pinned, message_type,
+         tool_name, tool_mode, tool_status, structured_content_json, created_at, updated_at)
        VALUES ('effect-1', '0', 2, 'assistant', 'tool_call', 'agent',
-         '', 'both', 0, 'tool', 'read_resource', 'read', 'pending',
+         '', 'tool:effect-1', 'effect-1', 'both', 0, 'tool', 'read_resource', 'read', 'pending',
          json('{"invocation":{"status":"started","completedAt":null,"error":null}}'), 1, 1)`,
     );
+    insertWorkstreamMessageRecord(sql, await prepareWorkstreamMessageRecord({
+      messageId: "effect-1",
+      clientMessageId: "tool:effect-1",
+      authorType: "agent",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "tool",
+      text: "",
+      structuredContentJson:
+        '{"invocation":{"status":"started","completedAt":null,"error":null}}',
+      producedByRunId: null,
+      role: "assistant",
+      kind: "tool_call",
+      effectIntentId: "effect-1",
+      toolName: "read_resource",
+      toolMode: "read",
+      toolStatus: "pending",
+      visibility: "both",
+      sequenceNumber: 2,
+      attentionOrdinal: null,
+      createdAt: 1,
+      editedAt: null,
+      now: 1,
+    }));
     reaped(sql);
 
-    settleResidual(storage);
+    await settleResidual(storage);
 
     // Without this the receipt goes terminal and the card spins forever. It
     // used to be the compatibility trigger's job — object schema migration 14
@@ -1010,9 +1038,30 @@ describe("settling the residual receipts of a terminal run", () => {
       visible_status: "failed",
       visible_error: "parent_run_terminated",
     }]);
+    const canonical = sql.exec<{
+      tool_status: string;
+      edited_at: number | null;
+      payload_json: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT record.tool_status, record.edited_at, payload.payload_json
+         FROM workstream_message_records record
+         JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE record.message_id = 'effect-1'`,
+    ).one();
+    expect(canonical.tool_status).toBe("failed");
+    expect(canonical.edited_at).toBe(NOW);
+    expect(JSON.parse(canonical.payload_json)).toMatchObject({
+      structuredContent: {
+        invocation: {
+          status: "failed",
+          error: { code: "parent_run_terminated" },
+        },
+      },
+    });
   });
 
-  it("refuses when the run was not terminalized at the instant claimed", () => {
+  it("refuses when the run was not terminalized at the instant claimed", async () => {
     const { storage, sql } = open();
     storage.admit(plan());
     reaped(sql, NOW);
@@ -1020,16 +1069,16 @@ describe("settling the residual receipts of a terminal run", () => {
     // The guard is the sweep's own fence, re-proved here. A caller passing a
     // stale timestamp is describing a different terminalization than the one
     // that happened, and must move nothing.
-    expect(settleResidual(storage, NOW - 1)).toEqual({ settled: 0, open: 1 });
+    await expect(settleResidual(storage, NOW - 1)).resolves.toEqual({ settled: 0, open: 1 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "executing" }]);
   });
 
-  it("refuses while the run is still live", () => {
+  it("refuses while the run is still live", async () => {
     const { storage, sql } = open();
     storage.admit(plan());
 
-    expect(settleResidual(storage)).toEqual({ settled: 0, open: 1 });
+    await expect(settleResidual(storage)).resolves.toEqual({ settled: 0, open: 1 });
     expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
       .toEqual([{ status: "executing" }]);
   });
