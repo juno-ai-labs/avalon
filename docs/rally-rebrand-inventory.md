@@ -249,7 +249,9 @@ design, not by oversight.
   and `assets/brand/rally-mark.png`. The generator writes the same real mark to
   the desktop, native icon, menu bar, site, favicon, and social-card surfaces.
 - The public site's pages render the redesigned vector mark
-  (`/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` below 24 px).
+  (`/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` below 24 px and
+  `/brand/rally-mark-ink.svg` — the same cut stroked ink — on light surfaces,
+  where the lime stroke has no contrast).
   `/brand/rally-mark.png` is still served because provider manifests hotlink
   that URL; it, `assets/brand/rally-mark.png`, and every other generated
   raster asset come from `scripts/generate-brand-assets.py`, whose source mask
