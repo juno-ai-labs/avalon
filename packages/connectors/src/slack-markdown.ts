@@ -12,6 +12,8 @@
  * structures that make it worth rendering at all.
  */
 
+import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
+
 /** Slack's cumulative limit for all `markdown` blocks in one message payload. */
 export const SLACK_MARKDOWN_BLOCK_LIMIT = 12_000;
 
@@ -30,6 +32,30 @@ const MINIMUM_CHUNK = 64;
 
 /** A line that opens or closes a fenced code block, with its marker captured. */
 const FENCE_LINE = /^[ \t]{0,3}(`{3,}|~{3,})(.*)$/u;
+
+/**
+ * Agent markdown, made safe for a channel.
+ *
+ * Slack renders neither the `resource://` scheme nor footnote syntax, so an
+ * unrewritten citation lands verbatim in front of everybody in the channel: raw
+ * scheme URLs, literal `[^1]` markers, and a broken image where an announcement
+ * belonged. This reduces chips and embeds to the words the model wrote and
+ * footnotes to numbered markers over one trailing source list.
+ *
+ * It is a named step rather than something folded into the chunker because
+ * Slack has two delivery paths and only one of them builds message payloads:
+ * the streaming path appends chunks straight to an open stream. Both call this,
+ * and both call it *before* splitting — running the footnote pass over a chunk
+ * whose definitions landed in the next one would renumber against a body it
+ * could not see.
+ *
+ * Applying it twice is a no-op: what comes out has no citation syntax left to
+ * rewrite. The transcript copy of the same answer keeps its citations; only
+ * what leaves Rally is reduced.
+ */
+export function slackDeliveryMarkdown(markdown: string): string {
+  return rewriteCitationsAsPlainText(markdown.replace(/\r\n/gu, "\n"));
+}
 
 export interface SlackMarkdownMessage {
   /** Notification and accessibility fallback. Never empty; Slack rejects that. */
@@ -159,7 +185,7 @@ export function slackMarkdownMessages(markdown: string, options: {
   header?: string;
   fallback?: string;
 } = {}): SlackMarkdownMessage[] {
-  const source = markdown.replace(/\r\n/gu, "\n").trim() || (options.fallback ?? "").trim();
+  const source = slackDeliveryMarkdown(markdown).trim() || (options.fallback ?? "").trim();
   const chunks = splitSlackMarkdown(source);
   if (!chunks.length) return [];
   const header = options.header?.trim();

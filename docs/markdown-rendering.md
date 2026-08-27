@@ -15,12 +15,15 @@ one of them silently missed the others; the changelog records what that cost.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its four component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, and the `a` renderer that turns mention links into chips. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
+| `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
+| `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, and the plain-text rewrite that outbound email and Slack delivery send instead. |
+| `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guard that `react-markdown` stays mounted in one place. |
 
-Eight call sites, all passing a markdown string as `children`:
+Nine call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
@@ -30,13 +33,16 @@ Eight call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
+| A resource's readable content in the rail's detail | `inspector-rail.tsx` |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
 
 `MarkdownBody` renders a `div.markdown-body` around `ReactMarkdown` with
-`remark-gfm`, so tables, task lists, strikethrough, and autolinks all parse. Four
-overrides sit on top of the default element mapping.
+`remark-gfm`, so tables, task lists, strikethrough, and autolinks all parse.
+Overrides sit on top of the default element mapping: code and tables below, and
+the four — `a`, `img`, `li`, `section` — that hand a node to the citation
+matrix.
 
 ### Code
 
@@ -84,6 +90,61 @@ external one, with `target="_blank"` and `rel="noopener noreferrer"`.
 The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
 model's text cannot impersonate one.
+
+### Citations
+
+A citation is the same mechanism as a mention pointed at content instead of an
+identity, and it reuses every part of it: ordinary Markdown syntax, a custom
+scheme through `urlTransform`, a component override that decides, and label text
+when it cannot. What it adds is a second syntax form and a second position.
+
+`[Title](resource://<id>)` renders as an inline chip.
+`![Title](resource://<id>)` renders as a block embed card — image syntax, because
+models place an image on its own line by training, so the card lands between
+sentences with no renderer heuristic guessing where a block belongs. A GFM
+footnote whose definition is one paragraph carrying exactly one link becomes an
+inline numbered pill with a hover popover, and its entry is dropped from the
+trailing list; a definition that does not fit that grammar keeps classic
+footnote rendering, and the section renders only what was left. In the common
+all-citations case nothing renders at the bottom at all, which is the vertical
+space the feature exists to reclaim.
+
+The dispatch is a **matrix, not an if-chain**: three
+`Record<CitationScheme, …>` tables, one per position, so a scheme added to the
+protocol is a type error until somebody has decided what it looks like as a
+link, as an embed, and as a source. Two cells are worth knowing about:
+
+- **`image` × `https` is a real image**, deliberately. Markdown images render
+  today and the CSP permits them, so hijacking that syntax as a web-citation
+  card would collide with the model legitimately embedding an image.
+- **`link` × unknown keeps react-markdown's default.** That cell is where
+  `mailto:`, `tel:` and relative targets live; rendering it as text would be a
+  regression dressed as a degradation.
+
+Resolution is two-tier. A cited resource the loaded work stream already carries
+resolves synchronously, so the chip is on the first paint. Anything else falls
+back to the workspace-scoped `GET /resources/:id`, remembered per id — a failure
+and a denial are the same answer, label text, so a citation cannot become a way
+to learn that something exists.
+
+Two things here are structural rather than incidental:
+
+- **The citation context travels by React context, not by prop.** A host-owned
+  object in the components' dependency list would invalidate the memoised
+  component config on every commit, exactly as a `mentions = []` default does,
+  and turn the streaming fast path back into a whole-body re-parse. Context
+  updates cross a `memo` boundary, so a footnote definition that arrives
+  mid-stream still reaches its pill while the settled segments around it are
+  reused untouched.
+- **Footnote ids are namespaced per mounted body** through remark-rehype's
+  `clobberPrefix`. GFM writes identical `fn-1`/`fnref-1` ids into every message,
+  and a transcript is dozens of mounts of it.
+
+`react-markdown` and `remark-gfm` are pinned to exact versions, and a guard in
+`markdown-renderer.node.test.ts` keeps them that way. The footnote DOM those two
+produce — the `data-footnote-ref` anchors, the `.footnotes` section — is read
+here by attribute and class name, so a minor release renaming either would
+degrade every citation to a plain superscript with no build error to catch it.
 
 ### Streaming
 
@@ -183,6 +244,16 @@ cannot be written this way is a sign it is not a typography override.
 - **A connector chip requires this render's token.** Without it the link is text
   someone wrote rather than a mention Rally minted, and it renders as a
   fallback span.
+- **A citation that cannot be resolved renders as its label text, and nothing
+  else.** A chip adds an affordance, never disclosure: the label is the model's
+  own words, already in the message. This is also what an unauthorized target
+  renders as, which is why it is indistinguishable from one that does not exist.
+- **`urlTransform` passes exactly three schemes, in two positions.** `resource:`,
+  `person:` and `connector:`, on `a[href]` and `img[src]`. Everything else goes
+  through `defaultUrlTransform`, which empties what it rejects. Widening this is
+  how a model-chosen destination reaches the DOM.
+- **The matrix has no fallthrough.** Every cell is written, or the compiler
+  refuses the table. An `else` branch here is a silent gap by another name.
 
 ## Boundary
 
@@ -248,6 +319,11 @@ that stylesheet and the reasoning behind not deriving it from this one.
   different body colour has to restate it inside the wrapper, and should say why
   in the same breath. `.note-detail-article` carried a dead `color` of this kind
   until 2026-08-12.
+- **A `resource://` target that is malformed, unknown, or invisible to the
+  viewer** renders as the citation's label text — no chip, no card, no anchor.
+- **A footnote reference whose definition never arrived** renders literally,
+  which is the existing behavior for a split footnote and is what streaming
+  shows until the message settles.
 - **A very long markdown string** is rendered in full. Nothing here truncates;
   the surfaces that need a cap impose it themselves, as the system-message clamp
   in `app.css` does.
@@ -262,6 +338,9 @@ pnpm --filter @rally/desktop exec vitest run src/renderer/styles/app.css.node.te
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/markdown-renderer.node.test.ts
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/workstream-blocks.test.tsx
 pnpm --filter @rally/desktop exec vitest run src/renderer/components/attachments.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/renderer/components/citations.test.tsx
+pnpm --filter @rally/desktop exec vitest run src/renderer/lib/use-citations.test.tsx
+pnpm --filter @rally/contracts exec vitest run src/citations.test.ts
 ```
 
 Both guards are `.node.test.ts` files: they read source off disk with `node:fs`,
@@ -285,6 +364,46 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-27 — Citations render as chips, cards and footnote pills
+
+**What changed:** `MarkdownBody` gained a citation layer. Link and image syntax
+carrying a `resource://` target render as an inline chip and a block embed card;
+a GFM footnote whose definition is one paragraph with exactly one link renders
+as an inline numbered pill with a popover and no trailing list entry. The
+dispatch is a typed matrix keyed by scheme and position rather than a branch in
+the `a` override, and it now covers `img`, `li` and `section` as well. The
+protocol — the scheme allowlist, the footnote grammar, and the plain-text
+rewrite for outbound email and Slack — moved into
+`packages/contracts/src/citations.ts`, shared with those two surfaces.
+`react-markdown` and `remark-gfm` are pinned exactly, footnote ids are
+namespaced per mount, and `ResourceIcon` moved here from the inspector rail so
+one mapping serves both.
+
+**Why:** Two pains, one proven mechanism. The terminal-generation sibling
+publishes documents the chat could only talk about in prose — the affordance
+was off in the rail, and a collaborator scanning the transcript had nothing to
+click where the document was named. And a grounded answer showed nothing about
+which claim leaned on which source, which on a multiplayer surface means "go
+check for yourself" is a re-read of everything. Mention chips were already the
+proof that a bracketed-scheme protocol is squarely inside what models emit
+reliably, so citations are one more scheme on that mechanism rather than a new
+message type. The rejected alternative, a dedicated message type with a card,
+costs a wire enum, cache and dispatch branches, and version-skew handling on
+every client to deliver what a link already carries.
+
+**Consequences:** A future scheme is three type errors, not three places to
+remember — that is the reason the matrix is a table. Two cells are load-bearing
+and easy to "fix" wrongly: `image` × `https` stays a real image, because that
+syntax is live and means what it means everywhere, and `link` × unknown keeps
+the default anchor, because that cell is where `mailto:` and `tel:` live. The
+citation context travels by React context specifically so it stays out of the
+memoised component config; putting it in a prop would silently restore the
+whole-body re-parse the streaming segmentation exists to prevent, and the
+streaming-cost test is what would catch it. The pinned dependency versions are
+now part of the contract: the footnote DOM is read by attribute and class name,
+so unpinning them reintroduces a failure that shows up as citations quietly
+becoming superscripts.
 
 ### 2026-08-23 — A code block gets a header bar instead of a floating button
 

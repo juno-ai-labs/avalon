@@ -297,3 +297,70 @@ describe("email markdown rendering", () => {
     expect(html.indexOf("<h1")).toBeLessThan(html.indexOf("<h2"));
   });
 });
+
+/**
+ * Citations leaving Rally.
+ *
+ * This module renders for a mail client, which has never heard of
+ * `resource://` and does not render footnotes. Left alone, an announcement
+ * arrives as literal bracket syntax, an embed as a broken image, and a grounded
+ * answer as a page of `[^1]` markers above nothing at all — and all three are
+ * reachable today, because the HTML path links only `http(s)` targets, the text
+ * path appends whatever target it is given, and neither has any footnote
+ * handling. The rule covers every email this renders, not only digests.
+ */
+describe("citations in outbound email", () => {
+  it("reduces a chip to the words the model wrote, in both MIME parts", () => {
+    const source = "See [the Q3 deck](resource://board-deck) for detail.";
+
+    expect(markdownToEmailHtml(source)).toContain("See the Q3 deck for detail.");
+    expect(markdownToEmailHtml(source)).not.toContain("resource:");
+    expect(markdownToEmailText(source)).toBe("See the Q3 deck for detail.");
+  });
+
+  it("reduces an embed to its label rather than a broken image", () => {
+    const source = "Published:\n\n![Mute windows PRD](resource://prd-mute)";
+
+    // This renderer emits no `<img>` at all, so the leak is not a broken image
+    // here — it is the raw syntax arriving as visible text.
+    expect(markdownToEmailHtml(source)).not.toContain("resource:");
+    expect(markdownToEmailHtml(source)).not.toContain("![");
+    expect(markdownToEmailHtml(source)).toContain("Mute windows PRD");
+    expect(markdownToEmailText(source)).toContain("Mute windows PRD");
+    expect(markdownToEmailText(source)).not.toContain("resource:");
+  });
+
+  it("turns footnotes into numbered markers over one plain source list", () => {
+    const source = [
+      "Revenue grew 40%.[^rev] Margin held.[^mar]",
+      "",
+      "[^rev]: [Q3 board deck](resource://board-deck)",
+      "[^mar]: [Margin memo](https://example.com/memo)",
+    ].join("\n");
+
+    const html = markdownToEmailHtml(source);
+    expect(html).toContain("Revenue grew 40%.[1] Margin held.[2]");
+    expect(html).toContain("Sources");
+    // An internal source is its title; there is no deep link for it to become.
+    expect(html).toContain("Q3 board deck");
+    // An external one keeps a real link, which is the reader's only way to follow it.
+    expect(html).toContain('href="https://example.com/memo"');
+    expect(html).not.toContain("[^");
+  });
+
+  it("keeps a citation out of the inbox preview line", () => {
+    expect(markdownToEmailPreheader("See [the Q3 deck](resource://board-deck) today."))
+      .toBe("See the Q3 deck today.");
+  });
+
+  it("leaves an ordinary external link exactly as it was", () => {
+    expect(markdownToEmailHtml("Read [the docs](https://example.com/docs)."))
+      .toContain('href="https://example.com/docs"');
+  });
+
+  it("leaves a fenced block that is showing the syntax alone", () => {
+    const html = markdownToEmailHtml("Cite like this:\n\n```md\n[Title](resource://the-id)\n```");
+
+    expect(html).toContain("[Title](resource://the-id)");
+  });
+});

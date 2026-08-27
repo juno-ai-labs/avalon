@@ -12,6 +12,7 @@ import {
   slackAgentActivationAcknowledgement,
   slackAgentReactionSource,
   slackDefaultReactionFor,
+  slackDeliveryMarkdown,
   slackMarkdownMessages,
   slackWorkingReaction,
   splitSlackMarkdown,
@@ -1288,7 +1289,11 @@ export class SlackAgentService {
     let deliveryError: unknown;
     try {
       if (session.slack_stream_ts) {
-        for (const chunk of splitSlackMarkdown(responseText)) {
+        // The streaming path builds no message payload, so it does not pass
+        // through `slackMarkdownMessages` — it has to reduce citations itself
+        // or an answer delivered by stream leaks the syntax the batched one
+        // does not.
+        for (const chunk of splitSlackMarkdown(slackDeliveryMarkdown(responseText))) {
           await slackApi(token, "chat.appendStream", { channel: session.slack_channel_id, ts: session.slack_stream_ts, markdown_text: chunk }, AbortSignal.timeout(10_000));
         }
         streamContentComplete = true;

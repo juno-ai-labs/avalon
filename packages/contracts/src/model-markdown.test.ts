@@ -160,3 +160,30 @@ describe("normalizeModelText", () => {
       .toBe("Migrate C:\\to\\dist and \\in-flight work");
   });
 });
+
+/**
+ * This pass sits between the model and every renderer, so it is the one place
+ * that could mangle a citation before anything has had a chance to read it. It
+ * escapes Markdown punctuation in what it unwraps, and a `\[` manufactured
+ * inside a citation would stop the syntax being a link at all — the failure
+ * would look like the citation feature not working, several modules away from
+ * the cause.
+ */
+describe("citation syntax through the normalizer", () => {
+  it("passes every citation form through byte for byte", () => {
+    for (const source of [
+      "See [the Q3 deck](resource://board-deck) for detail.",
+      "![Mute windows PRD](resource://prd-mute)",
+      "Revenue grew 40%.[^1]\n\n[^1]: [Q3 board deck](resource://board-deck)",
+      "Legacy spelling still parses: [Deck](resource:board-deck).",
+      "[Docs](https://example.com/a_b_c?x=1&y=2)",
+    ]) {
+      expect(normalizeModelMarkdown(source)).toBe(source);
+    }
+  });
+
+  it("still repairs the prose around a citation", () => {
+    expect(normalizeModelMarkdown("Backlog $\\rightarrow$ Done, per [the deck](resource://d)."))
+      .toBe("Backlog → Done, per [the deck](resource://d).");
+  });
+});

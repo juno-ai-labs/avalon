@@ -149,6 +149,7 @@ export {
 export {
   slackHeaderBlock,
   slackMarkdownBlock,
+  slackDeliveryMarkdown,
   slackMarkdownMessages,
   slackNotificationText,
   splitSlackMarkdown,
