@@ -105,7 +105,12 @@ exact provider array, so the operation creates no historical Bind head/message
 and records that limitation explicitly rather than inventing interleaving.
 
 The data operation is an object-owned RPC, not constructor work. It requires a
-main-feed (`external_substream_id = '0'`) authority and a quiescent writer,
+main-feed (`external_substream_id = '0'`) authority. Before a first-time
+backfill, it runs the existing terminal-run residual-receipt repair so a tool
+receipt left open after its owning run terminalized is settled through the same
+runtime path used at ordinary run admission. Repair failure aborts the
+operation; an already committed replay never runs repair. The operation then
+requires a quiescent writer,
 captures a real pre-write PITR bookmark, hashes and prepares
 the source outside the transaction, then re-reads the entire source inside the
 single SQLite transaction that shifts sequences, inserts projections, and
@@ -1256,8 +1261,10 @@ wake on the migration path.
 **What a future change has to respect:** source rows referenced by a completed
 receipt are immutable transcript owners. A backfill must be quiescent,
 object-local, atomic with its receipt, PITR-recoverable, and replay-reconciled.
-Quiescence includes pending legacy tools backed by an `admitted` or `executing`
-receipt and connected clients holding immutable transcript snapshots: later
+Before the first receipt, terminal runs receive the established residual-tool
+repair pass; this may settle their `admitted` or `executing` receipts and make
+their legacy cards eligible. A still-open receipt after repair and connected
+clients holding immutable transcript snapshots remain quiescence failures: later
 receipt settlement would invalidate the recorded source digest, while prefix
 insertion would change an open fence's sequence meaning. A historical pending
 card without an open receipt has no settlement writer and is projected as the

@@ -1078,6 +1078,42 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("legacy_transcript_backfill_run_id_invalid");
     }
     if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
+    if (!this.transcript.hasLegacyBackfillReceipt()) {
+      const identity = this.objectStore.identity();
+      if (identity) {
+        const executionEnv = this.localRuntimeEnvironment(
+          identity.workspaceId,
+          identity.workstreamId,
+          "0",
+        );
+        const repairFailures: string[] = [];
+        await reapStaleHarnessRuns(
+          createHarnessRunObjectPort(executionEnv, identity.workspaceId, identity.workstreamId),
+          {
+            receipts: createToolReceiptPortFactory(executionEnv),
+            blocks: createBlockDashboardPortFactory(executionEnv),
+            workspaceId: identity.workspaceId,
+            workstreamId: identity.workstreamId,
+            limit: 100,
+            automationDatabase: withWorkspaceRuntimeDatabase(this.env, identity.workspaceId).DB,
+            onReceiptRepairFailure: (failure) => {
+              repairFailures.push(failure.reason);
+              logWarn(this.env, "legacy_transcript_backfill_residual_receipt_repair_failed", {
+                workspace_id: failure.workspaceId,
+                workstream_id: failure.workstreamId,
+                harness_run_id: failure.runId,
+                attempt_id: failure.attemptId,
+                repair_phase: failure.phase,
+                reason: failure.reason,
+              });
+            },
+          },
+        );
+        if (repairFailures.length > 0) {
+          throw new Error("legacy_transcript_backfill_residual_receipt_repair_failed");
+        }
+      }
+    }
     return this.transcript.backfillLegacyTranscript({
       operatorRunId: input.operatorRunId,
       cutoverVersion: input.cutoverVersion,

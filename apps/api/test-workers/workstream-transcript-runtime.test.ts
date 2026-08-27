@@ -7,6 +7,7 @@ import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../src/durable-objects/names";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
+import { seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000701");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000702");
@@ -14,6 +15,81 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-000000000702");
 beforeEach(async () => reset());
 
 describe("work-stream transcript on workerd SQLite", () => {
+  it("repairs a terminal run's open tool receipt before the first backfill", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const cutover = Number(state.storage.sql.exec<{ applied_at: number }>(
+        `SELECT applied_at FROM _sql_schema_migrations WHERE version = 27`,
+      ).one().applied_at);
+      state.storage.sql.exec(`INSERT INTO parts
+        (id, substream_id, sequence_number, role, kind, author_type, content,
+         client_message_id, effect_intent_id, tool_name, tool_mode, tool_status,
+         visibility, pinned, message_type, structured_content_json, created_at, updated_at)
+        VALUES ('residual-tool', '0', 1, 'assistant', 'tool_call', 'agent', '',
+                'tool:residual-tool', 'residual-tool', 'search', 'read', 'pending',
+                'people', 0, 'tool', '{"invocation":{"status":"pending"}}', ?, ?)`,
+      cutover - 1, cutover - 1);
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, legacy_attempt_id,
+         terminalized_at, created_at, updated_at)
+        VALUES ('terminal-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 1,
+                0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 'terminal-attempt', 5, 1, 5)`);
+      state.storage.sql.exec(`INSERT INTO tool_effects
+        (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+         tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json)
+        VALUES ('residual-tool', 'terminal-run', 0, 0, 'residual-tool', 'search',
+                'read', 'request', 'authority', 'admitted', 'provider-call', '{}')`);
+    });
+
+    const outcome = await stub.backfillLegacyTranscript({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000713",
+      cutoverVersion: 27,
+    });
+    expect(outcome).toMatchObject({ applied: true, verified: true, participantTurnCount: 1 });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.storage.sql.exec<{ tool_status: string }>(
+        `SELECT tool_status FROM parts WHERE id = 'residual-tool'`,
+      ).one().tool_status).toBe("failed");
+      expect(state.storage.sql.exec<{ lifecycle_state: string }>(
+        `SELECT lifecycle_state FROM participant_transcript_blocks WHERE turn_id = 'residual-tool'`,
+      ).one().lifecycle_state).toBe("failed");
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, legacy_attempt_id,
+         terminalized_at, created_at, updated_at)
+        VALUES ('post-backfill-terminal-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 6,
+                0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 'post-backfill-attempt', 10, 6, 10)`);
+      state.storage.sql.exec(`INSERT INTO tool_effects
+        (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+         tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json)
+        VALUES ('post-backfill-tool', 'post-backfill-terminal-run', 0, 0,
+                'post-backfill-tool', 'search', 'read', 'request', 'authority',
+                'admitted', 'post-backfill-provider-call', '{}')`);
+    });
+
+    const replay = await stub.backfillLegacyTranscript({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000714",
+      cutoverVersion: 27,
+    });
+    expect(replay).toMatchObject({ applied: false, verified: true });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM tool_effects WHERE effect_intent_id = 'post-backfill-tool'`,
+      ).one().status).toBe("admitted");
+    });
+  });
+
   it("refuses to renumber while a client holds an immutable transcript snapshot", async () => {
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
