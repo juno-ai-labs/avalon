@@ -97,11 +97,16 @@ describe('InspectorRail details', () => {
   });
 
   it('steps the stored width from the handle standing beside the rail', () => {
-    render(
+    const { container } = render(
       <Tooltip.Provider>
         <InspectorRail workstream={workstream} />
       </Tooltip.Provider>,
     );
+    // The class is the whole contract: `.rail-scroll` in `app.css` owns the
+    // scrolling, the reserved gutter and the overscroll containment for this
+    // rail and HyperSight's alike, and renaming it here would take all three
+    // away with nothing else noticing.
+    expect(container.querySelector('.rail-scroll')).not.toBeNull();
     const handle = screen.getByRole('separator', { name: 'Resize inspector' });
 
     expect(handle).toHaveAttribute('aria-valuenow', '360');

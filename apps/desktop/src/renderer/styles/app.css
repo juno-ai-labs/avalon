@@ -597,7 +597,9 @@ pre {
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px 8px 18px;
+  scrollbar-gutter: stable;
 }
 
 .sidebar-primary-actions { display: grid; gap: var(--av-sys-space-row-gap); margin-bottom: var(--av-sys-space-group-gap); }
@@ -1204,6 +1206,7 @@ pre {
   min-height: 0;
   overflow-y: auto;
   padding-top: 14px;
+  scrollbar-gutter: stable;
 }
 
 .settings-navigation-group { margin-top: 13px; }
@@ -1299,6 +1302,7 @@ pre {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 20px 30px 34px;
+  scrollbar-gutter: stable;
 }
 
 .settings-pane { margin: 0 auto; max-width: 860px; width: 100%; }
@@ -2273,7 +2277,7 @@ pre {
 
 /* New work stream */
 
-.new-workstream-home { margin: 0 auto; max-width: 860px; overflow-y: auto; padding: 92px 34px 34px; width: 100%; }
+.new-workstream-home { margin: 0 auto; max-width: 860px; overflow-y: auto; padding: 92px 34px 34px; scrollbar-gutter: stable; width: 100%; }
 .new-workstream-welcome { align-items: center; display: flex; gap: 10px; }
 .new-workstream-welcome h1 { font-size: 25px; font-weight: 510; letter-spacing: -0.03em; line-height: 1.15; margin: 0; }
 .new-workstream-welcome-mark { color: var(--av-sys-color-brand-ink); height: 22px; width: 22px; }
@@ -2432,13 +2436,12 @@ pre {
 .participant-header-button { align-items: center; background: transparent; border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-muted); display: flex; gap: 4px; min-height: 30px; padding: 2px 5px; }
 .participant-header-button:hover { background: var(--av-sys-color-surface-raised); color: var(--av-sys-color-text-default); }
 
-.transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; }
+.transcript-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: auto; scrollbar-gutter: stable; }
 
 /* HyperSight — the second panel of the right sidebar, sharing the inspector
    rail's frame, grab handle, and header through `.rail-surface`. */
 .block-dashboard-rail .rail-title { gap: 7px; }
 .block-dashboard-rail .rail-title h2 { margin-left: 0; }
-.block-dashboard-rail .rail-scroll { overscroll-behavior: contain; }
 .block-dashboard-rail-icon { align-items: center; color: var(--av-sys-color-brand-ink); display: flex; }
 .block-dashboard-block-count { color: var(--av-sys-color-text-muted); font-size: 9.5px; }
 .block-dashboard-panel { min-width: 0; }
@@ -2804,6 +2807,9 @@ pre {
  * highlight layer. The layers must agree on where a line wraps, and `auto`
  * would take 9px away mid-draft; applying it unconditionally also keeps the
  * text column from shifting when a composer gains its first mentionable label.
+ * `scrollbar-gutter: stable` — which is what every other scroller in this file
+ * reserves its 9px with — would also reserve it here, but the two layers' wrap
+ * agreement is not worth re-proving to swap one working mechanism for another.
  */
 .workstream-composer textarea,
 .workstream-composer .composer-highlight { overflow-y: scroll; }
@@ -2942,7 +2948,7 @@ pre {
 .rail-title,
 .rail-header-actions { align-items: center; display: flex; gap: 2px; }
 .rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; }
-.rail-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; }
+.rail-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .rail-inline-error { padding: 9px 11px 0; }
 .rail-inline-error .inline-error { margin: 0; }
 .rail-sections { padding: 3px 11px 20px; }
@@ -3069,7 +3075,7 @@ pre {
 
 /* Conversational automation creation */
 
-.new-automation-screen { height: 100%; overflow: auto; }
+.new-automation-screen { height: 100%; overflow: auto; scrollbar-gutter: stable; }
 .new-automation-actions { position: fixed; right: 10px; top: 6px; z-index: 5; }
 .automation-builder { display: flex; flex-direction: column; margin: 0 auto; min-height: 100%; padding: 68px 38px 132px; width: min(996px, 100%); }
 .automation-builder-intro { margin: auto 0; padding: 30px 0 95px; text-align: center; }
@@ -3187,7 +3193,7 @@ pre {
 .automation-overview-actions .button { font-size: 11px; }
 .overview-error { left: 50%; position: absolute; top: 60px; transform: translateX(-50%); z-index: 3; }
 .overview-error .inline-error { background: var(--av-sys-color-danger-wash); border-radius: var(--av-sys-size-radius-sm); padding: 6px 9px; }
-.automation-overview-scroll { min-height: 0; overflow: auto; }
+.automation-overview-scroll { min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 .automation-overview-layout { display: grid; gap: 42px; grid-template-columns: 250px minmax(0, 1fr); margin: 0 auto; max-width: 1120px; padding: 48px 35px 100px; }
 .automation-facts { display: flex; flex-direction: column; gap: 25px; }
 .automation-facts section { display: grid; gap: 5px; }
@@ -3369,7 +3375,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   min-width: 0;
 }
 .note-detail-main { display: grid; grid-template-rows: 55px minmax(0, 1fr); min-width: 0; }
-.note-detail-scroll { min-height: 0; overflow-y: auto; }
+.note-detail-scroll { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 /* `font-size` and `line-height` are the empty state's; the markdown carries its
    own. No `color` here: `.markdown-body` sets one on itself and a declaration
    beats inheritance, so a colour stated on this element would reach the markdown
@@ -3435,7 +3441,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 .note-transcript-rail > header > span { align-items: center; color: var(--av-sys-color-text-muted); display: flex; gap: 7px; }
 .note-transcript-rail h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0; }
 .note-transcript-rail small { color: var(--av-sys-color-brand-ink); font-size: 9px; text-transform: uppercase; }
-.note-transcript-scroll { min-height: 0; overflow-y: auto; padding: 16px 14px 28px; }
+.note-transcript-scroll { min-height: 0; overflow-y: auto; padding: 16px 14px 28px; scrollbar-gutter: stable; }
 .note-transcript-scroll > p { color: var(--av-sys-color-text-subtle); font-size: 12px; line-height: 1.58; margin: 0 0 14px; }
 .note-transcript-scroll > p:last-child { color: var(--av-sys-color-text-default); margin-bottom: 0; }
 .note-transcript-empty { font-size: 11px; gap: 8px; height: 100%; }
