@@ -1,0 +1,214 @@
+/**
+ * One-time, jurisdiction-safe production backfill of pre-v27 work-stream rows.
+ *
+ * The Cloudflare inventory API supplies opaque object IDs. A local remote-dev
+ * probe classifies those IDs and invokes the deployed, object-owned RPC through
+ * each regional namespace binding. Every result, including the pre-write PITR
+ * bookmark, is written to a mode-0600 local receipt before this command exits.
+ */
+import { rename, writeFile } from 'node:fs/promises';
+
+import { isEntryPoint } from './entry-point.mjs';
+import {
+  classifyRegionalObjects,
+  listNamespaces,
+  listStoredObjects,
+} from './force-substream-agent-migrations.mjs';
+
+const CLASS_NAME = 'SubstreamAgent';
+// Reuse the migration subsystem's reviewed 100-object fan-out batch; this
+// one-off content operation must not introduce a second guessed fleet limit.
+const BATCH_SIZE = 100;
+const REGIONS = ['eu', 'global'];
+
+function required(environment, name) {
+  const value = environment[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function parseArguments(argv) {
+  const args = argv.filter((argument) => argument !== '--');
+  const value = (name) => args.find((argument) => argument.startsWith(`${name}=`))
+    ?.slice(name.length + 1) ?? null;
+  const apply = args.includes('--apply');
+  const region = value('--region') ?? 'all';
+  if (!['all', ...REGIONS].includes(region)) throw new Error(`unsupported_region:${region}`);
+  const probeUrl = value('--jurisdiction-probe-url');
+  if (!probeUrl || !URL.canParse(probeUrl)) throw new Error('jurisdiction_probe_url_required');
+  const expected = {
+    eu: Number(value('--expected-eu')),
+    global: Number(value('--expected-global')),
+  };
+  if (apply && (expected.eu !== 3 || expected.global !== 389)) {
+    throw new Error('apply_requires_expected_eu_3_and_global_389');
+  }
+  const allowed = new Set([
+    '--apply', '--region', '--jurisdiction-probe-url', '--expected-eu',
+    '--expected-global', '--receipt',
+  ]);
+  const unknown = args.find((argument) => {
+    const key = argument.includes('=') ? argument.slice(0, argument.indexOf('=')) : argument;
+    return !allowed.has(key);
+  });
+  if (unknown) throw new Error(`unknown_argument:${unknown}`);
+  return {
+    apply,
+    expected,
+    probeUrl,
+    receiptPath: value('--receipt'),
+    regions: region === 'all' ? REGIONS : [region],
+  };
+}
+
+function namespaceFor(namespaces, region) {
+  const matches = namespaces.filter((namespace) =>
+    namespace.class === CLASS_NAME && namespace.script === `avalon-api-${region}`);
+  if (matches.length !== 1 || typeof matches[0]?.id !== 'string') {
+    throw new Error(`${region}_substream_agent_namespace_count_${matches.length}`);
+  }
+  return matches[0].id;
+}
+
+async function invokeBackfill(probeUrl, region, objectIds, operatorRunId, fetcher) {
+  const response = await fetcher(probeUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      operation: 'backfill',
+      region,
+      objectIds,
+      operatorRunId,
+      cutoverVersion: 27,
+    }),
+  });
+  if (!response.ok) throw new Error(`${region}_backfill_probe_${response.status}`);
+  const payload = await response.json();
+  if (!Array.isArray(payload.objects) || payload.objects.length !== objectIds.length) {
+    throw new Error(`${region}_backfill_probe_incomplete`);
+  }
+  const expectedIds = new Set(objectIds);
+  const seen = new Set();
+  return payload.objects.map((row) => {
+    if (!row || typeof row.objectId !== 'string'
+      || !expectedIds.has(row.objectId) || seen.has(row.objectId)) {
+      throw new Error(`${region}_backfill_probe_invalid`);
+    }
+    seen.add(row.objectId);
+    if (row.error !== undefined) return { objectId: row.objectId, error: String(row.error) };
+    const outcome = row.outcome;
+    const validCount = (count) => Number.isSafeInteger(count) && count >= 0;
+    if (outcome?.verified !== true
+      || typeof outcome.applied !== 'boolean'
+      || typeof outcome.preBackfillBookmark !== 'string'
+      || outcome.preBackfillBookmark.length === 0
+      || typeof outcome.sourceSha256 !== 'string'
+      || !/^[a-f0-9]{64}$/u.test(outcome.sourceSha256)
+      || !validCount(outcome.sourcePartCount)
+      || !validCount(outcome.participantTurnCount)
+      || outcome.sourcePartCount !== outcome.participantTurnCount
+      || !validCount(outcome.sourceCheckpointCount)
+      || !validCount(outcome.checkpointProjectionCount)
+      || outcome.sourceCheckpointCount !== outcome.checkpointProjectionCount
+      || outcome.bindHistoryStatus !== 'not_reconstructable_from_legacy_aggregate_rows') {
+      return { objectId: row.objectId, error: 'unverified_backfill_outcome' };
+    }
+    return { objectId: row.objectId, outcome };
+  });
+}
+
+async function persistReceipt(path, receipt) {
+  const temporary = `${path}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  await rename(temporary, path);
+}
+
+export async function backfillSubstreamAgentTranscripts({
+  argv = process.argv.slice(2),
+  environment = process.env,
+  fetcher = fetch,
+  logger = console,
+} = {}) {
+  const options = parseArguments(argv);
+  const credentials = {
+    accountId: required(environment, 'CLOUDFLARE_ACCOUNT_ID'),
+    apiToken: required(environment, 'CLOUDFLARE_API_TOKEN'),
+  };
+  const namespaces = await listNamespaces(credentials, fetcher);
+  const inventories = await Promise.all(options.regions.map(async (region) => {
+    const namespaceId = namespaceFor(namespaces, region);
+    const stored = await listStoredObjects(credentials, namespaceId, fetcher);
+    const classified = await classifyRegionalObjects(
+      { region }, stored, options.probeUrl, fetcher,
+    );
+    return { region, namespaceId, stored: stored.length, ...classified };
+  }));
+  const counts = Object.fromEntries(inventories.map((inventory) => [inventory.region, {
+    stored: inventory.stored,
+    eligible: inventory.eligibleObjectIds.length,
+    skipped: inventory.skippedObjects,
+  }]));
+  logger.log(JSON.stringify({ mode: options.apply ? 'apply' : 'dry-run', regions: counts }, null, 2));
+  if (!options.apply) return { mode: 'dry-run', regions: counts };
+  for (const inventory of inventories) {
+    if (inventory.eligibleObjectIds.length !== options.expected[inventory.region]) {
+      throw new Error(
+        `${inventory.region}_eligible_count_${inventory.eligibleObjectIds.length}`
+        + `_expected_${options.expected[inventory.region]}`,
+      );
+    }
+  }
+
+  const operatorRunId = crypto.randomUUID();
+  const receiptPath = options.receiptPath
+    ?? `/tmp/rally-legacy-transcript-backfill-${operatorRunId}.json`;
+  const receipt = {
+    operatorRunId,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    regions: Object.fromEntries(inventories.map((inventory) => [inventory.region, []])),
+  };
+  await persistReceipt(receiptPath, receipt);
+  for (const inventory of inventories) {
+    for (let index = 0; index < inventory.eligibleObjectIds.length; index += BATCH_SIZE) {
+      const objectIds = inventory.eligibleObjectIds.slice(index, index + BATCH_SIZE);
+      const rows = await invokeBackfill(
+        options.probeUrl,
+        inventory.region,
+        objectIds,
+        operatorRunId,
+        fetcher,
+      );
+      receipt.regions[inventory.region].push(...rows);
+      await persistReceipt(receiptPath, receipt);
+      logger.log(JSON.stringify({
+        operatorRunId,
+        region: inventory.region,
+        completed: receipt.regions[inventory.region].length,
+        expected: inventory.eligibleObjectIds.length,
+      }));
+    }
+  }
+  receipt.completedAt = new Date().toISOString();
+  await persistReceipt(receiptPath, receipt);
+  const failures = Object.values(receipt.regions).flat().filter((row) => row.error !== undefined);
+  if (failures.length > 0) throw new Error(`legacy_transcript_backfill_failures_${failures.length}`);
+  const totals = Object.fromEntries(Object.entries(receipt.regions).map(([region, rows]) => [region, {
+    objects: rows.length,
+    appliedObjects: rows.filter((row) => row.outcome.applied === true).length,
+    replayedObjects: rows.filter((row) => row.outcome.applied === false).length,
+    sourceParts: rows.reduce((sum, row) => sum + row.outcome.sourcePartCount, 0),
+    participantTurns: rows.reduce((sum, row) => sum + row.outcome.participantTurnCount, 0),
+    sourceCheckpoints: rows.reduce((sum, row) => sum + row.outcome.sourceCheckpointCount, 0),
+    checkpointProjections: rows.reduce((sum, row) => sum + row.outcome.checkpointProjectionCount, 0),
+  }]));
+  logger.log(JSON.stringify({ operatorRunId, receiptPath, regions: totals }, null, 2));
+  return { mode: 'apply', operatorRunId, receiptPath, regions: totals };
+}
+
+if (isEntryPoint(import.meta.url)) {
+  backfillSubstreamAgentTranscripts().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
