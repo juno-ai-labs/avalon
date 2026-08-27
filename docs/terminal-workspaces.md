@@ -555,7 +555,9 @@ short-lived credential, and fixed publication script as three concurrent file
 uploads. Its one direct process call executes the uploaded script without a
 per-command environment payload. The script keeps the credential out of Git
 configuration, removes the credential file on success or failure, and retains
-the fixed safe stage markers.
+the fixed safe stage markers. Cleanup waits for every concurrent upload to
+settle before deleting the publisher sandbox, including when a sibling upload
+has already failed.
 
 **Why:** Production Daytona returned `exitCode: -1` with no output before the
 first script marker whenever the direct process request carried the Git
