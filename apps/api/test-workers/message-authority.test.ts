@@ -320,4 +320,23 @@ describe("message authority on real workerd", () => {
       expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
     });
   });
+
+  it("refuses an append too large for the participant message contract before writing", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+
+    const result = await messages(stub, "appendMessage", {
+      ...append(),
+      text: "x".repeat(100_001),
+    });
+
+    expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM parts`).one().count).toBe(0);
+      expect(state.storage.sql.exec(
+        `SELECT next_sequence_number FROM workstream`,
+      ).one().next_sequence_number).toBe(1);
+    });
+  });
 });
