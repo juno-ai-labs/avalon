@@ -12,6 +12,10 @@ import type { z } from "zod";
 import { workspaceDOName, workstreamDOName, substreamAgentName } from "../durable-objects/names";
 import type { AuthContext, Env } from "../env";
 import { workstreamImportHash } from "../durable-objects/workstream-import-hash";
+import {
+  WorkspaceProjectMutationResultSchema,
+} from "../durable-objects/workspace-project-protocol";
+import type { WorkspaceProjectMembershipSettleRequestSchema } from "../durable-objects/workspace-project-protocol";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
@@ -125,7 +129,7 @@ export class WorkstreamObjectCreationService {
     // that resolved `public`, replay it, and hand the caller back the
     // workspace-readable work stream the first attempt had already committed.
     // In the hash, that mismatch is the 409 the receipt exists to raise.
-    const scope = input.scope ?? "personal";
+    const requestedScope = input.scope ?? "personal";
     const { mentions: requestMentions, ...hashBody } = body;
     const requestHash = workstreamImportHash({
       ...hashBody,
@@ -134,7 +138,7 @@ export class WorkstreamObjectCreationService {
       // message and therefore remain part of the idempotency identity.
       ...(requestMentions.length > 0 ? { mentions: requestMentions } : {}),
       descriptionSource: input.descriptionSource ?? "derived",
-      scope,
+      scope: requestedScope,
     });
     const at = new Date().toISOString();
     const proposedId = newId();
@@ -187,6 +191,45 @@ export class WorkstreamObjectCreationService {
     }
     span.setAttributes({ "rally.create.path": "fresh" });
 
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+    let scope = requestedScope;
+    let participantUserIds = body.participantUserIds;
+    let originResourceIds = options.originResourceIds ?? [];
+    let projectSettle: z.infer<typeof WorkspaceProjectMembershipSettleRequestSchema> | null = null;
+    if (body.projectId) {
+      const plan = await workspace.prepareProjectMembership({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        projectId: body.projectId,
+        workstreamId: asWorkstreamId(receipt.workstream_id),
+      });
+      if (!plan.ok) {
+        throw new ApiError(404, plan.code, "The project is unavailable");
+      }
+      scope = plan.project.scope;
+      participantUserIds = [...new Set([
+        ...body.participantUserIds,
+        ...plan.project.participants
+          .filter((participant) => participant.state === "active")
+          .map((participant) => participant.userId),
+      ])];
+      originResourceIds = [...new Set([...originResourceIds, ...plan.project.defaultResourceIds])];
+      projectSettle = {
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        projectId: body.projectId,
+        workstreamId: asWorkstreamId(receipt.workstream_id),
+        membershipGeneration: plan.membershipGeneration,
+        sourceProjectId: null,
+        sourceDetached: false,
+      };
+    }
+
     const objective = body.objective
       ?? provisionalWorkstreamDescription(body.openingMessage, "Review the attached files");
     const title = body.title ?? provisionalWorkstreamTitle(objective, "New work stream");
@@ -221,7 +264,9 @@ export class WorkstreamObjectCreationService {
       ],
     ));
 
-    const created = await span.step("workstream.create.object.initialize", () => client.initialize({
+    let created: Awaited<ReturnType<WorkstreamObjectClient["initialize"]>>;
+    try {
+      created = await span.step("workstream.create.object.initialize", () => client.initialize({
       workspaceId: this.auth.workspaceId,
       workstreamId: asWorkstreamId(receipt.workstream_id),
       generation: control.generation,
@@ -235,11 +280,11 @@ export class WorkstreamObjectCreationService {
       mentions: body.mentions,
       openingStructuredContent: options.openingStructuredContent ?? null,
       clientMessageId: body.clientMessageId,
-      participantUserIds: body.participantUserIds,
+      participantUserIds,
       notifyParticipants: options.notifyParticipants ?? false,
       attachmentIds: body.attachmentIds,
       scope,
-      originResourceIds: options.originResourceIds ?? [],
+      originResourceIds,
       modelOverride: body.modelOverride ?? null,
       originType: "ad_hoc",
       automationSubscriptionId: null,
@@ -260,7 +305,17 @@ export class WorkstreamObjectCreationService {
         telemetrySubjectUserId: this.auth.userId,
       } : {}),
       reason: options.reason ?? "opening_message",
-    }));
+      }));
+      if (projectSettle) {
+        const membership = WorkspaceProjectMutationResultSchema.parse(
+          await workspace.finalizeProjectMembership(projectSettle),
+        );
+        if (!membership.ok) throw new ApiError(409, membership.code, "The project changed while the work stream was being prepared");
+      }
+    } catch (error) {
+      if (projectSettle) await workspace.cancelProjectMembership(projectSettle).catch(() => undefined);
+      throw error;
+    }
     span.setAttributes({ "rally.harness_run.id": created.harnessRunId });
     const substream = await durableObjectStubForWorkspace(
       this.env,
@@ -284,12 +339,6 @@ export class WorkstreamObjectCreationService {
       ),
     );
     await span.step("workstream.create.workstream.flush_directory", () => workstream.flushWorkspaceDirectoryEffects());
-    const workspace = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.WORKSPACE_DOS,
-      this.auth.workspaceId,
-      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
-    );
     if (!await span.step("workstream.create.workspace.directory_probe", () => workspace.hasWorkstreamDirectory({
       workspaceId: this.auth.workspaceId,
       workstreamId: receipt.workstream_id,

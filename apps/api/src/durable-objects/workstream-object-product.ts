@@ -119,7 +119,7 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   clientMessageId: z.string().min(1).max(120),
   participantUserIds: z.array(z.string().uuid()),
   attachmentIds: z.array(z.string().uuid()).max(10),
-  originResourceIds: z.array(z.string().uuid()).max(8).default([]),
+  originResourceIds: z.array(z.string().uuid()).default([]),
   /**
    * Who may read it from birth. Defaulted to `personal`: a work stream nobody
    * has said anything about is the one somebody just started for themselves,

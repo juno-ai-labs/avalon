@@ -41,6 +41,7 @@ import {
 } from '@rally/contracts';
 
 import { Button, IconButton, InlineError, Modal } from './primitives';
+import type { WorkstreamSummary } from '../lib/types';
 
 const PROJECT_ICONS: Record<ProjectIconKey, LucideIcon> = {
   briefcase: Briefcase,
@@ -87,22 +88,41 @@ export function ProjectIcon({ project, size = 15 }: { project: ProjectSummary; s
   );
 }
 
+export function ProjectIconPile({ projects }: { projects: ProjectSummary[] }): React.JSX.Element | null {
+  if (projects.length === 0) return null;
+  const description = `Projects: ${projects.map((project) => project.name).join(', ')}`;
+  return (
+    <span aria-label={description} className="project-icon-pile" role="img" title={description}>
+      {projects.map((project) => <span className="project-icon-pile-item" key={project.id}><ProjectIcon project={project} size={14} /></span>)}
+    </span>
+  );
+}
+
 interface ProjectSidebarSectionProps {
   projects: ProjectSummary[];
+  inactiveProjects: ProjectSummary[];
+  workstreams: WorkstreamSummary[];
   loading: boolean;
   onCreate: (input: CreateProjectRequest) => Promise<void>;
+  onAddWorkstream: (projectId: string, workstreamId: string) => Promise<void>;
   onReorder: (projectIds: string[]) => Promise<void>;
+  onRestore: (projectId: string) => Promise<void>;
 }
 
 export function ProjectSidebarSection({
   projects,
+  inactiveProjects,
+  workstreams,
   loading,
   onCreate,
+  onAddWorkstream,
   onReorder,
+  onRestore,
 }: ProjectSidebarSectionProps): React.JSX.Element {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [name, setName] = useState('');
   const [iconKey, setIconKey] = useState<ProjectIconKey>('briefcase');
   const [colorKey, setColorKey] = useState<ProjectColorKey>('blue');
@@ -160,14 +180,14 @@ export function ProjectSidebarSection({
       <section aria-labelledby="projects-heading" className="sidebar-section projects-section">
         <div className="sidebar-section-heading">
           <h2 id="projects-heading">Projects</h2>
-          <IconButton label="New project" onClick={() => setCreateOpen(true)}>
+          <IconButton label="New project" onClick={() => { setError(null); setCreateOpen(true); }}>
             <IconPlus size={15} stroke={1.8} />
           </IconButton>
         </div>
         {loading && projects.length === 0 ? (
           <p className="sidebar-empty">Loading projects…</p>
         ) : projects.length === 0 ? (
-          <p className="sidebar-empty">No projects yet</p>
+          <p className="sidebar-empty">{inactiveProjects.length > 0 ? 'No active projects' : 'No projects yet'}</p>
         ) : (
           <div aria-describedby="projects-reorder-help" className="sidebar-list">
             <p className="sr-only" id="projects-reorder-help">Hold Alt and press the up or down arrow to reorder projects.</p>
@@ -191,10 +211,21 @@ export function ProjectSidebarSection({
                     setDragOrder((current) => move(current ?? projects.map((item) => item.id), active, index));
                   }}
                   onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    const workstreamId = event.dataTransfer.getData('application/x-rally-workstream-id');
+                    if (!workstreamId) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    dragging.current = null;
+                    void onAddWorkstream(project.id, workstreamId).catch((cause: unknown) => {
+                      setError(cause instanceof Error ? cause.message : 'The work stream could not be added.');
+                    });
+                  }}
                   onDragStart={(event) => {
                     dragging.current = project.id;
                     setDragOrder(projects.map((item) => item.id));
                     event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData('application/x-rally-project-id', project.id);
                   }}
                 >
                   <div className="project-sidebar-row">
@@ -212,7 +243,6 @@ export function ProjectSidebarSection({
                     >
                       <IconTriangle className={clsx(isExpanded && 'is-expanded')} size={10} stroke={1.8} />
                     </button>
-                    <span className="project-row-icon"><ProjectIcon project={project} /></span>
                     <NavLink
                       className={({ isActive }) => clsx('project-row-link', isActive && 'is-active')}
                       onKeyDown={(event) => {
@@ -224,10 +254,11 @@ export function ProjectSidebarSection({
                       }}
                       to={`/projects/${project.id}`}
                     >
+                      <span className="project-row-icon"><ProjectIcon project={project} /></span>
                       <span>{project.name}</span>
                       {project.scope === 'personal' && <IconLock aria-label="Private project" size={12} stroke={1.8} />}
+                      <span />
                     </NavLink>
-                    <span />
                     <IconButton
                       label={`New work stream in ${project.name}`}
                       onClick={() => void navigate(`/projects/${project.id}/workstreams/new`)}
@@ -235,7 +266,21 @@ export function ProjectSidebarSection({
                       <IconPlus size={14} stroke={1.8} />
                     </IconButton>
                   </div>
-                  {isExpanded && <p className="project-sidebar-empty">No work streams</p>}
+                  {isExpanded && (() => {
+                    const members = workstreams
+                      .filter((workstream) => project.workstreamIds.includes(workstream.id))
+                      .sort((left, right) => (
+                        new Date(right.lastActivityAt).getTime() - new Date(left.lastActivityAt).getTime()
+                        || left.id.localeCompare(right.id)
+                      ));
+                    return members.length === 0
+                      ? <p className="project-sidebar-empty">No work streams</p>
+                      : <div className="project-sidebar-workstreams">{members.map((workstream) => (
+                        <NavLink className="project-sidebar-workstream" key={workstream.id} to={`/workstreams/${workstream.id}`}>
+                          {workstream.title}
+                        </NavLink>
+                      ))}</div>;
+                  })()}
                 </div>
               );
             })}
@@ -243,7 +288,7 @@ export function ProjectSidebarSection({
         )}
       </section>
       <Modal
-        footer={<><Button disabled={saving} onClick={closeCreate}>Cancel</Button><Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create project</Button></>}
+        footer={<>{inactiveProjects.length > 0 && <Button disabled={saving} onClick={() => { setError(null); setCreateOpen(false); setRecoveryOpen(true); }}>Restore archived project</Button>}<Button disabled={saving} onClick={closeCreate}>Cancel</Button><Button className="button-primary" disabled={saving || !name.trim()} onClick={() => void submit()}>Create project</Button></>}
         onOpenChange={(open) => open ? setCreateOpen(true) : closeCreate()}
         open={createOpen}
         title="New project"
@@ -270,7 +315,7 @@ export function ProjectSidebarSection({
                   <Tooltip.Trigger asChild>
                     <button aria-label={label(key)} aria-pressed={colorKey === key} className={clsx(colorKey === key && 'is-selected')} onClick={() => setColorKey(key)} type="button"><span style={{ background: `var(--av-sys-color-project-${key})` }} /></button>
                   </Tooltip.Trigger>
-                  <Tooltip.Portal><Tooltip.Content className="tooltip-content" sideOffset={5}>{label(key)}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal>
+                  <Tooltip.Portal><Tooltip.Content className="tooltip" sideOffset={5}>{label(key)}<Tooltip.Arrow className="tooltip-arrow" /></Tooltip.Content></Tooltip.Portal>
                 </Tooltip.Root>
               ))}
             </div>
@@ -284,6 +329,22 @@ export function ProjectSidebarSection({
           </label>
           {error && <InlineError>{error}</InlineError>}
         </form>
+      </Modal>
+      <Modal
+        footer={<Button onClick={() => { setError(null); setRecoveryOpen(false); }}>Cancel</Button>}
+        onOpenChange={(open) => { if (!open) setError(null); setRecoveryOpen(open); }}
+        open={recoveryOpen}
+        title="Restore archived project"
+      >
+        <div className="project-recovery-list">{inactiveProjects.map((project) => (
+          <Button key={project.id} onClick={() => {
+            setError(null);
+            void onRestore(project.id)
+              .then(() => { setRecoveryOpen(false); void navigate(`/projects/${project.id}`); })
+              .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'The project could not be restored.'));
+          }}><ProjectIcon project={project} /> {project.name}</Button>
+        ))}</div>
+        {error && <InlineError>{error}</InlineError>}
       </Modal>
     </>
   );
