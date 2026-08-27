@@ -5,6 +5,11 @@ import type {
   DesktopRealtimeSocketOpenInput,
   DesktopRealtimeSocketSendInput,
 } from '../../common/realtime-socket';
+import {
+  MAX_WEBSOCKET_CLOSE_REASON_BYTES,
+  validWebSocketCloseCode,
+  validWebSocketCloseReason,
+} from '../../common/realtime-socket-validation';
 import { desktopBridge, desktopServicesAvailable } from './platform';
 
 export const REALTIME_SOCKET_CONNECTING = 0;
@@ -86,9 +91,11 @@ class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
     this.unsubscribe = subscribeToSocketEvents(this.bridge, input.socketId, (event) => {
       if (this.readyState === REALTIME_SOCKET_CLOSED) return;
       if (event.type === 'open') {
+        if (this.readyState !== REALTIME_SOCKET_CONNECTING) return;
         this.readyState = REALTIME_SOCKET_OPEN;
         this.dispatchEvent(new Event('open'));
       } else if (event.type === 'message') {
+        if (this.readyState !== REALTIME_SOCKET_OPEN) return;
         this.dispatchEvent(new MessageEvent<string>('message', { data: event.data }));
       } else if (event.type === 'error') {
         this.dispatchEvent(new Event('error'));
@@ -122,6 +129,15 @@ class BrokeredRealtimeSocket extends EventTarget implements RealtimeSocket {
 
   close(code?: number, reason?: string): void {
     if (this.readyState === REALTIME_SOCKET_CLOSING || this.readyState === REALTIME_SOCKET_CLOSED) return;
+    if (code !== undefined && !validWebSocketCloseCode(code)) {
+      throw new DOMException('The close code is not valid.', 'InvalidAccessError');
+    }
+    if (reason !== undefined && !validWebSocketCloseReason(reason)) {
+      throw new DOMException(
+        `The close reason must be at most ${MAX_WEBSOCKET_CLOSE_REASON_BYTES} UTF-8 bytes.`,
+        'SyntaxError',
+      );
+    }
     this.readyState = REALTIME_SOCKET_CLOSING;
     void this.bridge.closeRealtimeSocket({ socketId: this.input.socketId, code, reason }).catch(() => {
       this.failOpen();

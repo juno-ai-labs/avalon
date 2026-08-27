@@ -80,6 +80,20 @@ test("requires renderer WebSockets to consume an authenticated ticket URL", () =
     "const socket = createRealtimeSocket('substream_feed', url, protocols);",
     "require-websocket-ticket",
   ).length, 1);
+  assert.equal(lint(`
+    import { createRealtimeSocket as dial } from './realtime-socket';
+    const socket = dial('substream_feed', url, protocols);
+  `, "require-websocket-ticket").length, 1);
+  assert.equal(lint(`
+    import * as realtime from './realtime-socket';
+    const socket = realtime.createRealtimeSocket('substream_feed', url, protocols);
+  `, "require-websocket-ticket").length, 1);
+  assert.equal(lint(`
+    import { createRealtimeSocket as dial } from './realtime-socket';
+    function safe(createRealtimeSocket) {
+      return createRealtimeSocket('substream_feed', url, protocols);
+    }
+  `, "require-websocket-ticket").length, 0);
 });
 
 test("rejects bare Zod URL validators but permits imported explicit contracts", () => {

@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { WebSocketUrlSchema } from '@rally/contracts/url-schemas';
+import {
+  REALTIME_SOCKET_ID_PATTERN,
+  validWebSocketCloseCode,
+  validWebSocketCloseReason,
+} from './realtime-socket-validation';
 
 export const RALLY_RENDERER_ORIGIN = 'app://rallywithai';
 
@@ -9,8 +14,10 @@ export const DesktopRealtimeSocketKindSchema = z.enum([
 ]);
 export type DesktopRealtimeSocketKind = z.infer<typeof DesktopRealtimeSocketKindSchema>;
 
+const DesktopRealtimeSocketIdSchema = z.string().regex(REALTIME_SOCKET_ID_PATTERN);
+
 export const DesktopRealtimeSocketOpenInputSchema = z.object({
-  socketId: z.uuid(),
+  socketId: DesktopRealtimeSocketIdSchema,
   kind: DesktopRealtimeSocketKindSchema,
   url: WebSocketUrlSchema,
   protocols: z.tuple([
@@ -21,37 +28,37 @@ export const DesktopRealtimeSocketOpenInputSchema = z.object({
 export type DesktopRealtimeSocketOpenInput = z.infer<typeof DesktopRealtimeSocketOpenInputSchema>;
 
 export const DesktopRealtimeSocketSendInputSchema = z.object({
-  socketId: z.uuid(),
+  socketId: DesktopRealtimeSocketIdSchema,
   data: z.string(),
 }).strict();
 export type DesktopRealtimeSocketSendInput = z.infer<typeof DesktopRealtimeSocketSendInputSchema>;
 
 export const DesktopRealtimeSocketCloseInputSchema = z.object({
-  socketId: z.uuid(),
-  code: z.number().int().optional(),
-  reason: z.string().optional(),
+  socketId: DesktopRealtimeSocketIdSchema,
+  code: z.number().int().refine(validWebSocketCloseCode).optional(),
+  reason: z.string().refine(validWebSocketCloseReason).optional(),
 }).strict();
 export type DesktopRealtimeSocketCloseInput = z.infer<typeof DesktopRealtimeSocketCloseInputSchema>;
 
 export const DesktopRealtimeSocketEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('open'),
-    socketId: z.uuid(),
+    socketId: DesktopRealtimeSocketIdSchema,
     protocol: z.string(),
     extensions: z.string(),
   }).strict(),
   z.object({
     type: z.literal('message'),
-    socketId: z.uuid(),
+    socketId: DesktopRealtimeSocketIdSchema,
     data: z.string(),
   }).strict(),
   z.object({
     type: z.literal('error'),
-    socketId: z.uuid(),
+    socketId: DesktopRealtimeSocketIdSchema,
   }).strict(),
   z.object({
     type: z.literal('close'),
-    socketId: z.uuid(),
+    socketId: DesktopRealtimeSocketIdSchema,
     code: z.number().int(),
     reason: z.string(),
     wasClean: z.boolean(),

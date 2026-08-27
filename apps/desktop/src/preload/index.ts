@@ -17,6 +17,7 @@ import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import type { ThemeChoice } from '../common/themes';
 import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
+import { REALTIME_SOCKET_ID_PATTERN } from '../common/realtime-socket-validation';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
@@ -26,12 +27,15 @@ const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
 let meetingCloseQueued: MeetingCloseReason | null = null;
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
 const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function parseRealtimeSocketEvent(rawEvent: unknown): DesktopRealtimeSocketEvent | null {
+  // Keep this dependency-free: importing the shared Zod schema externalizes
+  // `zod` from the sandboxed preload bundle, where Electron cannot resolve it.
+  // The shared ID pattern prevents the two validation paths from drifting.
   if (!rawEvent || typeof rawEvent !== 'object') return null;
   const event = rawEvent as Record<string, unknown>;
-  if (typeof event['socketId'] !== 'string' || !UUID_PATTERN.test(event['socketId'])) return null;
+  if (typeof event['socketId'] !== 'string'
+    || !REALTIME_SOCKET_ID_PATTERN.test(event['socketId'])) return null;
   if (event['type'] === 'open'
     && typeof event['protocol'] === 'string'
     && typeof event['extensions'] === 'string') {

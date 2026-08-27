@@ -4259,6 +4259,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
+         AND directory.exact_state NOT IN ('running', 'interrupting', 'preparing_context',
+                                           'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
          AND (? IS NULL OR directory.last_activity_at < ?
@@ -4279,7 +4281,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const nextCursor = hasMore && last
       ? `${last.last_activity_at}:${last.workstream_id}`
       : null;
-    if (!request.before) rows.push(...this.pinnedDirectoryRows(request.userId, request.includeSystem));
+    if (!request.before) {
+      const selected = new Set(rows.map((row) => row.workstream_id));
+      const supplemental = [
+        ...this.pinnedDirectoryRows(request.userId, request.includeSystem),
+        ...this.runningDirectoryRows(request.userId, request.includeSystem),
+      ];
+      for (const row of supplemental) {
+        if (selected.has(row.workstream_id)) continue;
+        selected.add(row.workstream_id);
+        rows.push(row);
+      }
+    }
     return {
       items: rows.map((row) => directoryWorkstream(row, request.workspaceId)),
       stateVersions: rows.map(directoryStateVersion),
@@ -4323,6 +4336,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
        ORDER BY pin.position, directory.workstream_id`,
+      userId,
+      userId,
+      includeSystem ? 1 : 0,
+    ).toArray();
+  }
+
+  /**
+   * Running work streams are connection targets, not merely directory rows.
+   * Return every visible one with the first page so an old active stream is
+   * not hidden behind the recent-work cursor and omitted from socket prewarm.
+   */
+  private runningDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {
+    return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+      `${SELECT_WORKSPACE_DIRECTORY}
+       WHERE directory.archived_at IS NULL
+         AND directory.exact_state IN ('running', 'interrupting', 'preparing_context',
+                                       'waiting_capacity')
+         AND (? = 1 OR directory.system_kind IS NULL)
+         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+       ORDER BY directory.last_activity_at DESC, directory.workstream_id`,
       userId,
       userId,
       includeSystem ? 1 : 0,

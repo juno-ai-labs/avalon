@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import type {
-  DesktopRealtimeSocketEvent,
-  DesktopRealtimeSocketOpenInput,
+import {
+  DesktopRealtimeSocketCloseInputSchema,
+  DesktopRealtimeSocketEventSchema,
+  type DesktopRealtimeSocketEvent,
+  type DesktopRealtimeSocketOpenInput,
 } from '../common/realtime-socket';
 import {
   RealtimeSocketBroker,
+  proxyUrlFromElectronResolution,
   realtimeSocketTargetAllowed,
   type RealtimeSocketClient,
   type RealtimeSocketFactory,
@@ -73,6 +76,43 @@ describe('realtimeSocketTargetAllowed', () => {
   });
 });
 
+describe('proxyUrlFromElectronResolution', () => {
+  it('translates Electron proxy directives for the Node socket agent', () => {
+    expect(proxyUrlFromElectronResolution('DIRECT')).toBe('');
+    expect(proxyUrlFromElectronResolution('PROXY proxy.example:8080; DIRECT'))
+      .toBe('http://proxy.example:8080');
+    expect(proxyUrlFromElectronResolution('HTTPS proxy.example:8443'))
+      .toBe('https://proxy.example:8443');
+    expect(proxyUrlFromElectronResolution('SOCKS5 proxy.example:1080'))
+      .toBe('socks5://proxy.example:1080');
+    expect(() => proxyUrlFromElectronResolution('UNKNOWN proxy.example:8080'))
+      .toThrow('unsupported proxy directive');
+  });
+});
+
+describe('desktop realtime socket validation', () => {
+  it('accepts only generated UUID v4 socket IDs and valid close frames', () => {
+    expect(DesktopRealtimeSocketEventSchema.safeParse({
+      type: 'error', socketId,
+    }).success).toBe(true);
+    expect(DesktopRealtimeSocketEventSchema.safeParse({
+      type: 'error', socketId: '00000000-0000-0000-0000-000000000000',
+    }).success).toBe(false);
+    expect(DesktopRealtimeSocketCloseInputSchema.safeParse({
+      socketId, code: 1_000, reason: '💡'.repeat(30),
+    }).success).toBe(true);
+    expect(DesktopRealtimeSocketCloseInputSchema.safeParse({
+      socketId, code: 1_005,
+    }).success).toBe(false);
+    expect(DesktopRealtimeSocketCloseInputSchema.safeParse({
+      socketId, code: 1_001,
+    }).success).toBe(false);
+    expect(DesktopRealtimeSocketCloseInputSchema.safeParse({
+      socketId, code: 1_000, reason: '💡'.repeat(31),
+    }).success).toBe(false);
+  });
+});
+
 describe('RealtimeSocketBroker', () => {
   it('starts a work-stream control socket and its feed socket without waiting for either handshake', () => {
     const sockets = [new FakeSocket(), new FakeSocket()];
@@ -121,5 +161,17 @@ describe('RealtimeSocketBroker', () => {
 
     expect(socket.terminate).toHaveBeenCalledOnce();
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('terminates and forgets a socket when the native close call throws', () => {
+    const socket = new FakeSocket();
+    socket.readyState = 1;
+    socket.close.mockImplementation(() => { throw new TypeError('invalid close frame'); });
+    const broker = new RealtimeSocketBroker(() => socket);
+    broker.open(7, openInput(), vi.fn());
+
+    expect(() => broker.close(7, socketId, 1_000, 'done')).toThrow('invalid close frame');
+    expect(socket.terminate).toHaveBeenCalledOnce();
+    expect(() => broker.send(7, socketId, 'ping')).toThrow('not open');
   });
 });
