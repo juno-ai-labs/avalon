@@ -257,6 +257,21 @@ import {
 } from "./workspace-opportunity-protocol";
 import { WorkspaceProductStorage } from "./workspace-product-storage";
 import {
+  WorkspaceProjectCreateRequestSchema,
+  WorkspaceProjectDirectoryResultSchema,
+  WorkspaceProjectListRequestSchema,
+  WorkspaceProjectMutationResultSchema,
+  WorkspaceProjectReorderRequestSchema,
+  WorkspaceProjectUpdateRequestSchema,
+  type WorkspaceProjectCreateRequest,
+  type WorkspaceProjectDirectoryResult,
+  type WorkspaceProjectListRequest,
+  type WorkspaceProjectMutationResult,
+  type WorkspaceProjectReorderRequest,
+  type WorkspaceProjectUpdateRequest,
+} from "./workspace-project-protocol";
+import { WorkspaceProjectStorage } from "./workspace-project-storage";
+import {
   applyWorkstreamRegionalEnvelope,
   insertWorkstreamEffectReceipt,
 } from "./workspace-regional-effect-storage";
@@ -1099,6 +1114,68 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
            SELECT OLD.model_content_ref, OLD.workspace_id, OLD.resource_id, 'derivative', datetime('now'), datetime('now')
             WHERE OLD.model_content_ref IS NOT NULL;
        END`,
+  ],
+}, {
+  version: 14,
+  description: "make WorkspaceDO authoritative for projects and per-person ordering",
+  statements: [
+    `CREATE TABLE projects (
+      project_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL CHECK (length(trim(name)) > 0),
+      normalized_name TEXT NOT NULL UNIQUE CHECK (length(normalized_name) > 0),
+      icon_key TEXT NOT NULL CHECK (icon_key IN (
+        'briefcase', 'target', 'calendar-days', 'list-checks', 'clipboard-list',
+        'file-text', 'folder', 'lightbulb', 'star', 'flag', 'rocket',
+        'chart-no-axes-combined', 'calculator', 'coins', 'users', 'user-search',
+        'handshake', 'megaphone', 'palette', 'image', 'pen-tool', 'package',
+        'building-2', 'globe-2', 'heart'
+      )),
+      icon_color_key TEXT NOT NULL CHECK (icon_color_key IN (
+        'gray', 'brown', 'red', 'orange', 'yellow', 'green', 'teal', 'cyan',
+        'blue', 'indigo', 'purple', 'pink'
+      )),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      status TEXT NOT NULL CHECK (status IN (
+        'active', 'archiving', 'archived', 'restoring', 'cancelling_restore'
+      )),
+      creator_user_id TEXT NOT NULL,
+      archived_at INTEGER CHECK (archived_at IS NULL OR archived_at >= 0),
+      archived_by_user_id TEXT,
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      presentation_revision INTEGER NOT NULL DEFAULT 1 CHECK (presentation_revision > 0),
+      audience_generation INTEGER NOT NULL DEFAULT 1 CHECK (audience_generation > 0),
+      lifecycle_generation INTEGER NOT NULL DEFAULT 1 CHECK (lifecycle_generation > 0),
+      CHECK ((status = 'archived') = (archived_at IS NOT NULL)),
+      CHECK ((archived_at IS NULL) = (archived_by_user_id IS NULL))
+    ) STRICT`,
+    `CREATE TABLE project_participants (
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('adding', 'active', 'removing', 'removed')),
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      PRIMARY KEY (project_id, user_id)
+    ) STRICT`,
+    `CREATE INDEX project_participants_user_state_idx
+      ON project_participants(user_id, state, project_id)`,
+    `CREATE TABLE workspace_project_order (
+      user_id TEXT NOT NULL,
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      position INTEGER NOT NULL CHECK (position >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      PRIMARY KEY (user_id, project_id)
+    ) STRICT`,
+    `CREATE INDEX workspace_project_order_user_position_idx
+      ON workspace_project_order(user_id, position, project_id)`,
+    `CREATE TABLE workspace_project_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      waterline INTEGER NOT NULL CHECK (waterline >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
+    ) STRICT`,
+    `INSERT INTO workspace_project_state (id, waterline, updated_at) VALUES (1, 0, 0)`,
   ],
 }];
 
@@ -2321,6 +2398,64 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   ): Promise<void> {
     await this.initialized;
     this.ensureIdentity(workspaceId, placementAffinity);
+  }
+
+  async createProject(input: WorkspaceProjectCreateRequest): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectCreateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().create(request, uuidV7());
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_name_conflict" });
+  }
+
+  async listProjects(input: WorkspaceProjectListRequest): Promise<WorkspaceProjectDirectoryResult> {
+    await this.initialized;
+    const request = WorkspaceProjectListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    return WorkspaceProjectDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.projectStorage().list(request.userId),
+    });
+  }
+
+  async reorderProjects(
+    input: WorkspaceProjectReorderRequest,
+  ): Promise<WorkspaceProjectDirectoryResult> {
+    await this.initialized;
+    const request = WorkspaceProjectReorderRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    return WorkspaceProjectDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.projectStorage().reorder(request.userId, request.order.projectIds),
+    });
+  }
+
+  async updateProjectPresentation(
+    input: WorkspaceProjectUpdateRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectUpdateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().updatePresentation(request);
+    return WorkspaceProjectMutationResultSchema.parse(project === false
+      ? { ok: false, code: "project_not_found" }
+      : project === null
+        ? { ok: false, code: "project_name_conflict" }
+        : { ok: true, project });
   }
 
   /**
@@ -4615,6 +4750,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         waterline: this.sidebarListWaterline("notes"),
         items: this.listSidebarNotes(attachment.workspaceId, attachment.userId),
       },
+      projects: this.projectStorage().list(attachment.userId),
     });
   }
 
@@ -4676,6 +4812,17 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   private productStorage(): WorkspaceProductStorage {
     return new WorkspaceProductStorage(this.state.storage);
+  }
+
+  private projectStorage(): WorkspaceProjectStorage {
+    return new WorkspaceProjectStorage(this.state.storage);
+  }
+
+  private async activeWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+    return Boolean(await this.env.DB.prepare(
+      `SELECT 1 FROM workspace_members
+        WHERE workspace_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
+    ).bind(workspaceId, userId).first());
   }
 
   private reapExpiredActivityEvents(now: number): void {

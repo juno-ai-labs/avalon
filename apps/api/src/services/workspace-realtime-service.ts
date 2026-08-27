@@ -57,6 +57,7 @@ export function workspaceSyncTopicsForMutation(
     || pathname.startsWith("/automation-templates")
   ) return ["automations", "workstream_directory"];
   if (pathname.startsWith("/notes")) return ["notes", "resources"];
+  if (pathname.startsWith("/projects")) return ["projects"];
   if (pathname.startsWith("/resources")) return ["resources", "workstream_directory"];
   if (pathname.startsWith("/work-opportunities")) {
     return ["work_opportunities", "activity", "workstream_directory"];

@@ -663,6 +663,22 @@ Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-27 — Projects add a closed semantic color palette
+
+**What changed:** Added twelve `--av-sys-color-project-*` tokens used by the
+shared project icon registry and picker.
+
+**Why:** Projects persist named hues rather than hex values so every theme can
+render the same choice with suitable contrast.
+
+**Considered and rejected:** Arbitrary colors and component-local hex values;
+both bypass theme control and can produce unreadable icons.
+
+**Consequences:** Every new theme must define or deliberately inherit all twelve
+project hues, and project components must address them by registry key.
+
+Design: `docs/PRDs/2026-08-26_projects/prd.md`.
+
 ### 2026-08-26 — Raised popovers use the raised hover state
 
 **What changed:** Ordinary highlighted dropdown and command rows now paint with

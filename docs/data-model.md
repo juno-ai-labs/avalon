@@ -288,8 +288,16 @@ hash-checked RPCs rather than cross-object SQL joins.
   collides with itself. A pin is never broadcast — it changes nothing anyone else
   can see — and it never widens what its owner may read: every pinned read still
   applies the visibility rule above, so a pin left behind by a work stream that was
-  archived or narrowed contributes no row while remaining removable by its owner.
-  See [`workstream-pinning.md`](workstream-pinning.md).
+  removed from their audience cannot make it visible again.
+  An archived or narrowed work stream contributes no row while remaining
+  removable by its owner. See [`workstream-pinning.md`](workstream-pinning.md).
+- `projects`, `project_participants`, and `workspace_project_order` in
+  WorkspaceDO hold project identity/presentation, project-level readers, and
+  each person's fixed server order. Presentation, audience, and lifecycle use
+  separate revisions so a rename does not stale an audience operation. Project
+  names are unique after normalization across active and inactive rows, and the
+  icon/color columns accept only the shared V1 registries. See
+  [`projects.md`](projects.md).
 - Object-local `participants` records explicit participation reasons, and
   `first_opened_at` — null until that person opens the work stream, which is
   what makes "you were added to this and have never been here" a state the
@@ -843,6 +851,24 @@ Overwriting one canonical R2 pointer would expose only the latest bytes.
 **Consequences:** Semantic resource writes and successful hydration observations
 increment version; processing-only derivative state enriches the current version.
 R2 cleanup must treat every retained version as live until the resource is deleted.
+
+### 2026-08-27 — WorkspaceDO gains project authority
+
+**What changed:** WorkspaceDO schema version 13 adds projects, participants,
+per-person project order, and a project-directory waterline with closed
+presentation checks and independent revisions.
+
+**Why:** Project visibility and ordering are workspace product state that must
+commit beside the cross-work-stream directory rather than becoming D1 product
+tables or device-local preferences.
+
+**Considered and rejected:** D1 authority and client-only order. Both split the
+single answer needed by authorization, realtime recovery, and multiple devices.
+
+**Consequences:** Later project memberships and propagation operations must
+reference this authority through typed RPCs and append new migration versions.
+
+Design: `docs/PRDs/2026-08-26_projects/prd.md`.
 
 ### 2026-08-26 — Legacy transcript projections preserve single payload ownership
 

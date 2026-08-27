@@ -132,6 +132,7 @@ function invalidateTopic(
     // longer names them — it carries the detail surfaces REST still serves.
     automations: [['automation'], ['automation-draft']],
     notes: [['note']],
+    projects: [['projects']],
     resources: [['resources'], ['workstream-context']],
     activity: [['work-opportunities']],
     work_opportunities: [['work-opportunities']],
@@ -316,6 +317,7 @@ export function WorkspaceSocketProvider({
         sidebar.automations.items.map(mapAutomationSummary),
       );
       applyVersionedSidebarList(queryClient, 'notes', sidebar.notes.waterline, sidebar.notes.items);
+      if (sidebar.projects) queryClient.setQueryData(['projects'], sidebar.projects);
       setSidebarConnect((current) => ({
         generation: (current?.generation ?? 0) + 1,
         nextCursor: page.nextCursor,
