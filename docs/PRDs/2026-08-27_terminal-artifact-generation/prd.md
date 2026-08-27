@@ -7,10 +7,11 @@
 > Terminal sandbox and publishes it back into the work stream as an ordinary
 > generated resource. No new message type, no new tools, no new plugin: this
 > change is standing-prompt guidance over machinery that already exists.
-> Companion: [state](state.md). Supersedes part of
-> [work-stream artifacts](../2026-08-26_workstream-artifacts/prd.md), whose
-> [`design.md`](../2026-08-26_workstream-artifacts/design.md) carries the
-> protocol comparison that picked this path's machinery. Siblings:
+> Companion: [state](state.md). Supersedes part of the combined
+> work-stream artifacts PRD, which was not merged; its folder — including
+> the `design.md` protocol comparison that picked this path's machinery —
+> remains readable on
+> [PR #334](https://github.com/juno-ai-labs/avalon/pull/334). Siblings:
 > [resource versioning](../2026-08-27_resource-versioning/prd.md) (history
 > beneath the resources this produces),
 > [inline resource citations](../2026-08-27_inline-resource-citations/prd.md)
@@ -278,8 +279,9 @@ trip for a rule whose trigger is evaluated on any request.
    deliverable is policy plus one publish-path refinement. The rejected
    alternative — the superseded PRD's dedicated typed artifact tools and
    message type — bought observability and a bespoke surface at the cost
-   of four layers of new build, and its own protocol framework
-   ([`design.md`](../2026-08-26_workstream-artifacts/design.md)) rated the
+   of four layers of new build, and its own protocol framework (the
+   unmerged combined PRD's `design.md`, on
+   [PR #334](https://github.com/juno-ai-labs/avalon/pull/334)) rated the
    Terminal path strongest exactly where documents hurt most: targeted
    edits to long files. The cold-start and two-copies costs that framework
    charged against Terminal are accepted here as the price of shipping
@@ -449,10 +451,17 @@ module itself are still made deliberately, as for any prompt change.
    its own activity copy ("Setting up the work stream's workspace…") or
    the existing tool rows suffice — settle against real screenshots
    during implementation.
-3. **A token-friendly resource identifier.** The model handles resource
-   ids here only occasionally — publish outputs return one, and the
-   recycle-recovery path passes one to import — but the suggestion of a
-   short slug alias for resources (raised against the citations sibling,
-   where ids are emitted routinely; see its open questions) would make
-   those ids cheaper and safer to copy here too. A resource-system
-   decision, not this PRD's; nothing here depends on identifier shape.
+3. **A token-friendly resource identifier.** ~~The model handles
+   resource ids here only occasionally — publish outputs return one, and
+   the recycle-recovery path passes one to import — but the suggestion
+   of a short slug alias for resources (raised against the citations
+   sibling, where ids are emitted routinely) would make those ids
+   cheaper and safer to copy here too.~~ **Resolved elsewhere: the slug
+   alias was adopted.** It rides the
+   [versioning sibling](../2026-08-27_resource-versioning/prd.md)'s
+   schema work (its key design decision 8), which puts slugs in
+   model-facing outputs and listings — so publish results get cheaper
+   ids when that lands. The recycle-recovery import's contract is
+   unchanged: `terminal_import_resource` takes the UUID, and accepting
+   slugs there would be its own input-contract change, not implied by
+   the alias. Nothing here depends on identifier shape.
