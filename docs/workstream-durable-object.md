@@ -1176,7 +1176,8 @@ the socket's hibernation attachment, orders commands by a socket-local revision,
 validates foreground work-stream visibility against its local directory on both
 focus and directory changes, and broadcasts a viewer-scoped user set. The
 work-stream face pile gives other present participants a subtle repeating ring;
-the current user is omitted and reduced-motion users receive a static ring.
+hovering that avatar explains that the named participant is viewing this work
+stream. The current user is omitted and reduced-motion users receive a static ring.
 
 **Why:** The metadata/feed socket pool deliberately retains recently viewed
 work streams, so socket liveness describes warm transport rather than current
