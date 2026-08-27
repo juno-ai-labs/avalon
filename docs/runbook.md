@@ -219,8 +219,9 @@ Use the structured events `terminal_plugin_activation_finished`,
 `terminal_sandbox_lifecycle_transition`, and
 `terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
 Activation records acquisition/cache state, provider duration and request/poll
-counts, residual Rally time, and whether repository preparation completed or was
-deferred to the visible repair tools. Provider-request events use a fixed
+counts, residual Rally time, a one-based `activation_attempt`, and whether
+repository preparation completed or was deferred to the visible repair tools.
+Provider-request events use a fixed
 content-free operation/detail vocabulary and correlate activation under the
 `terminal_plugin_activation` tool identity.
 For regional durable diagnosis, query counts/ages and exact IDs from

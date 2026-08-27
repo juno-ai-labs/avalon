@@ -628,6 +628,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  /** Distinguishes this live object instance from the predecessor it replaces. */
+  private readonly harnessLeaseOwnerNonce = uuidV7();
   private readonly recoverableHarnessAttempts = new Map<string, string>();
   /**
    * Whether the drain this alarm just ran left a run in someone else's hands.
@@ -638,6 +640,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   private runDrainDeferred = false;
   private activeRunDispatch: { runId: string; leaseToken: string } | null = null;
+
+  private harnessAttemptOwner(
+    input: Pick<WorkstreamWorkflowInput, "substreamId" | "harnessRunId">,
+    attemptId: string,
+  ): string {
+    return `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}:${this.harnessLeaseOwnerNonce}`;
+  }
 
   constructor(
     state: DurableObjectState,
@@ -2635,12 +2644,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await reapStaleHarnessRuns(runs, recoveryOptions);
     }
     const attemptId = recoverableAttemptId ?? uuidV7();
+    const attemptOwner = this.harnessAttemptOwner(input, attemptId);
     const claim = await claimHarnessAttempt(
       runs,
       input,
       {
         attemptId,
-        owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
+        owner: attemptOwner,
         leaseSeconds: 300,
       },
     );
@@ -2656,8 +2666,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         attempt_id: recoverableAttemptId,
         attempt_epoch: claim.lease.attemptNumber,
       });
-      // Claim the root before this pass. Its children were expired with it,
-      // and a live parent makes them resumable rather than stale-reapable.
+      // The root is live before this pass. Its children were expired with it,
+      // so the reaper keeps them resumable instead of treating them as stale.
       await reapStaleHarnessRuns(runs, recoveryOptions);
     } else if (recoverableAttemptId !== null) {
       // The recovered row was busy, cancelled, or terminal. Repair old
@@ -2711,7 +2721,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       await terminalizeQueuedHarnessRun(
         runs,
         input,
-        { attemptId, owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}` },
+        { attemptId, owner: attemptOwner },
         { code: "run_cancelled", message: "The run was stopped before it started" },
         "stopped",
       );
