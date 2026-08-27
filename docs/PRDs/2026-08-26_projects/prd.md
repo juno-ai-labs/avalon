@@ -306,6 +306,12 @@ Clicking the project row opens a project space with two main sections:
 The project-space header shows the project icon, name, scope, and participants.
 Its settings affordance edits those fields and the participant list.
 
+A work stream whose project start gate has not released appears in this table
+as **Preparing work stream…**, using its persisted opening text and start
+operation rather than an active D1 route. A failed setup row offers **Retry** to
+an authorized project reader. This row survives desktop restart and moves into
+ordinary activity order only after creation finalization activates the route.
+
 Its menu also provides **Archive project**. Archiving is confirmed because it
 removes the project from active navigation and stops new assignments and
 default-resource propagation. An archived project space is read-only except for
@@ -407,9 +413,36 @@ durable:
 4. the current project-default resource links, deduplicated by canonical
    resource identity.
 
-If this setup cannot complete, the opening message remains available for retry
-and Rally says that the work stream could not be started in the project. It does
-not silently start an unconfigured first turn.
+Creation persists this wait rather than leaving it in the desktop request. The
+initial `SubstreamAgent` transaction stores the opening turn, scheduled run, and
+a stable start gate in `awaiting_project_setup`; it does not dispatch the
+Workflow. `WorkspaceDO` owns a matching project-work-stream start operation and
+its audience and resource prerequisites. The transaction that settles the last
+required receipt changes that operation to `ready_to_dispatch` and records a
+durable finalization intent for its alarm.
+
+While this start operation is nonterminal, `WorkspaceDO` refuses participant,
+scope, default-resource, archive, and remove-this-membership commands that would
+change its captured prerequisites, returning `project_busy`. Presentation edits
+and independent work-stream additions remain available. This freezes exactly
+the setup being gated without turning the whole project into a global lock.
+
+Finalization releases the named `SubstreamAgent` start gate through an
+idempotent typed effect. In the same target transaction, `SubstreamAgent`
+changes the gate to released and records the normal durable Workflow-dispatch
+intent. The finalizer waits for the existing Workflow start round trip, drains
+and verifies the directory facts, activates the minimal D1 route and email, and
+then settles the WorkspaceDO start receipt. A crash at any point resumes from
+the operation, gate, dispatch, and route receipts; a repeated release cannot
+start a second run. The HTTP request may wait for this completion when it stays
+connected, but request or desktop lifetime is not the durability boundary.
+
+If setup cannot complete, the opening message and scheduled run remain behind
+the gate for an authorized retry, and Rally says that the work stream could not
+be started in the project. It does not silently start an unconfigured first
+turn. A project with no audience or default-resource work to fan out reaches
+`ready_to_dispatch` in the creating transaction and follows the existing
+synchronous creation path.
 
 ### Adding an existing work stream
 
@@ -581,16 +614,23 @@ one of the member work streams is refused until the person has been added to
 the project and this operation has completed. An empty project has no targets,
 so the participant becomes active in the creating transaction.
 
-Removing a participant from a non-empty personal project is one durable
-operation, not a sequence the person must perform by hand. The caller may
-remove themself; removing somebody else fails with
+Removing a participant from a personal project starts with the same
+authorization and final-reader checks whether or not the project has work
+streams. The caller may remove themself; removing somebody else fails with
 `participant_removal_denied` unless the caller is a workspace owner or admin.
-After that authorization, `WorkspaceDO` first
-changes the project participant from `active` to `removing`. A removing
+After that authorization, the same `WorkspaceDO` transaction verifies that at
+least one other participant is already `active`. An `adding` participant does
+not count. Removing the final active reader fails with
+`project_participant_required` and tells the caller to add another participant,
+make the project workspace-scoped, or archive it instead. `WorkspaceDO` then
+changes the selected project participant from `active` to `removing`. A removing
 participant immediately stops being a project reader, cannot receive new
 project propagation, and disappears from the active participant list. The
-operation then removes that person from every current member work stream using
-ID-only messages on the regional `PROJECT_AUDIENCE_QUEUE`. Its consumer claims
+project completes this transition to `removed` in the same transaction when it
+has no work streams. Otherwise it is one durable operation, not a sequence the
+person must perform by hand, and removes that person from every member work
+stream using ID-only messages on the regional `PROJECT_AUDIENCE_QUEUE`. Its
+consumer claims
 each removal target from `WorkspaceDO`, applies a version-fenced typed effect to
 the owning `WorkstreamDO`, and records the receipt before acknowledging the
 message; the work-stream removal uses the existing access-revocation path. It
@@ -686,7 +726,9 @@ channel and does not own or merge its work streams' transcripts.
 When this ships, the standing implementation brief should say that related work
 streams may share a project, and that project membership can supply authorized
 default resources. The existing rule that authorization is based on scope and
-participants does not change.
+participants does not change. Project-start creation adds a durable setup gate
+before the opening Workflow dispatch; it does not change the work stream as the
+unit of the run, and ordinary non-project creation keeps its current path.
 
 ## Decision log
 
@@ -764,7 +806,9 @@ meaningless local `workspace_id` column.
 - `project_participants` owns `adding`, `active`, `removing`, and `removed`
   participant history and the participant generation used by authorization.
   Only `active` rows authorize project reads. Its shape otherwise follows
-  work-stream participants even though it lives in a different authority.
+  work-stream participants even though it lives in a different authority. A
+  personal-project removal command atomically refuses the transition from one
+  active participant to zero; pending additions do not satisfy that invariant.
 - `project_audience_operations` owns one durable root for a `participant_add`,
   `participant_remove`, or `scope_widen`. It stores the operation and project
   IDs, actor, expected project revision, optional participant and pending scope,
@@ -789,6 +833,12 @@ meaningless local `workspace_id` column.
   `project_resource_applications`; the project space reads both sources for
   bulk progress. Its primary key is `(project_id, workstream_id)`. There is
   deliberately no uniqueness constraint on `workstream_id`.
+- `project_workstream_starts` owns the resumable gate for a work stream created
+  from a project. It stores a stable start-operation ID; project, work-stream,
+  substream, run, and target-gate IDs; prerequisite audience and resource
+  generations; `configuring`, `ready_to_dispatch`, `dispatching`, `active`, or
+  `failed` state; and the finalization attempt and receipt. The last prerequisite
+  receipt and transition to `ready_to_dispatch` commit together.
 - `workspace_project_order` owns one person's project order. It is keyed by
   `(user_id, project_id)` and stores a dense ascending `position`, following the
   same server-authoritative pattern as `workspace_workstream_pins`. It is a
@@ -823,6 +873,10 @@ The actual resource relationship stays in the owning `SubstreamAgent`'s
 `WorkstreamDO` stores receipts for project-audience targets and direct
 member-audience mutations. These local receipts contain operation identity and
 generation, not a second copy of project authority.
+`SubstreamAgent` also owns the start gate beside the scheduled run and the
+idempotent release-to-Workflow-dispatch receipt. The D1 route stays `verified`
+and email stays inactive until the existing creation finalizer has both that
+receipt and the directory-publication fence.
 Applying a default uses an idempotent typed effect and receipt rather than a
 cross-object SQL write. A `WorkspaceDO` alarm drains pending application IDs to
 the regional `PROJECT_RESOURCE_QUEUE` binding and marks them queued after
@@ -862,15 +916,15 @@ applied or already present. Audience consumers use the same lease-and-receipt
 contract with `WorkstreamDO`. Messages carry pointers and generations, not
 project names, resource metadata, resource bytes, or other user content.
 
-Starting a project work stream uses this same Queue path and waits for all
-current-default receipts before dispatching the first run; it does not bypass
-the Queue with a direct resource RPC. Project admission uses version-fenced
-typed effects. Later multi-work-stream participant and scope changes publish
-target IDs through `PROJECT_AUDIENCE_QUEUE` and settle durable receipts in
-`WorkspaceDO`; they do not synchronously fan out from a desktop request or
-pretend partial completion is success. The project space reads audience and
-resource receipts from `WorkspaceDO` to show bulk progress and retryable
-failures.
+Starting a project work stream uses this same Queue path and the durable
+`project_workstream_starts` gate before dispatching the first run; it does not
+bypass the Queue with a direct resource RPC or depend on the create request
+remaining alive. Project admission uses version-fenced typed effects. Later
+multi-work-stream participant and scope changes publish target IDs through
+`PROJECT_AUDIENCE_QUEUE` and settle durable receipts in `WorkspaceDO`; they do
+not synchronously fan out from a desktop request or pretend partial completion
+is success. The project space reads audience, resource, and start receipts from
+`WorkspaceDO` to show bulk progress and retryable failures.
 
 V1 add, move, and restore commands query memberships belonging to `active` or
 `restoring` projects in the same `WorkspaceDO` transaction and reject a second
@@ -975,8 +1029,12 @@ the named audience effect.
    list. Newly visible projects append to the end.
 3. Starting a work stream from a project applies every current default resource
    through the regional Cloudflare Queue and receives every application receipt
-   before the first agent turn begins. A personal project seats all project
-   participants; a workspace project creates a workspace-scoped work stream.
+   before the first agent turn begins. A durable WorkspaceDO start operation and
+   SubstreamAgent gate release the scheduled run exactly once after the final
+   receipt, even when the create request or desktop has gone away. The D1 route
+   and email do not activate before the existing Workflow and directory fences.
+   A personal project seats all project participants; a workspace project
+   creates a workspace-scoped work stream.
 4. Dragging an existing work stream onto a project and choosing **Add to
    project** from its right-click submenu produce the same durable result,
    enlarge its audience as required, and recover cleanly from a failed write.
@@ -1052,7 +1110,9 @@ the named audience effect.
     **Suggested work**.
 17. The project space presents an activity-ordered work-stream table styled
     like **Needs attention**, a default-resource list with an **Add resource**
-    control.
+    control. A persisted start operation that has not activated its route
+    remains discoverable there as **Preparing work stream…** with retry on
+    failure, including after a desktop restart.
 18. Creating, joining, leaving, archiving, or restoring a project does not
     change a work stream's system prompt, compaction behavior, or available
     memory scopes.
@@ -1062,7 +1122,9 @@ the named audience effect.
     `removing` state until every work-stream authority acknowledges the change.
     A direct one-work-stream removal cannot bypass this operation or leave the
     project audience inconsistent, and the operation preserves the existing
-    self-or-workspace-owner/admin removal rule.
+    self-or-workspace-owner/admin removal rule. Removing the final active reader
+    is refused until another participant is active or the project becomes
+    workspace-scoped.
 20. Adding a personal-project participant and widening a project to workspace
     scope each create one durable audience target per current work stream and
     converge through the regional project-audience Queue. Project access or
