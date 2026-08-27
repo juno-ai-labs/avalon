@@ -470,9 +470,12 @@ Adding a default resource to a project with existing work streams is performed
 through a regional Cloudflare Queue. The `WorkspaceDO` transaction that adds
 the default also creates one durable application record for each current work
 stream. Its alarm publishes ID-only application pointers to the Queue; the
-regional API consumer claims each application from `WorkspaceDO`, attaches the
-resource through the owning work stream's typed RPC, and then settles the
-application receipt in `WorkspaceDO`.
+regional API consumer atomically claims each application from `WorkspaceDO`
+with an authority-issued lease, attaches the resource through the owning work
+stream's typed RPC, and then settles the application receipt in `WorkspaceDO`.
+The target effect carries the application ID, generation, and lease expiry. It
+rejects an expired claim and stores its idempotent effect receipt in the same
+local transaction as the resource link.
 
 The Queue is at-least-once and unordered. Every application therefore has a
 stable ID and captures the project, membership, default-resource, and audience
@@ -487,20 +490,22 @@ application does not replay a successful batch. Transient failures retry on
 the Queue. Every regional Queue has its own `PROJECT_RESOURCE_DLQ`, and that
 Queue has a regional failure consumer rather than being a passive callback.
 The failure consumer claims the application from `WorkspaceDO`, changes the
-matching still-queued generation to `failed`, and acknowledges the dead-letter
-message only after `WorkspaceDO` reports failed or already terminal. If that
-receipt write is unavailable, the DLQ message retries. The failure consumer
-never calls the work-stream resource effect and never retries delivery itself.
+matching nonterminal generation with no live application lease to `failed`, and
+acknowledges the dead-letter message only after `WorkspaceDO` reports failed or
+already terminal. If that receipt write is unavailable, the DLQ message
+retries. The failure consumer never calls the work-stream resource effect and
+never retries delivery itself.
 
 `PROJECT_RESOURCE_DLQ` itself dead-letters exhausted failure-consumer messages
 to a separate regional `PROJECT_RESOURCE_FAILURE_DLQ`. That terminal Queue has
 no automatic consumer: a non-empty backlog is the visible signal that
-`WorkspaceDO` could not record failure, and it preserves the application
-pointer instead of letting Cloudflare delete it. After the authority recovers,
-an operator can replay the pointer into the failure consumer; its claim and
-terminal-state check make replay idempotent. The implementation leaves the
-failure-consumer retry count open for the team to set rather than guessing a
-defensive limit in this PRD.
+`WorkspaceDO` could not record failure, and it retains the pointer for
+best-effort operational replay within Cloudflare's retention window. It is not
+the durable recovery mechanism: the authoritative application row and alarm
+reconciliation below can rediscover the work after any Queue copy expires.
+Replay into the failure consumer remains idempotent. The implementation leaves
+the failure-consumer retry count and lease durations open for the team to set
+rather than guessing defensive limits in this PRD.
 
 The project space shows **Adding to work streams…** until every target is
 applied, already satisfied, superseded, or failed. A failed target is named by
@@ -599,16 +604,25 @@ marks an exhausted target `failed` and lets an authorized reader retry it; it
 does not restore project access.
 
 Every direct participant or scope mutation for a project member work stream is
-mediated by a `WorkspaceDO` project-membership guard before the owning
-`WorkstreamDO` applies it. The guard refuses removing an active project
-participant directly from one member work stream; the caller removes them from
-the project so the durable operation updates every member. It also refuses a
-scope change that would make a personal-project work stream workspace-scoped or
-a workspace-project work stream personal. The person must first remove the work
-stream from the project or make the project scope compatible. Because
-membership and these commands serialize in `WorkspaceDO`, a concurrent add,
-move, participant change, or scope change cannot pass an earlier check and
-commit an incompatible audience afterward.
+submitted through `WorkspaceDO` as a durable member-audience mutation. In one
+transaction, `WorkspaceDO` validates every current project membership, records
+the intended mutation and expected membership generations, and reserves that
+work stream against add, move, restore, and project-audience commands. The
+owning `WorkstreamDO` then applies the typed effect only when its local audience
+generation matches, and stores an idempotent receipt under the mutation ID in
+the same local transaction. `WorkspaceDO` releases the reservation only after
+it settles that receipt. Its alarm resumes the same operation after a crash, so
+the reservation fences the effect across the cross-object `await` rather than
+protecting only the earlier check.
+
+The validation refuses removing an active project participant directly from
+one member work stream; the caller removes them from the project so the durable
+operation updates every member. It also refuses a scope change that would make
+a personal-project work stream workspace-scoped or a workspace-project work
+stream personal. The person must first remove the work stream from the project
+or make the project scope compatible. A concurrent membership or audience
+command sees the reservation and returns `project_busy`; it cannot commit
+between guard approval and the `WorkstreamDO` effect.
 
 Changing a personal project to workspace scope uses the same durable audience
 operation. The project remains personal and records a pending `workspace`
@@ -715,6 +729,9 @@ None yet.
    one change affects several work streams, regional Queue targets and durable
    receipts make partial progress resumable, while version-fenced typed effects
    leave each work-stream authority responsible for its actual audience write.
+   A direct one-work-stream mutation holds a durable `WorkspaceDO` reservation
+   until that authority settles its idempotent effect, because a check that
+   ends before the cross-object `await` would not fence the later commit.
 8. **Project order is personal and manual; work-stream order is by activity.**
    A fixed server-owned project order keeps the sidebar where each person put
    it. Sorting project headers by activity was rejected because a message in
@@ -755,10 +772,17 @@ meaningless local `workspace_id` column.
 - `project_audience_targets` owns one receipt per operation and member work
   stream. It stores the operation, project, participant when applicable, and
   work-stream IDs; expected membership and audience generations; and
-  `pending`, `queued`, `applied`, `superseded`, or `failed` state. A participant
-  addition or pending scope does not become active, and a removal does not
-  become final, until every target is applied or superseded by removing that
-  membership.
+  `pending`, `queued`, `applying`, `reconciling`, `applied`, `superseded`, or
+  `failed` state. Queued and applying rows also own the publication-reconcile
+  time or authority-issued claim lease and attempt. A participant addition or
+  pending scope does not become active, and a removal does not become final,
+  until every target is applied or superseded by removing that membership.
+- `project_member_audience_mutations` owns the durable reservation for one
+  direct work-stream participant or scope command. It stores the mutation,
+  work-stream, actor, intended effect, expected project-membership and local
+  audience generations, and `pending`, `applying`, `applied`, or `failed`
+  state. One nonterminal reservation per work stream blocks a project mutation
+  from invalidating the guard before `WorkstreamDO` records its effect receipt.
 - `project_workstreams` owns `project_id`, `workstream_id`, who added it, when
   it was added, the admitted project/work-stream audience generations, and the
   application state for audience expansion. Per-resource receipt state lives in
@@ -777,12 +801,14 @@ meaningless local `workspace_id` column.
   `application_id`; one monotonic `application_generation` sequence per
   `(project_id, resource_id, workstream_id)` tuple, starting at 1 for that
   tuple's first application; the three subject IDs; the expected project,
-  membership, default-resource, and audience generations; and `pending`,
-  `queued`, `applied`, `superseded`, or `failed` state. A uniqueness rule over
-  the three subject IDs and `application_generation` deduplicates Queue
-  publication and delivery without preventing a later, newer application.
-  Applied receipts are retained when a membership or default is removed because
-  the work-stream resource link remains. No resource content is stored here.
+  membership, default-resource, and audience generations; `pending`, `queued`,
+  `applying`, `reconciling`, `applied`, `superseded`, or `failed` state; and the
+  publication-reconcile time or authority-issued claim lease and attempt used
+  by that state. A uniqueness rule over the three subject IDs and
+  `application_generation` deduplicates Queue publication and delivery without
+  preventing a later, newer application. Applied receipts are retained when a
+  membership or default is removed because the work-stream resource link
+  remains. No resource content is stored here.
 - `project_restore_operations` owns resumable restore work. It records the
   project revision, requester, `running`, `failed`, `applied`, or `cancelled`
   state, and each member work stream's audience and resource readiness. A
@@ -793,13 +819,18 @@ meaningless local `workspace_id` column.
 
 The actual resource relationship stays in the owning `SubstreamAgent`'s
 `workstream_resource_links`, and the resource metadata stays in `WorkspaceDO`.
+`SubstreamAgent` also stores the idempotent project-resource effect receipt;
+`WorkstreamDO` stores receipts for project-audience targets and direct
+member-audience mutations. These local receipts contain operation identity and
+generation, not a second copy of project authority.
 Applying a default uses an idempotent typed effect and receipt rather than a
 cross-object SQL write. A `WorkspaceDO` alarm drains pending application IDs to
 the regional `PROJECT_RESOURCE_QUEUE` binding and marks them queued after
 Cloudflare accepts the send. A crash between those two steps may publish the
 same ID again, which is safe by contract. After publication, Cloudflare Queue
 owns retry and dead-lettering; the alarm does not imitate Queue delivery with a
-parallel RPC retry path.
+parallel RPC retry path. Marking a row queued also records an
+authority-generated `reconcile_after` time.
 
 The same alarm drains pending audience-target IDs to
 `PROJECT_AUDIENCE_QUEUE`. It marks a target queued only after Cloudflare accepts
@@ -807,12 +838,29 @@ the send, and a crash may safely publish the stable target ID again. A failed
 target can be returned to pending by an authorized retry without changing the
 operation ID or replaying already applied siblings.
 
+The alarm also reconciles authoritative resource applications and audience
+targets whose queued `reconcile_after` time or applying claim lease has expired.
+It atomically changes the still-current generation to `reconciling` before any
+external call. A queued row with no effect claim becomes `failed`. For an
+expired applying claim, the alarm asks the owning `SubstreamAgent` or
+`WorkstreamDO` for the idempotent effect receipt: a receipt settles the row as
+applied, while no receipt settles it as failed. The target authority rejects a
+late effect after its WorkspaceDO-issued lease expires, so it cannot commit
+after reconciliation observed no receipt. This path starts from SQLite state,
+not a Queue message, and therefore still works after terminal-DLQ retention
+expires. It never republishes the same generation automatically; an authorized
+retry returns a failed current generation to pending with a new fenced attempt,
+while superseded intent creates the fresh application generation described
+above. The recovery interval and lease duration are explicit deployment
+decisions left open for the team to set.
+
 The Queue consumer validates the message region, claims and reloads the named
 application from `WorkspaceDO`, then uses the same-region typed RPC to ask the
-owning `SubstreamAgent` to insert the canonical resource link. It settles the
-WorkspaceDO receipt only after the target reports applied or already present.
-Messages carry pointers and generations, not project names, resource metadata,
-resource bytes, or other user content.
+owning `SubstreamAgent` to insert the canonical resource link and effect
+receipt. It settles the WorkspaceDO receipt only after the target reports
+applied or already present. Audience consumers use the same lease-and-receipt
+contract with `WorkstreamDO`. Messages carry pointers and generations, not
+project names, resource metadata, resource bytes, or other user content.
 
 Starting a project work stream uses this same Queue path and waits for all
 current-default receipts before dispatching the first run; it does not bypass
@@ -939,19 +987,24 @@ the named audience effect.
    independently, and exhausted work reaches a regional dead-letter queue whose
    failure consumer durably changes the matching application to `failed` before
    acknowledging it. If that consumer also exhausts retries, a separate passive
-   regional terminal DLQ preserves the pointer for visible, idempotent
-   operational replay. Closing the desktop does not stop the fan-out. Future
-   members and project restoration use the same application path; restoration
-   creates a fresh generation even when an older receipt was applied.
+   regional terminal DLQ provides a visible, idempotently replayable signal.
+   Independent `WorkspaceDO` alarm reconciliation discovers expired queued or
+   applying records from authoritative SQLite and settles them from target
+   receipts even after every Queue copy expires. Closing the desktop does not
+   stop the fan-out. Future members and project restoration use the same
+   application path; restoration creates a fresh generation even when an older
+   receipt was applied.
 6. Removing a work stream or a default resource leaves every resource already
    attached to a work stream in place. Removing a work stream also leaves its
    participants and scope unchanged.
 7. Personal/workspace authorization and audience containment hold for project
    spaces, sidebar rows, work-stream membership, and resources. Every direct
    participant or scope mutation for a member work stream passes through the
-   authoritative `WorkspaceDO` membership guard before `WorkstreamDO` changes
-   the audience. Any project participant may remove themself; only a workspace
-   owner or admin may remove somebody else from a project and its work streams.
+   authoritative `WorkspaceDO` membership guard and holds a durable reservation
+   until `WorkstreamDO` stores and returns its idempotent effect receipt. A
+   project membership command cannot commit in the cross-object gap. Any
+   project participant may remove themself; only a workspace owner or admin may
+   remove somebody else from a project and its work streams.
 8. A work stream can remain pinned while it is in a project. Neither action
    changes the other.
 9. V1 moves a work stream between projects, while storage and internal
@@ -1021,4 +1074,5 @@ the named audience effect.
     removal remains immediate and replaces any resource applications that its
     audience change superseded. An exhausted audience failure-consumer message
     is likewise preserved in a passive regional terminal DLQ for visible,
-    idempotent operational replay.
+    idempotent operational replay, while authority-owned alarm reconciliation
+    remains able to settle the target after Queue retention expires.
