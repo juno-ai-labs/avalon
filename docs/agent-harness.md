@@ -122,6 +122,8 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 An automation run's final message is what Rally delivers, so the run is told which destinations Rally will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Rally and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
+A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the trigger — an explicit document type, a composition past roughly three paragraphs organized with headings or a table, or a result long enough to bury the conversation — plus the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is rendered only for a run that can produce one — the region reports Terminal supported, and the run is not an automation, a scheduled digest, an inbound email, or Slack-originated, each of which delivers a final message that a rail entry is not part of. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the rule steers into.
+
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
 ### Automation compilation
@@ -804,6 +806,52 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-27 — A document request becomes a published resource, not a wall of chat
+
+**What changed:** `DOCUMENT_GENERATION_POLICY` joined the work-stream system
+prompt as a `# Documents` section, rendered only when `loadRunPromptContext`
+resolves `documentPublishing` — the region reports Terminal supported, and the
+run is not an automation, a scheduled digest, an inbound email, or
+Slack-originated. It carries the trigger, the write-then-publish procedure, the
+narration discipline, the same-path revision rule, the override, and the inline
+fallback.
+
+**Why:** A request like "draft the launch press release" produced one assistant
+message spanning many viewport heights, which buried the conversation, read as
+finished output rather than a draft under discussion, and repeated itself on
+every revision. Every mechanism the alternative needs already existed — the
+per-work-stream sandbox, the publish path, the resource rail, the read tools,
+the compaction inventory — and only the instruction to use them was missing.
+The predecessor design reached the same surface through a new message type, two
+dedicated tools, an artifact version ledger and a new rail pane; this is the
+same experience as prompt policy plus one publish-path derivation.
+
+**Considered and rejected:** Naming the publish tool in the section, which
+`writing-prompts.md` permits where a prompt owns a protocol — rejected because
+this renders before the Terminal plugin loads and for runs that never load it,
+so the name would teach a call that may not exist. Shipping it as an
+always-available skill, the PRD's open question — rejected on measurement: the
+rendered standing prompt is 6,014 bytes against its 8,000 ceiling, so it fits
+policy and a skill would pay a load round trip for a rule that applies to any
+request. A feature flag — rejected because the behavior is a prompt module, so
+the deploy is the rollout and the revert is the rollback; an admission-consulted
+flag is the recorded escalation if staged rollout is later wanted.
+
+**Consequences:** `WORKSTREAM_PROMPT_VERSION` is deliberately not bumped. It is
+hashed into the immutable run scope, so bumping it fails every in-flight run
+resuming across the deploy with `immutable_run_scope_mismatch`. The section
+grants no capability and moves no authority — eligible capabilities and the tool
+surface hash are unchanged — and its flag derives from environment and run input
+already frozen for the run, so a resumed attempt's scope is the same scope. A
+prompt change that did move authority would still need the bump.
+
+Slack is the one excluded origin the PRD does not name, and it is excluded on
+the reason the PRD gives for the others: Slack delivery cannot yet carry a
+reference to a resource, so a Slack participant would be told a document exists
+and given no way to open it. EU workspaces get nothing from this until Terminal
+is regionally supported there; the gate is the plugin's own regional rule, so
+that follows automatically rather than needing its own condition.
 
 ### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
 
