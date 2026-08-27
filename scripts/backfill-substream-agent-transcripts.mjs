@@ -40,8 +40,13 @@ function parseArguments(argv) {
     eu: Number(value('--expected-eu')),
     global: Number(value('--expected-global')),
   };
-  if (apply && (expected.eu !== 3 || expected.global !== 389)) {
-    throw new Error('apply_requires_expected_eu_3_and_global_389');
+  const regions = region === 'all' ? REGIONS : [region];
+  if (apply && regions.some((selected) => !Number.isSafeInteger(expected[selected]))) {
+    throw new Error('apply_requires_explicit_expected_counts');
+  }
+  if (apply && regions.some((selected) =>
+    expected[selected] !== (selected === 'eu' ? 3 : 389))) {
+    throw new Error('apply_requires_reviewed_expected_counts');
   }
   const allowed = new Set([
     '--apply', '--region', '--jurisdiction-probe-url', '--expected-eu',
@@ -57,7 +62,7 @@ function parseArguments(argv) {
     expected,
     probeUrl,
     receiptPath: value('--receipt'),
-    regions: region === 'all' ? REGIONS : [region],
+    regions,
     targetPaths: {
       eu: value('--eu-target-ids'),
       global: value('--global-target-ids'),
@@ -67,7 +72,12 @@ function parseArguments(argv) {
 
 async function authoritativeTargets(path, eligibleObjectIds, region) {
   if (!path) return { targetObjectIds: eligibleObjectIds, excludedObjects: 0 };
-  const parsed = JSON.parse(await readFile(path, 'utf8'));
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf8'));
+  } catch {
+    throw new Error(`${region}_target_ids_invalid`);
+  }
   if (!Array.isArray(parsed)) throw new Error(`${region}_target_ids_invalid`);
   const targetObjectIds = [];
   const seen = new Set();
