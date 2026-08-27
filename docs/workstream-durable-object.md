@@ -1253,6 +1253,30 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
+
+**What changed:** The face-pile presence signal now follows Tailwind's
+`animate-ping` treatment: a translucent filled copy of the avatar expands to
+twice its size and fades on a one-second loop. It shares the avatar's stacking
+layer, paints beneath its own solid avatar, and follows face-pile order so a
+participant's ping stays above earlier avatars and below later avatars or the
+overflow badge.
+Reduced-motion users keep a static translucent halo.
+
+**Why:** The tooltip opens after 300 ms, but the previous 550 ms inset phase was
+fully covered by the avatar. A user could hover a correctly present participant,
+see the explanatory tooltip, and see no corresponding sonar pulse.
+
+**Considered and rejected:** Increasing the outlined ring's colour or width
+would make the later visible phase louder without matching the familiar radar
+ping treatment. The halo stays tokenized and subtle while adopting the filled,
+expanding geometry.
+
+**Consequences, and what a future change has to respect:** The looping presence
+signal must use the avatar's face-pile layer without obscuring its own face or
+crossing later avatars or the overflow count, and remain a non-animated outer
+halo in reduced-motion mode.
+
 ### 2026-08-26 — Legacy transcript rows gain faithful canonical projections
 
 **What changed:** schema v28 adds one receipt for the explicit pre-v27
