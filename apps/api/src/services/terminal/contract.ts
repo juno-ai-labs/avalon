@@ -257,7 +257,7 @@ export function createTerminalPlugin(executors: TerminalToolExecutors, systemMes
     shortWireName: "terminal",
     displayName: "Terminal",
     searchAliases: ["code", "shell", "bash", "python", "javascript", "typescript", "sqlite", "git", "pull request", "artifact"],
-    description: "Use an isolated terminal workspace to run code, edit files, create resources, validate repositories, and publish an authorized pull request.",
+    description: "Get an isolated Linux sandbox that allows you to write/run code, edit files, create artifacts/documents, work in git repositories, and open GitHub pull requests.",
     systemMessage,
     tools,
     preload: false,
