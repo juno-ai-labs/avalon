@@ -209,7 +209,7 @@ between that marker and the work-stream name.
   whitespace and letter case so `Hiring` and `hiring` cannot become two
   different projects.
 - **Icon:** exactly one icon from the fixed V1 library below.
-- **Color:** one solid icon fill chosen from the fixed project palette below.
+- **Color:** one solid icon color chosen from the fixed project palette below.
   Rally stores the palette key rather than a hex value, so the same choice can
   use the right accessible shade in every theme.
 
@@ -235,6 +235,8 @@ technology. The selected swatch has a non-color selection indicator. These keys
 resolve through new `sys.color.project.<key>` design tokens supplied by every
 Rally theme. A theme may change the rendered shade for contrast, but it must
 preserve the named hue. V1 does not accept custom colors, opacity, or gradients.
+Every icon option is an outline drawn in the currently selected color, so a
+color change previews all 25 choices immediately.
 
 The V1 icon library contains exactly these Lucide choices. The first value is
 the `lucide-react` component; the second is the stable stored `icon_key`:

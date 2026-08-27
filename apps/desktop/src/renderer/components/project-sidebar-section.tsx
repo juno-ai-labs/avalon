@@ -40,7 +40,7 @@ import {
   type ProjectSummary,
 } from '@rally/contracts';
 
-import { Button, IconButton, InlineError, Modal } from './primitives';
+import { Button, DropdownSelect, IconButton, InlineError, Modal } from './primitives';
 import type { WorkstreamSummary } from '../lib/types';
 
 const PROJECT_ICONS: Record<ProjectIconKey, LucideIcon> = {
@@ -105,7 +105,7 @@ export function ProjectAppearancePicker({
         <div className="project-icon-grid">
           {PROJECT_ICON_KEYS.map((key) => {
             const Icon = PROJECT_ICONS[key];
-            return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => onIconChange(key)} type="button"><Icon aria-hidden="true" size={17} /></button>;
+            return <button aria-label={label(key)} aria-pressed={iconKey === key} className={clsx(iconKey === key && 'is-selected')} key={key} onClick={() => onIconChange(key)} type="button"><Icon aria-hidden="true" size={17} stroke={`var(--av-sys-color-project-${colorKey})`} /></button>;
           })}
         </div>
       </fieldset>
@@ -346,13 +346,18 @@ export function ProjectSidebarSection({
             <input autoFocus onChange={(event) => setName(event.target.value)} value={name} />
           </label>
           <ProjectAppearancePicker colorKey={colorKey} iconKey={iconKey} onColorChange={setColorKey} onIconChange={setIconKey} />
-          <label className="form-field">
+          <div className="form-field">
             <span>Who can see this project?</span>
-            <select onChange={(event) => setScope(event.target.value as 'personal' | 'workspace')} value={scope}>
-              <option value="personal">Project participants</option>
-              <option value="workspace">Everyone in the workspace</option>
-            </select>
-          </label>
+            <DropdownSelect
+              ariaLabel="Project scope"
+              onValueChange={(value) => setScope(value as 'personal' | 'workspace')}
+              options={[
+                { label: 'Project participants', value: 'personal' },
+                { label: 'Everyone in the workspace', value: 'workspace' },
+              ]}
+              value={scope}
+            />
+          </div>
           {modalError && <InlineError>{modalError}</InlineError>}
         </form>
       </Modal>
