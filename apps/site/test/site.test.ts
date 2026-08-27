@@ -147,13 +147,16 @@ describe('public Rally site', () => {
     };
 
     expect(pages[0]).toContain('class="rally-symbol"');
-    expect(pages[0]).toContain('/brand/rally-mark.png');
+    expect(pages[0]).toContain('/brand/rally-mark.svg');
+    expect(pages[0]).toContain('/brand/rally-mark-small.svg');
     for (const page of pages.slice(1)) {
-      expect(page).toContain('/brand/rally-mark.png');
+      expect(page).toContain('/brand/rally-mark.svg');
     }
     for (const page of pages) {
       expect(page).not.toMatch(/Avalon|with-avalon|avalon-mark/iu);
-      expect(page).not.toContain('/brand/rally-mark.svg');
+      // Pages render the vector mark; the PNG stays on disk only because
+      // provider manifests hotlink it by URL.
+      expect(page).not.toContain('/brand/rally-mark.png');
       expect(page).toContain('/favicon.png');
       expect(page).not.toContain('✣');
       expect(page).not.toContain('/favicon.svg');
@@ -165,7 +168,8 @@ describe('public Rally site', () => {
     expect(manifest.background_color).toBe('#111210');
     expect(manifest.icons.map(({ src }) => src)).toEqual(['/favicon.png', '/apple-touch-icon.png']);
     expect(existsSync(new URL('../public/brand/rally-mark.png', import.meta.url))).toBe(true);
-    expect(existsSync(new URL('../public/brand/rally-mark.svg', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../public/brand/rally-mark.svg', import.meta.url))).toBe(true);
+    expect(existsSync(new URL('../public/brand/rally-mark-small.svg', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/brand/avalon-mark.png', import.meta.url))).toBe(false);
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
@@ -185,7 +189,7 @@ describe('public Rally site', () => {
       'utf8',
     );
     expect(migrationGuide).toContain('/brand/rally-mark.png');
-    expect(migrationGuide).not.toContain('/brand/rally-mark.svg');
+    expect(migrationGuide).toContain('/brand/rally-mark.svg');
   });
 
   it('keeps the shared invitation, auth handoff, and not-found surfaces styled and functional', () => {
