@@ -511,31 +511,45 @@ assigned work stream starts a move admission. In one `WorkspaceDO` transaction,
 Rally validates both projects, reserves the work stream against another
 membership command, records a durable membership operation, and creates a
 non-visible `joining` row for the destination. A move keeps the old membership
-active and visible during setup.
+active and visible during setup only while the destination audience remains
+compatible with the source project.
 
 The admission captures the destination audience and default generations and
 creates durable receipts for its one `WorkstreamDO` audience effect and every
 default-resource application. Applying a personal project adds every active
 project participant in the local work-stream transaction; applying a workspace
 project changes the work stream to `workspace` scope. The destination project
-shows **Adding work stream…**, while normal sidebar and Needs attention reads
-continue to show only the old active project, if any. Participant additions,
+shows **Adding work stream…**. Normal sidebar and Needs attention reads continue
+to show only the old active project while doing so remains audience-safe.
+Participant additions,
 scope, default-resource, archive, and conflicting membership commands that
 would change the captured admission return `project_busy` until it is terminal,
 except that an access-revoking participant removal preempts the admission.
 
+Before claiming a destination audience effect that would make the work stream
+incompatible with its source project, `WorkspaceDO` first runs the source
+membership's late-effect barrier and detaches that membership. Only then may
+the wider audience commit in `WorkstreamDO`. The work stream is temporarily
+unassigned in ordinary navigation, while the destination project continues to
+show **Adding work stream…**. The move confirmation warns that cancelling after
+this point will not restore the source assignment. This applies, for example,
+when moving from a personal project into a workspace project or into a personal
+project with additional participants.
+
 After every audience and resource receipt is satisfied, one `WorkspaceDO`
 transaction changes the destination row from `joining` to `active` and removes
-the old active membership. That final swap is the only point at which the
-visible assignment changes. If setup fails, **Retry add/move** resumes only
+any still-compatible old active membership. Except for the safe early
+detachment above, that final swap is the only point at which the visible
+assignment changes. If setup fails, **Retry add/move** resumes only
 unfinished targets. **Cancel add/move** prevents new claims, waits for live
 leases to settle or expire, removes the `joining` row, and releases the
-reservation. The old visible assignment remains, but any audience expansion or
-resource link already applied is kept and named in the cancellation message;
-Rally does not pretend those monotonic effects were rolled back. For an
-initial add, cancellation leaves the work stream unassigned with the same
-already-applied effects. Closing the desktop does not abandon, complete, or
-cancel the admission.
+reservation. A compatible old assignment remains. An early-detached source is
+not restored, so that cancellation leaves the work stream unassigned. Any
+audience expansion or resource link already applied is kept and named in the
+cancellation message; Rally does not pretend those monotonic effects were
+rolled back. An initial add likewise leaves the work stream unassigned with the
+same already-applied effects. Closing the desktop does not abandon, complete,
+or cancel the admission.
 
 Some apparent moves are not safe as one action. In particular, a work stream
 made workspace-scoped by its old project cannot move directly into a personal
@@ -993,12 +1007,14 @@ meaningless local `workspace_id` column.
 - `project_membership_operations` owns a staged add, move, or removal. It stores
   the operation, work-stream, optional source and destination project IDs;
   expected destination lifecycle and audience generations, that membership's
-  generation, and each captured default row's generation;
+  generation, each captured default row's generation, and whether an
+  audience-incompatible source was durably detached before destination setup;
   `configuring`, `ready`, `cancelling`, `applied`, `failed`, or `cancelled`
   state; its audience target; and the resource-application set. One nonterminal
   operation reserves the work stream. The destination becomes active and the
-  old membership is removed only in the final transaction after every target
-  receipt or removal barrier is satisfied.
+  compatible old membership is removed only in the final transaction after
+  every target receipt or removal barrier is satisfied; an incompatible source
+  is removed through its earlier barrier before destination audience expansion.
 - `project_workstream_starts` owns the resumable gate for a work stream created
   from a project. It stores a stable start-operation ID; project, work-stream,
   substream, run, and target-gate IDs; the project lifecycle and audience
@@ -1248,11 +1264,14 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
 4. Dragging an existing work stream onto a project and choosing **Add to
    project** from its right-click submenu create the same durable staged
    admission. The old project remains the only visible assignment until every
-   destination audience and resource receipt settles. Failure offers retry or
-   cancellation; cancellation removes the joining membership after live leases
-   finish and explicitly keeps any monotonic audience or resource effects that
-   already applied. Participant removal preempts and rebases the admission
-   instead of waiting behind its setup fence.
+   destination audience and resource receipt settles when its audience remains
+   compatible. If destination setup must change the audience incompatibly, the
+   source membership's late-effect barrier completes and detaches it before that
+   effect can commit. Failure offers retry or cancellation; cancellation removes
+   the joining membership after live leases finish, does not restore an
+   early-detached unsafe source, and explicitly keeps any monotonic audience or
+   resource effects that already applied. Participant removal preempts and
+   rebases the admission instead of waiting behind its setup fence.
 5. Adding a project default records one durable application for every current
    member and delivers those applications through the regional Cloudflare
    Queue. The default's audience must contain the complete current project
