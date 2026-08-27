@@ -9,6 +9,7 @@ import type {
   TerminalWorkspaceSettings as ContractTerminalWorkspaceSettings,
   TerminalNetworkPolicyPreview as ContractTerminalNetworkPolicyPreview,
   TerminalWorkstreamState as ContractTerminalWorkstreamState,
+  WorkstreamTranscriptSnapshot,
 } from '@rally/contracts';
 
 /** The OpenRouter model ids a composer may pin work to. Re-exported so the
@@ -210,6 +211,8 @@ export interface AutomationUserDelivery {
 
 export interface ToolEventData {
   id: string;
+  /** Stable provider/Bind call identity shared by live and canonical rows. */
+  toolCallId?: string;
   name: string;
   summary?: string;
   status: 'started' | 'completed' | 'failed' | 'ambiguous';
@@ -227,6 +230,9 @@ export interface ThoughtEventData {
   durationMs: number;
   /** Client receipt time for the currently streaming inference attempt. */
   startedAt?: number;
+  monotonicStartedAt?: number;
+  activeVerb?: string;
+  completedVerb?: string;
 }
 
 export interface ElicitationData {
@@ -304,6 +310,8 @@ export interface ExternalActor {
 
 export interface Message {
   id: string;
+  /** Canonical Bind turn identity used to replace its transient stream overlay. */
+  transcriptTurnId?: string;
   /**
    * Stable identity supplied by the client for idempotent message creation.
    * The persisted message receives a different database `id`, so this value
@@ -340,7 +348,7 @@ export interface Message {
   realtimeOrder?: {
     anchorSequenceNumber: number;
     eventSequence: number;
-    placement: 'before_anchor' | 'at_anchor';
+    placement: 'before_anchor' | 'at_anchor' | 'after_anchor';
   };
   toolEvent?: ToolEventData;
   thoughtEvent?: ThoughtEventData;
@@ -453,6 +461,7 @@ export interface WorkstreamDetail extends WorkstreamSummary {
  * are not contiguous, and the transcript is a single ordered run.
  */
 export interface WorkstreamBoot extends WorkstreamDetail {
+  transcript: WorkstreamTranscriptSnapshot;
   /** Undefined from a Worker that predates the field; absent is not empty. */
   messageFeed?: MessagePage;
   resumeFeed: MessagePage | null;

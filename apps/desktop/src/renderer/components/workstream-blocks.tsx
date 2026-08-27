@@ -874,6 +874,9 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
     <AgentWorkTiming
       active={thought.status === 'started'}
       durationMs={thought.durationMs}
+      monotonicStartedAt={thought.monotonicStartedAt}
+      activeVerb={thought.activeVerb}
+      completedVerb={thought.completedVerb}
       {...(thought.startedAt === undefined ? {} : { startedAt: thought.startedAt })}
     />
   );

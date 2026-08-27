@@ -606,6 +606,30 @@ both signals rather than trusting the comment there to survive.
 
 ## Changelog
 
+### 2026-08-26 — Work-stream open includes both transcript islands and usable composer
+
+**What changed:** The existing renderer `workstream_open` clock now treats the
+ordered transcript snapshot as part of the socket snapshot boundary. That one
+frame contains the unread-centered range, the prefetched five-turn tail, active
+turn/activity baselines, and the room event fence; success still waits for the
+renderer commit and usable composer. Release evidence reports combined and
+cohort p50/p90, with goals of p50 at or below 1,000 ms and p90 at or below
+2,000 ms.
+
+**Why:** Ending the clock at authorization, Durable Object response, or one
+painted island would report a fast partial open while the reader could neither
+jump to the live tail nor send. The product goal is the complete visible open.
+
+**Considered and rejected:** A new transcript-only microbenchmark cannot prove
+the Electron renderer is visible or usable. A second trace would also split one
+member action into competing totals. The existing client-monotonic flow is the
+authoritative boundary and its backend spans remain diagnostic components.
+
+**Consequences:** Slow successful opens remain in percentiles. Failed and
+cancelled opens record their outcome but never enter successful percentiles.
+Warm/cold, unread/latest overlap, disjoint islands, large history, and
+mid-stream cohorts remain separable without transcript content.
+
 ### 2026-08-26 — Renderer traces persist locally and cold wakes expose initialization
 
 **What changed:** macOS builds now package a native Unified Logging bridge that

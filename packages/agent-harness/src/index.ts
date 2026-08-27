@@ -23,9 +23,28 @@ import {
   type AddressingContextMessage,
 } from "./prompts";
 import { toolActivityName } from "./tool-activity";
+import type {
+  BindLoopTransition,
+  BindProviderBoundary,
+} from "./bind-loop-projection";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
+export {
+  applyBindLoopTransition,
+  BIND_LOOP_PROJECTOR_VERSION,
+  BIND_SYSTEM_RENDERER_VERSION,
+  canonicalizeBindLoop,
+  hashBindLoop,
+  projectBindLoopMessages,
+  verifyBindProviderBoundary,
+  type BindLoopMessage,
+  type BindLoopMessageOrigin,
+  type BindLoopProjectionState,
+  type BindLoopTransition,
+  type BindProviderBoundary,
+  type BindSystemProjection,
+} from "./bind-loop-projection";
 export {
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
@@ -78,6 +97,15 @@ export interface ModelMessage {
   name?: string;
   tool_call_id?: string;
   tool_calls?: ModelToolCall[];
+  /** Durable source of an exact model-facing wrapper; never sent to a provider. */
+  provenance?: ModelMessageProvenance;
+}
+
+export interface ModelMessageProvenance {
+  originKind: "canonical" | "protocol" | "derived";
+  sourceKind: string | null;
+  sourceId: string | null;
+  sourceRevision: number | null;
 }
 
 export interface OpenRouterInferencePayload {
@@ -2625,6 +2653,11 @@ export interface HarnessCompactionConfig {
   renderAppendix?: () => string | Promise<string>;
 }
 
+export interface BindCompactionCommit {
+  checkpoint: HarnessCompactionCheckpoint;
+  transition: Extract<BindLoopTransition, { kind: "state_replaced" }>;
+}
+
 /**
  * The outcome of revalidating one plugin's authorization.
  *
@@ -2802,6 +2835,16 @@ export interface RunHarnessInput {
   onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
   onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
   onTranscriptIssues?: (issues: Array<{ kind: string; index?: number; healed?: boolean }>) => void | Promise<void>;
+  /**
+   * Required by transcript-aware hosts. The callback must durably commit the
+   * transition before resolving; Bind will not accept the corresponding message
+   * or replacement into its private loop until it does.
+   */
+  onBindLoopTransition?: (transition: BindLoopTransition) => void | Promise<void>;
+  /** Called after the exact post-validation provider input has been hash-checked. */
+  onBindProviderBoundary?: (boundary: BindProviderBoundary) => void | Promise<void>;
+  /** Atomically owns the compaction checkpoint and Bind replacement transition. */
+  onBindCompaction?: (commit: BindCompactionCommit) => void | Promise<void>;
   onToolCallRejected?: (event: { toolCallId: string; code: string }) => void | Promise<void>;
   onProgress?: (progress: { outputTokens: number; toolCalls: number }) => void | Promise<void>;
   flushProgress?: (progress: {

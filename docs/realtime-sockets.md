@@ -41,6 +41,7 @@ is recorded.
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
+| `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free WorkstreamDO control socket after a one-second sidebar hover, and retains recently viewed work-stream pairs without remounting their connection hooks. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
@@ -95,6 +96,18 @@ admission is split in two.
    so the answer is required — and it is always the sentinel, never the ticket.
 
 ### Hibernation lifecycle
+
+An admitted SubstreamAgent feed also accepts correlated
+`load_transcript_range` requests. The request names the opening `snapshotId`, a
+half-open sequence interval, and `resumeAfterEventSequence`; the answer names
+the interval actually inspected. The socket's existing admitted identity is
+reused for the range—there is no authorization call per returned turn or block.
+The corresponding fence and snapshot UTC live in that socket's hibernation
+attachment. They survive object eviction and are replaced by the next snapshot;
+no global snapshot row or timeout is needed. A snapshot-expired or sequence-ahead request returns a resync outcome rather
+than silently reading a new fence. Active response/plugin/tool/thinking and
+compaction intervals carry their original UTC start plus the snapshot UTC and
+elapsed baseline; the client advances clocks locally.
 
 All four product objects follow Cloudflare's [WebSocket Hibernation
 server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
@@ -577,6 +590,27 @@ revision every command so asynchronous session authorization cannot reorder it.
 Attachments from the previous deployment resume as background. Presence frames
 remain ephemeral, authorized, recipient-specific, and outside the workspace
 waterline/replay log. Presence has no REST fallback.
+
+### 2026-08-26 — Substream sockets carry snapshot-fenced transcript ranges
+
+**What changed:** Feed snapshots now carry the ordered transcript fence, two
+opening ranges, active turns, and nested activity baselines. Correlated range
+requests fill explicit gaps over the same socket and snapshot. The socket's
+hibernation attachment owns that reader fence, and each range result carries the
+bounded activity rows referenced by its turns.
+
+**Why:** Cursor pages could not distinguish missing history from an empty page
+or retain a disjoint unread island and live tail. Reconnect also needed an
+authoritative elapsed baseline without streaming clock ticks.
+
+**Considered and rejected:** A REST request per gap, a fresh participant
+authorization per row, an append-only table of every open, and a guessed
+snapshot TTL. The SubstreamAgent already owns the admitted socket, its durable
+attachment, and the transcript SQL.
+
+**Consequences:** Clients must retain `snapshotId`, coverage, and event fence
+together. A range reply does not advance the room event sequence and cannot be
+interpreted as realtime catch-up.
 
 ### 2026-08-26 — Route handoff cannot paint a retained work stream under the next URL
 

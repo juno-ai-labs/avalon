@@ -27,7 +27,13 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import {
+  MESSAGE_MAX_CHARACTERS,
+  MESSAGE_TOO_LONG_MESSAGE,
+  type TranscriptActivity,
+  type TranscriptTurn,
+  type WorkstreamTranscriptSnapshot,
+} from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
@@ -52,9 +58,13 @@ import {
 } from '../lib/telemetry';
 import {
   appendDismissedSuggestionId,
+  adjacentTranscriptRange,
   createTextMessage,
   dismissedSuggestionIdsQueryKey,
   removeTranscriptMessage,
+  orderedTranscriptMessages,
+  transientMessagesWithoutCanonicalMatch,
+  transcriptGaps,
   visibleTranscriptMessages,
 } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -70,6 +80,7 @@ import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   insertMessage,
   nextTranscriptSequence,
+  orderTranscript,
   reconcileCanonicalTranscript,
   type SocketState,
 } from '../lib/use-workstream-socket';
@@ -121,6 +132,28 @@ export function workstreamRunTiming(
   const canonicalCompletedAt = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
   const completedAt = Number.isFinite(canonicalCompletedAt) ? canonicalCompletedAt : now;
   return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
+}
+
+interface OrderedTimingSnapshot {
+  activities: readonly Pick<TranscriptActivity, 'activityId' | 'parentActivityId' | 'scope' | 'subjectId'>[];
+  ranges: readonly { turns: readonly Pick<TranscriptTurn, 'activityId'>[] }[];
+  activeTurns: readonly Pick<TranscriptTurn, 'activityId'>[];
+}
+
+export function orderedTranscriptOwnsRunTiming(
+  snapshot: OrderedTimingSnapshot | undefined,
+  runId: string | undefined,
+): boolean {
+  if (!runId || !snapshot) return false;
+  const response = snapshot.activities.find((activity) =>
+    activity.scope === 'response' && activity.subjectId === runId);
+  if (!response) return false;
+  const assistantActivityIds = new Set(snapshot.activities.flatMap((activity) =>
+    activity.scope === 'assistant_turn' && activity.parentActivityId === response.activityId
+      ? [activity.activityId]
+      : []));
+  return [...snapshot.ranges.flatMap((range) => range.turns), ...snapshot.activeTurns]
+    .some((turn) => turn.activityId !== null && assistantActivityIds.has(turn.activityId));
 }
 
 /**
@@ -905,6 +938,10 @@ export function WorkstreamScreen(): React.JSX.Element {
       messageFeed: boot.messageFeed,
       resumeFeed: boot.resumeFeed,
     });
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', id],
+      boot.transcript,
+    );
     return detailFromRecoveryBoot(boot);
   }, [api, id, queryClient]);
   const workstream = useQuery<WorkstreamDetail>({
@@ -1139,7 +1176,35 @@ export function WorkstreamScreen(): React.JSX.Element {
   });
   const socketState = socketConnection.state;
   const loadSocketMessagePage = socketConnection.loadMessagePage;
-  const transcript = routedMessages ?? [];
+  const loadTranscriptRange = socketConnection.loadTranscriptRange;
+  const orderedTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
+    queryKey: ['ordered-transcript', id],
+    queryFn: async () => undefined,
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const orderedTranscriptGaps = useMemo(
+    () => orderedTranscript.data ? transcriptGaps(orderedTranscript.data) : [],
+    [orderedTranscript.data],
+  );
+  const transcript = useMemo(() => {
+    const ordered = orderedTranscriptMessages(orderedTranscript.data, id);
+    const transient = transientMessagesWithoutCanonicalMatch(ordered, routedMessages ?? []);
+    const lastAnchor = ordered.reduce(
+      (maximum, message) => Math.max(maximum, message.sequenceNumber),
+      0,
+    );
+    return orderTranscript([
+      ...ordered,
+      ...transient.map((message, index) => ({
+        ...message,
+        sequenceNumber: lastAnchor + index + 1,
+        realtimeOrder: message.realtimeOrder
+          ? { ...message.realtimeOrder, anchorSequenceNumber: lastAnchor + index + 1 }
+          : message.realtimeOrder,
+      })),
+    ]);
+  }, [id, orderedTranscript.data, routedMessages]);
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -1178,8 +1243,15 @@ export function WorkstreamScreen(): React.JSX.Element {
   );
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
+    const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', id],
+    );
+    const orderedRange = orderedSnapshot
+      ? adjacentTranscriptRange(orderedSnapshot, 'older')
+      : null;
     const before = queryClient.getQueryData<string | null>(['messages-cursor', id]);
-    if (!api || !before || loadingOlderRef.current) return;
+    if (orderedSnapshot && !orderedRange) return;
+    if (!api || (!orderedRange && !before) || loadingOlderRef.current) return;
     if (socketState !== 'connected') {
       pendingOlderAfterReconnectRef.current = true;
       setOlderMessagesError(undefined);
@@ -1193,6 +1265,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
     try {
+      if (orderedSnapshot && orderedRange) {
+        await loadTranscriptRange({
+          snapshotId: orderedSnapshot.snapshotId,
+          range: orderedRange,
+          resumeAfterEventSequence: orderedSnapshot.eventSequence,
+        });
+        if (activeWorkstreamIdRef.current !== id) return;
+        window.requestAnimationFrame(() => {
+          const element = transcriptRef.current;
+          if (!element) return;
+          scrollTranscriptTo(preservedPrependScrollTop(
+            previousScrollTop,
+            previousScrollHeight,
+            element.scrollHeight,
+          ));
+        });
+        return;
+      }
+      if (!before) return;
       const page = await loadSocketMessagePage({ before });
       if (activeWorkstreamIdRef.current !== id) return;
       const nextCursor = transcriptPageCursor(page, before, 'before');
@@ -1218,11 +1309,18 @@ export function WorkstreamScreen(): React.JSX.Element {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
+  }, [api, id, loadSocketMessagePage, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState]);
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
+    const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', id],
+    );
+    const orderedRange = orderedSnapshot
+      ? adjacentTranscriptRange(orderedSnapshot, 'newer')
+      : null;
     const after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
-    if (!api || !after || loadingNewerRef.current) return;
+    if (orderedSnapshot && !orderedRange) return;
+    if (!api || (!orderedRange && !after) || loadingNewerRef.current) return;
     if (socketState !== 'connected') {
       pendingNewerAfterReconnectRef.current = true;
       setOlderMessagesError(undefined);
@@ -1232,6 +1330,15 @@ export function WorkstreamScreen(): React.JSX.Element {
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
+      if (orderedSnapshot && orderedRange) {
+        await loadTranscriptRange({
+          snapshotId: orderedSnapshot.snapshotId,
+          range: orderedRange,
+          resumeAfterEventSequence: orderedSnapshot.eventSequence,
+        });
+        return;
+      }
+      if (!after) return;
       const page = await loadSocketMessagePage({ after });
       if (activeWorkstreamIdRef.current !== id) return;
       const newerCursor = transcriptPageCursor(page, after, 'after');
@@ -1247,7 +1354,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
+  }, [api, id, loadSocketMessagePage, loadTranscriptRange, queryClient, socketState]);
 
   const jumpToLatest = useCallback(async (): Promise<void> => {
     if (!api || loadingNewerRef.current) return;
@@ -1260,6 +1367,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
+      const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+        ['ordered-transcript', id],
+      );
+      if (orderedSnapshot && orderedSnapshot.snapshotThrough === 0) {
+        window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
+        return;
+      }
+      if (orderedSnapshot?.ranges.some((range) =>
+        range.covered.endExclusive === orderedSnapshot.snapshotThrough + 1)) {
+        window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
+        return;
+      }
       let after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
       while (after) {
         const page = await loadSocketMessagePage({ after });
@@ -1284,7 +1403,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, loadSocketMessagePage, queryClient, socketState, transcriptVirtualizer]);
+  }, [api, id, loadSocketMessagePage, queryClient, scrollTranscriptToEnd, socketState]);
 
   useEffect(() => {
     if (socketState !== 'connected') return;
@@ -1730,6 +1849,10 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const detail = routedDetail;
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
+  const orderedOwnsRunTiming = orderedTranscriptOwnsRunTiming(
+    orderedTranscript.data,
+    detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
+  );
   const visibleTranscript = transcript;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
@@ -1818,12 +1941,14 @@ export function WorkstreamScreen(): React.JSX.Element {
           const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < TRANSCRIPT_END_SLACK;
           if (shouldLoadEarlierFromScroll(
             element.scrollTop,
-            Boolean(messageCursor.data),
+            Boolean(messageCursor.data) || orderedTranscriptGaps.length > 0,
             loadingOlderRef.current,
           )) {
             void loadOlderMessages();
           }
-          if (nearBottom && newerMessageCursor.data && !loadingNewerRef.current) {
+          if (nearBottom
+            && (newerMessageCursor.data || orderedTranscriptGaps.length > 0)
+            && !loadingNewerRef.current) {
             void loadNewerMessages();
           }
           scheduleReadAcknowledgement();
@@ -1896,7 +2021,9 @@ export function WorkstreamScreen(): React.JSX.Element {
             && detail.harnessStatus === 'running'
             && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
             ? <AgentCompactionIndicator />
-            : runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
+            : !orderedOwnsRunTiming
+              && runTiming
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
@@ -1914,7 +2041,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       </div>
 
       <div className="composer-dock">
-        {!(transcriptAtEnd && newerMessageCursor.data === null) && (
+        {!transcriptAtEnd && (
           <JumpToLatestButton onJump={() => void jumpToLatest()} />
         )}
         <div className="composer-stack">

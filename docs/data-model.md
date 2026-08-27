@@ -45,6 +45,7 @@ knowing an object's ID is enough to read it — it never is.
 | `apps/api/src/mappers/connection.ts` | D1 row schemas parsed at the read — the pattern the remaining hand-coercing control-plane readers are converging on. |
 | `apps/api/src/telemetry/` | The only services that interpret telemetry rows, deadlines, destination state, and EU analysis projections. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | The separate versioned authority schema local to one `SubstreamAgent`. |
+| `apps/api/src/durable-objects/workstream-transcript-storage.ts` | Canonical transcript fact ownership, participant and exact Bind projections, range snapshots, activities, and compaction checkpoints. |
 | `apps/api/src/durable-objects/workspace-do.ts`, `workspace-product-schema.ts`, `workspace-domain-schema.ts`, `workspace-product-storage.ts`, `workspace-runtime-sql.ts`, `workstream-do.ts` | SQL schemas and repositories for authoritative workspace product state, typed compatibility SQL, sync/command routing, bounded invalidation replay, non-agent child aggregation, HyperSight fan-out/results, and work-stream metadata sockets. |
 | `apps/api/src/services/workspace-runtime-database.ts` | D1-compatible routing port that sends an allowlisted workspace-product statement to typed WorkspaceDO RPC while leaving global/regional control SQL in D1; mixed-authority batches fail closed, and so does any single statement — read or write — naming both a WorkspaceDO table and a regional-only one. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Typed, runtime-validated cross-object query and effect contracts joining WorkstreamDO facts to WorkspaceDO serving state without cross-database SQL. |
@@ -89,6 +90,32 @@ SQL runs. Knowing either a D1 row ID or a Durable Object ID is never sufficient
 authorization.
 
 ### Realtime synchronization records
+
+Each main `SubstreamAgent` transcript has one semantic fact/payload owner and
+two ordering projections. `participant_transcript_turns` assigns
+`transcript_sequence` to participant-visible conversation turns and safe status
+events; `participant_transcript_blocks` orders text, tool, and generic thinking
+blocks inside a turn. `bind_loop_states` and `bind_loop_state_messages` assign
+the exact provider-facing state revision and `loop_sequence`, including private
+protocol messages and compaction replacements. Both projections reference
+`transcript_facts`; identical payloads are not independently copied merely to
+serve another ordering. Each fact also records whether it is canonical,
+protocol-only, a model-facing derivative, or a system projection. Derivatives
+must carry a typed source identity and optional source revision; system
+projections point to the exact prompt-input hash and renderer revision. These
+fields are fact metadata rather than a second payload copy, and the source index
+makes the ownership trail directly inspectable.
+
+The admitted feed socket's hibernation attachment owns its half-open range
+snapshot fence and room event waterline; there is no append-only snapshot table
+or guessed expiry window. `transcript_activities` and
+`transcript_activity_intervals` store
+nestable response, assistant-turn, plugin, tool, thinking, and compaction
+lifecycle edges with UTC boundaries. `transcript_compaction_checkpoints` keeps
+the principal/inventory-fenced private continuation. Query-shape indexes cover
+latest conversation turns, unread attention anchors, sequence ranges, active
+activities, exact loop reconstruction, provider-boundary verification, and
+compaction lookup.
 
 `WorkspaceDO` is the relational authority for workspace product state and
 cross-work-stream serving. It stores connector/product configuration, Terminal
@@ -752,6 +779,34 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-26 — Transcript facts own bytes while two projections own order
+
+**What changed:** The SubstreamAgent schema gained canonical payload/fact rows,
+participant turn/block ordering, exact Bind-loop states and boundary hashes,
+nested activity intervals, and compaction replacement records. Each admitted
+feed socket keeps its current range fence in its hibernation attachment, and
+range replies carry only the lifecycle rows referenced by their turns plus
+required ancestry. Facts classify canonical, protocol-only, derived, and system
+projection origins; every derivative carries its typed durable source identity,
+and source provenance is indexed without copying the source payload.
+
+**Why:** Participant rendering and provider continuation have different
+visibility and ordering domains, but duplicating their common text would create
+two sources of truth. Flat parts also had no representation for known gaps or
+lossless post-compaction Bind state.
+
+**Considered and rejected:** One sequence containing private protocol rows, and
+two independently copied transcripts. The former leaks or forces sparse public
+bounds; the latter permits identical semantic bytes to diverge. Persisting every
+reader snapshot forever was also rejected, as was expiring it after an invented
+TTL: socket-owned fences are naturally bounded by the reader session.
+
+**What a future change has to respect:** One semantic datum has one owner.
+Projection rows may add only ordering, visibility, and lifecycle metadata unless
+their payload is genuinely different. A genuinely different model-facing
+wrapper must point back to its source fact or record. Both sequence domains are
+monotonic and provider-boundary hash equality is fail-closed.
 
 ### 2026-08-26 — Connector processing ownership becomes Queue-native
 

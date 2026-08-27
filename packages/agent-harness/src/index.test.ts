@@ -22,6 +22,8 @@ import {
   renderAddressingMessages,
   runHarness,
   type AutomationCompilerStreamEvent,
+  type BindLoopTransition,
+  type BindProviderBoundary,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessTool,
@@ -1630,6 +1632,142 @@ describe("agent harness", () => {
     const stopped = await runHarness({ ...runInput(hangingFetch), signal: controller.signal });
     expect(stopped).toMatchObject({ status: "stopped" });
     expect(stopped.failure).toBeUndefined();
+  });
+
+  it("persists and hash-verifies the exact Bind array before and after a provider turn", async () => {
+    let providerBody: Record<string, unknown> | null = null;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      providerBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 4, completion_tokens: 1 },
+      }]);
+    }) as typeof fetch;
+    const transitions: BindLoopTransition[] = [];
+    const boundaries: BindProviderBoundary[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      messages: [{
+        role: "user",
+        content: "Do the work",
+        provenance: {
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: "message-1",
+          sourceRevision: 1,
+        },
+      }],
+      onBindLoopTransition: async (transition) => { transitions.push(transition); },
+      onBindProviderBoundary: async (boundary) => { boundaries.push(boundary); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "Done" });
+    expect(transitions.map((transition) => transition.kind)).toEqual([
+      "state_initialized",
+      "state_reconciled",
+      "assistant_accepted",
+    ]);
+    expect(boundaries).toEqual([
+      expect.objectContaining({
+        stateRevision: 2,
+        generation: 1,
+        projectedHash: expect.any(String),
+        bindHash: expect.any(String),
+      }),
+    ]);
+    expect(boundaries[0]!.projectedHash).toBe(boundaries[0]!.bindHash);
+    const initialized = transitions[0];
+    expect(initialized?.kind).toBe("state_initialized");
+    if (initialized?.kind === "state_initialized") {
+      expect(initialized.nonSystemMessageOrigins).toEqual([{
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: "message-1",
+        sourceRevision: 1,
+      }]);
+    }
+    expect(JSON.stringify(providerBody)).not.toContain("provenance");
+    expect(JSON.stringify(providerBody)).not.toContain("participant_turn");
+  });
+
+  it("does not let Bind accept an assistant message whose durable transition failed", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      model: "test/model",
+      choices: [{ delta: { content: "Uncommitted" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 4, completion_tokens: 1 },
+    }])) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      onBindLoopTransition: async (transition) => {
+        if (transition.kind === "assistant_accepted") throw new Error("durable transcript unavailable");
+      },
+      onBindProviderBoundary: async () => undefined,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+  });
+
+  it("persists reverse-settling parallel tool results in Bind call order before the next request", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [
+            toolDelta(0, "call-first", "first"),
+            toolDelta(1, "call-second", "second"),
+          ] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{
+        choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+      }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    let markStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    let started = 0;
+    const gate = (which: "first" | "second") => async () => {
+      started += 1;
+      if (started === 2) markStarted();
+      await new Promise<void>((resolve) => {
+        if (which === "first") releaseFirst = resolve;
+        else releaseSecond = resolve;
+      });
+      return { output: { which }, summary: which };
+    };
+    const transitions: BindLoopTransition[] = [];
+    const run = runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([
+        { ...harnessTool("first", "read", []), execute: gate("first") },
+        { ...harnessTool("second", "read", []), execute: gate("second") },
+      ])],
+      onBindLoopTransition: async (transition) => { transitions.push(transition); },
+    });
+
+    await bothStarted;
+    releaseSecond();
+    await Promise.resolve();
+    releaseFirst();
+    await expect(run).resolves.toMatchObject({ status: "completed", content: "Done" });
+
+    const accepted = transitions.filter((transition): transition is Extract<
+      BindLoopTransition,
+      { kind: "tool_result_accepted" }
+    > => transition.kind === "tool_result_accepted");
+    expect(accepted.map((transition) => [transition.toolCallId, transition.callIndex]))
+      .toEqual([["call-first", 0], ["call-second", 1]]);
+    const secondBoundary = transitions.findIndex((transition) =>
+      transition.kind === "state_reconciled" && transition.stateRevision > accepted[1]!.stateRevision);
+    expect(secondBoundary).toBeGreaterThan(transitions.indexOf(accepted[1]!));
   });
 
   // A work stream pinned from the developer-mode model selector routes with no
@@ -4384,11 +4522,18 @@ describe("agent harness", () => {
       return streamResponse([{ choices: [{ delta: { content: "healed" }, finish_reason: "stop" }] }]);
     }) as typeof fetch;
     const issues: Array<{ kind: string; healed?: boolean }> = [];
+    const transitions: BindLoopTransition[] = [];
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       messages: [
-        { role: "user", content: "First request" },
+        {
+          role: "user",
+          content: "First request",
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "first", sourceRevision: 1,
+          },
+        },
         {
           role: "assistant",
           content: null,
@@ -4397,11 +4542,28 @@ describe("agent harness", () => {
             type: "function",
             function: { name: "missing_tool", arguments: "{}" },
           }],
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "dropped", sourceRevision: 2,
+          },
         },
-        { role: "tool", tool_call_id: "orphan-call", content: "{}" },
-        { role: "user", content: "Continue without the stale call" },
+        {
+          role: "tool",
+          tool_call_id: "orphan-call",
+          content: "{}",
+          provenance: {
+            originKind: "derived", sourceKind: "tool_receipt", sourceId: "orphan", sourceRevision: null,
+          },
+        },
+        {
+          role: "user",
+          content: "Continue without the stale call",
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "last", sourceRevision: 4,
+          },
+        },
       ],
       onTranscriptIssues: (found) => { issues.push(...found); },
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "healed" });
@@ -4411,6 +4573,11 @@ describe("agent harness", () => {
     ]));
     expect(requestBodies[0]!.messages.some((message) => message.tool_call_id === "orphan-call")).toBe(false);
     expect(JSON.stringify(requestBodies[0]!.messages)).not.toContain("dangling-call");
+    const initialized = transitions.find((transition) => transition.kind === "state_initialized");
+    expect(initialized?.kind === "state_initialized" ? initialized.nonSystemMessageOrigins : []).toEqual([
+      expect.objectContaining({ sourceId: "first" }),
+      expect.objectContaining({ sourceId: "last" }),
+    ]);
   });
 
   it("normalizes what the compiler said the person asked for", () => {
