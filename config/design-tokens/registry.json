@@ -8,7 +8,7 @@
     "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark \u2014 a dark theme makes a control recede by darkening it, a light theme by greying it.",
     "sys.color.text": "Text tones, strongest to faintest.",
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
-    "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
+    "sys.color.brand": "Rally's own colour. `ink` is the brand read as a legible label or accent on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it. `mark` is narrower still \u2014 it is the logo, everywhere the logo is drawn. It takes only two values across every theme, the pair the brand is built on: the volt chartreuse on a dark ground, and near-black on a light one. It is not a theme's own reading of the brand, so a light theme does not get to warm it and a dark one does not get to mute it; a theme picks the side its background puts it on and nothing else.",
     "sys.color.accent": "The hue for links, focus and selection.",
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control \u2014 a switch that is on, a selected preset \u2014 which is neither the vivid hue nor the wash.",
     "sys.color.warning": "Attention short of failure.",
@@ -198,6 +198,9 @@
       "$type": "color"
     },
     "sys.color.brand.ink": {
+      "$type": "color"
+    },
+    "sys.color.brand.mark": {
       "$type": "color"
     },
     "sys.color.brand.wash": {

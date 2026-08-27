@@ -105,6 +105,40 @@ describe('work-stream launch surface geometry', () => {
   });
 });
 
+/**
+ * The turning mark is solved into a square viewBox that the curve fills, so two
+ * things travel with a host's size and neither is obvious from the markup.
+ * A box that is not square stretches the drawing along one axis, which as it
+ * turns reads as the mark being squashed rather than as the box being wrong.
+ * And a stroke weight left behind by a size change closes the crossings shut as
+ * the mark grows — both look like the drawing was always that way.
+ *
+ * `.rally-seam` deliberately declares neither, so there is no default to fall
+ * back on and every host has to say both.
+ */
+describe('the turning brand mark', () => {
+  it.each([
+    ['.new-workstream-welcome-mark'],
+    ['.signin-mark'],
+    ['.automation-builder-intro > .automation-builder-mark'],
+  ])(
+    'keeps %s square and names the stroke its size needs',
+    (selector) => {
+      const declarations = rule(selector) ?? '';
+      const height = /height:\s*(\d+)px/u.exec(declarations)?.[1];
+      const width = /width:\s*(\d+)px/u.exec(declarations)?.[1];
+
+      expect(height).toBeDefined();
+      expect(width).toEqual(height);
+      expect(declarations).toMatch(/stroke-width:\s*\d/u);
+    },
+  );
+
+  it('leaves the shared rule sizeless, so no host inherits one it did not choose', () => {
+    expect(rule('.rally-seam')).not.toMatch(/(?:height|width|stroke-width)\s*:/u);
+  });
+});
+
 describe('member picker controls', () => {
   it('keeps custom controls out of the flexible member-copy rule', () => {
     const copy = rule(

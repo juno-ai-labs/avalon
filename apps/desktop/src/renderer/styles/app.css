@@ -129,15 +129,36 @@ pre {
   to { transform: rotate(360deg); }
 }
 
+/* The still mark, and the same colour as the turning one: this is the logo
+   wherever it appears, and a logo does not change hue with its surroundings.
+   `brand-ink` — the brand read as a legible label — stays what every other
+   brand-coloured thing in this stylesheet uses. */
 .rally-mark {
   background: currentColor;
-  color: var(--av-sys-color-brand-ink);
+  color: var(--av-sys-color-brand-mark);
   display: inline-block;
   flex: 0 0 auto;
   height: 24px;
   -webkit-mask: url('../assets/rally-mark.png') center / contain no-repeat;
   mask: url('../assets/rally-mark.png') center / contain no-repeat;
   width: 24px;
+}
+
+/* The solved mark. Everything here is the drawing's own contract and belongs to
+   no one surface; a host sets `height`, `width`, and `stroke-width` together,
+   because the curve fills the box and its crossings close up if the weight does
+   not move with the size.
+
+   `brand-mark` is the logo's colour, shared with `.rally-mark` above so the two
+   drawings of the mark are at least the same colour. */
+.rally-seam {
+  color: var(--av-sys-color-brand-mark);
+  display: block;
+  fill: none;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .button,
@@ -1111,7 +1132,10 @@ pre {
 .onboarding-continue { margin-top: 20px; width: 100%; }
 
 .signin-card { text-align: center; width: min(400px, 100%); }
-.signin-mark { height: 34px; margin-bottom: 20px; width: 34px; }
+/* `.rally-seam` is a block, so it needs the margin the card's `text-align`
+   cannot give it. Size and stroke weight travel together — see the seam's
+   own rule. */
+.signin-mark { height: 180px; margin: 0 auto 30px; stroke-width: 6; width: 180px; }
 .signin-card h1 { margin-bottom: 8px; }
 .signin-button { margin-top: 24px; width: 100%; }
 .signin-button + .signin-button { margin-top: 8px; }
@@ -2301,9 +2325,12 @@ pre {
 /* New work stream */
 
 .new-workstream-home { margin: 0 auto; max-width: 860px; overflow-y: auto; padding: 92px 34px 34px; scrollbar-gutter: stable; width: 100%; }
-.new-workstream-welcome { align-items: center; display: flex; gap: 10px; }
-.new-workstream-welcome h1 { font-size: 25px; font-weight: 510; letter-spacing: -0.03em; line-height: 1.15; margin: 0; }
-.new-workstream-welcome-mark { color: var(--av-sys-color-brand-ink); height: 22px; width: 22px; }
+.new-workstream-welcome { align-items: center; display: flex; gap: 14px; }
+.new-workstream-welcome h1 { font-size: 38px; font-weight: 510; letter-spacing: -0.03em; line-height: 1.15; margin: 0; }
+/* Sized against the heading's cap height rather than its font size: the seam
+   fills its box, where the still mark carried its own margin inside the image,
+   so the two are not the same number for the same apparent size. */
+.new-workstream-welcome-mark { height: 56px; stroke-width: 6; width: 56px; }
 .waiting-workstreams { margin-top: 48px; }
 .waiting-workstreams h2 { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 520; margin: 0 0 10px; }
 .waiting-workstream-list { display: grid; gap: 5px; }
@@ -3108,7 +3135,11 @@ pre {
 .new-automation-actions { position: fixed; right: 10px; top: 6px; z-index: 5; }
 .automation-builder { display: flex; flex-direction: column; margin: 0 auto; min-height: 100%; padding: 68px 38px 132px; width: min(996px, 100%); }
 .automation-builder-intro { margin: auto 0; padding: 30px 0 95px; text-align: center; }
-.automation-builder-intro > .rally-mark { height: 29px; margin-bottom: 15px; width: 29px; }
+/* A display mark, like the sign-in card's: this section is the whole screen
+   while it is up, and the mark is what is on it. `.rally-seam` is a block, so
+   the auto margin is what the section's `text-align` cannot give it. Size and
+   stroke weight travel together — see the seam's own rule. */
+.automation-builder-intro > .automation-builder-mark { height: 150px; margin: 0 auto 18px; stroke-width: 6; width: 150px; }
 .automation-builder-intro h1 { font-size: 26px; letter-spacing: -0.035em; margin: 7px 0 7px; }
 .automation-builder-intro > p:not(.eyebrow) { color: var(--av-sys-color-text-muted); margin: 0; }
 .suggested-prompt-list { display: grid; gap: 5px; margin: 28px auto 0; max-width: 620px; width: 100%; }
