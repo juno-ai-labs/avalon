@@ -298,3 +298,65 @@ describe('InspectorRail details', () => {
   });
 
 });
+
+describe('InspectorRail resource detail', () => {
+  const document_: WorkstreamResource = {
+    id: 'resource-doc',
+    title: 'Mute windows PRD',
+    resourceType: 'document',
+    provider: 'rally_generated',
+    mimeType: 'text/markdown',
+    contentAvailable: true,
+    watchEnabled: false,
+    watchStatus: 'unsupported',
+    currentVersion: 2,
+    relationshipType: 'generated',
+    direction: 'artifact',
+  };
+
+  function renderDetail(resource: WorkstreamResource, loadResourceContent = vi.fn(
+    async () => new Blob(['## Mute windows\n\nThe body of the document.'], { type: 'text/markdown' }),
+  )): { loadResourceContent: ReturnType<typeof vi.fn> } {
+    useUiStore.setState({ railOpen: true, railVariant: 'context', inspector: { type: 'resource', id: resource.id } });
+    render(
+      <Tooltip.Provider>
+        <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [resource] }} />
+      </Tooltip.Provider>,
+    );
+    return { loadResourceContent };
+  }
+
+  it('reads the resource beneath its metadata, so a citation does not land on a dead end', async () => {
+    const { loadResourceContent } = renderDetail(document_);
+
+    expect(await screen.findByText('The body of the document.')).toBeVisible();
+    expect(loadResourceContent).toHaveBeenCalledWith('resource-doc', expect.anything());
+    // Through the one renderer, so a fix to markdown rendering reaches here.
+    expect(screen.getByRole('heading', { name: 'Mute windows' }).closest('.markdown-body')).not.toBeNull();
+    expect(screen.getByText('Version')).toBeVisible();
+  });
+
+  it('asks for nothing when the resource has no readable content', () => {
+    const { loadResourceContent } = renderDetail({ ...document_, contentAvailable: false });
+
+    expect(loadResourceContent).not.toHaveBeenCalled();
+    expect(screen.getByText('Mute windows PRD')).toBeVisible();
+  });
+
+  it('says the preview failed rather than showing an empty pane', async () => {
+    renderDetail(document_, vi.fn(async () => { throw new Error('Rally could not load this resource.'); }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Rally could not load this resource.');
+  });
+
+  it('lands a citation for a resource outside the loaded work stream on the unavailable state', () => {
+    useUiStore.setState({ railOpen: true, railVariant: 'context', inspector: { type: 'resource', id: 'elsewhere' } });
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={{ ...workstream, resources: [document_] }} />
+      </Tooltip.Provider>,
+    );
+
+    expect(screen.getByText('Item unavailable')).toBeVisible();
+  });
+});

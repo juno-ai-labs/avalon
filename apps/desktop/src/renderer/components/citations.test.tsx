@@ -12,13 +12,16 @@ vi.mock('../lib/platform', () => ({
 }));
 
 /** Everything the work stream has loaded resolves; nothing else does. */
-const resolver: CitationResolver = (resourceId) => (
-  resourceId === 'prd-1'
-    ? { status: 'resolved', resource: { id: 'prd-1', title: 'Mute windows PRD', resourceType: 'document' } }
-    : resourceId === 'gone'
-      ? { status: 'unavailable' }
-      : { status: 'pending' }
-);
+const resolver: CitationResolver = {
+  request: () => undefined,
+  resolve: (resourceId) => (
+    resourceId === 'prd-1'
+      ? { status: 'resolved', resource: { id: 'prd-1', title: 'Mute windows PRD', resourceType: 'document' } }
+      : resourceId === 'gone'
+        ? { status: 'unavailable' }
+        : { status: 'pending' }
+  ),
+};
 
 function renderBody(markdown: string, resolve: CitationResolver = resolver): HTMLElement {
   const { container } = render(

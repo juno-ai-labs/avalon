@@ -3137,6 +3137,14 @@ pre {
 .inspector-detail > p { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 3px 0 20px; }
 .inspector-detail .detail-list { margin-bottom: 18px; }
 .inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+/* The resource's own content, under a rule that separates it from the metadata
+   and the actions above it. The lightbox's document article sets a page's
+   generous padding and a 960px measure, neither of which belongs in a 360px
+   rail, so both are taken back here rather than by a second component. */
+.inspector-detail-preview { border-top: 1px solid var(--av-sys-color-border-subtle); margin-top: 20px; padding-top: 16px; }
+.inspector-detail-preview .attachment-lightbox-document { max-width: none; min-height: 0; padding: 0; }
+.inspector-detail-preview .attachment-lightbox-text { font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+.inspector-detail-preview img { border-radius: var(--av-sys-size-radius-sm); display: block; max-width: 100%; }
 
 /* Conversational automation creation */
 

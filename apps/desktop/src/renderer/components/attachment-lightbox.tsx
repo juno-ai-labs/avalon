@@ -1,34 +1,14 @@
-import { classifyAttachmentKind } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
-import { LoaderCircle, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { X } from 'lucide-react';
+import { useEffect } from 'react';
 import type { AttachmentPreview } from './attachments';
-import { MarkdownBody } from './workstream-blocks';
-
-type PreviewMode = 'image' | 'markdown' | 'text';
-
-interface LoadedPreview {
-  preview: AttachmentPreview;
-  src?: string;
-  text?: string;
-  error?: string;
-}
-
-function previewMode(preview: AttachmentPreview): PreviewMode {
-  if (preview.src) return 'image';
-  const mimeType = preview.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
-  if (mimeType.startsWith('text/') && mimeType !== 'text/markdown') return 'text';
-  const kind = classifyAttachmentKind({ fileName: preview.name, mimeType: preview.mimeType });
-  if (kind === 'image') return 'image';
-  return kind === 'text' ? 'text' : 'markdown';
-}
+import { DocumentPreviewContent, useDocumentPreview } from './document-preview';
 
 export function AttachmentLightbox({ preview, onClose }: {
   preview: AttachmentPreview | null;
   onClose: () => void;
 }): React.JSX.Element | null {
-  const [loaded, setLoaded] = useState<LoadedPreview | null>(null);
-  const mode = preview ? previewMode(preview) : null;
+  const state = useDocumentPreview(preview);
 
   useEffect(() => {
     if (!preview) return;
@@ -42,43 +22,14 @@ export function AttachmentLightbox({ preview, onClose }: {
     };
   }, [onClose, preview]);
 
-  useEffect(() => {
-    if (!preview || preview.src || !preview.loadContent || !mode) return;
-    const controller = new AbortController();
-    let objectUrl: string | undefined;
-    void preview.loadContent(controller.signal).then(async (blob) => {
-      if (mode === 'image') {
-        if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
-        setLoaded({ preview, src: objectUrl });
-        return;
-      }
-      const text = await blob.text();
-      if (!controller.signal.aborted) setLoaded({ preview, text });
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      setLoaded({
-        preview,
-        error: error instanceof Error ? error.message : 'Rally could not load this attachment.',
-      });
-    });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [mode, preview]);
-
-  if (!preview || !mode) return null;
-  const current = loaded?.preview === preview ? loaded : null;
-  const src = preview.src ?? current?.src;
-  const loading = !src && current?.text === undefined && current?.error === undefined;
+  if (!preview || !state) return null;
 
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="attachment-lightbox-overlay" />
         <Dialog.Content
-          aria-busy={loading || undefined}
+          aria-busy={state.loading || undefined}
           className="attachment-lightbox"
           onCloseAutoFocus={(event) => {
             if (!preview.returnFocus) return;
@@ -92,14 +43,11 @@ export function AttachmentLightbox({ preview, onClose }: {
               <button aria-label="Close preview" className="attachment-lightbox-close" type="button"><X size={20} /></button>
             </Dialog.Close>
           </header>
-          <div className={`attachment-lightbox-content is-${mode}`} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-            {loading && <div className="attachment-lightbox-status" role="status"><LoaderCircle aria-hidden="true" className="spin" size={20} /> Preparing preview…</div>}
-            {current?.error && <div className="attachment-lightbox-status is-error" role="alert">{current.error}</div>}
-            {mode === 'image' && src && <img alt={preview.name} src={src} />}
-            {mode === 'markdown' && current?.text !== undefined && (
-              <article className="attachment-lightbox-document"><MarkdownBody verbatim>{current.text}</MarkdownBody></article>
-            )}
-            {mode === 'text' && current?.text !== undefined && <pre className="attachment-lightbox-text">{current.text}</pre>}
+          <div
+            className={`attachment-lightbox-content is-${state.mode}`}
+            onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+          >
+            <DocumentPreviewContent name={preview.name} state={state} />
           </div>
         </Dialog.Content>
       </Dialog.Portal>

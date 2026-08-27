@@ -4,6 +4,7 @@ import { AlertTriangle, Cable, RefreshCcw } from 'lucide-react';
 import { Component, type ErrorInfo, type PropsWithChildren, useEffect, useRef, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { logError } from '../common/logger';
+import { CitationResolutionProvider } from './components/citation-resolution';
 import { AppShell } from './components/app-shell';
 import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
@@ -344,7 +345,9 @@ export default function App(): React.JSX.Element {
       <QueryClientProvider client={queryClient}>
         <Tooltip.Provider>
           <AppSessionProvider>
-            <SessionGate />
+            <CitationResolutionProvider>
+              <SessionGate />
+            </CitationResolutionProvider>
           </AppSessionProvider>
         </Tooltip.Provider>
       </QueryClientProvider>
