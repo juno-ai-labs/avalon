@@ -84,6 +84,9 @@ function resourceFromLocalDraft(attachment: PendingAttachment): WorkstreamResour
     watchStatus: 'unsupported',
     contentAvailable: true,
     sizeBytes: attachment.file.size,
+    currentVersion: 1,
+    relationshipType: 'attachment',
+    direction: 'source',
   };
 }
 

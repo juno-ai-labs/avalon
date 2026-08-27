@@ -151,6 +151,9 @@ describe('WorkstreamComposer mention confirmation', () => {
         watchStatus: 'unsupported',
         contentAvailable: true,
         sizeBytes: 5,
+        currentVersion: 1,
+        relationshipType: 'attachment',
+        direction: 'source',
       },
     };
     vi.stubGlobal('ResizeObserver', class {

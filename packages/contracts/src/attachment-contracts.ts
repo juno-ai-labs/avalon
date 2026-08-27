@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 
 export const ATTACHMENT_KIND_ENTRIES = [
   { kind: "image", description: "an image the agent can view" },
@@ -276,7 +277,8 @@ const ResourceListItemSchema = z.object({
   provider: z.string(),
   mimeType: MimeTypeSchema,
   sizeBytes: NonNegativeIntegerSchema,
-  relationshipType: z.string(),
+  relationshipType: ResourceRelationshipTypeSchema,
+  direction: ResourceDirectionSchema,
   attachedAt: z.string().datetime({ offset: true }),
   messageAttachment: z.boolean(),
   attachmentKind: AttachmentKindSchema,

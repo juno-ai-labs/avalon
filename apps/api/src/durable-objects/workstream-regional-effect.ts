@@ -1,4 +1,4 @@
-import { IdSchema, RegionSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
+import { IdSchema, RegionSchema, ResourceRelationshipTypeSchema, WorkspaceIdSchema, WorkstreamIdSchema } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
@@ -35,7 +35,7 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
   resourceLinks: z.array(z.object({
     resourceId: IdSchema,
     watchEnabled: z.boolean(),
-    relationshipType: z.string().min(1).max(80),
+    relationshipType: ResourceRelationshipTypeSchema,
   }).strict()).max(10_000).optional(),
   createdAt: TimestampSchema.optional(),
   updatedAt: TimestampSchema.optional(),

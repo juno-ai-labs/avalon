@@ -17,7 +17,7 @@ import {
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
-  ResourceSchema,
+  WorkstreamResourceSchema,
   UpdateBlockDashboardPreferenceRequestSchema,
   UpdateBlockDashboardRequestSchema,
   UpdateWorkstreamRequestSchema,
@@ -372,7 +372,7 @@ workstreamRoutes.delete("/:id/participants/:userId", zValidator("param", partici
 });
 workstreamRoutes.post("/:id/resources", zValidator("param", idParam), zValidator("json", resourceBody), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
-  return c.json(ResourceSchema.parse(await client.attachResource(c.req.valid("json").resourceId)), 201);
+  return c.json(WorkstreamResourceSchema.parse(await client.attachResource(c.req.valid("json").resourceId)), 201);
 });
 workstreamRoutes.delete("/:id/resources/:resourceId", zValidator("param", resourceParam), async (c) => {
   const param = c.req.valid("param");

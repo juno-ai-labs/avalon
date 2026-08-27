@@ -1,5 +1,5 @@
 import { newId, nowIso } from "@rally/db";
-import { AutomationDraftStateSchema, TriggerDefinitionSchema, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { AutomationDraftStateSchema, ResourceRelationshipTypeSchema, TriggerDefinitionSchema, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type {
   HarnessRunId,
   WorkspaceId,
@@ -1752,12 +1752,12 @@ export class AutomationService {
         ...(resourceRows.results ?? []).map((resource) => ({
           resourceId: resource.resource_id,
           attachedByUserId: resource.attached_by_user_id,
-          relationshipType: resource.relationship_type,
+          relationshipType: ResourceRelationshipTypeSchema.parse(resource.relationship_type),
         })),
         ...(openingInput ? [{
           resourceId: openingInput.resourceId,
           attachedByUserId: null,
-          relationshipType: "inbound_email",
+          relationshipType: "inbound_email" as const,
         }] : []),
       ];
       for (const attachment of attachments) {
