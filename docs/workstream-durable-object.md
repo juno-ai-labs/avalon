@@ -1273,10 +1273,13 @@ directory write at all.
 
 ### 2026-08-27 — Replacement instances resume the attempt their predecessor fenced
 
-**What changed:** SubstreamAgent construction now expires still-live local
-harness leases left by the previous object instance together with its dispatch
-lease. Already-expired leases remain stale-reaper failures. The replacement
-reclaims the same attempt ID under a new owner and epoch before it
+**What changed:** SubstreamAgent construction replaces still-live local harness
+lease owners left by the previous object instance with a durable
+recovery-pending owner and expires those leases together with the dispatch
+lease. A later replacement recognizes that marker even though its timestamp is
+expired, so it preserves recovery intent across consecutive evictions before a
+claim; already-expired unmarked leases remain stale-reaper failures. The
+replacement reclaims the same attempt ID under a new owner and epoch before it
 runs the stale-lease sweep, preserving frozen scope, completed tool receipts,
 and resumable child attempts. An exact completed tool receipt remains replayable
 while ownership transfers; receipt mutation and mismatched-plan paths still
@@ -1297,11 +1300,12 @@ spinner, discard replayable completed work, steal live HyperSight execution,
 or invalidate the frozen scope and receipts keyed to the original attempt.
 
 **Consequences:** An object restart can resume a local run immediately without
-weakening ordinary live-owner exclusion. The old owner is fenced by the new
-instance-nonce lease owner and epoch; normal expiration still follows the
-stale-run policy; and real-workerd eviction coverage verifies that constructor
-recovery expires only leases whose executor died with this SubstreamAgent
-instance.
+weakening ordinary live-owner exclusion. The recovery-pending owner immediately
+fences the vanished executor, survives another eviction, and is replaced by the
+new instance-nonce lease owner with an advanced epoch when execution resumes.
+Normal unmarked expiration still follows the stale-run policy; real-workerd
+coverage verifies both consecutive replacement and that constructor recovery
+touches only leases whose executor died with this SubstreamAgent instance.
 
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 
