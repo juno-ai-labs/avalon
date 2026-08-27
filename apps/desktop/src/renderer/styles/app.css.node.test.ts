@@ -103,6 +103,20 @@ describe('member picker controls', () => {
   });
 });
 
+describe('dropdown menu interaction states', () => {
+  it('highlights ordinary rows against the raised menu surface', () => {
+    expect(rule('.menu-content')).toContain(
+      'background: var(--av-sys-color-surface-raised);',
+    );
+    expect(rule('.menu-item[data-highlighted]')).toContain(
+      'background: var(--av-sys-color-surface-raised-hover);',
+    );
+    expect(rule('.menu-item-danger[data-highlighted]')).toContain(
+      'background: var(--av-sys-color-danger-tint);',
+    );
+  });
+});
+
 describe('work-stream participant presence', () => {
   it('draws a tokenized sonar ring and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
