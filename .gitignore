@@ -20,6 +20,7 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 .eslintcache
+__pycache__/
 
 # Streaming-smoothness measurement output (scripts/measure-stream-smoothness.mjs)
 .stream-measurements/
