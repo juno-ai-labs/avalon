@@ -710,8 +710,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
       if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
-      // Whatever leases survive belong to the isolate this one replaced, so
-      // the runs they cover are recoverable now rather than at expiry.
+      // Still-live local leases belong to the isolate this one replaced, so
+      // their runs are recoverable now. Already-expired rows stay with the
+      // ordinary stale-run reaper.
       const recoveryStartedAt = Date.now();
       for (const attempt of expireLocalAttemptLeasesFromPreviousInstance(
         state.storage,

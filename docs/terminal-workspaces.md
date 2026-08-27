@@ -551,6 +551,8 @@ update lag before changing the default.
 work-stream sandbox and prepares a selected repository before exposing the nine
 tools. Repairable repository failures are deferred so checkout remains visible.
 Restored activation hints skip preparation and retain first-tool acquisition.
+Explicit preparation populates the same per-run promise used by every tool, so
+the first tool does not reacquire or bootstrap the selected repository again.
 Activation emits correlated acquisition, provider-operation, repository-state,
 residual Rally timing, and a distinct attempt identity for each retry. Eight
 repeated explicit loads single-flight one activation, and a 64-operation utility

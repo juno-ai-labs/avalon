@@ -297,9 +297,11 @@ export async function createAvalonTerminalPlugin(
       });
       const terminalContext: HarnessToolContext = { ...context, toolCallId };
       try {
-        const repositoryPreparationCode = await withTerminalToolTrace(trace, async () => {
-          const sandbox = await coordinator.acquire(terminalContext);
-          return prepareRepositoryForActivation(terminalContext, sandbox);
+        let repositoryPreparationCode: string | null = null;
+        await withTerminalToolTrace(trace, async () => {
+          await runtime.prepare(terminalContext, async (runtimeContext, sandbox) => {
+            repositoryPreparationCode = await prepareRepositoryForActivation(runtimeContext, sandbox);
+          });
         });
         const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "info", "terminal_plugin_activation_finished", {
