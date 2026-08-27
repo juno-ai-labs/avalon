@@ -151,6 +151,21 @@
   --av-sys-color-danger-edge: #5b302d;
   --av-sys-color-danger-on: #17100f;
 
+  /* The fixed project icon palette. These fills are identity choices rather
+   * than theme accents, so a project keeps the same colour in every theme. */
+  --av-sys-color-project-gray: #6b7280;
+  --av-sys-color-project-brown: #92400e;
+  --av-sys-color-project-red: #dc2626;
+  --av-sys-color-project-orange: #ea580c;
+  --av-sys-color-project-yellow: #ca8a04;
+  --av-sys-color-project-green: #16a34a;
+  --av-sys-color-project-teal: #0d9488;
+  --av-sys-color-project-cyan: #0891b2;
+  --av-sys-color-project-blue: #2563eb;
+  --av-sys-color-project-indigo: #4f46e5;
+  --av-sys-color-project-purple: #9333ea;
+  --av-sys-color-project-pink: #db2777;
+
   /* One colour per state a work stream can show a person in the sidebar and on
    * the home screen. Every marker in the product draws from this group and
    * nowhere else, so a state has one colour wherever it appears; which state
@@ -534,6 +549,19 @@
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
 
+  --av-sys-color-project-gray: #6b7280;
+  --av-sys-color-project-brown: #92400e;
+  --av-sys-color-project-red: #dc2626;
+  --av-sys-color-project-orange: #ea580c;
+  --av-sys-color-project-yellow: #ca8a04;
+  --av-sys-color-project-green: #16a34a;
+  --av-sys-color-project-teal: #0d9488;
+  --av-sys-color-project-cyan: #0891b2;
+  --av-sys-color-project-blue: #2563eb;
+  --av-sys-color-project-indigo: #4f46e5;
+  --av-sys-color-project-purple: #9333ea;
+  --av-sys-color-project-pink: #db2777;
+
   --av-sys-color-workstream-running: #1f74b8;
   --av-sys-color-workstream-needs-input: #b07d0a;
   --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
@@ -827,6 +855,19 @@
   --av-sys-color-danger-edge: #3a201a;
   --av-sys-color-danger-on: #150b08;
 
+  --av-sys-color-project-gray: #6b7280;
+  --av-sys-color-project-brown: #92400e;
+  --av-sys-color-project-red: #dc2626;
+  --av-sys-color-project-orange: #ea580c;
+  --av-sys-color-project-yellow: #ca8a04;
+  --av-sys-color-project-green: #16a34a;
+  --av-sys-color-project-teal: #0d9488;
+  --av-sys-color-project-cyan: #0891b2;
+  --av-sys-color-project-blue: #2563eb;
+  --av-sys-color-project-indigo: #4f46e5;
+  --av-sys-color-project-purple: #9333ea;
+  --av-sys-color-project-pink: #db2777;
+
   --av-sys-color-workstream-running: #5cb3e0;
   --av-sys-color-workstream-needs-input: #dcb45f;
   --av-sys-color-workstream-completed: var(--av-ref-color-neutral-9);
@@ -1119,6 +1160,19 @@
   --av-sys-color-danger-wash: #fdeeed;
   --av-sys-color-danger-edge: #f2c9c6;
   --av-sys-color-danger-on: #ffffff;
+
+  --av-sys-color-project-gray: #6b7280;
+  --av-sys-color-project-brown: #92400e;
+  --av-sys-color-project-red: #dc2626;
+  --av-sys-color-project-orange: #ea580c;
+  --av-sys-color-project-yellow: #ca8a04;
+  --av-sys-color-project-green: #16a34a;
+  --av-sys-color-project-teal: #0d9488;
+  --av-sys-color-project-cyan: #0891b2;
+  --av-sys-color-project-blue: #2563eb;
+  --av-sys-color-project-indigo: #4f46e5;
+  --av-sys-color-project-purple: #9333ea;
+  --av-sys-color-project-pink: #db2777;
 
   --av-sys-color-workstream-running: #1a7fc4;
   --av-sys-color-workstream-needs-input: #b8860b;

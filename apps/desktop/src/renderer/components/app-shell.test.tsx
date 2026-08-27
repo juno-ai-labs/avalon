@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
+import { ProjectSummarySchema } from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import type { WorkstreamSummary } from '../lib/types';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
@@ -10,10 +11,27 @@ import {
   openWorkstreamId,
   RUNNING_HARNESS_STATUSES,
   showsAutomation,
+  upsertProjectDirectory,
   workstreamMatchesBatchFilter,
 } from './app-shell';
 
 const workstreamId = '00000000-0000-7000-8000-000000000001';
+const project = ProjectSummarySchema.parse({
+  id: '00000000-0000-7000-8000-0000000000f2',
+  name: 'Hiring',
+  iconKey: 'target',
+  colorKey: 'green',
+  scope: 'personal',
+  status: 'active',
+  presentationRevision: 1,
+  audienceGeneration: 1,
+  lifecycleGeneration: 1,
+  participants: [],
+  workstreamIds: [],
+  defaultResourceIds: [],
+  createdAt: '2026-08-27T00:00:00.000Z',
+  updatedAt: '2026-08-27T00:00:00.000Z',
+});
 
 function summary(harnessStatus: WorkstreamSummary['harnessStatus'], id = workstreamId): WorkstreamSummary {
   return {
@@ -50,6 +68,15 @@ describe('openWorkstreamId', () => {
     expect(openWorkstreamId('/workstreams/new')).toBeNull();
     expect(openWorkstreamId('/automations/abc')).toBeNull();
     expect(openWorkstreamId(`/workstreams/${workstreamId}/settings`)).toBeNull();
+  });
+});
+
+describe('upsertProjectDirectory', () => {
+  it('does not duplicate a project when its socket push beats the REST response', () => {
+    expect(upsertProjectDirectory({ waterline: 4, items: [project] }, project)).toEqual({
+      waterline: 4,
+      items: [project],
+    });
   });
 });
 

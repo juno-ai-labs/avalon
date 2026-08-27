@@ -32,7 +32,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
-import type { WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
+import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import {
   formatDateTime,
   formatRelative,
@@ -56,11 +56,15 @@ import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } fro
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
+import { ContextNestedMenu } from './nested-menu';
 
 interface SidebarProps {
   workspace: Workspace;
   automations: AutomationSummary[];
   notes?: NoteSummary[];
+  projects?: ProjectSummary[];
+  inactiveProjects?: ProjectSummary[];
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
@@ -97,6 +101,10 @@ interface SidebarProps {
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onOpenMeetingNotes: (noteId?: string) => Promise<void>;
   onPreviewWorkstreamBatch: (filter: WorkstreamBatchFilter) => Promise<number>;
+  onCreateProject?: (input: CreateProjectRequest) => Promise<void>;
+  onAddWorkstreamToProject?: (projectId: string, workstreamId: string) => Promise<void>;
+  onReorderProjects?: (projectIds: string[]) => Promise<void>;
+  onRestoreProject?: (projectId: string) => Promise<void>;
   onSignOut: () => void;
 }
 
@@ -451,6 +459,8 @@ function WorkstreamRow({
   onMarkUnread,
   onRename,
   onTogglePin,
+  projects,
+  onAddToProject,
 }: {
   commandShortcut?: number;
   commandShortcutsVisible?: boolean;
@@ -464,6 +474,8 @@ function WorkstreamRow({
   onMarkUnread: (workstream: WorkstreamSummary) => void;
   onRename: (workstream: WorkstreamSummary) => void;
   onTogglePin: (workstream: WorkstreamSummary, pinned: boolean) => void;
+  projects: ProjectSummary[];
+  onAddToProject: (projectId: string, workstreamId: string) => void;
 }): React.JSX.Element {
   const location = useLocation();
   const socketWarmup = useWorkstreamSocketHoverWarmup(workstream.id);
@@ -495,7 +507,7 @@ function WorkstreamRow({
           // How the sidebar finds this row again after pinning has moved it to
           // a different section — see the `reveal` effect.
           data-workstream-id={workstream.id}
-          draggable={drag !== undefined}
+          draggable={drag !== undefined || projects.length > 0}
           onDragEnd={drag
             // A drag nothing accepted reports `none`. Treated as cancelled when
             // the browser gives no `dataTransfer` at all, because a drop this
@@ -515,8 +527,7 @@ function WorkstreamRow({
               drag.onDragOver(workstream);
             }
             : undefined}
-          onDragStart={drag
-            ? (event) => {
+          onDragStart={(event) => {
               // Chromium refuses to start a drag with an empty payload, and the
               // id is the payload every other surface would want anyway. The
               // order itself is tracked in the sidebar's own state: reading it
@@ -524,9 +535,9 @@ function WorkstreamRow({
               // too late to move anything under the pointer.
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('text/plain', workstream.id);
-              drag.onDragStart(workstream);
-            }
-            : undefined}
+              event.dataTransfer.setData('application/x-rally-workstream-id', workstream.id);
+              drag?.onDragStart(workstream);
+            }}
           onDrop={drag ? (event) => event.preventDefault() : undefined}
           onKeyDown={drag
             ? (event) => {
@@ -650,6 +661,22 @@ function WorkstreamRow({
           <ContextMenu.Item className="menu-item" onSelect={() => onRename(workstream)}>
             <Pencil aria-hidden="true" size={16} /> Rename
           </ContextMenu.Item>
+          {projects.length > 0 && (
+            <ContextNestedMenu
+              icon={<FileStack aria-hidden="true" size={16} />}
+              label="Add to project"
+              options={projects.map((project) => {
+                const selected = project.workstreamIds.includes(workstream.id);
+                return {
+                  id: project.id,
+                  label: project.name,
+                  icon: <ProjectIcon project={project} />,
+                  selected,
+                  ...(!selected ? { onSelect: () => onAddToProject(project.id, workstream.id) } : {}),
+                };
+              })}
+            />
+          )}
           {/* Named for the state it moves to, the way the note item is. Private
               is not ownership: everyone left in the work stream can still read
               it, write to it, and bring somebody else in. */}
@@ -813,6 +840,8 @@ export function Sidebar({
   workspace,
   automations,
   notes = [],
+  projects = [],
+  inactiveProjects = [],
   workstreams,
   loading,
   meetingRecordingAvailable = false,
@@ -831,6 +860,10 @@ export function Sidebar({
   onRunAutomation,
   onOpenMeetingNotes,
   onPreviewWorkstreamBatch,
+  onCreateProject = async () => undefined,
+  onAddWorkstreamToProject = async () => undefined,
+  onReorderProjects = async () => undefined,
+  onRestoreProject = async () => undefined,
   onSignOut,
   hasMoreWorkstreams = false,
   loadingMoreWorkstreams = false,
@@ -1538,6 +1571,17 @@ export function Sidebar({
             )}
           </div>
 
+          <ProjectSidebarSection
+            inactiveProjects={inactiveProjects}
+            loading={loading === true}
+            onAddWorkstream={onAddWorkstreamToProject}
+            onCreate={onCreateProject}
+            onReorder={onReorderProjects}
+            onRestore={onRestoreProject}
+            projects={projects}
+            workstreams={workstreams}
+          />
+
           <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">
               <h2 id="automations-heading">Automations</h2>
@@ -1612,9 +1656,11 @@ export function Sidebar({
                     onArchive={setArchiveWorkstreamTarget}
                     onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                     onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
+                    onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
                     onRename={openRename}
                     onTogglePin={(target, pin) => void togglePin(target, pin)}
                     pinPending={pinPendingWorkstreamId === pinned.id}
+                    projects={projects}
                     scopePending={scopePendingWorkstreamId === pinned.id}
                     workstream={pinned}
                   />
@@ -1706,9 +1752,11 @@ export function Sidebar({
                         onArchive={setArchiveWorkstreamTarget}
                         onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
                         onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
+                        onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
                         onRename={openRename}
                         onTogglePin={(target, pin) => void togglePin(target, pin)}
                         pinPending={pinPendingWorkstreamId === item.workstream.id}
+                        projects={projects}
                         scopePending={scopePendingWorkstreamId === item.workstream.id}
                         workstream={item.workstream}
                       />

@@ -18,6 +18,7 @@ describe('workspaceSyncTopicsForMutation', () => {
     ['PATCH', '/automations/automation-1', ['automations', 'workstream_directory']],
     ['POST', '/automation-templates/template-1/subscribe', ['automations', 'workstream_directory']],
     ['POST', '/notes', ['notes', 'resources']],
+    ['PATCH', '/projects/project-1', []],
     ['DELETE', '/resources/resource-1', ['resources', 'workstream_directory']],
     ['POST', '/work-opportunities/opportunity-1/start', ['work_opportunities', 'activity', 'workstream_directory']],
     ['PATCH', '/workstreams/workstream-1', ['workstream_directory']],

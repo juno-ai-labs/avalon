@@ -221,6 +221,7 @@ describe("the shared Durable Object alarm list", () => {
         { phase: "recovery_rearm", alarmKind: undefined },
         { phase: "authority_check", alarmKind: undefined },
         { phase: "stored_target", alarmKind: "schedule_bootstrap" },
+        { phase: "project_default_publish", alarmKind: undefined },
         { phase: "activity_reap", alarmKind: undefined },
         { phase: "schedule_reconcile", alarmKind: undefined },
         { phase: "final_rearm", alarmKind: undefined },

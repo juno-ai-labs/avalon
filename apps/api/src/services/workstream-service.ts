@@ -598,7 +598,14 @@ export class WorkstreamService {
 
 
   async update(id: string, input: UpdateWorkstreamInput) {
-    return (await this.authoritativeClient(id)).update(input);
+    const client = await this.authoritativeClient(id);
+    if (input.scope === "personal") {
+      const constraints = await this.projectConstraints(id);
+      if (constraints.requiresWorkspaceScope) {
+        throw new ApiError(409, "project_audience_managed_by_project", "Remove the work stream from its workspace project before making it private");
+      }
+    }
+    return client.update(input);
   }
 
   async messages(id: string, limit: number, before?: number, after?: number, around?: number) {
@@ -630,8 +637,26 @@ export class WorkstreamService {
     return (await this.authoritativeClient(id)).addParticipant(userId);
   }
 
-  async removeParticipant(id: string, userId: string): Promise<void> {
-    return (await this.authoritativeClient(id)).removeParticipant(userId);
+  async removeParticipant(id: string, userId: string, options: { projectEffect?: boolean } = {}): Promise<void> {
+    const client = await this.authoritativeClient(id);
+    if (options.projectEffect !== true && (await this.projectConstraints(id)).activeProject) {
+      throw new ApiError(409, "project_audience_managed_by_project", "Change project participants before removing this person");
+    }
+    return client.removeParticipant(userId);
+  }
+
+  private async projectConstraints(workstreamId: string) {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      this.auth.workspaceId,
+      workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
+    );
+    return workspace.projectWorkstreamConstraints({
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      workstreamId: asWorkstreamId(workstreamId),
+    });
   }
 
   async attachResource(id: string, resourceId: string) {
