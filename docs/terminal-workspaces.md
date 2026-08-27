@@ -545,6 +545,35 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-27 — Terminal preservation follows resource authority into WorkspaceDO
+
+**What changed:** Repository-replacement backups and final-diff preservation
+now write their generated `resources` row and
+`resource_object_deletion_outbox` receipt through the routed WorkspaceDO
+database already installed on the Terminal plugin environment. The
+work-stream resource link remains a separate WorkstreamDO mutation after the
+resource row is durable.
+
+**Why:** Production repository checkout after the D1 product-state retirement
+successfully used the same sandbox and resource bridge, then failed while
+creating its mandatory recovery backup with `D1_ERROR: no such table:
+resource_object_deletion_outbox`. These two preservation helpers were still
+calling the old work-stream database's `regionalDatabase` escape hatch. That
+peeled both runtime routers and sent WorkspaceDO-owned resource SQL to the
+retired D1 copy. Ordinary `publish_resource` already used the routed database
+and passed in the same run, isolating the stale route.
+
+**Considered and rejected:** Restoring the outbox table in D1, falling back to
+D1 when the object call fails, or writing cleanup ownership into both stores.
+Each would recreate a second product-state authority instead of repairing the
+one stale caller.
+
+**What a future change has to respect:** `resources` and
+`resource_object_deletion_outbox` are WorkspaceDO authority. A Terminal helper
+that creates resource bytes must use the routed workspace database for both
+rows, then attach the resource through the work-stream object; regional
+database escape hatches are only for control-plane tables that D1 still owns.
+
 ### 2026-08-27 — Explicit Terminal loading initializes the sandbox
 
 **What changed:** The explicit Terminal `load_plugin` path now acquires the
