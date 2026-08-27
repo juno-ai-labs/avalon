@@ -272,6 +272,23 @@ rather than assertions.
 
 ## Changelog
 
+### 2026-08-27 — The raster pipeline regenerates from the new vector
+
+**What changed:** `assets/brand/rally-mark-source.png` was redrawn from the new
+vector and `scripts/generate-brand-assets.py` rerun, so every generated raster
+asset — the mark PNGs, favicon, touch icon, social card, and desktop icons —
+now carries the redesigned mark in `#CCFF00`. The out-of-band PNG replacement
+recorded in the entry below is superseded: the generator is the source of
+truth again, and rerunning it is safe.
+
+**Why:** The previous entry left a standing hazard — a generator whose output
+would regress the served mark. Closing it in the immediate follow-up was the
+condition under which the out-of-band replacement was acceptable at all.
+
+**Consequences:** The browser tab, the social unfurl, and the served mark now
+agree. Icons uploaded to providers (Notion, Slack, GitHub) still hold old
+copies until re-uploaded from `assets/brand/rally-mark.png`.
+
 ### 2026-08-27 — Public pages render the vector mark while manifests keep the raster URL
 
 **What changed:** Every public HTML page now references the redesigned vector
