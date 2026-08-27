@@ -31,17 +31,23 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
+  /** Set false when the icon's meaning is already obvious from its position (e.g. a dialog's close X). */
+  showTooltip?: boolean;
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { className, label, tooltipSide = 'bottom', ...props },
+  { className, label, tooltipSide = 'bottom', showTooltip = true, ...props },
   ref,
 ) {
+  const button = (
+    <button ref={ref} aria-label={label} className={clsx('icon-button', className)} type="button" {...props} />
+  );
+
+  if (!showTooltip) return button;
+
   return (
     <Tooltip.Root delayDuration={450}>
-      <Tooltip.Trigger asChild>
-        <button ref={ref} aria-label={label} className={clsx('icon-button', className)} type="button" {...props} />
-      </Tooltip.Trigger>
+      <Tooltip.Trigger asChild>{button}</Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className="tooltip" side={tooltipSide} sideOffset={6}>
           {label}
@@ -350,7 +356,7 @@ export function Modal({
               {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
             </div>
             <Dialog.Close asChild>
-              <IconButton label="Close dialog">
+              <IconButton label="Close dialog" showTooltip={false}>
                 <X size={16} />
               </IconButton>
             </Dialog.Close>
