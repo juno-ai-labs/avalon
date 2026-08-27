@@ -153,7 +153,6 @@ function fixture(
       return { exitCode: input.command === "false" ? 1 : 0, stdout: "ok\n", stderr: input.command === "false" ? "bad\n" : "" };
     }),
     cleanupCommand: vi.fn(async () => undefined),
-    publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
   const runCommandImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, input) => runCommandImplementation(id, {

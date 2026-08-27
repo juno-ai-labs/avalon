@@ -114,7 +114,6 @@ function provider(): TerminalSandboxProvider {
     runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
     runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
     cleanupCommand: vi.fn(async () => undefined),
-    publishGitBundle: vi.fn(async (request) => ({ publishedSha: request.headSha })),
   };
 }
 

@@ -177,16 +177,6 @@ export interface TerminalSandboxProvider {
    * that owns the durable cleanup claim.
    */
   cleanupCommand?(idOrName: string, taskName: string): Promise<"deleted" | "missing" | void>;
-  publishGitBundle(input: {
-    operationId: string;
-    bundle: Uint8Array;
-    repositoryFullName: string;
-    baseSha: string;
-    headSha: string;
-    headRef: string;
-    expectedOldSha: string | null;
-    githubBasicCredential: string;
-  }): Promise<{ publishedSha: string }>;
 }
 
 export function isTerminalProviderNotFound(error: unknown): boolean {
@@ -250,10 +240,6 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/gu, `'"'"'`)}'`;
 }
 
-function trustedPublicationFailureStage(output: string): string {
-  return /^RALLY_PUBLISH_FAILED_STAGE=([a-z_]+)$/mu.exec(output)?.[1] ?? "unknown_stage";
-}
-
 export function terminalGitCaSetupCommands(input: {
   required: boolean;
   sessionEnvPath?: string;
@@ -287,28 +273,6 @@ function parseInstalledCapabilities(output: string): TerminalManagedBootstrapCap
   const allowed = new Set<string>(MANAGED_BOOTSTRAP_CAPABILITIES);
   return [...new Set(match[1]!.split(",").filter((value) => allowed.has(value)))]
     .map((value) => value as TerminalManagedBootstrapCapability);
-}
-
-function assertTrustedGitInput(input: {
-  repositoryFullName: string;
-  baseSha: string;
-  headSha: string;
-  headRef: string;
-  expectedOldSha: string | null;
-}): void {
-  if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/u.test(input.repositoryFullName)) {
-    throw new Error("The trusted publisher received an invalid repository name");
-  }
-  if (
-    !/^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,200}$/u.test(input.headRef)
-    || input.headRef.includes("..")
-    || input.headRef.includes("//")
-    || input.headRef.endsWith("/")
-    || input.headRef.endsWith(".lock")
-  ) throw new Error("The trusted publisher received an invalid head ref");
-  for (const sha of [input.baseSha, input.headSha, ...(input.expectedOldSha ? [input.expectedOldSha] : [])]) {
-    if (!/^[0-9a-f]{40}$/u.test(sha)) throw new Error("The trusted publisher received an invalid Git SHA");
-  }
 }
 
 export function createDaytonaTerminalProvider(
@@ -945,101 +909,6 @@ export function createDaytonaTerminalProvider(
         // reason to stop the whole sandbox could disrupt the successor.
         if (isTerminalProviderNotFound(error)) return "missing";
         throw error;
-      }
-    },
-    async publishGitBundle(input) {
-      assertTrustedGitInput(input);
-      if (input.bundle.byteLength > 50 * 1_048_576) {
-        throw new Error("The Git bundle exceeds the 50 MiB publication limit");
-      }
-      const operationKey = input.operationId.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 80);
-      let publisher: DaytonaSandboxLike | null = null;
-      try {
-        publisher = await measureRequest("sandbox.create", () => client.create({
-          name: `rally-publisher-${operationKey}`.slice(0, 100),
-          language: "typescript",
-          snapshot: configuration.snapshot,
-          public: false,
-          ephemeral: true,
-          autoStopInterval: 15,
-          autoArchiveInterval: 60,
-          autoDeleteInterval: 0,
-          ttlMinutes: 30,
-          domainAllowList: "github.com",
-          labels: { "rally.publisher": input.operationId },
-        }, { timeout: 60 }));
-        if (!publisher.fs || !publisher.process) throw new Error("The Daytona publisher sandbox is missing required services");
-        if (!publisher.process.executeCommand) throw new Error("The Daytona publisher sandbox cannot execute commands");
-        const repositoryUrl = `https://github.com/${input.repositoryFullName}.git`;
-        const expectedOld = input.expectedOldSha ?? "";
-        const credentialPath = "/workspace/.rally-git-credential";
-        const quotedCredentialPath = shellQuote(credentialPath);
-        const scriptPath = "/workspace/rally-publish.sh";
-        const script = [
-          "set -euo pipefail",
-          "publish_stage=environment",
-          `trap 'rally_status=$?; rm -f "${credentialPath}"; if [ "$rally_status" -ne 0 ]; then printf "RALLY_PUBLISH_FAILED_STAGE=%s\\n" "$publish_stage"; fi; exit "$rally_status"' EXIT`,
-          "export GIT_CONFIG_NOSYSTEM=1 HOME=/tmp/rally-publisher-home",
-          "export GIT_CONFIG_COUNT=1",
-          `export GIT_CONFIG_KEY_0=${shellQuote(`http.${repositoryUrl}.extraheader`)}`,
-          `export GIT_CONFIG_VALUE_0="Authorization: Basic $(cat ${quotedCredentialPath})"`,
-          "publish_stage=git_ca",
-          ...terminalGitCaSetupCommands({ required: true }),
-          "publish_stage=repository_init",
-          'mkdir -p "$HOME"',
-          "git init --bare /workspace/repository.git >/dev/null",
-          "publish_stage=bundle_import",
-          `git -C /workspace/repository.git fetch /workspace/publication.bundle ${shellQuote(`refs/heads/${input.headRef}`)}:${shellQuote(`refs/heads/${input.headRef}`)}`,
-          "publish_stage=bundle_verify",
-          "git -C /workspace/repository.git fsck --strict",
-          `test "$(git -C /workspace/repository.git rev-parse ${shellQuote(`refs/heads/${input.headRef}`)})" = ${shellQuote(input.headSha)}`,
-          `git -C /workspace/repository.git merge-base --is-ancestor ${shellQuote(input.baseSha)} ${shellQuote(input.headSha)}`,
-          "publish_stage=remote_verify",
-          `git -C /workspace/repository.git remote add origin ${shellQuote(repositoryUrl)}`,
-          `remote_sha=$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)`,
-          `test "$remote_sha" = ${shellQuote(expectedOld)}`,
-          "publish_stage=remote_push",
-          `git -C /workspace/repository.git push origin ${shellQuote(`${input.headSha}:refs/heads/${input.headRef}`)}`,
-          "publish_stage=post_push_verify",
-          `test "$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)" = ${shellQuote(input.headSha)}`,
-          `rm -f ${quotedCredentialPath}`,
-          "trap - EXIT",
-          "printf 'published\\n'",
-        ].join("\n");
-        const credential = Buffer.from(input.githubBasicCredential);
-        const publisherScript = Buffer.from(script);
-        const uploadResults = await Promise.allSettled([
-          measureRequest("file.upload", () => publisher!.fs!.uploadFile(
-            Buffer.from(input.bundle),
-            "/workspace/publication.bundle",
-            120,
-          ), { bytes: input.bundle.byteLength }),
-          measureRequest("file.upload", () => publisher!.fs!.uploadFile(
-            credential,
-            credentialPath,
-            120,
-          ), { bytes: credential.byteLength }),
-          measureRequest("file.upload", () => publisher!.fs!.uploadFile(
-            publisherScript,
-            scriptPath,
-            120,
-          ), { bytes: publisherScript.byteLength }),
-        ]);
-        const uploadFailure = uploadResults.find((result) => result.status === "rejected");
-        if (uploadFailure?.status === "rejected") throw uploadFailure.reason;
-        const result = await measureRequest("process.execute_utility", () => publisher!.process!.executeCommand!(
-          `/bin/bash ${scriptPath}`,
-          "/workspace",
-          undefined,
-          180,
-        ));
-        if ((result.exitCode ?? 1) !== 0) {
-          const output = result.result ?? result.artifacts?.stdout ?? "";
-          throw new Error(`Trusted Git publication failed at ${trustedPublicationFailureStage(output)} with exit code ${result.exitCode ?? 1}`);
-        }
-        return { publishedSha: input.headSha };
-      } finally {
-        if (publisher?.delete) await measureRequest("sandbox.delete", () => publisher!.delete!(60, true)).catch(() => undefined);
       }
     },
   };
