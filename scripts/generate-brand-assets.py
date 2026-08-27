@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Generate Rally web and Electron brand assets from the canonical alpha mask."""
 
+from __future__ import annotations
+
 import math
 from pathlib import Path
 
@@ -23,7 +25,7 @@ MENU_BAR_ICON_INSET = 1 / 16
 # bounding box would keep it and shrink the visible ring to roughly two thirds of
 # the menu bar, so the crop is taken at a threshold instead.
 MENU_BAR_ICON_ALPHA_THRESHOLD = 16
-PRIMARY = (206, 220, 0, 255)  # #CEDC00
+PRIMARY = (204, 255, 0, 255)  # #CCFF00
 SECONDARY = (71, 199, 252, 255)  # #47C7FC
 DARK_CANVAS = (17, 18, 16, 255)  # #111210
 LIGHT_CANVAS = (236, 235, 229, 255)  # #ECEBE5
@@ -162,16 +164,7 @@ def social_card() -> Image.Image:
     draw.polygon(((1140, 390), (1200, 390), (1200, 630), (1060, 630)), fill=SECONDARY)
     draw.text((62, 145), "rally", font=font(210, bold=True), fill=DARK_CANVAS)
     draw.text((68, 376), "AI is multiplayer now.", font=font(38, bold=True), fill=DARK_CANVAS)
-    points = []
-    for step in range(241):
-        angle = 2 * math.pi * step / 240
-        denominator = 1 + math.sin(angle) ** 2
-        x = 790 + 235 * math.cos(angle) / denominator
-        y = 490 + 145 * math.sin(angle) * math.cos(angle) / denominator
-        points.append((x, y))
-    draw.line(points, fill=PRIMARY, width=42, joint="curve")
-    draw.ellipse((620, 463, 674, 517), fill=PRIMARY)
-    draw.ellipse((906, 463, 960, 517), fill=PRIMARY)
+    result.alpha_composite(mark(420), (590, 210))
     return result
 
 
