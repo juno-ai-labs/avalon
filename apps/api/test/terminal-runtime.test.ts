@@ -1,5 +1,9 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator";
@@ -10,6 +14,7 @@ import {
 import { sha256Hex } from "../src/lib/crypto";
 import {
   createDaytonaTerminalRuntime,
+  TERMINAL_READ_TEXT_PAGE_PYTHON,
   type TerminalRepositoryPublisher,
   type TerminalResourceBridge,
 } from "../src/services/terminal/runtime";
@@ -153,7 +158,13 @@ function fixture(
   const runCommandImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, input) => runCommandImplementation(id, {
     ...input,
-    taskName: input.taskName ?? "terminal-utility",
+    taskName: input.operation === "file.read_page"
+      ? "terminal-read-page"
+      : input.operation === "file.inspect"
+        ? "avalon-read-stat"
+        : input.operation === "file.replace"
+          ? "avalon-write"
+          : "terminal-utility",
   }));
   const resources: TerminalResourceBridge = {
     importResource: vi.fn(async (_context, input, destination): Promise<TerminalImportResourceOutput> => ({
@@ -186,7 +197,8 @@ function fixture(
     acquisitionObserved,
   );
   return { database, objectStore, files, provider, resources, publisher, coordinator, runtime: createDaytonaTerminalRuntime(
-    testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox) };
+    testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox,
+    () => clock.now().getTime()) };
 }
 
 const context: HarnessToolContext = {
@@ -229,6 +241,35 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.readFile).not.toHaveBeenCalled();
   });
 
+  it("rejects a text line larger than the page budget instead of returning a stuck cursor", () => {
+    const root = mkdtempSync(join(tmpdir(), "rally-terminal-page-"));
+    try {
+      const path = join(root, "minified.txt");
+      writeFileSync(path, "x".repeat(256 * 1_024 + 1));
+      const result = spawnSync("python3", [
+        "-c", TERMINAL_READ_TEXT_PAGE_PYTHON,
+        root, path, "1", "200", String(256 * 1_024), String(10 * 1_048_576),
+      ], { encoding: "utf8" });
+
+      expect(result.status).toBe(51);
+      expect(result.stdout.trim()).toBe(String(256 * 1_024 + 1));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("maps an oversized text line to an actionable limit error", async () => {
+    const { provider, runtime } = fixture();
+    vi.mocked(provider.runUtilityCommand).mockResolvedValueOnce({
+      exitCode: 51, stdout: String(256 * 1_024 + 1), stderr: "",
+    });
+
+    await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).rejects.toMatchObject({
+      code: "limit_exceeded",
+      message: expect.stringContaining("single line"),
+    });
+  });
+
   it("acquires and prepares one sandbox once for all tools in the same run", async () => {
     const prepareSandbox = vi.fn(async () => undefined);
     const { coordinator, runtime } = fixture(undefined, undefined, prepareSandbox);
@@ -239,6 +280,37 @@ describe("Daytona Terminal runtime", () => {
 
     expect(acquire).toHaveBeenCalledOnce();
     expect(prepareSandbox).toHaveBeenCalledOnce();
+  });
+
+  it("reacquires after the cached operation lease expires", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-08-13T12:00:00.000Z"));
+      const clock = { now: () => new Date(Date.now()) };
+      const { coordinator, runtime } = fixture(clock);
+      const acquire = vi.spyOn(coordinator, "acquire");
+
+      await runtime.readFile(context, "src/file.txt");
+      vi.setSystemTime(new Date("2026-08-13T12:17:00.000Z"));
+      await runtime.readFile({ ...context, toolCallId: "call-runtime-after-lease" }, "src/file.txt");
+
+      expect(acquire).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cleans an uploaded write temp file after a provider request failure", async () => {
+    const { provider, runtime } = fixture();
+    vi.mocked(provider.runUtilityCommand).mockRejectedValueOnce(new Error("provider unavailable"));
+
+    await expect(runtime.writeFile(context, "src/new.txt", new TextEncoder().encode("new")))
+      .rejects.toThrow("provider unavailable");
+    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(2);
+    expect(provider.runUtilityCommand).toHaveBeenLastCalledWith("sandbox-runtime", expect.objectContaining({
+      operation: "file.temp_cleanup",
+      command: expect.stringMatching(/^rm -f -- /u),
+    }));
   });
 
   it("rejects a provider-resolved symlink escape before reading bytes", async () => {

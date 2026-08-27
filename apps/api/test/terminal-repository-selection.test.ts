@@ -174,7 +174,7 @@ async function fixture(input?: {
   const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, command) => utilityImplementation(id, {
     ...command,
-    taskName: command.taskName ?? "terminal-utility",
+    taskName: command.operation === "lifecycle.backup_cleanup" ? "cleanup" : "terminal-utility",
   }));
   const catalog: TerminalRepositoryCatalogGateway = {
     resolveRepository: vi.fn(async () => ({
@@ -280,7 +280,7 @@ describe("Terminal model repository selection", () => {
     expect(payloadPut).toHaveBeenCalledOnce();
     expect(residentResourceAttacher).toHaveBeenCalledOnce();
     const archiveCommand = vi.mocked(provider.runUtilityCommand).mock.calls.find(([, command]) => (
-      command.taskName?.includes("workspace-backup") && !command.taskName.includes("cleanup")
+      command.operation === "lifecycle.backup"
     ))?.[1].command;
     expect(archiveCommand).toContain("git bundle create");
     expect(archiveCommand).toContain("--exclude='*/.git'");

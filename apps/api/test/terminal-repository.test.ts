@@ -148,7 +148,7 @@ function fixture(message = "Please publish these changes and open a pull request
   const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, input) => utilityImplementation(id, {
     ...input,
-    taskName: input.taskName ?? "terminal-utility",
+    taskName: "terminal-utility",
   }));
   const context: HarnessToolContext = {
     workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "publish-call",
@@ -172,7 +172,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       readGateway,
     )).resolves.toMatchObject({ repositoryFullName: "owner/repo", baseSha: BASE, headRef: HEAD_REF, outcome: "cloned" });
@@ -230,7 +230,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       gateway,
     )).rejects.toMatchObject({ code: "repository_access_revoked" });
@@ -256,7 +256,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       gateway,
     )).resolves.toMatchObject({ outcome: "refreshed" });
@@ -286,7 +286,7 @@ describe("Terminal repository publication", () => {
     await bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       gateway,
     );
@@ -331,7 +331,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).resolves.toEqual({
       repository: "owner/repo", baseRef: "main", headRef: HEAD_REF, commitSha: HEAD,
       publishedSha: HEAD, outcome: "created",
@@ -360,7 +360,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).resolves.toMatchObject({ outcome: "unchanged", publishedSha: HEAD });
     expect(provider.publishGitBundle).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(
@@ -382,7 +382,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(unreceipted, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).rejects.toMatchObject({ code: "tool_receipt_missing" });
     // The receipt is what makes a publication replayable. Without it nothing
     // may reach GitHub, or a retry opens a second pull request.
@@ -399,7 +399,7 @@ describe("Terminal repository publication", () => {
     const publisher = createTerminalRepositoryPublisher(env, gateway);
     const sandbox = {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running" as const,
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     };
 
     await publisher.publishBranchAndPr(context, { title: "Ship it", body: "First commit" }, sandbox, provider);
@@ -464,7 +464,7 @@ describe("Terminal repository publication", () => {
     vi.mocked(dirty.provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 0, stdout: " M src/app.ts\n", stderr: "" });
     await expect(createTerminalRepositoryPublisher(dirty.env, dirty.gateway).publishBranchAndPr(
       dirty.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       dirty.provider,
     )).rejects.toMatchObject({ code: "working_tree_dirty", message: expect.stringContaining("commit") });
   });
@@ -489,7 +489,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(readOnly.env, readOnly.gateway).publishBranchAndPr(
       readOnly.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       readOnly.provider,
     )).rejects.toMatchObject({
       code: "repository_remote_read_only",
@@ -512,7 +512,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(workflow.env, workflow.gateway).publishBranchAndPr(
       workflow.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       workflow.provider,
     )).rejects.toMatchObject({
       code: "publication_policy_denied",
@@ -535,7 +535,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(removed.env, removed.gateway).publishBranchAndPr(
       removed.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       removed.provider,
     )).rejects.toMatchObject({ code: "publication_not_authorized", message: expect.stringContaining("no longer belongs") });
     expect(removed.gateway.mintWriteToken).not.toHaveBeenCalled();

@@ -151,8 +151,6 @@ export interface TerminalSandboxProvider {
   writeFile(idOrName: string, path: string, bytes: Uint8Array, signal: AbortSignal): Promise<void>;
   /** Execute one Rally-authored bounded utility command without a durable named session. */
   runUtilityCommand(idOrName: string, input: {
-    /** Stable Rally operation label; never sent to Daytona. */
-    taskName: string;
     operation: TerminalUtilityOperation;
     command: string;
     cwd: string;
@@ -377,6 +375,11 @@ export function createDaytonaTerminalProvider(
     loadedSandboxes.set(sandbox.name, sandbox);
     return sandbox;
   };
+  const forget = (sandbox: DaytonaSandboxLike): void => {
+    for (const [key, cached] of loadedSandboxes) {
+      if (cached === sandbox) loadedSandboxes.delete(key);
+    }
+  };
   const load = async (idOrName: string): Promise<DaytonaSandboxLike> => {
     const cached = loadedSandboxes.get(idOrName);
     if (cached) return cached;
@@ -592,11 +595,13 @@ export function createDaytonaTerminalProvider(
       const sandbox = await load(idOrName);
       if (!sandbox.stop) throw new Error("Daytona sandbox does not support stop");
       await measureRequest("sandbox.stop", () => sandbox.stop!(60));
+      forget(sandbox);
     },
     async archiveSandbox(idOrName) {
       const sandbox = await load(idOrName);
       if (!sandbox.archive) throw new Error("Daytona sandbox does not support archive");
       await measureRequest("sandbox.archive", () => sandbox.archive!());
+      forget(sandbox);
     },
     async deleteSandbox(idOrName) {
       const sandbox = await load(idOrName);
@@ -604,14 +609,15 @@ export function createDaytonaTerminalProvider(
       await clearReadSecrets(sandbox.id);
       try {
         await measureRequest("sandbox.delete", () => sandbox.delete!(60, true));
-        loadedSandboxes.delete(idOrName);
-        loadedSandboxes.delete(sandbox.id);
-        loadedSandboxes.delete(sandbox.name);
+        forget(sandbox);
       } catch (deleteError) {
         try {
           await loadFresh(sandbox.id);
         } catch (observationError) {
-          if (isTerminalProviderNotFound(observationError)) return;
+          if (isTerminalProviderNotFound(observationError)) {
+            forget(sandbox);
+            return;
+          }
         }
         throw deleteError;
       }
@@ -684,10 +690,13 @@ export function createDaytonaTerminalProvider(
     async runUtilityCommand(idOrName, input) {
       if (input.signal?.aborted) throw new Error("Terminal utility command cancelled");
       const sandbox = await load(idOrName);
+      if (input.signal?.aborted) throw new Error("Terminal utility command cancelled");
       if (!sandbox.process?.executeCommand) throw new Error("Daytona process execution is unavailable");
       const timeoutSeconds = Math.max(1, Math.ceil(input.timeoutMs / 1_000));
-      const command = `(cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.rally/session.env ]; then . /workspace/.rally/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; rally_status=$?; if [ "$rally_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n' >&2; fi; exit "$rally_status")`;
-      const result = await measureRequest(
+      // executeCommand exposes one stdout-shaped result and no stderr channel,
+      // so the private timeout marker must use that result before we strip it.
+      const command = `(cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.rally/session.env ]; then . /workspace/.rally/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; rally_status=$?; if [ "$rally_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n'; fi; exit "$rally_status")`;
+      const execution = measureRequest(
         "process.execute_utility",
         () => sandbox.process!.executeCommand!(command, undefined, undefined, timeoutSeconds + 10),
         {
@@ -695,7 +704,46 @@ export function createDaytonaTerminalProvider(
           detail: input.operation,
         },
       );
-      if (input.signal?.aborted) throw new Error("Terminal utility command cancelled");
+      const cancelled = Symbol("terminal_utility_cancelled");
+      let settleCancellation: ((value: typeof cancelled) => void) | null = null;
+      const cancelledAfterQuiescence = new Promise<typeof cancelled>((resolve) => {
+        settleCancellation = resolve;
+      });
+      let cancellationQuiescence: Promise<void> | null = null;
+      const cancel = (): void => {
+        if (cancellationQuiescence) return;
+        cancellationQuiescence = (async () => {
+          if (!sandbox.stop || !sandbox.start) {
+            await execution.catch(() => undefined);
+            return;
+          }
+          await measureRequest("sandbox.stop", () => sandbox.stop!(60));
+          await measureRequest("sandbox.start", () => sandbox.start!(60));
+        })();
+        void cancellationQuiescence.then(
+          () => settleCancellation?.(cancelled),
+          async () => {
+            // If quiescence could not be established, do not let ownership
+            // hand off until the bounded provider execution itself settles.
+            await execution.catch(() => undefined);
+            settleCancellation?.(cancelled);
+          },
+        );
+      };
+      input.signal?.addEventListener("abort", cancel, { once: true });
+      if (input.signal?.aborted) cancel();
+      let outcome: Awaited<typeof execution> | typeof cancelled;
+      try {
+        outcome = await Promise.race([execution, cancelledAfterQuiescence]);
+      } finally {
+        input.signal?.removeEventListener("abort", cancel);
+      }
+      if (outcome === cancelled || input.signal?.aborted) {
+        if (cancellationQuiescence) await cancellationQuiescence;
+        void execution.catch(() => undefined);
+        throw new Error("Terminal utility command cancelled");
+      }
+      const result = outcome;
       const stdout = result.result ?? result.artifacts?.stdout ?? "";
       const timedOut = result.exitCode === 124 && stdout.includes("AVALON_COMMAND_TIMED_OUT");
       return {
@@ -708,18 +756,24 @@ export function createDaytonaTerminalProvider(
     async runCommand(idOrName, input) {
       const sandbox = await load(idOrName);
       if (!sandbox.process) throw new Error("Daytona sandbox process service is unavailable");
-      let cleaned = false;
+      let cleanupRequest: Promise<void> | null = null;
       let cancelled = false;
       let terminal = false;
       const cleanup = async (suppressFailure: boolean): Promise<void> => {
-        if (cleaned) return;
-        cleaned = true;
-        try {
-          await measureRequest("process.session_delete", () => sandbox.process!.deleteSession(input.taskName));
-        } catch (error) {
-          if (!suppressFailure && !isTerminalProviderNotFound(error)) throw error;
-        }
+        if (cleanupRequest) return cleanupRequest;
+        cleanupRequest = (async () => {
+          try {
+            await measureRequest("process.session_delete", () => sandbox.process!.deleteSession(input.taskName));
+          } catch (error) {
+            if (!suppressFailure && !isTerminalProviderNotFound(error)) throw error;
+          }
+        })();
+        return cleanupRequest;
       };
+      let closeCreationWindow!: () => void;
+      const creationWindowClosed = new Promise<void>((resolve) => {
+        closeCreationWindow = resolve;
+      });
       try {
         const timeoutSeconds = Math.max(1, Math.ceil(input.timeoutMs / 1_000));
         if (input.signal?.aborted) {
@@ -773,6 +827,7 @@ export function createDaytonaTerminalProvider(
               throw error;
             }
           }
+          closeCreationWindow();
           let commandId = commands[0]?.id;
           let observedExitCode = commands[0]?.exitCode ?? undefined;
           let initialStdout: string | undefined;
@@ -843,11 +898,19 @@ export function createDaytonaTerminalProvider(
             stdout: stdout || initialStdout || "",
             stderr: stderr || initialStderr || "",
           };
-        })();
+        })().finally(closeCreationWindow);
         const abort = input.signal ? new Promise<never>((_resolve, reject) => {
           const onAbort = () => {
             cancelled = true;
-            void cleanup(true).finally(() => reject(new Error("Terminal command cancelled")));
+            void (async () => {
+              // A delete can win before an in-flight create reaches Daytona.
+              // Wait only for that pre-submission window, then delete again.
+              await cleanup(true);
+              await creationWindowClosed;
+              cleanupRequest = null;
+              await cleanup(true);
+              reject(new Error("Terminal command cancelled"));
+            })();
           };
           input.signal!.addEventListener("abort", onAbort, { once: true });
           void execution.finally(() => input.signal!.removeEventListener("abort", onAbort)).catch(() => undefined);
