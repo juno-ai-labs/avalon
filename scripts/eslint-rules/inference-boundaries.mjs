@@ -176,7 +176,7 @@ export const requireWebSocketTicketRule = {
       argument?.type === "MemberExpression"
       && propertyName(argument) === "url"
       && argument.object.type === "Identifier"
-      && ticketBindings.has(argument.object.name)
+      && ticketBindings.has(bindingFor(argument.object))
     );
     return {
       ImportDeclaration(node) {
@@ -201,7 +201,8 @@ export const requireWebSocketTicketRule = {
         const init = unwrapAwait(node.init);
         if (node.id.type === "Identifier" && init?.type === "CallExpression") {
           const method = propertyName(init.callee);
-          if (method && TICKET_METHODS.has(method)) ticketBindings.add(node.id.name);
+          const binding = bindingFor(node.id);
+          if (method && TICKET_METHODS.has(method) && binding) ticketBindings.add(binding);
           return;
         }
         if (
@@ -214,7 +215,8 @@ export const requireWebSocketTicketRule = {
           const source = init.arguments[0].elements[index];
           if (element?.type !== "Identifier" || source?.type !== "CallExpression") continue;
           const method = propertyName(source.callee);
-          if (method && TICKET_METHODS.has(method)) ticketBindings.add(element.name);
+          const binding = bindingFor(element);
+          if (method && TICKET_METHODS.has(method) && binding) ticketBindings.add(binding);
         }
       },
       NewExpression(node) {

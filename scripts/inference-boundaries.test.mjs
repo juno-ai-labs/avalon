@@ -94,6 +94,18 @@ test("requires renderer WebSockets to consume an authenticated ticket URL", () =
       return createRealtimeSocket('substream_feed', url, protocols);
     }
   `, "require-websocket-ticket").length, 0);
+  assert.equal(lint(`
+    const ticket = await api.getSocketTicket(id);
+    function unsafe(ticket) {
+      return new WebSocket(ticket.url);
+    }
+  `, "require-websocket-ticket").length, 1);
+  assert.equal(lint(`
+    const [ticket] = await Promise.all([api.getSocketTicket(id)]);
+    function unsafe(ticket) {
+      return createRealtimeSocket('substream_feed', ticket.url, protocols);
+    }
+  `, "require-websocket-ticket").length, 1);
 });
 
 test("rejects bare Zod URL validators but permits imported explicit contracts", () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
 import {
   DesktopRealtimeSocketCloseInputSchema,
   DesktopRealtimeSocketEventSchema,
@@ -7,7 +8,8 @@ import {
 } from '../common/realtime-socket';
 import {
   RealtimeSocketBroker,
-  proxyUrlFromElectronResolution,
+  createNodeRealtimeSocketFactory,
+  proxyUrlsFromElectronResolution,
   realtimeSocketTargetAllowed,
   type RealtimeSocketClient,
   type RealtimeSocketFactory,
@@ -34,7 +36,7 @@ class FakeSocket implements RealtimeSocketClient {
   extensions = '';
   protocol = 'rally.ticket.v1';
   readyState = 0;
-  readonly close = vi.fn();
+  readonly close = vi.fn(() => { this.readyState = 2; });
   readonly send = vi.fn();
   readonly terminate = vi.fn();
   private closeListener: ((code: number, reason: Uint8Array) => void) | null = null;
@@ -46,7 +48,11 @@ class FakeSocket implements RealtimeSocketClient {
   onError(listener: () => void): void { this.errorListener = listener; }
   onMessage(listener: (data: unknown) => void): void { this.messageListener = listener; }
   onOpen(listener: () => void): void { this.openListener = listener; }
-  emitClose(code: number, reason: string): void { this.closeListener?.(code, Buffer.from(reason)); }
+  emitClose(code: number, reason: string): void {
+    this.readyState = 3;
+    this.closeListener?.(code, Buffer.from(reason));
+  }
+  emitError(): void { this.errorListener?.(); }
   emitMessage(data: string): void { this.messageListener?.(Buffer.from(data)); }
   emitOpen(): void { this.openListener?.(); }
 }
@@ -76,17 +82,56 @@ describe('realtimeSocketTargetAllowed', () => {
   });
 });
 
-describe('proxyUrlFromElectronResolution', () => {
-  it('translates Electron proxy directives for the Node socket agent', () => {
-    expect(proxyUrlFromElectronResolution('DIRECT')).toBe('');
-    expect(proxyUrlFromElectronResolution('PROXY proxy.example:8080; DIRECT'))
-      .toBe('http://proxy.example:8080');
-    expect(proxyUrlFromElectronResolution('HTTPS proxy.example:8443'))
-      .toBe('https://proxy.example:8443');
-    expect(proxyUrlFromElectronResolution('SOCKS5 proxy.example:1080'))
-      .toBe('socks5://proxy.example:1080');
-    expect(() => proxyUrlFromElectronResolution('UNKNOWN proxy.example:8080'))
+describe('proxyUrlsFromElectronResolution', () => {
+  it('preserves Electron proxy directives and fallbacks in order', () => {
+    expect(proxyUrlsFromElectronResolution('DIRECT')).toEqual(['']);
+    expect(proxyUrlsFromElectronResolution(
+      'PROXY primary.example:8080; HTTPS secondary.example:8443; DIRECT',
+    )).toEqual([
+      'http://primary.example:8080',
+      'https://secondary.example:8443',
+      '',
+    ]);
+    expect(proxyUrlsFromElectronResolution('SOCKS5 proxy.example:1080'))
+      .toEqual(['socks5://proxy.example:1080']);
+    expect(() => proxyUrlsFromElectronResolution('UNKNOWN proxy.example:8080'))
       .toThrow('unsupported proxy directive');
+  });
+
+  it('advances to the next PAC directive when the first handshake fails', async () => {
+    const first = new FakeSocket();
+    const second = new FakeSocket();
+    const attempts = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+    const factory = createNodeRealtimeSocketFactory(
+      async () => 'PROXY primary.example:8080; PROXY secondary.example:8080; DIRECT',
+      attempts,
+    );
+    const socket = factory(openInput().url, openInput().protocols);
+    const opened = vi.fn();
+    const failed = vi.fn();
+    socket.onOpen(opened);
+    socket.onError(failed);
+    await Promise.resolve();
+
+    expect(attempts).toHaveBeenCalledTimes(1);
+    expect(attempts.mock.calls[0]?.[0]).toMatchObject({
+      proxyUrl: 'http://primary.example:8080',
+      maxPayload: WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
+    });
+    first.emitError();
+    expect(attempts).toHaveBeenCalledTimes(2);
+    expect(attempts.mock.calls[1]?.[0]).toMatchObject({
+      proxyUrl: 'http://secondary.example:8080',
+      maxPayload: WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
+    });
+
+    second.readyState = 1;
+    second.emitOpen();
+    expect(opened).toHaveBeenCalledOnce();
+    expect(failed).not.toHaveBeenCalled();
+    expect(first.terminate).toHaveBeenCalledOnce();
   });
 });
 
@@ -173,5 +218,32 @@ describe('RealtimeSocketBroker', () => {
     expect(() => broker.close(7, socketId, 1_000, 'done')).toThrow('invalid close frame');
     expect(socket.terminate).toHaveBeenCalledOnce();
     expect(() => broker.send(7, socketId, 'ping')).toThrow('not open');
+  });
+
+  it('forwards a normal close once, forgets the socket, and leaves other owners alone', () => {
+    const first = new FakeSocket();
+    const otherOwner = new FakeSocket();
+    const replacement = new FakeSocket();
+    first.readyState = 1;
+    otherOwner.readyState = 1;
+    const sockets = [first, otherOwner, replacement];
+    const events: DesktopRealtimeSocketEvent[] = [];
+    const broker = new RealtimeSocketBroker(() => sockets.shift()!);
+    broker.open(7, openInput(), (event) => events.push(event));
+    broker.open(8, openInput(), vi.fn());
+
+    broker.close(7, socketId, 1_000, 'done');
+    broker.close(7, socketId, 1_000, 'done');
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(first.close).toHaveBeenCalledWith(1_000, 'done');
+    first.emitClose(1_000, 'done');
+    first.emitClose(1_000, 'duplicate');
+
+    expect(events).toEqual([
+      { type: 'close', socketId, code: 1_000, reason: 'done', wasClean: true },
+    ]);
+    expect(() => broker.send(7, socketId, 'ping')).toThrow('not open');
+    expect(() => broker.send(8, socketId, 'ping')).not.toThrow();
+    expect(() => broker.open(7, openInput(), vi.fn())).not.toThrow();
   });
 });

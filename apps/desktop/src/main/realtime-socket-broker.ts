@@ -1,4 +1,4 @@
-import { IdSchema } from '@rally/contracts';
+import { IdSchema, WORKSTREAM_REALTIME_MAX_FRAME_BYTES } from '@rally/contracts';
 import { SOCKET_TICKET_SUBPROTOCOL } from '@rally/contracts/socket-tickets';
 import { getCACertificates } from 'node:tls';
 import { ProxyAgent } from 'proxy-agent';
@@ -49,13 +49,8 @@ function wrapWebSocket(socket: WebSocket): RealtimeSocketClient {
   };
 }
 
-function defaultSocketFactory(url: string, protocols: readonly string[]): RealtimeSocketClient {
-  return wrapWebSocket(new WebSocket(url, [...protocols], { origin: RALLY_RENDERER_ORIGIN }));
-}
-
-export function proxyUrlFromElectronResolution(resolution: string): string {
-  const directive = resolution.split(';', 1)[0]?.trim() ?? '';
-  if (!directive || directive === 'DIRECT') return '';
+function proxyUrlFromElectronDirective(directive: string): string {
+  if (!directive || directive.toUpperCase() === 'DIRECT') return '';
   const separator = directive.indexOf(' ');
   if (separator < 1) throw new Error('Electron returned an invalid proxy directive');
   const kind = directive.slice(0, separator).toUpperCase();
@@ -71,6 +66,175 @@ export function proxyUrlFromElectronResolution(resolution: string): string {
   }
 }
 
+export function proxyUrlsFromElectronResolution(resolution: string): string[] {
+  const directives = resolution.split(';').map((directive) => directive.trim()).filter(Boolean);
+  return (directives.length === 0 ? ['DIRECT'] : directives).map(proxyUrlFromElectronDirective);
+}
+
+export interface RealtimeSocketAttemptInput {
+  ca: readonly string[];
+  maxPayload: number;
+  protocols: readonly string[];
+  proxyUrl: string;
+  url: string;
+}
+
+export type RealtimeSocketAttemptFactory = (
+  input: RealtimeSocketAttemptInput,
+) => RealtimeSocketClient;
+
+function createNodeSocketAttempt(input: RealtimeSocketAttemptInput): RealtimeSocketClient {
+  const agent = new ProxyAgent({
+    ca: [...input.ca],
+    getProxyForUrl: () => input.proxyUrl,
+  });
+  return wrapWebSocket(new WebSocket(input.url, [...input.protocols], {
+    agent,
+    maxPayload: input.maxPayload,
+    origin: RALLY_RENDERER_ORIGIN,
+  }));
+}
+
+/** One browser-shaped client that advances through Electron's PAC route. */
+class ProxyFallbackRealtimeSocketClient implements RealtimeSocketClient {
+  private readonly closeListeners = new Set<(code: number, reason: Uint8Array) => void>();
+  private readonly errorListeners = new Set<() => void>();
+  private readonly messageListeners = new Set<(data: unknown) => void>();
+  private readonly openListeners = new Set<() => void>();
+  private current: RealtimeSocketClient | null = null;
+  private generation = 0;
+  private opened = false;
+  private routes: string[] = [];
+  private routeIndex = 0;
+  private state: number = WebSocket.CONNECTING;
+  private closeCode = 1_000;
+  private closeReason = '';
+
+  constructor(
+    private readonly url: string,
+    private readonly protocols: readonly string[],
+    private readonly ca: readonly string[],
+    resolveProxy: RealtimeSocketProxyResolver,
+    private readonly createAttempt: RealtimeSocketAttemptFactory,
+  ) {
+    void resolveProxy(url)
+      .then((resolution) => {
+        this.routes = proxyUrlsFromElectronResolution(resolution);
+        this.openNext();
+      })
+      .catch(() => this.failFinal());
+  }
+
+  get extensions(): string { return this.current?.extensions ?? ''; }
+  get protocol(): string { return this.current?.protocol ?? ''; }
+  get readyState(): number { return this.state; }
+
+  close(code = 1_000, reason = ''): void {
+    if (this.state === WebSocket.CLOSING || this.state === WebSocket.CLOSED) return;
+    this.state = WebSocket.CLOSING;
+    this.closeCode = code;
+    this.closeReason = reason;
+    if (this.current) this.current.close(code, reason);
+  }
+
+  onClose(listener: (code: number, reason: Uint8Array) => void): void { this.closeListeners.add(listener); }
+  onError(listener: () => void): void { this.errorListeners.add(listener); }
+  onMessage(listener: (data: unknown) => void): void { this.messageListeners.add(listener); }
+  onOpen(listener: () => void): void { this.openListeners.add(listener); }
+
+  send(data: string): void {
+    if (this.state !== WebSocket.OPEN || !this.current) throw new Error('Realtime socket is not open');
+    this.current.send(data);
+  }
+
+  terminate(): void {
+    if (this.state === WebSocket.CLOSED) return;
+    this.state = WebSocket.CLOSED;
+    this.generation += 1;
+    this.current?.terminate();
+    this.current = null;
+  }
+
+  private openNext(): void {
+    if (this.state === WebSocket.CLOSED) return;
+    if (this.state === WebSocket.CLOSING) {
+      this.finishClose(this.closeCode, Buffer.from(this.closeReason));
+      return;
+    }
+    const proxyUrl = this.routes[this.routeIndex++];
+    if (proxyUrl === undefined) {
+      this.failFinal();
+      return;
+    }
+    const generation = this.generation += 1;
+    let attempt: RealtimeSocketClient;
+    try {
+      attempt = this.createAttempt({
+        ca: this.ca,
+        maxPayload: WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
+        protocols: this.protocols,
+        proxyUrl,
+        url: this.url,
+      });
+    } catch {
+      this.openNext();
+      return;
+    }
+    this.current = attempt;
+    attempt.onOpen(() => {
+      if (!this.isCurrent(generation, attempt)) return;
+      this.opened = true;
+      this.state = WebSocket.OPEN;
+      for (const listener of this.openListeners) listener();
+    });
+    attempt.onMessage((data) => {
+      if (!this.opened || !this.isCurrent(generation, attempt)) return;
+      for (const listener of this.messageListeners) listener(data);
+    });
+    attempt.onError(() => {
+      if (!this.isCurrent(generation, attempt)) return;
+      if (this.opened) {
+        for (const listener of this.errorListeners) listener();
+        return;
+      }
+      this.failAttempt(attempt);
+    });
+    attempt.onClose((code, reason) => {
+      if (!this.isCurrent(generation, attempt)) return;
+      if (this.opened || this.state === WebSocket.CLOSING) {
+        this.finishClose(code, reason);
+        return;
+      }
+      this.failAttempt(attempt);
+    });
+  }
+
+  private isCurrent(generation: number, attempt: RealtimeSocketClient): boolean {
+    return this.generation === generation && this.current === attempt;
+  }
+
+  private failAttempt(attempt: RealtimeSocketClient): void {
+    this.generation += 1;
+    this.current = null;
+    attempt.terminate();
+    this.openNext();
+  }
+
+  private failFinal(): void {
+    if (this.state === WebSocket.CLOSED) return;
+    for (const listener of this.errorListeners) listener();
+    this.finishClose(1_006, new Uint8Array());
+  }
+
+  private finishClose(code: number, reason: Uint8Array): void {
+    if (this.state === WebSocket.CLOSED) return;
+    this.state = WebSocket.CLOSED;
+    this.generation += 1;
+    this.current = null;
+    for (const listener of this.closeListeners) listener(code, reason);
+  }
+}
+
 /**
  * Keep Node-owned sockets independent of Chromium's per-renderer connection
  * scheduling while preserving the operating system proxy and trust settings
@@ -78,19 +242,19 @@ export function proxyUrlFromElectronResolution(resolution: string): string {
  */
 export function createNodeRealtimeSocketFactory(
   resolveProxy: RealtimeSocketProxyResolver,
+  createAttempt: RealtimeSocketAttemptFactory = createNodeSocketAttempt,
 ): RealtimeSocketFactory {
   const ca = [...new Set([
     ...getCACertificates('default'),
     ...getCACertificates('system'),
   ])];
-  const agent = new ProxyAgent({
+  return (url, protocols) => new ProxyFallbackRealtimeSocketClient(
+    url,
+    protocols,
     ca,
-    getProxyForUrl: async (url) => proxyUrlFromElectronResolution(await resolveProxy(url)),
-  });
-  return (url, protocols) => wrapWebSocket(new WebSocket(url, [...protocols], {
-    agent,
-    origin: RALLY_RENDERER_ORIGIN,
-  }));
+    resolveProxy,
+    createAttempt,
+  );
 }
 
 function socketOrigin(apiBaseUrl: string): string | null {
@@ -156,7 +320,7 @@ function messageText(data: unknown): string {
 export class RealtimeSocketBroker {
   private readonly sockets = new Map<string, OwnedSocket>();
 
-  constructor(private readonly createSocket: RealtimeSocketFactory = defaultSocketFactory) {}
+  constructor(private readonly createSocket: RealtimeSocketFactory) {}
 
   open(
     ownerId: number,
