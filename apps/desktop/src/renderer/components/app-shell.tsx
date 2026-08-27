@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import type { WorkstreamBatchFilter } from '@rally/contracts';
+import type { CreateProjectRequest, ProjectDirectory, WorkstreamBatchFilter } from '@rally/contracts';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
@@ -229,6 +229,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     return true;
   };
   const notes = useSocketOwnedList<NoteSummary>(['notes']);
+  const projects = useQuery({
+    queryKey: ['projects'],
+    queryFn: ({ signal }) => {
+      if (!api) throw new Error('Your session is no longer active. Sign in again.');
+      return api.getProjects(signal);
+    },
+    enabled: Boolean(api),
+    staleTime: 30_000,
+  });
   const featureFlags = useClientFeatureFlags(api);
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
@@ -281,6 +290,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         // claiming an empty workspace when the socket cannot connect.
         loading={workstreams.data === undefined}
         notes={notes.data ?? []}
+        projects={projects.data?.items ?? []}
         meetingRecordingAvailable={featureFlags.data?.meetingRecordingEnabled === true}
         automationWorkspaceTemplatesAvailable={featureFlags.data?.automationWorkspaceTemplatesEnabled === true}
         onArchiveDraftAutomation={async (automation) => {
@@ -462,6 +472,20 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         onPreviewWorkstreamBatch={async (filter) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           return api.previewWorkstreamBatch(filter);
+        }}
+        onCreateProject={async (input: CreateProjectRequest) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const created = await api.createProject(input);
+          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => ({
+            waterline: Math.max(current?.waterline ?? 0, created.presentationRevision),
+            items: [...(current?.items ?? []), created],
+          }));
+          void queryClient.invalidateQueries({ queryKey: ['projects'] });
+        }}
+        onReorderProjects={async (projectIds) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const directory = await api.reorderProjects(projectIds);
+          queryClient.setQueryData(['projects'], directory);
         }}
         onSignOut={() => {
           void signOut().catch(() => undefined);

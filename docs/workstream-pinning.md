@@ -272,6 +272,24 @@ allocated — `MAX(position) + 1` inside the insert — rather than by the schem
 
 ## Changelog
 
+### 2026-08-27 — Project ordering stays independent from pins
+
+**What changed:** The sidebar now renders a separately draggable Projects
+section before Pinned, backed by `workspace_project_order`; no pin schema or
+ordering behavior changed.
+
+**Why:** A project groups shared work while a pin keeps one work stream handy
+for one person. Sharing either ordering would make one gesture silently rewrite
+the other concept.
+
+**Considered and rejected:** Reusing pin positions or removing a pinned work
+stream from Pinned when it joins a project.
+
+**Consequences:** A work stream may eventually appear inside a project and in
+Pinned simultaneously, and the two drag protocols remain separate.
+
+Design: `docs/PRDs/2026-08-26_projects/prd.md`.
+
 ### 2026-08-26 — The complete live-state supplement is independent of the pin cap
 
 **What changed:** The initial WorkspaceDO directory contract no longer caps the

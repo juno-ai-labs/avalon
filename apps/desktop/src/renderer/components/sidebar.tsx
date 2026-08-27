@@ -32,7 +32,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
-import type { WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
+import type { CreateProjectRequest, ProjectSummary, WorkstreamBatchFilter, WorkstreamBatchUpdate } from '@rally/contracts';
 import {
   formatDateTime,
   formatRelative,
@@ -56,11 +56,13 @@ import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } fro
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
+import { ProjectSidebarSection } from './project-sidebar-section';
 
 interface SidebarProps {
   workspace: Workspace;
   automations: AutomationSummary[];
   notes?: NoteSummary[];
+  projects?: ProjectSummary[];
   workstreams: WorkstreamSummary[];
   /** Whether a page of work streams remains beyond the ones listed. */
   hasMoreWorkstreams?: boolean;
@@ -97,6 +99,8 @@ interface SidebarProps {
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onOpenMeetingNotes: (noteId?: string) => Promise<void>;
   onPreviewWorkstreamBatch: (filter: WorkstreamBatchFilter) => Promise<number>;
+  onCreateProject?: (input: CreateProjectRequest) => Promise<void>;
+  onReorderProjects?: (projectIds: string[]) => Promise<void>;
   onSignOut: () => void;
 }
 
@@ -813,6 +817,7 @@ export function Sidebar({
   workspace,
   automations,
   notes = [],
+  projects = [],
   workstreams,
   loading,
   meetingRecordingAvailable = false,
@@ -831,6 +836,8 @@ export function Sidebar({
   onRunAutomation,
   onOpenMeetingNotes,
   onPreviewWorkstreamBatch,
+  onCreateProject = async () => undefined,
+  onReorderProjects = async () => undefined,
   onSignOut,
   hasMoreWorkstreams = false,
   loadingMoreWorkstreams = false,
@@ -1537,6 +1544,13 @@ export function Sidebar({
               </button>
             )}
           </div>
+
+          <ProjectSidebarSection
+            loading={loading === true}
+            onCreate={onCreateProject}
+            onReorder={onReorderProjects}
+            projects={projects}
+          />
 
           <section className="sidebar-section" aria-labelledby="automations-heading">
             <div className="sidebar-section-heading">

@@ -11,9 +11,11 @@ import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
+import { ProjectDirectorySchema } from "./projects";
 
 export * from "./attachment-contracts";
 export * from "./resource-relationships";
+export * from "./projects";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
@@ -1844,6 +1846,7 @@ export const WORKSPACE_SYNC_TOPICS = [
   "digest_schedule",
   "automations",
   "notes",
+  "projects",
   "resources",
   "activity",
   "work_opportunities",
@@ -2004,6 +2007,8 @@ export const WorkspaceSidebarSchema = z.object({
     waterline: z.number().int().nonnegative(),
     items: z.array(NoteSummarySchema).max(250),
   }).strict(),
+  /** Optional during the rolling deployment; current servers always send it. */
+  projects: ProjectDirectorySchema.optional(),
 }).strict();
 
 /**
