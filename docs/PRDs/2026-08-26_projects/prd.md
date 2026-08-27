@@ -8,6 +8,7 @@
 > [data model](../../data-model.md),
 > [Queue versus RPC](../../choosing-queues-or-rpc.md),
 > [work-stream creation](../../workstream-creation.md),
+> [work-stream email addresses](../../workstream-email-addresses.md),
 > [work-stream pinning](../../workstream-pinning.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
@@ -469,13 +470,15 @@ reconciliation contract; cancellation does not release the draft or its fence
 while a late effect could still commit. It then durably asks each authority to
 abandon only this never-activated draft: `SubstreamAgent` marks the gate and
 scheduled run cancelled, `WorkspaceDO` removes the draft membership, and the
-creation finalizer releases the verified D1 route and email reservation without
-ever making them active. Applied resource links disappear with the unactivated
-draft; this is draft cleanup, not removing an active work stream from a project.
-The operation becomes `cancelled` and releases the project configuration fence
-only after no setup lease is live and every cleanup receipt is durable. If final
-dispatch won the claim first, cancellation returns `project_busy`; creation
-finishes and the person can then use the ordinary active-work-stream actions.
+creation finalizer removes the never-active regional owner and verified D1 route.
+The Global email-address claim is a permanent tombstone and is never released or
+recycled; stale mail to it cannot find an active regional owner. Applied resource
+links disappear with the unactivated draft; this is draft cleanup, not removing
+an active work stream from a project. The operation becomes `cancelled` and
+releases the project configuration fence only after no setup lease is live and
+every supported cleanup receipt is durable. If final dispatch won the claim
+first, cancellation returns `project_busy`; creation finishes and the person can
+then use the ordinary active-work-stream actions.
 
 ### Adding an existing work stream
 
@@ -1234,8 +1237,8 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
     remains discoverable there as **Preparing work stream…** with retry and
     cancellation on failure, including after a desktop restart. Cancellation
     waits for live setup claims, durably abandons the gated run and draft
-    authorities, then releases the project configuration fence without
-    activating the route.
+    regional authorities, retains the permanent Global email-address tombstone,
+    then releases the project configuration fence without activating the route.
 18. Creating, joining, leaving, archiving, or restoring a project does not
     change a work stream's system prompt, compaction behavior, or available
     memory scopes.
