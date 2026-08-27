@@ -809,14 +809,17 @@ count, an age, a schema-declared enum, an id, and an email domain — never a
 name, an address, or anything a person wrote. Widening that set is a data
 decision about both regions at once, not a local change to a loader.
 
-Ace automatically ensures `hypersight-enabled`, `meeting-recording-enabled`,
-`suggested-work-enabled`, `automation-workspace-templates-enabled`, and
-`digests-enabled` exist on every merge-to-main deployment. It does not
-overwrite existing rules. Every one of them defaults off except
+Ace automatically ensures all eleven `agent-model-*` JSON flags plus
+`hypersight-enabled`, `meeting-recording-enabled`, `suggested-work-enabled`,
+`automation-workspace-templates-enabled`, and `digests-enabled` exist on every
+merge-to-main deployment. It seeds model flags from the checked-in Worker
+defaults and does not overwrite an existing definition. Every product flag
+defaults off except
 `digests-enabled`, which defaults **on** — a digest already sends by default
 for every existing person, so provisioning it must not be the thing that
 silently stops delivery; see [`digests.md`](digests.md#the-run). Once created,
-edit these flags through Ace rather than the Flagship dashboard: Flagship's
+edit product flags and each model flag's current default route through Ace
+rather than the Flagship dashboard: Flagship's
 documented API has no outbound change webhook, so only Ace performs the Queue
 fan-out that wakes connected clients — including for `digests-enabled`, whose
 save now reaches a client the same way the presentation flags' do, serving
@@ -850,8 +853,10 @@ read-only Flagship grant is enough to list apps and flags but returns
 [The runbook](runbook.md#required-hosted-resources) lists the full token
 permission set.
 
-Then create one JSON flag per agent, seeded with the model ids currently in the
-Wrangler variables so provisioning changes nothing:
+Ace's deployment normally creates one JSON flag per agent, seeded with the model
+ids currently in the Wrangler variables so provisioning changes nothing. If a
+fresh account is being assembled outside that release path, the equivalent
+manual command is:
 
 ```bash
 pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type json \
@@ -860,7 +865,8 @@ pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type 
   -d "Work-stream agent OpenRouter models"
 ```
 
-Repeat for every key in the table above. An agent whose flag does not exist
+Repeat for every key in the table above, or deploy Ace and let its idempotent
+provisioner create only the missing keys. An agent whose flag does not exist
 keeps running on its Worker variables, so the flags may be created one at a
 time.
 
@@ -935,7 +941,19 @@ why it fails open rather than closed.
 
 ### Changing an agent's models
 
-Add the new plan as a second variation, roll it out, then promote it:
+For a fleet-wide default change, use Ace → **Models**. Choose one of the known
+model ids or enter any OpenRouter id, edit the ordered fallback array, and save.
+Ace validates every id against OpenRouter's live endpoints while it is edited
+and repeats the check immediately before the Flagship write. An unknown id, an
+id without a current route, or an unavailable validation service leaves the
+existing flag unchanged.
+Ace replaces only the current default variation's atomic `{ model,
+fallbackModels }` plan after reading the live flag; it preserves the flag's
+status, targeting rules, rollout percentages, and every staged variation.
+
+For a targeted rollout, add the new plan as a second variation with Wrangler,
+roll it out, then promote it. Ace deliberately does not flatten these advanced
+variations into its default-route editor:
 
 ```bash
 pnpm exec wrangler flagship flags update <APP_ID> agent-model-workstream --type json \
@@ -1041,6 +1059,36 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-26 — Ace owns the ordinary default-route edit
+
+**What changed:** Ace now catalogs all eleven model roles and edits the atomic
+route plan in each flag's current default variation. Its inputs suggest every
+model id already reviewed or checked in, accept another OpenRouter id as free
+text after live exact-id and endpoint validation, and keep fallbacks ordered.
+The Worker repeats validation before mutation, then the save path reads the live flag before its
+full-definition PUT, preserving status, rules, rollout percentages, and staged
+variations. Ace deployment also provisions missing model flags from the Worker
+defaults.
+
+**Why:** The runtime already centralized every model choice in Flagship, but an
+ordinary model change still required remembering opaque role keys and writing
+JSON through Wrangler or the provider dashboard. The code knew both what each
+role did and what fallback it used; the operator surface did not.
+
+**Considered and rejected:** Giving Ace a second model-routing store. It would
+make Ace authoritative only on paper while every run continued to evaluate
+Flagship, leaving a synchronization problem on the hottest part of the path.
+Flattening a flag to one variation on every save was also rejected because a
+default change must not erase a staged regional or workspace rollout.
+
+**Consequences:** Ace is the normal path for fleet-wide default changes;
+Wrangler remains the path for adding and rolling out non-default variations.
+Model changes do not enter the product-feature notification Queues because no
+client caches them and each run evaluates on admission. Adding a role to
+`AGENT_MODEL_ROLES` now also requires adding its explanation and checked-in
+fallback to Ace's hard-coded catalog. OpenRouter outages fail model writes
+closed, preserving the last known route.
 
 ### 2026-08-25 — digests-enabled joins the client-visible flags
 
