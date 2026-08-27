@@ -145,8 +145,11 @@ describe('public Rally site', () => {
     expect(pages[0]).toContain('class="rally-symbol"');
     expect(pages[0]).toContain('/brand/rally-mark.svg');
     expect(pages[0]).toContain('/brand/rally-mark-small.svg');
+    // The lime cut at header size belongs to the dark homepage alone; every
+    // light-surfaced page renders the ink cut so the mark keeps its contrast.
     for (const page of pages.slice(1)) {
-      expect(page).toContain('/brand/rally-mark.svg');
+      expect(page).toContain('/brand/rally-mark-ink.svg');
+      expect(page).not.toContain('/brand/rally-mark.svg"');
     }
     for (const page of pages) {
       expect(page).not.toMatch(/Avalon|with-avalon|avalon-mark/iu);
@@ -166,6 +169,7 @@ describe('public Rally site', () => {
     expect(existsSync(new URL('../public/brand/rally-mark.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/brand/rally-mark.svg', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/brand/rally-mark-small.svg', import.meta.url))).toBe(true);
+    expect(existsSync(new URL('../public/brand/rally-mark-ink.svg', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/brand/avalon-mark.png', import.meta.url))).toBe(false);
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
