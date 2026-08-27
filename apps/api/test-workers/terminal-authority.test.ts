@@ -40,6 +40,7 @@ import {
   boot,
   post,
   seedOpenWorkstreamAuthority,
+  seedParticipantMessage,
   seedWorkstreamRoot,
 } from "./helpers/substream-fixture";
 
@@ -159,18 +160,6 @@ function seedEffect(state: DurableObjectState, effectId: string, runId: string, 
     position,
     `occurrence-${position}`,
     `call-${position}`,
-  );
-}
-
-function seedPart(state: DurableObjectState, partId: string, sequence: number): void {
-  state.storage.sql.exec(
-    `INSERT INTO parts (
-       id, substream_id, sequence_number, role, kind, author_type, author_user_id,
-       visibility, pinned, message_type, content, created_at, updated_at
-     ) VALUES (?, '0', ?, 'user', 'text', 'member', ?, 'both', 0, 'text', 'hi', 1, 1)`,
-    partId,
-    sequence,
-    "00000000-0000-7000-8000-0000000000u1",
   );
 }
 
@@ -1940,10 +1929,16 @@ describe("Terminal authority on real workerd", () => {
       const effectOne = "00000000-0000-7000-8000-0000000000f3";
       const effectTwo = "00000000-0000-7000-8000-0000000000f4";
       await boot(stub);
-      await runInDurableObject(stub, (_instance, state) => {
+      await runInDurableObject(stub, async (_instance, state) => {
         seedWorkstreamRoot(state);
         seedRunRow(state, RUN_A, "running");
-        seedPart(state, part, 1);
+        await seedParticipantMessage(state, {
+          id: part,
+          sequence: 1,
+          text: "hi",
+          authorUserId: "00000000-0000-7000-8000-0000000000u1",
+          now: 1,
+        });
         seedEffect(state, effectOne, RUN_A, 0);
         seedEffect(state, effectTwo, RUN_A, 1);
       });
@@ -2014,8 +2009,8 @@ describe("Terminal authority on real workerd", () => {
         seedEffect(state, effect, RUN_A);
       });
 
-      // workerd enforces the foreign key, so a receipt can never point at a
-      // grant that was never admitted.
+      // The storage boundary rejects an orphan even while a schema migration
+      // has temporarily disabled SQLite foreign-key enforcement.
       const orphan = await terminal(stub, "beginPublication", {
         publicationId: "00000000-0000-7000-8000-0000000000b1",
         effectIntentId: effect,

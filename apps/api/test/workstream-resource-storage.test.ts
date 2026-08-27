@@ -107,17 +107,20 @@ describe("what a work stream has attached", () => {
     const { storage, sql } = open();
     attach(sql, "r-a");
     attach(sql, "r-b");
+    sql.exec(`INSERT INTO transcript_payloads
+      (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+      VALUES ('p1-payload', 'shared', 'application/json',
+              '{"role":"user","content":"hi","structuredContent":null}', 'p1-hash', 1, ?)`, NOW);
+    sql.exec(`INSERT INTO transcript_facts
+      (fact_id, fact_kind, payload_id, origin_kind, turn_id, created_at)
+      VALUES ('p1-fact', 'workstream_message', 'p1-payload', 'canonical', 'p1', ?)`, NOW);
+    sql.exec(`INSERT INTO workstream_message_records
+      (id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind, author_type,
+       author_user_id, client_message_id, visibility, pinned, message_type, created_at, updated_at)
+      VALUES ('p1','0',1,1,'p1-fact','user','text','member','u1','c1','both',0,'text',?,?)`,
+      NOW, NOW);
     sql.exec(
-      `INSERT INTO parts
-         (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
-          author_user_id, content, client_message_id, visibility, pinned, message_type,
-          created_at, updated_at)
-       VALUES ('p1','0',1,1,'user','text','member','u1','hi','c1','both',0,'text',?,?)`,
-      NOW,
-      NOW,
-    );
-    sql.exec(
-      `INSERT INTO part_attachments (part_id, resource_id, position, attachment_json)
+      `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
        VALUES ('p1','r-a',0,'{}')`,
     );
 

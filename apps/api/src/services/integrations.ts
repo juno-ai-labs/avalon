@@ -33,7 +33,6 @@ import {
   type AddressingContextMessage,
   type AutomationCompilerStreamEvent,
   type AutomationCreatorPluginCatalogEntry,
-  type HarnessCompactionCheckpoint,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessToolContext,
@@ -800,8 +799,7 @@ type TranscriptMessageLister = (
 
 async function loadWorkstreamContextCompaction(
   database: D1Database,
-  transcript: Pick<TranscriptObjectPort, "compactionCheckpoint">
-    | Pick<SchedulingObjectPort, "compactionCheckpoint">,
+  transcript: Pick<TranscriptObjectPort, "compactionCheckpoint">,
   attachments: ResourceObjectPort,
   workspaceId: string,
   workstreamId: string,
@@ -889,43 +887,6 @@ async function loadWorkstreamContextCompaction(
       row.compacted_through_sequence,
     )),
   };
-}
-
-async function persistWorkstreamContextCompaction(
-  scheduling: SchedulingObjectPort,
-  input: WorkstreamWorkflowInput,
-  compactedThroughSequence: number,
-  checkpoint: HarnessCompactionCheckpoint,
-  expectedVisibilityFingerprint: string,
-): Promise<void> {
-  const revision = Number.parseInt(expectedVisibilityFingerprint.replace(/^inventory:/u, ""), 10);
-  if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("invalid_resource_inventory_revision");
-  // The visibility fence, and the write, in one transaction on the object. The
-  // routed statement expressed the fence as a `WHERE COALESCE((SELECT revision
-  // FROM workstream_resource_inventory_revisions …), 0) = ?` on the insert
-  // itself, and then had to re-read the fingerprint to find out whether zero
-  // changes meant "the inventory moved" or something else. The operation says
-  // which.
-  const persisted = await scheduling.persistCompactionCheckpoint({
-    executionPrincipalKey: executionPrincipalKey(input.executionPrincipal),
-    resourceVisibilityFingerprint: expectedVisibilityFingerprint,
-    checkpointTemplateVersion: CHECKPOINT_TEMPLATE_VERSION,
-    runId: input.harnessRunId,
-    compactedThroughSequence,
-    messagesJson: JSON.stringify(checkpoint.messages),
-    summary: checkpoint.summary,
-    model: checkpoint.model,
-    contextTokensBeforeCompaction: checkpoint.contextTokensBeforeCompaction,
-    contextWindowTokens: checkpoint.contextWindowTokens,
-    inputTokens: checkpoint.inputTokens,
-    outputTokens: checkpoint.outputTokens,
-    costMicros: Math.max(0, Math.round(checkpoint.costCents * 10_000)),
-    expectedInventoryRevision: revision,
-    now: Date.now(),
-  });
-  if (persisted === "inventory_revision_moved") {
-    throw new Error("compaction_resource_visibility_changed");
-  }
 }
 
 /**
@@ -2534,21 +2495,6 @@ export async function runWorkstreamHarness(
               asOf: new Date().toISOString(),
               inventory: current,
             });
-          },
-          persist: async (checkpoint) => {
-            await liveness.pulse("compaction_persist", true);
-            await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
-            if (!preparedCompactionVisibilityFingerprint) {
-              throw new Error("compaction_resource_visibility_changed");
-            }
-            await persistWorkstreamContextCompaction(
-              createSchedulingObjectPort(env, input.workspaceId, input.workstreamId),
-              input,
-              compactedThroughSequence,
-              checkpoint,
-              preparedCompactionVisibilityFingerprint,
-            );
-            preparedCompactionVisibilityFingerprint = null;
           },
         },
       } : {}),
@@ -7882,7 +7828,6 @@ async function recordToolAudit(
 export const __integrationTesting = {
   createToolEffectIntents,
   loadWorkstreamContextCompaction,
-  persistWorkstreamContextCompaction,
   loadAutomationCreatorPluginCatalog,
   assertRunAuthorityStillValid,
   assertSafePublicUrl,

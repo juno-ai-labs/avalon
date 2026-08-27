@@ -462,7 +462,7 @@ function seedMessages(database: DatabaseSync, count: number): void {
   // The messages compat view has no DELETE trigger — production never deletes
   // transcript rows — so replacing the transcript clears the normalized parts
   // rows directly, as test scaffolding.
-  objectStore.prepare("DELETE FROM parts WHERE substream_id = '0'").run();
+  objectStore.prepare("DELETE FROM workstream_message_records WHERE substream_id = '0'").run();
   const texts = [
     objective,
     "Danny bounced — the address on file is his old Mucker one.",

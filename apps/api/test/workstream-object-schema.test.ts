@@ -42,7 +42,6 @@ const EXPECTED_TABLES = [
   "block_dashboard_block_runs",
   "block_dashboard_configuration_versions",
   "block_dashboard_user_preferences",
-  "compaction_checkpoints",
   "content_refs",
   "description_refresh_state",
   "due_work",
@@ -50,17 +49,11 @@ const EXPECTED_TABLES = [
   "durable_outbox",
   "elicitation_requests",
   "inference_attempts",
-  "legacy_transcript_backfills",
-  "legacy_transcript_cleanup_receipts",
-  "legacy_transcript_payload_transfers",
   "member_attention",
   "object_versions",
-  "part_attachments",
-  "part_mentions",
   "participant_transcript_blocks",
   "participant_transcript_turns",
   "participants",
-  "parts",
   "plugin_activation_hints",
   "projection_keys",
   "realtime_state",
@@ -180,6 +173,129 @@ describe("the Workstream Durable Object relational schema", () => {
     }
   });
 
+  it("retires verified payload owners without changing canonical compaction history or edges", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 31),
+        component: "workstream",
+        workerVersionId: "worker-before-retirement",
+        now: 1_000,
+      });
+      database.exec("PRAGMA foreign_keys = OFF");
+      database.exec(`
+        INSERT INTO substreams
+          (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+        VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 1);
+        INSERT INTO transcript_payloads
+          (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+        VALUES
+          ('message-payload', 'shared', 'application/json',
+           '{"content":"Hello","role":"user","structuredContent":null}', 'message-hash', 1, 1),
+          ('checkpoint-payload', 'model', 'application/json',
+           '{"compactedThroughSequence":2,"messages":[{"content":"Summary","role":"user"}],"model":"test/model","summary":"Summary"}',
+           'checkpoint-hash', 1, 2),
+          ('status-payload', 'participant', 'application/json', '{}', 'status-hash', 1, 2);
+        INSERT INTO transcript_facts
+          (fact_id, fact_kind, payload_id, origin_kind, run_id, turn_id, created_at)
+        VALUES
+          ('message-fact', 'workstream_message', 'message-payload', 'canonical', NULL, 'message-1', 1),
+          ('checkpoint-fact', 'compaction_checkpoint', 'checkpoint-payload', 'canonical', 'run-1', NULL, 2),
+          ('status-fact', 'compaction_status', 'status-payload', 'canonical', 'run-1', 'run-1:compaction:2', 2);
+        INSERT INTO parts
+          (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+           author_user_id, content, client_message_id, visibility, pinned, message_type,
+           created_at, updated_at)
+        VALUES ('message-1', '0', 1, 1, 'user', 'text', 'member', 'user-1', 'Hello',
+                'client-1', 'both', 0, 'text', 1, 1);
+        INSERT INTO workstream_message_records
+          (message_id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind,
+           author_type, author_user_id, client_message_id, visibility, pinned, message_type,
+           created_at, updated_at)
+        VALUES ('message-1', '0', 1, 1, 'message-fact', 'user', 'text', 'member', 'user-1',
+                'client-1', 'both', 0, 'text', 1, 1);
+        INSERT INTO participant_transcript_turns
+          (transcript_sequence, turn_id, entry_kind, actor, root_fact_id, activity_id,
+           revision, created_at, updated_at)
+        VALUES (1, 'run-1:compaction:2', 'status', 'system', 'status-fact',
+                'run-1:compaction:2', 2, 2, 3);
+        INSERT INTO transcript_compaction_checkpoints
+          (checkpoint_fact_id, execution_principal_key, resource_visibility_fingerprint,
+           checkpoint_template_version, run_id, compacted_through_sequence, model,
+           context_tokens_before_compaction, context_window_tokens, input_tokens, output_tokens,
+           cost_micros, created_at, updated_at)
+        VALUES ('checkpoint-fact', 'user:user-1', 'inventory:0', 1, 'run-1', 2,
+                'test/model', 90, 100, 10, 2, 1, 2, 3);
+        INSERT INTO transcript_activities
+          (activity_id, scope, subject_id, call_index, label, lifecycle_state,
+           revision, created_at, updated_at)
+        VALUES ('run-1:compaction:2', 'compaction', '2', 1,
+                'Context automatically compacted', 'completed', 2, 2, 3);
+        INSERT INTO legacy_transcript_payload_transfers
+          (id, operator_run_id, pre_transfer_bookmark, source_part_count,
+           source_attachment_count, source_mention_count, source_checkpoint_count,
+           source_sha256, message_record_count, checkpoint_projection_count, completed_at)
+        VALUES (1, 'operator', 'bookmark', 1, 0, 0, 0,
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1, 0, 4);
+      `);
+      database.exec("PRAGMA foreign_keys = ON");
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+
+      applyWorkstreamObjectSchema(storage, "worker-after-retirement", 2_000);
+
+      expect(database.prepare(
+        `SELECT content FROM workstream_message_details WHERE id = 'message-1'`,
+      ).get()).toEqual({ content: "Hello" });
+      expect(database.prepare(
+        `SELECT COUNT(*) AS count FROM transcript_compaction_checkpoints`,
+      ).get()).toEqual({ count: 1 });
+      expect(database.prepare(
+        `SELECT lifecycle_state, revision FROM transcript_activities
+          WHERE activity_id = 'run-1:compaction:2'`,
+      ).get()).toEqual({ lifecycle_state: "completed", revision: 2 });
+      expect(database.prepare(
+        `SELECT revision FROM participant_transcript_turns
+          WHERE turn_id = 'run-1:compaction:2'`,
+      ).get()).toEqual({ revision: 2 });
+      expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("refuses retirement while any legacy message lacks a verified canonical owner", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version < 31),
+        component: "workstream",
+        workerVersionId: "worker-before-retirement",
+        now: 1_000,
+      });
+      database.exec(`
+        INSERT INTO substreams
+          (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+        VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 1);
+        INSERT INTO parts
+          (id, substream_id, sequence_number, attention_ordinal, role, kind, author_type,
+           author_user_id, content, visibility, pinned, message_type, created_at, updated_at)
+        VALUES ('unowned', '0', 1, 1, 'user', 'text', 'member', 'member-1',
+                'Not transferred', 'both', 0, 'text', 1, 1);
+      `);
+
+      expect(() => applyWorkstreamObjectSchema(storage, "worker-retirement", 2_000))
+        .toThrow("transcript_payload_retirement_not_verified");
+      expect(database.prepare(`SELECT content FROM parts WHERE id = 'unowned'`).get())
+        .toEqual({ content: "Not transferred" });
+    } finally {
+      database.close();
+    }
+  });
+
   it("keeps accepted restricted suggestions contained across direct audience writes", () => {
     const database = new DatabaseSync(":memory:");
     const storage = objectStorage(database);
@@ -289,8 +405,8 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(database.prepare(
         "SELECT schema_version FROM object_versions WHERE id = 1",
       ).get()).toEqual({ schema_version: WORKSTREAM_OBJECT_SCHEMA_VERSION });
-      // The surviving compaction authority is untouched by the sibling drop.
-      expect(database.prepare("SELECT COUNT(*) AS count FROM compaction_checkpoints").get())
+      // The canonical compaction authority is untouched by the sibling drop.
+      expect(database.prepare("SELECT COUNT(*) AS count FROM transcript_compaction_checkpoints").get())
         .toEqual({ count: 0 });
     } finally {
       database.close();
@@ -391,7 +507,7 @@ describe("the Workstream Durable Object relational schema", () => {
       database.prepare(
         `INSERT INTO substreams
            (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
-            depth, return_mode, origin_part_id, owner_user_id, audience,
+            depth, return_mode, origin_message_id, owner_user_id, audience,
             tool_policy, status, created_at, closed_at)
          VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
                  'workspace', 'full', 'open', 1000, NULL)`,
@@ -400,7 +516,7 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(() => database.prepare(
         `INSERT INTO substreams
            (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
-            depth, return_mode, origin_part_id, owner_user_id, audience,
+            depth, return_mode, origin_message_id, owner_user_id, audience,
             tool_policy, status, created_at, closed_at)
          VALUES ('not-main', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
                  'workspace', 'full', 'open', 1000, NULL)`,
@@ -535,72 +651,6 @@ describe("the Workstream Durable Object relational schema", () => {
       })).toEqual({ outcome: "unchanged" });
       expect(readBack().first_opened_at).toBe(6000);
 
-    } finally {
-      database.close();
-    }
-  });
-
-  it("serves legacy runtime SQL from normalized object-local tables", () => {
-    const database = new DatabaseSync(":memory:");
-    const storage = objectStorage(database);
-    try {
-      applyWorkstreamObjectSchema(storage, "worker-one", 1_000);
-      database.prepare(
-        `INSERT INTO workstream
-           (id, workstream_key, parent_workspace_key, region, authority_mode,
-            authority_generation, title, description, scope, exact_state,
-            state_reason_code, next_sequence_number, next_attention_ordinal,
-            authority_epoch, scope_epoch, source_authorization_floor, listing_epoch,
-            deletion_epoch, run_revision, created_at, last_people_activity_at,
-            state_changed_at, updated_at)
-         VALUES (1, ?, ?, 'global', 'authoritative', 1, 'Local', 'Object owned',
-                 'workspace', 'scheduled', 'test', 1, 1, 1, 0, 0, 1, 0, 1,
-                 1000, 1000, 1000, 1000)`,
-      ).run(WORKSTREAM_ID, WORKSPACE_ID);
-      database.prepare(
-        `INSERT INTO substreams
-           (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq,
-            depth, return_mode, origin_part_id, owner_user_id, audience,
-            tool_policy, status, created_at, closed_at)
-         VALUES ('0', 'main', 'none', NULL, NULL, 0, 'none', NULL, NULL,
-                 'workspace', 'full', 'open', 1000, NULL)`,
-      ).run();
-      database.prepare(rewriteWorkstreamRuntimeSql(
-        `INSERT INTO harness_runs
-           (id, workspace_id, workstream_id, origin, execution_principal_json,
-            status, model, created_at)
-         VALUES (?, ?, ?, 'opening_message', ?, 'scheduled', 'test-model', ?)`,
-      )).run(RUN_ID, WORKSPACE_ID, WORKSTREAM_ID, JSON.stringify({
-        type: "workspace",
-        workspaceId: WORKSPACE_ID,
-      }), "2026-08-17T12:00:00.000Z");
-      database.prepare(rewriteWorkstreamRuntimeSql(
-        `INSERT INTO messages
-           (id, client_message_id, workspace_id, workstream_id, author_type,
-            message_type, text_content, sequence_number, harness_run_id, created_at)
-         VALUES (?, 'runtime-message', ?, ?, 'agent', 'text', 'hello', 1, ?, ?)`,
-      )).run(MESSAGE_ID, WORKSPACE_ID, WORKSTREAM_ID, RUN_ID, "2026-08-17T12:00:01.000Z");
-      // Terminal is deliberately absent here. Its tables left the legacy
-      // vocabulary in schema version 12: the services hold a typed port onto
-      // `terminal_workspace` and friends, so there is no compatibility view
-      // left for a `workstream_sandboxes` statement to be rewritten onto.
-      //
-      // So is the scheduling slice, and for the same reason: version 20 dropped
-      // the wake-up, compaction, description-refresh and plugin-hint views, so
-      // a `workstream_context_compactions` statement has nothing to be
-      // rewritten onto either. What that slice writes is proved against a real
-      // object store in `workstream-resource-inventory.test.ts` — the fence
-      // refusing a write, the fenced and unfenced reads, and the principal
-      // scoping — rather than against a statement's bindings.
-
-      expect(database.prepare("SELECT run_id, status FROM runs").get()).toEqual({
-        run_id: RUN_ID,
-        status: "admitted",
-      });
-      expect(database.prepare("SELECT id, content FROM parts").get()).toEqual({
-        id: MESSAGE_ID,
-        content: "hello",
-      });
     } finally {
       database.close();
     }

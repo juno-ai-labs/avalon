@@ -37,6 +37,12 @@ import {
   type SchedulingOperation,
 } from "../../src/durable-objects/workstream-scheduling-protocol";
 import { WorkstreamToolReceiptStorage } from "../../src/durable-objects/workstream-tool-receipt-storage";
+import { WorkstreamTranscriptStorage } from "../../src/durable-objects/workstream-transcript-storage";
+import {
+  TRANSCRIPT_OPERATIONS,
+  type TranscriptObjectPort,
+  type TranscriptOperation,
+} from "../../src/durable-objects/workstream-transcript-protocol";
 import { WorkstreamTerminalStorage } from "../../src/durable-objects/workstream-terminal-storage";
 import {
   createTerminalPortFactory,
@@ -132,7 +138,120 @@ export function testWorkstreamObjectStore(): DatabaseSync {
     "durable-authority-test",
     Date.parse("2026-01-02T00:00:00.000Z"),
   );
+  installMessageSqlFixtureAdapter(database);
   return database;
+}
+
+/**
+ * Transitional test-fixture adapter for suites whose setup still states a
+ * message as the old runtime SQL shape. Production has no such view: the
+ * assertions read the canonical owner, while this trigger only keeps fixture
+ * setup terse until those suites move to `testMessagePort`.
+ */
+function installMessageSqlFixtureAdapter(database: DatabaseSync): void {
+  database.exec(`
+    CREATE VIEW _runtime_messages AS
+      SELECT record.id, record.client_message_id, root.parent_workspace_key AS workspace_id,
+             root.workstream_key AS workstream_id,
+             CASE record.author_type WHEN 'member' THEN 'human' WHEN 'agent' THEN 'agent'
+               WHEN 'external' THEN 'external' ELSE 'system' END AS author_type,
+             record.author_user_id, record.message_type,
+             COALESCE(json_extract(payload.payload_json, '$.content'), '') AS text_content,
+             CASE WHEN json_type(payload.payload_json, '$.structuredContent') = 'null' THEN NULL
+               ELSE json_extract(payload.payload_json, '$.structuredContent') END AS structured_content_json,
+             record.sequence_number,
+             strftime('%Y-%m-%dT%H:%M:%fZ', record.created_at / 1000.0, 'unixepoch') AS created_at,
+             CASE WHEN record.edited_at IS NULL THEN NULL ELSE
+               strftime('%Y-%m-%dT%H:%M:%fZ', record.edited_at / 1000.0, 'unixepoch') END AS edited_at,
+             record.produced_by_run_id AS harness_run_id,
+             run.legacy_attempt_id AS harness_attempt_id,
+             record.external_actor_json
+        FROM workstream_message_records record
+        JOIN transcript_facts fact ON fact.fact_id = record.fact_id
+        JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        CROSS JOIN workstream root
+        LEFT JOIN runs run ON run.run_id = record.produced_by_run_id
+       WHERE root.id = 1 AND record.substream_id = '0';
+    CREATE TRIGGER _runtime_messages_insert INSTEAD OF INSERT ON _runtime_messages BEGIN
+      INSERT OR IGNORE INTO transcript_payloads
+        (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+      VALUES (
+        'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at),
+        'shared', 'application/json',
+        json_object(
+          'role', CASE NEW.author_type WHEN 'human' THEN 'user' WHEN 'agent' THEN 'assistant'
+                    WHEN 'external' THEN 'user' ELSE 'system' END,
+          'content', COALESCE(NEW.text_content, ''),
+          'structuredContent', json(NEW.structured_content_json)
+        ),
+        'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at),
+        length(COALESCE(NEW.text_content, '')),
+        CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER)
+      );
+      INSERT OR IGNORE INTO transcript_facts
+        (fact_id, fact_kind, payload_id, origin_kind, run_id, turn_id, created_at)
+      VALUES (
+        NEW.id || ':fixture-message', 'workstream_message',
+        'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at),
+        'canonical', NEW.harness_run_id, NEW.id,
+        CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER)
+      );
+      UPDATE transcript_facts
+         SET payload_id = 'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at)
+       WHERE fact_id = NEW.id || ':fixture-message';
+      INSERT OR IGNORE INTO workstream_message_records
+        (id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind,
+         author_type, author_user_id, external_actor_json, client_message_id, effect_intent_id,
+         produced_by_run_id, attempt_epoch, tool_name, tool_mode, tool_status, visibility,
+         pinned, message_type, edited_at, created_at, updated_at)
+      VALUES (
+        NEW.id, '0', NEW.sequence_number,
+        CASE WHEN NEW.message_type = 'tool' THEN NULL ELSE
+          (SELECT next_attention_ordinal FROM workstream WHERE id = 1) END,
+        NEW.id || ':fixture-message',
+        CASE NEW.author_type WHEN 'human' THEN 'user' WHEN 'agent' THEN 'assistant'
+          WHEN 'external' THEN 'user' ELSE 'system' END,
+        CASE WHEN NEW.message_type = 'tool' THEN 'tool_call' ELSE 'text' END,
+        CASE NEW.author_type WHEN 'human' THEN 'member' WHEN 'agent' THEN 'agent'
+          WHEN 'external' THEN 'external' ELSE 'system' END,
+        NEW.author_user_id, NEW.external_actor_json, NEW.client_message_id,
+        CASE WHEN NEW.message_type = 'tool' THEN NEW.id ELSE NULL END,
+        NEW.harness_run_id,
+        (SELECT attempt_epoch FROM runs WHERE run_id = NEW.harness_run_id),
+        json_extract(NEW.structured_content_json, '$.invocation.toolName'),
+        CASE WHEN NEW.message_type = 'tool' THEN 'read' ELSE NULL END,
+        CASE WHEN NEW.message_type = 'tool' THEN
+          CASE json_extract(NEW.structured_content_json, '$.invocation.status')
+            WHEN 'pending' THEN 'pending' WHEN 'started' THEN 'pending'
+            WHEN 'ambiguous' THEN 'ambiguous' WHEN 'failed' THEN 'failed' ELSE 'completed' END
+          ELSE NULL END,
+        CASE WHEN NEW.message_type IN ('text', 'elicitation') THEN 'both' ELSE 'people' END,
+        0, NEW.message_type,
+        CASE WHEN NEW.edited_at IS NULL THEN NULL ELSE
+          CAST((julianday(NEW.edited_at) - 2440587.5) * 86400000 AS INTEGER) END,
+        CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER),
+        CAST((julianday(COALESCE(NEW.edited_at, NEW.created_at)) - 2440587.5) * 86400000 AS INTEGER)
+      );
+      UPDATE workstream_message_records SET
+        fact_id = NEW.id || ':fixture-message',
+        tool_status = CASE json_extract(NEW.structured_content_json, '$.invocation.status')
+          WHEN 'pending' THEN 'pending' WHEN 'started' THEN 'pending'
+          WHEN 'ambiguous' THEN 'ambiguous' WHEN 'failed' THEN 'failed' ELSE 'completed' END,
+        edited_at = CASE WHEN NEW.edited_at IS NULL THEN edited_at ELSE
+          CAST((julianday(NEW.edited_at) - 2440587.5) * 86400000 AS INTEGER) END,
+        updated_at = CAST((julianday(COALESCE(NEW.edited_at, NEW.created_at)) - 2440587.5)
+                          * 86400000 AS INTEGER)
+       WHERE id = NEW.id AND message_type = 'tool';
+      UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
+      UPDATE workstream SET
+        next_attention_ordinal = next_attention_ordinal +
+          CASE WHEN NEW.message_type = 'tool' THEN 0 ELSE 1 END,
+        next_sequence_number = MAX(next_sequence_number, NEW.sequence_number + 1),
+        updated_at = CAST((julianday(COALESCE(NEW.edited_at, NEW.created_at)) - 2440587.5)
+                          * 86400000 AS INTEGER)
+       WHERE id = 1;
+    END;
+  `);
 }
 
 /**
@@ -1153,6 +1272,13 @@ export function testSchedulingPort(database: DatabaseSync): SchedulingObjectPort
   return testObjectPort<WorkstreamSchedulingStorage, SchedulingOperation, SchedulingObjectPort>(
     new WorkstreamSchedulingStorage(plainBinding(database)),
     SCHEDULING_OPERATIONS,
+  );
+}
+
+export function testTranscriptPort(database: DatabaseSync): TranscriptObjectPort {
+  return testObjectPort<WorkstreamTranscriptStorage, TranscriptOperation, TranscriptObjectPort>(
+    new WorkstreamTranscriptStorage(plainBinding(database)),
+    TRANSCRIPT_OPERATIONS,
   );
 }
 

@@ -81,7 +81,6 @@ import {
 } from "../observability/tracing";
 import {
   claimHarnessAttempt,
-  repairTerminalResidualReceipts,
   reapStaleHarnessRuns,
   RunOwnershipLostError,
   terminalizeHarnessAttempt,
@@ -142,10 +141,7 @@ import {
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
-import {
-  WorkstreamTranscriptStorage,
-  type LegacyTranscriptBackfillOutcome,
-} from "./workstream-transcript-storage";
+import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
 import {
   TranscriptOperationRequestSchema,
   type TranscriptOperationRequest,
@@ -1107,117 +1103,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.identityOperationOutcome(input));
-  }
-
-  /** Operator-only, binding-addressed projection of pre-v27 transcript rows. */
-  async backfillLegacyTranscript(input: {
-    objectId: string;
-    operatorRunId: string;
-    cutoverVersion: 27;
-  }): Promise<LegacyTranscriptBackfillOutcome> {
-    await this.initialized;
-    if (this.externalSubstreamId() !== "0") {
-      throw new Error("legacy_transcript_backfill_requires_main_substream");
-    }
-    if (input.objectId !== this.state.id.toString()) {
-      throw new Error(`legacy_transcript_backfill_object_mismatch:${input.objectId}`);
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
-      .test(input.operatorRunId)) {
-      throw new Error("legacy_transcript_backfill_run_id_invalid");
-    }
-    if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
-    if (!this.transcript.hasLegacyBackfillReceipt()) {
-      const identity = this.objectStore.identity();
-      if (identity) {
-        const executionEnv = this.localRuntimeEnvironment(
-          identity.workspaceId,
-          identity.workstreamId,
-          "0",
-        );
-        const repairFailures: string[] = [];
-        await repairTerminalResidualReceipts(
-          createHarnessRunObjectPort(executionEnv, identity.workspaceId, identity.workstreamId),
-          {
-            receipts: createToolReceiptPortFactory(executionEnv),
-            blocks: createBlockDashboardPortFactory(executionEnv),
-            workspaceId: identity.workspaceId,
-            workstreamId: identity.workstreamId,
-            // One-time migration page; a partial page remains fenced and is retried.
-            limit: 100,
-            automationDatabase: withWorkspaceRuntimeDatabase(this.env, identity.workspaceId).DB,
-            onReceiptRepairFailure: (failure) => {
-              repairFailures.push(failure.reason);
-              logWarn(this.env, "legacy_transcript_backfill_residual_receipt_repair_failed", {
-                workspace_id: failure.workspaceId,
-                workstream_id: failure.workstreamId,
-                harness_run_id: failure.runId,
-                attempt_id: failure.attemptId,
-                repair_phase: failure.phase,
-                reason: failure.reason,
-              });
-            },
-          },
-        );
-        if (repairFailures.length > 0) {
-          throw new Error("legacy_transcript_backfill_residual_receipt_repair_failed");
-        }
-      }
-    }
-    return this.transcript.backfillLegacyTranscript({
-      operatorRunId: input.operatorRunId,
-      cutoverVersion: input.cutoverVersion,
-    });
-  }
-
-  /** Operator-only transfer of legacy payload ownership into canonical facts. */
-  async transferLegacyTranscriptPayloadOwnership(input: {
-    objectId: string;
-    operatorRunId: string;
-  }) {
-    await this.initialized;
-    if (this.externalSubstreamId() !== "0") {
-      throw new Error("legacy_transcript_payload_transfer_requires_main_substream");
-    }
-    if (input.objectId !== this.state.id.toString()) {
-      throw new Error(`legacy_transcript_payload_transfer_object_mismatch:${input.objectId}`);
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
-      .test(input.operatorRunId)) {
-      throw new Error("legacy_transcript_payload_transfer_run_id_invalid");
-    }
-    return this.transcript.transferLegacyTranscriptPayloadOwnership({
-      operatorRunId: input.operatorRunId,
-    });
-  }
-
-  async abandonPreCutoverRunsForTranscriptBackfill(input: {
-    objectId: string;
-    operatorRunId: string;
-    cutoverVersion: number;
-  }): Promise<{ abandonedRunCount: number; cleanupOperatorRunId: string | null }> {
-    await this.initialized;
-    if (this.externalSubstreamId() !== "0") {
-      throw new Error("legacy_transcript_backfill_requires_main_substream");
-    }
-    if (input.objectId !== this.state.id.toString()) {
-      throw new Error(`legacy_transcript_backfill_object_mismatch:${input.objectId}`);
-    }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
-      .test(input.operatorRunId)) {
-      throw new Error("legacy_transcript_backfill_run_id_invalid");
-    }
-    if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
-    const cleanupReceipt = this.harnessRuns.preCutoverLeaseLessCleanupReceipt();
-    if (cleanupReceipt) return cleanupReceipt;
-    if (this.transcript.hasLegacyBackfillReceipt()) {
-      return { abandonedRunCount: 0, cleanupOperatorRunId: null };
-    }
-    return this.harnessRuns.abandonPreCutoverLeaseLessRuns({
-      operatorRunId: input.operatorRunId,
-      cutoverVersion: input.cutoverVersion,
-      now: Date.now(),
-    });
   }
 
   async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
@@ -4269,12 +4154,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private blockDashboardContextFence(workspaceId: string): BlockDashboardContextFence {
     const pendingTool = this.state.storage.sql.exec<{ sequence_number: number | null }>(
       `SELECT MIN(sequence_number) AS sequence_number
-         FROM parts
+         FROM workstream_message_records
         WHERE substream_id = '0' AND kind = 'tool_call' AND tool_status = 'pending'`,
     ).toArray()[0]?.sequence_number ?? null;
     const throughSequence = this.state.storage.sql.exec<{ sequence_number: number | null }>(
       `SELECT MAX(sequence_number) AS sequence_number
-         FROM parts
+         FROM workstream_message_records
         WHERE substream_id = '0'
           AND kind IN ('text', 'tool_call', 'tool_result', 'attachment', 'terminal')
           AND (? IS NULL OR sequence_number < ?)`,
@@ -4287,14 +4172,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const principalKey = `workspace:${workspaceId}`;
     const fingerprint = `inventory:${revision}`;
     const checkpoint = this.state.storage.sql.exec<CompactionCheckpointRow>(
-      `SELECT execution_principal_key, resource_visibility_fingerprint,
-              checkpoint_template_version, run_id, compacted_through_sequence,
-              messages_json, summary, model
-         FROM compaction_checkpoints
-        WHERE execution_principal_key = ?
-          AND resource_visibility_fingerprint = ?
-          AND compacted_through_sequence <= ?
-        ORDER BY compacted_through_sequence DESC, updated_at DESC LIMIT 1`,
+      `SELECT checkpoint.execution_principal_key, checkpoint.resource_visibility_fingerprint,
+              checkpoint.checkpoint_template_version, checkpoint.run_id,
+              checkpoint.compacted_through_sequence,
+              json_extract(payload.payload_json, '$.messages') AS messages_json,
+              json_extract(payload.payload_json, '$.summary') AS summary, checkpoint.model
+         FROM transcript_compaction_checkpoints checkpoint
+         JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE checkpoint.execution_principal_key = ?
+          AND checkpoint.resource_visibility_fingerprint = ?
+          AND checkpoint.compacted_through_sequence <= ?
+        ORDER BY checkpoint.compacted_through_sequence DESC,
+                 checkpoint.updated_at DESC LIMIT 1`,
       principalKey,
       fingerprint,
       throughSequence,

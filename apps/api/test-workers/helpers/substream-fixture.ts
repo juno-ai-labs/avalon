@@ -11,6 +11,11 @@
  */
 
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import {
+  insertWorkstreamMessageRecord,
+  prepareWorkstreamMessageRecord,
+  WorkstreamTranscriptStorage,
+} from "../../src/durable-objects/workstream-transcript-storage";
 
 export const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000004a1");
 export const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004a2");
@@ -98,6 +103,82 @@ export function seedWorkstreamRoot(
     now,
     now,
   );
+}
+
+/** Seed one participant-visible message through the canonical transcript owner. */
+export async function seedParticipantMessage(
+  state: DurableObjectState,
+  input: {
+    id: string;
+    sequence: number;
+    text: string;
+    authorType?: "human" | "agent" | "external" | "system";
+    authorUserId?: string | null;
+    clientMessageId?: string;
+    messageType?: "text" | "system" | "elicitation";
+    structuredContentJson?: string | null;
+    externalActorJson?: string | null;
+    attentionOrdinal?: number | null;
+    now?: number;
+  },
+): Promise<void> {
+  const authorType = input.authorType ?? "human";
+  const now = input.now ?? input.sequence;
+  await new WorkstreamTranscriptStorage(state.storage).appendParticipantMessage({
+    turnId: input.id,
+    actor: authorType === "agent" ? "assistant" : authorType,
+    authorUserId: input.authorUserId ?? (authorType === "human" ? USER_ID : null),
+    clientMessageId: input.clientMessageId ?? input.id,
+    messageType: input.messageType ?? "text",
+    text: input.text,
+    structuredContentJson: input.structuredContentJson ?? null,
+    externalActorJson: input.externalActorJson ?? null,
+    producedByRunId: null,
+    messageSequenceNumber: input.sequence,
+    createdAtUtc: new Date(now).toISOString(),
+    attentionOrdinal: input.attentionOrdinal ?? null,
+  });
+}
+
+/** Seed a canonical tool or operational message without advancing root counters. */
+export async function seedCanonicalMessageRecord(
+  state: DurableObjectState,
+  input: {
+    id: string;
+    sequence: number;
+    messageType: "text" | "system" | "elicitation" | "tool" | "suggestion";
+    text?: string;
+    structuredContentJson?: string | null;
+    toolName?: string | null;
+    toolStatus?: "pending" | "completed" | "failed" | "ambiguous" | null;
+    effectIntentId?: string | null;
+    clientMessageId?: string;
+    now?: number;
+  },
+): Promise<void> {
+  const now = input.now ?? input.sequence;
+  const prepared = await prepareWorkstreamMessageRecord({
+    messageId: input.id,
+    clientMessageId: input.clientMessageId ?? input.id,
+    authorType: "agent",
+    authorUserId: null,
+    externalActorJson: null,
+    messageType: input.messageType,
+    text: input.text ?? "",
+    structuredContentJson: input.structuredContentJson ?? null,
+    producedByRunId: null,
+    role: "assistant",
+    kind: input.messageType === "tool" ? "tool_call" : "text",
+    effectIntentId: input.effectIntentId ?? null,
+    toolName: input.toolName ?? null,
+    toolMode: input.messageType === "tool" ? "read" : null,
+    toolStatus: input.toolStatus ?? null,
+    visibility: "people",
+    sequenceNumber: input.sequence,
+    attentionOrdinal: null,
+    now,
+  });
+  state.storage.transactionSync(() => insertWorkstreamMessageRecord(state.storage.sql, prepared));
 }
 
 /** A run row in the state a dispatch expects to find it. */
