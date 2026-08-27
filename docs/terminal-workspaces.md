@@ -396,8 +396,9 @@ are minted just in time and narrowed to the selected repository and operation.
 Read credentials remain mounted through host-scoped Daytona placeholders and
 are rotated or removed on revocation/expiry. The trusted publisher keeps the
 write credential out of the agent sandbox: it passes that credential only to
-the single Git process in a separate ephemeral sandbox and deletes that sandbox
-afterward. Logs include IDs, state, error code, duration, and byte counts—not
+the single Git process as transient Git configuration in a separate ephemeral
+sandbox, never writes it into the bare repository config, and deletes that
+sandbox afterward. Logs include IDs, state, error code, duration, and byte counts—not
 commands, output, diffs, tokens, or resource contents.
 
 The account-level `avalon_terminal_operations` Analytics Engine dataset is even
@@ -552,7 +553,8 @@ update lag before changing the default.
 **What changed:** The ephemeral trusted publisher now passes its short-lived,
 repository-scoped GitHub credential directly to the one fixed Git process
 instead of creating, listing, mounting, and deleting a separate Daytona Secret
-for every publication. The process emits a content-free stage marker on failure,
+for every publication. Git receives the header through transient process
+configuration rather than a repository config file. The process emits a content-free stage marker on failure,
 which turns Daytona's otherwise opaque `exitCode=-1` into a safe publication
 phase while keeping command output and credentials out of logs and tool results.
 
