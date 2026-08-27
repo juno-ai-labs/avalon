@@ -853,10 +853,11 @@ read-only Flagship grant is enough to list apps and flags but returns
 [The runbook](runbook.md#required-hosted-resources) lists the full token
 permission set.
 
-Ace's deployment normally creates one JSON flag per agent, seeded with the model
-ids currently in the Wrangler variables so provisioning changes nothing. If a
-fresh account is being assembled outside that release path, the equivalent
-manual command is:
+Ace's deployment normally creates one JSON flag per agent, seeded from the
+checked-in route catalog. Those values match the Wrangler defaults in both
+regional configurations; a deployment does not read a locally overridden
+Wrangler value when it provisions an absent flag. If a fresh account is being
+assembled outside that release path, the equivalent manual command is:
 
 ```bash
 pnpm exec wrangler flagship flags create <APP_ID> agent-model-workstream --type json \
@@ -946,10 +947,18 @@ model ids or enter any OpenRouter id, edit the ordered fallback array, and save.
 Ace validates every id against OpenRouter's live endpoints while it is edited
 and repeats the check immediately before the Flagship write. An unknown id, an
 id without a current route, or an unavailable validation service leaves the
-existing flag unchanged.
+existing flag unchanged. Each provider lookup is aborted after the
+product-owner-selected five-second deadline; a timeout is treated as validation
+unavailable and returns `502` without reading or mutating Flagship.
 Ace replaces only the current default variation's atomic `{ model,
 fallbackModels }` plan after reading the live flag; it preserves the flag's
 status, targeting rules, rollout percentages, and every staged variation.
+Cloudflare's API exposes no conditional-update token: like Wrangler, Ace must
+read and then replace the complete definition. Concurrent edits to the same
+flag are therefore last-writer-wins. Avoid changing one model flag in two
+operator surfaces at once, and use
+`wrangler flagship flags changelog <APP_ID> <FLAG_KEY>` to audit or reconstruct
+an overlapping change.
 
 For a targeted rollout, add the new plan as a second variation with Wrangler,
 roll it out, then promote it. Ace deliberately does not flatten these advanced
@@ -1086,9 +1095,16 @@ default change must not erase a staged regional or workspace rollout.
 Wrangler remains the path for adding and rolling out non-default variations.
 Model changes do not enter the product-feature notification Queues because no
 client caches them and each run evaluates on admission. Adding a role to
-`AGENT_MODEL_ROLES` now also requires adding its explanation and checked-in
-fallback to Ace's hard-coded catalog. OpenRouter outages fail model writes
-closed, preserving the last known route.
+the shared `AGENT_MODEL_ROLES` contract now fails Ace's catalog-parity test until
+its explanation and checked-in fallback are added to Ace's hard-coded catalog.
+Ace and the API also consume one shared route-value schema, including the
+runtime's empty fallback default, so a manually authored Flagship value cannot
+silently resolve differently in the operator surface. OpenRouter outages fail
+model writes closed, preserving the last known route. The Flagship API has no
+conditional write primitive, so concurrent edits to one flag remain
+last-writer-wins and are diagnosed through its changelog. The selected
+five-second OpenRouter deadline prevents a stalled provider connection from
+holding either validation or save indefinitely.
 
 ### 2026-08-25 — digests-enabled joins the client-visible flags
 

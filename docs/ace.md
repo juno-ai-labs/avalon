@@ -96,7 +96,10 @@ disabled while the route is incomplete, being checked, unavailable, or invalid.
 The PUT repeats the same validation before it contacts Flagship, so bypassing
 the browser check cannot persist an unknown id. An exact id match with at least
 one current endpoint is required; OpenRouter validation uses the public API and
-receives no Rally or Cloudflare credential.
+receives no Rally or Cloudflare credential. Each provider lookup has a
+five-second deadline chosen by the product owner; a stalled request returns the
+same `502` validation-unavailable response as another provider outage and no
+Flagship read or write begins.
 
 `PUT /api/models/:role` changes the route plan in that flag's current default
 variation. The route plan remains atomic — one primary `model` and one ordered
@@ -105,6 +108,14 @@ so Ace reads the live definition immediately before saving and copies its flag
 status, rules, rollout percentages, and every non-default variation back
 unchanged. New runs resolve the change on admission; no client notification
 fan-out is needed.
+
+The Flagship API does not expose an ETag, version precondition, or other
+conditional-update token. Ace therefore has the same read-then-replace race as
+Wrangler: two operators editing one model flag concurrently are last-writer-wins.
+The editor disables an unchanged save to avoid needless rewrites, but operators
+must not edit one flag in Ace and Wrangler at the same time. Flagship appends a
+changelog entry for every update, which is the recovery and audit path if edits
+overlap.
 
 ## Invariants
 
@@ -329,10 +340,16 @@ advanced cohort rollouts still use Wrangler or Flagship. A custom model id is
 allowed only after OpenRouter returns the exact id with a current serving
 endpoint, unlike the desktop's closed reviewed work-stream pin list. A provider
 validation outage therefore blocks model saves rather than risking an unusable
-route. The catalog and its rank are hard-coded and must gain an entry whenever
-`AGENT_MODEL_ROLES` gains one. Model saves append the
-ordinary Flagship changelog entry but send no product-flag Queue notification:
-there is no client cache to wake, and a run resolves the route when admitted.
+route. The role and route-value contracts are shared with the API; Ace's
+code-derived explanations, defaults, and ranks remain hard-coded, with a parity
+test that fails when the shared role catalog gains an entry. Model saves append
+the ordinary Flagship changelog entry but send no product-flag Queue
+notification: there is no client cache to wake, and a run resolves the route
+when admitted. Cloudflare offers no conditional flag update, so concurrent
+edits remain last-writer-wins; disabling unchanged saves reduces accidental
+rewrites but does not manufacture a concurrency guarantee the provider lacks.
+OpenRouter lookups abort after five seconds so a provider that accepts a
+connection and stalls cannot hold the operator request indefinitely.
 
 ### 2026-08-25 — Queues exposes live dead-letter backlogs and non-consuming message inspection
 

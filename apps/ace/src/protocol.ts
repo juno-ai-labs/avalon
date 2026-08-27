@@ -1,4 +1,12 @@
-import { AGENT_MODEL_OVERRIDES, ProductFeatureFlagKeySchema } from '@rally/contracts';
+import {
+  AGENT_MODEL_OVERRIDES,
+  AGENT_MODEL_ROLES,
+  AgentModelRoutingSchema,
+  ProductFeatureFlagKeySchema,
+  type AgentModelRole,
+  type AgentModelRouting,
+  type AGENT_MODEL_FLAG_KEYS,
+} from '@rally/contracts';
 import { z } from 'zod';
 
 export const MODEL_CHOICES = [
@@ -7,6 +15,16 @@ export const MODEL_CHOICES = [
   // selector above, but it is a first-class option for Ace's fleet routing.
   'google/gemini-2.5-flash-lite',
 ] as const;
+
+interface ManagedModelDefinition {
+  rank: number;
+  rankReason: string;
+  role: AgentModelRole;
+  key: (typeof AGENT_MODEL_FLAG_KEYS)[AgentModelRole];
+  label: string;
+  description: string;
+  defaultRouting: AgentModelRouting;
+}
 
 /**
  * Ace cannot discover model roles from the deployed Worker: Flagship stores
@@ -115,20 +133,12 @@ export const MANAGED_MODELS = [
     description: 'Refreshes one shared read-only Markdown dashboard block from a reproducible interval of the work-stream transcript.',
     defaultRouting: { model: 'x-ai/grok-4.3', fallbackModels: [] },
   },
-] as const;
+] as const satisfies readonly ManagedModelDefinition[];
 
-export const ManagedModelRoleSchema = z.enum(MANAGED_MODELS.map((model) => model.role) as [
-  (typeof MANAGED_MODELS)[number]['role'],
-  ...(typeof MANAGED_MODELS)[number]['role'][],
-]);
-export type ManagedModelRole = z.infer<typeof ManagedModelRoleSchema>;
-
-export const AgentModelRoutingSchema = z.object({
-  model: z.string().trim().min(1),
-  fallbackModels: z.array(z.string().trim().min(1)),
-}).strict();
-
-export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
+export const ManagedModelRoleSchema = z.enum(AGENT_MODEL_ROLES);
+export type ManagedModelRole = AgentModelRole;
+export { AgentModelRoutingSchema };
+export type { AgentModelRouting };
 
 export const ManagedModelUpdateSchema = z.object({
   role: ManagedModelRoleSchema,

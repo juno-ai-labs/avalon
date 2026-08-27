@@ -1,4 +1,8 @@
-import { ProductFeatureFlagKeySchema } from '@rally/contracts';
+import {
+  AGENT_MODEL_FLAG_KEYS,
+  AGENT_MODEL_ROLES,
+  ProductFeatureFlagKeySchema,
+} from '@rally/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   MANAGED_FLAGS,
@@ -96,6 +100,10 @@ describe('Ace managed model protocol', () => {
     expect(MANAGED_MODELS.every((model) => model.rankReason.length > 15)).toBe(true);
     expect(new Set(MANAGED_MODELS.map((model) => model.key)).size).toBe(MANAGED_MODELS.length);
     expect(MANAGED_MODELS.every((model) => model.description.length > 60)).toBe(true);
+    expect(new Set(MANAGED_MODELS.map((model) => model.role))).toEqual(new Set(AGENT_MODEL_ROLES));
+    for (const model of MANAGED_MODELS) {
+      expect(model.key, `${model.role} must use the runtime Flagship key`).toBe(AGENT_MODEL_FLAG_KEYS[model.role]);
+    }
   });
 
   it('suggests the checked-in classifier model as well as the reviewed pin list', () => {
@@ -126,5 +134,14 @@ describe('Ace managed model protocol', () => {
     expect(ManagedModelUpdateSchema.safeParse({
       role: 'workstream', routing: { model: 'x-ai/grok-4.3', fallbackModels: [' '] },
     }).success).toBe(false);
+  });
+
+  it('accepts an explicitly empty or omitted fallback array like the runtime resolver', () => {
+    expect(ManagedModelUpdateSchema.parse({
+      role: 'workstream', routing: { model: 'x-ai/grok-4.3', fallbackModels: [] },
+    }).routing.fallbackModels).toEqual([]);
+    expect(ManagedModelUpdateSchema.parse({
+      role: 'workstream', routing: { model: 'x-ai/grok-4.3' },
+    }).routing.fallbackModels).toEqual([]);
   });
 });

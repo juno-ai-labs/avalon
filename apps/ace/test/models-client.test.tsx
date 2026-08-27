@@ -37,6 +37,12 @@ describe('Ace Models client', () => {
       .toMatchObject({ source: 'flagship', routing: { model: 'custom/current', fallbackModels: ['custom/backup'] } });
     expect(routingFromFlag(workstreamFlag({ model: '', fallbackModels: [] }), 'workstream'))
       .toMatchObject({ source: 'checked-in', routing: { model: 'x-ai/grok-4.3', fallbackModels: ['google/gemini-3.6-flash'] } });
+    expect(routingFromFlag({
+      ...workstreamFlag({ model: 'ignored', fallbackModels: [] }),
+      variations: { current: { model: 'custom/without-fallbacks' } },
+    }, 'workstream')).toMatchObject({
+      source: 'flagship', routing: { model: 'custom/without-fallbacks', fallbackModels: [] },
+    });
   });
 
   it('moves fallbacks without changing their order otherwise', () => {
@@ -62,6 +68,7 @@ describe('Ace Models client', () => {
     await act(async () => root.render(<ModelsView />));
     await vi.waitFor(() => expect(container.textContent).toContain('Flagship connected'));
     expect(container.textContent).toContain('Runs the main participant-visible work stream and the structured attachment-summary pass');
+    expect(container.textContent).toContain('Targeted rules may still serve a different variation');
     const modelButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.models > button'));
     expect(modelButtons).toHaveLength(11);
     expect(modelButtons.map((button) => button.querySelector('strong')?.textContent)).toEqual([
@@ -78,6 +85,11 @@ describe('Ace Models client', () => {
       '11HyperSight block',
     ]);
 
+    const save = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Save route')!;
+    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
+    expect(save.disabled).toBe(true);
+
     const addFallback = Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent?.includes('Add fallback'))!;
     await act(async () => addFallback.click());
@@ -89,8 +101,6 @@ describe('Ace Models client', () => {
       );
       freeTextInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    const save = Array.from(container.querySelectorAll('button'))
-      .find((button) => button.textContent === 'Save route')!;
     await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
     expect(save.disabled).toBe(false);
     await act(async () => save.click());
@@ -108,6 +118,7 @@ describe('Ace Models client', () => {
         fallbackModels: ['google/gemini-3.6-flash', 'new-provider/new-model'],
       },
     });
+    expect(save.disabled).toBe(true);
   });
 
   it('marks a typed unavailable model invalid and keeps save disabled', async () => {
