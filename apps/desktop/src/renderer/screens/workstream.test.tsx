@@ -17,6 +17,7 @@ import {
   preservedPrependScrollTop,
   RunFailureNotice,
   RunStoppedNotice,
+  orderedTranscriptOwnsRunTiming,
   shouldLoadEarlierFromScroll,
   transcriptPageCursor,
   WorkstreamErrorState,
@@ -766,6 +767,32 @@ describe('workstreamRunTiming', () => {
       ...harnessRun,
       status: 'needs_input',
     })).toBeNull();
+  });
+});
+
+describe('orderedTranscriptOwnsRunTiming', () => {
+  it('replaces the legacy timer only after the canonical response timing has an ordered turn anchor', () => {
+    const snapshot: NonNullable<Parameters<typeof orderedTranscriptOwnsRunTiming>[0]> = {
+      activities: [
+        { activityId: 'run-one:activity', parentActivityId: null, scope: 'response', subjectId: 'run-one' },
+        {
+          activityId: 'run-one:turn:1:activity',
+          parentActivityId: 'run-one:activity',
+          scope: 'assistant_turn',
+          subjectId: 'run-one:turn:1',
+        },
+      ],
+      ranges: [],
+      activeTurns: [],
+    };
+
+    expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-one')).toBe(false);
+    snapshot.ranges = [{
+      turns: [{ activityId: 'run-one:turn:1:activity' }],
+    }];
+    expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-one')).toBe(true);
+    expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-two')).toBe(false);
+    expect(orderedTranscriptOwnsRunTiming(undefined, 'run-one')).toBe(false);
   });
 });
 

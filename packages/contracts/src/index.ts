@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  TranscriptActivitySchema,
+  TranscriptRangeResultSchema,
+  TranscriptTurnSchema,
+  WorkstreamTranscriptRangeRequestSchema,
+  WorkstreamTranscriptSnapshotSchema,
+} from "./workstream-transcript";
+export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
@@ -1688,6 +1696,7 @@ export const MessageFeedPageSchema = z.object({
  * That preference continues to arrive on the WorkstreamDO control socket.
  */
 export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
+  transcript: WorkstreamTranscriptSnapshotSchema,
   /**
    * Newest page. Bounded: a screen shows tens of messages, not hundreds.
    *
@@ -1719,6 +1728,11 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   // the same sequenced snapshot an initial subscription receives, which is what
   // lets the client's ordinary ordering guard decide whether to apply it.
   z.object({ type: z.literal("request_snapshot") }).strict(),
+  z.object({
+    type: z.literal("load_transcript_range"),
+    requestId: IdSchema,
+    request: WorkstreamTranscriptRangeRequestSchema,
+  }).strict(),
   z.object({
     type: z.literal("load_message_page"),
     requestId: IdSchema,
@@ -2300,6 +2314,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
     workstream: WorkstreamDetailSchema,
+    transcript: WorkstreamTranscriptSnapshotSchema,
     /** Newest canonical transcript page, downloaded over the SubstreamAgent socket. */
     messageFeed: MessageFeedPageSchema.default({ items: [], nextCursor: null, newerCursor: null }),
     /**
@@ -2327,6 +2342,21 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("transcript_turn_upserted"),
+    turn: TranscriptTurnSchema,
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("transcript_activity_upserted"),
+    activity: TranscriptActivitySchema,
+    snapshotAtUtc: z.string().datetime({ offset: true }),
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("transcript_range"),
+    requestId: IdSchema,
+    snapshotId: IdSchema,
+    result: TranscriptRangeResultSchema,
+  }),
   /** The title changed — a person renamed the work stream, or Avalon named it. */
   ServerEventBaseSchema.extend({
     type: z.literal("workstream_renamed"),
@@ -2386,7 +2416,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
-    reason: z.enum(["history_unavailable", "sequence_ahead"]),
+    reason: z.enum(["history_unavailable", "snapshot_expired", "sequence_ahead"]),
     latestSequence: z.number().int().nonnegative(),
     /** Preserves an in-flight response while canonical REST state is refreshed. */
     activeStreams: ActiveStreamCheckpointsSchema.default([]),

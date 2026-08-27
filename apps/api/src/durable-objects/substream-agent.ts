@@ -139,6 +139,11 @@ import {
 } from "./workstream-tool-receipt-protocol";
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
+import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
+import {
+  TranscriptOperationRequestSchema,
+  type TranscriptOperationRequest,
+} from "./workstream-transcript-protocol";
 import {
   type MessageOperationRequest,
   MessageOperationRequestSchema,
@@ -221,7 +226,12 @@ const SocketAttachmentSchema = z.object({
   afterSequence: z.number().int().nonnegative(),
   subscribed: z.boolean().default(false),
   /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
-  snapshotInFlight: z.boolean().default(false)
+  snapshotInFlight: z.boolean().default(false),
+  transcriptSnapshot: z.object({
+    snapshotId: z.string().min(1),
+    snapshotThrough: z.number().int().nonnegative(),
+    snapshotAtUtc: z.string().datetime({ offset: true }),
+  }).nullable().default(null),
 });
 
 const BroadcastRequestSchema = z.object({
@@ -581,6 +591,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private scheduling!: WorkstreamSchedulingStorage;
 
   private messages!: WorkstreamMessageStorage;
+  private transcript!: WorkstreamTranscriptStorage;
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
@@ -635,7 +646,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         env.APP_VERSION ?? "unknown",
         env.AVALON_REGION,
       ));
-      this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
+      this.transcript = new WorkstreamTranscriptStorage(state.storage);
+      this.product = new WorkstreamObjectProductService(
+        state.storage,
+        this.objectStore,
+        env,
+        this.transcript,
+      );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
@@ -983,6 +1000,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeMessageOperation(input: MessageOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.messageOperationOutcome(input));
+  }
+
+  async executeTranscriptOperation(input: TranscriptOperationRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return objectPortRpcResult(await this.transcriptOperationOutcome(input));
   }
 
   async executeResourceOperation(input: ResourceOperationRequest): Promise<DurableObjectRpcResult> {
@@ -1337,6 +1359,45 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         true,
       )
       : method.apply(this.messages, parsed.data.args);
+    return { status: 200, payload: { ok: true, value: value ?? null } };
+  }
+
+  private async transcriptOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = TranscriptOperationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_transcript_operation" } };
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_transcript_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.transcript[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = await method.apply(this.transcript, parsed.data.args);
+    if (parsed.data.operation === "upsertActivity" && value) {
+      await this.publishAgentRuntimeEvent({
+        type: "transcript_activity_upserted",
+        activity: value,
+        snapshotAtUtc: new Date().toISOString(),
+      });
+    }
+    const first = parsed.data.args[0] as Record<string, unknown> | undefined;
+    let turn = null;
+    if (parsed.data.operation === "commitBindTransition") {
+      turn = first?.kind === "assistant_accepted" && typeof first.turnId === "string"
+        ? this.transcript.participantTurn(first.turnId)
+        : null;
+    } else if (parsed.data.operation === "upsertToolLifecycle" && typeof first?.toolCallId === "string") {
+      turn = this.transcript.participantTurnForTool(first.toolCallId);
+    } else if (parsed.data.operation === "reserveCompactionStatus"
+      && typeof first?.compactionEventId === "string") {
+      turn = this.transcript.participantTurn(first.compactionEventId);
+    } else if (parsed.data.operation === "commitBindCompaction") {
+      const transition = (first?.commit as { transition?: { compactionEventId?: unknown } } | undefined)?.transition;
+      turn = typeof transition?.compactionEventId === "string"
+        ? this.transcript.participantTurn(transition.compactionEventId)
+        : null;
+    } else if (parsed.data.operation === "setParticipantTurnAttentionOrdinal") {
+      turn = value;
+    }
+    if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -1808,6 +1869,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               type: "message_created",
               message: opening,
             }));
+          const transcriptTurn = this.transcript.participantTurn(opening.id);
+          if (transcriptTurn) {
+            await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
+          }
         }
         return jsonResponse({
           workstream: result.workstream,
@@ -1819,7 +1884,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(await span.step("workstream.room.product.get", () => this.product.get(current)));
       }
       if (request.operation === "boot") {
-        return jsonResponse(await span.step("workstream.room.product.boot", () => this.product.boot(current)));
+        const boot = await span.step("workstream.room.product.boot", () => this.product.boot(current));
+        return jsonResponse({
+          ...boot,
+          transcript: this.transcript.createOpeningSnapshot({
+            unreadHighWaterAttentionOrdinal: boot.workstream.firstUnreadSequenceNumber,
+          }),
+        });
       }
       if (request.operation === "messages") {
         const query = request;
@@ -1855,6 +1926,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (result.inserted) {
           await span.step("workstream.room.event.publish_message_created", () =>
             this.publishLocalProductEvent(identity, { type: "message_created", message: result.message }));
+          const transcriptTurn = this.transcript.participantTurn(result.message.id);
+          if (transcriptTurn) {
+            await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
+          }
         }
         span.setAttributes({
           "rally.agent.invoked": result.agentInvoked,
@@ -2774,6 +2849,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       message: resident((body) => this.messageOperationOutcome(body)),
       resource: resident((body) => this.resourceOperationOutcome(body)),
       scheduling: resident((body) => this.schedulingOperationOutcome(body)),
+      transcript: resident((body) => this.transcriptOperationOutcome(body)),
       toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
@@ -2924,6 +3000,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
+    if (parsed.data.type === "load_transcript_range") {
+      await this.fulfillTranscriptRange(socket, attachment, parsed.data);
+      return;
+    }
+
     if (parsed.data.type === "create_message") {
       this.sendError(
         socket,
@@ -3025,6 +3106,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         snapshotInFlight: false,
       } satisfies SocketAttachment);
       throw error;
+    }
+  }
+
+  private async fulfillTranscriptRange(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    request: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "load_transcript_range" }>,
+  ): Promise<void> {
+    // Subscription admission already verified the session and bound this
+    // socket to one object-local work-stream/substream authority. Revocation
+    // evicts the socket through the local participant/session epoch path, so a
+    // range does not repeat D1 authorization per block or hydrated turn.
+    if (!attachment.subscribed) {
+      this.sendError(socket, "subscription_required", "Subscribe before loading transcript ranges");
+      return;
+    }
+    const sequence = await this.currentSequence();
+    if (request.request.resumeAfterEventSequence > sequence) {
+      this.sendResyncRequired(socket, sequence, "sequence_ahead");
+      return;
+    }
+    try {
+      const fence = attachment.transcriptSnapshot;
+      if (!fence || fence.snapshotId !== request.request.snapshotId) {
+        this.sendResyncRequired(socket, sequence, "snapshot_expired");
+        return;
+      }
+      const result = this.transcript.range(fence, request.request.range);
+      socket.send(JSON.stringify(ServerSocketEventSchema.parse({
+        type: "transcript_range",
+        sequence,
+        occurredAt: new Date().toISOString(),
+        requestId: request.requestId,
+        snapshotId: request.request.snapshotId,
+        result,
+      })));
+    } catch {
+      this.sendResyncRequired(socket, sequence, "history_unavailable");
     }
   }
 
@@ -3687,7 +3806,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence,
       subscribed: false,
-      snapshotInFlight: false
+      snapshotInFlight: false,
+      transcriptSnapshot: null,
     };
 
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
@@ -4060,7 +4180,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private sendResyncRequired(
     socket: WebSocket,
     currentSequence: number,
-    reason: "history_unavailable" | "sequence_ahead",
+    reason: "history_unavailable" | "snapshot_expired" | "sequence_ahead",
   ): void {
     const event = ServerSocketEventSchema.parse({
       type: "resync_required",
@@ -4087,15 +4207,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       const attachment = this.readAttachment(socket);
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
-      const workstream = await span.step("workstream.room.snapshot.detail", () =>
+      const admitted = await span.step("workstream.room.snapshot.detail", () =>
         this.loadSnapshot(workspaceId, workstreamId, attachment.userId));
-      // Its own step: this is an awaited D1 round trip, and a step's duration is
-      // measured from the end of the previous one, so leaving it unstepped
-      // charged the authorization wait to the transcript read below and made
-      // `slowest_step` name the wrong thing.
-      const auth = await span.step("workstream.room.snapshot.session_auth", () =>
-        this.socketAuth(attachment));
-      if (!auth) throw new Error("Snapshot viewer is no longer authorized");
+      const { auth, workstream } = admitted;
       // Both transcript windows, from the assembler `GET /workstreams/:id` also
       // uses. The detail above already carries presence, which `boot` cannot
       // know about, so its own copy is discarded rather than re-read here.
@@ -4103,7 +4217,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.product.bootFeeds(
           auth,
           reason === "initial" ? workstream.firstUnreadSequenceNumber : null,
+          true,
         ));
+      const transcript = this.transcript.createOpeningSnapshot({
+        unreadHighWaterAttentionOrdinal: reason === "initial"
+          ? workstream.firstUnreadSequenceNumber
+          : null,
+      });
       const messageFeed = { ...boot.messageFeed, items: [...boot.messageFeed.items] };
       // Copied, not aliased: the cap below has to be able to shrink this one too.
       const resumeFeed = boot.resumeFeed
@@ -4125,6 +4245,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           sequence,
           occurredAt: new Date().toISOString(),
           workstream,
+          transcript,
           messageFeed,
           resumeFeed,
           activeStreams,
@@ -4178,6 +4299,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         "rally.snapshot.trims": trims,
       });
       socket.send(encoded);
+      const currentAttachment = this.readAttachment(socket);
+      if (currentAttachment) {
+        socket.serializeAttachment({
+          ...currentAttachment,
+          transcriptSnapshot: {
+            snapshotId: transcript.snapshotId,
+            snapshotThrough: transcript.snapshotThrough,
+            snapshotAtUtc: transcript.snapshotAtUtc,
+          },
+        } satisfies SocketAttachment);
+      }
       return true;
     } catch {
       span.setError("snapshot_unavailable");
@@ -4189,14 +4321,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     workspaceId: string,
     workstreamId: string,
     viewerUserId: string,
-  ): Promise<WorkstreamDetail> {
+  ): Promise<{ auth: AuthContext; workstream: WorkstreamDetail }> {
     const attachment = this.state.getWebSockets().map((socket) => this.readAttachment(socket))
       .find((candidate) => candidate?.userId === viewerUserId);
     if (!attachment) throw new Error("Snapshot viewer socket is unavailable");
     const auth = await this.socketAuth(attachment);
     if (!auth) throw new Error("Snapshot viewer is no longer authorized");
     const viewers = await this.loadViewers(workspaceId, workstreamId);
-    return this.product.get(auth, viewers);
+    return { auth, workstream: await this.product.get(auth, viewers) };
   }
 
   private async loadViewers(

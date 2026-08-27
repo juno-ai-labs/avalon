@@ -483,7 +483,16 @@ describe("work-stream compaction resource inventory", () => {
       AS_OF,
     )).resolves.toEqual({
       compactedThroughSequence: 7,
-      messages: [{ role: "user", content: "future-version base checkpoint" }],
+      messages: [{
+        role: "user",
+        content: "future-version base checkpoint",
+        provenance: {
+          originKind: "derived",
+          sourceKind: "compaction_checkpoint",
+          sourceId: `${CHECKPOINT_RUN}:7`,
+          sourceRevision: 7,
+        },
+      }],
     });
   });
 

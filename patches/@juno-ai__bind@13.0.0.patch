@@ -1,0 +1,62 @@
+diff --git a/loop/tool-loop.d.ts b/loop/tool-loop.d.ts
+index 957a6c5b3ca96da7d35779fe56bc03fdf7ee61e0..9f2f405e21c0db62a36ac9d84542e3a175605f61 100644
+--- a/loop/tool-loop.d.ts
++++ b/loop/tool-loop.d.ts
+@@ -217,6 +217,9 @@ export interface ToolLoopParams {
+     buildTools: () => OpenAI.ChatCompletionTool[];
+     /** Execute one tool call → the `tool` message + control signals. */
+     runToolCall: (toolCall: OpenAI.ChatCompletionMessageToolCall) => Promise<ToolCallOutcome>;
++    /** Persist the exact accepted tool message in model call order immediately
++     * before it is appended to `state.messages`. A rejection aborts acceptance. */
++    beforeToolMessageAccepted?: (message: OpenAI.ChatCompletionToolMessageParam, callIndex: number) => Promise<void> | void;
+     /**
+      * Activate newly loaded plugins (mutate the catalog/active set). Optional:
+      * a host with a fixed tool surface has nothing to activate, and requiring an
+diff --git a/loop/tool-loop.js b/loop/tool-loop.js
+index 0ef145dae77e956af606509461886c2282848109..5c3baef570028b2df0328f7d7e5ef649a2d86cd5 100644
+--- a/loop/tool-loop.js
++++ b/loop/tool-loop.js
+@@ -67,7 +67,7 @@ function toolCallStatsKey(tc) {
+  * run's conclusion, which only exists once the loop is over.
+  */
+ export async function runToolLoop(params) {
+-    const { state, maxIterations, callModel, buildTools, runToolCall, activatePlugins, activateSkills, now = Date.now, ensureNotCancelled, throwIfTimedOut, onStatus, signal, onThinking, onAssistantMessage, flushProgress, onProgressUpdate, shouldStop, onTurnWouldEnd, drainInterrupts, onInterruptReceived, needsCompaction, applyCompaction, runsSerially, isFatalToolError, onToolCallRejected, } = params;
++    const { state, maxIterations, callModel, buildTools, runToolCall, activatePlugins, activateSkills, now = Date.now, ensureNotCancelled, throwIfTimedOut, onStatus, signal, onThinking, onAssistantMessage, flushProgress, onProgressUpdate, shouldStop, onTurnWouldEnd, drainInterrupts, onInterruptReceived, needsCompaction, applyCompaction, runsSerially, isFatalToolError, onToolCallRejected, beforeToolMessageAccepted, } = params;
+     let stats = emptyRunStats();
+     // The default is the outcome of falling out of the `for` — every other exit
+     // assigns before it breaks. Seeding it here rather than at each `break` means
+@@ -398,7 +398,8 @@ export async function runToolLoop(params) {
+         }
+         let compactionRequested = false;
+         let suspendRequested = false;
+-        for (const outcome of outcomes) {
++        for (let outcomeIndex = 0; outcomeIndex < outcomes.length; outcomeIndex++) {
++            const outcome = outcomes[outcomeIndex];
+             // An `answer`-suspend WITHHOLDS its tool message — the result is the
+             // future answer, threaded back on resume. At most one may be open: the
+             // first becomes `state.suspended`; any additional suspend in the same
+@@ -420,19 +421,22 @@ export async function runToolLoop(params) {
+                     // in one transcript — the exact thing `toolResultMessage` exists to
+                     // prevent. `conflict` because it is a concurrency loss: the call was
+                     // refused only because another question is already open.
+-                    state.messages.push(toolResultMessage(outcome.suspend.toolCallId, {
++                    const conflictMessage = toolResultMessage(outcome.suspend.toolCallId, {
+                         success: false,
+                         kind: "conflict",
+                         error: "This question was not asked — you already have one waiting " +
+                             "for an answer, and only one can be open at a time. When that " +
+                             "answer arrives, ask this one then, or finish the turn with " +
+                             "what you have.",
+-                    }));
++                    });
++                    await beforeToolMessageAccepted?.(conflictMessage, outcomeIndex);
++                    state.messages.push(conflictMessage);
+                     continue;
+                 }
+                 // `wake` (e.g. sleep_until): fall through and push the tool message, then
+                 // end the run — it re-enters via a prompt, not a threaded answer.
+             }
++            await beforeToolMessageAccepted?.(outcome.toolMessage, outcomeIndex);
+             state.messages.push(outcome.toolMessage);
+             if (outcome.requestCompaction)
+                 compactionRequested = true;
