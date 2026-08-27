@@ -9,8 +9,10 @@
 > content, carried in ordinary message text through the one markdown
 > renderer, the way mention chips already are. Companion:
 > [state](state.md), [research](research.md) — the syntax prior art.
-> Supersedes the card-and-pane scope of
-> [work-stream artifacts](../2026-08-26_workstream-artifacts/prd.md).
+> Supersedes the card-and-pane scope of the combined work-stream
+> artifacts PRD, which was not merged; its folder and protocol research
+> remain readable on
+> [PR #334](https://github.com/juno-ai-labs/avalon/pull/334).
 > Siblings:
 > [terminal artifact generation](../2026-08-27_terminal-artifact-generation/prd.md)
 > (whose published documents these citations make reachable from chat),
