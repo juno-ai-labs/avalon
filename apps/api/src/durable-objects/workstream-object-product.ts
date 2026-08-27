@@ -576,7 +576,6 @@ export class WorkstreamObjectProductService {
       turnId: messageId,
       actor: "human",
       authorUserId: input.creatorUserId,
-      text: prepared.text,
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: 1,
     });
@@ -2697,7 +2696,6 @@ export class WorkstreamObjectProductService {
       turnId: messageId,
       actor: "human",
       authorUserId: auth.userId,
-      text: prepared.text,
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: root.next_attention_ordinal,
     });
@@ -3005,6 +3003,7 @@ export class WorkstreamObjectProductService {
     elicitation: Elicitation | undefined;
     harnessRunId: string | null;
     workflowInput: WorkstreamWorkflowInput | null;
+    responsePartId: string;
   }> {
     const input = AnswerElicitationRequestSchema.parse(rawInput);
     const root = await this.authorize(auth);
@@ -3029,6 +3028,13 @@ export class WorkstreamObjectProductService {
     const responsePartId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
     const model = await this.model(root);
+    const transcriptMessage = await this.transcript.prepareParticipantMessage({
+      turnId: responsePartId,
+      actor: "human",
+      authorUserId: auth.userId,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: null,
+    });
     let admittedRunId: HarnessRunId | null = null;
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -3074,6 +3080,10 @@ export class WorkstreamObjectProductService {
           JSON.stringify({ kind: "elicitation_response", elicitation: persisted }),
           now, now,
         );
+        this.transcript.appendPreparedParticipantMessage({
+          ...transcriptMessage,
+          input: { ...transcriptMessage.input, attentionOrdinal: attention },
+        });
         sql.exec(
           `INSERT INTO participants
              (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -3150,7 +3160,7 @@ export class WorkstreamObjectProductService {
       executionPrincipal: { type: "user", userId: auth.userId },
       reason: "elicitation_answer",
     } : null;
-    return { elicitation: answered, harnessRunId: admittedRunId, workflowInput };
+    return { elicitation: answered, harnessRunId: admittedRunId, workflowInput, responsePartId };
   }
 
   private validateElicitationAnswer(

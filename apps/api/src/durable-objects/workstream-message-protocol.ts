@@ -5,7 +5,20 @@ import {
   type ObjectPortOf,
 } from "./object-port-protocol";
 import type { WorkstreamMessageStorage } from "./workstream-message-storage";
-import type { z } from "zod";
+import { z } from "zod";
+
+export const AppendMessageInputSchema = z.object({
+  messageId: z.string().min(1),
+  clientMessageId: z.string().min(1),
+  authorType: z.enum(["human", "agent", "external", "system"]),
+  authorUserId: z.string().min(1).nullable(),
+  externalActorJson: z.string().nullable(),
+  messageType: z.enum(["text", "system", "elicitation"]),
+  text: z.string(),
+  structuredContentJson: z.string().nullable(),
+  producedByRunId: z.string().min(1).nullable(),
+  now: z.number().finite(),
+}).strict();
 
 /**
  * The wire contract for one work stream's transcript.
