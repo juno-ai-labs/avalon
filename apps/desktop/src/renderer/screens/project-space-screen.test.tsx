@@ -137,7 +137,8 @@ describe('project space appearance', () => {
   it('asks for confirmation before applying a live scope selection', async () => {
     renderProject();
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Project scope' }), { target: { value: 'workspace' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Project scope' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Everyone in the workspace' }));
     const dialog = screen.getByRole('dialog', { name: 'Change project access?' });
     expect(within(dialog).getByText(/Everyone in the workspace will be able/u)).toBeVisible();
     expect(api.updateProjectAudience).not.toHaveBeenCalled();
