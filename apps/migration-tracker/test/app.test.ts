@@ -173,6 +173,8 @@ describe("the operator site", () => {
     const emptyText = emptyObject.replace(/\s+/gu, " ");
 
     expect(overview).toMatch(/<div class="n">1<\/div>\s*<div class="k">Empty<\/div>/u);
+    expect(overview).toContain(".empty-state { padding: 22px");
+    expect(overview).not.toContain(".empty { padding: 22px");
     expect(tableHeaders(overview)).toContainEqual(
       ["Script", "Class", "Storage", "Stored", "IDs", "Swept"],
     );
