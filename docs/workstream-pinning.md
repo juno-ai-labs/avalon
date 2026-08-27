@@ -289,6 +289,8 @@ removes.
 soon as the directory cache updates. The pool still deduplicates active,
 running, recently viewed, recent-unpinned, and pinned roles by work-stream ID.
 
+Shipped in #341.
+
 ### 2026-08-20 — The imported D1 pin source is removed
 
 **What changed:** Migration 0090 drops `workstream_pins` and its writer fences,

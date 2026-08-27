@@ -396,6 +396,8 @@ prove the visible boundary in Electron. Other substreams require tuple-keyed
 pool and cache ownership; they cannot reuse the current workstream-only key or
 duplicate its WorkstreamDO control connection.
 
+Shipped in #341.
+
 ### 2026-08-26 — Work-stream socket pairs move outside Chromium's handshake queue
 
 **What changed:** Packaged Electron now opens each selected work stream's
@@ -422,3 +424,5 @@ must terminate every owned Node socket. Workspace commands, HyperSight blocks,
 dictation, browser development, Durable Object admission, and hibernation keep
 their existing owners. Future socket kinds do not inherit broker access without
 an explicit schema and route-validator change.
+
+Shipped in #341.
