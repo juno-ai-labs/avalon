@@ -85,7 +85,6 @@ function fixture() {
     runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
     runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
     cleanupCommand: vi.fn(async () => undefined),
-    publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
   return {
     database,

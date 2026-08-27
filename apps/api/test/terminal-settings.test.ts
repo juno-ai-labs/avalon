@@ -112,7 +112,7 @@ function fixture(role: AuthContext["role"] = "owner") {
     createSandbox: vi.fn(), getSandbox: vi.fn(async () => ({ id: "provider-1", name: "settings-sandbox", state: "stopped" as const, domainAllowList: appliedDomains })),
     startSandbox: vi.fn(), stopSandbox: vi.fn(async () => undefined), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(),
     updateNetworkPolicy: vi.fn(async (_id, domains) => { appliedDomains = domains ?? []; }), configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
-    readFile: vi.fn(), writeFile: vi.fn(), runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })), runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })), publishGitBundle: vi.fn(),
+    readFile: vi.fn(), writeFile: vi.fn(), runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })), runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
   };
   const auth: AuthContext = { sessionId: "session", userId: U, workspaceId: W, region: "global", role };
   return {

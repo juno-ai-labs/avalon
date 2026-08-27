@@ -18,7 +18,6 @@ import type { TerminalRepositoryPublisher } from "./runtime";
 import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";
 import { createIdentityObjectPort } from "../../runtime/identity-port";
 
-const MAX_BUNDLE_BYTES = 50 * 1_048_576;
 const MAX_CHANGED_PATHS = 500;
 
 function shellQuote(value: string): string {
@@ -48,8 +47,10 @@ export interface TerminalPullRequest {
 }
 
 export interface TerminalGitHubPublicationGateway {
-  mintWriteToken(selection: TerminalRepositorySelection, signal: AbortSignal): Promise<{ accessToken: string }>;
-  revokeWriteToken(accessToken: string): Promise<void>;
+  mintWriteToken(
+    selection: TerminalRepositorySelection,
+    signal: AbortSignal,
+  ): Promise<{ accessToken: string; expiresAt: string }>;
   verifyRepositoryIdentity(selection: TerminalRepositorySelection, accessToken: string, signal: AbortSignal): Promise<void>;
   getRef(selection: TerminalRepositorySelection, ref: string, accessToken: string, signal: AbortSignal): Promise<string | null>;
   findPullRequest(selection: TerminalRepositorySelection, accessToken: string, signal: AbortSignal): Promise<TerminalPullRequest | null>;
@@ -359,14 +360,28 @@ export async function admitTerminalPublicationGrant(
 async function runInspection(
   provider: TerminalSandboxProvider,
   sandboxId: string,
-  operation: "status" | "branch" | "head" | "ancestry" | "paths" | "bundle",
+  operation: "status" | "branch" | "head" | "ancestry" | "paths",
   command: string,
+  timeoutMs = 60_000,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return provider.runUtilityCommand(sandboxId, {
     operation: `repository.publish.${operation}`,
     command,
     cwd: "/workspace",
-    timeoutMs: 60_000,
+    timeoutMs,
+  });
+}
+
+async function runPublishStep(
+  provider: TerminalSandboxProvider,
+  sandboxId: string,
+  command: string,
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return provider.runUtilityCommand(sandboxId, {
+    operation: "repository.publish.push",
+    command,
+    cwd: "/workspace",
+    timeoutMs: 180_000,
   });
 }
 
@@ -485,23 +500,6 @@ export function createTerminalRepositoryPublisher(
       if (paths.some((path) => path === ".github/workflows" || path.startsWith(".github/workflows/"))) {
         throw new TerminalToolError("publication_policy_denied", "Terminal cannot publish GitHub Actions workflow changes. Remove `.github/workflows/` changes and ask a coding workflow with elevated review to publish them.");
       }
-      const bundlePath = `/workspace/.rally/publications/${effectIntentId}.bundle`;
-      const bundle = await runInspection(
-        provider,
-        sandbox.providerSandboxId,
-        "bundle",
-        `mkdir -p /workspace/.rally/publications && git bundle create ${shellQuote(bundlePath)} ${shellQuote(`refs/heads/${selection.headRef}`)} && stat -c %s -- ${shellQuote(bundlePath)}`,
-      );
-      if (bundle.exitCode !== 0) throw new TerminalToolError("publication_conflict", "Git could not create the bounded publication bundle. Verify the branch ref and retry.", { reason: "Verify the fixed branch ref and committed objects before retrying." });
-      const bundleSize = Number(bundle.stdout.trim());
-      if (!Number.isSafeInteger(bundleSize) || bundleSize <= 0 || bundleSize > MAX_BUNDLE_BYTES) {
-        throw new TerminalToolError("limit_exceeded", `The Git bundle is ${bundle.stdout.trim() || "an unknown size"}; publication requires a nonempty bundle at most ${MAX_BUNDLE_BYTES} bytes. Reduce large committed files and retry.`);
-      }
-      const bundleBytes = await provider.readFile(sandbox.providerSandboxId, bundlePath);
-      if (bundleBytes.byteLength === 0 || bundleBytes.byteLength > MAX_BUNDLE_BYTES) {
-        throw new TerminalToolError("limit_exceeded", `The Git bundle is ${bundleBytes.byteLength} bytes; publication requires a nonempty bundle at most ${MAX_BUNDLE_BYTES}. Reduce large committed files and retry.`);
-      }
-
       if (context.executionPrincipal.type !== "user") {
         throw new TerminalToolError("publication_not_authorized", "Publication requires a current human work-stream participant. Stop and ask a participant to request publication.");
       }
@@ -515,9 +513,23 @@ export function createTerminalRepositoryPublisher(
         throw new TerminalToolError("publication_not_authorized", "The participant who requested publication no longer belongs to this work stream. Stop and ask a current participant to request publication.");
       }
       const token = await gateway.mintWriteToken(selection, context.signal);
-      try {
-        await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
-        const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
+      await gateway.verifyRepositoryIdentity(selection, token.accessToken, context.signal);
+      // Publication is the one point in a run that must guarantee the mounted
+      // Git credential remains valid for the complete remote mutation. Reuse
+      // the freshly minted publication token instead of rechecking or rotating
+      // the sandbox credential before every ordinary Terminal operation.
+      await provider.configureGitHubReadAccess(sandbox.providerSandboxId, {
+        gitBasicCredential: btoa(`x-access-token:${token.accessToken}`),
+        ghToken: token.accessToken,
+      });
+      await terminal.recordRepositoryBootstrap({
+        generation: sandbox.generation,
+        readTokenExpiresAt: Date.parse(token.expiresAt),
+        repositoryFullName: selection.repositoryFullName,
+        baseSha: selection.baseSha,
+        now: Date.now(),
+      });
+      const expectedOldSha = await gateway.getRef(selection, selection.headRef, token.accessToken, context.signal);
         const consumed = await terminal.consumePublicationGrant({
           grantId: grant.grantId,
           effectIntentId,
@@ -539,16 +551,38 @@ export function createTerminalRepositoryPublisher(
           now: Date.now(),
         });
         try {
-          const published = await provider.publishGitBundle({
-            operationId: publicationId,
-            bundle: bundleBytes,
-            repositoryFullName: selection.repositoryFullName,
-            baseSha: selection.baseSha,
-            headSha,
-            headRef: selection.headRef,
-            expectedOldSha,
-            githubBasicCredential: btoa(`x-access-token:${token.accessToken}`),
-          });
+          // A missing ref and an empty successful ls-remote result are both the
+          // empty string, so first publication passes the same SHA fence.
+          const expectedOld = expectedOldSha ?? "";
+          const repositoryUrl = `https://github.com/${selection.repositoryFullName}.git`;
+          // A per-publication alias outranks any model-authored broad URL
+          // rewrite without putting the credential in the command. The fixed
+          // config also prevents Git from adding tags to the exact refspec.
+          const repositoryUrlAlias = `rally-publish-${publicationId}://repository`;
+          const insteadOf = `url.${repositoryUrl}.insteadOf=${repositoryUrlAlias}`;
+          const pushInsteadOf = `url.${repositoryUrl}.pushInsteadOf=${repositoryUrlAlias}`;
+          const push = await runPublishStep(provider, sandbox.providerSandboxId, [
+            "set -euo pipefail",
+            "publish_stage=remote_verify",
+            "trap 'rally_status=$?; if [ \"$rally_status\" -ne 0 ]; then printf \"RALLY_PUBLISH_FAILED_STAGE=%s\\n\" \"$publish_stage\"; fi; exit \"$rally_status\"' EXIT",
+            `remote_sha=$(git -c ${shellQuote(insteadOf)} ls-remote ${shellQuote(repositoryUrlAlias)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)`,
+            `test "$remote_sha" = ${shellQuote(expectedOld)}`,
+            "publish_stage=remote_push",
+            `git -c ${shellQuote(insteadOf)} -c ${shellQuote(pushInsteadOf)} -c core.hooksPath=/dev/null -c push.followTags=false push ${shellQuote(repositoryUrlAlias)} ${shellQuote(`${headSha}:refs/heads/${selection.headRef}`)}`,
+            "publish_stage=post_push_verify",
+            `test "$(git -c ${shellQuote(insteadOf)} ls-remote ${shellQuote(repositoryUrlAlias)} ${shellQuote(`refs/heads/${selection.headRef}`)} | cut -f1)" = ${shellQuote(headSha)}`,
+            "trap - EXIT",
+            "printf 'published\\n'",
+          ].join("\n"));
+          if (push.exitCode !== 0) {
+            const output = `${push.stdout}\n${push.stderr}`;
+            const stage = /^RALLY_PUBLISH_FAILED_STAGE=([a-z_]+)$/mu.exec(output)?.[1] ?? "unknown_stage";
+            throw new TerminalToolError(
+              "provider_publication_failed",
+              `Trusted Git publication failed at ${stage} with exit code ${push.exitCode}`,
+              { stage, exitCode: push.exitCode },
+            );
+          }
           let pullRequest = await gateway.findPullRequest(selection, token.accessToken, context.signal);
           let outcome: "created" | "updated" = "created";
           if (pullRequest) {
@@ -560,12 +594,12 @@ export function createTerminalRepositoryPublisher(
           } else {
             pullRequest = await gateway.createPullRequest(selection, token.accessToken, input, context.signal);
           }
-          if (pullRequest.state !== "open" || pullRequest.headSha !== published.publishedSha) {
+          if (pullRequest.state !== "open" || pullRequest.headSha !== headSha) {
             throw new TerminalToolError("publication_conflict", "GitHub did not confirm the expected open pull request head. Retry publication so Rally can reconcile the exact branch and PR.", { reason: "Retry the same publication receipt so Rally can reconcile the branch and pull request." });
           }
           await terminal.completePublication({
             effectIntentId,
-            publishedSha: published.publishedSha,
+            publishedSha: headSha,
             pullRequestNumber: pullRequest.number,
             pullRequestUrl: pullRequest.url,
             now: Date.now(),
@@ -575,7 +609,7 @@ export function createTerminalRepositoryPublisher(
             baseRef: selection.baseRef,
             headRef: selection.headRef,
             commitSha: headSha,
-            publishedSha: published.publishedSha,
+            publishedSha: headSha,
             outcome,
             pullRequest: {
               number: pullRequest.number,
@@ -594,12 +628,6 @@ export function createTerminalRepositoryPublisher(
           });
           throw error;
         }
-      } finally {
-        // GitHub cannot scope an installation token to one branch. The exact
-        // ref is enforced above, and the one-repository write token is revoked
-        // as soon as the trusted publication attempt finishes.
-        await gateway.revokeWriteToken(token.accessToken).catch(() => undefined);
-      }
     },
   };
 }
@@ -670,16 +698,6 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
   }
   return {
     verifyRepositoryIdentity: verifyGitHubRepositoryIdentity,
-    async revokeWriteToken(accessToken) {
-      const response = await fetch(`${api}/installation/token`, {
-        method: "DELETE",
-        headers: githubHeaders(accessToken),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok && response.status !== 404) {
-        throw new Error(`GitHub write-token revocation failed (${response.status})`);
-      }
-    },
     async mintWriteToken(selection, signal) {
       const config = githubConnectorConfig(env);
       if (!config) throw new TerminalToolError("github_unavailable", "The regional Rally GitHub App is not configured.");
@@ -691,13 +709,21 @@ export function createGitHubRestPublicationGateway(env: Env): TerminalGitHubPubl
         headers: githubHeaders(jwt),
         body: JSON.stringify({
           repositories: [repositoryName],
-          permissions: { contents: "write", pull_requests: "write", metadata: "read" },
+          permissions: {
+            contents: "write",
+            pull_requests: "write",
+            metadata: "read",
+            actions: "read",
+            checks: "read",
+          },
         }),
         signal,
       });
       const value = await githubResponse(response);
-      if (typeof value.token !== "string" || !value.token) throw new TerminalToolError("github_unavailable", "GitHub did not return a scoped installation token.");
-      return { accessToken: value.token };
+      if (typeof value.token !== "string" || !value.token || typeof value.expires_at !== "string") {
+        throw new TerminalToolError("github_unavailable", "GitHub did not return a scoped installation token and expiry.");
+      }
+      return { accessToken: value.token, expiresAt: value.expires_at };
     },
     async getRef(selection, ref, accessToken, signal) {
       const encodedRef = ref.split("/").map(encodeURIComponent).join("/");

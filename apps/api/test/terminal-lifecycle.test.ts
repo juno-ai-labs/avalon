@@ -61,7 +61,7 @@ function fixture(state: "running" | "stopped" | "archived", deadlines: { warm: s
     startSandbox: vi.fn(), stopSandbox: vi.fn(async () => undefined), archiveSandbox: vi.fn(async () => undefined), deleteSandbox: vi.fn(async () => undefined),
     updateNetworkPolicy: vi.fn(), configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(async () => undefined),
     readFile: vi.fn(), writeFile: vi.fn(), runUtilityCommand: vi.fn(), runCommand: vi.fn(),
-    cleanupCommand: vi.fn(async () => undefined), publishGitBundle: vi.fn(),
+    cleanupCommand: vi.fn(async () => undefined),
   };
   return {
     database,
