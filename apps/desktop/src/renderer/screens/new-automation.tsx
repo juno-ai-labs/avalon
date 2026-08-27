@@ -23,7 +23,7 @@ import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
-import { RallyMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
+import { RallyMark, RallySeam, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
@@ -1254,7 +1254,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
               // and a message sent against it starts a second draft while the
               // first is still on screen in the sidebar.
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
-                <RallyMark />
+                <RallySeam className="automation-builder-mark" />
                 <p className="eyebrow">Draft automation</p>
                 <h1 id="automation-builder-heading">This draft could not be opened</h1>
                 <p>{resumedDraft.error instanceof ApiError ? resumedDraft.error.message : 'Rally could not load this conversation.'}</p>
@@ -1262,13 +1262,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
               </section>
             ) : resumeDraftId !== null && !draft ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
-                <RallyMark />
+                <RallySeam className="automation-builder-mark" />
                 <p className="eyebrow">Draft automation</p>
                 <h1 id="automation-builder-heading">Opening this draft…</h1>
               </section>
             ) : turns.length === 0 && !draft ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
-                <RallyMark />
+                <RallySeam className="automation-builder-mark" />
                 <p className="eyebrow">Create an automation</p>
                 <h1 id="automation-builder-heading">What should happen automatically?</h1>
                 <p>Describe the outcome. Rally can research your plugins and will ask for the details it needs.</p>

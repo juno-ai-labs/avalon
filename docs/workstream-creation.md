@@ -20,6 +20,7 @@ attempt at the opposite that the changelog records.
 | `apps/desktop/src/renderer/screens/new-workstream.tsx` | Both states of the screen, the `launching` state that switches between them, both create mutations, `launchedWorkstreamDetail` — the one place a launched work stream's cached detail is built — and `useHomeHandOff`. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.workstream-launch-screen` block at the end of the file: every geometry difference between the two states, and the two keyframes. |
 | `apps/desktop/src/renderer/components/composer-input.tsx` | `ComposerInput`, the single composer element the hand-off is built around. |
+| `apps/desktop/src/renderer/components/primitives.tsx` | `RallySeam`, the turning welcome mark. Its geometry, rates, and reduced-motion rule are in [`brand-mark-motion.md`](brand-mark-motion.md). |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MessageBlock`, which renders the optimistic opening turn exactly as the work-stream screen will render the persisted one. |
 | `apps/desktop/src/renderer/components/agent-work-timing.tsx` | `AgentWorkTiming`, the work timer the optimistic surface starts and the created work stream keeps counting from. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The authoritative create, opening turn/run, feed snapshot, and synchronous child-effect drain used by the route-activation fence. |
@@ -91,6 +92,16 @@ dialog's task instead of focusing the header's Close control and opening its
 tooltip as a side effect. The native checkboxes remain the interactive controls;
 the fixed 16px indicators at the end of each row are only their visual treatment
 and mirror the native input's keyboard-visible focus.
+
+### The welcome mark turns
+
+The mark beside "Welcome back" is not the still masked image every other surface
+uses. It is a curve solved and re-projected every frame, turning about two axes,
+and it is 56px beside a 38px heading because the second axis needs the size to
+read as a turn rather than a wobble. `RallySeam` and the reasoning are in
+[`brand-mark-motion.md`](brand-mark-motion.md); what belongs to this screen is
+that its host rule names the size and the stroke weight together, and that the
+loop stops when the launch unmounts the home layer.
 
 ### What the optimistic surface shows
 
@@ -394,6 +405,29 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-27 — The welcome mark turns, and grew to a size that can carry it
+
+**What changed:** The mark beside "Welcome back" is drawn by `RallySeam` rather
+than by the shared still image, turning about two axes. It went from 22px to
+56px and the heading from 25px to 38px.
+
+**Why:** The mark was asked to move and to be larger on this screen. The size is
+not decoration: a two-axis turn is asymmetric about the vertical in most frames,
+and below roughly 40px that reads as a wobble instead of a turn.
+
+**Considered and rejected:** `transform: rotate()` on the existing image, which
+costs nothing and turns the drawing in its own plane like a sticker. See
+[`brand-mark-motion.md`](brand-mark-motion.md) for the full reasoning; it owns
+this decision, and the sign-in card and new-automation intro made the same one.
+
+**Consequences:** This screen now runs a `requestAnimationFrame` loop for as
+long as the home layer is mounted, and the launch hand-off is what stops it —
+the loop is cancelled on unmount, and the home layer is only unmounted after
+`HOME_HAND_OFF_MS`. It also draws a visibly different rendering of the mark from
+the one the sidebar beside it shows.
+
+Shipped in TBD.
 
 ### 2026-08-27 — The reduced-motion cut now zeroes delay, not only duration
 
