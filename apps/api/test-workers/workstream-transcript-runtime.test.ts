@@ -382,11 +382,129 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
+  it("transfers two exact legacy compactions without rewriting their completed edges", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    const expected = [
+      { sequence: 4, summary: "First", messages: [{ role: "user", content: "First exact" }] },
+      { sequence: 9, summary: "Second", messages: [{ role: "assistant", content: "Second exact" }] },
+    ];
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, created_at, updated_at)
+        VALUES ('legacy-compaction-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)`);
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      for (let index = 0; index < expected.length; index += 1) {
+        const checkpoint = expected[index]!;
+        const eventId = `legacy-compaction-run:compaction:${index + 1}`;
+        await transcript.reserveCompactionStatus({
+          compactionEventId: eventId,
+          runId: "legacy-compaction-run",
+          trigger: "auto",
+          occurredAtUtc: new Date(100 + index * 10).toISOString(),
+        });
+        transcript.upsertActivity({
+          activityId: eventId,
+          parentActivityId: null,
+          scope: "compaction",
+          subjectId: String(index + 1),
+          callIndex: index,
+          label: "Context automatically compacting",
+          action: "start",
+          revision: 1,
+          occurredAtUtc: new Date(100 + index * 10).toISOString(),
+        });
+        transcript.upsertActivity({
+          activityId: eventId,
+          parentActivityId: null,
+          scope: "compaction",
+          subjectId: String(index + 1),
+          callIndex: index,
+          label: "Context automatically compacting",
+          action: "complete",
+          revision: 2,
+          occurredAtUtc: new Date(105 + index * 10).toISOString(),
+        });
+        state.storage.sql.exec(`INSERT INTO compaction_checkpoints
+          (projection_key, execution_principal_key, resource_visibility_fingerprint,
+           checkpoint_template_version, run_id, compacted_through_sequence,
+           messages_json, summary, model, context_tokens_before_compaction,
+           context_window_tokens, input_tokens, output_tokens, cost_micros,
+           created_at, updated_at)
+          VALUES ('projection', 'workspace:one', 'inventory:0', 1,
+                  'legacy-compaction-run', ?, ?, ?, 'model', 100, 1000, 10, 2, 30, 0, 0)`,
+        checkpoint.sequence, JSON.stringify(checkpoint.messages), checkpoint.summary);
+      }
+    });
+
+    await expect(stub.backfillLegacyTranscript({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000720",
+      cutoverVersion: 27,
+    })).resolves.toMatchObject({ sourceCheckpointCount: 2, verified: true });
+    const outcome = await stub.transferLegacyTranscriptPayloadOwnership({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000721",
+    });
+    expect(outcome).toMatchObject({
+      applied: true,
+      verified: true,
+      sourceCheckpointCount: 2,
+      checkpointProjectionCount: 2,
+    });
+    expect(outcome.preTransferBookmark.length).toBeGreaterThan(0);
+    await runInDurableObject(stub, async (_instance, state) => {
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const snapshot = transcript.createOpeningSnapshot({
+        unreadHighWaterAttentionOrdinal: null,
+        now: 1_000,
+      });
+      expect(snapshot.ranges[0]!.turns.filter((turn) => turn.entryKind === "status")).toHaveLength(2);
+      expect(snapshot.activities.filter((activity) => activity.scope === "compaction"))
+        .toEqual([
+          expect.objectContaining({
+            activityId: "legacy-compaction-run:compaction:1",
+            state: "completed",
+          }),
+          expect.objectContaining({
+            activityId: "legacy-compaction-run:compaction:2",
+            state: "completed",
+          }),
+        ]);
+      const rows = state.storage.sql.exec<{
+        compacted_through_sequence: number;
+        payload_json: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT checkpoint.compacted_through_sequence, payload.payload_json
+           FROM transcript_compaction_checkpoints checkpoint
+           JOIN transcript_facts fact ON fact.fact_id = checkpoint.checkpoint_fact_id
+           JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+          WHERE checkpoint.run_id = 'legacy-compaction-run'
+          ORDER BY checkpoint.compacted_through_sequence`,
+      ).toArray();
+      expect(rows.map((row) => ({
+        sequence: Number(row.compacted_through_sequence),
+        messages: (JSON.parse(row.payload_json) as { messages: unknown }).messages,
+      }))).toEqual(expected.map((checkpoint) => ({
+        sequence: checkpoint.sequence,
+        messages: checkpoint.messages,
+      })));
+    });
+  });
+
   it("commits the exact loop and participant projections atomically and preserves snapshot fences", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
     await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
       const transcript = new WorkstreamTranscriptStorage(state.storage);
       await transcript.commitBindTransition({
         kind: "state_initialized",
@@ -451,6 +569,7 @@ describe("work-stream transcript on workerd SQLite", () => {
         turnId: "after-fence",
         actor: "human",
         authorUserId: "user-1",
+        text: "After",
         createdAtUtc: new Date().toISOString(),
         attentionOrdinal: 1,
       });
