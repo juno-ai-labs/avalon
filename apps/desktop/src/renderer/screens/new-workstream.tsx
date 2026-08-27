@@ -221,7 +221,9 @@ function AttentionWorkstreamRow({ projects, workstream }: { projects: ProjectSum
           same ranking the sidebar dot uses, so one work stream does not show
           two different markers on two screens. */}
       <StatusDot status={workstreamMarkerStatus(workstream)} />
-      <ProjectIconPile projects={projects.filter((project) => project.workstreamIds.includes(workstream.id))} />
+      <span className="waiting-workstream-projects">
+        <ProjectIconPile projects={projects.filter((project) => project.workstreamIds.includes(workstream.id))} />
+      </span>
       <span className="waiting-workstream-copy">
         <strong>{workstream.title}</strong>
         {summary && <span>{summary}</span>}

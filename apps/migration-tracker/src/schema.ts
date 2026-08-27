@@ -33,11 +33,11 @@ const MIGRATIONS_TABLE = `
  * One row per Durable Object the tracker has ever heard of, from either source.
  *
  * `object_id` is the primary key because it is the only identifier both sources
- * produce: the Cloudflare inventory API returns IDs and nothing else, and a
- * report carries the same ID from `state.id.toString()`. Everything else on the
- * row is nullable because either source may be the first to arrive — an object
- * discovered by a sweep has no version until it next wakes, and an object that
- * reported before the first sweep has no namespace until one runs.
+ * produce: the Cloudflare inventory API returns an ID plus its storage-presence
+ * flag, and a report carries the same ID from `state.id.toString()`. Everything
+ * else on the row is nullable because either source may be the first to arrive —
+ * an object discovered by a sweep has no version until it next wakes, and an
+ * object that reported before the first sweep has no namespace until one runs.
  */
 const V1_DURABLE_OBJECTS = `
   CREATE TABLE IF NOT EXISTS durable_objects (
@@ -50,6 +50,8 @@ const V1_DURABLE_OBJECTS = `
     region TEXT,
     app_env TEXT,
     worker_version_id TEXT,
+    -- The latest inventory fact. Report-only rows keep the default; it is not
+    -- interpreted until last_swept_at proves an inventory observation exists.
     has_stored_data INTEGER NOT NULL DEFAULT 0,
     -- The sweep that last listed this object. A monotonic receipt id rather
     -- than a timestamp: absence is decided by comparing against the current
@@ -139,8 +141,9 @@ const V1_SWEEPS = `
 
 /**
  * One row per Durable Object namespace the account has ever had. Two more
- * columns arrive in v2 below — `retired_at` and `last_sweep_id` — so this
- * `CREATE TABLE` is not the whole shape of the deployed table.
+ * columns arrive below — `retired_at` and `last_sweep_id` in v2, then
+ * `last_listed_sweep_id` in v5 — so this `CREATE TABLE` is not the whole shape
+ * of the deployed table.
  */
 const V1_NAMESPACES = `
   CREATE TABLE IF NOT EXISTS durable_object_namespaces (
@@ -275,6 +278,22 @@ const V4_MIGRATION_RUNS = `
   ) STRICT
 `;
 
+/**
+ * The sweep receipt that most recently listed this namespace's objects.
+ *
+ * `last_sweep_id` cannot carry both meanings: it advances whenever the
+ * namespace itself was returned, even when its object listing failed, because
+ * namespace retirement depends on that fact. `last_listed_sweep_id` advances
+ * only when `objects` is non-null, so the displayed Stored count and IDs count
+ * remain a projection of the same successful listing.
+ */
+const V5_NAMESPACE_LISTING_STAMP = [
+  `ALTER TABLE durable_object_namespaces ADD COLUMN last_listed_sweep_id INTEGER`,
+  `UPDATE durable_object_namespaces
+      SET last_listed_sweep_id = last_sweep_id
+    WHERE last_swept_at IS NOT NULL`,
+] as const;
+
 export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
   version: 1,
   description: "durable object inventory, migration reports, and sweep receipts",
@@ -313,6 +332,10 @@ export const REGISTRY_MIGRATIONS: readonly RegistryMigration[] = [{
     `CREATE UNIQUE INDEX IF NOT EXISTS migration_runs_run_id
        ON migration_runs (run_id)`,
   ],
+}, {
+  version: 5,
+  description: "separate namespace discovery from successful object listings",
+  statements: V5_NAMESPACE_LISTING_STAMP,
 }];
 
 export const REGISTRY_SCHEMA_VERSION = REGISTRY_MIGRATIONS.at(-1)?.version ?? 0;

@@ -2071,11 +2071,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(participant);
       }
       if (request.operation === "remove_participant") {
-        await this.product.removeParticipant(current, request.userId);
-        await this.publishLocalProductEvent(identity, {
-          type: "participant_removed",
-          userId: request.userId,
-        });
+        const outcome = await this.product.removeParticipant(current, request.userId);
+        if (outcome !== "not_found") {
+          // The participant fact is already committed. Close every socket it
+          // just revoked before any fallible event preparation or publication;
+          // a failed response can then be retried without extending access.
+          this.evictReadersWhoLostLocalAccess();
+          await this.publishLocalProductEvent(identity, {
+            type: "participant_removed",
+            userId: request.userId,
+          });
+        }
         return jsonResponse({ ok: true });
       }
       if (request.operation === "attach_resource") {
