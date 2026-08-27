@@ -10,7 +10,16 @@
  * Everything here exists to put agent output through the `markdown` block on
  * every delivery path, and to split it at Slack's limit without severing the
  * structures that make it worth rendering at all.
+ *
+ * The same "every delivery path" is why the citation rewrite sits in the
+ * splitter rather than at each call site. Slack renders neither the
+ * `resource://` scheme nor GFM footnote syntax, so an unrewritten citation
+ * reaches a channel as a raw scheme URL, a literal `[^1]`, or — for the embed
+ * form — a broken image. Both paths that post agent markdown chunk it here
+ * first, so this is the one place that cannot be forgotten.
  */
+
+import { rewriteCitationsForPlainDelivery } from "@rally/contracts/citations";
 
 /** Slack's cumulative limit for all `markdown` blocks in one message payload. */
 export const SLACK_MARKDOWN_BLOCK_LIMIT = 12_000;
@@ -54,10 +63,15 @@ export function slackHeaderBlock(title: string): Record<string, unknown> {
  * fenced code block closes the fence and the next chunk reopens it, so a long
  * code block arrives as two rendered blocks instead of one block and a page of
  * loose text.
+ *
+ * Citations are rewritten to readable text first, before anything is measured
+ * or cut, because the rewrite changes the length of what is being split and a
+ * trailing source list must land whole in the last chunk rather than being
+ * assembled across two.
  */
 export function splitSlackMarkdown(value: string, maximum = SLACK_MARKDOWN_BLOCK_LIMIT): string[] {
   if (maximum < MINIMUM_CHUNK) throw new Error("Slack markdown chunks need room to reopen a fence");
-  const normalized = value.replace(/\r\n/gu, "\n");
+  const normalized = rewriteCitationsForPlainDelivery(value.replace(/\r\n/gu, "\n"));
   if (!normalized.trim()) return [];
   if (normalized.length <= maximum) return [normalized];
 
