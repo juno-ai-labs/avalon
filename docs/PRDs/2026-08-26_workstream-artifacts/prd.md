@@ -218,7 +218,9 @@ version ledger, a revision protocol, a card, and a pane.
    representation: nothing in V1 renders HTML, runs an app, or evaluates a
    spreadsheet, and the pane renders Markdown only — but the artifact object
    carries a type, so later types are new renderers and policy, not a new
-   object model.
+   object model. The platform path for the reactive end — Dynamic Workers
+   run as supervised Durable Object facets — is identified and sketched in
+   [`design.md`](design.md), still gated on its own security PRD.
 8. **A workspace artifacts library, cross-work-stream artifact search, or
    sharing an artifact outside its work stream.** Rejected. Rally is
    organized around work streams rather than channels, search, or a global
@@ -562,10 +564,14 @@ inactive*; everything below is *roadmap*.
 **Long term:**
 
 - **Comments and annotations**, with their participation-contract PRD.
-- **Richer artifact types** — structured tables, HTML dashboards,
-  interactive mini-apps rendered under a security model of their own; the
-  object carries a type from day one so these are renderers and policy, not
-  remodeling.
+- **Richer artifact types** — structured tables, HTML dashboards, and
+  realtime/reactive mini-apps under a security model of their own. The
+  identified platform path for the reactive end is agent-written code run
+  as a Dynamic Worker inside a supervised Durable Object facet — its own
+  isolated SQLite for runtime state, bindings and network withheld by the
+  supervisor, code versions deployed from the ledger
+  ([`design.md`](design.md)); the object carries a type from day one so
+  these are renderers and policy, not remodeling.
 - **External-document subscriptions** — a watched external document whose
   changes can notify the work stream and let the agent decide whether to
   re-read; the connector-authored version is the ledger's third dormant
