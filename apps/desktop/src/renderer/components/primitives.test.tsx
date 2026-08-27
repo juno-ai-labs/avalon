@@ -110,6 +110,33 @@ describe('SocketStatusIndicator', () => {
 });
 
 describe('AvatarStack', () => {
+  it('keeps an avatar mounted while its presence ring fades in and out', () => {
+    const members = [{
+      id: 'user-collaborator',
+      name: 'Ari Collaborator',
+      email: 'ari@rally.test',
+      timezone: 'America/Los_Angeles',
+    }];
+    const view = (presentUserIds: readonly string[] = []) => (
+      <Tooltip.Provider>
+        <AvatarStack members={members} presentUserIds={presentUserIds} />
+      </Tooltip.Provider>
+    );
+    const { container, rerender } = render(view());
+    const avatar = container.querySelector('.avatar');
+    if (!avatar) throw new Error('avatar missing before presence change');
+
+    rerender(view(['user-collaborator']));
+    expect(container.querySelector('.avatar')).toBe(avatar);
+    expect(avatar.closest('.avatar-stack-item')).toHaveClass('is-present');
+    expect(container.querySelector('.avatar-presence-ping')).not.toBeNull();
+
+    rerender(view());
+    expect(container.querySelector('.avatar')).toBe(avatar);
+    expect(avatar.closest('.avatar-stack-item')).not.toHaveClass('is-present');
+    expect(container.querySelector('.avatar-presence-ping')).toBeNull();
+  });
+
   it('explains when another participant is viewing the work stream', async () => {
     stubResizeObserver();
     const { container } = render(

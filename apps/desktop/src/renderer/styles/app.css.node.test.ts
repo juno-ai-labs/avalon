@@ -239,21 +239,39 @@ describe('raised popover interaction states', () => {
 });
 
 describe('work-stream participant presence', () => {
-  it('draws a tokenized Tailwind-style ping and preserves a static reduced-motion state', () => {
+  it('finishes the arrival pop before pulsing every ten seconds and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
     expect(ping).not.toBeNull();
-    expect(ping).toContain('animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;');
+    expect(ping).toContain('animation: avatar-presence-ping 10s cubic-bezier(0, 0, .2, 1) infinite;');
+    expect(ping).toContain('animation-delay: 420ms;');
     expect(ping).toContain('background: color-mix(');
     expect(ping).toContain('var(--av-sys-color-success-base)');
     expect(ping).toContain('inset: 0;');
+    expect(ping).toContain('opacity: 0;');
+    expect(ping).toContain('transform: scale(1);');
     expect(ping).toContain('z-index: 1;');
-    expect(stylesheet).toContain('75%, 100% { opacity: 0; transform: scale(2); }');
+    expect(stylesheet).toContain('20%, 100% { opacity: 0; transform: scale(2); }');
+    expect(rule('.avatar-stack .avatar')).toContain('transition: border-color 180ms ease;');
+    const presentAvatar = rule('.avatar-stack-item.is-present > .avatar');
+    expect(presentAvatar).toContain(
+      'animation: avatar-presence-entry 420ms cubic-bezier(.2, .75, .24, 1);',
+    );
+    expect(presentAvatar).toContain('border-color: var(--av-sys-color-brand-base);');
+    expect(stylesheet).toContain('42% { transform: translateY(-3px); }');
     const reducedMotion = stylesheet.match(
-      /@media \(prefers-reduced-motion: reduce\) \{\s*\.avatar-presence-ping \{([^}]*)\}/,
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.avatar-presence-ping \{([^}]*)\}/,
     )?.[1];
     expect(reducedMotion).toContain('animation: none;');
     expect(reducedMotion).toContain('opacity: .3;');
     expect(reducedMotion).toContain('transform: scale(1.35);');
+    const reducedMotionAvatar = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.avatar-stack \.avatar \{([^}]*)\}/,
+    )?.[1];
+    expect(reducedMotionAvatar).toContain('transition: none;');
+    const reducedMotionEntry = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.avatar-stack-item\.is-present > \.avatar \{([^}]*)\}/,
+    )?.[1];
+    expect(reducedMotionEntry).toContain('animation: none;');
     const overflow = stylesheet.match(/\n\.avatar-overflow \{\n {2}align-items: center;[^}]*\}/)?.[0];
     expect(overflow).toContain('position: relative;');
     expect(overflow).toContain('z-index: 1;');
