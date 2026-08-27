@@ -273,7 +273,10 @@ test('the landing site deploys from the tip of main, never from the stale releas
   // The step executes code from main's tip — commits this job never built —
   // so the signing identity must be gone before any of it runs.
   assert.ok(keychainRemoved < siteStart, 'The signing keychain must be removed before tip code runs');
-  const siteStep = workflow.slice(siteStart);
+  // Bounded at the next step so a step appended after this one is not
+  // silently policed by the site step's own negative assertions.
+  const nextStep = workflow.indexOf('\n      - name: ', siteStart);
+  const siteStep = workflow.slice(siteStart, nextStep === -1 ? workflow.length : nextStep);
 
   // Each command is looked up as a complete run-block line — anchored by the
   // newline and the block's indent, so a comment quoting it cannot satisfy
@@ -293,9 +296,10 @@ test('the landing site deploys from the tip of main, never from the stale releas
   // never older than one of those.
   const fetched = line('git fetch origin main');
   const added = line('git worktree add --detach "$site" origin/main');
-  // Its own frozen install, filtered to the site's dependency closure so the
-  // Electron and Worker toolchains stay out of the release's final step —
-  // and failing loudly when the filter stops matching, because an unmatched
+  // Its own frozen install, filtered to the site's dependency closure so
+  // Electron and the desktop toolchain stay out of the release's final step
+  // (wrangler is a site dependency, so workerd and esbuild remain) — and
+  // failing loudly when the filter stops matching, because an unmatched
   // pnpm filter exits 0 and a green run would deploy no site at all.
   const installed = line('pnpm -C "$site" install --frozen-lockfile --filter "@rally/site..." --fail-if-no-match');
   const typechecked = line('pnpm -C "$site" --filter @rally/site --fail-if-no-match typecheck');
@@ -317,15 +321,31 @@ test('the landing site deploys from the tip of main, never from the stale releas
   // The shell stays in the job workspace: every git and pnpm call addresses
   // the worktree explicitly, so the EXIT trap never removes its own cwd.
   assert.doesNotMatch(siteStep, /^ +cd\b/mu, 'The site step must not change directory');
-  assert.doesNotMatch(siteStep, /^ {10}pnpm (?!-C "\$site" )/mu, 'Every pnpm invocation in the site step must address the worktree');
+  // Scanned per line rather than anchored on the first token, so an env-var
+  // prefix or a command substitution cannot slip an invocation of the job
+  // checkout past the assertion.
+  for (const invocation of siteStep.split('\n')) {
+    if (/^\s*#/u.test(invocation) || !/(^|[\s(`])pnpm\s/u.test(invocation)) continue;
+    assert.match(invocation, /pnpm -C "\$site" /u,
+      `Every pnpm invocation in the site step must address the worktree: ${invocation.trim()}`);
+  }
 });
 
 test('nothing deploys the site from the release checkout', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
 
-  // The pre-2026-08-27 one-liner, banned anywhere in the workflow: deploying
-  // the site from the job's own working tree is what reverted a live fix.
-  assert.doesNotMatch(workflow, /^ {8}run: pnpm --filter @rally\/site run deploy$/mu);
+  // The pre-2026-08-27 failure was a site deploy running from the job's own
+  // working tree — the release commit, up to a build stale — which reverted
+  // a live site fix. Any spelling of a site deploy that does not address the
+  // tip worktree is that failure coming back, so this scans every
+  // non-comment line naming a site deploy rather than pinning one exact
+  // command form.
+  for (const invocation of workflow.split('\n')) {
+    if (/^\s*#/u.test(invocation)) continue;
+    if (!(invocation.includes('pnpm') && invocation.includes('@rally/site') && invocation.includes('deploy'))) continue;
+    assert.match(invocation, /-C "\$site"/u,
+      `A site deploy must run from the tip worktree, never the release checkout: ${invocation.trim()}`);
+  }
 });
 
 test('the release records its site config back on the default branch', async () => {

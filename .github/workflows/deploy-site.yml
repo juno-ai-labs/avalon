@@ -16,6 +16,13 @@ on:
       # provider's callback until an unrelated site change ships.
       - "packages/**"
       - "pnpm-lock.yaml"
+      # The site's tsconfig extends the root config, and the workspace file
+      # decides which install build scripts run — a merge touching either
+      # changes what this workflow would have built, so it must redeploy and
+      # verify the site rather than leave the desktop release's site deploy
+      # as the only path that ships it.
+      - "tsconfig.base.json"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
 
