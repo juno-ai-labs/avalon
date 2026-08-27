@@ -1,13 +1,13 @@
 /**
  * Object-local transcript for one work stream.
  *
- * The `parts` table is the work stream's record of what was said and by whom.
+ * `workstream_message_records` is the work stream's record of what was said and by whom.
  * Members read it through `WorkstreamObjectProductService`, which has always
  * been object-native. This class is the other reader and writer: the harness,
  * the digest, Slack, inbound email, and the automation service, all of which
  * reached the same rows from the Worker by preparing D1-shaped SQL against
  * `_runtime_messages` — a compatibility view whose INSTEAD OF trigger mapped
- * `member` to `human`, `parts.content` to `text_content`, invented
+ * `member` to `human`, the stored payload's content to `text_content`, invented
  * `workspace_id` and `workstream_id` from the object's identity row, converted
  * unix milliseconds to ISO-8601, and — the part that is easy to miss — advanced
  * the work stream's `next_attention_ordinal` and `last_people_activity_at` as a
@@ -133,7 +133,7 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
 /**
  * Which message types a window is about, as the question its caller asks.
  *
- * Not one list. `parts.message_type` carries no CHECK constraint, so "these
+ * Not one list. `workstream_message_records.message_type` carries no CHECK constraint, so "these
  * types" and "everything but these" are genuinely different questions about it:
  * an `include` list silently drops a type nobody has added yet, and an
  * `exclude` list silently admits one. Naming means the first — `text` alone,
@@ -588,31 +588,31 @@ export class WorkstreamMessageStorage {
     prepared: PreparedWorkstreamMessageRecord,
   ): { outcome: "appended" | "refreshed"; sequenceNumber: number } {
     // Guarded on `message_type = 'tool'` in the *lookup*, not only in the
-      // update, so the answer is about a row that exists. The routed
-      // `DO UPDATE … WHERE parts.message_type = 'tool'` matched nothing when a
-      // non-tool row held this id and still reported a write; here that case
-      // falls to the insert and fails on the primary key instead. Neither is a
-      // path production takes — the id is the invocation's own UUIDv7 and no
-      // message carries it — so this is about the operation answering truly
-      // rather than about a state to handle.
+    // update, so the answer is about a row that exists. The routed
+    // `DO UPDATE … WHERE workstream_message_records.message_type = 'tool'`
+    // matched nothing when a non-tool row held this id and still reported a
+    // write; here that case falls to the insert and fails on the primary key
+    // instead. Neither is a path production takes — the id is the invocation's
+    // own UUIDv7 and no message carries it — so this is about the operation
+    // answering truly rather than about a state to handle.
     const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
-        `SELECT sequence_number FROM workstream_message_records
-          WHERE substream_id = '0' AND id = ? AND message_type = 'tool'`,
-        input.messageId,
+      `SELECT sequence_number FROM workstream_message_records
+        WHERE substream_id = '0' AND id = ? AND message_type = 'tool'`,
+      input.messageId,
     ));
     if (existing) {
       prepared.input.sequenceNumber = existing.sequence_number;
       insertWorkstreamMessageRecord(this.sql, prepared);
-        // What the trigger's counter update did on the conflict path: the work
-        // stream's own clock moves, its sequence and attention counters do not.
+      // What the trigger's counter update did on the conflict path: the work
+      // stream's own clock moves, its sequence and attention counters do not.
       this.sql.exec(
-          `UPDATE workstream SET updated_at = ? WHERE id = 1`,
-          input.editedAt ?? input.createdAt,
-        );
+        `UPDATE workstream SET updated_at = ? WHERE id = 1`,
+        input.editedAt ?? input.createdAt,
+      );
       return { outcome: "refreshed" as const, sequenceNumber: existing.sequence_number };
     }
     const sequence = this.sql.exec<{ next_sequence_number: number } & Record<string, SqlStorageValue>>(
-        `SELECT next_sequence_number FROM workstream WHERE id = 1`,
+      `SELECT next_sequence_number FROM workstream WHERE id = 1`,
     ).one().next_sequence_number;
     prepared.input.sequenceNumber = sequence;
     insertWorkstreamMessageRecord(this.sql, prepared);

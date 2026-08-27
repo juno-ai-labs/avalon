@@ -120,7 +120,7 @@ function projectMessage(
 /**
  * The published spelling of a stored message type.
  *
- * `parts.message_type` is constrained by the object's schema to this exact set,
+ * `workstream_message_records.message_type` is constrained by the object's schema to this exact set,
  * so the fallback is unreachable — but it is a fallback rather than a cast,
  * because the alternative is asserting over the one column whose vocabulary the
  * retired trigger branched on.

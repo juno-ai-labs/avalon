@@ -33,7 +33,7 @@ export const UpsertToolMessageInputSchema = z.object({
 /**
  * The wire contract for one work stream's transcript.
  *
- * The `parts` rows are object-local, but every reader and writer that is not
+ * The canonical message records are object-local, but every reader and writer that is not
  * the product service runs in the Worker. This endpoint is how they reach them,
  * in place of D1-shaped SQL rewritten onto `_runtime_messages`.
  */

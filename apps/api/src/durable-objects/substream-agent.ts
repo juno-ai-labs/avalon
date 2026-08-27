@@ -81,6 +81,7 @@ import {
 } from "../observability/tracing";
 import {
   claimHarnessAttempt,
+  repairTerminalResidualReceipts,
   reapStaleHarnessRuns,
   RunOwnershipLostError,
   terminalizeHarnessAttempt,

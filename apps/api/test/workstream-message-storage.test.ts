@@ -342,7 +342,7 @@ describe("a tool card in the transcript", () => {
       .toEqual([{ tool_status: "completed", edited_at: NOW + 5_000 }]);
     expect(sql.exec(
       `SELECT tool_name, tool_mode, tool_status, edited_at
-         FROM workstream_message_records WHERE message_id = 'invocation-1'`,
+         FROM workstream_message_records WHERE id = 'invocation-1'`,
     ).toArray()).toEqual([{
       tool_name: "linear.issue.get",
       tool_mode: "read",

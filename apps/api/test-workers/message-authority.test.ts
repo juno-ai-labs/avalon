@@ -135,7 +135,7 @@ describe("message authority on real workerd", () => {
     expect(result.value).toEqual({ outcome: "appended", sequenceNumber: 1 });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
-        `SELECT tool_status FROM workstream_message_records WHERE message_id = 'tool-1'`,
+        `SELECT tool_status FROM workstream_message_records WHERE id = 'tool-1'`,
       ).one().tool_status).toBe("pending");
       const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
         `SELECT payload_json FROM durable_outbox WHERE partition_key = 'common'`,
