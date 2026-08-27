@@ -82,6 +82,7 @@ function fixture() {
     clearGitHubReadAccess: vi.fn(async () => undefined),
     readFile: vi.fn(async () => new Uint8Array()),
     writeFile: vi.fn(async () => undefined),
+    runUtilityCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
     runCommand: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })),
     cleanupCommand: vi.fn(async () => undefined),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),

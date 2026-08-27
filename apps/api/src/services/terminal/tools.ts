@@ -6,7 +6,6 @@ import { TerminalArgumentSchemas, type TerminalToolExecutors } from "./contract"
 import type { TerminalCheckoutRepositoryOutput } from "./repository-selection";
 
 const MAX_FILE_BYTES = 10 * 1_048_576;
-const MAX_READ_BYTES = 256 * 1_024;
 const MAX_INLINE_OUTPUT_BYTES = 128 * 1_024;
 
 type ReadFileInput = z.infer<typeof TerminalArgumentSchemas.read_file>;
@@ -84,9 +83,39 @@ export interface TerminalPublishedBranchAndPrOutput {
   };
 }
 
+export interface TerminalWriteFileOutput {
+  created: boolean;
+  previousLines: number;
+}
+
+export interface TerminalWriteFileOptions {
+  /** UTF-8 content this same tool invocation already read and validated. */
+  previousText: string;
+}
+
+export interface TerminalReadFilePage {
+  content: string;
+  startLine: number;
+  endLine: number;
+  totalLines: number;
+  truncated: boolean;
+  nextOffset?: number;
+}
+
 export interface TerminalRuntime {
   readFile(context: HarnessToolContext, filePath: string): Promise<Uint8Array | null>;
-  writeFile(context: HarnessToolContext, filePath: string, bytes: Uint8Array): Promise<void>;
+  readFilePage(
+    context: HarnessToolContext,
+    filePath: string,
+    offset: number,
+    limit: number,
+  ): Promise<TerminalReadFilePage | null>;
+  writeFile(
+    context: HarnessToolContext,
+    filePath: string,
+    bytes: Uint8Array,
+    options?: TerminalWriteFileOptions,
+  ): Promise<TerminalWriteFileOutput>;
   applyPatch(context: HarnessToolContext, patch: string): Promise<TerminalPatchOutput>;
   runCommand(context: HarnessToolContext, input: {
     command: string;
@@ -265,40 +294,22 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
     async read_file(rawInput, context): Promise<HarnessToolResult> {
       const input: ReadFileInput = TerminalArgumentSchemas.read_file.parse(rawInput);
       const filePath = safeRelativePath(input.filePath, "filePath");
-      const bytes = await runtime.readFile(context, filePath);
-      if (!bytes) {
+      const offset = input.offset ?? 1;
+      const requestedLimit = input.limit ?? 200;
+      const page = await runtime.readFilePage(context, filePath, offset, requestedLimit);
+      if (!page) {
         throw new TerminalToolError(
           "not_found",
           "The requested file was not found. Use `terminal_run_command` with `pwd` and `ls -la` or `find` to inspect available paths before trying another file.",
           { reason: "Inspect the terminal workspace root before choosing another path." },
         );
       }
-      const text = decodeText(bytes, filePath);
-      const allLines = text ? text.split("\n") : [];
-      if (allLines.at(-1) === "") allLines.pop();
-      const offset = input.offset ?? 1;
-      const requestedLimit = input.limit ?? 200;
-      const selected: string[] = [];
-      let selectedBytes = 0;
-      for (const line of allLines.slice(offset - 1, offset - 1 + requestedLimit)) {
-        const lineBytes = new TextEncoder().encode(`${selected.length ? "\n" : ""}${line}`).byteLength;
-        if (selectedBytes + lineBytes > MAX_READ_BYTES) break;
-        selected.push(line);
-        selectedBytes += lineBytes;
-      }
-      const endLine = selected.length ? offset + selected.length - 1 : Math.min(offset - 1, allLines.length);
-      const truncated = endLine < allLines.length;
       return {
         output: {
           filePath,
-          content: selected.join("\n"),
-          startLine: offset,
-          endLine,
-          totalLines: allLines.length,
-          truncated,
-          ...(truncated ? { nextOffset: endLine + 1 } : {}),
+          ...page,
         },
-        summary: `Read ${filePath} lines ${offset}–${endLine}`,
+        summary: `Read ${filePath} lines ${page.startLine}–${page.endLine}`,
       };
     },
     async edit_file(rawInput, context): Promise<HarnessToolResult> {
@@ -321,7 +332,7 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
         ? prior.split(input.oldString).join(input.newString)
         : prior.replace(input.oldString, input.newString);
       const bytes = boundedUtf8(content, MAX_FILE_BYTES, "filePath");
-      await runtime.writeFile(context, filePath, bytes);
+      await runtime.writeFile(context, filePath, bytes, { previousText: prior });
       return {
         output: {
           filePath,
@@ -335,19 +346,17 @@ export function createTerminalToolExecutors(runtime: TerminalRuntime): TerminalT
     async write_file(rawInput, context): Promise<HarnessToolResult> {
       const input: WriteFileInput = TerminalArgumentSchemas.write_file.parse(rawInput);
       const filePath = safeRelativePath(input.filePath, "filePath");
-      const priorBytes = await runtime.readFile(context, filePath);
-      const prior = priorBytes ? decodeText(priorBytes, filePath) : "";
       const bytes = boundedUtf8(input.content, MAX_FILE_BYTES, "content");
-      await runtime.writeFile(context, filePath, bytes);
+      const replaced = await runtime.writeFile(context, filePath, bytes);
       return {
         output: {
           filePath,
-          created: priorBytes === null,
+          created: replaced.created,
           bytes: bytes.byteLength,
           additions: linesIn(input.content),
-          deletions: linesIn(prior),
+          deletions: replaced.previousLines,
         },
-        summary: `${priorBytes === null ? "Created" : "Replaced"} ${filePath}`,
+        summary: `${replaced.created ? "Created" : "Replaced"} ${filePath}`,
       };
     },
     async apply_patch(rawInput, context): Promise<HarnessToolResult> {
