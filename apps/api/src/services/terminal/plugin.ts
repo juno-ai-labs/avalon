@@ -282,12 +282,14 @@ export async function createAvalonTerminalPlugin(
     observedExecutors,
     `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`,
   );
+  let activationAttempt = 0;
   return {
     ...plugin,
     activationTimeoutMs: TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
     onActivate: async (context: HarnessPluginActivationContext) => {
       const startedAt = Date.now();
-      const toolCallId = `${context.harnessRunId}:plugin:terminal:activation`;
+      const activationAttemptNumber = ++activationAttempt;
+      const toolCallId = `${context.harnessRunId}:plugin:terminal:activation:${activationAttemptNumber}`;
       const trace = createTerminalToolTrace({
         toolName: "terminal_plugin_activation",
         toolCallId,
@@ -305,6 +307,7 @@ export async function createAvalonTerminalPlugin(
           workstream_id: context.workstreamId,
           harness_run_id: context.harnessRunId,
           tool_call_id: toolCallId,
+          activation_attempt: activationAttemptNumber,
           state: "completed",
           repository_state: repositoryPreparationCode ? "deferred" : "prepared",
           ...(repositoryPreparationCode ? { repository_code: repositoryPreparationCode } : {}),
@@ -325,6 +328,7 @@ export async function createAvalonTerminalPlugin(
           workstream_id: context.workstreamId,
           harness_run_id: context.harnessRunId,
           tool_call_id: toolCallId,
+          activation_attempt: activationAttemptNumber,
           state: "failed",
           code: error instanceof TerminalToolError ? error.code : "terminal_activation_failed",
           duration_ms: durationMs,
