@@ -828,9 +828,14 @@ describe("Daytona Terminal provider", () => {
     );
   });
 
-  it("publishes a verified bundle from a fresh ephemeral sandbox with a host-scoped secret", async () => {
+  it("publishes a verified bundle from a fresh ephemeral sandbox with a process-scoped credential", async () => {
     const uploadFile = vi.fn(async () => undefined);
-    const executeCommand = vi.fn(async () => ({
+    const executeCommand = vi.fn<(
+      command: string,
+      cwd?: string,
+      env?: Record<string, string>,
+      timeout?: number,
+    ) => Promise<{ exitCode: number; result: string }>>(async () => ({
       exitCode: 0,
       result: "published\n",
     }));
@@ -844,21 +849,13 @@ describe("Daytona Terminal provider", () => {
       },
       delete: removePublisher,
     };
-    const createSecret = vi.fn(async (input: { name: string; hosts?: string[] }) => ({
-      id: "secret-1", name: input.name, placeholder: "dtn_secret_1",
-      hosts: input.hosts ?? [], createdAt: "", updatedAt: "",
-    }));
-    const deleteSecret = vi.fn(async () => undefined);
-    const create = vi.fn(async () => publisherSandbox);
+    const create = vi.fn<(
+      input: Record<string, unknown>,
+      options?: { timeout?: number },
+    ) => Promise<typeof publisherSandbox>>(async () => publisherSandbox);
     const client = {
       create,
       get: vi.fn(async () => publisherSandbox),
-      secret: {
-        list: vi.fn(async () => ({ items: [], total: 0, nextCursor: null })),
-        create: createSecret,
-        update: vi.fn(),
-        delete: deleteSecret,
-      },
     };
     const provider = createDaytonaTerminalProvider({
       capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
@@ -875,31 +872,60 @@ describe("Daytona Terminal provider", () => {
       expectedOldSha: null,
       githubBasicCredential: "encoded-credential",
     })).resolves.toEqual({ publishedSha: "b".repeat(40) });
-    expect(createSecret).toHaveBeenCalledWith(expect.objectContaining({
-      value: "encoded-credential",
-      hosts: ["github.com"],
-    }));
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       snapshot: "snapshot",
       ephemeral: true,
       public: false,
       domainAllowList: "github.com",
-      secrets: { GITHUB_WRITE_BASIC: expect.any(String) },
     }), { timeout: 60 });
+    expect(create.mock.calls[0]?.[0]).not.toHaveProperty("secrets");
     expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/publication.bundle", 120);
     expect(executeCommand).toHaveBeenCalledWith(
       expect.stringContaining("git fsck --strict"),
       "/workspace",
-      undefined,
+      { GITHUB_WRITE_BASIC: "encoded-credential" },
       180,
     );
     expect(executeCommand).toHaveBeenCalledWith(
       expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
       "/workspace",
-      undefined,
+      { GITHUB_WRITE_BASIC: "encoded-credential" },
       180,
     );
+    expect(executeCommand.mock.calls[0]?.[0]).not.toContain("encoded-credential");
     expect(removePublisher).toHaveBeenCalledWith(60, true);
-    expect(deleteSecret).toHaveBeenCalledWith("secret-1");
+  });
+
+  it("reports the safe trusted-publication stage when Daytona cannot execute it", async () => {
+    const executeCommand = vi.fn(async () => ({
+      exitCode: -1,
+      result: "RALLY_PUBLISH_FAILED_STAGE=remote_push\n",
+    }));
+    const removePublisher = vi.fn(async () => undefined);
+    const publisherSandbox = {
+      id: "publisher-1", name: "rally-publisher", state: "started",
+      fs: { uploadFile: vi.fn(async () => undefined), downloadFile: vi.fn() },
+      process: {
+        executeCommand,
+        createSession: vi.fn(), executeSessionCommand: vi.fn(), deleteSession: vi.fn(),
+      },
+      delete: removePublisher,
+    };
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(async () => publisherSandbox), get: vi.fn(async () => publisherSandbox) }));
+
+    await expect(provider.publishGitBundle({
+      operationId: "publication-1",
+      bundle: new Uint8Array([1, 2, 3]),
+      repositoryFullName: "owner/repo",
+      baseSha: "a".repeat(40),
+      headSha: "b".repeat(40),
+      headRef: "avalon/workstream-1",
+      expectedOldSha: null,
+      githubBasicCredential: "encoded-credential",
+    })).rejects.toThrow("Trusted Git publication failed at remote_push with exit code -1");
+    expect(removePublisher).toHaveBeenCalledWith(60, true);
   });
 });
