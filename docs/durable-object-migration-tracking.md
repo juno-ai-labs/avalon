@@ -749,10 +749,17 @@ goes through `hono/html` escaping.
   pnpm exec dotenv -e <credential-repo>/.env.local -- \
     pnpm migrate:legacy-workstream-transcripts -- --apply \
       --jurisdiction-probe-url=http://localhost:8790 \
-      --expected-global=389 --expected-eu=3
+      --expected-global=389 --expected-eu=3 \
+      --global-target-ids=/tmp/rally-global-main-substream-ids.json
   ```
 
-  Apply refuses count drift before the first object RPC. Every object returns a
+  The optional regional target files are JSON arrays of object IDs resolved
+  from the authoritative work-stream route set. The script verifies every ID
+  is unique, structurally valid, present in the current stored inventory, and
+  encoded for the matching jurisdiction. This lets an unrelated auxiliary or
+  test object remain visible as `excluded` without guessing from inventory
+  order or widening the reviewed main-feed target. Apply refuses target-count
+  drift before the first object RPC. Every object returns a
   real pre-write PITR bookmark and reconciliation outcome, persisted to a
   mode-0600 file under `/tmp` by default. Any object error makes the command
   fail after preserving completed outcomes. Re-run the same command after a
@@ -825,12 +832,15 @@ per-object rollback bookmark and partial-failure boundary.
 
 **What a future change has to respect:** schema migration and content migration
 are distinct operations. Content apply requires explicit fleet-count witnesses,
-regional classification, durable object-local atomic receipts, protected local
+regional classification, an authoritative target set when the namespace also
+contains unrelated regional objects, durable object-local atomic receipts, protected local
 recovery evidence, nonzero exit on any unverified object, and a full idempotent
-replay before completion. An object with a pending legacy tool or a connected
-transcript snapshot is ineligible for the mutating pass; the fleet command must
-record the failure and retry after settlement/disconnection, preserving both
-the source digest and every client's immutable sequence fence.
+replay before completion. An object with an open tool receipt behind a pending
+legacy card or a connected transcript snapshot is ineligible for the mutating
+pass; the fleet command must record the failure and retry after settlement or
+disconnection, preserving both the source digest and every client's immutable
+sequence fence. An orphaned historical pending card has no future writer and is
+therefore retained as `started`, not treated as live execution.
 
 ### 2026-08-26 — A manual SubstreamAgent fleet wake respects jurisdictions
 
