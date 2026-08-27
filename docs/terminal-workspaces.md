@@ -97,7 +97,7 @@ to preserve separate stdout and stderr through its named session. Cancellation
 of an accepted direct utility stops and restarts the sandbox before Rally lets
 the abandoned invocation return, establishing process quiescence without adding
 named-session setup to the success path. The trusted publisher uses the direct
-operation in its fresh ephemeral sandbox as well.
+operation in the already-authorized full-access work-stream sandbox as well.
 
 Command results expose three deliberately different clocks. `durationMs` is
 the provider command interval derived from the durable task timestamps;
@@ -279,8 +279,8 @@ network proxy, or a general GitHub administration surface.
   limits are enforced before R2 publication.
 - Trusted only has 20 effective Daytona targets. The immutable baseline consumes
   thirteen; duplicate custom targets do not consume another slot.
-- Git publication allows one fixed branch and convergent PR, a 50 MiB Git
-  bundle, bounded changed paths/objects, no `.github/workflows/` changes, and no
+- Git publication allows one fixed branch and convergent PR, bounded changed
+  paths, no `.github/workflows/` changes, and no
   protected/default-ref push. Closed or merged convergent PRs are not reopened.
 - Every expected model-repairable error names the next action: re-read a drifted
   file, inspect paths with `pwd`/`ls`/`find`, narrow an ambiguous edit, repair Git
@@ -394,11 +394,13 @@ Daytona SDK is reachable only through the regional adapter.
 The Daytona project credential stays a Worker secret. GitHub installation tokens
 are minted just in time and narrowed to the selected repository and operation.
 Read credentials remain mounted through host-scoped Daytona placeholders and
-are rotated or removed on revocation/expiry. The trusted publisher keeps the
-write credential out of the agent sandbox: it passes that credential only to
-the single Git process as transient Git configuration in a separate ephemeral
-sandbox, never writes it into the bare repository config, and deletes that
-sandbox afterward. Logs include IDs, state, error code, duration, and byte counts—not
+are rotated or removed on revocation/expiry. A full-access checkout establishes
+the same short-lived, single-repository write credential once in the work-stream
+sandbox; ordinary Git and the typed publisher share that already-authorized
+credential until the existing refresh boundary rotates it. The typed publisher
+still revalidates participant, grant, repository, branch, ancestry, expected
+remote SHA, and final PR state before completing its durable receipt. Logs
+include IDs, state, error code, duration, and byte counts—not
 commands, output, diffs, tokens, or resource contents.
 
 The account-level `avalon_terminal_operations` Analytics Engine dataset is even
@@ -547,6 +549,45 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-27 — Typed publication reuses the authorized repository sandbox
+
+**What changed:** `terminal_publish_branch_and_pr` now performs its expected-old
+SHA check, push, and post-push verification as one Rally-authored direct utility
+inside the selected full-access work-stream sandbox. It no longer creates a
+second Daytona sandbox, builds and transfers a Git bundle, uploads another
+credential, or boots a second Git environment. Fixed safe stage markers and the
+durable publication/PR convergence receipt remain. The direct command uses the
+validated repository URL rather than mutable local remote configuration and
+uses a per-publication URL alias that outranks broad model-authored Git URL
+rewrites. It disables repository-local Git hooks and automatic follow-tag pushes
+for the Rally-authored exact-ref push.
+
+**Why:** Two merged production repairs changed secret injection and then process
+environment injection in the disposable publisher, but the same live typed
+publication still ended with Daytona `exitCode: -1` and no script output. In
+the same repository, the normal full-access sandbox had already completed an
+authenticated `git push` and PR creation. The separate publisher duplicated an
+authorization and Git runtime boundary that checkout had already established,
+added 22 seconds to the final failed attempt, and supplied no additional branch
+scope because both credentials were repository-scoped GitHub App tokens.
+
+**Considered and rejected:** A third disposable-publisher launch mechanism,
+another provider retry, and preserving the bundle transfer only for validation.
+The first two keep debugging the redundant boundary; the last retains its
+largest transfers after local status, branch, ancestry, and changed-path checks
+have already validated the exact committed head.
+
+**Consequences:** Typed publication now pays one direct `process.executeCommand`
+against the warm sandbox and one GitHub API token boundary for remote fencing
+and convergent PR mutation. Immediately before that remote mutation, Rally
+mounts the freshly minted publication token into the already-authorized sandbox
+and records its expiry. The token remains the sandbox credential after the PR
+operation, so later ordinary Git/`gh` commands do not inherit a revoked token;
+there is no repeated credential check on ordinary tools. Read-only selections
+still fail before token minting or any push. A failed direct push keeps the same
+ambiguity receipt and reports `remote_verify`, `remote_push`,
+`post_push_verify`, or `unknown_stage` without retrying the remote write.
 
 ### 2026-08-27 — Trusted publication launches from uploaded payloads
 

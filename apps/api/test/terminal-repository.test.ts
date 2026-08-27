@@ -1,12 +1,15 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import {
   admitTerminalPublicationGrant,
   bootstrapTerminalRepository,
-  createGitHubRestPublicationGateway,
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher,
   type TerminalGitHubPublicationGateway,
@@ -122,8 +125,10 @@ function fixture(message = "Please publish these changes and open a pull request
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
   });
   const gateway: TerminalGitHubPublicationGateway = {
-    mintWriteToken: vi.fn(async () => ({ accessToken: "write-token" })),
-    revokeWriteToken: vi.fn(async () => undefined),
+    mintWriteToken: vi.fn(async () => ({
+      accessToken: "write-token",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    })),
     verifyRepositoryIdentity: vi.fn(async () => undefined),
     getRef: vi.fn(async (_selection, ref) => ref === HEAD_REF ? null : BASE),
     findPullRequest: vi.fn(async () => null),
@@ -140,10 +145,9 @@ function fixture(message = "Please publish these changes and open a pull request
       if (input.command.includes("branch --show-current")) return { exitCode: 0, stdout: `${HEAD_REF}\n`, stderr: "" };
       if (input.command.includes("rev-parse HEAD")) return { exitCode: 0, stdout: `${HEAD}\n`, stderr: "" };
       if (input.command.includes("diff --name-only")) return { exitCode: 0, stdout: "src/app.ts\n", stderr: "" };
-      if (input.command.includes("git bundle create")) return { exitCode: 0, stdout: "3\n", stderr: "" };
+      if (input.command.includes("core.hooksPath=/dev/null push")) return { exitCode: 0, stdout: "published\n", stderr: "" };
       return { exitCode: 0, stdout: "", stderr: "" };
     }),
-    publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
   const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, input) => utilityImplementation(id, {
@@ -152,12 +156,75 @@ function fixture(message = "Please publish these changes and open a pull request
   }));
   const context: HarnessToolContext = {
     workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "publish-call",
-    // The publication's durable identity: the bundle path, the grant it
-    // consumes, and its `terminal_publications` row all key to this.
+    // The publication's durable identity: the grant it consumes and its
+    // `repository_publications` row both key to this.
     effectIntentId: I,
     executionPrincipal: { type: "user", userId: U }, signal: new AbortController().signal,
   };
   return { database, objectStore, env, gateway, provider, context };
+}
+
+function publicationPushes(provider: TerminalSandboxProvider) {
+  return vi.mocked(provider.runUtilityCommand).mock.calls.filter(
+    ([, input]) => input.operation === "repository.publish.push",
+  );
+}
+
+function executePublicationScript(
+  command: string,
+  input: {
+    remoteBefore: string;
+    remoteAfter: string;
+    failOperation?: "ls-remote" | "push";
+  },
+) {
+  const directory = mkdtempSync(join(tmpdir(), "rally-terminal-publication-"));
+  const statePath = join(directory, "ls-remote-count");
+  const gitPath = join(directory, "git");
+  writeFileSync(gitPath, `#!/usr/bin/env bash
+set -euo pipefail
+operation=""
+for argument in "$@"; do
+  case "$argument" in
+    ls-remote|push) operation="$argument"; break ;;
+  esac
+done
+case "$operation" in
+  ls-remote)
+    count=0
+    if [ -f "$RALLY_GIT_STATE" ]; then count=$(cat "$RALLY_GIT_STATE"); fi
+    printf '%s' "$((count + 1))" > "$RALLY_GIT_STATE"
+    if [ "$RALLY_FAIL_OPERATION" = "ls-remote" ] && [ "$count" -eq 0 ]; then exit 128; fi
+    if [ "$count" -eq 0 ]; then sha="$RALLY_REMOTE_BEFORE"; else sha="$RALLY_REMOTE_AFTER"; fi
+    if [ -n "$sha" ]; then printf '%s\\trefs/heads/test\\n' "$sha"; fi
+    ;;
+  push)
+    if [ "$RALLY_FAIL_OPERATION" = "push" ]; then exit 1; fi
+    ;;
+  *) exit 2 ;;
+esac
+`, { mode: 0o700 });
+  try {
+    const result = spawnSync("bash", ["-c", command], {
+      cwd: directory,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH ?? ""}`,
+        RALLY_FAIL_OPERATION: input.failOperation ?? "",
+        RALLY_GIT_STATE: statePath,
+        RALLY_REMOTE_AFTER: input.remoteAfter,
+        RALLY_REMOTE_BEFORE: input.remoteBefore,
+      },
+    });
+    return {
+      exitCode: result.status ?? 1,
+      stdout: result.stdout,
+      stderr: "",
+    };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 describe("Terminal repository publication", () => {
@@ -321,8 +388,15 @@ describe("Terminal repository publication", () => {
     }, new Date("2026-08-13T12:00:00.000Z"))).resolves.toMatchObject({ admitted: true });
   });
 
-  it("validates committed repository state, consumes the grant, and converges one PR", async () => {
+  it("refreshes a stale mounted credential, validates the commit, and converges one PR", async () => {
     const { objectStore, env, gateway, provider, context } = fixture();
+    workstreamObjectRun(
+      objectStore,
+      `UPDATE terminal_repository
+          SET bootstrapped_sandbox_generation = 1, read_token_expires_at = ?
+        WHERE id = 1`,
+      Date.parse("2026-08-13T00:00:00.000Z"),
+    );
     await admitTerminalPublicationGrant(env, {
       workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
       executionPrincipal: { type: "user", userId: U },
@@ -337,13 +411,26 @@ describe("Terminal repository publication", () => {
       publishedSha: HEAD, outcome: "created",
       pullRequest: { number: 9, url: "https://github.com/owner/repo/pull/9", title: "Ship it", state: "open" },
     });
-    expect(provider.publishGitBundle).toHaveBeenCalledWith(expect.objectContaining({
-      bundle: new Uint8Array([1, 2, 3]), repositoryFullName: "owner/repo",
-      baseSha: BASE, headSha: HEAD, headRef: HEAD_REF, expectedOldSha: null,
-      githubBasicCredential: btoa("x-access-token:write-token"),
-    }));
+    expect(publicationPushes(provider)).toEqual([["sandbox", expect.objectContaining({
+      operation: "repository.publish.push",
+      cwd: "/workspace",
+      timeoutMs: 180_000,
+      command: expect.stringMatching(new RegExp(
+        `git -c 'url\\.https://github\\.com/owner/repo\\.git\\.insteadOf=rally-publish-[^']+://repository' -c 'url\\.https://github\\.com/owner/repo\\.git\\.pushInsteadOf=rally-publish-[^']+://repository' -c core\\.hooksPath=/dev/null -c push\\.followTags=false push 'rally-publish-[^']+://repository' '${HEAD}:refs/heads/${HEAD_REF}'`,
+        "u",
+      )),
+    })]]);
+    expect(provider.readFile).not.toHaveBeenCalled();
+    expect(provider.configureGitHubReadAccess).toHaveBeenCalledWith("sandbox", {
+      gitBasicCredential: btoa("x-access-token:write-token"),
+      ghToken: "write-token",
+    });
+    const pushCallIndex = vi.mocked(provider.runUtilityCommand).mock.calls.findIndex(
+      ([, operation]) => operation.operation === "repository.publish.push",
+    );
+    expect(vi.mocked(provider.configureGitHubReadAccess).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(provider.runUtilityCommand).mock.invocationCallOrder[pushCallIndex]!);
     expect(gateway.createPullRequest).toHaveBeenCalledOnce();
-    expect(gateway.revokeWriteToken).toHaveBeenCalledOnce();
     expect(gateway.verifyRepositoryIdentity).toHaveBeenCalledWith(
       expect.objectContaining({ repositoryId: 42, repositoryFullName: "owner/repo" }),
       "write-token",
@@ -357,12 +444,19 @@ describe("Terminal repository publication", () => {
       objectStore,
       "SELECT consumed_by_effect_intent_id FROM terminal_publication_grants",
     )).toEqual({ consumed_by_effect_intent_id: I });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT bootstrapped_sandbox_generation, read_token_expires_at FROM terminal_repository WHERE id = 1",
+    )).toEqual({
+      bootstrapped_sandbox_generation: 1,
+      read_token_expires_at: Date.parse("2099-01-01T00:00:00.000Z"),
+    });
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
       authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).resolves.toMatchObject({ outcome: "unchanged", publishedSha: HEAD });
-    expect(provider.publishGitBundle).toHaveBeenCalledOnce();
+    expect(publicationPushes(provider)).toHaveLength(1);
     expect(workstreamObjectGet(
       objectStore,
       "SELECT COUNT(*) AS count FROM repository_publications WHERE effect_intent_id = ?",
@@ -386,8 +480,88 @@ describe("Terminal repository publication", () => {
     }, provider)).rejects.toMatchObject({ code: "tool_receipt_missing" });
     // The receipt is what makes a publication replayable. Without it nothing
     // may reach GitHub, or a retry opens a second pull request.
-    expect(provider.publishGitBundle).not.toHaveBeenCalled();
+    expect(publicationPushes(provider)).toHaveLength(0);
     expect(gateway.createPullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { stdout: "RALLY_PUBLISH_FAILED_STAGE=remote_push\n", stage: "remote_push" },
+    { stdout: "", stage: "unknown_stage" },
+  ])("reports direct publication failure stage $stage", async ({ stdout, stage }) => {
+    const failed = fixture();
+    await admitTerminalPublicationGrant(failed.env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+    const runUtility = vi.mocked(failed.provider.runUtilityCommand);
+    const defaultImplementation = runUtility.getMockImplementation()!;
+    runUtility.mockImplementation(async (sandboxId, input) => input.operation === "repository.publish.push"
+      ? { exitCode: 1, stdout, stderr: "" }
+      : defaultImplementation(sandboxId, input));
+
+    await expect(createTerminalRepositoryPublisher(failed.env, failed.gateway).publishBranchAndPr(
+      failed.context,
+      { title: "Ship", body: "" },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      failed.provider,
+    )).rejects.toThrow(`Trusted Git publication failed at ${stage} with exit code 1`);
+    expect(publicationPushes(failed.provider)).toEqual([["sandbox", expect.objectContaining({
+      command: expect.stringContaining("-c core.hooksPath=/dev/null -c push.followTags=false push"),
+    })]]);
+    expect(failed.gateway.createPullRequest).not.toHaveBeenCalled();
+    expect(workstreamObjectGet(
+      failed.objectStore,
+      "SELECT state FROM repository_publications WHERE effect_intent_id = ?",
+      I,
+    )).toEqual({ state: "ambiguous" });
+  });
+
+  it.each([
+    { name: "first push", expectedOld: null, remoteBefore: "", remoteAfter: HEAD, expectedStage: null },
+    { name: "existing branch", expectedOld: BASE, remoteBefore: BASE, remoteAfter: HEAD, expectedStage: null },
+    { name: "remote moved", expectedOld: null, remoteBefore: BASE, remoteAfter: HEAD, expectedStage: "remote_verify" },
+    { name: "remote authentication failed", expectedOld: null, remoteBefore: "", remoteAfter: HEAD, failOperation: "ls-remote" as const, expectedStage: "remote_verify" },
+    { name: "push rejected", expectedOld: null, remoteBefore: "", remoteAfter: HEAD, failOperation: "push" as const, expectedStage: "remote_push" },
+    { name: "post-push ref mismatch", expectedOld: null, remoteBefore: "", remoteAfter: BASE, expectedStage: "post_push_verify" },
+  ])("executes the generated publication script for $name", async ({
+    expectedOld,
+    remoteBefore,
+    remoteAfter,
+    failOperation,
+    expectedStage,
+  }) => {
+    const scenario = fixture();
+    await admitTerminalPublicationGrant(scenario.env, {
+      workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
+      executionPrincipal: { type: "user", userId: U },
+    }, new Date(Date.now() - 1_000));
+    vi.mocked(scenario.gateway.getRef).mockResolvedValue(expectedOld);
+    const runUtility = vi.mocked(scenario.provider.runUtilityCommand);
+    const defaultImplementation = runUtility.getMockImplementation()!;
+    runUtility.mockImplementation(async (sandboxId, operation) => operation.operation === "repository.publish.push"
+      ? executePublicationScript(operation.command, { remoteBefore, remoteAfter, ...(failOperation ? { failOperation } : {}) })
+      : defaultImplementation(sandboxId, operation));
+
+    const publication = createTerminalRepositoryPublisher(scenario.env, scenario.gateway).publishBranchAndPr(
+      scenario.context,
+      { title: "Ship", body: "" },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
+      scenario.provider,
+    );
+    if (expectedStage) {
+      await expect(publication).rejects.toMatchObject({
+        code: "provider_publication_failed",
+        details: { stage: expectedStage },
+      });
+      expect(workstreamObjectGet(
+        scenario.objectStore,
+        "SELECT state, failure_code FROM repository_publications WHERE effect_intent_id = ?",
+        I,
+      )).toEqual({ state: "ambiguous", failure_code: "provider_publication_failed" });
+    } else {
+      await expect(publication).resolves.toMatchObject({ outcome: "created", publishedSha: HEAD });
+    }
+    expect(publicationPushes(scenario.provider)).toHaveLength(1);
   });
 
   it("publishes later commits from the same authorized run to the existing open PR", async () => {
@@ -441,14 +615,13 @@ describe("Terminal repository publication", () => {
       publishedSha: SECOND_HEAD,
       pullRequest: { number: 9, title: "Ship it again" },
     });
-    expect(provider.publishGitBundle).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      headSha: SECOND_HEAD,
-      expectedOldSha: HEAD,
+    expect(publicationPushes(provider)).toHaveLength(2);
+    expect(publicationPushes(provider)[1]?.[1]).toEqual(expect.objectContaining({
+      command: expect.stringContaining(`test "$remote_sha" = '${HEAD}'`),
     }));
     expect(gateway.createPullRequest).toHaveBeenCalledOnce();
     expect(gateway.updatePullRequest).toHaveBeenCalledOnce();
     expect(gateway.mintWriteToken).toHaveBeenCalledTimes(2);
-    expect(gateway.revokeWriteToken).toHaveBeenCalledTimes(2);
     expect(workstreamObjectGet(
       objectStore,
       "SELECT COUNT(*) AS count FROM repository_publications WHERE grant_id = (SELECT grant_id FROM terminal_publication_grants)",
@@ -518,7 +691,7 @@ describe("Terminal repository publication", () => {
       code: "publication_policy_denied",
       message: expect.stringContaining("GitHub Actions workflow"),
     });
-    expect(workflow.provider.publishGitBundle).not.toHaveBeenCalled();
+    expect(publicationPushes(workflow.provider)).toHaveLength(0);
   });
 
   it("revalidates current work-stream participation immediately before minting a write token", async () => {
@@ -573,18 +746,4 @@ describe("Terminal repository publication", () => {
     );
   });
 
-  it("revokes a trusted publisher token instead of waiting for its expiry", async () => {
-    const { env } = fixture();
-    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(createGitHubRestPublicationGateway(env).revokeWriteToken("write-token")).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.github.com/installation/token",
-      expect.objectContaining({
-        method: "DELETE",
-        headers: expect.objectContaining({ authorization: "Bearer write-token" }),
-      }),
-    );
-  });
 });
