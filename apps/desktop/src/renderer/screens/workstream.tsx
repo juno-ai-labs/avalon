@@ -1,5 +1,4 @@
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { IconAugmentedReality } from '@tabler/icons-react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
@@ -94,6 +93,7 @@ import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } 
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
+import { Icon } from '../components/ui';
 import { Avatar, AvatarStack, Badge, Button, EmptyState, IconButton, InlineError, LoadingState, Modal, OpeningState, SocketStatusIndicator, StatusDot, TitleSkeleton } from '../components/primitives';
 import { MessageBlock, type SystemRowDisclosure } from '../components/workstream-blocks';
 import { WorkstreamComposer } from '../components/workstream-composer';
@@ -660,7 +660,7 @@ export function WorkstreamHeader({
             label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
             onClick={onToggleBlockDashboard}
           >
-            <IconAugmentedReality size={16} stroke={1.7} />
+            <Icon name="dashboard" size="md" />
           </IconButton>
         )}
         <IconButton

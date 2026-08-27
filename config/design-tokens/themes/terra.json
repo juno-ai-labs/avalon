@@ -71,6 +71,8 @@
     "sys.color.border.default": "{ref.color.line.2}",
     "sys.color.border.subtle": "{ref.color.line.1}",
     "sys.color.border.strong": "{ref.color.line.3}",
+    "sys.color.border.hover": "{ref.color.line.4}",
+    "sys.color.border.focus": "{ref.color.line.6}",
     "sys.color.brand.base": "#cedc00",
     "sys.color.brand.strong": "#e0ec25",
     "sys.color.brand.soft": "#aab96a",

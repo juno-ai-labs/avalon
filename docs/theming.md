@@ -26,7 +26,8 @@ either stops being true.
 | `apps/desktop/src/renderer/lib/device-preferences.ts` | Where the choice is stored, beside the region and the microphone. |
 | `apps/desktop/src/renderer/components/theme-picker.tsx` | The Appearance control in Settings. |
 | `apps/desktop/src/main/application-settings.ts` | `themeChoice`, the mirrored copy the main process paints a new window from. |
-| `apps/desktop/tailwind.config.ts` | The Tailwind palette, pointed at the same tokens so a utility class cannot diverge. |
+| `apps/desktop/src/renderer/styles/tailwind-theme.ts` | **Generated.** The palette and scales a utility class may name, derived from the registry by the same build step. |
+| `apps/desktop/tailwind.config.ts` | Assigns that palette to `theme.colors` — replacing Tailwind's own, so `bg-zinc-800` cannot resolve — and extends the rest. See [`component-library.md`](component-library.md). |
 | `apps/desktop/src/main/theme-assets.ts` | The two asset schemes: the backdrop policy, and the remote-font cache. |
 | `apps/desktop/src/renderer/components/theme-backdrop.tsx` | The sandboxed frame a backdrop document renders in. |
 | `apps/desktop/src/renderer/fonts/` | Font files a theme may name as `bundled`, with their licences. |

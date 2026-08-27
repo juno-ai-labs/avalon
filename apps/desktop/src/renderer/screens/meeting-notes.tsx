@@ -1,5 +1,4 @@
 import clsx from 'clsx';
-import { IconAirTrafficControl, IconWaveSine } from '@tabler/icons-react';
 import {
   Copy,
   Globe2,
@@ -18,6 +17,7 @@ import type {
   DesktopMeetingAudioPermissions,
   MeetingAudioPermissionKind,
 } from '../../common/desktop';
+import { Icon } from '../components/ui';
 import { Button, IconButton, InlineError, Modal } from '../components/primitives';
 import { MarkdownBody } from '../components/workstream-blocks';
 import { useAppSession } from '../lib/app-session';
@@ -906,7 +906,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
         <div className="meeting-stack">
           <section aria-labelledby="live-notes-heading" className="meeting-live-notes">
             <header>
-              <span><IconAirTrafficControl aria-hidden="true" size={17} /><h2 id="live-notes-heading">Control Tower</h2></span>
+              <span><Icon name="control-tower" size="lg" /><h2 id="live-notes-heading">Control Tower</h2></span>
               <IconButton disabled={!notes || notesPending} label="Copy Control Tower" onClick={() => void copy(notes, 'note_summary')}>
                 <Copy size={15} />
               </IconButton>
@@ -935,7 +935,7 @@ export function MeetingNotesScreen(): React.JSX.Element {
 
           <section aria-labelledby="live-transcript-heading" className="meeting-transcript-card">
             <header>
-              <span><IconWaveSine aria-hidden="true" size={18} /><h2 id="live-transcript-heading">Live transcript</h2></span>
+              <span><Icon name="waveform" size="lg" /><h2 id="live-transcript-heading">Live transcript</h2></span>
               <IconButton disabled={!transcript} label="Copy transcript" onClick={() => void copy(transcript, 'note_transcript')}>
                 <Copy size={15} />
               </IconButton>

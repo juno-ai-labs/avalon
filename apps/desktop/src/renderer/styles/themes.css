@@ -92,12 +92,18 @@
   --av-sys-color-text-muted: var(--av-ref-color-neutral-10);
   --av-sys-color-text-disabled: var(--av-ref-color-neutral-8);
 
-  /* The three borders the stylesheet names directly; each resolves to a step
-   * on the line ramp. */
+  /* The borders the interface names directly; each resolves to a step on the
+   * line ramp. `hover` is the edge a control lifts to when the pointer is over
+   * it — a step past `strong`, because a control that only brightens its fill
+   * on hover reads as smudged rather than raised. `focus` is the top of the
+   * ramp, the edge a text field takes while it has focus, where the ring alone
+   * is not enough to say which of two adjacent fields is being typed into. */
   --av-sys-color-border-highlight: rgba(255, 255, 255, 0.035);
   --av-sys-color-border-default: var(--av-ref-color-line-2);
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
+  --av-sys-color-border-hover: var(--av-ref-color-line-4);
+  --av-sys-color-border-focus: var(--av-ref-color-line-6);
 
   /* Rally's own colour. `ink` is the brand drawn as a mark or a label on an
    * ordinary surface, which is a different question from `base`: the
@@ -490,6 +496,8 @@
   --av-sys-color-border-default: var(--av-ref-color-line-2);
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
+  --av-sys-color-border-hover: var(--av-ref-color-line-4);
+  --av-sys-color-border-focus: var(--av-ref-color-line-6);
 
   --av-sys-color-brand-base: #d2822c;
   --av-sys-color-brand-strong: #b96c1e;
@@ -783,6 +791,8 @@
   --av-sys-color-border-default: var(--av-ref-color-line-2);
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
+  --av-sys-color-border-hover: var(--av-ref-color-line-4);
+  --av-sys-color-border-focus: var(--av-ref-color-line-6);
 
   --av-sys-color-brand-base: #e8a15c;
   --av-sys-color-brand-strong: #f0a55a;
@@ -1076,6 +1086,8 @@
   --av-sys-color-border-default: var(--av-ref-color-line-2);
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
+  --av-sys-color-border-hover: var(--av-ref-color-line-4);
+  --av-sys-color-border-focus: var(--av-ref-color-line-6);
 
   --av-sys-color-brand-base: #cedc00;
   --av-sys-color-brand-strong: #dbe834;

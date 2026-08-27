@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
+import { AvatarStack, RallyMark, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
   ThinkingOrb: ({ size, state }: { size: number; state: string }) => (
@@ -233,24 +233,5 @@ describe('Modal', () => {
 
     fireEvent.keyDown(field, { key: 'Escape' });
     expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-});
-
-describe('DropdownSelect', () => {
-  it('renders the secondary settings treatment with an accessible trigger', () => {
-    render(
-      <DropdownSelect
-        ariaLabel="Personal default timezone"
-        onValueChange={vi.fn()}
-        options={[{ label: 'Pacific time', value: 'America/Los_Angeles' }]}
-        value="America/Los_Angeles"
-        variant="secondary"
-      />,
-    );
-
-    const trigger = screen.getByRole('combobox', { name: 'Personal default timezone' });
-    expect(trigger).toHaveClass('dropdown-select-trigger-secondary');
-    fireEvent.click(trigger);
-    expect(screen.getByRole('option', { name: 'Pacific time' })).toBeVisible();
   });
 });

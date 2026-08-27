@@ -7,7 +7,7 @@
     "sys.backdrop": "The window's backdrop: one painted layer behind every pane, so a theme's light runs unbroken beneath a translucent sidebar and the feed beside it rather than being repainted per pane and showing a seam at the join. Each token is a CSS `background-*` longhand under its own name, so a theme declares a backdrop the way a stylesheet would and the browser's own sizing, centring and tiling rules apply unchanged. `image` also accepts `{\"svg\": \"<svg \u2026>\"}` for artwork drawn in the theme file and `{\"url\": \"https://\u2026\"}` for one fetched over the network, and an array for layers.",
     "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark \u2014 a dark theme makes a control recede by darkening it, a light theme by greying it.",
     "sys.color.text": "Text tones, strongest to faintest.",
-    "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
+    "sys.color.border": "The borders the interface names directly; each resolves to a step on the line ramp. `hover` is the edge a control lifts to when the pointer is over it \u2014 a step past `strong`, because a control that only brightens its fill on hover reads as smudged rather than raised. `focus` is the top of the ramp, the edge a text field takes while it has focus, where the ring alone is not enough to say which of two adjacent fields is being typed into.",
     "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
     "sys.color.accent": "The hue for links, focus and selection.",
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control \u2014 a switch that is on, a selected preset \u2014 which is neither the vivid hue nor the wash.",
@@ -185,6 +185,12 @@
       "$type": "color"
     },
     "sys.color.border.strong": {
+      "$type": "color"
+    },
+    "sys.color.border.hover": {
+      "$type": "color"
+    },
+    "sys.color.border.focus": {
       "$type": "color"
     },
     "sys.color.brand.base": {

@@ -13,6 +13,10 @@ import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-po
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
 import { requireValidatedResponseRule } from "./scripts/eslint-rules/require-validated-response.mjs";
 import {
+  componentLibraryBarrelRule,
+  iconRegistryRule,
+} from "./scripts/eslint-rules/component-library-boundaries.mjs";
+import {
   noDirectWorkstreamsCacheWriteRule,
 } from "./scripts/eslint-rules/renderer-cache-boundaries.mjs";
 import { toolInputNumberBoundaryRule } from "./scripts/eslint-rules/tool-input-boundaries.mjs";
@@ -57,6 +61,8 @@ export default tseslint.config(
           "no-application-contract-test-cast": noApplicationContractTestCastRule,
           "no-direct-cloudflare-test-cast": noDirectCloudflareTestCastRule,
           "no-direct-workstreams-cache-write": noDirectWorkstreamsCacheWriteRule,
+          "icon-registry": iconRegistryRule,
+          "component-library-barrel": componentLibraryBarrelRule,
           "no-production-double-assertion": noProductionDoubleAssertionRule,
           "durable-object-sql-storage": durableObjectSqlStorageRule,
           "durable-object-region-routing": durableObjectRegionRoutingRule,
@@ -200,6 +206,16 @@ export default tseslint.config(
     ignores: ["apps/desktop/src/renderer/lib/workstreams-cache.ts"],
     rules: {
       "rally/no-direct-workstreams-cache-write": "error",
+    },
+  },
+  {
+    // Tests reach into the library on purpose — a primitive's own test is
+    // about that file, not about the barrel's promise.
+    files: ["apps/desktop/src/renderer/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}"],
+    rules: {
+      "rally/icon-registry": "error",
+      "rally/component-library-barrel": "error",
     },
   },
   {

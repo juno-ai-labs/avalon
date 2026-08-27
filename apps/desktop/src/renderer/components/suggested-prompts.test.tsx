@@ -2,30 +2,46 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { SuggestedPromptList, type SuggestedPromptIcon } from './suggested-prompts';
 
+const icons: SuggestedPromptIcon[] = [
+  'clock',
+  'brand-github',
+  'brand-google',
+  'brand-google-drive',
+  'brand-notion',
+  'brand-slack',
+  'linear',
+  'plug',
+  'webhook',
+  'world-search',
+];
+
+/**
+ * What matters is that a suggestion is attributed to *its* source, so the
+ * assertion is that the ten marks are ten different drawings.
+ *
+ * It used to name the icon package's own class on each one —
+ * `tabler-icon-brand-github` and so on — which passed for the wrong reason:
+ * it proved which library had been imported, not that the icons differed, and
+ * it failed the moment `clock` moved to the semantic registry even though the
+ * clock still rendered. A test that breaks when the backing changes but the
+ * output does not is testing the backing.
+ */
 describe('SuggestedPromptList', () => {
-  it('renders the provider-specific icon for every supported prompt icon', () => {
-    const expected: Array<[SuggestedPromptIcon, string]> = [
-      ['clock', 'tabler-icon-clock'],
-      ['brand-github', 'tabler-icon-brand-github'],
-      ['brand-google', 'tabler-icon-brand-google'],
-      ['brand-google-drive', 'tabler-icon-brand-google-drive'],
-      ['brand-notion', 'tabler-icon-brand-notion'],
-      ['brand-slack', 'tabler-icon-brand-slack'],
-      ['linear', 'tabler-icon-stack-2'],
-      ['plug', 'tabler-icon-plug'],
-      ['webhook', 'tabler-icon-webhook'],
-      ['world-search', 'tabler-icon-world-search'],
-    ];
+  it('renders a distinct mark for every supported prompt icon', () => {
     render(
       <SuggestedPromptList
-        items={expected.map(([icon]) => ({ id: icon, text: `Prompt ${icon}`, icon }))}
+        items={icons.map((icon) => ({ id: icon, text: `Prompt ${icon}`, icon }))}
         onSelect={vi.fn()}
       />,
     );
 
-    for (const [icon, className] of expected) {
+    const drawings = icons.map((icon) => {
       const button = screen.getByRole('button', { name: `Prompt ${icon}` });
-      expect(button.querySelector(`.${className}`)).not.toBeNull();
-    }
+      const mark = button.querySelector('svg');
+      expect(mark, `${icon} rendered no mark`).not.toBeNull();
+      return mark?.innerHTML ?? '';
+    });
+
+    expect(new Set(drawings).size).toBe(icons.length);
   });
 });

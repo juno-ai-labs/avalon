@@ -1,22 +1,32 @@
 import * as AvatarPrimitive from '@radix-ui/react-avatar';
-import * as Dialog from '@radix-ui/react-dialog';
-import * as Select from '@radix-ui/react-select';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import clsx from 'clsx';
-import { Check, ChevronDown, LoaderCircle, X } from 'lucide-react';
 import { ThinkingOrb, type OrbSize, type OrbState } from 'thinking-orbs';
+import { LoaderCircle } from 'lucide-react';
 import {
   forwardRef,
   type ButtonHTMLAttributes,
-  type HTMLAttributes,
   type PropsWithChildren,
-  type RefObject,
   type ReactNode,
 } from 'react';
 import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../lib/format';
-import { isComposingKeyEvent } from '../lib/ime';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
+
+/**
+ * Rally's own components, and the barrel's under their historical names.
+ *
+ * `Badge`, `Modal` and `InlineError` are re-exports: their backing moved into
+ * `components/ui/` and not one of the sixty-odd call sites changed, which is
+ * the barrel's whole claim made good. `DropdownSelect` is gone — its two call
+ * sites name `Select` directly now.
+ *
+ * What is left here genuinely belongs to Rally rather than to a component
+ * library: a work-stream marker, a socket indicator, a member avatar, the
+ * naming skeleton. New generic primitives go in `components/ui/`; see
+ * `docs/component-library.md`.
+ */
+export { Badge, Dialog as Modal } from './ui';
 
 export function RallyMark({ className }: { className?: string }): React.JSX.Element {
   return <span aria-hidden="true" className={clsx('rally-mark', className)} />;
@@ -211,13 +221,7 @@ export function AvatarStack({
   );
 }
 
-export function Badge({ children, className, ...props }: PropsWithChildren<HTMLAttributes<HTMLSpanElement>>): React.JSX.Element {
-  return (
-    <span className={clsx('badge', className)} {...props}>
-      {children}
-    </span>
-  );
-}
+
 
 /**
  * Stands in for a work stream's title while Rally is choosing one.
@@ -239,127 +243,6 @@ export function TitleSkeleton({ className }: { className?: string }): React.JSX.
     <span className={clsx('title-skeleton', className)}>
       <span className="sr-only">Rally is naming this work stream</span>
     </span>
-  );
-}
-
-export interface DropdownOption {
-  value: string;
-  label: string;
-  description?: string;
-}
-
-interface DropdownSelectProps {
-  ariaLabel: string;
-  disabled?: boolean;
-  onValueChange: (value: string) => void;
-  options: DropdownOption[];
-  value: string;
-  variant?: 'primary' | 'secondary';
-}
-
-/** Shared settings selector: bordered for primary form controls, text-only for
- * compact preference rows. Radix supplies native keyboard and screen-reader behavior. */
-export function DropdownSelect({
-  ariaLabel,
-  disabled = false,
-  onValueChange,
-  options,
-  value,
-  variant = 'primary',
-}: DropdownSelectProps): React.JSX.Element {
-  return (
-    <Select.Root disabled={disabled} onValueChange={onValueChange} value={value}>
-      <Select.Trigger
-        aria-label={ariaLabel}
-        className={clsx('dropdown-select-trigger', `dropdown-select-trigger-${variant}`)}
-      >
-        <Select.Value />
-        <Select.Icon aria-hidden="true" className="dropdown-select-chevron">
-          <ChevronDown size={15} strokeWidth={1.7} />
-        </Select.Icon>
-      </Select.Trigger>
-      <Select.Portal>
-        <Select.Content
-          className={clsx('dropdown-select-content', `dropdown-select-content-${variant}`)}
-          collisionPadding={10}
-          position="popper"
-          sideOffset={6}
-        >
-          <Select.Viewport className="dropdown-select-viewport">
-            {options.map((option) => (
-              <Select.Item className="dropdown-select-item" key={option.value} value={option.value}>
-                <span className="dropdown-select-item-copy">
-                  <Select.ItemText>{option.label}</Select.ItemText>
-                  {option.description && <small>{option.description}</small>}
-                </span>
-                <Select.ItemIndicator className="dropdown-select-indicator">
-                  <Check size={17} strokeWidth={2} />
-                </Select.ItemIndicator>
-              </Select.Item>
-            ))}
-          </Select.Viewport>
-        </Select.Content>
-      </Select.Portal>
-    </Select.Root>
-  );
-}
-
-interface ModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  title: string;
-  description?: string;
-  children?: ReactNode;
-  footer?: ReactNode;
-  initialFocusRef?: RefObject<HTMLElement | null>;
-}
-
-export function Modal({
-  open,
-  onOpenChange,
-  title,
-  description,
-  children,
-  footer,
-  initialFocusRef,
-}: ModalProps): React.JSX.Element {
-  return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content
-          className="dialog-content"
-          /* Escape belongs to the IME while it is composing: it abandons the
-             candidate, and Radix must not read the same keystroke as a request
-             to close the dialog and take the typed draft with it. Radix calls
-             this before dismissing and skips the dismissal when the event is
-             defaultPrevented. A native KeyboardEvent, so no `nativeEvent`. */
-          onEscapeKeyDown={(event) => {
-            if (isComposingKeyEvent(event)) event.preventDefault();
-          }}
-          onOpenAutoFocus={(event) => {
-            const initialFocus = initialFocusRef?.current;
-            if (!initialFocus) return;
-            event.preventDefault();
-            initialFocus.focus();
-          }}
-        >
-          <header className="dialog-header">
-            <div>
-              <Dialog.Title className="dialog-title">{title}</Dialog.Title>
-              {description && <Dialog.Description className="dialog-description">{description}</Dialog.Description>}
-            </div>
-            <Dialog.Close asChild>
-              <IconButton label="Close dialog">
-                <X size={16} />
-              </IconButton>
-            </Dialog.Close>
-          </header>
-          {children != null && <div className="dialog-body">{children}</div>}
-          {footer && <footer className="dialog-footer">{footer}</footer>}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
   );
 }
 

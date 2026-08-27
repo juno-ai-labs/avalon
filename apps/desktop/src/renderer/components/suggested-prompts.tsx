@@ -1,30 +1,16 @@
-import {
-  IconBrandGithub,
-  IconBrandGoogle,
-  IconBrandGoogleDrive,
-  IconBrandNotion,
-  IconBrandSlack,
-  IconClock,
-  IconPlug,
-  IconStack2,
-  IconWebhook,
-  IconWorldSearch,
-  type TablerIcon,
-} from '@tabler/icons-react';
-import { ChevronRight, LoaderCircle, X } from 'lucide-react';
+import type { AutomationPluginIcon } from '@rally/contracts';
 import type { ComponentType, ReactNode } from 'react';
 
-export type SuggestedPromptIcon =
-  | 'clock'
-  | 'brand-github'
-  | 'brand-google'
-  | 'brand-google-drive'
-  | 'brand-notion'
-  | 'brand-slack'
-  | 'linear'
-  | 'plug'
-  | 'webhook'
-  | 'world-search';
+import { ConnectorIcon, Icon } from './ui';
+
+/**
+ * A suggestion is either attributed to a connector or it is the recency one,
+ * so the vocabulary is the connector list plus `clock`. It was a hand-written
+ * union that repeated all nine connector names beside an identical copy of the
+ * icon map in `workstream-blocks.tsx`; the two drifted the moment one of them
+ * gained a provider.
+ */
+export type SuggestedPromptIcon = AutomationPluginIcon | 'clock';
 
 export interface SuggestedPromptItem {
   id: string;
@@ -42,22 +28,9 @@ export interface SuggestedPromptListProps {
   onDismiss?: (item: SuggestedPromptItem) => void;
 }
 
-const promptIconByKey: Record<SuggestedPromptIcon, TablerIcon> = {
-  clock: IconClock,
-  'brand-github': IconBrandGithub,
-  'brand-google': IconBrandGoogle,
-  'brand-google-drive': IconBrandGoogleDrive,
-  'brand-notion': IconBrandNotion,
-  'brand-slack': IconBrandSlack,
-  linear: IconStack2,
-  plug: IconPlug,
-  webhook: IconWebhook,
-  'world-search': IconWorldSearch,
-};
-
 function PromptIcon({ icon }: { icon: SuggestedPromptIcon }): React.JSX.Element {
-  const Icon = promptIconByKey[icon];
-  return <Icon aria-hidden="true" size={13} />;
+  if (icon === 'clock') return <Icon name="clock" size="xs" />;
+  return <ConnectorIcon name={icon} plain />;
 }
 
 export function SuggestedPromptList({
@@ -77,10 +50,10 @@ export function SuggestedPromptList({
         return (
           <div className="suggested-prompt-row" key={item.id}>
             <button aria-label={item.text} disabled={Boolean(pendingId)} onClick={() => onSelect(item)} type="button">
-              {pending ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <PromptIcon icon={item.icon} />}
+              {pending ? <Icon name="spinner" size="xs" spinning /> : <PromptIcon icon={item.icon} />}
               <span>{item.text}</span>
               {item.sourceLabel && <small>{item.sourceLabel}</small>}
-              <ChevronRight aria-hidden="true" size={13} />
+              <Icon name="chevron-right" size="xs" />
             </button>
             {onDismiss && (
               <button
@@ -90,7 +63,7 @@ export function SuggestedPromptList({
                 onClick={() => onDismiss(item)}
                 type="button"
               >
-                <X aria-hidden="true" size={12} />
+                <Icon name="close" size="xs" />
               </button>
             )}
           </div>

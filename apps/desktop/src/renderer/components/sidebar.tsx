@@ -1,7 +1,6 @@
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
   Archive,
@@ -55,6 +54,7 @@ import {
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { Icon } from './ui';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 
 interface SidebarProps {
@@ -661,7 +661,7 @@ function WorkstreamRow({
             >
               {isPrivate
                 ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
-                : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
+                : <><Icon name="private" size="md" /> Make private</>}
             </ContextMenu.Item>
           )}
           {debugEnabled && <CopyWorkstreamLinkItem workstreamId={workstream.id} />}
@@ -689,7 +689,7 @@ function WorkstreamRow({
 function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
   return (
     <span aria-label={label} className="sidebar-note-privacy" role="img">
-      <IconLock aria-hidden="true" size={15} stroke={1.8} />
+      <Icon name="private" size="sm" />
     </span>
   );
 }
@@ -750,7 +750,7 @@ function NoteRow({
           >
             {isPrivate
               ? <><Globe2 aria-hidden="true" size={16} /> Make public to workspace</>
-              : <><IconLock aria-hidden="true" size={16} stroke={1.8} /> Make private</>}
+              : <><Icon name="private" size="md" /> Make private</>}
           </ContextMenu.Item>
           {debugEnabled && (
             <CopyResourceIdItem contentType="note_id" id={note.id} label="Copy note id" resourceType="note" />
@@ -1650,7 +1650,7 @@ export function Sidebar({
                           className="sidebar-group-menu-trigger window-no-drag"
                           type="button"
                         >
-                          <IconDots aria-hidden="true" size={16} stroke={1.8} />
+                          <Icon name="more" size="md" />
                         </button>
                       </DropdownMenu.Trigger>
                       <DropdownMenu.Portal>
