@@ -23,6 +23,7 @@ import type { DurableObjectMigrationCommand } from "@rally/contracts/durable-obj
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../env";
+import { inDurableObjectPhase } from "../observability/tracing";
 import {
   latestMigrationVersion,
   reportForcedMigration,
@@ -50,6 +51,7 @@ export interface DurableObjectMigrationPlan {
 
 export abstract class MigratableDurableObject<TEnv extends Env = Env>
   extends DurableObject<TEnv> {
+  private readonly constructorStartedAt = Date.now();
   /** This class's schema: its component key, its class name, its migrations. */
   protected abstract migrationPlan(): DurableObjectMigrationPlan;
 
@@ -64,6 +66,26 @@ export abstract class MigratableDurableObject<TEnv extends Env = Env>
    * runner directly.
    */
   protected abstract migrationsReady(): Promise<void>;
+
+  /**
+   * The constructor's input gate, instrumented once for every migratable class.
+   * Subclasses use this instead of calling `blockConcurrencyWhile` directly so
+   * a newly-added object cannot silently recreate the cold-wake blind spot.
+   */
+  protected initializeDurableObject(run: () => Promise<void>): Promise<void> {
+    const plan = this.migrationPlan();
+    return this.ctx.blockConcurrencyWhile(() => inDurableObjectPhase(
+      this.env,
+      "initialize",
+      {
+        component: plan.component,
+        className: plan.className,
+        latestVersion: latestMigrationVersion(plan.migrations),
+        startedAt: this.constructorStartedAt,
+      },
+      run,
+    ));
+  }
 
   /**
    * Apply this object's schema and tell the tracker what happened.

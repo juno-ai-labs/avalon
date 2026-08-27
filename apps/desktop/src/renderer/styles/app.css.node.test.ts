@@ -103,6 +103,52 @@ describe('member picker controls', () => {
   });
 });
 
+describe('raised popover interaction states', () => {
+  it('highlights ordinary menu rows and preserves the danger override', () => {
+    expect(rule('.menu-content')).toContain(
+      'background: var(--av-sys-color-surface-raised);',
+    );
+    expect(rule('.menu-item[data-highlighted]')).toContain(
+      'background: var(--av-sys-color-surface-raised-hover);',
+    );
+    expect(rule('.menu-item-danger[data-highlighted]')).toContain(
+      'background: var(--av-sys-color-danger-tint);',
+    );
+  });
+
+  it('highlights command rows against the raised command popover', () => {
+    expect(rule('.command-popover')).toContain(
+      'background: var(--av-sys-color-surface-raised);',
+    );
+    expect(rule(
+      '.command-popover > button:hover,\n'
+      + '.command-popover > button:focus-visible,\n'
+      + '.command-popover > button.is-selected',
+    )).toContain('background: var(--av-sys-color-surface-raised-hover);');
+  });
+});
+
+describe('work-stream participant presence', () => {
+  it('draws a tokenized Tailwind-style ping and preserves a static reduced-motion state', () => {
+    const ping = rule('.avatar-presence-ping');
+    expect(ping).toContain('animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;');
+    expect(ping).toContain('background: color-mix(');
+    expect(ping).toContain('var(--av-sys-color-success-base)');
+    expect(ping).toContain('inset: 0;');
+    expect(ping).toContain('z-index: 1;');
+    expect(stylesheet).toContain('75%, 100% { opacity: 0; transform: scale(2); }');
+    const reducedMotion = stylesheet.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.avatar-presence-ping \{([^}]*)\}/,
+    )?.[1];
+    expect(reducedMotion).toContain('animation: none;');
+    expect(reducedMotion).toContain('opacity: .3;');
+    expect(reducedMotion).toContain('transform: scale(1.35);');
+    const overflow = stylesheet.match(/\n\.avatar-overflow \{\n {2}align-items: center;[^}]*\}/)?.[0];
+    expect(overflow).toContain('position: relative;');
+    expect(overflow).toContain('z-index: 1;');
+  });
+});
+
 /**
  * The five-line cap on a system row exists only here. `SystemMessageBlock`
  * renders the whole string and sets one attribute; the clamp, and therefore the

@@ -24,6 +24,8 @@ export interface RecordedSpan {
   name: string;
   attributes: Record<string, string | number | boolean>;
   ended: boolean;
+  /** Whether an error crossed the runtime span callback boundary. */
+  callbackFailed: boolean;
 }
 
 const recorded: RecordedSpan[] = [];
@@ -38,7 +40,7 @@ export function resetRecordedSpans(): void {
 }
 
 function makeSpan(name: string): { span: RecordedSpan; handle: SpanHandle } {
-  const span: RecordedSpan = { name, attributes: {}, ended: false };
+  const span: RecordedSpan = { name, attributes: {}, ended: false, callbackFailed: false };
   recorded.push(span);
   return {
     span,
@@ -73,6 +75,7 @@ export const tracing = {
     try {
       result = callback(handle, ...args);
     } catch (error) {
+      span.callbackFailed = true;
       finish();
       throw error;
     }
@@ -80,7 +83,13 @@ export const tracing = {
     // returns the promise; a stand-in that ended it early would let a test pass
     // over a span the runtime would still have open.
     if (result instanceof Promise) {
-      return result.finally(finish) as T;
+      return result.then(
+        (value) => value,
+        (error: unknown) => {
+          span.callbackFailed = true;
+          throw error;
+        },
+      ).finally(finish) as T;
     }
     finish();
     return result;

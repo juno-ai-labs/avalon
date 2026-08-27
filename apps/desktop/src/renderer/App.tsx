@@ -9,6 +9,8 @@ import { Button, EmptyState, LoadingState } from './components/primitives';
 import { ApiError, isSessionRejection } from './lib/api';
 import { AppSessionProvider, useAppSession, type AppSessionValue } from './lib/app-session';
 import {
+  abandonPendingWorkstreamFeedOpen,
+  abandonWorkstreamFeedOpenOutsideRoute,
   installRendererErrorTelemetry,
   consumeSurfaceEntrypoint,
   reportJavascriptError,
@@ -127,6 +129,9 @@ function TelemetryRouteObserver(): null {
   useEffect(() => {
     const screen = telemetryScreenForPath(location.pathname);
     const surface = telemetrySurfaceForPath(location.pathname);
+    abandonWorkstreamFeedOpenOutsideRoute(
+      surface?.resourceType === 'workstream' ? surface.resourceId ?? null : null,
+    );
     if (!surface && screen !== lastScreen.current) {
       lastScreen.current = screen;
       if (screen) reportTelemetryScreen(screen);
@@ -171,6 +176,7 @@ function WorkspaceApp(): React.JSX.Element {
   });
 
   useEffect(() => {
+    if (workspace.error) abandonPendingWorkstreamFeedOpen();
     endSessionFor(workspace.error, { signOut, signOutIfCredentialCleared });
   }, [signOut, signOutIfCredentialCleared, workspace.error]);
 
@@ -210,7 +216,15 @@ function WorkspaceApp(): React.JSX.Element {
 
   return (
     <WorkspaceSocketProvider api={api!} workspaceId={workspace.data.id}>
-      <HashRouter>
+      {/*
+        A declarative router otherwise wraps its history listener in
+        startTransition. The hash and active sidebar row move first while the
+        previous work-stream screen remains visible, which can put the wrong
+        transcript under the newly selected row. This route tree is small and
+        local; commit its navigation atomically, then let each screen show its
+        own opening state while keyed data arrives.
+      */}
+      <HashRouter useTransitions={false}>
         <TelemetryRouteObserver />
         <WorkstreamSocketResumeProvider scope={`${session?.user.id ?? 'unknown'}:${workspace.data.id}`}>
           <AppShell workspace={workspace.data}>

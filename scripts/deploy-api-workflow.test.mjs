@@ -6,6 +6,25 @@ import { fileURLToPath } from 'node:url';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+test('a merge to main provisions every declared Queue before either regional deploy', async () => {
+  const workflow = await readFile(
+    join(repositoryDirectory, '.github/workflows/deploy-api.yml'),
+    'utf8',
+  );
+  const ensureQueues = workflow.indexOf(
+    '- name: Ensure every Queue the Wrangler configs declare exists',
+  );
+  const deployEu = workflow.indexOf('- name: Deploy the EU Worker');
+  const deployGlobal = workflow.indexOf('- name: Deploy the Global Worker');
+
+  assert.match(workflow, /push:\s+branches:\s+- main/su);
+  assert.match(workflow, /- "apps\/api\/\*\*"/u);
+  assert.match(workflow, /- "packages\/\*\*"/u);
+  assert.notEqual(ensureQueues, -1, 'the deploy must run the idempotent Queue provisioner');
+  assert.ok(ensureQueues < deployEu, 'Queue provisioning must precede the EU deploy');
+  assert.ok(ensureQueues < deployGlobal, 'Queue provisioning must precede the Global deploy');
+});
+
 test('applies destructive D1 retirements only after compatible Workers deploy', async () => {
   const workflow = await readFile(
     join(repositoryDirectory, '.github/workflows/deploy-api.yml'),
@@ -40,6 +59,7 @@ test('applies destructive D1 retirements only after compatible Workers deploy', 
   assert.ok(retireGlobal < health, 'health must inspect the final schema');
   assert.match(workflow, /0090_drop_legacy_product_tables\.sql/u);
   assert.match(workflow, /0094_retire_agent_inference_payload_ledger\.sql/u);
+  assert.match(workflow, /0097_email_routes_use_full_address\.sql/u);
   assert.equal(
     workflow.match(/classify-pending-d1-migrations\.mjs/gu)?.length,
     2,

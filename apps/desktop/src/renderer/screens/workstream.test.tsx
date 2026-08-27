@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopSession } from '../../common/desktop';
-import type { ElicitationData, HarnessRunMetadata, Message, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, Message, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import {
   AddParticipantDialog,
@@ -17,13 +17,38 @@ import {
   preservedPrependScrollTop,
   RunFailureNotice,
   RunStoppedNotice,
+  orderedTranscriptOwnsRunTiming,
   shouldLoadEarlierFromScroll,
   transcriptPageCursor,
   WorkstreamErrorState,
   WorkstreamHeader,
+  workstreamPayloadBelongsToRoute,
+  workstreamPresenceViewers,
   workstreamRunTiming,
+  workstreamShowsReadyState,
   workspaceMemberFromSession,
 } from './workstream';
+
+describe('workspace foreground presence', () => {
+  const member = (id: string, name: string): WorkspaceMember => ({
+    id,
+    name,
+    email: `${id}@example.test`,
+    timezone: 'America/Los_Angeles',
+  });
+
+  it('resolves non-participant viewers from WorkspaceDO presence instead of feed subscribers', () => {
+    const participant = member('participant', 'Participant');
+    const viewer = member('viewer', 'Viewer');
+    const offline = member('offline', 'Offline');
+
+    expect(workstreamPresenceViewers(
+      [participant],
+      [participant, viewer, offline],
+      [participant.id, viewer.id],
+    )).toEqual([{ ...viewer, viewing: true }]);
+  });
+});
 
 function transcriptMessage(
   sequenceNumber: number,
@@ -86,6 +111,23 @@ describe('transcript cursor pagination', () => {
   });
 });
 
+describe('work-stream route handoff', () => {
+  it('refuses to paint detail or transcript rows retained from another work stream', () => {
+    const routeWorkstreamId = 'workstream-two';
+    const workstream = { id: routeWorkstreamId };
+    const currentMessages = [{ workstreamId: routeWorkstreamId }];
+
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, currentMessages)).toBe(true);
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, { id: 'workstream-one' }, currentMessages)).toBe(false);
+    expect(workstreamPayloadBelongsToRoute(
+      routeWorkstreamId,
+      workstream,
+      [{ workstreamId: 'workstream-one' }],
+    )).toBe(false);
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, undefined)).toBe(false);
+  });
+});
+
 const copyText = vi.hoisted(() => vi.fn());
 const getRuntimeConfig = vi.hoisted(() => vi.fn());
 
@@ -142,8 +184,10 @@ function headerElement(
   overrides: {
     blockDashboardOpen?: boolean;
     blockDashboardAvailable?: boolean;
+    currentUserId?: string | null;
     onRename?: (title: string) => Promise<void>;
     onToggleBlockDashboard?: () => void;
+    presentUserIds?: readonly string[];
   } = {},
 ): React.JSX.Element {
   return (
@@ -151,13 +195,14 @@ function headerElement(
       <WorkstreamHeader
         blockDashboardAvailable={overrides.blockDashboardAvailable ?? true}
         blockDashboardOpen={overrides.blockDashboardOpen ?? false}
-        blockDashboardPreferencePending={false}
+        currentUserId={overrides.currentUserId ?? null}
         onAddParticipant={vi.fn()}
         // The screen opens the rail through the same store action, after
         // giving up the right sidebar's other occupant.
         onOpenRail={(variant) => useUiStore.getState().openRail(variant)}
         onRename={overrides.onRename ?? (async () => undefined)}
         onToggleBlockDashboard={overrides.onToggleBlockDashboard ?? vi.fn()}
+        presentUserIds={overrides.presentUserIds ?? []}
         socketState="connected"
         workstream={workstream}
       />
@@ -168,6 +213,37 @@ function headerElement(
 function renderWorkstreamHeader(...args: Parameters<typeof headerElement>): ReturnType<typeof render> {
   return render(headerElement(...args));
 }
+
+describe('WorkstreamHeader presence', () => {
+  const current = {
+    id: 'user-current',
+    name: 'Current User',
+    email: 'current@rally.test',
+    timezone: 'America/Los_Angeles',
+  };
+  const collaborator = {
+    id: 'user-collaborator',
+    name: 'Ari Collaborator',
+    email: 'ari@rally.test',
+    timezone: 'America/Los_Angeles',
+  };
+
+  it('pings a present collaborator but never the current user', () => {
+    const { container } = renderWorkstreamHeader({
+      ...headerWorkstream,
+      participants: [current, collaborator],
+    }, {
+      currentUserId: current.id,
+      presentUserIds: [current.id, collaborator.id],
+    });
+
+    expect(screen.getByTitle(current.name).closest('.avatar-stack-item')).not.toHaveClass('is-present');
+    expect(container.querySelector('.avatar-stack-item.is-present')).not.toBeNull();
+    expect(screen.queryByTitle(collaborator.name)).not.toBeInTheDocument();
+    expect(container.querySelectorAll('.avatar-presence-ping')).toHaveLength(1);
+    expect(container.querySelector('.participant-header-button [tabindex]')).toBeNull();
+  });
+});
 
 describe('WorkstreamHeader origin affordances', () => {
   beforeEach(() => {
@@ -714,6 +790,42 @@ describe('workstreamRunTiming', () => {
       ...harnessRun,
       status: 'needs_input',
     })).toBeNull();
+  });
+});
+
+describe('workstreamShowsReadyState', () => {
+  it('never invites another start while a newly created run is admitted or running', () => {
+    expect(workstreamShowsReadyState(0, false, 'scheduled')).toBe(false);
+    expect(workstreamShowsReadyState(0, false, 'running')).toBe(false);
+    expect(workstreamShowsReadyState(0, false, 'completed')).toBe(true);
+    expect(workstreamShowsReadyState(1, false, 'completed')).toBe(false);
+    expect(workstreamShowsReadyState(0, true, 'completed')).toBe(false);
+  });
+});
+
+describe('orderedTranscriptOwnsRunTiming', () => {
+  it('replaces the legacy timer only after the canonical response timing has an ordered turn anchor', () => {
+    const snapshot: NonNullable<Parameters<typeof orderedTranscriptOwnsRunTiming>[0]> = {
+      activities: [
+        { activityId: 'run-one:activity', parentActivityId: null, scope: 'response', subjectId: 'run-one' },
+        {
+          activityId: 'run-one:turn:1:activity',
+          parentActivityId: 'run-one:activity',
+          scope: 'assistant_turn',
+          subjectId: 'run-one:turn:1',
+        },
+      ],
+      ranges: [],
+      activeTurns: [],
+    };
+
+    expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-one')).toBe(false);
+    snapshot.ranges = [{
+      turns: [{ activityId: 'run-one:turn:1:activity' }],
+    }];
+    expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-one')).toBe(true);
+    expect(orderedTranscriptOwnsRunTiming(snapshot, 'run-two')).toBe(false);
+    expect(orderedTranscriptOwnsRunTiming(undefined, 'run-one')).toBe(false);
   });
 });
 

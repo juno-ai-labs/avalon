@@ -1,6 +1,6 @@
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { useEffect, type PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSocketApi } from './use-workstream-socket';
@@ -9,6 +9,9 @@ import {
   WorkstreamSocketPool,
   retainedWorkstreamSocketIds,
   useRetainedWorkstreamSocket,
+  useWorkstreamSocketHoverWarmup,
+  useWorkstreamSocketOpenContext,
+  type WorkstreamSocketOpenContext,
 } from './workstream-socket-pool';
 
 const workspaceCreateMessage = vi.hoisted(() => vi.fn());
@@ -79,14 +82,40 @@ function socketApi(): WorkstreamSocketApi & {
 function ActiveConnection({
   api,
   enabled,
+  onRender,
   workstreamId,
 }: {
   api: WorkstreamSocketApi;
   enabled: boolean;
+  onRender?: () => void;
   workstreamId: string;
 }): React.JSX.Element {
+  onRender?.();
   const connection = useRetainedWorkstreamSocket(api, workstreamId, enabled);
   return <div>{connection.state}</div>;
+}
+
+function HoverWarmTarget({
+  onRender,
+  workstreamId,
+}: {
+  onRender?: () => void;
+  workstreamId: string;
+}): React.JSX.Element {
+  onRender?.();
+  const warmup = useWorkstreamSocketHoverWarmup(workstreamId);
+  return <button {...warmup}>Warm work stream</button>;
+}
+
+function OpenContextTarget({
+  onRead,
+  workstreamId,
+}: {
+  onRead: (context: WorkstreamSocketOpenContext) => void;
+  workstreamId: string;
+}): React.JSX.Element {
+  const readOpenContext = useWorkstreamSocketOpenContext(workstreamId);
+  return <button onClick={() => onRead(readOpenContext())}>Read pool context</button>;
 }
 
 async function flushPromises(): Promise<void> {
@@ -116,6 +145,268 @@ describe('retainedWorkstreamSocketIds', () => {
 });
 
 describe('WorkstreamSocketPool', () => {
+  it('opens and retains only the control socket after a one-second hover', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const workstreamId = '00000000-0000-7000-8000-000000000630';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    const target = view.getByRole('button', { name: 'Warm work stream' });
+
+    fireEvent.pointerEnter(target);
+    act(() => vi.advanceTimersByTime(999));
+    fireEvent.pointerLeave(target);
+    act(() => vi.advanceTimersByTime(1));
+    await flushPromises();
+    expect(api.getSocketTicket).not.toHaveBeenCalled();
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
+
+    fireEvent.pointerEnter(target);
+    act(() => vi.advanceTimersByTime(1_000));
+    await flushPromises();
+    expect(api.getSocketTicket).not.toHaveBeenCalled();
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    const warmedSockets = FakeWebSocket.instances.filter(
+      (socket) => String(socket.url).includes(workstreamId),
+    );
+    expect(warmedSockets.map((socket) => String(socket.url))).toEqual([
+      `wss://api.rally.test/workstreams/${workstreamId}/control`,
+    ]);
+
+    fireEvent.pointerLeave(target);
+    act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS - 1));
+    expect(warmedSockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
+    expect(warmedSockets.every((socket) => socket.close.mock.calls.length === 1)).toBe(true);
+  });
+
+  it('adds the feed without reopening the warmed control socket after navigation succeeds', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const workstreamId = '00000000-0000-7000-8000-000000000639';
+    const onReadContext = vi.fn();
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+        <ActiveConnection api={api} enabled={false} workstreamId={workstreamId} />
+        <OpenContextTarget onRead={onReadContext} workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+
+    fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
+    expect(onReadContext).toHaveBeenLastCalledWith({ state: 'cold' });
+
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    act(() => vi.advanceTimersByTime(1_000));
+    await flushPromises();
+    const warmedControl = FakeWebSocket.instances[0];
+    if (!warmedControl) throw new Error('The hovered work stream opened no control socket.');
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getSocketTicket).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
+    const warmedContext = onReadContext.mock.lastCall?.[0] as WorkstreamSocketOpenContext;
+    expect(warmedContext).toEqual({
+      state: 'control_warmup',
+      socketLeaseId: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    });
+
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+        <ActiveConnection api={api} enabled workstreamId={workstreamId} />
+        <OpenContextTarget onRead={onReadContext} workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    await flushPromises();
+
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances.map((socket) => String(socket.url))).toEqual([
+      `wss://api.rally.test/workstreams/${workstreamId}/control`,
+      `wss://api.rally.test/workstreams/${workstreamId}/feed`,
+    ]);
+    expect(FakeWebSocket.instances[0]).toBe(warmedControl);
+    expect(warmedControl.close).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole('button', { name: 'Read pool context' }));
+    expect(onReadContext).toHaveBeenLastCalledWith({
+      state: 'retained_pair',
+      socketLeaseId: warmedContext.socketLeaseId,
+    });
+  });
+
+  it('keeps at most one unopened control socket warm', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const firstWorkstreamId = '00000000-0000-7000-8000-000000000640';
+    const secondWorkstreamId = '00000000-0000-7000-8000-000000000641';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={firstWorkstreamId} />
+        <HoverWarmTarget workstreamId={secondWorkstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    const targets = view.getAllByRole('button', { name: 'Warm work stream' });
+    const firstTarget = targets[0];
+    const secondTarget = targets[1];
+    if (!firstTarget || !secondTarget) throw new Error('Expected two hover targets.');
+
+    fireEvent.pointerEnter(firstTarget);
+    act(() => vi.advanceTimersByTime(1_000));
+    await flushPromises();
+    const firstControl = FakeWebSocket.instances[0];
+    if (!firstControl) throw new Error('The first hovered work stream opened no control socket.');
+
+    fireEvent.pointerEnter(secondTarget);
+    act(() => vi.advanceTimersByTime(1_000));
+    await flushPromises();
+
+    expect(api.getSocketTicket).not.toHaveBeenCalled();
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    expect(firstControl.close).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances[1]?.close).not.toHaveBeenCalled();
+  });
+
+  it('does not rerender hover consumers when a pooled connection changes state', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const activeWorkstreamId = '00000000-0000-7000-8000-000000000645';
+    const rendered = vi.fn();
+    render(
+      <WorkstreamSocketPool activeWorkstreamId={activeWorkstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <ActiveConnection api={api} enabled workstreamId={activeWorkstreamId} />
+        <HoverWarmTarget onRender={rendered} workstreamId="another-workstream" />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    const rendersBeforeConnectionChange = rendered.mock.calls.length;
+    const feedSocket = FakeWebSocket.instances.find((socket) => String(socket.url).endsWith('/feed'));
+    if (!feedSocket) throw new Error('The active work stream opened no feed socket.');
+
+    act(() => {
+      feedSocket.readyState = FakeWebSocket.OPEN;
+      feedSocket.dispatchEvent(new Event('open'));
+    });
+    await flushPromises();
+
+    expect(rendered).toHaveBeenCalledTimes(rendersBeforeConnectionChange);
+  });
+
+  it('does not publish background connection churn through the active connection context', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const activeWorkstreamId = '00000000-0000-7000-8000-000000000646';
+    const backgroundWorkstreamId = '00000000-0000-7000-8000-000000000647';
+    const rendered = vi.fn();
+    render(
+      <WorkstreamSocketPool
+        activeWorkstreamId={activeWorkstreamId}
+        api={api}
+        backgroundWorkstreamIds={[backgroundWorkstreamId]}
+      >
+        <ActiveConnection
+          api={api}
+          enabled
+          onRender={rendered}
+          workstreamId={activeWorkstreamId}
+        />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+    await flushPromises();
+    const rendersBeforeBackgroundChange = rendered.mock.calls.length;
+    const backgroundFeed = FakeWebSocket.instances.find((socket) =>
+      String(socket.url).includes(backgroundWorkstreamId) && String(socket.url).endsWith('/feed'));
+    if (!backgroundFeed) throw new Error('The background work stream opened no feed socket.');
+
+    act(() => {
+      backgroundFeed.readyState = FakeWebSocket.OPEN;
+      backgroundFeed.dispatchEvent(new Event('open'));
+    });
+    await flushPromises();
+
+    expect(rendered).toHaveBeenCalledTimes(rendersBeforeBackgroundChange);
+  });
+
+  it('does not add a hover warm-up beyond the active socket pair', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const workstreamId = '00000000-0000-7000-8000-000000000642';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    act(() => vi.advanceTimersByTime(1_001));
+    await flushPromises();
+
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending warm-up when the row unmounts', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const workstreamId = '00000000-0000-7000-8000-000000000643';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    act(() => vi.advanceTimersByTime(500));
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]} />,
+    );
+    act(() => vi.advanceTimersByTime(501));
+    await flushPromises();
+
+    expect(api.getSocketTicket).not.toHaveBeenCalled();
+    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
+  });
+
+  it('replaces a pending warm-up with the active socket pair', async () => {
+    vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApi();
+    const workstreamId = '00000000-0000-7000-8000-000000000644';
+    const view = render(
+      <WorkstreamSocketPool activeWorkstreamId={null} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+      { wrapper: createWrapper() },
+    );
+
+    fireEvent.pointerEnter(view.getByRole('button', { name: 'Warm work stream' }));
+    act(() => vi.advanceTimersByTime(500));
+    view.rerender(
+      <WorkstreamSocketPool activeWorkstreamId={workstreamId} api={api} backgroundWorkstreamIds={[]}>
+        <HoverWarmTarget workstreamId={workstreamId} />
+      </WorkstreamSocketPool>,
+    );
+    act(() => vi.advanceTimersByTime(501));
+    await flushPromises();
+
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the route subtree mounted while the active work stream changes', () => {
     const mounted = vi.fn();
     function Route({ workstreamId }: { workstreamId: string }): React.JSX.Element {
@@ -141,7 +432,7 @@ describe('WorkstreamSocketPool', () => {
     expect(mounted).toHaveBeenCalledTimes(1);
   });
 
-  it('does not admit a route whose initial reads failed, including after navigation', async () => {
+  it('opens each active route feed without waiting for descendant admission', async () => {
     vi.useFakeTimers({ now: new Date('2026-08-25T12:00:00.000Z') });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const api = socketApi();
@@ -163,9 +454,14 @@ describe('WorkstreamSocketPool', () => {
     await flushPromises();
     act(() => vi.advanceTimersByTime(RECENT_WORKSTREAM_SOCKET_RETENTION_MS));
 
-    expect(api.getSocketTicket).not.toHaveBeenCalled();
-    expect(api.getWorkstreamControlSocketTicket).not.toHaveBeenCalled();
-    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
+    expect(api.getWorkstreamControlSocketTicket).toHaveBeenCalledTimes(2);
+    expect(FakeWebSocket.instances.map((socket) => String(socket.url))).toEqual([
+      `wss://api.rally.test/workstreams/${firstWorkstreamId}/control`,
+      `wss://api.rally.test/workstreams/${firstWorkstreamId}/feed`,
+      `wss://api.rally.test/workstreams/${secondWorkstreamId}/control`,
+      `wss://api.rally.test/workstreams/${secondWorkstreamId}/feed`,
+    ]);
   });
 
   it('reuses the exact feed and control socket pair until retention expires', async () => {

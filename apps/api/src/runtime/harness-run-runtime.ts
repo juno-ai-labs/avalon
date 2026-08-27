@@ -1455,7 +1455,7 @@ export async function terminalizeHarnessAttempt(
   runs: HarnessRunObjectPort,
   messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
-  lease: AttemptLease,
+  lease: AttemptIdentity,
   outcome: TerminalOutcome,
   receipts: ToolReceiptObjectPort,
   blocks: BlockDashboardObjectPort,
@@ -1625,59 +1625,48 @@ export async function recordInferenceAttempt(
   return id;
 }
 
-export async function reapStaleHarnessRuns(
-  runs: HarnessRunObjectPort,
-  options: {
+interface StaleHarnessRunReapOptions {
+  workspaceId: string;
+  workstreamId: string;
+  limit?: number;
+  /** WorkspaceDO authority for automation settlement; null for block-only runtimes. */
+  automationDatabase: D1Database | null;
+  /**
+   * How to reach a run's receipt authority. Required rather than defaulted:
+   * a sweep that terminalizes a run and silently leaves its receipts
+   * `executing` is worse than one that fails to start, and a default would
+   * make that the quiet outcome of forgetting to wire it.
+   */
+  receipts: ToolReceiptPortFactory;
+  /** A terminal row that could not be reconciled must not block run admission. */
+  onReceiptRepairFailure?: (failure: {
+    phase: "terminal_repair" | "stale_root" | "stale_child";
+    runId: string;
     workspaceId: string;
     workstreamId: string;
-    limit?: number;
-    /** WorkspaceDO authority for automation settlement; null for block-only runtimes. */
-    automationDatabase: D1Database | null;
-    /**
-     * How to reach a run's receipt authority. Required rather than defaulted:
-     * a sweep that terminalizes a run and silently leaves its receipts
-     * `executing` is worse than one that fails to start, and a default would
-     * make that the quiet outcome of forgetting to wire it.
-     */
-    receipts: ToolReceiptPortFactory;
-    /** A terminal row that could not be reconciled must not block run admission. */
-    onReceiptRepairFailure?: (failure: {
-      phase: "terminal_repair" | "stale_root" | "stale_child";
-      runId: string;
-      workspaceId: string;
-      workstreamId: string;
-      attemptId: string;
-      reason: string;
-    }) => void;
-    /**
-     * How to reach a run's HyperSight block authority. Required for the reason
-     * `receipts` is: a sweep that terminalizes a block's run and leaves the
-     * block `running` is worse than one that fails to start.
-     */
-    blocks: BlockDashboardPortFactory;
-  },
-): Promise<string[]> {
+    attemptId: string;
+    reason: string;
+  }) => void;
+  /**
+   * How to reach a run's HyperSight block authority. Required for the reason
+   * `receipts` is: a sweep that terminalizes a block's run and leaves the
+   * block `running` is worse than one that fails to start.
+   */
+  blocks: BlockDashboardPortFactory;
+}
+
+/**
+ * Reconcile receipts and related authorities left open by already-terminal
+ * runs, without expiring or terminalizing any nonterminal run.
+ */
+export async function repairTerminalResidualReceipts(
+  runs: HarnessRunObjectPort,
+  options: StaleHarnessRunReapOptions,
+): Promise<void> {
   const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
   const blockOnly = options.automationDatabase === null;
   const { workspaceId, workstreamId } = options;
   const receipts = options.receipts(workspaceId, workstreamId);
-  const reaped: string[] = [];
-  let processed = 0;
-
-  const reportFailure = (
-    phase: "terminal_repair" | "stale_root" | "stale_child",
-    repair: TerminalizedReceiptRepair,
-    error: unknown,
-  ): void => {
-    options.onReceiptRepairFailure?.({
-      phase,
-      runId: repair.runId,
-      workspaceId: repair.workspaceId,
-      workstreamId: repair.workstreamId,
-      attemptId: repair.attemptId,
-      reason: error instanceof Error ? error.message : String(error),
-    });
-  };
 
   // Terminalization and receipt settlement cross object calls. If the second
   // call failed, the terminal row is the durable authority and this marker is
@@ -1686,13 +1675,10 @@ export async function reapStaleHarnessRuns(
   // the marker, so the bounded walk makes forward progress instead of scanning
   // the same historical rows on every activation.
   //
-  // On its own budget, deliberately. This pass and the two reaps below used to
-  // share one, which was harmless while the pass could only select the three
-  // paths that wrote a marker. It selects every unmarked terminal row now, so a
-  // shared budget would let a history backfill return before the stale-lease
-  // reap ran at all — and that reap is the only recovery for an executor that
-  // died without terminalizing, which is the worse of the two ways a tool card
-  // gets stranded. A backfill must never delay it.
+  // On its own budget, deliberately. This pass and stale-run reaping used to
+  // share one. The general reaper composes this helper before its time-sensitive
+  // stale-lease pass, while callers such as transcript backfill can safely run
+  // terminal repair alone without changing nonterminal run state.
   for (const row of await runs.residualRepairCandidates({
     markerEventKey: RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY,
     blockOnly,
@@ -1718,9 +1704,45 @@ export async function reapStaleHarnessRuns(
         settleOtherAuthorities(options, options.automationDatabase, row.origin, repair),
       );
     } catch (error) {
-      reportFailure("terminal_repair", repair, error);
+      options.onReceiptRepairFailure?.({
+        phase: "terminal_repair",
+        runId: repair.runId,
+        workspaceId: repair.workspaceId,
+        workstreamId: repair.workstreamId,
+        attemptId: repair.attemptId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
     }
   }
+}
+
+export async function reapStaleHarnessRuns(
+  runs: HarnessRunObjectPort,
+  options: StaleHarnessRunReapOptions,
+): Promise<string[]> {
+  const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 25)));
+  const blockOnly = options.automationDatabase === null;
+  const { workspaceId, workstreamId } = options;
+  const receipts = options.receipts(workspaceId, workstreamId);
+  const reaped: string[] = [];
+  let processed = 0;
+
+  const reportFailure = (
+    phase: "stale_root" | "stale_child",
+    repair: TerminalizedReceiptRepair,
+    error: unknown,
+  ): void => {
+    options.onReceiptRepairFailure?.({
+      phase,
+      runId: repair.runId,
+      workspaceId: repair.workspaceId,
+      workstreamId: repair.workstreamId,
+      attemptId: repair.attemptId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  };
+
+  await repairTerminalResidualReceipts(runs, options);
 
   // No early return on a full repair page: the reaps below are the
   // time-sensitive half and must run on every activation.

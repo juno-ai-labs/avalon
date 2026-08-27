@@ -4,16 +4,28 @@ import {
   type WorkstreamSocketApi,
   type WorkstreamSocketConnection,
 } from './use-workstream-socket';
+import { useWorkstreamControlSocket } from './use-workstream-control-socket';
+import { uuidV7 } from './telemetry';
 
 export const RECENT_WORKSTREAM_SOCKET_RETENTION_MS = 5 * 60_000;
+export const WORKSTREAM_SOCKET_HOVER_WARMUP_MS = 1_000;
 
-interface RetainedWorkstreamSocketContextValue {
+interface RetainedWorkstreamSocketActionsContextValue {
   activeWorkstreamId: string | null;
   admit: (workstreamId: string) => void;
-  connections: ReadonlyMap<string, WorkstreamSocketConnection>;
+  openContext: (workstreamId: string) => WorkstreamSocketOpenContext;
+  warm: (workstreamId: string) => void;
 }
 
-const RetainedWorkstreamSocketContext = createContext<RetainedWorkstreamSocketContextValue | null>(null);
+export interface WorkstreamSocketOpenContext {
+  state: 'retained_pair' | 'control_warmup' | 'cold';
+  socketLeaseId?: string;
+}
+
+const RetainedWorkstreamSocketActionsContext = createContext<RetainedWorkstreamSocketActionsContextValue | null>(null);
+const RetainedWorkstreamSocketConnectionsContext = createContext<ReadonlyMap<string, WorkstreamSocketConnection>>(
+  new Map(),
+);
 
 export function retainedWorkstreamSocketIds(
   activeWorkstreamId: string | null,
@@ -32,11 +44,22 @@ export function retainedWorkstreamSocketIds(
 function useRetainedWorkstreamSocketIds(
   activeWorkstreamId: string | null,
   backgroundWorkstreamIds: readonly string[],
-): string[] {
+): {
+  retain: (workstreamId: string) => void;
+  workstreamIds: string[];
+} {
   const previousActiveWorkstreamId = useRef(activeWorkstreamId);
   const [recentlyViewedUntil, setRecentlyViewedUntil] = useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
+  const retain = useCallback((workstreamId: string) => {
+    const retainUntil = Date.now() + RECENT_WORKSTREAM_SOCKET_RETENTION_MS;
+    setRecentlyViewedUntil((current) => {
+      const next = new Map(current);
+      next.set(workstreamId, retainUntil);
+      return next;
+    });
+  }, []);
   const justLeftWorkstreamId = previousActiveWorkstreamId.current !== activeWorkstreamId
     ? previousActiveWorkstreamId.current
     : null;
@@ -44,13 +67,8 @@ function useRetainedWorkstreamSocketIds(
   useLayoutEffect(() => {
     previousActiveWorkstreamId.current = activeWorkstreamId;
     if (justLeftWorkstreamId === null) return;
-    const retainUntil = Date.now() + RECENT_WORKSTREAM_SOCKET_RETENTION_MS;
-    setRecentlyViewedUntil((current) => {
-      const next = new Map(current);
-      next.set(justLeftWorkstreamId, retainUntil);
-      return next;
-    });
-  }, [activeWorkstreamId, justLeftWorkstreamId]);
+    retain(justLeftWorkstreamId);
+  }, [activeWorkstreamId, justLeftWorkstreamId, retain]);
 
   useEffect(() => {
     if (recentlyViewedUntil.size === 0) return;
@@ -74,38 +92,47 @@ function useRetainedWorkstreamSocketIds(
     };
   }, [recentlyViewedUntil]);
 
-  return retainedWorkstreamSocketIds(
-    activeWorkstreamId,
-    backgroundWorkstreamIds,
-    [...recentlyViewedUntil.keys()],
-    justLeftWorkstreamId,
-  );
+  return {
+    retain,
+    workstreamIds: retainedWorkstreamSocketIds(
+      activeWorkstreamId,
+      backgroundWorkstreamIds,
+      [...recentlyViewedUntil.keys()],
+      justLeftWorkstreamId,
+    ),
+  };
 }
 
 function RetainedWorkstreamSocket({
+  active,
   admitted,
   api,
   background,
-  onAdmit,
+  controlWarm,
   onConnection,
   onRelease,
+  socketLeaseId,
   workstreamId,
 }: {
+  active: boolean;
   admitted: boolean;
   api: WorkstreamSocketApi | null;
   background: boolean;
-  onAdmit: (workstreamId: string) => void;
+  controlWarm: boolean;
   onConnection: (workstreamId: string, connection: WorkstreamSocketConnection) => void;
   onRelease: (workstreamId: string) => void;
+  socketLeaseId: string;
   workstreamId: string;
 }): null {
+  const feedEnabled = active || background || admitted;
+  const initialReason = controlWarm && !feedEnabled
+    ? 'hover_warmup'
+    : active ? 'active_workstream' : background ? 'background_workstream' : 'retained_workstream';
+  useWorkstreamControlSocket(api, workstreamId, controlWarm || feedEnabled, initialReason, socketLeaseId);
+  const connection = useWorkstreamSocket(api, workstreamId, feedEnabled, true, initialReason, socketLeaseId);
   useLayoutEffect(() => {
-    if (background) onAdmit(workstreamId);
-  }, [background, onAdmit, workstreamId]);
-  const connection = useWorkstreamSocket(api, workstreamId, background || admitted);
-  useLayoutEffect(() => {
-    onConnection(workstreamId, connection);
-  }, [connection, onConnection, workstreamId]);
+    if (active || admitted) onConnection(workstreamId, connection);
+  }, [active, admitted, connection, onConnection, workstreamId]);
   useLayoutEffect(() => () => {
     onRelease(workstreamId);
   }, [onRelease, workstreamId]);
@@ -113,33 +140,39 @@ function RetainedWorkstreamSocket({
 }
 
 function RetainedWorkstreamSocketOwners({
+  activeWorkstreamId,
   admittedWorkstreamIds,
   api,
   backgroundWorkstreamIds,
-  onAdmit,
+  controlWarmWorkstreamId,
   onConnection,
   onRelease,
+  socketLeaseIds,
   workstreamIds,
 }: {
+  activeWorkstreamId: string | null;
   admittedWorkstreamIds: ReadonlySet<string>;
   api: WorkstreamSocketApi | null;
-  backgroundWorkstreamIds: readonly string[];
-  onAdmit: (workstreamId: string) => void;
+  backgroundWorkstreamIds: ReadonlySet<string>;
+  controlWarmWorkstreamId: string | null;
   onConnection: (workstreamId: string, connection: WorkstreamSocketConnection) => void;
   onRelease: (workstreamId: string) => void;
+  socketLeaseIds: ReadonlyMap<string, string>;
   workstreamIds: readonly string[];
 }): React.JSX.Element {
   return (
     <>
       {workstreamIds.map((workstreamId) => (
         <RetainedWorkstreamSocket
+          active={activeWorkstreamId === workstreamId}
           admitted={admittedWorkstreamIds.has(workstreamId)}
           api={api}
-          background={backgroundWorkstreamIds.includes(workstreamId)}
+          background={backgroundWorkstreamIds.has(workstreamId)}
+          controlWarm={controlWarmWorkstreamId === workstreamId}
           key={workstreamId}
-          onAdmit={onAdmit}
           onConnection={onConnection}
           onRelease={onRelease}
+          socketLeaseId={socketLeaseIds.get(workstreamId)!}
           workstreamId={workstreamId}
         />
       ))}
@@ -162,19 +195,70 @@ export function WorkstreamSocketPool({
   api: WorkstreamSocketApi | null;
   backgroundWorkstreamIds: readonly string[];
 }>): React.JSX.Element {
-  const workstreamIds = useRetainedWorkstreamSocketIds(activeWorkstreamId, backgroundWorkstreamIds);
+  const { workstreamIds } = useRetainedWorkstreamSocketIds(
+    activeWorkstreamId,
+    backgroundWorkstreamIds,
+  );
   const [admittedWorkstreamIds, setAdmittedWorkstreamIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [connections, setConnections] = useState<ReadonlyMap<string, WorkstreamSocketConnection>>(
     () => new Map(),
   );
+  const [controlWarm, setControlWarm] = useState<{
+    expiresAt: number;
+    workstreamId: string;
+  } | null>(null);
+  const admittedWorkstreamIdsRef = useRef(admittedWorkstreamIds);
+  admittedWorkstreamIdsRef.current = admittedWorkstreamIds;
+  const controlWarmRef = useRef(controlWarm);
+  controlWarmRef.current = controlWarm;
+  const socketLeaseIdsRef = useRef<ReadonlyMap<string, string>>(new Map());
+  const backgroundWorkstreamIdSet = useMemo(
+    () => new Set(backgroundWorkstreamIds),
+    [backgroundWorkstreamIds],
+  );
+  const backgroundWorkstreamIdsRef = useRef<ReadonlySet<string>>(backgroundWorkstreamIdSet);
+  backgroundWorkstreamIdsRef.current = backgroundWorkstreamIdSet;
   const admit = useCallback((workstreamId: string) => {
     setAdmittedWorkstreamIds((current) => {
       if (current.has(workstreamId)) return current;
       return new Set(current).add(workstreamId);
     });
   }, []);
+  const warm = useCallback((workstreamId: string) => {
+    setControlWarm({
+      expiresAt: Date.now() + RECENT_WORKSTREAM_SOCKET_RETENTION_MS,
+      workstreamId,
+    });
+  }, []);
+  const openContext = useCallback((workstreamId: string): WorkstreamSocketOpenContext => {
+    const state = admittedWorkstreamIdsRef.current.has(workstreamId)
+      || backgroundWorkstreamIdsRef.current.has(workstreamId)
+      ? 'retained_pair' as const
+      : controlWarmRef.current?.workstreamId === workstreamId ? 'control_warmup' as const : 'cold' as const;
+    const socketLeaseId = socketLeaseIdsRef.current.get(workstreamId);
+    return { state, ...(socketLeaseId ? { socketLeaseId } : {}) };
+  }, []);
+  useEffect(() => {
+    if (!controlWarm) return;
+    let timeout: number | null = null;
+    const expire = (): void => {
+      const remaining = controlWarm.expiresAt - Date.now();
+      if (remaining > 0) {
+        timeout = window.setTimeout(expire, remaining);
+        return;
+      }
+      setControlWarm((current) => current?.workstreamId === controlWarm.workstreamId
+        && current.expiresAt === controlWarm.expiresAt
+        ? null
+        : current);
+    };
+    timeout = window.setTimeout(expire, Math.max(0, controlWarm.expiresAt - Date.now()));
+    return () => {
+      if (timeout !== null) window.clearTimeout(timeout);
+    };
+  }, [controlWarm]);
   const publishConnection = useCallback((
     workstreamId: string,
     connection: WorkstreamSocketConnection,
@@ -200,24 +284,93 @@ export function WorkstreamSocketPool({
       return next;
     });
   }, []);
-  const context = useMemo<RetainedWorkstreamSocketContextValue>(() => ({
+  const actions = useMemo<RetainedWorkstreamSocketActionsContextValue>(() => ({
     activeWorkstreamId,
     admit,
-    connections,
-  }), [activeWorkstreamId, admit, connections]);
+    openContext,
+    warm,
+  }), [activeWorkstreamId, admit, openContext, warm]);
+  const ownerWorkstreamIds = useMemo(() => [...new Set([
+    ...workstreamIds,
+    ...(controlWarm === null ? [] : [controlWarm.workstreamId]),
+  ])], [controlWarm, workstreamIds]);
+  const socketLeaseIds = useMemo(() => {
+    const previous = socketLeaseIdsRef.current;
+    const next = new Map<string, string>();
+    for (const workstreamId of ownerWorkstreamIds) {
+      next.set(workstreamId, previous.get(workstreamId) ?? uuidV7());
+    }
+    socketLeaseIdsRef.current = next;
+    return next;
+  }, [ownerWorkstreamIds]);
   return (
-    <RetainedWorkstreamSocketContext.Provider value={context}>
-      <RetainedWorkstreamSocketOwners
-        admittedWorkstreamIds={admittedWorkstreamIds}
-        api={api}
-        backgroundWorkstreamIds={backgroundWorkstreamIds}
-        onAdmit={admit}
-        onConnection={publishConnection}
-        onRelease={release}
-        workstreamIds={workstreamIds}
-      />
-      {children}
-    </RetainedWorkstreamSocketContext.Provider>
+    <RetainedWorkstreamSocketActionsContext.Provider value={actions}>
+      <RetainedWorkstreamSocketConnectionsContext.Provider value={connections}>
+        <RetainedWorkstreamSocketOwners
+          activeWorkstreamId={activeWorkstreamId}
+          admittedWorkstreamIds={admittedWorkstreamIds}
+          api={api}
+          backgroundWorkstreamIds={backgroundWorkstreamIdSet}
+          controlWarmWorkstreamId={controlWarm?.workstreamId ?? null}
+          onConnection={publishConnection}
+          onRelease={release}
+          socketLeaseIds={socketLeaseIds}
+          workstreamIds={ownerWorkstreamIds}
+        />
+        {children}
+      </RetainedWorkstreamSocketConnectionsContext.Provider>
+    </RetainedWorkstreamSocketActionsContext.Provider>
+  );
+}
+
+/**
+ * Warm one WorkstreamDO control socket after a deliberate sidebar hover.
+ * SubstreamAgent subscription remains tied to opening the work stream so a
+ * hover never publishes viewer presence.
+ */
+export function useWorkstreamSocketHoverWarmup(workstreamId: string): {
+  onPointerCancel: () => void;
+  onPointerEnter: () => void;
+  onPointerLeave: () => void;
+} {
+  const actions = useContext(RetainedWorkstreamSocketActionsContext);
+  const activeWorkstreamId = actions?.activeWorkstreamId ?? null;
+  const activeWorkstreamIdRef = useRef(activeWorkstreamId);
+  activeWorkstreamIdRef.current = activeWorkstreamId;
+  const timeout = useRef<number | null>(null);
+  const cancel = useCallback(() => {
+    if (timeout.current === null) return;
+    window.clearTimeout(timeout.current);
+    timeout.current = null;
+  }, []);
+  const start = useCallback(() => {
+    cancel();
+    if (!actions || activeWorkstreamIdRef.current === workstreamId) return;
+    timeout.current = window.setTimeout(() => {
+      timeout.current = null;
+      if (activeWorkstreamIdRef.current !== workstreamId) actions.warm(workstreamId);
+    }, WORKSTREAM_SOCKET_HOVER_WARMUP_MS);
+  }, [actions, cancel, workstreamId]);
+  useEffect(() => {
+    if (activeWorkstreamId === workstreamId) cancel();
+  }, [activeWorkstreamId, cancel, workstreamId]);
+  useEffect(() => () => {
+    cancel();
+  }, [cancel]);
+  return useMemo(() => ({
+    onPointerCancel: cancel,
+    onPointerEnter: start,
+    onPointerLeave: cancel,
+  }), [cancel, start]);
+}
+
+export function useWorkstreamSocketOpenContext(
+  workstreamId: string,
+): () => WorkstreamSocketOpenContext {
+  const actions = useContext(RetainedWorkstreamSocketActionsContext);
+  return useCallback(
+    () => actions?.openContext(workstreamId) ?? { state: 'cold' },
+    [actions, workstreamId],
   );
 }
 
@@ -231,12 +384,13 @@ export function useRetainedWorkstreamSocket(
   workstreamId: string,
   enabled: boolean,
 ): WorkstreamSocketConnection {
-  const retained = useContext(RetainedWorkstreamSocketContext);
-  const matchesRetainedConnection = retained?.activeWorkstreamId === workstreamId;
-  const admit = retained?.admit;
+  const actions = useContext(RetainedWorkstreamSocketActionsContext);
+  const connections = useContext(RetainedWorkstreamSocketConnectionsContext);
+  const matchesRetainedConnection = actions?.activeWorkstreamId === workstreamId;
+  const admit = actions?.admit;
   useLayoutEffect(() => {
     if (enabled && matchesRetainedConnection) admit?.(workstreamId);
   }, [admit, enabled, matchesRetainedConnection, workstreamId]);
   const direct = useWorkstreamSocket(api, workstreamId, enabled && !matchesRetainedConnection);
-  return matchesRetainedConnection ? retained?.connections.get(workstreamId) ?? direct : direct;
+  return matchesRetainedConnection ? connections.get(workstreamId) ?? direct : direct;
 }

@@ -1,10 +1,9 @@
 import { asWorkspaceId } from "@rally/contracts";
-import { nowIso } from "@rally/db";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { uuidV7 } from "../lib/uuid-v7";
+import { logInfo, logWarn } from "../observability/logger";
 import {
   WorkstreamMentionNotificationEffectSchema,
   WorkstreamParticipantNotificationEffectSchema,
@@ -20,6 +19,12 @@ import {
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceRegionalEffectApplyResultSchema,
 } from "../durable-objects/workspace-directory-protocol";
+import {
+  WorkspaceNotificationIntentClaimResultSchema,
+  WorkspaceNotificationIntentTransitionResultSchema,
+  type WorkspaceNotificationIntentTransitionRequest,
+  type WorkspaceNotificationIntentTransitionResult,
+} from "../durable-objects/workspace-notification-intent-protocol";
 import { sendWorkstreamMentionEmail } from "./mention-email-service";
 import { sendWorkstreamParticipantAddedEmail } from "./participant-email-service";
 import {
@@ -28,8 +33,7 @@ import {
 } from "./slack-notification-service";
 import { enqueueMentionOpportunitySnapshot } from "./work-opportunity-batching";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
-import { withWorkspaceRuntimeDatabase, workspaceRegionalDatabase } from "./workspace-runtime-database";
-import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
+import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 function workspaceTopicsForEffect(
   effect: WorkstreamRegionalEffectEnvelope["effect"],
@@ -40,18 +44,16 @@ function workspaceTopicsForEffect(
   return ["activity", "workstream_directory"] as const;
 }
 
-interface NotificationIntentRow {
-  intent_id: string;
-  workspace_id: string;
-  workstream_id: string;
-  recipient_user_id: string;
-  source_generation: number;
-  required_directory_version: number;
-  notification_kind: string;
-  payload_json: string;
+interface NotificationRecipientIdentity {
   recipient_email: string;
   recipient_name: string;
   workspace_name: string;
+}
+
+interface NotificationIntentTransitionPort {
+  transitionWorkstreamNotificationIntent(
+    input: WorkspaceNotificationIntentTransitionRequest,
+  ): Promise<unknown>;
 }
 
 export interface WorkstreamRegionalEffectResult {
@@ -131,6 +133,16 @@ export async function applyWorkstreamRegionalEffect(
     // A previous authority generation can still have Queue messages in flight.
     // Its state was superseded at cutover, so acknowledging it is the only
     // terminal and safe outcome; applying it would regress the current owner.
+    logInfo(env, "workstream_regional_effect_apply_terminal", {
+      workspace_id: message.workspaceId,
+      workstream_id: message.workstreamId,
+      message_id: message.messageId,
+      effect_kind: message.effect.kind,
+      outcome: "skipped",
+      reason: "authority_generation_superseded",
+      message_generation: message.generation,
+      active_generation: route.generation,
+    });
     return { replayed: true, notificationIntentId: null };
   }
   if (route?.state !== "active" || route.generation !== message.generation) {
@@ -185,6 +197,19 @@ export async function applyWorkstreamRegionalEffect(
     }),
   );
 
+  if (message.effect.kind !== "activity_event" && !applied.notificationIntentId) {
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: message.workspaceId,
+      workstream_id: message.workstreamId,
+      message_id: message.messageId,
+      kind: message.effect.kind,
+      recipient_user_id: message.effect.recipientUserId,
+      outcome: "skipped",
+      reason: recipientIsActiveMember ? "notification_intent_not_created" : "recipient_inactive",
+      replayed: applied.replayed,
+    });
+  }
+
   if (
     message.effect.kind === "activity_event"
     && message.effect.sourceKind === "workstream_message"
@@ -216,104 +241,149 @@ export async function processWorkstreamNotificationIntent(
   workspaceId: string,
   intentId: string,
 ): Promise<"delivered" | "skipped" | "busy"> {
-  env = withWorkspaceRuntimeDatabase(env, workspaceId);
-  const leaseId = uuidV7();
-  const at = nowIso();
-  const claim = await env.DB.prepare(
-    `UPDATE workstream_notification_intents
-        SET state = 'processing', attempts = attempts + 1, lease_id = ?,
-            lease_expires_at = ?, last_error_code = NULL, updated_at = ?
-      WHERE intent_id = ? AND payload_json IS NOT NULL
-        AND (state IN ('pending', 'failed')
-          OR (state = 'processing' AND COALESCE(lease_expires_at, '') <= ?))`,
-  ).bind(
-    leaseId,
-    new Date(Date.now() + 5 * 60_000).toISOString(),
-    at,
-    intentId,
-    at,
-  ).run();
-  if ((claim.meta.changes ?? 0) !== 1) {
-    const settled = await env.DB.prepare(
-      `SELECT state FROM workstream_notification_intents WHERE intent_id = ?`,
-    ).bind(intentId).first<{ state: string }>();
-    if (!settled) return "skipped";
-    if (settled.state === "skipped") {
-      await refreshWorkspaceSchedule(env, workspaceId);
-      return "skipped";
-    }
-    if (settled.state === "delivered") {
-      // A prior delivery may have committed before scheduler refresh failed.
-      // Retrying the Queue item repairs that alarm edge without re-sending.
-      await refreshWorkspaceSchedule(env, workspaceId);
-      return "delivered";
-    }
+  const typedWorkspaceId = asWorkspaceId(workspaceId);
+  const workspace = await durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    typedWorkspaceId,
+    workspaceDOName(env.AVALON_REGION, typedWorkspaceId),
+  );
+  const claim = WorkspaceNotificationIntentClaimResultSchema.parse(
+    await workspace.claimWorkstreamNotificationIntent({ workspaceId: typedWorkspaceId, intentId }),
+  );
+  if (claim.outcome === "missing") {
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: workspaceId,
+      notification_intent_id: intentId,
+      outcome: "skipped",
+      reason: "notification_intent_missing",
+    });
+    return "skipped";
+  }
+  if (claim.outcome === "terminal") {
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: workspaceId,
+      workstream_id: claim.intent.workstreamId,
+      notification_intent_id: intentId,
+      kind: claim.intent.notificationKind,
+      recipient_user_id: claim.intent.recipientUserId,
+      outcome: claim.intent.state,
+      reason: claim.intent.state === "delivered"
+        ? "notification_already_delivered"
+        : "notification_already_skipped",
+      replayed: true,
+    });
+    return claim.intent.state;
+  }
+  if (claim.outcome === "busy") {
+    logInfo(env, "workstream_notification_deferred", {
+      workspace_id: workspaceId,
+      workstream_id: claim.intent.workstreamId,
+      notification_intent_id: intentId,
+      kind: claim.intent.notificationKind,
+      recipient_user_id: claim.intent.recipientUserId,
+      outcome: "busy",
+      reason: "notification_lease_active",
+      state: claim.intent.state,
+    });
     return "busy";
   }
 
-  const intent = await env.DB.prepare(
-    `SELECT intent_id, workspace_id, workstream_id, recipient_user_id,
-            source_generation, required_directory_version, notification_kind, payload_json
-       FROM workstream_notification_intents
-      WHERE intent_id = ? AND workspace_id = ? AND lease_id = ?`,
-  ).bind(intentId, workspaceId, leaseId).first<Omit<
-    NotificationIntentRow,
-    "recipient_email" | "recipient_name" | "workspace_name"
-  >>();
-  const identity = intent ? await workspaceRegionalDatabase(env).prepare(
+  const row = claim.intent;
+  const leaseId = claim.leaseId;
+  const identity = await workspaceRegionalDatabase(env).prepare(
     `SELECT user.email AS recipient_email, user.name AS recipient_name,
             workspace.name AS workspace_name
        FROM users user JOIN workspaces workspace ON workspace.id = ?
        JOIN workspace_members member ON member.workspace_id = workspace.id
         AND member.user_id = user.id AND member.status = 'active'
       WHERE user.id = ?`,
-  ).bind(workspaceId, intent.recipient_user_id).first<Pick<
-    NotificationIntentRow,
-    "recipient_email" | "recipient_name" | "workspace_name"
-  >>() : null;
-  const row: NotificationIntentRow | null = intent && identity ? { ...intent, ...identity } : null;
-  if (!row) {
-    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
+  ).bind(workspaceId, row.recipientUserId).first<NotificationRecipientIdentity>();
+  if (!identity) {
+    await requireNotificationIntentTransition(workspace, {
+      workspaceId: typedWorkspaceId,
+      intentId,
+      leaseId,
+      transition: "settle",
+      state: "skipped",
+    });
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: workspaceId,
+      workstream_id: row.workstreamId,
+      notification_intent_id: intentId,
+      kind: row.notificationKind,
+      recipient_user_id: row.recipientUserId,
+      outcome: "skipped",
+      reason: "recipient_inactive_or_identity_missing",
+    });
     return "skipped";
   }
 
-  const workspace = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSPACE_DOS,
-    row.workspace_id,
-    workspaceDOName(env.AVALON_REGION, asWorkspaceId(row.workspace_id)),
-  );
   const rawDirectoryState = await workspace.notificationDirectoryState({
-    workspaceId: row.workspace_id,
-    workstreamId: row.workstream_id,
-    userId: row.recipient_user_id,
+    workspaceId: row.workspaceId,
+    workstreamId: row.workstreamId,
+    userId: row.recipientUserId,
   });
   const viewer = rawDirectoryState
     ? WorkspaceDirectoryNotificationStateSchema.parse(rawDirectoryState)
     : null;
   if (
     !viewer
-    || viewer.authorityGeneration < row.source_generation
+    || viewer.authorityGeneration < row.sourceGeneration
     || (
-      viewer.authorityGeneration === row.source_generation
-      && viewer.viewerVersion < row.required_directory_version
+      viewer.authorityGeneration === row.sourceGeneration
+      && viewer.viewerVersion < row.requiredDirectoryVersion
     )
   ) {
-    await env.DB.prepare(
-      `UPDATE workstream_notification_intents
-          SET state = 'pending', lease_id = NULL, lease_expires_at = NULL,
-              last_error_code = 'directory_projection_pending', updated_at = ?
-        WHERE intent_id = ? AND lease_id = ?`,
-    ).bind(nowIso(), intentId, leaseId).run();
+    const transition = await transitionNotificationIntent(workspace, {
+      workspaceId: typedWorkspaceId,
+      intentId,
+      leaseId,
+      transition: "defer",
+      errorCode: "directory_projection_pending",
+    });
+    logInfo(env, "workstream_notification_deferred", {
+      workspace_id: row.workspaceId,
+      workstream_id: row.workstreamId,
+      notification_intent_id: intentId,
+      kind: row.notificationKind,
+      recipient_user_id: row.recipientUserId,
+      outcome: transition.outcome === "applied" ? "busy" : transition.outcome,
+      reason: transition.outcome === "applied"
+        ? "directory_projection_pending"
+        : "notification_lease_lost_before_defer",
+      required_generation: row.sourceGeneration,
+      current_generation: viewer?.authorityGeneration ?? null,
+      required_directory_version: row.requiredDirectoryVersion,
+      current_directory_version: viewer?.viewerVersion ?? null,
+      current_state: transition.outcome === "lease_lost" ? transition.state : null,
+    });
+    if (transition.outcome === "lease_lost" && transition.state === "delivered") return "delivered";
+    if (transition.outcome === "lease_lost" && transition.state === "skipped") return "skipped";
     return "busy";
   }
   if (!viewer.listable) {
-    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
+    await requireNotificationIntentTransition(workspace, {
+      workspaceId: typedWorkspaceId,
+      intentId,
+      leaseId,
+      transition: "settle",
+      state: "skipped",
+    });
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: row.workspaceId,
+      workstream_id: row.workstreamId,
+      notification_intent_id: intentId,
+      kind: row.notificationKind,
+      recipient_user_id: row.recipientUserId,
+      outcome: "skipped",
+      reason: "recipient_not_listable",
+    });
     return "skipped";
   }
 
-  const payload: unknown = JSON.parse(row.payload_json);
-  const participantAdded = row.notification_kind === "participant_added";
+  const payload: unknown = JSON.parse(row.payloadJson);
+  const participantAdded = row.notificationKind === "participant_added";
   const effect = participantAdded
     ? WorkstreamParticipantNotificationEffectSchema.parse(payload)
     : WorkstreamMentionNotificationEffectSchema.parse(payload);
@@ -324,7 +394,22 @@ export async function processWorkstreamNotificationIntent(
     ? effect.authorUserId
     : effect.actorUserId;
   if (effect.recipientUserId === originatorUserId) {
-    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "skipped");
+    await requireNotificationIntentTransition(workspace, {
+      workspaceId: typedWorkspaceId,
+      intentId,
+      leaseId,
+      transition: "settle",
+      state: "skipped",
+    });
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: row.workspaceId,
+      workstream_id: row.workstreamId,
+      notification_intent_id: intentId,
+      kind: row.notificationKind,
+      recipient_user_id: effect.recipientUserId,
+      outcome: "skipped",
+      reason: "self_notification",
+    });
     return "skipped";
   }
   try {
@@ -333,18 +418,20 @@ export async function processWorkstreamNotificationIntent(
     // sequenced rather than fanned out so nobody is told twice.
     const recipient = {
       recipientUserId: effect.recipientUserId,
-      recipientEmail: row.recipient_email,
-      workspaceId: row.workspace_id,
-      workspaceName: row.workspace_name,
-      workstreamId: row.workstream_id,
+      recipientEmail: identity.recipient_email,
+      workspaceId: row.workspaceId,
+      workspaceName: identity.workspace_name,
+      workstreamId: row.workstreamId,
       workstreamTitle: effect.workstreamTitleSnapshot,
     };
+    const sourceId = effect.kind === "participant_notification" ? effect.sourceId : effect.messageId;
     const slack = effect.kind === "participant_notification"
       ? await sendWorkstreamParticipantAddedSlack(env, {
         ...recipient,
         sourceId: effect.sourceId,
         actorName: effect.actorNameSnapshot,
         workstreamObjective: effect.workstreamObjectiveSnapshot,
+        titleIsProvisional: effect.titleIsProvisional,
       })
       : await sendWorkstreamMentionSlack(env, {
         ...recipient,
@@ -352,66 +439,120 @@ export async function processWorkstreamNotificationIntent(
         authorName: effect.authorNameSnapshot,
         messageText: effect.messageText,
       });
+    logInfo(env, "workstream_notification_transport_terminal", {
+      workspace_id: row.workspaceId,
+      workstream_id: row.workstreamId,
+      notification_intent_id: intentId,
+      kind: row.notificationKind,
+      source_id: sourceId,
+      recipient_user_id: effect.recipientUserId,
+      channel: "slack",
+      outcome: slack,
+      reason: slack === "sent" ? "provider_accepted" : "fallback_required",
+    });
+    let email: "sent" | "skipped" | null = null;
     if (slack !== "sent") {
       const fallback = {
         ...recipient,
-        recipientName: row.recipient_name,
+        recipientName: identity.recipient_name,
         workstreamEmailAddress: viewer.emailAddress,
         region: env.AVALON_REGION,
       };
       if (effect.kind === "participant_notification") {
-        await sendWorkstreamParticipantAddedEmail(env, {
+        email = await sendWorkstreamParticipantAddedEmail(env, {
           ...fallback,
           sourceId: effect.sourceId,
           actorName: effect.actorNameSnapshot,
           workstreamObjective: effect.workstreamObjectiveSnapshot,
+          titleIsProvisional: effect.titleIsProvisional,
         });
       } else {
-        await sendWorkstreamMentionEmail(env, {
+        email = await sendWorkstreamMentionEmail(env, {
           ...fallback,
           messageId: effect.messageId,
           authorName: effect.authorNameSnapshot,
           messageText: effect.messageText,
         });
       }
+      logInfo(env, "workstream_notification_transport_terminal", {
+        workspace_id: row.workspaceId,
+        workstream_id: row.workstreamId,
+        notification_intent_id: intentId,
+        kind: row.notificationKind,
+        source_id: sourceId,
+        recipient_user_id: effect.recipientUserId,
+        channel: "email",
+        outcome: email,
+        reason: email === "sent" ? "provider_accepted" : "transport_disabled_for_environment",
+      });
     }
-    await settleNotificationIntent(env, workspaceId, intentId, leaseId, "delivered");
+    await requireNotificationIntentTransition(workspace, {
+      workspaceId: typedWorkspaceId,
+      intentId,
+      leaseId,
+      transition: "settle",
+      state: "delivered",
+    });
+    logInfo(env, "workstream_notification_terminal", {
+      workspace_id: row.workspaceId,
+      workstream_id: row.workstreamId,
+      notification_intent_id: intentId,
+      kind: row.notificationKind,
+      source_id: sourceId,
+      recipient_user_id: effect.recipientUserId,
+      outcome: "delivered",
+      reason: slack === "sent" ? "slack_sent" : "email_fallback_completed",
+      delivery_channel: slack === "sent" ? "slack" : "email",
+      slack_outcome: slack,
+      email_outcome: email,
+    });
     return "delivered";
   } catch (error) {
     const code = error instanceof ApiError ? error.code : "notification_delivery_failed";
-    await env.DB.prepare(
-      `UPDATE workstream_notification_intents
-          SET state = 'failed', lease_id = NULL, lease_expires_at = NULL,
-              last_error_code = ?, updated_at = ?
-        WHERE intent_id = ? AND lease_id = ?`,
-    ).bind(code, nowIso(), intentId, leaseId).run();
+    const transition = await transitionNotificationIntent(workspace, {
+      workspaceId: typedWorkspaceId,
+      intentId,
+      leaseId,
+      transition: "fail",
+      errorCode: code,
+    });
+    logWarn(env, "workstream_notification_failed", {
+      workspace_id: row.workspaceId,
+      workstream_id: row.workstreamId,
+      notification_intent_id: intentId,
+      kind: row.notificationKind,
+      recipient_user_id: row.recipientUserId,
+      outcome: "failed",
+      reason: code,
+      error_name: error instanceof Error ? error.name : "Error",
+      transition_outcome: transition.outcome,
+      current_state: transition.outcome === "lease_lost" ? transition.state : null,
+    });
     throw error;
   }
 }
 
-/**
- * Close one intent out, for either kind.
- *
- * The payload is cleared on the way: it held a message excerpt or a work
- * stream's objective only so delivery could render it, and a settled intent is
- * a receipt rather than a copy of what was said.
- */
-async function settleNotificationIntent(
-  env: Env,
-  workspaceId: string,
-  intentId: string,
-  leaseId: string,
-  state: "delivered" | "skipped",
+async function transitionNotificationIntent(
+  workspace: NotificationIntentTransitionPort,
+  input: WorkspaceNotificationIntentTransitionRequest,
+): Promise<WorkspaceNotificationIntentTransitionResult> {
+  return WorkspaceNotificationIntentTransitionResultSchema.parse(
+    await workspace.transitionWorkstreamNotificationIntent(input),
+  );
+}
+
+async function requireNotificationIntentTransition(
+  workspace: NotificationIntentTransitionPort,
+  input: WorkspaceNotificationIntentTransitionRequest,
 ): Promise<void> {
-  const at = nowIso();
-  await env.DB.prepare(
-    `UPDATE workstream_notification_intents
-        SET state = ?, payload_json = NULL, lease_id = NULL,
-            lease_expires_at = NULL, last_error_code = NULL, updated_at = ?,
-            delivered_at = CASE WHEN ? = 'delivered' THEN ? ELSE NULL END
-      WHERE intent_id = ? AND lease_id = ?`,
-  ).bind(state, at, state, at, intentId, leaseId).run();
-  await refreshWorkspaceSchedule(env, workspaceId);
+  const result = await transitionNotificationIntent(workspace, input);
+  if (result.outcome === "applied") return;
+  if (
+    input.transition === "settle"
+    && result.outcome === "lease_lost"
+    && result.state === input.state
+  ) return;
+  throw new Error(`workstream_notification_transition_not_applied:${result.outcome}`);
 }
 
 /** Remove an acknowledged DO outbox row; the replay receipt stays in WorkspaceDO. */
@@ -426,32 +567,18 @@ export async function acknowledgeWorkstreamOutboxEffect(
     message.workspaceId,
     objectName,
   );
-  await workstream.acknowledgeRegionalEffect({
+  const removed = await workstream.acknowledgeRegionalEffect({
     messageId: message.messageId,
     payloadHash: message.payloadHash,
   });
-}
-
-const REGIONAL_EFFECT_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
-
-/** Reap terminal mention intents inside the one WorkspaceDO that owns them. */
-export async function reapSettledWorkspaceNotificationIntents(
-  env: Env,
-  workspaceId: string,
-  limit = 500,
-): Promise<number> {
-  const workspaceEnv = withWorkspaceRuntimeDatabase(env, workspaceId);
-  const cutoff = new Date(Date.now() - REGIONAL_EFFECT_RECEIPT_RETENTION_MS).toISOString();
-  const boundedLimit = Math.max(1, Math.min(limit, 1_000));
-  const result = await workspaceEnv.DB.prepare(
-    `DELETE FROM workstream_notification_intents
-      WHERE intent_id IN (
-        SELECT intent_id FROM workstream_notification_intents
-         WHERE workspace_id = ? AND state IN ('delivered', 'skipped') AND updated_at < ?
-         ORDER BY updated_at, intent_id LIMIT ?
-      )`,
-  ).bind(workspaceId, cutoff, boundedLimit).run();
-  return Number(result.meta.changes ?? 0);
+  logInfo(env, "workstream_outbox_acknowledged", {
+    workspace_id: message.workspaceId,
+    workstream_id: message.workstreamId,
+    message_id: message.messageId,
+    effect_kind: message.effect.kind,
+    removed,
+    outcome: removed ? "deleted" : "already_absent",
+  });
 }
 
 export async function loadWorkstreamRegionalEffect(

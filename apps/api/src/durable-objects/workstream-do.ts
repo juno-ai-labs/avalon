@@ -3,6 +3,7 @@ import {
   BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
   UserIdSchema,
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -25,7 +26,7 @@ import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   applyDurableObjectSqliteMigrations,
@@ -75,6 +76,16 @@ const ForwardedEffectsSchema = z.object({
   envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
 }).strict();
 export type ForwardedEffects = z.infer<typeof ForwardedEffectsSchema>;
+
+const realtimeTextEncoder = new TextEncoder();
+
+function workstreamControlPayload(event: WorkstreamControlSocketEvent): string {
+  const payload = JSON.stringify(WorkstreamControlSocketEventSchema.parse(event));
+  if (realtimeTextEncoder.encode(payload).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+    throw new Error("Work-stream control event exceeds the bounded frame size");
+  }
+  return payload;
+}
 
 interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
   next_version: number;
@@ -588,7 +599,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
     // so waking them in sequence pays for two cold starts a person waits
     // through end to end.
     this.wakeMainSubstream(env);
-    this.initialized = state.blockConcurrencyWhile(async () => {
+    this.initialized = this.initializeDurableObject(async () => {
       await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSTREAM_DO_SCHEMA_MIGRATIONS,
@@ -916,11 +927,11 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       return;
     }
     socket.serializeAttachment({ ...attachment, subscribed: true });
-    socket.send(JSON.stringify(WorkstreamControlSocketEventSchema.parse({
+    socket.send(workstreamControlPayload({
       type: "workstream_metadata",
       occurredAt: new Date().toISOString(),
       metadata,
-    })));
+    }));
   }
 
   override webSocketClose(): void {
@@ -970,7 +981,16 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
             );
           }
         });
-      } catch {
+        const metadata = this.metadataRow();
+        logInfo(this.env, "workstream_outbox_batch_enqueued", {
+          workspace_id: metadata?.workspace_id ?? null,
+          workstream_id: metadata?.workstream_id ?? null,
+          message_ids: due.map((effect) => effect.messageId),
+          effect_kinds: due.map((effect) => effect.effect.kind),
+          effect_count: due.length,
+          outcome: "queued",
+        });
+      } catch (error) {
         const retryAt = Date.now() + RETRY_BASE_MS;
         this.state.storage.transactionSync(() => {
           for (const effect of due) {
@@ -982,6 +1002,17 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
               effect.payloadHash,
             );
           }
+        });
+        const metadata = this.metadataRow();
+        logWarn(this.env, "workstream_outbox_enqueue_failed", {
+          workspace_id: metadata?.workspace_id ?? null,
+          workstream_id: metadata?.workstream_id ?? null,
+          message_ids: due.map((effect) => effect.messageId),
+          effect_kinds: due.map((effect) => effect.effect.kind),
+          effect_count: due.length,
+          retry_at: new Date(retryAt).toISOString(),
+          reason: diagnosticErrorCode(error, "queue_send_failed"),
+          error_name: error instanceof Error ? error.name : typeof error,
         });
       }
     }
@@ -1469,7 +1500,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       }
     }
     if (activeUsers.size === 0) return;
-    const payload = JSON.stringify(WorkstreamControlSocketEventSchema.parse(event));
+    const payload = workstreamControlPayload(event);
     for (const socket of sockets) {
       const attachment = readSocketAttachment(socket);
       if (!attachment?.subscribed || !activeUsers.has(attachment.userId)) continue;
@@ -2194,11 +2225,11 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       }
       const metadata = this.metadataForUser(attachment.userId);
       if (!metadata) continue;
-      socket.send(JSON.stringify(WorkstreamControlSocketEventSchema.parse({
+      socket.send(workstreamControlPayload({
         type: "workstream_metadata",
         occurredAt,
         metadata,
-      })));
+      }));
     }
   }
 

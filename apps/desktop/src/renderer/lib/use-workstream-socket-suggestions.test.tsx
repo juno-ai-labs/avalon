@@ -112,6 +112,18 @@ describe('activity suggestions over the work-stream socket', () => {
       messageMentionPayload: vi.fn(async () => []),
       getWorkstream: vi.fn(async () => ({
         ...detail(),
+        transcript: {
+          snapshotId: '00000000-0000-7000-8000-000000000777',
+          snapshotThrough: 0,
+          eventSequence: 0,
+          snapshotAtUtc: '2026-07-31T19:00:00.000Z',
+          unreadAnchorSequence: null,
+          unreadReason: 'no_unread' as const,
+          ranges: [],
+          activities: [],
+          activeActivities: [],
+          activeTurns: [],
+        },
         messageFeed: { items: [], nextCursor: null, newerCursor: null },
         resumeFeed: null,
         blockDashboardPreference: { visible: false, updatedAt: null },

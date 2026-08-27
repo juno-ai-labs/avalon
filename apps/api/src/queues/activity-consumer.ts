@@ -22,6 +22,8 @@ import { z } from "zod";
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import { workspaceDOName } from "../durable-objects/names";
 import {
+  WorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventProcessQueueMessageSchema,
   WorkspaceConnectorEventQueueMessageSchema,
   type WorkspaceConnectorEvent,
 } from "../durable-objects/workspace-connector-event-protocol";
@@ -59,11 +61,14 @@ import {
   attachWorkstreamOriginResource,
   describeWorkstreamOrigin,
 } from "../services/workstream-origin-resource";
-import { logDebug, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logDebug, logInfo, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { activityContentAudience, restrictedActivityUserIds } from "../lib/activity-visibility";
 import { readWorkstreamRuntimeAudience } from "../services/workstream-object-client";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
+import {
+  enqueueWorkspaceConnectorEventProcess,
+} from "../services/workspace-connector-event-ingress";
 import {
   acknowledgeWorkstreamOutboxEffect,
   applyQueuedWorkspaceDirectoryEffect,
@@ -74,6 +79,7 @@ import {
 } from "../services/workstream-regional-effect-service";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
 
 interface ActivityRow {
   id: string;
@@ -230,28 +236,58 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
 }
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+  if (await consumeWorkstreamBatchUpdate(message, env)) return;
   const regionalEffect = WorkstreamRegionalEffectQueueMessageSchema.safeParse(message.body);
   if (regionalEffect.success) {
     if (regionalEffect.data.region !== env.AVALON_REGION) {
+      logInfo(env, "workstream_regional_effect_terminal", {
+        workspace_id: regionalEffect.data.workspaceId,
+        workstream_id: regionalEffect.data.workstreamId,
+        message_id: regionalEffect.data.messageId,
+        outcome: "skipped",
+        reason: "region_mismatch",
+        queue_attempts: message.attempts,
+      });
       message.ack();
       return;
     }
+    let effectKind: string | null = null;
     try {
       const envelope = await loadWorkstreamRegionalEffect(env, regionalEffect.data);
       if (!envelope) {
         // An already acknowledged DO outbox row no longer needs work, and the
         // replay receipt lives in WorkspaceDO beside the state it fenced —
         // there is nothing regional left to mark.
+        logInfo(env, "workstream_regional_effect_terminal", {
+          workspace_id: regionalEffect.data.workspaceId,
+          workstream_id: regionalEffect.data.workstreamId,
+          message_id: regionalEffect.data.messageId,
+          outcome: "already_acknowledged",
+          reason: "outbox_effect_missing",
+          queue_attempts: message.attempts,
+        });
         message.ack();
         return;
       }
+      effectKind = envelope.effect.kind;
       if (isWorkspaceDirectoryEffect(envelope.effect)) {
         await applyQueuedWorkspaceDirectoryEffect(env, envelope);
         await acknowledgeWorkstreamOutboxEffect(env, envelope);
+        logInfo(env, "workstream_regional_effect_terminal", {
+          workspace_id: envelope.workspaceId,
+          workstream_id: envelope.workstreamId,
+          message_id: envelope.messageId,
+          effect_kind: envelope.effect.kind,
+          outcome: "applied",
+          reason: "directory_effect_acknowledged",
+          outbox_acknowledged: true,
+          queue_attempts: message.attempts,
+        });
         message.ack();
         return;
       }
       const applied = await applyWorkstreamRegionalEffect(env, envelope);
+      let notificationOutcome: "delivered" | "skipped" | null = null;
       if (applied.notificationIntentId) {
         const outcome = await processWorkstreamNotificationIntent(
           env,
@@ -259,17 +295,42 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
           applied.notificationIntentId,
         );
         if (outcome === "busy") {
+          logInfo(env, "workstream_regional_effect_deferred", {
+            workspace_id: envelope.workspaceId,
+            workstream_id: envelope.workstreamId,
+            message_id: envelope.messageId,
+            effect_kind: envelope.effect.kind,
+            notification_intent_id: applied.notificationIntentId,
+            reason: "notification_busy",
+            queue_attempts: message.attempts,
+            retry_delay_seconds: 30,
+          });
           message.retry({ delaySeconds: 30 });
           return;
         }
+        notificationOutcome = outcome;
       }
       await acknowledgeWorkstreamOutboxEffect(env, envelope);
+      logInfo(env, "workstream_regional_effect_terminal", {
+        workspace_id: envelope.workspaceId,
+        workstream_id: envelope.workstreamId,
+        message_id: envelope.messageId,
+        effect_kind: envelope.effect.kind,
+        outcome: notificationOutcome ?? "applied",
+        reason: notificationOutcome ? "notification_terminal" : "effect_applied",
+        notification_intent_id: applied.notificationIntentId,
+        replayed: applied.replayed,
+        outbox_acknowledged: true,
+        queue_attempts: message.attempts,
+      });
       message.ack();
     } catch (error) {
       logWarn(env, "workstream_regional_effect_processing_failed", {
         workspace_id: regionalEffect.data.workspaceId,
         workstream_id: regionalEffect.data.workstreamId,
         message_id: regionalEffect.data.messageId,
+        effect_kind: effectKind,
+        queue_attempts: message.attempts,
         reason: error instanceof Error ? error.message : "unknown",
       });
       const attempts = Math.max(1, message.attempts);
@@ -281,6 +342,13 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   const slackIngress = SlackIngressQueueMessageSchema.safeParse(message.body);
   if (slackIngress.success) {
     if (slackIngress.data.region !== env.AVALON_REGION) {
+      logInfo(env, "slack_ingress_queue_terminal", {
+        workspace_id: slackIngress.data.workspaceId,
+        job_id: slackIngress.data.jobId,
+        outcome: "skipped",
+        reason: "region_mismatch",
+        queue_attempts: message.attempts,
+      });
       message.ack();
       return;
     }
@@ -289,10 +357,19 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         slackIngress.data.workspaceId,
         slackIngress.data.jobId,
       );
+      logInfo(env, "slack_ingress_queue_terminal", {
+        workspace_id: slackIngress.data.workspaceId,
+        job_id: slackIngress.data.jobId,
+        outcome: "processed",
+        reason: "ingress_job_completed",
+        queue_attempts: message.attempts,
+      });
       message.ack();
     } catch (error) {
       logWarn(env, "slack_ingress_queue_processing_failed", {
+        workspace_id: slackIngress.data.workspaceId,
         job_id: slackIngress.data.jobId,
+        queue_attempts: message.attempts,
         reason: error instanceof Error ? error.message : "unknown",
       });
       const attempts = Math.max(1, message.attempts);
@@ -303,21 +380,212 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
     return;
   }
 
-  const connectorIngress = WorkspaceConnectorEventQueueMessageSchema.safeParse(message.body);
-  if (connectorIngress.success) {
-    const input = connectorIngress.data;
+  // Processing retries intentionally carry no event body. WorkspaceDO became
+  // authoritative at ingress, so claim returns the canonical event; copying it
+  // here would retain content in retries/DLQ without eliminating this RPC.
+  const connectorProcess = WorkspaceConnectorEventProcessQueueMessageSchema.safeParse(message.body);
+  if (connectorProcess.success) {
+    const input = connectorProcess.data;
+    // `processingAttempt` is the legacy/redrive generation and remains bounded
+    // by its own protocol. Queue delivery count is transport telemetry, not a
+    // claim generation; WorkspaceDO returns a fresh lease for every acquisition.
+    const processingAttempt = input.processingAttempt;
     if (input.region !== env.AVALON_REGION) {
+      logInfo(env, "connector_event_process_terminal", {
+        workspace_id: input.workspaceId,
+        connector_event_id: input.eventId,
+        processing_owner_id: input.processingOwnerId,
+        processing_attempt: processingAttempt,
+        outcome: "skipped",
+        reason: "region_mismatch",
+        queue_attempts: message.attempts,
+      });
       message.ack();
       return;
     }
     try {
-      await admitConnectorEvent(env, input.request, input.attempt);
+      const workspace = await workspaceDirectory(env, input.workspaceId);
+      const claim = WorkspaceConnectorEventClaimResultSchema.parse(
+        await workspace.claimConnectorEvent({
+          workspaceId: input.workspaceId,
+          eventId: input.eventId,
+          processingOwnerId: input.processingOwnerId,
+          attempt: processingAttempt,
+          orchestrator: "queue",
+        }),
+      );
+      logInfo(env, "connector_event_process_claim", {
+        workspace_id: input.workspaceId,
+        connector_event_id: input.eventId,
+        processing_owner_id: input.processingOwnerId,
+        processing_attempt: processingAttempt,
+        queue_attempts: message.attempts,
+        outcome: claim.outcome,
+        processing_lease_id: claim.outcome === "claimed" ? claim.processingLeaseId : null,
+        processing_lease_expires_at: claim.outcome === "claimed"
+          ? claim.processingLeaseExpiresAt
+          : claim.outcome === "busy"
+            ? claim.retryAt
+            : null,
+      });
+      if (claim.outcome === "processed") {
+        logInfo(env, "connector_event_process_terminal", {
+          workspace_id: input.workspaceId,
+          connector_event_id: input.eventId,
+          processing_owner_id: input.processingOwnerId,
+          processing_attempt: processingAttempt,
+          outcome: "already_processed",
+          reason: "authoritative_event_already_settled",
+          queue_attempts: message.attempts,
+        });
+        message.ack();
+        return;
+      }
+      if (claim.outcome === "busy") {
+        if (claim.retryAt === null) {
+          logInfo(env, "connector_event_process_terminal", {
+            workspace_id: input.workspaceId,
+            connector_event_id: input.eventId,
+            processing_owner_id: input.processingOwnerId,
+            processing_attempt: processingAttempt,
+            outcome: "skipped",
+            reason: claim.reason,
+            queue_attempts: message.attempts,
+          });
+          message.ack();
+          return;
+        }
+        const retryDelaySeconds = Math.max(1, Math.ceil((claim.retryAt - Date.now()) / 1_000));
+        logInfo(env, "connector_event_process_deferred", {
+          workspace_id: input.workspaceId,
+          connector_event_id: input.eventId,
+          processing_owner_id: input.processingOwnerId,
+          processing_attempt: processingAttempt,
+          outcome: "busy",
+          reason: claim.reason,
+          queue_attempts: message.attempts,
+          retry_at: claim.retryAt,
+          retry_delay_seconds: retryDelaySeconds,
+        });
+        message.retry({ delaySeconds: retryDelaySeconds });
+        return;
+      }
+
+      try {
+        await processConnectorEvent(env, claim.event);
+      } catch (error) {
+        const errorCode = diagnosticErrorCode(error, "connector_event_processing_failed");
+        const reason = error instanceof Error
+          ? error.message.slice(0, 1_000)
+          : "connector_event_processing_failed";
+        await workspace.settleConnectorEvent({
+          workspaceId: input.workspaceId,
+          eventId: input.eventId,
+          processingOwnerId: input.processingOwnerId,
+          processingLeaseId: claim.processingLeaseId,
+          outcome: "failed",
+          error: reason,
+        });
+        const attempts = Math.max(1, message.attempts);
+        const retryDelaySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+        logWarn(env, "connector_event_process_failed", {
+          workspace_id: input.workspaceId,
+          connector_type: claim.event.connectorType,
+          connection_id: claim.event.activity.connectionId,
+          connector_event_id: input.eventId,
+          processing_owner_id: input.processingOwnerId,
+          processing_lease_id: claim.processingLeaseId,
+          processing_attempt: processingAttempt,
+          outcome: "failed",
+          reason: errorCode,
+          error_name: error instanceof Error ? error.name : typeof error,
+          queue_attempts: message.attempts,
+          retry_delay_seconds: retryDelaySeconds,
+        });
+        message.retry({ delaySeconds: retryDelaySeconds });
+        return;
+      }
+
+      await workspace.settleConnectorEvent({
+        workspaceId: input.workspaceId,
+        eventId: input.eventId,
+        processingOwnerId: input.processingOwnerId,
+        processingLeaseId: claim.processingLeaseId,
+        outcome: "processed",
+        error: null,
+      });
+      logInfo(env, "connector_event_process_terminal", {
+        workspace_id: input.workspaceId,
+        connector_type: claim.event.connectorType,
+        connection_id: claim.event.activity.connectionId,
+        connector_event_id: input.eventId,
+        processing_owner_id: input.processingOwnerId,
+        processing_lease_id: claim.processingLeaseId,
+        processing_attempt: processingAttempt,
+        outcome: "processed",
+        reason: "authoritative_event_settled",
+        queue_attempts: message.attempts,
+      });
+      message.ack();
+    } catch (error) {
+      const attempts = Math.max(1, message.attempts);
+      const retryDelaySeconds = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+      logWarn(env, "connector_event_process_delivery_failed", {
+        workspace_id: input.workspaceId,
+        connector_event_id: input.eventId,
+        processing_owner_id: input.processingOwnerId,
+        processing_attempt: processingAttempt,
+        reason: diagnosticErrorCode(error, "connector_event_process_delivery_failed"),
+        error_name: error instanceof Error ? error.name : typeof error,
+        queue_attempts: message.attempts,
+        retry_delay_seconds: retryDelaySeconds,
+      });
+      message.retry({ delaySeconds: retryDelaySeconds });
+    }
+    return;
+  }
+
+  const connectorIngress = WorkspaceConnectorEventQueueMessageSchema.safeParse(message.body);
+  if (connectorIngress.success) {
+    const input = connectorIngress.data;
+    if (input.region !== env.AVALON_REGION) {
+      logInfo(env, "connector_event_queue_terminal", {
+        workspace_id: input.request.workspaceId,
+        connector_type: input.request.event.connectorType,
+        ingress_event_id: input.request.ingressEventId,
+        outcome: "skipped",
+        reason: "region_mismatch",
+        queue_attempts: message.attempts,
+      });
+      message.ack();
+      return;
+    }
+    try {
+      const admission = await admitConnectorEvent(env, input.request, input.attempt);
+      logInfo(env, "connector_event_queue_terminal", {
+        workspace_id: input.request.workspaceId,
+        connector_type: input.request.event.connectorType,
+        ingress_event_id: input.request.ingressEventId,
+        connector_event_id: admission.accepted.eventId,
+        duplicate: admission.accepted.duplicate,
+        prior_processing_status: admission.accepted.processingStatus,
+        processing_attempt: admission.processingAttempt,
+        processing_owner_id: admission.processingOwnerId,
+        processing_outcome: admission.processingOutcome,
+        outcome: "admitted",
+        reason: "workspace_event_committed",
+        queue_attempts: message.attempts,
+      });
       message.ack();
     } catch (error) {
       logWarn(env, "connector_event_queue_admission_failed", {
         workspace_id: input.request.workspaceId,
+        connector_type: input.request.event.connectorType,
         ingress_event_id: input.request.ingressEventId,
-        reason: error instanceof Error ? error.message : "unknown",
+        requested_attempt: input.attempt,
+        queue_attempts: message.attempts,
+        reason: diagnosticErrorCode(error, "connector_event_admission_failed"),
+        error_name: error instanceof Error ? error.name : typeof error,
       });
       const attempts = Math.max(1, message.attempts);
       message.retry({ delaySeconds: Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6)) });
@@ -330,6 +598,14 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
   // that was already in flight then can still arrive, and it is acked rather
   // than left to redeliver forever. Reading the frozen D1 source row behind it
   // would reintroduce a second connector-event authority.
+  const legacyActivity = ActivityQueueMessageSchema.safeParse(message.body);
+  logInfo(env, "connector_event_queue_terminal", {
+    workspace_id: legacyActivity.success ? legacyActivity.data.workspaceId : null,
+    connector_event_id: legacyActivity.success ? legacyActivity.data.activityId : null,
+    outcome: "skipped",
+    reason: "legacy_message_after_cutover",
+    queue_attempts: message.attempts,
+  });
   message.ack();
 }
 
@@ -340,35 +616,38 @@ async function admitConnectorEvent(
 ) {
   const workspace = await workspaceDirectory(env, request.workspaceId);
   const accepted = await workspace.ingestConnectorEvent(request);
-  const workflowAttempt = accepted.processingStatus === "processing"
+  const processingAttempt = accepted.processingStatus === "processing"
     ? accepted.processingAttempt
     : accepted.processingStatus === "failed"
       ? Math.max(requestedAttempt, accepted.processingAttempt + 1)
       : Math.max(0, requestedAttempt);
-  const recordedAttempt = Math.min(workflowAttempt, 5);
-  const workflowInstanceId = `connector-event:${accepted.eventId}:${recordedAttempt}`;
-  if (accepted.processingStatus !== "processed" && workflowAttempt <= 5) {
-    try {
-      await env.CONNECTOR_EVENT_WORKFLOW.create({
-        id: workflowInstanceId,
-        params: {
-          region: env.AVALON_REGION,
-          workspaceId: request.workspaceId,
-          eventId: accepted.eventId,
-          workflowInstanceId,
-          attempt: workflowAttempt,
-        },
-      });
-    } catch (error) {
-      if (!(error instanceof Error) || !/(already exists|duplicate|conflict)/iu.test(error.message)) {
-        throw error;
-      }
-    }
+  const recordedAttempt = Math.min(processingAttempt, 5);
+  let processingOwnerId: string | null = null;
+  let processingOutcome: "enqueued" | "active_processing" | "already_processed" | "attempts_exhausted";
+  if (
+    (accepted.processingStatus === "pending" || accepted.processingStatus === "failed")
+    && processingAttempt <= 5
+  ) {
+    processingOwnerId = uuidV7();
+    await enqueueWorkspaceConnectorEventProcess(env, {
+      region: env.AVALON_REGION,
+      workspaceId: request.workspaceId,
+      eventId: accepted.eventId,
+      processingOwnerId,
+      processingAttempt: recordedAttempt,
+    });
+    processingOutcome = "enqueued";
+  } else if (accepted.processingStatus === "processing") {
+    processingOutcome = "active_processing";
+  } else {
+    processingOutcome = accepted.processingStatus === "processed"
+      ? "already_processed"
+      : "attempts_exhausted";
   }
-  return { accepted, workflowAttempt, recordedAttempt, workflowInstanceId };
+  return { accepted, processingAttempt, recordedAttempt, processingOwnerId, processingOutcome };
 }
 
-/** The connector-event Workflow's idempotent product processing step. */
+/** The Queue consumer's idempotent product processing step; legacy Workflow also drains through it. */
 export async function processConnectorEvent(
   env: Env,
   event: WorkspaceConnectorEvent
@@ -385,6 +664,17 @@ export async function processConnectorEvent(
     await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   }
   await projectActivityEvent(env, activity);
+  logInfo(env, "connector_event_processing_completed", {
+    workspace_id: activity.workspace_id,
+    connection_id: activity.connection_id,
+    connector_type: activity.connector_type,
+    provider: activity.provider,
+    connector_event_id: activity.id,
+    direct_workstream_count: directWorkstreamIds.size,
+    routed_contextually: routedContextually,
+    opportunity_enqueued: directWorkstreamIds.size === 0 && !routedContextually,
+    outcome: "processed",
+  });
 }
 
 function activityRowFromWorkspaceEvent(event: WorkspaceConnectorEvent): ActivityRow {
@@ -845,7 +1135,7 @@ async function startActivityAutomation(
         workstreamId: asWorkstreamId(workstreamId),
         title: `${subscription.template_name}: ${activity.title}`.slice(0, 180),
         objective: subscription.template_description,
-        scope: "personal",
+        scope: subscription.scope,
         originType: "automation",
         createdByUserId: audienceUserId,
         participantUserIds: [audienceUserId],
@@ -884,9 +1174,10 @@ async function startActivityAutomation(
         try {
           const deleted = await env.DB.prepare(
             `DELETE FROM automation_runs
-              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL`,
-          ).bind(runId, activity.workspace_id).run();
-          if ((deleted.meta.changes ?? 0) !== 1) {
+              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL
+              RETURNING id`,
+          ).bind(runId, activity.workspace_id).first<{ id: string }>();
+          if (deleted?.id !== runId) {
             throw new Error("activity_automation_run_compensation_not_applied", { cause: error });
           }
         } catch (compensationError) {

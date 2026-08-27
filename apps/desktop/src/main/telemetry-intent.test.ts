@@ -21,6 +21,115 @@ describe('parseTelemetryProductIntent', () => {
     expect(parseTelemetryProductIntent({ ...socketIntent })).toEqual(socketIntent);
   });
 
+  it('admits correlated feed paint and socket start intents with only registered fields', () => {
+    const operationId = '018f22f2-4c22-7abc-8def-0123456789ab';
+    const socketLeaseId = '018f22f2-4c22-7abc-8def-0123456789ac';
+    const workstreamId = '00000000-0000-4000-8000-000000000201';
+    const feedIntent = {
+      kind: 'workstream_feed_visible',
+      operationId,
+      workstreamId,
+      socketLeaseId,
+      durationMs: 240,
+      dataReadyDurationMs: 220,
+      sidebarSection: 'recent',
+      cacheState: 'feed_cached',
+      socketPoolState: 'retained_pair',
+      feedSource: 'feed_cache',
+      messageCount: 'two_to_five',
+    };
+    expect(parseTelemetryProductIntent(feedIntent)).toEqual(feedIntent);
+    expect(() => parseTelemetryProductIntent({ ...feedIntent, dataReadyDurationMs: 241 }))
+      .toThrow('Invalid telemetry intent');
+
+    const sendReadyIntent = {
+      kind: 'workstream_send_ready',
+      operationId,
+      workstreamId,
+      durationMs: 252,
+      workspaceSocketState: 'reconnecting',
+    };
+    expect(parseTelemetryProductIntent(sendReadyIntent)).toEqual(sendReadyIntent);
+    expect(() => parseTelemetryProductIntent({ ...sendReadyIntent, workspaceSocketState: 'queued' }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...sendReadyIntent, workspaceSocketState: 'unavailable' }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...sendReadyIntent, composerText: 'secret' }))
+      .toThrow('Invalid telemetry intent');
+
+    const socketIntent = {
+      kind: 'workstream_socket_started',
+      operationId,
+      workstreamId,
+      socketLeaseId,
+      openAttemptId: operationId,
+      socket: 'substream_feed',
+      reason: 'reconnect',
+      attempts: 'one',
+    };
+    expect(parseTelemetryProductIntent(socketIntent)).toEqual(socketIntent);
+    expect(() => parseTelemetryProductIntent({ ...socketIntent, reason: 'maybe' }))
+      .toThrow('Invalid telemetry intent');
+
+    const startedIntent = {
+      kind: 'workstream_open_started',
+      operationId,
+      workstreamId,
+      sidebarSection: 'recent',
+      socketPoolState: 'retained_pair',
+      socketLeaseId,
+    };
+    expect(parseTelemetryProductIntent(startedIntent)).toEqual(startedIntent);
+    const supersededIntent = {
+      kind: 'workstream_open_outcome',
+      operationId,
+      workstreamId,
+      outcome: 'superseded',
+      durationMs: 24,
+      socketLeaseId,
+      supersedingWorkstreamId: '00000000-0000-4000-8000-000000000202',
+    };
+    expect(parseTelemetryProductIntent(supersededIntent)).toEqual(supersededIntent);
+    expect(() => parseTelemetryProductIntent({ ...supersededIntent, supersedingWorkstreamId: undefined }))
+      .toThrow('Invalid telemetry intent');
+    expect(parseTelemetryProductIntent({
+      ...supersededIntent,
+      outcome: 'abandoned',
+      supersedingWorkstreamId: undefined,
+    })).toEqual({
+      ...supersededIntent,
+      outcome: 'abandoned',
+      supersedingWorkstreamId: undefined,
+    });
+  });
+
+  it('admits a correlated renderer timing projection and rejects console-only fields', () => {
+    const intent = {
+      kind: 'renderer_perf_flow',
+      operationId: '018f22f2-4c22-7abc-8def-0123456789ab',
+      flow: 'workstream_open',
+      workstreamId: '00000000-0000-4000-8000-000000000201',
+      outcome: 'snapshot',
+      durationMs: 814.2,
+      blockedMs: 10.1,
+      longTaskCount: 'one',
+      socketTicketMs: 212.4,
+      dialMs: 2.1,
+      handshakeMs: 480.2,
+      firstFrameMs: 119.5,
+      attempts: 'zero',
+      sinceEffectMs: 8.4,
+      ticketId: '018f22f2-4c22-7abc-8def-0123456789ac',
+      clientMessageId: '00000000-0000-4000-8000-000000000202',
+      messageCount: 'six_to_twenty',
+    };
+    expect(parseTelemetryProductIntent(intent)).toEqual(intent);
+    expect(() => parseTelemetryProductIntent({ ...intent, afterSequence: 42 }))
+      .toThrow('Invalid telemetry intent');
+    expect(() => parseTelemetryProductIntent({ ...intent, operationId: 'not-v7' }))
+      .toThrow('Invalid telemetry intent');
+  });
+
   it('refuses a socket transition the registry would not accept', () => {
     // A property the contract does not declare. The registry parse is strict,
     // so this is refused rather than quietly stripped and sent.

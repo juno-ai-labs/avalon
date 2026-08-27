@@ -9,6 +9,7 @@ import {
 } from "@rally/connectors";
 import type { Env } from "../env";
 import { notionCallbackUrl } from "./notion-ingress";
+import { logStructuredEvent } from "../observability/logger";
 
 export function githubConnectorConfig(env: Env): GitHubConnectorConfig | null {
   if (
@@ -126,6 +127,7 @@ function buildConnectorRegistry(env: Env) {
   const slack = slackConnectorConfig(env);
   const x = xConnectorConfig(env);
   return createConnectorRegistry({
+    observer: (level, event, fields) => logStructuredEvent(env, level, event, fields),
     granola,
     ...(google ? { google } : {}),
     ...(github ? { github } : {}),

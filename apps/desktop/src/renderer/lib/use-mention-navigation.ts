@@ -25,12 +25,14 @@ export function mentionQueryAtCaret(value: string, caret: number | null | undefi
 export function draftWithMentionStarted(
   value: string,
   caret: number | null | undefined,
+  selectionEnd: number | null | undefined = caret,
 ): { value: string; caret: number } {
   const at = caret ?? value.length;
+  const after = Math.max(at, selectionEnd ?? at);
   const before = value.slice(0, at);
   const prefix = before.length === 0 || /\s$/u.test(before) ? '' : ' ';
   return {
-    value: `${before}${prefix}@${value.slice(at)}`,
+    value: `${before}${prefix}@${value.slice(after)}`,
     caret: before.length + prefix.length + 1,
   };
 }

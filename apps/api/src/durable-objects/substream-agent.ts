@@ -15,9 +15,12 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   asSubstreamId,
+  asUserId,
+  asWorkspaceId,
   ServerSocketEventSchema,
   SubstreamDirectSocketEventSchema,
   UpdateWorkstreamRequestSchema,
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamWorkflowInputSchema,
   type PersonalSocketEvent,
@@ -66,7 +69,7 @@ import {
 import {
   launchBlockDashboardRefresh,
 } from "../services/block-dashboard-service";
-import { logError, logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logError, logInfo, logWarn } from "../observability/logger";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   identityAttributes,
@@ -77,6 +80,7 @@ import {
 } from "../observability/tracing";
 import {
   claimHarnessAttempt,
+  repairTerminalResidualReceipts,
   reapStaleHarnessRuns,
   RunOwnershipLostError,
   terminalizeHarnessAttempt,
@@ -105,6 +109,10 @@ import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-data
 import { TerminalObjectPortError } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
 import { loadWorkstreamWakeup } from "../services/workstream-wakeup-service";
+import {
+  WorkstreamBatchUpdateQueueMessageSchema,
+  type WorkstreamBatchUpdateQueueMessage,
+} from "../services/workstream-batch-update";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import type { WorkstreamRuntimeResourceAttacher } from "../services/workstream-object-client";
 import {
@@ -134,11 +142,24 @@ import {
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import {
+  WorkstreamTranscriptStorage,
+  type LegacyTranscriptBackfillOutcome,
+} from "./workstream-transcript-storage";
+import {
+  TranscriptOperationRequestSchema,
+  type TranscriptOperationRequest,
+} from "./workstream-transcript-protocol";
+import {
+  AppendMessageInputSchema,
   type MessageOperationRequest,
   MessageOperationRequestSchema,
   mutatesTranscript,
 } from "./workstream-message-protocol";
-import { WorkstreamHarnessRunStorage } from "./workstream-harness-run-storage";
+import {
+  expireLocalAttemptLeasesFromPreviousInstance,
+  previousInstanceRecoveryOwner,
+  WorkstreamHarnessRunStorage,
+} from "./workstream-harness-run-storage";
 import {
   type HarnessRunOperationRequest,
   HarnessRunOperationRequestSchema,
@@ -158,6 +179,8 @@ import {
 } from "./workstream-resource-protocol";
 import { WorkstreamSchedulingStorage } from "./workstream-scheduling-storage";
 import {
+  AnswerElicitationExternallyInputSchema,
+  OpenElicitationInputSchema,
   type SchedulingOperationRequest,
   mutatesWakeups,
   SchedulingOperationRequestSchema,
@@ -202,6 +225,22 @@ import {
 
 export { applyActiveStreamCheckpointEvent, splitActiveStreamCheckpointText } from "./workstream-object-storage";
 
+function isAppendedMessageOutcome(
+  value: unknown,
+): value is { outcome: "appended"; messageId: string; sequenceNumber: number } {
+  if (value === null || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return candidate.outcome === "appended"
+    && typeof candidate.messageId === "string"
+    && typeof candidate.sequenceNumber === "number";
+}
+
+function isPersistedElicitationOutcome(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  const outcome = (value as Record<string, unknown>).outcome;
+  return outcome === "opened" || outcome === "answered";
+}
+
 const SocketAttachmentSchema = z.object({
   connectionId: z.string().uuid(),
   workspaceId: WorkspaceIdSchema,
@@ -214,8 +253,16 @@ const SocketAttachmentSchema = z.object({
   connectedAt: z.string().datetime({ offset: true }),
   afterSequence: z.number().int().nonnegative(),
   subscribed: z.boolean().default(false),
+  // Missing means a legacy client whose feed subscription still represented
+  // viewing. Current proactive clients opt out and use WorkspaceDO presence.
+  publishPresence: z.boolean().default(true),
   /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
-  snapshotInFlight: z.boolean().default(false)
+  snapshotInFlight: z.boolean().default(false),
+  transcriptSnapshot: z.object({
+    snapshotId: z.string().min(1),
+    snapshotThrough: z.number().int().nonnegative(),
+    snapshotAtUtc: z.string().datetime({ offset: true }),
+  }).nullable().default(null),
 });
 
 const BroadcastRequestSchema = z.object({
@@ -575,12 +622,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private scheduling!: WorkstreamSchedulingStorage;
 
   private messages!: WorkstreamMessageStorage;
+  private transcript!: WorkstreamTranscriptStorage;
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
   private readonly initialized: Promise<void>;
   private readonly keepAliveLease: DurableAgentKeepAlive;
   private readonly agentDrain = new DurableAgentDrain();
+  /** Distinguishes this live object instance from the predecessor it replaces. */
+  private readonly harnessLeaseOwnerNonce = uuidV7();
+  private readonly recoverableHarnessAttempts = new Map<string, string>();
   /**
    * Whether the drain this alarm just ran left a run in someone else's hands.
    *
@@ -590,6 +641,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   private runDrainDeferred = false;
   private activeRunDispatch: { runId: string; leaseToken: string } | null = null;
+
+  private harnessAttemptOwner(
+    input: Pick<WorkstreamWorkflowInput, "substreamId" | "harnessRunId">,
+    attemptId: string,
+  ): string {
+    return `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}:${this.harnessLeaseOwnerNonce}`;
+  }
 
   constructor(
     state: DurableObjectState,
@@ -615,7 +673,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       instance: this,
     });
     this.keepAliveLease = new DurableAgentKeepAlive(async () => { await this.armNextAlarm(); });
-    this.initialized = state.blockConcurrencyWhile(async () => {
+    this.initialized = this.initializeDurableObject(async () => {
       // The store applies this object's schema in its own constructor, so the
       // report wrapper goes around the construction rather than around a
       // migration call this class makes itself. It happens here rather than in
@@ -629,7 +687,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         env.APP_VERSION ?? "unknown",
         env.AVALON_REGION,
       ));
-      this.product = new WorkstreamObjectProductService(state.storage, this.objectStore, env);
+      this.transcript = new WorkstreamTranscriptStorage(
+        state.storage,
+        () => this.state.getWebSockets().some((socket) =>
+          this.readAttachment(socket)?.transcriptSnapshot != null),
+      );
+      this.product = new WorkstreamObjectProductService(
+        state.storage,
+        this.objectStore,
+        env,
+        this.transcript,
+      );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
       this.blockDashboard = new WorkstreamBlockDashboardStorage(state.storage);
@@ -643,12 +711,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
       if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
-      // Whatever leases survive belong to the isolate this one replaced, so
-      // the runs they cover are recoverable now rather than at expiry.
+      // Still-live local leases belong to the isolate this one replaced, so
+      // their runs are recoverable now. Already-expired rows stay with the
+      // ordinary stale-run reaper.
+      const recoveryStartedAt = Date.now();
+      for (const attempt of expireLocalAttemptLeasesFromPreviousInstance(
+        state.storage,
+        recoveryStartedAt,
+      )) {
+        this.recoverableHarnessAttempts.set(attempt.runId, attempt.attemptId);
+      }
       releaseAgentRunDispatchLeases(
         this.state.storage.sql,
         SUBSTREAM_AGENT_RUN_DISPATCHES,
-        Date.now(),
+        recoveryStartedAt,
       );
       // A run left behind by a previous isolate is rediscovered here, by
       // arming the alarm rather than by starting a drain this constructor
@@ -902,6 +978,47 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return responseToRpcResult(await this.acceptProductRequest(this.rpcRequest(input), traced));
   }
 
+  /**
+   * Trusted regional Queue delivery for one member-initiated batch mutation.
+   * The HTTP request authenticated the person before enqueue; delivery rechecks
+   * active workspace membership, but deliberately does not depend on the login
+   * session still being alive after the durable handoff.
+   */
+  async applyQueuedBatchUpdate(input: WorkstreamBatchUpdateQueueMessage) {
+    await this.initialized;
+    const request = WorkstreamBatchUpdateQueueMessageSchema.parse(input);
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== "0"
+      || request.region !== this.env.AVALON_REGION) {
+      return { outcome: "skipped" as const, reason: "workstream_identity_mismatch" };
+    }
+    const membership = await this.activeMembership(
+      asWorkspaceId(request.workspaceId),
+      asUserId(request.userId),
+    );
+    if (!membership) return { outcome: "skipped" as const, reason: "member_revoked" };
+    const auth: AuthContext = {
+      sessionId: `batch:${request.operationId}`,
+      userId: asUserId(request.userId),
+      workspaceId: asWorkspaceId(request.workspaceId),
+      region: this.env.AVALON_REGION,
+      role: membership.role,
+      analyticsWorkspaceId: membership.analytics_workspace_id ?? null,
+    };
+    try {
+      const outcome = await this.product.applyQueuedBatchUpdate(auth, request);
+      return { outcome, reason: null };
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        return { outcome: "skipped" as const, reason: error.code };
+      }
+      throw error;
+    }
+  }
+
   async executeRuntimeSql(
     input: z.input<typeof WorkstreamRuntimeSqlRequestSchema>,
   ): Promise<DurableObjectRpcResult> {
@@ -936,6 +1053,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeMessageOperation(input: MessageOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.messageOperationOutcome(input));
+  }
+
+  async executeTranscriptOperation(input: TranscriptOperationRequest): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    return objectPortRpcResult(await this.transcriptOperationOutcome(input));
   }
 
   async executeResourceOperation(input: ResourceOperationRequest): Promise<DurableObjectRpcResult> {
@@ -982,6 +1104,96 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async executeIdentityOperation(input: IdentityOperationRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return objectPortRpcResult(await this.identityOperationOutcome(input));
+  }
+
+  /** Operator-only, binding-addressed projection of pre-v27 transcript rows. */
+  async backfillLegacyTranscript(input: {
+    objectId: string;
+    operatorRunId: string;
+    cutoverVersion: 27;
+  }): Promise<LegacyTranscriptBackfillOutcome> {
+    await this.initialized;
+    if (this.externalSubstreamId() !== "0") {
+      throw new Error("legacy_transcript_backfill_requires_main_substream");
+    }
+    if (input.objectId !== this.state.id.toString()) {
+      throw new Error(`legacy_transcript_backfill_object_mismatch:${input.objectId}`);
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(input.operatorRunId)) {
+      throw new Error("legacy_transcript_backfill_run_id_invalid");
+    }
+    if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
+    if (!this.transcript.hasLegacyBackfillReceipt()) {
+      const identity = this.objectStore.identity();
+      if (identity) {
+        const executionEnv = this.localRuntimeEnvironment(
+          identity.workspaceId,
+          identity.workstreamId,
+          "0",
+        );
+        const repairFailures: string[] = [];
+        await repairTerminalResidualReceipts(
+          createHarnessRunObjectPort(executionEnv, identity.workspaceId, identity.workstreamId),
+          {
+            receipts: createToolReceiptPortFactory(executionEnv),
+            blocks: createBlockDashboardPortFactory(executionEnv),
+            workspaceId: identity.workspaceId,
+            workstreamId: identity.workstreamId,
+            // One-time migration page; a partial page remains fenced and is retried.
+            limit: 100,
+            automationDatabase: withWorkspaceRuntimeDatabase(this.env, identity.workspaceId).DB,
+            onReceiptRepairFailure: (failure) => {
+              repairFailures.push(failure.reason);
+              logWarn(this.env, "legacy_transcript_backfill_residual_receipt_repair_failed", {
+                workspace_id: failure.workspaceId,
+                workstream_id: failure.workstreamId,
+                harness_run_id: failure.runId,
+                attempt_id: failure.attemptId,
+                repair_phase: failure.phase,
+                reason: failure.reason,
+              });
+            },
+          },
+        );
+        if (repairFailures.length > 0) {
+          throw new Error("legacy_transcript_backfill_residual_receipt_repair_failed");
+        }
+      }
+    }
+    return this.transcript.backfillLegacyTranscript({
+      operatorRunId: input.operatorRunId,
+      cutoverVersion: input.cutoverVersion,
+    });
+  }
+
+  async abandonPreCutoverRunsForTranscriptBackfill(input: {
+    objectId: string;
+    operatorRunId: string;
+    cutoverVersion: number;
+  }): Promise<{ abandonedRunCount: number; cleanupOperatorRunId: string | null }> {
+    await this.initialized;
+    if (this.externalSubstreamId() !== "0") {
+      throw new Error("legacy_transcript_backfill_requires_main_substream");
+    }
+    if (input.objectId !== this.state.id.toString()) {
+      throw new Error(`legacy_transcript_backfill_object_mismatch:${input.objectId}`);
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(input.operatorRunId)) {
+      throw new Error("legacy_transcript_backfill_run_id_invalid");
+    }
+    if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
+    const cleanupReceipt = this.harnessRuns.preCutoverLeaseLessCleanupReceipt();
+    if (cleanupReceipt) return cleanupReceipt;
+    if (this.transcript.hasLegacyBackfillReceipt()) {
+      return { abandonedRunCount: 0, cleanupOperatorRunId: null };
+    }
+    return this.harnessRuns.abandonPreCutoverLeaseLessRuns({
+      operatorRunId: input.operatorRunId,
+      cutoverVersion: input.cutoverVersion,
+      now: Date.now(),
+    });
   }
 
   async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
@@ -1218,12 +1430,48 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (refusal) return refusal;
     const method = this.scheduling[parsed.data.operation] as (...args: unknown[]) => unknown;
     const mutates = mutatesWakeups(parsed.data.operation);
-    const value = mutates
+    const elicitationInput = parsed.data.operation === "openElicitation"
+      ? OpenElicitationInputSchema.safeParse(parsed.data.args[0])
+      : parsed.data.operation === "answerElicitationExternally"
+        ? AnswerElicitationExternallyInputSchema.safeParse(parsed.data.args[0])
+        : null;
+    if (elicitationInput && !elicitationInput.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_scheduling_operation" } };
+    }
+    const parsedElicitationInput = elicitationInput?.data ?? null;
+    const preparedTranscript = parsedElicitationInput
+      ? await this.transcript.prepareParticipantMessage({
+        turnId: parsedElicitationInput.messageId,
+        actor: parsed.data.operation === "openElicitation" ? "assistant" : "external",
+        authorUserId: null,
+        createdAtUtc: new Date(parsedElicitationInput.now).toISOString(),
+        attentionOrdinal: null,
+      })
+      : null;
+    const value = mutates || preparedTranscript
       ? await this.product.commitRuntimeMutation(
-        () => method.apply(this.scheduling, parsed.data.args),
+        () => {
+          const result = method.apply(this.scheduling, parsed.data.args);
+          if (preparedTranscript && isPersistedElicitationOutcome(result)) {
+            const row = this.messages.message({ messageId: preparedTranscript.input.turnId });
+            if (!row) throw new Error("participant_transcript_part_missing");
+            this.transcript.appendPreparedParticipantMessage({
+              ...preparedTranscript,
+              input: {
+                ...preparedTranscript.input,
+                attentionOrdinal: row.attention_ordinal,
+              },
+            });
+          }
+          return result;
+        },
         true,
       )
       : method.apply(this.scheduling, parsed.data.args);
+    if (preparedTranscript && isPersistedElicitationOutcome(value)) {
+      const turn = this.transcript.participantTurn(preparedTranscript.input.turnId);
+      if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
+    }
     if (mutates) {
       this.syncAgentTimerAlarms();
       // Arming is best-effort, as it is in `acceptRuntimeSql` and
@@ -1284,12 +1532,85 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (refusal) return refusal;
     const method = this.messages[parsed.data.operation] as (...args: unknown[]) => unknown;
     const mutates = mutatesTranscript(parsed.data.operation);
+    const appendInput = parsed.data.operation === "appendMessage"
+      ? AppendMessageInputSchema.safeParse(parsed.data.args[0])
+      : null;
+    if (appendInput && !appendInput.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
+    }
+    const parsedAppendInput = appendInput?.data ?? null;
+    const preparedTranscript = parsedAppendInput
+      ? await this.transcript.prepareParticipantMessage({
+        turnId: parsedAppendInput.messageId,
+        actor: parsedAppendInput.authorType === "agent" ? "assistant" : parsedAppendInput.authorType,
+        authorUserId: parsedAppendInput.authorUserId,
+        createdAtUtc: new Date(parsedAppendInput.now).toISOString(),
+        attentionOrdinal: null,
+      })
+      : null;
     const value = mutates
       ? await this.product.commitRuntimeMutation(
-        () => method.apply(this.messages, parsed.data.args),
+        () => {
+          const result = method.apply(this.messages, parsed.data.args);
+          if (preparedTranscript && isAppendedMessageOutcome(result)) {
+            const row = this.messages.message({ messageId: result.messageId });
+            if (!row) throw new Error("participant_transcript_part_missing");
+            this.transcript.appendPreparedParticipantMessage({
+              ...preparedTranscript,
+              input: {
+                ...preparedTranscript.input,
+                attentionOrdinal: row.attention_ordinal,
+              },
+            });
+          }
+          return result;
+        },
         true,
       )
       : method.apply(this.messages, parsed.data.args);
+    if (preparedTranscript && isAppendedMessageOutcome(value)) {
+      const turn = this.transcript.participantTurn(value.messageId);
+      if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
+    }
+    return { status: 200, payload: { ok: true, value: value ?? null } };
+  }
+
+  private async transcriptOperationOutcome(body: unknown): Promise<ObjectPortOutcome> {
+    const parsed = TranscriptOperationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return { status: 400, payload: { ok: false, error: "invalid_transcript_operation" } };
+    }
+    const refusal = this.objectPortRefusal(parsed.data, "workstream_transcript_identity_mismatch");
+    if (refusal) return refusal;
+    const method = this.transcript[parsed.data.operation] as (...args: unknown[]) => unknown;
+    const value = await method.apply(this.transcript, parsed.data.args);
+    if (parsed.data.operation === "upsertActivity" && value) {
+      await this.publishAgentRuntimeEvent({
+        type: "transcript_activity_upserted",
+        activity: value,
+        snapshotAtUtc: new Date().toISOString(),
+      });
+    }
+    const first = parsed.data.args[0] as Record<string, unknown> | undefined;
+    let turn = null;
+    if (parsed.data.operation === "commitBindTransition") {
+      turn = first?.kind === "assistant_accepted" && typeof first.turnId === "string"
+        ? this.transcript.participantTurn(first.turnId)
+        : null;
+    } else if (parsed.data.operation === "upsertToolLifecycle" && typeof first?.toolCallId === "string") {
+      turn = this.transcript.participantTurnForTool(first.toolCallId);
+    } else if (parsed.data.operation === "reserveCompactionStatus"
+      && typeof first?.compactionEventId === "string") {
+      turn = this.transcript.participantTurn(first.compactionEventId);
+    } else if (parsed.data.operation === "commitBindCompaction") {
+      const transition = (first?.commit as { transition?: { compactionEventId?: unknown } } | undefined)?.transition;
+      turn = typeof transition?.compactionEventId === "string"
+        ? this.transcript.participantTurn(transition.compactionEventId)
+        : null;
+    } else if (parsed.data.operation === "setParticipantTurnAttentionOrdinal") {
+      turn = value;
+    }
+    if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -1761,6 +2082,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               type: "message_created",
               message: opening,
             }));
+          const transcriptTurn = this.transcript.participantTurn(opening.id);
+          if (transcriptTurn) {
+            await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
+          }
         }
         return jsonResponse({
           workstream: result.workstream,
@@ -1772,7 +2097,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         return jsonResponse(await span.step("workstream.room.product.get", () => this.product.get(current)));
       }
       if (request.operation === "boot") {
-        return jsonResponse(await span.step("workstream.room.product.boot", () => this.product.boot(current)));
+        const boot = await span.step("workstream.room.product.boot", () => this.product.boot(current));
+        return jsonResponse({
+          ...boot,
+          transcript: this.transcript.createOpeningSnapshot({
+            unreadHighWaterAttentionOrdinal: boot.workstream.firstUnreadSequenceNumber,
+          }),
+        });
       }
       if (request.operation === "messages") {
         const query = request;
@@ -1808,6 +2139,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         if (result.inserted) {
           await span.step("workstream.room.event.publish_message_created", () =>
             this.publishLocalProductEvent(identity, { type: "message_created", message: result.message }));
+          const transcriptTurn = this.transcript.participantTurn(result.message.id);
+          if (transcriptTurn) {
+            await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
+          }
         }
         span.setAttributes({
           "rally.agent.invoked": result.agentInvoked,
@@ -1868,6 +2203,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             type: "elicitation_answered",
             elicitation: result.elicitation,
           });
+        }
+        const transcriptTurn = this.transcript.participantTurn(result.responsePartId);
+        if (transcriptTurn) {
+          await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
         }
         return jsonResponse({ elicitation: result.elicitation, harnessRunId: result.harnessRunId });
       }
@@ -2286,7 +2625,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
     }
     const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId);
-    await reapStaleHarnessRuns(runs, {
+    const recoveryOptions: Parameters<typeof reapStaleHarnessRuns>[1] = {
       receipts: createToolReceiptPortFactory(executionEnv),
       blocks: createBlockDashboardPortFactory(executionEnv),
       workspaceId: input.workspaceId,
@@ -2301,17 +2640,45 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         repair_phase: failure.phase,
         reason: failure.reason,
       }),
-    });
-    const attemptId = uuidV7();
+    };
+    const recoverableAttemptId = this.recoverableHarnessAttempts.get(input.harnessRunId) ?? null;
+    if (recoverableAttemptId === null) {
+      await reapStaleHarnessRuns(runs, recoveryOptions);
+    }
+    const attemptId = recoverableAttemptId ?? uuidV7();
+    const attemptOwner = this.harnessAttemptOwner(input, attemptId);
     const claim = await claimHarnessAttempt(
       runs,
       input,
       {
         attemptId,
-        owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}`,
+        owner: attemptOwner,
         leaseSeconds: 300,
       },
     );
+    if (recoverableAttemptId !== null
+      && claim.state !== "busy"
+      && claim.state !== "cancelled") {
+      this.recoverableHarnessAttempts.delete(input.harnessRunId);
+    }
+    if (recoverableAttemptId !== null && claim.state === "claimed") {
+      logWarn(this.env, "substream_agent_previous_instance_attempt_resumed", {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        substream_id: input.substreamId ?? "0",
+        harness_run_id: input.harnessRunId,
+        attempt_id: recoverableAttemptId,
+        attempt_epoch: claim.lease.attemptNumber,
+      });
+      // The root is live before this pass. Its children were expired with it,
+      // so the reaper keeps them resumable instead of treating them as stale.
+      await reapStaleHarnessRuns(runs, recoveryOptions);
+    } else if (recoverableAttemptId !== null) {
+      // The recovered row was busy, cancelled, or terminal. Repair old
+      // terminal receipts without letting the general reaper fail the attempt
+      // this instance still intends to reclaim on a later busy retry.
+      await repairTerminalResidualReceipts(runs, recoveryOptions);
+    }
     if (claim.state === "busy") {
       const leaseAt = claim.leaseExpiresAt ? Date.parse(claim.leaseExpiresAt) : Number.NaN;
       // A lease nobody will release leaves the run "running" forever, and this
@@ -2355,18 +2722,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     if (claim.state === "cancelled") {
-      await terminalizeQueuedHarnessRun(
-        runs,
-        input,
-        { attemptId, owner: `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}:${attemptId}` },
-        { code: "run_cancelled", message: "The run was stopped before it started" },
-        "stopped",
-      );
-      return this.persistAndSettleAgentRun(executionEnv, input, {
+      const stopped = {
         status: "stopped",
         error: { code: "run_cancelled", message: "The run was stopped before it started" },
         cancellationReason: "run_cancelled",
-      });
+      } as const;
+      if (recoverableAttemptId !== null) {
+        await terminalizeHarnessAttempt(
+          runs,
+          createMessageObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          input,
+          { attemptId, owner: previousInstanceRecoveryOwner(attemptId) },
+          stopped,
+          createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+        );
+        this.recoverableHarnessAttempts.delete(input.harnessRunId);
+      } else {
+        await terminalizeQueuedHarnessRun(
+          runs,
+          input,
+          { attemptId, owner: attemptOwner },
+          stopped.error,
+          "stopped",
+        );
+      }
+      return this.persistAndSettleAgentRun(executionEnv, input, stopped);
     }
 
     let outcome: WorkstreamHarnessResult;
@@ -2727,6 +3108,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       message: resident((body) => this.messageOperationOutcome(body)),
       resource: resident((body) => this.resourceOperationOutcome(body)),
       scheduling: resident((body) => this.schedulingOperationOutcome(body)),
+      transcript: resident((body) => this.transcriptOperationOutcome(body)),
       toolReceipt: resident((body) => this.toolReceiptOperationOutcome(body)),
       terminal: (operation, args) => this.runTerminalOperation({
         workspaceId,
@@ -2776,8 +3158,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       occurredAt: new Date().toISOString(),
     });
     const sequenced = await this.commitRealtimeEvent(parsed);
-    this.recordRecentEvent(sequenced);
-    this.broadcast(sequenced);
+    const encodedBytes = textEncoder.encode(JSON.stringify(sequenced)).byteLength;
+    if (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+      // The source row and canonical transcript turn are already durable by
+      // the time publication runs. Reporting a failed mutation here would be
+      // false, and an idempotent retry cannot republish an append it correctly
+      // recognizes as a replay. Mark this sequence unavailable and make every
+      // subscribed reader repair from the canonical snapshot immediately.
+      this.replayFloorSequence = sequenced.sequence;
+      for (const socket of this.state.getWebSockets()) {
+        const attachment = this.readAttachment(socket);
+        if (!attachment?.subscribed) continue;
+        try {
+          this.sendResyncRequired(socket, sequenced.sequence, "history_unavailable");
+        } catch {
+          // A stale socket cannot turn a committed mutation into a failure.
+        }
+      }
+    } else {
+      this.recordRecentEvent(sequenced);
+      this.broadcast(sequenced);
+    }
     if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(sequenced.type)) {
       await this.scheduleBlockDashboardRefresh(sequenced.sequence);
     }
@@ -2838,6 +3239,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // actually waits on, and it arrives on its own invocation — hence its own
       // trace, joined to the upgrade's by `rally.socket.connection_id`.
       const afterSequence = parsed.data.afterSequence;
+      const publishPresence = parsed.data.publishPresence;
+      socket.serializeAttachment({
+        ...attachment,
+        publishPresence,
+      } satisfies SocketAttachment);
       await inFlowSpan(this.env, "workstream.room.socket.subscribe", {
         flow: "workstream_open",
         component: "substream_do",
@@ -2859,7 +3265,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           afterSequence,
           span,
         );
-        if (subscribed) {
+        if (subscribed && publishPresence) {
           await span.step("workstream.room.socket.broadcast_presence", () =>
             this.broadcastPresence(attachment.workspaceId, attachment.workstreamId));
         }
@@ -2874,6 +3280,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     if (parsed.data.type === "load_message_page") {
       await this.fulfillMessagePage(socket, attachment, parsed.data);
+      return;
+    }
+
+    if (parsed.data.type === "load_transcript_range") {
+      await this.fulfillTranscriptRange(socket, attachment, parsed.data);
       return;
     }
 
@@ -2978,6 +3389,44 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         snapshotInFlight: false,
       } satisfies SocketAttachment);
       throw error;
+    }
+  }
+
+  private async fulfillTranscriptRange(
+    socket: WebSocket,
+    attachment: SocketAttachment,
+    request: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "load_transcript_range" }>,
+  ): Promise<void> {
+    // Subscription admission already verified the session and bound this
+    // socket to one object-local work-stream/substream authority. Revocation
+    // evicts the socket through the local participant/session epoch path, so a
+    // range does not repeat D1 authorization per block or hydrated turn.
+    if (!attachment.subscribed) {
+      this.sendError(socket, "subscription_required", "Subscribe before loading transcript ranges");
+      return;
+    }
+    const sequence = await this.currentSequence();
+    if (request.request.resumeAfterEventSequence > sequence) {
+      this.sendResyncRequired(socket, sequence, "sequence_ahead");
+      return;
+    }
+    try {
+      const fence = attachment.transcriptSnapshot;
+      if (!fence || fence.snapshotId !== request.request.snapshotId) {
+        this.sendResyncRequired(socket, sequence, "snapshot_expired");
+        return;
+      }
+      const result = this.transcript.range(fence, request.request.range);
+      socket.send(JSON.stringify(ServerSocketEventSchema.parse({
+        type: "transcript_range",
+        sequence,
+        occurredAt: new Date().toISOString(),
+        requestId: request.requestId,
+        snapshotId: request.request.snapshotId,
+        result,
+      })));
+    } catch {
+      this.sendResyncRequired(socket, sequence, "history_unavailable");
     }
   }
 
@@ -3193,6 +3642,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       throw new Error("substream_parent_effect_flush_limit");
     }
     await this.armNextAlarm();
+    logInfo(this.env, "substream_outbox_fence_terminal", {
+      substream_id: this.externalSubstreamId(),
+      delivered_count: delivered,
+      outcome: "forwarded",
+      reason: "parent_outbox_fence_complete",
+    });
     return delivered;
   }
 
@@ -3342,12 +3797,38 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (effects.length > 0) {
         try {
           await this.forwardEffectsToWorkstreamDO(effects);
+          let removed = 0;
           for (const effect of effects) {
-            this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
+            if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
+              removed += 1;
+            }
           }
-        } catch {
+          logInfo(this.env, "substream_outbox_batch_terminal", {
+            workspace_id: effects[0]?.workspaceId ?? null,
+            workstream_id: effects[0]?.workstreamId ?? null,
+            substream_id: this.externalSubstreamId(),
+            message_ids: effects.map((effect) => effect.messageId),
+            effect_kinds: effects.map((effect) => effect.effect.kind),
+            effect_count: effects.length,
+            removed_count: removed,
+            outcome: "forwarded",
+            reason: "parent_outbox_accepted",
+          });
+        } catch (error) {
           const retryAt = Date.now() + 5_000;
           this.objectStore.deferRegionalEffects(effects, retryAt);
+          logWarn(this.env, "substream_outbox_batch_deferred", {
+            workspace_id: effects[0]?.workspaceId ?? null,
+            workstream_id: effects[0]?.workstreamId ?? null,
+            substream_id: this.externalSubstreamId(),
+            message_ids: effects.map((effect) => effect.messageId),
+            effect_kinds: effects.map((effect) => effect.effect.kind),
+            effect_count: effects.length,
+            retry_at: new Date(retryAt).toISOString(),
+            outcome: "deferred",
+            reason: diagnosticErrorCode(error, "parent_forward_failed"),
+            error_name: error instanceof Error ? error.name : typeof error,
+          });
           await this.ensureAlarmNoLaterThan(retryAt);
         }
       }
@@ -3380,11 +3861,37 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (effects.length === 0) return;
     try {
       await this.forwardEffectsToWorkstreamDO(effects);
+      let removed = 0;
       for (const effect of effects) {
-        this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash);
+        if (this.objectStore.acknowledgeRegionalEffect(effect.messageId, effect.payloadHash)) {
+          removed += 1;
+        }
       }
-    } catch {
-      this.objectStore.deferRegionalEffects(effects, Date.now() + 5_000);
+      logInfo(this.env, "substream_outbox_flush_terminal", {
+        workspace_id: effects[0]?.workspaceId ?? null,
+        workstream_id: effects[0]?.workstreamId ?? null,
+        substream_id: this.externalSubstreamId(),
+        message_ids: effects.map((effect) => effect.messageId),
+        effect_kinds: effects.map((effect) => effect.effect.kind),
+        effect_count: effects.length,
+        removed_count: removed,
+        outcome: "forwarded",
+      });
+    } catch (error) {
+      const retryAt = Date.now() + 5_000;
+      this.objectStore.deferRegionalEffects(effects, retryAt);
+      logWarn(this.env, "substream_outbox_flush_deferred", {
+        workspace_id: effects[0]?.workspaceId ?? null,
+        workstream_id: effects[0]?.workstreamId ?? null,
+        substream_id: this.externalSubstreamId(),
+        message_ids: effects.map((effect) => effect.messageId),
+        effect_kinds: effects.map((effect) => effect.effect.kind),
+        effect_count: effects.length,
+        retry_at: new Date(retryAt).toISOString(),
+        outcome: "deferred",
+        reason: diagnosticErrorCode(error, "parent_forward_failed"),
+        error_name: error instanceof Error ? error.name : typeof error,
+      });
     }
   }
 
@@ -3432,7 +3939,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     void reason;
     void wasClean;
     const attachment = this.readAttachment(socket);
-    if (attachment?.subscribed) {
+    if (attachment?.subscribed && attachment.publishPresence) {
       await this.broadcastPresence(attachment.workspaceId, attachment.workstreamId, socket);
     }
   }
@@ -3444,7 +3951,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     } catch {
       // The peer may already be gone; presence cleanup still needs to run.
     }
-    if (attachment?.subscribed) {
+    if (attachment?.subscribed && attachment.publishPresence) {
       await this.broadcastPresence(attachment.workspaceId, attachment.workstreamId, socket);
     }
   }
@@ -3582,7 +4089,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence,
       subscribed: false,
-      snapshotInFlight: false
+      publishPresence: true,
+      snapshotInFlight: false,
+      transcriptSnapshot: null,
     };
 
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
@@ -3955,7 +4464,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private sendResyncRequired(
     socket: WebSocket,
     currentSequence: number,
-    reason: "history_unavailable" | "sequence_ahead",
+    reason: "history_unavailable" | "snapshot_expired" | "sequence_ahead",
   ): void {
     const event = ServerSocketEventSchema.parse({
       type: "resync_required",
@@ -3982,15 +4491,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       const attachment = this.readAttachment(socket);
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
-      const workstream = await span.step("workstream.room.snapshot.detail", () =>
+      const admitted = await span.step("workstream.room.snapshot.detail", () =>
         this.loadSnapshot(workspaceId, workstreamId, attachment.userId));
-      // Its own step: this is an awaited D1 round trip, and a step's duration is
-      // measured from the end of the previous one, so leaving it unstepped
-      // charged the authorization wait to the transcript read below and made
-      // `slowest_step` name the wrong thing.
-      const auth = await span.step("workstream.room.snapshot.session_auth", () =>
-        this.socketAuth(attachment));
-      if (!auth) throw new Error("Snapshot viewer is no longer authorized");
+      const { auth, workstream } = admitted;
       // Both transcript windows, from the assembler `GET /workstreams/:id` also
       // uses. The detail above already carries presence, which `boot` cannot
       // know about, so its own copy is discarded rather than re-read here.
@@ -3998,7 +4501,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.product.bootFeeds(
           auth,
           reason === "initial" ? workstream.firstUnreadSequenceNumber : null,
+          true,
         ));
+      const transcript = this.transcript.createOpeningSnapshot({
+        unreadHighWaterAttentionOrdinal: reason === "initial"
+          ? workstream.firstUnreadSequenceNumber
+          : null,
+      });
       const messageFeed = { ...boot.messageFeed, items: [...boot.messageFeed.items] };
       // Copied, not aliased: the cap below has to be able to shrink this one too.
       const resumeFeed = boot.resumeFeed
@@ -4020,6 +4529,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           sequence,
           occurredAt: new Date().toISOString(),
           workstream,
+          transcript,
           messageFeed,
           resumeFeed,
           activeStreams,
@@ -4073,6 +4583,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         "rally.snapshot.trims": trims,
       });
       socket.send(encoded);
+      const currentAttachment = this.readAttachment(socket);
+      if (currentAttachment) {
+        socket.serializeAttachment({
+          ...currentAttachment,
+          transcriptSnapshot: {
+            snapshotId: transcript.snapshotId,
+            snapshotThrough: transcript.snapshotThrough,
+            snapshotAtUtc: transcript.snapshotAtUtc,
+          },
+        } satisfies SocketAttachment);
+      }
       return true;
     } catch {
       span.setError("snapshot_unavailable");
@@ -4084,14 +4605,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     workspaceId: string,
     workstreamId: string,
     viewerUserId: string,
-  ): Promise<WorkstreamDetail> {
+  ): Promise<{ auth: AuthContext; workstream: WorkstreamDetail }> {
     const attachment = this.state.getWebSockets().map((socket) => this.readAttachment(socket))
       .find((candidate) => candidate?.userId === viewerUserId);
     if (!attachment) throw new Error("Snapshot viewer socket is unavailable");
     const auth = await this.socketAuth(attachment);
     if (!auth) throw new Error("Snapshot viewer is no longer authorized");
     const viewers = await this.loadViewers(workspaceId, workstreamId);
-    return this.product.get(auth, viewers);
+    return { auth, workstream: await this.product.get(auth, viewers) };
   }
 
   private async loadViewers(
@@ -4107,6 +4628,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         Boolean(
           attachment
           && attachment.subscribed
+          && attachment.publishPresence
           && attachment.workspaceId === workspaceId
           && attachment.workstreamId === workstreamId
         )
@@ -4154,7 +4676,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     audienceUserId?: string,
   ): void {
     const payload = JSON.stringify(event);
-    if (textEncoder.encode(payload).byteLength > 1_000_000) {
+    if (textEncoder.encode(payload).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
       throw new Error("Realtime event exceeds the bounded frame size");
     }
 

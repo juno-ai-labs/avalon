@@ -43,12 +43,12 @@ export async function sendWorkstreamMentionEmail(
   const replyTo = input.workstreamEmailAddress?.trim() || null;
   const subject = `${authorName} mentioned you in ${workstreamTitle}`;
   const text = [
-    recipientName ? `Hi ${recipientName},` : "You were mentioned in Avalon.",
+    recipientName ? `Hi ${recipientName},` : "You were mentioned in Rally.",
     "",
     `${authorName} mentioned you in "${workstreamTitle}" in ${workspaceName}.`,
     ...(excerpt ? ["", `"${excerpt}"`] : []),
     "",
-    `Open in Avalon: ${workstreamUrl}`,
+    `Open in Rally: ${workstreamUrl}`,
     ...(replyTo ? ["", "Reply to this email to continue the work stream."] : []),
   ].join("\n");
 
@@ -98,7 +98,7 @@ function mentionEmailHtml(input: {
   const recipientName = escapeHtml(input.recipientName);
   const excerpt = escapeHtml(input.excerpt);
   const workstreamUrl = escapeHtml(input.workstreamUrl);
-  const greeting = recipientName ? `Hi ${recipientName},` : "You were mentioned in Avalon.";
+  const greeting = recipientName ? `Hi ${recipientName},` : "You were mentioned in Rally.";
   const quote = excerpt
     ? `<tr><td style="padding:18px 20px;background:#20241e;border-left:3px solid #CEDC00;border-radius:8px;font-size:15px;line-height:1.55;color:#e2e5dc">${excerpt}</td></tr>`
     : "";
@@ -111,11 +111,11 @@ function mentionEmailHtml(input: {
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#10130f;padding:40px 16px">
       <tr><td align="center">
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#181b17;border:1px solid #343832;border-radius:18px;padding:36px">
-          <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#CEDC00">Avalon</td></tr>
+          <tr><td style="font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#CEDC00">Rally</td></tr>
           <tr><td><h1 style="margin:18px 0 12px;font-size:26px;line-height:1.25;color:#f2f3ec">You were mentioned</h1></td></tr>
           <tr><td style="padding-bottom:18px;font-size:15px;line-height:1.6;color:#c9ccc4">${greeting}<br><strong style="color:#f2f3ec">${authorName}</strong> mentioned you in <strong style="color:#f2f3ec">${workstreamTitle}</strong> in ${workspaceName}.</td></tr>
           ${quote}
-          <tr><td style="padding-top:28px"><a href="${workstreamUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open in Avalon</a></td></tr>
+          <tr><td style="padding-top:28px"><a href="${workstreamUrl}" style="display:inline-block;background:#CEDC00;color:#11140f;text-decoration:none;font-weight:700;padding:13px 20px;border-radius:10px">Open in Rally</a></td></tr>
           ${reply}
         </table>
       </td></tr>

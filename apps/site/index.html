@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#cedc00" />
+    <meta name="theme-color" content="#ccff00" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="64x64" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="manifest" href="/site.webmanifest" />
@@ -35,7 +35,7 @@
 
     <header class="rally-header">
       <a class="rally-wordmark" href="/" aria-label="Rally home">
-        <img class="rally-symbol" src="/brand/rally-mark.png" width="30" height="30" alt="" />
+        <img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" />
         <span>rally</span>
       </a>
       <nav aria-label="Primary navigation"><a href="#why-rally">Why Rally</a><a href="#how-it-works">How it works</a><a href="#connections">Connections</a></nav>
@@ -44,23 +44,31 @@
 
     <main id="content">
       <section class="rally-hero" aria-labelledby="hero-title">
-        <div class="hero-orbit hero-orbit-blue" aria-hidden="true"></div><div class="hero-orbit hero-orbit-orange" aria-hidden="true"></div>
         <div class="rally-hero-copy reveal">
-          <p class="rally-index">01 / Multiplayer AI workspace</p>
-          <h1 id="hero-title">AI is<br /><em>multiplayer</em><br />now.</h1>
-          <p class="rally-lede">Your best AI setup should not stop at you. Rally gives people and AI one shared workstream—so the context, the conversation, and the work move together.</p>
-          <div class="rally-actions"><!-- rally-desktop-hero-cta:start --><a class="rally-button rally-button-dark button-primary" href="#download"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a><!-- rally-desktop-hero-cta:end --><a class="rally-button rally-button-line button-quiet" href="#product">See Rally in play <span>→</span></a></div>
+          <p class="rally-index">01 / The next frontier</p>
+          <h1 id="hero-title">Docs went multiplayer.<br />Design went multiplayer.<br /><em>AI is next.</em></h1>
+          <p class="rally-lede">Every private chat tab is context your team loses. Rally pulls the people, the files, and the AI into one shared workstream—so the asking, the working, and the deciding happen where everyone can see.</p>
+          <div class="rally-actions"><!-- rally-desktop-hero-cta:start --><a class="rally-button rally-button-volt button-primary" href="#download"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a><!-- rally-desktop-hero-cta:end --><a class="rally-hero-link button-quiet" href="#why-rally">Why multiplayer <span>→</span></a></div>
           <p class="rally-availability"><i></i> Live private preview · Apple silicon</p>
         </div>
 
-        <div class="rally-hero-board reveal" aria-label="A shared Rally workstream">
-          <div class="court-line court-line-a" aria-hidden="true"></div><div class="court-line court-line-b" aria-hidden="true"></div>
-          <div class="hero-board-label"><span>Shared workstream</span><b>2 people · Rally included</b></div>
-          <article class="rally-note rally-note-one"><span>KB</span><div><b>Katherine</b><p>Let’s turn the interview notes into the launch story.</p></div></article>
-          <article class="rally-note rally-note-two"><span>AT</span><div><b>Alex</b><p>I added the brand references and product screenshots.</p></div></article>
-          <article class="rally-work-card"><header><img class="rally-symbol small" src="/brand/rally-mark.png" width="23" height="23" alt="" /><b>Rally is working</b><time>now</time></header><ol><li class="done"><i></i><span>Read 12 customer interviews</span><b>done</b></li><li class="active"><i></i><span>Compare the repeated language</span><b>working</b></li><li><i></i><span>Draft the shared launch narrative</span><b>next</b></li></ol></article>
-          <div class="rally-seam" aria-hidden="true"><i></i><i></i></div>
+        <div class="rally-merge reveal" aria-label="Four isolated chats and scattered files merging into one shared Rally workstream">
+          <div class="merge-sources">
+            <div class="merge-source"><b>maya — private chat</b><span>Context only she can see</span></div>
+            <div class="merge-source"><b>sam — private chat</b><span>Same question, asked again</span></div>
+            <div class="merge-source"><b>#launch — slack</b><span>Decision, 214 messages up</span></div>
+            <div class="merge-source"><b>files — everywhere</b><span>final_v3 (which one?)</span></div>
+          </div>
+          <div class="merge-mid" aria-hidden="true"><i class="merge-pulse"></i></div>
+          <div class="merge-out">
+            <p>One workstream</p>
+            <b>launch-narrative — shared</b>
+            <div class="merge-people" aria-hidden="true"><span>MK</span><span>SR</span><span>AT</span><i><img src="/brand/rally-mark-small.svg" width="13" height="13" alt="" /></i></div>
+            <span class="merge-note">4 people + Rally · full context</span>
+          </div>
         </div>
+
+        <div class="rally-hero-foot" aria-hidden="true"><span>Isolated rooms → one shared room</span><span>People · files · context · AI</span></div>
       </section>
 
       <section class="rally-ticker" aria-label="Rally product principles"><div><span>Shared context</span><i></i><span>Human conversation</span><i></i><span>Visible work</span><i></i><span>Connected tools</span><i></i><span>Durable outcomes</span><i></i><span>No copy + paste</span></div></section>
@@ -78,8 +86,8 @@
       <section class="rally-product" id="product" aria-labelledby="product-title">
         <div class="rally-product-heading reveal"><p class="rally-index">04 / Rally in play</p><h2 id="product-title">See what needs you.<br /><em>Let the rest keep moving.</em></h2></div>
         <figure class="rally-app reveal">
-          <div class="rally-app-top"><i></i><i></i><i></i><span><img class="rally-symbol tiny" src="/brand/rally-mark.png" width="17" height="17" alt="" /> rally</span><b>Desktop preview</b></div>
-          <div class="rally-app-body" aria-hidden="true" inert><aside><strong><img class="rally-symbol tiny" src="/brand/rally-mark.png" width="17" height="17" alt="" /> rally</strong><button type="button" tabindex="-1">＋ New workstream</button><p>Waiting for you</p><a class="selected">● Plan the launch</a><a>● Research onboarding gaps</a><a>● Update pricing story</a><p>Background</p><a>◌ Weekly customer pulse</a><a>◌ Social signal watch</a></aside><section><header><span>Plan the launch</span><b>Shared · 3</b></header><div class="rally-app-feed"><article><span>KB</span><p><b>Katherine</b> The strongest idea is that AI is still single-player.</p></article><article><span>AJ</span><p><b>Adam</b> Use the team’s own setup, without the copy-paste tax.</p></article><article class="rally-app-system"><img class="rally-symbol tiny" src="/brand/rally-mark.png" width="17" height="17" alt="" /><p><b>Rally</b> I compared the meeting notes with the brand thread. The recurring promise is shared leverage.</p></article></div><div class="rally-composer"><span>KB</span><span>AJ</span><span>AT</span><p>Talk with your team or hand work to Rally</p><b>↵</b></div></section><aside class="rally-app-rail"><header>Work in motion</header><article><i></i><b>Compare positioning notes</b><span>Working · 32s</span></article><article><i></i><b>Build launch narrative</b><span>Ready to review</span></article><article><i></i><b>Collect source links</b><span>Completed</span></article></aside></div>
+          <div class="rally-app-top"><i></i><i></i><i></i><span><img class="rally-symbol tiny" src="/brand/rally-mark-small.svg" width="17" height="17" alt="" /> rally</span><b>Desktop preview</b></div>
+          <div class="rally-app-body" aria-hidden="true" inert><aside><strong><img class="rally-symbol tiny" src="/brand/rally-mark-small.svg" width="17" height="17" alt="" /> rally</strong><button type="button" tabindex="-1">＋ New workstream</button><p>Waiting for you</p><a class="selected">● Plan the launch</a><a>● Research onboarding gaps</a><a>● Update pricing story</a><p>Background</p><a>◌ Weekly customer pulse</a><a>◌ Social signal watch</a></aside><section><header><span>Plan the launch</span><b>Shared · 3</b></header><div class="rally-app-feed"><article><span>KB</span><p><b>Katherine</b> The strongest idea is that AI is still single-player.</p></article><article><span>AJ</span><p><b>Adam</b> Use the team’s own setup, without the copy-paste tax.</p></article><article class="rally-app-system"><img class="rally-symbol tiny" src="/brand/rally-mark-small.svg" width="17" height="17" alt="" /><p><b>Rally</b> I compared the meeting notes with the brand thread. The recurring promise is shared leverage.</p></article></div><div class="rally-composer"><span>KB</span><span>AJ</span><span>AT</span><p>Talk with your team or hand work to Rally</p><b>↵</b></div></section><aside class="rally-app-rail"><header>Work in motion</header><article><i></i><b>Compare positioning notes</b><span>Working · 32s</span></article><article><i></i><b>Build launch narrative</b><span>Ready to review</span></article><article><i></i><b>Collect source links</b><span>Completed</span></article></aside></div>
           <figcaption>The room keeps the people, source material, conversation, actions, and outcome together. Share the workstream and the full trail comes with it.</figcaption>
         </figure>
       </section>
@@ -91,6 +99,6 @@
       <section class="rally-download" id="download" aria-labelledby="download-title"><div class="download-court" aria-hidden="true"><i></i><i></i></div><p class="rally-index">07 / Ready to rally?</p><h2 id="download-title">Bring your team<br /><em>into the work.</em></h2><p>Download Rally for macOS. Start an outcome, invite the right people, and carry the whole context forward together.</p><!-- rally-desktop-release:start --><span class="rally-button rally-button-dark button-disabled" aria-disabled="true"><img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Downloads opening soon</span><small>Private preview · Apple silicon · macOS</small><!-- rally-desktop-release:end --></section>
     </main>
 
-    <footer class="rally-footer"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.png" width="30" height="30" alt="" /><span>rally</span></a><p>AI is multiplayer now.</p><nav aria-label="Trust Center and company links"><a href="/security/">Trust Center</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/dpa/">DPA</a><a href="/subprocessors/">Sub-processors</a><a href="/cookies/">Cookies</a><a href="/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></nav><small>© 2026 Juno AI Labs · Rally</small></footer>
+    <footer class="rally-footer"><a class="rally-wordmark" href="/" aria-label="Rally home"><img class="rally-symbol" src="/brand/rally-mark.svg" width="30" height="30" alt="" /><span>rally</span></a><p>AI is multiplayer now.</p><nav aria-label="Trust Center and company links"><a href="/security/">Trust Center</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/dpa/">DPA</a><a href="/subprocessors/">Sub-processors</a><a href="/cookies/">Cookies</a><a href="/acceptable-use/">Acceptable Use</a><a href="/support/">Support</a></nav><small>© 2026 Juno AI Labs · Rally</small></footer>
   </body>
 </html>

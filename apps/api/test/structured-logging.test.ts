@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { logError, logInfo, logRequestEvent, logStructuredEvent, logWarn, summarizeEvent } from "../src/observability/logger";
+import {
+  diagnosticErrorCode,
+  logError,
+  logInfo,
+  logRequestEvent,
+  logStructuredEvent,
+  logWarn,
+  summarizeEvent,
+} from "../src/observability/logger";
 import { createTestEnv } from "./helpers/cloudflare-test";
 
 const env = createTestEnv({
@@ -21,6 +29,17 @@ function capture(level: "info" | "warn" | "error", emit: () => void): Record<str
 }
 
 describe("structured logging", () => {
+  it("extracts stable runtime error codes without logging arbitrary error text", () => {
+    expect(diagnosticErrorCode(
+      new Error("Failed to create instance: (instance.invalid_id) details follow"),
+      "connector_event_failed",
+    )).toBe("instance_invalid_id");
+    expect(diagnosticErrorCode(
+      new Error("Provider included customer@example.com in its response"),
+      "connector_event_failed",
+    )).toBe("connector_event_failed");
+  });
+
   it("keeps the request context authoritative over caller-supplied correlation", () => {
     const entry = capture("warn", () => logRequestEvent(
       env,

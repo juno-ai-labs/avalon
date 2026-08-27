@@ -35,9 +35,11 @@ function objectStoreForTest(): DatabaseSync {
 
 const ADDRESS_KEY = "avalon-workstream-routing-test-key-v1";
 const DOMAIN = "automation.with-avalon.com";
+const CURRENT_DOMAIN = "automation.rallywith.ai";
 
 interface RouteRow {
-  local_part: string;
+  email_address: string;
+  address_source: "migration" | "allocator" | "owner";
   region: Region;
   workspace_id: string;
   workstream_id: string | null;
@@ -79,6 +81,7 @@ class FakeStatement {
 
 class FakeDatabase {
   readonly routes: RouteRow[] = [];
+  fullAddressRegistry = true;
   /**
    * The work stream's own object.
    *
@@ -91,6 +94,7 @@ class FakeDatabase {
   readonly objectStore: DatabaseSync = objectStoreForTest();
   readonly automations: LocalAutomationRow[] = [];
   routeInsertAttempts = 0;
+  registrySchemaProbes = 0;
 
   prepare(sql: string): D1PreparedStatement {
     return createTestD1PreparedStatement(new FakeStatement(this, sql));
@@ -101,6 +105,10 @@ class FakeDatabase {
   }
 
   first(sql: string, values: unknown[]): RouteRow | LocalAutomationRow | null {
+    if (sql.includes("pragma_table_info('workstream_email_routes')")) {
+      this.registrySchemaProbes += 1;
+      return this.fullAddressRegistry ? { name: "email_address" } as unknown as RouteRow : null;
+    }
     if (sql.includes("FROM automation_subscriptions WHERE id = ? AND workspace_id = ?")) {
       const [automationId, workspaceId] = values.map(String);
       return this.automations.find((row) =>
@@ -109,24 +117,26 @@ class FakeDatabase {
     if (sql.includes("FROM workstream_email_routes") && sql.includes("LIMIT 1")) {
       return this.routes[0] ?? null;
     }
-    if (sql.includes("FROM workstream_email_routes") && sql.includes("WHERE local_part = ?")) {
-      const localPart = String(values[0]).toLowerCase();
-      return this.routes.find((row) => row.local_part.toLowerCase() === localPart) ?? null;
-    }
     if (sql.includes("FROM workstream_email_routes") && sql.includes("WHERE region = ?")) {
       if (sql.includes("automation_subscription_id = ?")) {
         const [region, workspaceId, automationSubscriptionId] = values.map(String);
-        return this.routes.find((row) =>
-          row.region === region
-          && row.workspace_id === workspaceId
-          && row.workstream_id === null
-          && row.automation_subscription_id === automationSubscriptionId) ?? null;
+        const row = this.routes.find((candidate) =>
+          candidate.region === region
+          && candidate.workspace_id === workspaceId
+          && candidate.workstream_id === null
+          && candidate.automation_subscription_id === automationSubscriptionId) ?? null;
+        return row && !this.fullAddressRegistry
+          ? { ...row, local_part: row.email_address.slice(0, row.email_address.lastIndexOf("@")) } as unknown as RouteRow
+          : row;
       }
       const [region, workspaceId, workstreamId] = values.map(String);
-      return this.routes.find((row) =>
-        row.region === region
-        && row.workspace_id === workspaceId
-        && row.workstream_id === workstreamId) ?? null;
+      const row = this.routes.find((candidate) =>
+        candidate.region === region
+        && candidate.workspace_id === workspaceId
+        && candidate.workstream_id === workstreamId) ?? null;
+      return row && !this.fullAddressRegistry
+        ? { ...row, local_part: row.email_address.slice(0, row.email_address.lastIndexOf("@")) } as unknown as RouteRow
+        : row;
     }
     if (sql.includes("SELECT placement_affinity FROM workspaces")) {
       // The routed owner read resolves the work stream's object, which asks
@@ -140,20 +150,22 @@ class FakeDatabase {
   run(sql: string, values: unknown[]): D1Result {
     if (sql.includes("INSERT INTO workstream_email_routes")) {
       this.routeInsertAttempts += 1;
-      const [localPart, region, workspaceId, ownerId, createdAt, updatedAt] = values.map(String);
+      const [storedIdentity, region, workspaceId, ownerId, createdAt, updatedAt] = values.map(String);
+      const emailAddress = this.fullAddressRegistry ? storedIdentity : `${storedIdentity}@${DOMAIN}`;
       const automation = sql.includes("automation_subscription_id") && sql.includes("NULL, ?");
       const workstreamId = automation ? null : ownerId!;
       const automationSubscriptionId = automation ? ownerId! : null;
-      const localPartTaken = this.routes.some((row) =>
-        row.local_part.toLowerCase() === localPart!.toLowerCase());
+      const addressTaken = this.routes.some((row) =>
+        row.email_address.toLowerCase() === emailAddress!.toLowerCase());
       const destinationTaken = this.routes.some((row) =>
         row.region === region
         && row.workspace_id === workspaceId
         && row.workstream_id === workstreamId
         && row.automation_subscription_id === automationSubscriptionId);
-      if (localPartTaken || destinationTaken) return result(0);
+      if (addressTaken || destinationTaken) return result(0);
       this.routes.push({
-        local_part: localPart!,
+        email_address: emailAddress!,
+        address_source: sql.includes("'owner'") ? "owner" : "allocator",
         region: region as Region,
         workspace_id: workspaceId!,
         workstream_id: workstreamId!,
@@ -161,6 +173,23 @@ class FakeDatabase {
         created_at: createdAt!,
         updated_at: updatedAt!,
       });
+      return result(1);
+    }
+    if (sql.includes("UPDATE OR IGNORE workstream_email_routes")) {
+      const [emailAddress, updatedAt, region, workspaceId, ownerId] = values.map(String);
+      const automation = sql.includes("automation_subscription_id = ?");
+      const row = this.routes.find((candidate) =>
+        candidate.region === region
+        && candidate.workspace_id === workspaceId
+        && candidate.address_source === "migration"
+        && (automation
+          ? candidate.automation_subscription_id === ownerId
+          : candidate.workstream_id === ownerId));
+      if (!row || this.routes.some((candidate) =>
+        candidate !== row && candidate.email_address.toLowerCase() === emailAddress!.toLowerCase())) return result(0);
+      row.email_address = emailAddress!;
+      row.address_source = "owner";
+      row.updated_at = updatedAt!;
       return result(1);
     }
     if (sql.includes("UPDATE automation_subscriptions") && sql.includes("SET email_address = ?")) {
@@ -194,7 +223,8 @@ describe("WorkstreamEmailRoutingService", () => {
     // The row is the claim and nothing else. Anything resembling a lifecycle
     // here would be a second copy of what the owner's own row already says.
     expect(Object.keys(database.routes[0]!)).toEqual([
-      "local_part",
+      "email_address",
+      "address_source",
       "region",
       "workspace_id",
       "workstream_id",
@@ -204,6 +234,178 @@ describe("WorkstreamEmailRoutingService", () => {
     ]);
     expect(database.routes).toHaveLength(1);
     expect(database.routeInsertAttempts).toBe(1);
+  });
+
+  it("preserves an automation's stored legacy domain and verifies the migrated Global claim", async () => {
+    const database = new FakeDatabase();
+    const input = {
+      region: "global" as const,
+      workspaceId: "workspace-legacy-automation",
+      automationSubscriptionId: "automation-legacy-address",
+    };
+    const legacyAddress = `crisp-calibrated-arctic-kuiper@${DOMAIN}`;
+    database.routes.push({
+      email_address: legacyAddress,
+      address_source: "migration",
+      region: "global",
+      workspace_id: input.workspaceId,
+      workstream_id: null,
+      automation_subscription_id: input.automationSubscriptionId,
+      created_at: "2026-08-06T04:46:44.006Z",
+      updated_at: "2026-08-06T04:46:44.006Z",
+    });
+    database.automations.push({
+      id: input.automationSubscriptionId,
+      workspace_id: input.workspaceId,
+      email_address: legacyAddress,
+      status: "active",
+      lifecycle_state: "visible",
+      updated_at: "2026-08-06T04:46:44.006Z",
+    });
+    const service = new WorkstreamEmailRoutingService(environment(database, {
+      WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
+    }));
+
+    await expect(service.ensureAutomationAddress(input)).resolves.toEqual({
+      ...input,
+      localPart: "crisp-calibrated-arctic-kuiper",
+      emailAddress: legacyAddress,
+    });
+    expect(database.routes[0]).toMatchObject({
+      email_address: legacyAddress,
+      address_source: "owner",
+    });
+    expect(database.routeInsertAttempts).toBe(0);
+  });
+
+  it("preserves the owner's full address while the Worker-first migration is still pending", async () => {
+    const database = new FakeDatabase();
+    database.fullAddressRegistry = false;
+    const input = {
+      region: "global" as const,
+      workspaceId: "workspace-worker-first",
+      automationSubscriptionId: "automation-worker-first",
+    };
+    const legacyAddress = `crisp-calibrated-arctic-kuiper@${DOMAIN}`;
+    database.routes.push({
+      email_address: legacyAddress,
+      address_source: "allocator",
+      region: "global",
+      workspace_id: input.workspaceId,
+      workstream_id: null,
+      automation_subscription_id: input.automationSubscriptionId,
+      created_at: "2026-08-06T04:46:44.006Z",
+      updated_at: "2026-08-06T04:46:44.006Z",
+    });
+    database.automations.push({
+      id: input.automationSubscriptionId,
+      workspace_id: input.workspaceId,
+      email_address: legacyAddress,
+      status: "active",
+      lifecycle_state: "visible",
+      updated_at: "2026-08-06T04:46:44.006Z",
+    });
+    const service = new WorkstreamEmailRoutingService(environment(database, {
+      WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
+    }));
+
+    await expect(service.ensureAutomationAddress(input)).resolves.toMatchObject({
+      emailAddress: legacyAddress,
+    });
+  });
+
+  it("uses owner-claim RPCs after the new Global Worker deploys but before migration 0097", async () => {
+    const globalDatabase = new FakeDatabase();
+    globalDatabase.fullAddressRegistry = false;
+    const globalService = new WorkstreamEmailRoutingService(environment(globalDatabase, {
+      WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
+    }));
+    const reserveAutomation = vi.fn(async (input) => success(
+      await globalService.reserveAutomationInGlobalRegistry(input),
+    ));
+    const claimAutomation = vi.fn(async (input) => success(
+      await globalService.claimAutomationInGlobalRegistry(input),
+    ));
+    const reserve = vi.fn(async (input) => success(
+      await globalService.reserveInGlobalRegistry(input),
+    ));
+    const claim = vi.fn(async (input) => success(
+      await globalService.claimInGlobalRegistry(input),
+    ));
+    const binding: GlobalWorkstreamEmailRouterRpcBinding = {
+      ping: async () => success(await globalService.pingGlobalRegistry()),
+      reserve,
+      reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
+      claim,
+      reserveAutomation,
+      claimAutomation,
+    };
+    const euService = new WorkstreamEmailRoutingService(environment(new FakeDatabase(), {
+      AVALON_REGION: "eu",
+      APP_ENV: "production",
+      GLOBAL_EMAIL_ROUTER: binding,
+    }));
+    const input = {
+      region: "eu" as const,
+      workspaceId: "workspace-eu-worker-first",
+      automationSubscriptionId: "automation-eu-worker-first",
+      emailAddress: `crisp-calibrated-arctic-kuiper@${DOMAIN}`,
+    };
+
+    await expect(euService.claimAutomation(input)).resolves.toMatchObject({
+      ...input,
+      localPart: "crisp-calibrated-arctic-kuiper",
+    });
+    expect(claimAutomation).toHaveBeenCalledExactlyOnceWith(input);
+    expect(reserveAutomation).not.toHaveBeenCalled();
+    const workstreamClaim = {
+      region: "eu" as const,
+      workspaceId: input.workspaceId,
+      workstreamId: "workstream-eu-worker-first",
+      emailAddress: `steady-modern-starlit-kovalevsky@${DOMAIN}`,
+    };
+    await expect(euService.claim(workstreamClaim)).resolves.toMatchObject({
+      ...workstreamClaim,
+      localPart: "steady-modern-starlit-kovalevsky",
+    });
+    expect(claim).toHaveBeenCalledExactlyOnceWith(workstreamClaim);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(globalDatabase.routes).toEqual([
+      expect.objectContaining({
+        email_address: input.emailAddress,
+        region: "eu",
+        automation_subscription_id: input.automationSubscriptionId,
+      }),
+      expect.objectContaining({
+        email_address: workstreamClaim.emailAddress,
+        region: "eu",
+        workstream_id: workstreamClaim.workstreamId,
+      }),
+    ]);
+  });
+
+  it("allows the same local part on another domain without advancing the allocator", async () => {
+    const database = new FakeDatabase();
+    const input = routeInput("workstream-domain-scoped-collision");
+    const firstCandidate = await allocateWorkstreamEmailAddressCandidate({
+      secretKey: ADDRESS_KEY,
+      workstreamId: `${input.region}:${input.workspaceId}:${input.workstreamId}`,
+      attempt: 0,
+    });
+    database.routes.push({
+      ...existingRoute(firstCandidate, "custom-workspace", "custom-workstream"),
+      email_address: `${firstCandidate}@customer.example`,
+    });
+    const service = new WorkstreamEmailRoutingService(environment(database, {
+      WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
+    }));
+
+    await expect(service.reserve(input)).resolves.toMatchObject({
+      localPart: firstCandidate,
+      emailAddress: `${firstCandidate}@${CURRENT_DOMAIN}`,
+    });
+    expect(database.routeInsertAttempts).toBe(1);
+    expect(database.routes).toHaveLength(2);
   });
 
   it("activates only after the owning regional work stream durably exists", async () => {
@@ -243,6 +445,8 @@ describe("WorkstreamEmailRoutingService", () => {
       ping: async () => success(await globalService.pingGlobalRegistry()),
       reserve: async (input) => success(await globalService.reserveInGlobalRegistry(input)),
       reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
+      claim: async (input) => success(await globalService.claimInGlobalRegistry(input)),
+      claimAutomation: async (input) => success(await globalService.claimAutomationInGlobalRegistry(input)),
     };
     const euDatabase = new FakeDatabase();
     const euService = new WorkstreamEmailRoutingService(environment(euDatabase, {
@@ -266,7 +470,7 @@ describe("WorkstreamEmailRoutingService", () => {
     // One Global row, written once, and the EU owner gate answered without a
     // second Global call: the claim is all that crosses the boundary.
     expect(globalDatabase.routes).toHaveLength(1);
-    expect(globalDatabase.routes[0]?.local_part).toBe(reservation.localPart);
+    expect(globalDatabase.routes[0]?.email_address).toBe(reservation.emailAddress);
   });
 
   it("retries the deterministic candidate sequence after a global collision", async () => {
@@ -317,6 +521,8 @@ describe("WorkstreamEmailRoutingService", () => {
       ping: async () => success(await globalService.pingGlobalRegistry()),
       reserve: async (input) => success(await globalService.reserveInGlobalRegistry(input)),
       reserveMany: async (inputs) => success(await globalService.reserveManyInGlobalRegistry(inputs)),
+      claim: async (input) => success(await globalService.claimInGlobalRegistry(input)),
+      claimAutomation: async (input) => success(await globalService.claimAutomationInGlobalRegistry(input)),
     };
     const euDatabase = new FakeDatabase();
     const euService = new WorkstreamEmailRoutingService(environment(euDatabase, {
@@ -339,7 +545,7 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(euDatabase.routeInsertAttempts).toBe(0);
   });
 
-  it("uses the same Global local-part namespace for automations and work streams", async () => {
+  it("uses the same Global full-address namespace for automations and work streams on one domain", async () => {
     const database = new FakeDatabase();
     const input = {
       region: "global" as const,
@@ -404,7 +610,7 @@ describe("WorkstreamEmailRoutingService", () => {
       status: 409,
       code: "automation_not_active",
     } satisfies Partial<ApiError>);
-    expect(database.routes[0]).toMatchObject({ local_part: reservation.localPart });
+    expect(database.routes[0]).toMatchObject({ email_address: reservation.emailAddress });
 
     automation.status = "active";
     await expect(service.activateAutomationRoute(input)).resolves.toMatchObject({
@@ -431,7 +637,7 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(database.routes).toHaveLength(1);
   });
 
-  it("never recycles a disabled local part for a different destination", async () => {
+  it("never recycles a claimed full address for a different destination", async () => {
     const database = new FakeDatabase();
     const input = routeInput("workstream-after-tombstone");
     const allocatorId = `${input.region}:${input.workspaceId}:${input.workstreamId}`;
@@ -457,7 +663,7 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(reserved.localPart).toBe(nextCandidate);
     expect(database.routes).toHaveLength(2);
     expect(database.routes[0]).toMatchObject({
-      local_part: tombstonedCandidate,
+      email_address: `${tombstonedCandidate}@${DOMAIN}`,
       workspace_id: "retired-workspace",
       workstream_id: "retired-workstream",
     });
@@ -516,6 +722,25 @@ describe("WorkstreamEmailRoutingService", () => {
     expect(reserveMany).toHaveBeenCalledExactlyOnceWith(inputs);
     expect(reserve).not.toHaveBeenCalled();
     expect(database.routeInsertAttempts).toBe(0);
+  });
+
+  it("probes the registry schema once per Global bulk reservation", async () => {
+    const database = new FakeDatabase();
+    const service = new WorkstreamEmailRoutingService(environment(database));
+    const workstreams = [
+      routeInput("workstream-global-bulk-1"),
+      routeInput("workstream-global-bulk-2"),
+      routeInput("workstream-global-bulk-3"),
+    ];
+
+    await expect(service.reserveManyInGlobalRegistry(workstreams)).resolves.toHaveLength(3);
+    expect(database.registrySchemaProbes).toBe(1);
+
+    await expect(service.reserveAutomationsInGlobalRegistry([
+      { region: "global", workspaceId: "workspace-1", automationSubscriptionId: "automation-bulk-1" },
+      { region: "global", workspaceId: "workspace-1", automationSubscriptionId: "automation-bulk-2" },
+    ])).resolves.toHaveLength(2);
+    expect(database.registrySchemaProbes).toBe(2);
   });
 
   it("reconstructs expected Global RPC errors as ApiError instances", async () => {
@@ -668,7 +893,8 @@ function existingRoute(
   workstreamId: string,
 ): RouteRow {
   return {
-    local_part: localPart,
+    email_address: `${localPart}@${DOMAIN}`,
+    address_source: "allocator",
     region: "global",
     workspace_id: workspaceId,
     workstream_id: workstreamId,

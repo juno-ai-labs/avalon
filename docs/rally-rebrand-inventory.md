@@ -248,8 +248,14 @@ design, not by oversight.
 - The canonical mask and generated mark are `assets/brand/rally-mark-source.png`
   and `assets/brand/rally-mark.png`. The generator writes the same real mark to
   the desktop, native icon, menu bar, site, favicon, and social-card surfaces.
-- The public site exposes only `/brand/rally-mark.png`; provider manifests use
-  that URL. The obsolete public Avalon mark and oversized `og.png` were removed.
+- The public site's pages render the redesigned vector mark
+  (`/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` below 24 px).
+  `/brand/rally-mark.png` is still served because provider manifests hotlink
+  that URL; it and `assets/brand/rally-mark.png` were re-rendered from the new
+  vector out of band of the generator, whose source mask still holds the woven
+  mark — rerunning `scripts/generate-brand-assets.py` before the mask is
+  redrawn regresses both PNGs to the old mark. The obsolete public Avalon mark
+  and oversized `og.png` were removed.
 - `apps/api/test/avalon-tool-prose.test.ts` — filename.
 - `docs/PRDs/2026-08-05_avalon-implementation-brief/` — folder name, and the
   standing product contract [`docs/README.md`](README.md) points at. PRDs
@@ -321,11 +327,23 @@ and Sheets descriptions in `packages/connectors/src/index.ts`, the X plugin, the
 Linear native-agent plugin, and the core plugin's own utilities line all moved;
 the four Slack connector labels moved earlier, in the Slack cut-over.
 
-**Not section 9, and deliberately left here:** the transactional email copy
-(`mention-`, `invitation-`, `participant-`, `automation-email-service.ts`) and
-the API error strings surfaced in the client UI. Those are user-facing copy the
-public-site pass did not reach, and they are section 7's remainder rather than
-this section's.
+**Not section 9, and deliberately left here:** the remaining transactional email
+copy (`invitation-email-service.ts`, `automation-email-content.ts`,
+`automation-email-service.ts`, `digest-email-content.ts`) and the API error
+strings surfaced in the client UI. Those are user-facing copy the public-site
+pass did not reach, and they are section 7's remainder rather than this
+section's.
+
+The two **person-notification** emails — `participant-` and
+`mention-email-service.ts` — have moved, along with both regions'
+`RESEND_FROM_EMAIL` and `RESEND_NOTIFICATION_FROM_EMAIL` display names, which
+front every template including the four above. They were taken out of order
+because their Slack halves had already moved, so one event arrived as "Open in
+Rally" in a DM and "Open in Avalon" in an inbox; and because a sender line
+reading Avalon over a Rally body is worse than either name used consistently.
+The consequence to know before finishing the sweep: those four templates now
+arrive **From: Rally** with an Avalon wordmark, which is the same split in the
+other direction and is the reason to finish rather than a reason to revert.
 
 **Strings the agent emits to people** moved too: the Slack fallback and mention
 copy in the Slack cut-over, and the Control Tower failure notices with this
@@ -400,6 +418,33 @@ with this repository. The two halves of that line have different owners.
   which is not the same as the order the work should happen in.
 
 ## Changelog
+
+### 2026-08-25 — The person-notification emails and both Resend senders
+
+**What changed:** `participant-` and `mention-email-service.ts` say Rally, and
+`RESEND_FROM_EMAIL` / `RESEND_NOTIFICATION_FROM_EMAIL` say `Rally <…>` in both
+regions and in `.env.example`. Section 7's remainder is now the invitation,
+automation, and digest templates.
+
+**Why:** taken out of section 7's order because a bug fix already had the two
+notification templates open, and leaving them was producing a visible split — the
+Slack halves of the same two events had moved in the Slack cut-over, so one add
+arrived as "Open in Rally" in a DM and "Open in Avalon" in an inbox, on a
+`rallywith.ai` link. The senders moved with them because a From line is read
+before a body and shows in the inbox list without opening anything: an Avalon
+sender over a Rally body is a worse artifact than either name used consistently,
+and `docs/runbook.md` already documented these two vars as `Rally <…>`, so the
+config was the stale side.
+
+**Considered and rejected:** moving the two bodies and leaving the senders, to
+keep the From line agreeing with the four templates still on Avalon. That
+optimises for the templates not being fixed. The senders are one value each and
+the bodies are four files; the sender is also the half a person sees first.
+
+**Consequences:** the invitation, automation, and digest emails now arrive
+**From: Rally** with an Avalon wordmark. That is the same inconsistency in the
+other direction and is deliberate pressure to finish the section, not a state to
+settle in.
 
 ### 2026-08-25 — Linear and Notion provider registrations completed the cut-over
 

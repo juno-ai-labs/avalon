@@ -8,7 +8,10 @@ import {
   AutomationDeliveryTargetSetSchema,
   AutomationDraftSchema,
   AutomationDraftStreamEventSchema,
+  AGENT_MODEL_FLAG_KEYS,
   AGENT_MODEL_OVERRIDES,
+  AGENT_MODEL_ROLES,
+  AgentModelRoutingSchema,
   ClientSocketEventSchema,
   CompileAutomationRequestSchema,
   ConnectorOAuthProviderSchema,
@@ -183,11 +186,30 @@ describe("boundary contracts", () => {
       openingMessage: "",
       attachmentIds: [],
     }).success).toBe(false);
-    expect(CreateWorkstreamRequestSchema.parse({
+    const attachmentOnly = CreateWorkstreamRequestSchema.parse({
       ...base,
       openingMessage: "",
       attachmentIds: [id],
-    }).objective).toBeUndefined();
+    });
+    expect(attachmentOnly.objective).toBeUndefined();
+    expect(attachmentOnly.mentions).toEqual([]);
+    expect(CreateWorkstreamRequestSchema.parse({
+      ...base,
+      openingMessage: "Ask @Adam",
+      mentions: [{
+        type: "person",
+        userId: id,
+        connectorType: null,
+        startOffset: 4,
+        endOffset: 9,
+      }],
+    }).mentions).toEqual([{
+      type: "person",
+      userId: id,
+      connectorType: null,
+      startOffset: 4,
+      endOffset: 9,
+    }]);
   });
 
   it("accepts a model override only from the closed list of selectable models", () => {
@@ -205,6 +227,39 @@ describe("boundary contracts", () => {
     expect(CreateWorkstreamRequestSchema.safeParse({ ...base, modelOverride: "x-ai/grok-9" }).success).toBe(false);
     expect(AGENT_MODEL_OVERRIDES[0]).toBe("x-ai/grok-4.3");
     expect(new Set(AGENT_MODEL_OVERRIDES).size).toBe(AGENT_MODEL_OVERRIDES.length);
+  });
+
+  it("owns the complete model-role, Flagship-key, and route-value contract", () => {
+    expect(AGENT_MODEL_ROLES).toEqual([
+      "workstream",
+      "inline_child",
+      "automation_compiler",
+      "block_dashboard",
+      "meeting_notes",
+      "addressing_classifier",
+      "workstream_naming",
+      "activity_structured",
+      "work_opportunity_admission",
+      "work_opportunity_ranking",
+      "workstream_description",
+    ]);
+    expect(AGENT_MODEL_ROLES.map((role) => AGENT_MODEL_FLAG_KEYS[role])).toEqual([
+      "agent-model-workstream",
+      "agent-model-inline-child",
+      "agent-model-automation-compiler",
+      "agent-model-block-dashboard",
+      "agent-model-meeting-notes",
+      "agent-model-addressing-classifier",
+      "agent-model-workstream-naming",
+      "agent-model-activity-structured",
+      "agent-model-work-opportunity-admission",
+      "agent-model-work-opportunity-ranking",
+      "agent-model-workstream-description",
+    ]);
+    expect(AgentModelRoutingSchema.parse({ model: " x-ai/grok-4.3 " })).toEqual({
+      model: "x-ai/grok-4.3",
+      fallbackModels: [],
+    });
   });
 
   it("accepts only explicit workspace timezone updates", () => {
@@ -378,6 +433,69 @@ describe("boundary contracts", () => {
     expect(result.success).toBe(true);
   });
 
+  // Before `automation_submit_draft` declared a `validateInput`, none of these
+  // messages or paths ever reached a model — they were swallowed into the
+  // runtime's generic "could not validate its data" sentence. They are now the
+  // compiler's entire correction vocabulary, so a path that names a field the
+  // model cannot find puts the compile back in the loop that made it a bug.
+  it("names the exact field for every readiness refinement", () => {
+    const base = {
+      name: "Contract watch",
+      description: "Escalate changed customer contracts.",
+      overview: "Watches the authorized connection and escalates changed contracts.",
+      instructions: "1. Read the change.\n2. Escalate a contract.\n3. Record a no-change result.",
+      requiredCapabilities: [],
+      expectedOutputs: ["Escalation"],
+      defaultBehavior: {},
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      followUpQuestion: null,
+      elicitation: null,
+      ready: true,
+    };
+    const activity = {
+      type: "semantic_activity",
+      connectorType: "google",
+      sourceBindingKey: "drive_source",
+      suggestedSourcePluginId: "plugin_google",
+      deterministicPrefilter: { eventType: "drive.file_changed" },
+      condition: "The changed file is a customer contract.",
+    };
+    const memoryTable = (name: string) => ({
+      name,
+      description: "Seen contracts.",
+      usageInstructions: "One row per contract.",
+      columns: [{ name: "id", description: "Contract id.", type: "string", required: true, searchable: false }],
+      keyColumns: ["id"],
+    });
+    const omit = (trigger: Record<string, unknown>, key: string) =>
+      Object.fromEntries(Object.entries(trigger).filter(([entry]) => entry !== key));
+
+    const cases: Array<[string, Record<string, unknown>, Array<string | number>, string]> = [
+      ["memory table name", { ...base, triggers: [{ type: "manual" }], memoryTables: [memoryTable("Seen"), memoryTable("seen")] },
+        ["memoryTables", 1, "name"], "Memory-table names must be unique within an automation"],
+      ["binding key", { ...base, triggers: [omit(activity, "sourceBindingKey")] },
+        ["triggers", 0, "sourceBindingKey"], "Ready activity triggers require a source binding key"],
+      ["source plugin", { ...base, triggers: [omit(activity, "suggestedSourcePluginId")] },
+        ["triggers", 0, "suggestedSourcePluginId"], "Ready activity triggers require an inspected source plugin"],
+      ["connector type", { ...base, triggers: [{ ...activity, connectorType: null }] },
+        ["triggers", 0, "connectorType"], "Ready semantic activity triggers require a concrete connector type"],
+      ["prefilter event type", { ...base, triggers: [{ ...activity, deterministicPrefilter: {} }] },
+        ["triggers", 0, "deterministicPrefilter", "eventType"], "Ready semantic activity triggers require one declared event type"],
+      ["reused binding key", { ...base, triggers: [activity, { ...activity, connectorType: "slack" }] },
+        ["triggers", 1, "sourceBindingKey"], "Reused activity source binding keys must identify the same connector and suggested plugin"],
+    ];
+
+    for (const [label, draft, path, message] of cases) {
+      const result = AutomationDraftSchema.safeParse(draft);
+      expect(result.success, label).toBe(false);
+      expect(result.error!.issues, label).toContainEqual(
+        expect.objectContaining({ path: [...path], message }),
+      );
+    }
+  });
+
   it("requires an exact event type for ready semantic activity triggers", () => {
     const result = AutomationDraftSchema.safeParse({
       name: "Important GitHub activity",
@@ -522,7 +640,12 @@ describe("boundary contracts", () => {
         type: "subscribe",
         afterSequence: 42
       })
-    ).toEqual({ type: "subscribe", afterSequence: 42 });
+    ).toEqual({ type: "subscribe", afterSequence: 42, publishPresence: true });
+    expect(ClientSocketEventSchema.parse({
+      type: "subscribe",
+      afterSequence: 42,
+      publishPresence: false,
+    })).toEqual({ type: "subscribe", afterSequence: 42, publishPresence: false });
     expect(ClientSocketEventSchema.parse({
       type: "create_message",
       operationId: id,
@@ -1013,11 +1136,12 @@ describe("boundary contracts", () => {
     }))).toEqual({ code: "provider_error" });
     expect(readStructuredFailure(new ProviderError("unauthorized", "Reconnect", {
       reconnectRequired: true,
+      retryable: false,
       reason: "invalid_grant",
       payload: { error_description: "Token has been revoked" },
     }))).toEqual({
       code: "unauthorized",
-      details: { reason: "invalid_grant", reconnectRequired: true },
+      details: { reason: "invalid_grant", reconnectRequired: true, retryable: false },
     });
     expect(readStructuredFailure(new ProviderError("invalid_payload", "Ambiguous", {
       reason: "ambiguous_calendar_name",

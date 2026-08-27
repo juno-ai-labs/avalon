@@ -16,6 +16,22 @@ import type {
 } from "@rally/contracts";
 import type { ZodError, ZodType } from "zod";
 
+/** Levels understood by a connector host's structured-log sink. */
+export type ConnectorLogLevel = "debug" | "info" | "warn" | "error";
+
+/**
+ * Optional host-owned sink for content-free connector lifecycle diagnostics.
+ *
+ * Adapters do not depend on a logging implementation. The host supplies this
+ * callback and the shared connector layer guarantees that a broken sink never
+ * changes provider behavior.
+ */
+export type ConnectorObserver = (
+  level: ConnectorLogLevel,
+  event: string,
+  fields: Record<string, unknown>,
+) => void;
+
 /** Marks one polled activity as withheld from digests by its own stream. */
 function withheldFromDigest(
   activity: Omit<NormalizedActivity, "id">,

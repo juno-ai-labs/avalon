@@ -13,13 +13,18 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace
 import { WorkspaceRegionalEffectApplyRequestSchema } from "../src/durable-objects/workspace-directory-protocol";
 import { applyWorkstreamRegionalEnvelope } from "../src/durable-objects/workspace-regional-effect-storage";
 import {
+  claimWorkspaceNotificationIntent,
+  reapSettledWorkspaceNotificationIntents,
+  transitionWorkspaceNotificationIntent,
+  workspaceNotificationIntentMaintenanceTarget,
+} from "../src/durable-objects/workspace-notification-intent-storage";
+import {
   consumeActivityQueue,
 } from "../src/queues/activity-consumer";
 import {
   applyWorkstreamRegionalEffect,
   loadWorkstreamRegionalEffect,
   processWorkstreamNotificationIntent,
-  reapSettledWorkspaceNotificationIntents,
 } from "../src/services/workstream-regional-effect-service";
 import {
   createCloudflareTestBinding,
@@ -93,7 +98,7 @@ function message(
   };
 }
 
-function workspaceSyncNamespace() {
+function workspaceSyncNamespace(listable = true) {
   const database = new DatabaseSync(":memory:");
   database.exec("PRAGMA foreign_keys = ON");
   for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
@@ -110,7 +115,14 @@ function workspaceSyncNamespace() {
     transactionSync: (body: () => unknown) => body(),
     sql: createTestSqlStorage(database),
   });
-  const refreshSchedule = vi.fn(async () => ({ alarmAt: null }));
+  const refreshSchedule = vi.fn(async (workspaceId?: string) => {
+    void workspaceId;
+    return { alarmAt: null };
+  });
+  const reapNotificationIntents = vi.fn(async (input: {
+    workspaceId: string;
+    limit: number;
+  }) => reapSettledWorkspaceNotificationIntents(storage, input, Date.now()));
   const namespace = createCloudflareTestBinding<DurableObjectNamespace>({
     idFromName: () => createTestDurableObjectId("workspace-sync"),
     get: () => ({
@@ -125,6 +137,27 @@ function workspaceSyncNamespace() {
           WorkspaceRegionalEffectApplyRequestSchema.parse(input),
           Date.now(),
         )),
+      claimWorkstreamNotificationIntent: vi.fn(async (input: {
+        workspaceId: string;
+        intentId: string;
+      }) => {
+        const result = claimWorkspaceNotificationIntent(
+          storage,
+          input,
+          crypto.randomUUID(),
+          Date.now(),
+        );
+        if (result.outcome === "terminal") await refreshSchedule(input.workspaceId);
+        return result;
+      }),
+      transitionWorkstreamNotificationIntent: vi.fn(async (input) => {
+        const result = transitionWorkspaceNotificationIntent(storage, input, Date.now());
+        if (input.transition === "settle") await refreshSchedule(input.workspaceId);
+        return result;
+      }),
+      notificationIntentMaintenanceTarget: vi.fn(async (input: { workspaceId: string }) =>
+        workspaceNotificationIntentMaintenanceTarget(storage, input.workspaceId)),
+      reapSettledWorkstreamNotificationIntents: reapNotificationIntents,
       executeRuntimeSql: vi.fn(async (input: {
         statements: Array<{ sql: string; params: Array<string | number | null> }>;
       }) => ({
@@ -146,13 +179,13 @@ function workspaceSyncNamespace() {
       notificationDirectoryState: vi.fn(async () => ({
         authorityGeneration: 1,
         viewerVersion: 1,
-        listable: true,
+        listable,
         title: "Regional effects",
         emailAddress: "regional-effects@example.com",
       })),
     }),
   });
-  return { database, namespace, refreshSchedule };
+  return { database, namespace, refreshSchedule, reapNotificationIntents };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -336,6 +369,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
     });
     const ack = vi.fn();
     const retry = vi.fn();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const queueMessage = {
       id: "directory-wake",
       timestamp: new Date(AT),
@@ -364,6 +398,22 @@ describe("the WorkstreamDO regional effect inbox", () => {
       });
       expect(ack).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "workstream_outbox_acknowledged",
+        workspace_id: WORKSPACE_ID,
+        workstream_id: WORKSTREAM_ID,
+        message_id: MESSAGE_ID,
+        effect_kind: "directory_common",
+        removed: true,
+        outcome: "deleted",
+      }));
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "workstream_regional_effect_terminal",
+        message_id: MESSAGE_ID,
+        effect_kind: "directory_common",
+        reason: "directory_effect_acknowledged",
+        outbox_acknowledged: true,
+      }));
     } finally {
       database.close();
     }
@@ -511,6 +561,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         sourceVersion: 3,
       }));
       expect(applied.notificationIntentId).toBe(mention.intentId);
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
       await expect(
         processWorkstreamNotificationIntent(env, WORKSPACE_ID, mention.intentId),
       ).resolves.toBe("delivered");
@@ -519,6 +570,18 @@ describe("the WorkstreamDO regional effect inbox", () => {
           WHERE intent_id = ?`,
       ).get(mention.intentId)).toEqual({ state: "delivered", payload_json: null, attempts: 1 });
       expect(workspace.refreshSchedule).toHaveBeenCalledWith(WORKSPACE_ID);
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "workstream_notification_terminal",
+        workspace_id: WORKSPACE_ID,
+        workstream_id: WORKSTREAM_ID,
+        notification_intent_id: mention.intentId,
+        recipient_user_id: USER_ID,
+        outcome: "delivered",
+        reason: "email_fallback_completed",
+        delivery_channel: "email",
+        slack_outcome: "skipped",
+        email_outcome: "skipped",
+      }));
     } finally {
       database.close();
       workspace.database.close();
@@ -545,6 +608,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Author",
         workstreamTitleSnapshot: "Regional effects",
         workstreamObjectiveSnapshot: "Prove the second notification kind lands",
+        titleIsProvisional: false,
         occurredAt: AT,
       };
       const applied = await applyWorkstreamRegionalEffect(env, message(added, {
@@ -617,6 +681,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Author",
         workstreamTitleSnapshot: workstreamId === WORKSTREAM_ID ? "Regional effects" : "Second room",
         workstreamObjectiveSnapshot: "",
+        titleIsProvisional: false,
         occurredAt: AT,
       });
       for (const workstreamId of [WORKSTREAM_ID, asWorkstreamId(secondWorkstreamId)]) {
@@ -659,6 +724,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Author",
         workstreamTitleSnapshot: "Regional effects",
         workstreamObjectiveSnapshot: "",
+        titleIsProvisional: false,
         occurredAt: AT,
       };
       const envelope = message(effect, {
@@ -673,6 +739,91 @@ describe("the WorkstreamDO regional effect inbox", () => {
       const replayed = await applyWorkstreamRegionalEffect(env, envelope);
       expect(replayed.replayed).toBe(true);
       expect(replayed.notificationIntentId).toBe(effect.intentId);
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("logs an inactive recipient before acknowledging a notification effect without an intent", async () => {
+    const database = seedAuthority();
+    database.prepare(
+      `UPDATE workspace_members SET status = 'suspended'
+        WHERE workspace_id = ? AND user_id = ?`,
+    ).run(WORKSPACE_ID, USER_ID);
+    const workspace = workspaceSyncNamespace();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+      APP_ENV: "test",
+    });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const mention: WorkstreamRegionalEffect = {
+      kind: "mention_notification",
+      intentId: `mention:${MESSAGE_ID}:${USER_ID}:inactive`,
+      messageId: MESSAGE_ID,
+      recipientUserId: USER_ID,
+      authorUserId: AUTHOR_ID,
+      authorNameSnapshot: "Author",
+      workstreamTitleSnapshot: "Regional effects",
+      messageText: "Please review this",
+      occurredAt: AT,
+    };
+    try {
+      await expect(applyWorkstreamRegionalEffect(env, message(mention, {
+        messageId: `notification:${MESSAGE_ID}:${USER_ID}:inactive`,
+        partitionKey: `notification:${MESSAGE_ID}:${USER_ID}`,
+        sourceVersion: 3,
+      }))).resolves.toMatchObject({ notificationIntentId: null });
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "workstream_notification_terminal",
+        recipient_user_id: USER_ID,
+        outcome: "skipped",
+        reason: "recipient_inactive",
+      }));
+    } finally {
+      database.close();
+      workspace.database.close();
+    }
+  });
+
+  it("logs when current directory policy makes a notification recipient unlistable", async () => {
+    const database = seedAuthority();
+    const workspace = workspaceSyncNamespace(false);
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      WORKSPACE_DOS: workspace.namespace,
+      APP_ENV: "test",
+    });
+    const mention: WorkstreamRegionalEffect = {
+      kind: "mention_notification",
+      intentId: `mention:${MESSAGE_ID}:${USER_ID}:unlistable`,
+      messageId: MESSAGE_ID,
+      recipientUserId: USER_ID,
+      authorUserId: AUTHOR_ID,
+      authorNameSnapshot: "Author",
+      workstreamTitleSnapshot: "Regional effects",
+      messageText: "Please review this",
+      occurredAt: AT,
+    };
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await applyWorkstreamRegionalEffect(env, message(mention, {
+        messageId: `notification:${MESSAGE_ID}:${USER_ID}:unlistable`,
+        partitionKey: `notification:${MESSAGE_ID}:${USER_ID}`,
+        sourceVersion: 3,
+      }));
+      await expect(processWorkstreamNotificationIntent(env, WORKSPACE_ID, mention.intentId))
+        .resolves.toBe("skipped");
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "workstream_notification_terminal",
+        notification_intent_id: mention.intentId,
+        recipient_user_id: USER_ID,
+        outcome: "skipped",
+        reason: "recipient_not_listable",
+      }));
     } finally {
       database.close();
       workspace.database.close();
@@ -699,6 +850,7 @@ describe("the WorkstreamDO regional effect inbox", () => {
         actorNameSnapshot: "Recipient",
         workstreamTitleSnapshot: "Regional effects",
         workstreamObjectiveSnapshot: "",
+        titleIsProvisional: false,
         occurredAt: AT,
       };
       await applyWorkstreamRegionalEffect(env, message(added, {
@@ -706,9 +858,17 @@ describe("the WorkstreamDO regional effect inbox", () => {
         partitionKey: `notification:${added.intentId}`,
         sourceVersion: 1,
       }));
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
       await expect(
         processWorkstreamNotificationIntent(env, WORKSPACE_ID, added.intentId),
       ).resolves.toBe("skipped");
+      expect(info).toHaveBeenCalledWith(expect.objectContaining({
+        event: "workstream_notification_terminal",
+        notification_intent_id: added.intentId,
+        recipient_user_id: USER_ID,
+        outcome: "skipped",
+        reason: "self_notification",
+      }));
     } finally {
       database.close();
       workspace.database.close();
@@ -718,11 +878,6 @@ describe("the WorkstreamDO regional effect inbox", () => {
   it("reaps terminal mention shells only from their owning WorkspaceDO", async () => {
     const database = seedAuthority();
     const workspace = workspaceSyncNamespace();
-    const env = createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      WORKSPACE_DOS: workspace.namespace,
-    });
     const intentId = `mention:${MESSAGE_ID}:${USER_ID}:expired`;
     workspace.database.prepare(
       `INSERT INTO workstream_notification_intents
@@ -735,8 +890,10 @@ describe("the WorkstreamDO regional effect inbox", () => {
     ).run(intentId, WORKSPACE_ID, WORKSTREAM_ID, USER_ID, MESSAGE_ID);
 
     try {
-      await expect(reapSettledWorkspaceNotificationIntents(env, WORKSPACE_ID, 10))
-        .resolves.toBe(1);
+      await expect(workspace.reapNotificationIntents({
+        workspaceId: WORKSPACE_ID,
+        limit: 10,
+      })).resolves.toEqual({ reapedIntentIds: [intentId] });
       expect(workspace.database.prepare(
         "SELECT COUNT(*) AS count FROM workstream_notification_intents",
       ).get()).toEqual({ count: 0 });

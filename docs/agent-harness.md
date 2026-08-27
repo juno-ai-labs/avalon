@@ -26,6 +26,39 @@ internal `block_dashboard` / `BlockDashboardAgent` name.
 
 ## How it works
 
+### Exact Bind-loop durability
+
+The host mirrors Bind's accepted message state as an append/replacement ledger,
+not as an aggregate participant transcript. Initialization stores the healed
+system plus non-system messages. Assistant acceptance, each exact tool-result
+message, protocol-only user messages, provider-validation reconciliation, and
+compaction replacement advance a monotonic state revision. Compaction also
+advances a generation; a stale revision or generation is refused.
+
+Immediately before every provider request, Rally reconstructs the ledger's
+message array and compares its canonical SHA-256 with the validated array Bind
+will send. The equality includes the newly rendered system projection and its
+renderer/input revision. A mismatch or failed persistence port stops the run
+before the model-facing state can advance. This makes `input.messages` an exact
+provider-boundary value even though Bind's internal `state.messages` remains
+private and may be replaced by compaction.
+
+Host context messages carry non-provider `provenance` metadata until Bind heals
+the initial array. The initialization transition records an origin beside each
+surviving exact message: participant and trigger wrappers point to their durable
+turn/event, tool wrappers point to receipts, memory wrappers point to the frozen
+memory hash, and compaction continuations point to their checkpoint. The adapter
+strips that metadata while constructing OpenAI-compatible messages, so it never
+changes provider bytes. Runtime-created continuation nudges are protocol-only;
+accepted assistant messages are canonical; accepted tool results retain their
+receipt identity.
+
+Assistant streaming remains independent: token deltas continue over the room
+while durable lifecycle edges are recorded at accepted turn/tool boundaries.
+Each Bind model turn has its own stable participant turn ID, so text before a
+tool batch, parallel tool blocks in declared call order, and narration after the
+batch cannot be collapsed back into one aggregate row.
+
 ### Addressing
 
 Before starting a loop, a lightweight classifier returns `agent_action`, `human_only`, `both`, or `uncertain` with confidence and a terse rationale code. Explicit Rally/connector mentions and clear work requests invoke the harness. Social acknowledgement and human-only coordination can remain unanswered. Uncertain messages invoke only when an active task or explicit tool context exists. The label is not exposed in the UI.
@@ -95,13 +128,11 @@ Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are ne
 
 Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. A calendar recurrence carries the IANA timezone a person named for it and null otherwise, and the account zones it would otherwise have to guess at — the requester's and the workspace's — are rendered into a user-role message the policy defers to by name; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Avalon delivers to is described rather than instructed: the compiler never writes a provider send for one, because Avalon sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Avalon offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
 
-Natural-language automation creation compiles to the validated draft schema. The compiler preserves established choices, defaults to personal scope and manual execution when omitted, and writes three to eight self-contained outcome-focused steps. Calendar recurrences require an IANA timezone; exact provider events use deterministic triggers and meaning-based conditions use semantic triggers. Connector manifests expose trusted activity descriptors with exact event names and typed deterministic filters through plugin search, inspection, and loading. Each connector-activity or semantic-activity trigger names a reusable source binding key and suggests one inspected plugin; acceptance binds that slot to one authorized connection without requiring the source plugin to be preloaded at runtime. Required capabilities are the minimum external grants. A destination Rally delivers to is described rather than instructed: the compiler never writes a provider send for one, because Rally sends the result there itself. Which destinations the owner asked for is a required field of the submit-draft schema, `requestedDelivery`, closed to the two Rally offers — the create screen selects from it rather than re-reading the draft's prose. It records what was asked and never what was inferred: a briefing *about* somebody's inbox is not a request to be emailed, a send aimed at a third party is not a request for the owner, and a request to be "sent the result" that names no channel resolves to nothing rather than to a guess.
-
 Request-scoped attachment tools may be added directly to the preloaded automation architect. They inherit its `automation_*` wire prefix and are not catalog-loaded connector capabilities. The API host freezes their admitted resource IDs and owns every authorization recheck; the harness only exposes the supplied strict tools for that compiler run.
 
 The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
 
-The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Invalid structured output gets one sanitized repair attempt, then `502 model_output_invalid` with a request ID.
+The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Because most of what makes a submission *ready* is a cross-field refinement no JSON Schema can state — a binding key, an inspected plugin, one declared prefilter event type — `automation_submit_draft` supplies `normalizeAutomationDraft` and `AutomationDraftSchema` — one shared parse, used by both its executor and its `validateInput` — so a rejected submission comes back to the model as the named field rather than as an external fault. The normalize step is half of that: it is what decodes the JSON-string fields at all. Structured output the compiler cannot parse becomes `502 model_output_invalid` with a request ID; the repair pass belongs to `client.structured`, which this path does not use.
 
 ### Connection plugins and authority narrowing
 
@@ -111,7 +142,7 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
-Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
@@ -129,14 +160,17 @@ validation, and provider declaration are owned by
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation, and `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
-deferred built-in `rally:terminal` plugin. It has no connection row and loading
-it is allocation-free: activation exposes its static supported-language prompt
-and complete eight-tool family, while the first tool execution acquires the
-separate Terminal mutation lease and Daytona sandbox. It is absent—not merely
-tool-filtered—when the region is unsupported or emergency-disabled. All eight
-tools stay visible together after activation; current principal/resource and
-repository/publication checks remain executor preconditions rather than scopes.
-The sandbox lifecycle and authority fence are owned by
+deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
+`load_plugin` acquires and initializes its Daytona sandbox and prepares the
+selected repository before the complete nine-tool family becomes visible.
+Repository failures that the nine-tool surface itself can repair are deferred,
+so `checkout_repository` remains available. A restored durable activation skips
+this hook: it does not eagerly allocate on every later run, and its first tool
+retains the ordinary acquisition path. Terminal is absent when the region is
+unsupported; the emergency breaker keeps it discoverable but makes explicit
+activation and every provider operation fail with host-authored guidance. Current
+principal/resource and repository/publication checks remain executor
+preconditions rather than scopes. The sandbox lifecycle and authority fence are owned by
 [`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
 
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Rally revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
@@ -413,6 +447,46 @@ memory. Personal automations search workspace, owner-user, and automation memory
 Workspace automations search workspace and automation memory. All work streams
 created by one automation subscription therefore share one automation scope.
 
+**A run in a work stream an automation created, carrying no subscription of its
+own, is none of those**, and the run's own `automationSubscriptionId` — not the
+work stream's origin — is what decides which it is. That covers more than a
+member's reply: an elicitation answer, a manual retry, a HyperSight block
+dispatch, and, least obviously, the automation's *own* continuation through a
+scheduled wake-up, because `launchWorkstreamHarness` declares no subscription
+either. Each searches workspace memory, plus that member's own when a person is
+behind it. The subscription's automation scope stays reachable exactly from a
+run that declares it and whose principal matches it, and a work stream an
+automation created owns no work-stream scope, because the next run of that
+subscription gets a different work stream and anything left in this one could
+never be recalled.
+
+**The union is not the whole story, and in one direction it currently overstates
+what is withheld.** The protocol projector reauthorizes replayed *attachment*
+results and nothing else, so a completed `memory_search` or `memory_table_query`
+receipt from an earlier run in the same transcript window is replayed to the next
+run verbatim, out of R2, whatever that run's own union is. A reply therefore
+resolves no automation scope but can still be handed the items the automation's
+run recalled from one. That gap predates this rule and is not created by it —
+two people in one ad-hoc work stream reach it the same way — but automation and
+owner-user memory only started travelling it once these runs stopped dying.
+Until the projector filters a replayed memory result against the current union,
+the scope union is the authority for what a run may *search*, not a guarantee
+about everything in its context.
+
+Memory is not the whole of what such a run does without: `automationContext` —
+the subscription's instructions, expected outputs, result delivery, and its
+`rally_tables` durable tables — and the subscription's default plugins are both
+gated on the same field, so a reply is also a *less capable* run than the one it
+is answering. The sharpest edge is the tables: `table_search` answers a run that
+cannot reach them with an empty result rather than a refusal, so a member asking
+for a row in the table the automation visibly keeps gets told there is no such
+table. Whether these runs should instead inherit what the automation was
+configured with is one unanswered product question about who may read and act on
+an automation's configuration; whether a work stream an automation created
+should start owning a work-stream scope once people are talking in it is a
+second. Neither is the memory union's to decide on its own, and neither writes a
+row today, so both stay open.
+
 Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
@@ -548,8 +622,15 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   hook rather than by what it was given, and cannot recurse.
 - **The model never selects a memory scope.** `memory_search` accepts exactly one
   content query or exact item ID; the host derives the authorized scope union
-  from the frozen principal and run origin, and every hit is reauthorized and
-  reloaded from D1 before exposure.
+  from the frozen principal and the run's own declared subscription, and every
+  hit is reauthorized and reloaded from WorkspaceDO before exposure and
+  rechecked against current D1 membership.
+- **A work stream an automation created owns no work-stream memory scope**, and
+  `resolveMemoryAccess` is the only thing that still says so. Migration 0036
+  held it as a D1 trigger; 0090 dropped that with the rest of D1's product
+  enforcement when memory moved into WorkspaceDO, which validates no scope
+  owner at all. Break it and memory accrues in a work stream the next run of
+  that subscription will never see.
 - **Whatever starts a run hands the host something to render.** A run whose
   instructions exist only as a transcript `system` row reaches the model with
   nothing but its work stream's objective, because the protocol projector drops
@@ -628,7 +709,11 @@ When an executor throws a Zod error and its normalized arguments also fail the
 provider-facing schema or its code-authored refinement, the model sees
 `kind: "validation"`, at most five actionable issues from the closest union
 branch, and no raw `invalid_union` tree. The message is capped at 1,200
-characters and never echoes submitted values. That bounded schema message is
+characters and echoes no submitted *value*. It does name up to five rejected
+**key** names on an `unrecognized_keys` issue, which is the one thing the model
+wrote that comes back to it: "remove these fields" is not actionable without
+them. Keep that in view when widening what the message carries, because a model
+that authored a key can put content in the key. That bounded schema message is
 the complete model recovery context for this branch; structured details from
 the executor's thrown error are not forwarded because they may describe
 downstream state rather than the rejected arguments. If those arguments pass
@@ -683,19 +768,30 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/agent-inference-logging.test.ts` | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs. |
 | `apps/api/test/inference-lakehouse.test.ts` | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation. |
 | `packages/db/test/agent-inference-retirement-migration.test.ts` | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity. |
-| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function. |
+| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function., and the automation compiler's submission loop — the correction a refused draft is answered with, and the argument-validation classification behind it. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/harness-run-runtime.test.ts` — the
 path is package-relative.
 
-Four traps. The prompts are byte-stable and golden-hashed, so an edit fails the
+Five traps. The prompts are byte-stable and golden-hashed, so an edit fails the
 hash assertion by design — update it deliberately rather than regenerating it.
 Anything that leases or heartbeats compares against `Date.now()`, so stub the clock
 and assert on the stored attempt and expiry rather than on elapsed time. The
 harness package's portability boundary is enforced by ESLint, not by the type
 checker: a test that imports a database or Node-only module to build a fixture will
 pass locally and fail `pnpm lint`.
+
+**A memory-scope fixture can enforce rules production dropped.**
+`scoped-memory.test.ts` builds on `preRetirementProductSqliteDatabase()`, which
+replays migrations only through 0089 — one short of the 0090 that moved
+`memory_scopes` into WorkspaceDO and dropped migration 0036's four owner-validation
+triggers with it. Left in place, those triggers enforce from the fixture the very
+rules `resolveMemoryAccess` is now solely responsible for, so neutering a scope
+condition still fails a test — on `memory_scope_workstream_owner_invalid`, from a
+constraint no deployed database has, rather than on the union the test asserts.
+The fixture drops all four for that reason. Anything that reaches
+`memory_scopes` through another fixture owes the same check.
 
 And **the route circuit breaker is module-scoped**, keyed by provider, model,
 credential source, and workspace. A test that deliberately fails one endpoint
@@ -708,6 +804,211 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
+
+**What changed:** Deferred plugins may provide an `onActivate` hook with a
+plugin-specific deadline. Bind runs it only for an explicit `load_plugin`, after
+authorization and dynamic tool discovery but before durable activation. A
+successful hook is single-flighted for the run; a failed hook may be retried.
+Restored activation hints skip the hook. Bind rechecks cancellation before
+persisting and forwards only host-authored retry guidance. Terminal uses the
+hook to acquire and initialize Daytona before its tools become visible.
+
+**Why:** Production behavior showed that loading Terminal is almost always
+followed immediately by a Terminal tool, while cold sandbox acquisition was the
+largest first-tool cost. Paying that setup inside the explicit load overlaps it
+with the model's capability-selection step and makes the next tool warm.
+
+**Considered and rejected:** Eager preparation for restored hints, one maximum
+deadline shared by every plugin, persisting after a timed-out detached hook,
+and failing Terminal activation for a repository state only
+`checkout_repository` can repair. Those respectively allocate for unrelated
+runs, inflate every plugin load, create a durable state the model was told
+failed, or hide the repair tool.
+
+**Consequences:** Plugin hooks must be convergent and must not perform an
+outward-facing provider/data write. Restored hints remain allocation-free.
+Future hook failures may expose only bounded host-authored guidance, and a new
+deadline must be scoped to the requested plugin rather than the discovery tool
+globally.
+
+### 2026-08-26 — Every Bind provider boundary is losslessly reproducible
+
+**What changed:** The Bind adapter now emits revisioned state transitions for
+initialization, validation reconciliation, assistant messages, exact tool
+results, protocol-only messages, and compaction replacement. The work-stream
+host durably commits those transitions and records an equality hash before each
+provider request. Initialization also carries typed provenance for every healed
+non-system message; that metadata is stored with facts and is never sent to the
+provider.
+
+**Why:** Bind's private message array is the real continuation state. Aggregate
+assistant text plus tool lifecycle rows omitted protocol messages, exact tool
+results, healing, and compaction replacement, so recovery could neither prove
+nor recreate what the provider consumed.
+
+**Considered and rejected:** Treating `input.messages` as a permanent copy of
+Bind state and reconstructing old interleaving heuristically. `input.messages`
+is only the admitted input; the ledger follows every later accepted mutation.
+
+**Consequences:** A run cannot continue when transcript persistence or boundary
+equality fails. The system prompt remains a deterministic runtime projection,
+but its rendered bytes and revision participate in every equality check.
+
+### 2026-08-26 — A run's own subscription decides whether it is an automation run
+
+**What changed:** `resolveMemoryAccess` no longer requires a work stream to be
+`ad_hoc` before granting the non-automation scope union. The run's own
+`automationSubscriptionId` decides whether it is an automation run; a run without
+one resolves workspace, plus its member's user scope when a person is behind it,
+in any work stream. The work-stream scope moved behind its own condition, granted
+only where the work stream belongs to no subscription. The two refusals
+`writableScope` raises are typed and now name the kinds the run does hold, and
+the `rally_memory` policy no longer tells the model a scope kind is available.
+
+**Why:** a work stream an automation creates is a place people reply in, and
+every reply admits a user-principal run carrying no subscription. That run fell
+past the automation branch into a check that read as a consistency assertion and
+was in fact a refusal, so `freezeRunMemoryContext` — the first recall a run
+performs, before the model sees anything — threw
+`memory_ad_hoc_workstream_mismatch` and the run ended `harness_execution_failed`.
+The manual retry took the same path, so the member-facing "Retrying is unlikely
+to help" was literally true and left nothing to do but abandon the work stream.
+Production run `01a03ed2-a0cd-708a-81f0-ba6cffbf4d87` on 2026-08-26 is the report
+this was found from. `assertRunAuthorityStillValid` (`services/integrations.ts`)
+already treated a run with no
+subscription as a non-automation run in any work stream, and that field is the
+run's authority claim rather than a description of its container; the memory
+union was the only layer disagreeing.
+
+**Considered and rejected:** *Passing the work stream's
+`automation_subscription_id` into a follow-up's run input.* It resolves
+differently by subscription scope — a personal automation's owner would succeed
+where a workspace automation's replier fails
+`memory_workspace_automation_principal_mismatch` — so the same member action
+would work in one automation and not another, and it would hand the
+subscription's accumulated memory to anyone who can see the work stream. Making
+it work would mean running a member's reply under the automation's stored
+principal, which is an authorization change, not a repair. *Restating migration
+0036's predicate verbatim* — `origin_type = 'ad_hoc' AND
+automation_subscription_id IS NULL` — was also rejected: the label is a second
+name for the same bit, and the weaker one, since the identity root declares
+`origin_type TEXT NOT NULL DEFAULT 'ad_hoc'` with no CHECK and would silently
+drop the scope for a value that is neither.
+
+**Consequences:** the class this admits is wider than a member's reply, and not
+all of it is repaired. An elicitation answer, a manual retry, and a scheduled
+wake-up an automation set for itself all declare no subscription, so each now
+runs where it used to die — but as an ordinary run. `automationContext`, the
+subscription's default plugins, and its `rally_tables` tables are gated on the
+same field, so those runs proceed without the automation's instructions or
+tables; `table_search` answers them with an empty result rather than a refusal,
+which reads as "no such table" one message below where the automation visibly
+used one. `finalizeAutomation` also gates on it, so an elicitation answer
+delivers nothing to the subscription's configured destination and leaves
+`automation_runs` at `needs_input` — unchanged from before, since the run that
+threw delivered nothing either, but now silent instead of loud. And because the
+protocol projector reauthorizes only replayed attachment results, a reply's model
+context can still carry the memory items the automation's own run recalled, which
+is a projector defect this change makes reachable with automation-scope content
+rather than one it introduces. Gating delivery
+on the *work stream's* subscription instead would mail a member's casual reply to
+the automation's destination, so this stays open with the two product questions
+in the section above rather than being decided here.
+
+**What a future change has to respect:** the automation branch is the only way
+into an automation scope, and reaching it still requires both the declared
+subscription and a matching principal. The work-stream-scope condition is now the
+only enforcement of migration 0036's `memory_scopes_validate_workstream_owner`,
+which 0090 dropped when memory moved into WorkspaceDO — not because the workspace
+object cannot see a work stream's origin (`workspace_workstream_directory`
+carries both fields) but because that row is a waterline-fenced projection a
+constraint would gate scope creation on, and memory rows there hold work-stream
+ids as opaque provenance rather than foreign keys. Reading the identity object
+here is safe only because every automation producer provisions a work stream
+before dispatching a run into it. The condition tests subscription ownership, not
+disposability, so a one-per-occurrence system work stream — a digest — still
+takes a work-stream scope it will never read back; that is a known exception, not
+an oversight.
+
+### 2026-08-25 — A rejected automation draft names the field, instead of telling the model not to change it
+
+**What changed:** `automation_submit_draft`, `web_search`, `web_fetch`, and
+`memory_search` each supply a `validateInput` re-running the schema their
+executor throws from. For the draft tool that parse is now one shared
+`parseAutomationSubmission`, so the normalize step and the schema cannot drift
+apart between the hook and the executor. The submission JSON Schema and the
+compiler policy both state the requirement behind this failure: a ready
+`semantic_activity` trigger's `deterministicPrefilter` names one declared event
+type. A prefilter string that is not a JSON object is handed to the schema
+rather than coerced to `{}`. `HarnessTool.validateInput`'s own docstring now
+says when declaring one is mandatory, and `bind-runtime` calls the hook inside a
+`try`.
+
+**Why:** the tool's declared `inputSchema` accepts a draft its executor then
+rejects, because everything that decides readiness — the binding key, the
+inspected plugin, the prefilter's event type, unique memory-table names — is a
+cross-field refinement JSON Schema cannot carry, and the prefilter's is inside an
+opaque JSON string besides. The runtime's classifier reads exactly one signal to
+tell a correctable argument from an external fault: whether the arguments also
+fail the declared schema or a code-authored refinement. With no refinement
+supplied they never did, so a `ZodError` raised by the draft's own contract was
+filed as downstream data validation and the model was handed "retry once; if it
+fails again, report that the tool could not validate its data instead of
+changing the arguments" — advice that is correct for a provider response and
+exactly wrong here, since the model *is* the author of the rejected value. On
+request `8592b3f1` it did as it was told: four submissions, byte-identical
+rejections of one missing `deterministicPrefilter.eventType`, then
+`automation_draft_not_submitted`, and a `502` whose only member-facing advice was
+to try again — which would have failed the same way. The hook existed for this;
+this tool had simply never been given one.
+
+**How it is proved:** `packages/agent-harness/src/index.test.ts` compiles a draft
+whose ready semantic trigger declares an empty prefilter, and asserts the tool
+result the *next* provider request carries names
+`triggers[0].deterministicPrefilter.eventType` with the refinement's own
+sentence, arrives as `kind: "validation"`, and does not carry the
+"instead of changing the arguments" advice — then that the corrected
+resubmission compiles. Removing the hook fails it on `kind`, then on that text.
+`packages/contracts/src/index.test.ts` pins the path *and* the message of all
+six readiness refinements, which became the compiler's correction vocabulary the
+moment this change made them reachable; a refinement whose path is wrong names a
+field the model cannot find, which is this same loop under another name. The
+prefilter pass-through and the schema sentence each have their own case.
+
+**What a future change has to respect:** a tool whose executor parses with a
+schema stricter than the one it advertises owes the runtime a `validateInput`.
+The omission is invisible — it produces no error log distinguishable from a hard
+failure, which is why three tools carried it into production unnoticed.
+Without it, its own contract's failures are attributed to somebody else's system
+and the model is actively steered away from the fix. The refinement passed here
+must stay the same parse the executor runs; two parses that can disagree would
+name a field in the correction that the executor does not reject, or accept one
+it does.
+
+**Considered and rejected:** *Broadening the runtime's classifier* to treat any
+executor `ZodError` as an argument error — the distinction is load-bearing, and a
+provider response that fails validation is not the model's to fix. *Loosening
+`AutomationDraftSchema`* so the submission is accepted and the missing event type
+surfaces later — `POST /automations` refuses the same draft with
+`activity_trigger_event_required`, so this only moves the dead end behind a
+Create button. *Leaving the submission schema's wording alone* now that
+the correction loop works — one recoverable round trip per draft is still a round
+trip, and the requirement was invisible to a model reading the field's own
+contract. *Adding* the rule to the compiler policy as a second sentence: that
+was written and reverted at +124 bytes against 63 of headroom. What went in
+instead is a correction, not an addition. Policy already carried a vaguer first
+copy — "a declared deterministic prefilter", which beside its
+`connector_activity` sibling's "only declared deterministic filter *fields*"
+reads as *declared by the plugin*, so `{}` satisfied it. Two statements of one
+rule drift into a contradiction, and this pair already had; the fix is to
+correct the stale one, at +22 bytes, not to leave it standing beside an accurate
+one elsewhere. *Throwing `formatToolArgumentValidationError`'s text from the
+executor* instead of declaring the hook — one line, and the model would see the
+same field names, but it routes around the classifier: the failure would still
+be reported as `kind: "external"`, so the wire contract and the telemetry would
+both say the provider's data was bad.
 
 ### 2026-08-25 — A platform refusal stops being the asking port's fault
 

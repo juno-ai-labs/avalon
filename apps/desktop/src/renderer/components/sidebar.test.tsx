@@ -15,6 +15,16 @@ const openSettings = vi.hoisted(() => vi.fn());
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 const markWorkstreamNavigation = vi.hoisted(() => vi.fn());
 const markSurfaceEntrypoint = vi.hoisted(() => vi.fn());
+const markWorkstreamFeedOpenStarted = vi.hoisted(() => vi.fn());
+const startWorkstreamSocketWarmup = vi.hoisted(() => vi.fn());
+const cancelWorkstreamSocketWarmup = vi.hoisted(() => vi.fn());
+const workstreamSocketOpenContext = vi.hoisted(() => vi.fn((workstreamId: string): {
+  state: 'retained_pair' | 'control_warmup' | 'cold';
+  socketLeaseId?: string;
+} => {
+  void workstreamId;
+  return { state: 'cold' };
+}));
 const applicationSettings = vi.hoisted(() => ({
   current: { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true },
   listeners: new Set<(settings: unknown) => void>(),
@@ -42,9 +52,19 @@ vi.mock('../lib/platform', () => ({
 
 vi.mock('../lib/telemetry', () => ({
   markSurfaceEntrypoint,
+  markWorkstreamFeedOpenStarted,
   markWorkstreamNavigation,
   reportTelemetryProductIntent,
   telemetryVisibility: (scope: string) => scope === 'workspace' ? 'public' : 'private',
+}));
+
+vi.mock('../lib/workstream-socket-pool', () => ({
+  useWorkstreamSocketOpenContext: (workstreamId: string) => () => workstreamSocketOpenContext(workstreamId),
+  useWorkstreamSocketHoverWarmup: (workstreamId: string) => ({
+    onPointerCancel: () => cancelWorkstreamSocketWarmup(workstreamId),
+    onPointerEnter: () => startWorkstreamSocketWarmup(workstreamId),
+    onPointerLeave: () => cancelWorkstreamSocketWarmup(workstreamId),
+  }),
 }));
 
 const workspace: Workspace = {
@@ -58,11 +78,14 @@ const workspace: Workspace = {
 const defaultActions = {
   onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onArchiveNote: async (): Promise<void> => undefined,
+  onArchiveWorkstream: async (): Promise<void> => undefined,
+  onApplyWorkstreamBatch: async (): Promise<number> => 0,
   onChangeNoteScope: async (): Promise<void> => undefined,
   onChangeWorkstreamScope: async (): Promise<void> => undefined,
   onDeleteAutomation: async (): Promise<void> => undefined,
   onMarkWorkstreamUnread: async (): Promise<void> => undefined,
   onOpenMeetingNotes: async (): Promise<void> => undefined,
+  onPreviewWorkstreamBatch: async (): Promise<number> => 0,
   onPinWorkstream: async (): Promise<boolean> => true,
   onReorderPinnedWorkstreams: async (): Promise<void> => undefined,
   onRenameWorkstream: async (): Promise<void> => undefined,
@@ -135,8 +158,13 @@ describe('Sidebar work-stream markers', () => {
   beforeEach(() => {
     window.localStorage.clear();
     copyText.mockReset().mockResolvedValue(undefined);
+    markSurfaceEntrypoint.mockReset();
     markWorkstreamNavigation.mockReset();
+    markWorkstreamFeedOpenStarted.mockReset();
     reportTelemetryProductIntent.mockReset();
+    startWorkstreamSocketWarmup.mockReset();
+    cancelWorkstreamSocketWarmup.mockReset();
+    workstreamSocketOpenContext.mockReset().mockReturnValue({ state: 'cold' });
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false, developerSettingsAvailable: true, menuBarEnabled: true, menuBarAvailable: true, menuBarPresent: true, launchAtLogin: true, launchAtLoginAvailable: true };
     applicationSettings.listeners.clear();
     useUiStore.setState({ sidebarOpen: false, sidebarWidth: 300 });
@@ -167,6 +195,91 @@ describe('Sidebar work-stream markers', () => {
 
     fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
     expect(resizer).toHaveAttribute('aria-valuenow', '300');
+  });
+
+  it('forwards a work-stream row hover to the pooled socket warm-up', () => {
+    const hovered = workstream('hovered-workstream', 'Warm this work stream', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[hovered]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+    const row = screen.getByText('Warm this work stream').closest('[data-workstream-id]');
+    if (!row) throw new Error('The work-stream row has no hover target.');
+
+    fireEvent.pointerEnter(row);
+    expect(startWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
+    fireEvent.pointerLeave(row);
+    expect(cancelWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
+    cancelWorkstreamSocketWarmup.mockClear();
+    fireEvent.pointerCancel(row);
+    expect(cancelWorkstreamSocketWarmup).toHaveBeenCalledWith(hovered.id);
+
+    const socketLeaseId = '018f22f2-4c22-7abc-8def-012345678905';
+    workstreamSocketOpenContext.mockReturnValue({ state: 'control_warmup', socketLeaseId });
+    fireEvent.click(screen.getByRole('link', { name: /Warm this work stream/u }));
+    expect(markWorkstreamFeedOpenStarted).toHaveBeenCalledWith(
+      hovered.id,
+      'recent',
+      'control_warmup',
+      expect.any(Number),
+      socketLeaseId,
+    );
+  });
+
+  it('keeps the description visible when a legacy preview is empty', () => {
+    const described = {
+      ...workstream('described-workstream', 'Daily competitor marketing', 'completed'),
+      objective: 'Tracks competitor positioning and campaign changes.',
+      preview: '',
+    };
+    render(
+      <MemoryRouter initialEntries={['/workstreams/described-workstream']}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[described]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('Tracks competitor positioning and campaign changes.'))
+      .toBeVisible();
+  });
+
+  it('does not start navigation telemetry when the active work-stream row is clicked again', () => {
+    const active = workstream('active-workstream', 'Already open', 'completed');
+    render(
+      <MemoryRouter initialEntries={[`/workstreams/${active.id}`]}>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[active]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: /Already open/u }));
+
+    expect(markWorkstreamFeedOpenStarted).not.toHaveBeenCalled();
+    expect(markWorkstreamNavigation).not.toHaveBeenCalled();
+    expect(markSurfaceEntrypoint).not.toHaveBeenCalled();
   });
 
   // The pill answers to how near the pointer is rather than to hovering the
@@ -571,6 +684,140 @@ describe('Sidebar work-stream markers', () => {
         'Scheduled this month',
         'Old input request',
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['Mark all as read', 'mark_read', 'marked as read'],
+    ['Archive all', 'archive', 'archived'],
+  ] as const)('confirms the %s grouping action with the server-side total', async (
+    menuLabel,
+    updateKind,
+    resultCopy,
+  ) => {
+    const onPreviewWorkstreamBatch = vi.fn(async () => 20);
+    const onApplyWorkstreamBatch = vi.fn(async () => 20);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
+            onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: menuLabel }));
+
+    const dialog = await screen.findByRole('dialog', { name: menuLabel });
+    await waitFor(() => expect(dialog).toHaveTextContent(
+      new RegExp(`20 work streams.*will be ${resultCopy}`, 'u'),
+    ));
+    expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
+      pinned: false,
+      includeSystem: false,
+      lastActivityAt: expect.objectContaining({ atOrAfter: expect.any(String) }),
+    }));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ pinned: false, includeSystem: false }),
+      { kind: updateKind },
+    ));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: menuLabel })).not.toBeInTheDocument());
+  });
+
+  it('keeps one operation id when a failed Queue dispatch is retried', async () => {
+    const onApplyWorkstreamBatch = vi.fn()
+      .mockRejectedValueOnce(new Error('One Queue chunk was not published.'))
+      .mockResolvedValueOnce(20);
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onApplyWorkstreamBatch={onApplyWorkstreamBatch}
+            onPreviewWorkstreamBatch={vi.fn(async () => 20)}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[workstream('recent', 'Recent planning', 'completed', 'ad_hoc', new Date().toISOString())]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Last hour actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive all' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive all' });
+    await waitFor(() => expect(dialog).toHaveTextContent('20 work streams'));
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(dialog).toHaveTextContent('One Queue chunk was not published.'));
+    const retry = within(dialog).getByRole('button', { name: 'Continue' });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(onApplyWorkstreamBatch).toHaveBeenCalledTimes(2));
+
+    expect(onApplyWorkstreamBatch.mock.calls[1]?.[0]).toBe(onApplyWorkstreamBatch.mock.calls[0]?.[0]);
+  });
+
+  it('moves a row at its recency boundary and previews with the new clock', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-31T20:00:00.000Z'));
+    const onPreviewWorkstreamBatch = vi.fn(async () => 1);
+    try {
+      render(
+        <MemoryRouter>
+          <Tooltip.Provider>
+            <Sidebar
+              {...defaultActions}
+              automations={[]}
+              onPreviewWorkstreamBatch={onPreviewWorkstreamBatch}
+              onSignOut={vi.fn()}
+              workspace={workspace}
+              workstreams={[workstream(
+                'boundary',
+                'Boundary planning',
+                'completed',
+                'ad_hoc',
+                '2026-07-31T19:00:30.000Z',
+              )]}
+            />
+          </Tooltip.Provider>
+        </MemoryRouter>,
+      );
+      expect(screen.getByRole('heading', { name: 'Last hour' })).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(30_002));
+
+      expect(screen.queryByRole('heading', { name: 'Last hour' })).not.toBeInTheDocument();
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'Today actions' }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Mark all as read' }));
+      expect(onPreviewWorkstreamBatch).toHaveBeenCalledWith(expect.objectContaining({
+        lastActivityAt: expect.objectContaining({
+          before: '2026-07-31T19:00:30.002Z',
+        }),
+      }));
     } finally {
       vi.useRealTimers();
     }
@@ -1202,6 +1449,97 @@ describe('Sidebar work-stream markers', () => {
       .not.toHaveAttribute('data-disabled'));
   });
 
+  it('archives a work stream from the menu once the confirmation is accepted', async () => {
+    const onArchiveWorkstream = vi.fn(async () => undefined);
+    const target = workstream('archive-me', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onArchiveWorkstream={onArchiveWorkstream}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /Quarterly planning/u });
+    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
+
+    // Cancelling is the whole point of confirming: a right-click that landed a
+    // row away from where it was aimed must not have archived anything.
+    const dialog = await screen.findByRole('dialog', { name: 'Archive work stream' });
+    expect(within(dialog).getByText('Quarterly planning')).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive work stream' }))
+      .not.toBeInTheDocument());
+    expect(onArchiveWorkstream).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
+      .getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(onArchiveWorkstream).toHaveBeenCalledWith(target));
+    await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({
+      kind: 'workstream_action_completed', workstreamId: target.id, action: 'archive',
+      visibility: 'public', origin: 'ad_hoc', pinned: false,
+    }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archive work stream' }))
+      .not.toBeInTheDocument());
+  });
+
+  it('reports a work-stream archive the server rejected instead of failing silently', async () => {
+    const onArchiveWorkstream = vi.fn(async () => {
+      throw new Error('The work stream could not be reached.');
+    });
+    const target = workstream('archive-me', 'Quarterly planning', 'completed');
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onArchiveWorkstream={onArchiveWorkstream}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[target]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.contextMenu(screen.getByRole('link', { name: /Quarterly planning/u }), {
+      clientX: 120, clientY: 90,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive work stream' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Archive work stream' }))
+      .getByRole('button', { name: 'Archive' }));
+
+    const failure = await screen.findByRole('dialog', { name: 'Work stream could not be archived' });
+    expect(within(failure).getByText('The work stream could not be reached.')).toBeVisible();
+    // The copy line, not only the message: it is the sentence that tells the
+    // reader the row survived, which is the whole reason this dialog exists.
+    expect(within(failure).getByText('The work stream is still in the sidebar. Try again in a moment.'))
+      .toBeVisible();
+
+    fireEvent.click(within(failure).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Work stream could not be archived' }))
+      .not.toBeInTheDocument());
+    // The row is still there, and saying so is the reason this dialog exists:
+    // the sidebar looks identical either way, so a silent failure reads as an
+    // archive the list has simply not caught up with yet.
+    expect(screen.getByRole('link', { name: /Quarterly planning/u })).toBeVisible();
+    expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'archive' }),
+    );
+  });
+
   it('marks work streams unread on the server and renames from the menu', async () => {
     const onMarkWorkstreamUnread = vi.fn(async () => undefined);
     const onRenameWorkstream = vi.fn(async () => undefined);
@@ -1226,7 +1564,7 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(row, { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Pin' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Archive' })).toHaveClass('menu-item-danger');
+    expect(screen.getByRole('menuitem', { name: 'Archive work stream' })).toHaveClass('menu-item-danger');
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
     await waitFor(() => expect(onMarkWorkstreamUnread).toHaveBeenCalledWith(target));
     await waitFor(() => expect(reportTelemetryProductIntent).toHaveBeenCalledWith({

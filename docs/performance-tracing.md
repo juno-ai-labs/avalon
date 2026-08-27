@@ -29,7 +29,7 @@ necessarily keeps apart.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
+| `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | `observability.traces`, which is what makes any of this reach a trace. Custom spans require it; see [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md). |
 | `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `GET /:id/messages`, `POST /:id/messages`, and both socket-ticket routes. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
@@ -37,7 +37,8 @@ necessarily keeps apart.
 | `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
 | `apps/api/src/durable-objects/workspace-do.ts` | The workspace command socket's `create_message`, which is how the desktop actually sends a message. |
 | `apps/api/test/helpers/cloudflare-workers.ts` | The Node suite's stand-in for `tracing`, and `recordedSpans()`, which is how a Node test asserts on span names and attributes. |
-| `apps/desktop/src/renderer/lib/perf-trace.ts` | The renderer's local tracer and `newRequestId`. Not OpenTelemetry — see [The desktop half](#the-desktop-half). |
+| `apps/desktop/src/renderer/lib/perf-trace.ts` | The renderer tracer, its governed diagnostic projection, and `newRequestId`. Not OpenTelemetry — see [The desktop half](#the-desktop-half). |
+| `apps/desktop/src/main/native-performance-log.ts`, `apps/desktop/native/unified-log/UnifiedLog.mm` | The main-owned, schema-closed bridge from a renderer performance event to macOS Unified Logging. |
 | `apps/desktop/src/renderer/lib/api.ts` | Stamps `x-request-id` on every HTTP call and prints one line per call. |
 | `apps/desktop/src/common/logger.ts` | `logDebug`, the trace level the renderer's lines print at. |
 
@@ -123,6 +124,28 @@ same reason Cloudflare documents its own spans as sometimes reporting `0 ms` for
 work that took longer. A step's number is therefore the time it spent waiting on
 D1, a Durable Object, or a provider, and a step that is pure computation reads
 `0ms` however long it took. Nothing on these paths is CPU-bound.
+
+### Durable Object cold-wake phases
+
+The automatic Durable Object binding span is the end-to-end clock from the
+caller through binding transport, object wake, construction, and the invoked
+method. Rally adds two nested custom spans and matching structured log rows to
+make the previously opaque constructor portion queryable:
+
+- `durable_object.initialize` / `durable_object_initialization` covers the
+  complete `blockConcurrencyWhile` input gate for each migratable class.
+- `durable_object.schema_migrate` / `durable_object_schema_migration` covers
+  every migration pass, including a current-schema no-op. It does not change
+  the migration tracker's deduped report policy.
+
+Both carry the component, class, latest version, status, and observed
+`duration_ms`; failures set the span error and rethrow unchanged. Read the
+binding span as total, the initialize span as object initialization, the nested
+schema span as migration wait, and the remainder as binding transport plus
+platform wake. That remainder is a diagnostic residual, not a separately
+measured platform phase. The pinned workerd clock caveat above applies: a
+`0 ms` schema span means no observable clock advance, not proof that no
+synchronous SQL or CPU work ran.
 
 ### Attribute names
 
@@ -230,6 +253,7 @@ would never meet.
 | Seam | The attribute that crosses it |
 | --- | --- |
 | Renderer → Worker, over HTTP | `rally.request.id`, from the `x-request-id` the desktop mints per call and the Worker echoes. |
+| Sidebar click → each retried `GET /workstreams/:id` | `rally.operation.id`, from the click-scoped `x-rally-operation-id`. Each HTTP call keeps its own `rally.request.id`. |
 | `GET …/socket` → the WebSocket upgrade → the room | `rally.socket.ticket_id`. A browser can attach no header to a handshake — see [`realtime-sockets.md`](realtime-sockets.md) — so the ticket id, which the issuing route logs and the room consumes, is the only shared value. |
 | The room's upgrade → the `subscribe` that follows | `rally.socket.connection_id`. `subscribe` arrives on a later invocation, possibly on a woken isolate. |
 | Renderer → workspace command socket → WorkspaceDO | `rally.message.client_id`, which the renderer, the command, and the command result all carry. |
@@ -258,10 +282,15 @@ inside it. `rally.snapshot.trims` is worth reading beside the byte size. A
 subscription snapshot also records `rally.subscribe.snapshot_reason` as
 `initial` or `history_unavailable`, so hibernation recovery can be separated
 from a cold open. The trim loop re-serializes the whole frame per dropped
-message, and that count is the only place its cost appears. `GET /:id` and
-`GET /:id/messages` carry the same flow for `sequence_ahead` and for the rare
-`history_unavailable` fallback after snapshot failure or catch-up overflow;
-ordinary lost replay history is repaired by the subscription snapshot itself.
+message, and that count is the only place its cost appears. Normal navigation
+issues neither detail nor transcript REST reads. `GET /:id` and
+`GET /:id/messages` carry the same flow only for explicit recovery after
+`sequence_ahead`, a failed or overflowed `history_unavailable` snapshot, or a
+person choosing Retry after the first connection failure or an unavailable
+state; ordinary lost replay history is repaired by the subscription snapshot
+itself. A first ticket or handshake failure exposes that Retry action as soon
+as the socket enters
+`reconnecting`; no guessed fallback timeout is part of the measurement.
 
 **`workstream_message_send`** — the desktop sends over the workspace command
 socket, so `workstream.message.send` on WorkspaceDO is the trace to read:
@@ -277,13 +306,38 @@ shipping a browser SDK and an exporter out of the Electron renderer would move
 telemetry off the main-owned regional path [`telemetry.md`](telemetry.md)
 requires everything to travel on.
 
-Instead `RallyApi` stamps `x-request-id` on every call and prints one
+Instead `RallyApi` stamps a distinct `x-request-id` on every call and prints one
 `[perf] http <method> <path> <status> <ms>` line, and each flow prints one
 `[perf] <flow> <ms>` line carrying its phases and the correlation ids above.
+The work-stream detail call additionally sends the pending sidebar attempt as
+`x-rally-operation-id`, so React Query retries remain separate requests under
+one product opening attempt.
 Both go through `logDebug`, which is `console.debug`: filtered out of DevTools
 and of a terminal until a reader opens the Verbose level. That is what lets it
 stay on in every build rather than behind a preference nobody had enabled when
 the slow open happened.
+
+Each completed flow also emits `renderer_perf_flow` through the typed renderer
+intent, validated main-process IPC, and regional telemetry spool. This is a
+closed diagnostic projection, not console forwarding: it carries exact total,
+phase, blocked, and effect-to-first-request milliseconds; a closed
+flow/outcome vocabulary; bounded structural counts; and the work-stream,
+ticket, client-message, and operation identifiers needed to join the backend
+work. Message sends keep the UUIDv4 client-message identifier separate from the
+UUIDv7 operation identifier required by the telemetry envelope. Raw console
+fields such as cursors and close codes are omitted, as are URLs, errors,
+messages, attachment names, and arbitrary annotations. Product analytics
+opt-out suppresses the event, Global follows the existing PostHog/lakehouse
+route, and EU remains on the regional internal route. The HTTP perf line remains
+local because its request duration is already present in backend request traces.
+
+On macOS, main also writes that same closed projection to Unified Logging under
+subsystem `ai.rallywith.desktop` and category `performance`. The local write
+happens before the telemetry preference gate, is device-only, and cannot change
+or delay the measured operation. It makes completed traces available across app
+sessions in Console.app even when Product analytics is disabled or upload is
+offline. It still does not forward arbitrary console objects: only the event
+that passed the strict renderer-intent parser is written. macOS owns retention.
 
 #### Telling a slow renderer apart from a slow service
 
@@ -304,10 +358,13 @@ absent in jsdom and on some Chromium builds — the numbers then read zero, whic
 is a gap in the diagnosis and never a broken flow.
 
 `workstream_open` also splits the wait for its socket in two.
-**`dial`** closes on the line that constructs the `WebSocket` and **`handshake`**
-on its open event; nothing is awaited between the ticket resolving and `dial`,
-so a large `dial` can only mean the renderer was not running. One number across
-both read as a slow server either way. And **`sinceEffectMs`** reports how long
+**`dial`** closes when the renderer has created its socket adapter and admitted
+the open to main, and **`handshake`** closes on the open event relayed from the
+Node broker. Nothing is awaited between the ticket resolving and `dial`, so a
+large `dial` can only mean the renderer was not running; main-process IPC,
+network setup, TLS, the Worker upgrade, and the Durable Object acceptance are
+all inside `handshake`. One number across both read as a slow server either way.
+And **`sinceEffectMs`** reports how long
 the work stream was on screen before the attempt's first request left: on
 attempt zero that is dead time no trace can otherwise see, because the trace
 does not exist until `connect` runs. On a reconnect it is the age of the effect
@@ -343,11 +400,15 @@ and the backoff explains it.
 
 This module owns latency diagnosis for the three named flows and nothing else.
 
-- **It is not product telemetry.** [`telemetry.md`](telemetry.md) owns product
-  signals, their regional routing, and the preferences that gate them; the
-  `api_operation_outcome` event's coarse duration bucket is a product metric and
-  stays where it is. A span and a `perf_flow` row are diagnostics, subject to
-  Workers Traces and Workers Logs retention, and reach no destination adapter.
+- **Its exported projection is diagnostic telemetry, not a product outcome.**
+  [`telemetry.md`](telemetry.md) owns its regional routing, closed schema,
+  retention, and preference gate. `renderer_perf_flow` exports the approved
+  phase timings and long-task overlap; `workstream_feed_visible` and
+  `workstream_send_ready` remain the authoritative product measurements for
+  click-to-painted-feed and click-to-sendable-composer. The local line may carry
+  additional debugging fields that the event deliberately rejects. Worker
+  spans and API-side `perf_flow` rows remain outside the telemetry destination
+  adapters and under Workers Traces and Workers Logs retention.
 - **It is not the run ledger.** A harness run's duration, tokens, and cost are
   `harness_run_finished` and the `RUN_ANALYTICS` dataset, described in
   [`runbook.md`](runbook.md#root-run-analytics). Tracing stops at the run
@@ -417,18 +478,23 @@ This module owns latency diagnosis for the three named flows and nothing else.
   `outcome = snapshot` before reading a percentile.** Making the trace span the
   reconnect would mean a renderer trace that outlives its socket, which is a
   larger change than this one.
-- **Retention is the platform's.** Nothing here is durable, and a flow
-  investigated a month later has no trace and no rows.
-- **The desktop's lines are lost on quit.** They live in the renderer's console
-  and are written nowhere.
+- **Retention is the platform's.** Cloudflare owns Worker trace/log retention,
+  the telemetry subsystem owns uploaded-event retention, and macOS owns local
+  Unified Log retention. None is a permanent application ledger.
+- **The desktop's raw lines are lost on quit.** The registered
+  `renderer_perf_flow` projection is durably spooled and retained regionally for
+  90 days when diagnostics are enabled and is also written to macOS Unified
+  Logging. The HTTP line and any fields outside that closed schema still live
+  only in the renderer console.
 
 ## Testing
 
 | Suite | What it proves |
 | --- | --- |
 | `apps/api/test/tracing.test.ts` (`pnpm --filter @rally/api test`) | That a step opens a runtime span and ends it, that the step which threw is still ended and the rejection propagates, the `perf_flow` row's step map and `slowest_step`, `setError`'s status attributes, that an absent identifier sets no attribute, that `noFlowSpan` opens nothing, and that a request's span carries the `x-request-id` the desktop sent. |
-| `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence — every socket path calls it defensively — and that `newRequestId` produces something `requestContext` will accept rather than replace. |
-| `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, and that a caller's own id is used when it has one. |
+| `apps/desktop/src/renderer/lib/perf-trace.test.ts` | The renderer tracer's phase order, its throwing phase, `end` idempotence, the exact governed projection and rejection of arbitrary console fields, and that `newRequestId` produces something `requestContext` will accept rather than replace. |
+| `apps/desktop/src/main/native-performance-log.test.ts`, desktop release tests | The exact public structured record, observational failure behavior, development/packaged addon paths, and that the native bridge is packaged, signed, and release-verified. |
+| `apps/desktop/src/renderer/lib/api.test.ts` (`request correlation`) | That every call carries a distinct `x-request-id`, explicit per-request socket IDs remain unchanged, and a work-stream detail retry carries its longer-lived opening attempt separately as `x-rally-operation-id`. |
 | `apps/api/test/security-and-config.test.ts` | That `x-request-id` survives the CORS preflight in both regions and is exposed on the response. |
 
 Three traps:
@@ -462,6 +528,20 @@ go to Workers Logs. To investigate one slow interaction a person reported:
    `rally.socket.connection_id` into the subscription.
 3. In Workers Logs, `event = perf_flow` with the same `request_id` gives the
    same breakdown as one row, including `slowest_step`.
+
+For a local macOS investigation, open Console.app and filter subsystem
+`ai.rallywith.desktop` plus category `performance`, or run:
+
+```bash
+log show --style compact \
+  --predicate 'subsystem == "ai.rallywith.desktop" AND category == "performance"'
+```
+
+For a cold Durable Object tail, find the automatic binding span and inspect its
+`durable_object.initialize` child, then the
+`durable_object.schema_migrate` child. Workers Logs can aggregate the matching
+`durable_object_initialization` and `durable_object_schema_migration` rows by
+`class_name`, `status`, and `duration_ms` even when a sampled trace is absent.
 
 To find the pattern rather than the instance, filter `event = perf_flow` with
 `flow = <name>` and `duration_ms >` a threshold, and group by `slowest_step`.
@@ -529,6 +609,234 @@ both signals rather than trusting the comment there to survive.
 
 ## Changelog
 
+### 2026-08-26 — Work-stream open includes both transcript islands and usable composer
+
+**What changed:** The existing renderer `workstream_open` clock now treats the
+ordered transcript snapshot as part of the socket snapshot boundary. That one
+frame contains the unread-centered range, the prefetched five-turn tail, active
+turn/activity baselines, and the room event fence; success still waits for the
+renderer commit and usable composer. Release evidence reports combined and
+cohort p50/p90, with goals of p50 at or below 1,000 ms and p90 at or below
+2,000 ms.
+
+**Why:** Ending the clock at authorization, Durable Object response, or one
+painted island would report a fast partial open while the reader could neither
+jump to the live tail nor send. The product goal is the complete visible open.
+
+**Considered and rejected:** A new transcript-only microbenchmark cannot prove
+the Electron renderer is visible or usable. A second trace would also split one
+member action into competing totals. The existing client-monotonic flow is the
+authoritative boundary and its backend spans remain diagnostic components.
+
+**Consequences:** Slow successful opens remain in percentiles. Failed and
+cancelled opens record their outcome but never enter successful percentiles.
+Warm/cold, unread/latest overlap, disjoint islands, large history, and
+mid-stream cohorts remain separable without transcript content.
+
+### 2026-08-26 — Work-stream handshake timing follows the Electron Node broker
+
+**What changed:** Electron's control/feed transport moved from Chromium to a
+main-process Node broker without moving the renderer's `workstream_open` flow.
+`dial` now ends at renderer admission to the broker and `handshake` ends when
+the broker relays its open event. The existing durable `renderer_perf_flow`
+record therefore measures the complete IPC plus network handshake without a
+new trace graph.
+
+**Why:** Concurrent cold work-stream sockets were queuing behind Chromium's
+same-endpoint handshake lock. Moving transport fixes the queue, but moving the
+flow clock would split the click-to-snapshot measurement across processes and
+lose the renderer's painted/send-ready boundaries.
+
+**Considered and rejected:** A separate main-process performance flow would
+measure the broker precisely but would no longer be the person's full wait and
+would need another correlation graph. The existing phase boundary already
+separates renderer scheduling from everything after admission.
+
+**Consequences:** A slow `handshake` may now include main-process IPC delay as
+well as network, Worker, and Durable Object time; backend ticket and upgrade
+correlation still separates the service portion. Chromium NetLog no longer
+contains these two socket types, while the renderer flow remains in Unified Log
+and regional telemetry.
+
+Shipped in #341.
+
+### 2026-08-26 — Renderer traces persist locally and cold wakes expose initialization
+
+**What changed:** macOS builds now package a native Unified Logging bridge that
+writes the already-governed `renderer_perf_flow` record under Rally's
+performance subsystem before the upload preference gate. Each migrated Durable
+Object also opens `initialize` and `schema_migrate` spans and emits one
+structured duration row per wake.
+
+**Why:** Packaged DevTools made renderer lines inaccessible and process exit
+discarded them, while a slow automatic binding span combined platform wake,
+constructor work, schema migration, and transport into one number. Neither gap
+could be repaired after a user supplied a session time window.
+
+**Considered and rejected:** A text log with application-owned rotation adds a
+second retention and file-security subsystem; Unified Logging is the idiomatic
+macOS durable store and Console.app already reads it. Reporting every migration
+pass to the fleet tracker would turn a timing question into cross-region queue
+traffic and defeat its deploy/heartbeat dedupe; structured Worker logs provide
+the per-wake record without changing tracker semantics.
+
+**Consequences:** Local renderer records survive app restarts and remain on the
+device regardless of Product analytics, while governed uploads still obey the
+account preference and regional route. Migration and initialization failures
+remain behaviorally identical. Workerd's pinned clock can report `0 ms` for
+synchronous work, and the residual outside `initialize` is inferred platform
+wake plus binding transport rather than a separately timed phase.
+
+### 2026-08-26 — Renderer phase timings use the governed regional telemetry path
+
+**What changed:** Every completed renderer `workstream_create`,
+`workstream_open`, and `workstream_message_send` trace now emits one closed
+`renderer_perf_flow` diagnostic event in addition to its local Verbose console
+line. Exact phase and blocked milliseconds, bounded counts, closed outcomes,
+and join identifiers travel through validated main-process IPC and the existing
+regional spool. The operation remains fire-and-forget and never waits for a
+preference read or telemetry delivery.
+
+**Why:** Packaged builds do not expose DevTools, so the only evidence capable of
+splitting the observed multi-second ticket-to-upgrade gap into renderer `dial`,
+network handshake, service wait, or main-thread blocking disappeared with the
+process. Backend timings could locate the gap but could not classify it, which
+made the two-second P90 goal unactionable from production evidence.
+
+**Considered and rejected:** Forwarding `[perf]` console objects wholesale
+would create an open telemetry vocabulary and could silently export future
+annotations. A renderer OpenTelemetry exporter would bypass regional routing,
+consent, validation, and the durable spool. Keeping only the existing total
+paint metric preserves percentiles but cannot identify which phase to change.
+
+**Consequences:** Diagnostic events obey the Product analytics preference;
+Global can reach PostHog and the lakehouse while EU remains internal-region
+only. The 90-day event omits cursor positions, close codes, raw server event
+names, errors, URLs, and content. Adding a renderer phase now requires an
+explicit contract change or it remains local, and raw console lines are still
+ephemeral.
+
+### 2026-08-25 — The socket snapshot is the cold-open clock
+
+**What changed:** A selected work stream starts its feed subscription before
+detail or transcript data exists, and the first valid socket `snapshot` now
+ends the normal renderer open. Detail and transcript HTTP spans under
+`workstream_open` represent recovery only. The WorkstreamDO control socket is
+started independently and its HyperSight preference does not end or delay the
+feed trace. Product telemetry names this path `socket_snapshot` so it remains
+separate from cache and HTTP recovery cohorts.
+
+**Why:** The previous renderer serialized `GET /workstreams/:id` and socket
+admission even though both caused the same SubstreamAgent to assemble canonical
+detail and transcript state. That made the request trace useful for diagnosis
+but guaranteed its latency was paid before the already-instrumented socket
+phases could begin.
+
+**Considered and rejected:** Racing REST against the socket would make the
+measured winner depend on duplicate object work and would retain two normal
+open shapes. Extending the flow until optional control metadata arrives would
+measure HyperSight readiness rather than the stated message-feed-and-send goal.
+
+**Consequences:** For cold-open percentiles, filter renderer outcomes to
+`socket_snapshot` and join ticket, upgrade, accept, and subscribe traces. A
+failed first socket attempt exposes the manual HTTP recovery while reconnecting,
+without adding a fallback timeout. HTTP rows are a recovery cohort and must not
+be mixed into the normal-open distribution.
+
+### 2026-08-25 — Client send readiness has its own opening milestone
+
+**What changed:** A sidebar opening now emits `workstream_send_ready` after the
+painted composer has an installed work-stream handler. It shares the opening
+operation ID and records the workspace command socket state.
+
+**Why:** Feed paint answers the opening question but is only a proxy for the
+separate question of when the client can accept a send. The workspace socket
+may queue a message while connecting or reconnecting, so socket-connected time
+would overstate the user's wait.
+
+**Considered and rejected:** Calling feed visibility send readiness, or waiting
+for a transport connection. The first hides an unmeasured claim; the second
+confuses queue admission with delivery. Server acknowledgement remains the
+existing `workstream_message_send` flow rather than a third reading of readiness.
+
+**Consequences:** Product analytics can compare feed and send-ready percentiles
+by operation ID. A workspace-level service error abandons the click before its
+same-work-stream retry can reuse that clock. Cloudflare spans and renderer phase
+traces remain unchanged.
+
+### 2026-08-25 — Detail retries separate request identity from opening identity
+
+**What changed:** Each `GET /workstreams/:id` call now keeps the fresh
+`x-request-id` that names that specific HTTP request and carries the sidebar
+click as `x-rally-operation-id`. The API open span records the latter as
+`rally.operation.id` beside `rally.request.id`.
+
+**Why:** React Query may retry a failing open twice. Reusing the opening ID as
+all three request IDs made distinct calls indistinguishable and fanned a join
+whose documentation promised one request. The tail is exactly where both the
+individual calls and their shared click must remain visible.
+
+**Considered and rejected:** Minting a new opening ID per retry would destroy
+the product attempt denominator. Keeping the repeated request ID and documenting
+the fan-out would preserve ambiguity in Workers traces. The existing operation
+header already expresses a lifecycle longer than one request and is CORS-safe in
+both regions.
+
+**Consequences:** Join on `rally.operation.id` to collect every detail retry for
+one click, then use `rally.request.id` to inspect one call. Authentication replay
+inside one `RallyApi` call deliberately retains its request ID because it is one
+caller-level request under a renewed credential.
+
+### 2026-08-25 — Opening, lease, and request IDs keep separate scopes
+
+**What changed:** A sidebar attempt now emits start and terminal outcome events
+under one opening operation ID. The detail request reuses it. Socket starts use
+their own operation ID for the ticket request, carry the pending opening ID when
+applicable, and carry the socket owner's stable lease ID. The feed and opening
+outcome record the lease that served the painted transcript.
+
+**Why:** One identifier cannot simultaneously name a user interaction, several
+ticket requests, and a pooled connection that may predate that interaction.
+Rapid navigation also needs a durable superseded outcome rather than a missing
+completion row.
+
+**Considered and rejected:** Timestamp joins are ambiguous for A to B to A
+switches. Making the click ID the request ID for both control and feed would
+merge independent requests. Treating the work-stream ID as a session would
+merge every open and reconnect for that resource.
+
+**Consequences:** `operation_id` means the event's own attempt: opening attempt
+on opening/feed events, socket attempt on socket-start events. `openAttemptId`
+is the explicit parent on a socket start; `socketLeaseId` joins control/feed
+attempts to the retained owner. None is a Cloudflare trace ID, ticket, or
+authorization value.
+
+### 2026-08-25 — The approved feed-paint metric exports totals, not renderer traces
+
+**What changed:** A click-scoped operation ID now labels the desktop's
+`workstream_feed_visible` product event and, when the open needs it,
+`GET /workstreams/:id`. The event
+exports exact click-to-data-ready and click-to-painted-feed milliseconds. The
+local renderer tracer remains local, and its phase list and long-task overlap
+are not copied into the product envelope.
+
+**Why:** The earlier decision below rejected regional renderer latency because
+no concrete product question required raw values. The requested average and
+P50/P75/P90/P99 click-to-feed distribution cannot be reconstructed from local
+lines, socket-open timing, or duration buckets. Reusing the request ID makes
+backend phase attribution possible without inventing a second trace graph.
+
+**Considered and rejected:** Exporting `[perf]` lines wholesale would move a
+diagnostic vocabulary into the product contract and retain substantially more
+state. Minting `traceparent` still forks Cloudflare's trace graph. Keeping only
+buckets makes the requested percentiles mathematically unavailable.
+
+**Consequences:** Exact totals are governed Product analytics and follow its
+consent and regional destinations; detailed phases remain diagnostic. A reader
+joins an uncached open on the opening operation/request ID and must not treat it
+as authorization or as a Cloudflare trace ID. A `feed_cache` open has no detail
+request to join by design. The newer entry above owns correlation to socket
+attempts and retained leases.
 ### 2026-08-25 — Subscription snapshots name replay-loss recovery
 
 **What changed:** `workstream.room.socket.subscribe` records

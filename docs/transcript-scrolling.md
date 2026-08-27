@@ -101,6 +101,25 @@ turn finishes.
 - `scrollTo(top)` to restore the reading position after an older page is
   prepended.
 
+### Disjoint transcript ranges
+
+An opening snapshot may contain two islands: the first-unread turn with five
+conversation turns on each side, and the latest five conversation turns. They
+share one server snapshot fence but do not imply that the middle was loaded.
+The desktop unions each response's explicit half-open `covered` interval and
+treats its complement as known gaps. An empty covered response still closes the
+gap; overlapping responses are de-duplicated by stable turn revision. Each lazy
+range also carries the bounded lifecycle activities referenced by those turns;
+the reducer merges them by stable activity identity and revision so historical
+“worked for” timing appears when its owning turn enters memory.
+
+Approaching a loaded edge requests only the adjacent 20-sequence interval over
+the already-open SubstreamAgent socket and preserves the visible prepend
+anchor. **Jump to latest** never downloads the middle: the latest island is
+already rendered, so the button scrolls to it immediately. The middle is filled
+lazily as its edges are approached. Range membership remains fenced to the
+opening snapshot even if live events append newer turns.
+
 ## Invariants
 
 - **Only the reader's own scrolling decides where the viewport sits.** The one
@@ -225,6 +244,29 @@ There is no test that renders `WorkstreamScreen`, so the wiring in
 client. That seam is where the original defect lived.
 
 ## Changelog
+
+### 2026-08-26 — Opening carries unread context and an immediately usable tail
+
+**What changed:** The transcript reducer now tracks explicit covered intervals,
+unions overlap, retains gaps, requests one adjacent block at a time, and uses the
+preloaded latest-five island for **Jump to latest**.
+
+**Why:** One cursor implied that everything between downloaded pages existed in
+memory. Opening near unread history either delayed first paint on the full tail
+or made jumping to the running end wait for every intervening page.
+
+**Considered and rejected:** Treating returned rows as coverage and loading the
+entire middle before jumping. Empty ranges and status-only spans make row-based
+coverage loop forever; the latest island makes the eager download unnecessary.
+
+**Consequences:** New range transports must preserve half-open coverage and the
+snapshot fence. Scroll restoration still goes through `useTranscriptFollow`;
+range loading does not gain a second `scrollTop` writer. Range activity payloads
+remain proportional to loaded turns and their ancestry, not total work-stream
+history. The existing run-metadata timer remains the live fallback until a
+canonical response activity has a loaded assistant-turn anchor; after that
+point the ordered timing row is the only renderer, avoiding both a reconnect
+gap before the first committed assistant turn and a duplicate historical row.
 
 ### 2026-08-23 — The follow now runs per reveal tick, and that was re-verified, not assumed
 

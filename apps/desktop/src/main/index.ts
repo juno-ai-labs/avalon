@@ -127,6 +127,11 @@ import {
   type MessageExportWindow,
 } from './message-export';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
+import {
+  RealtimeSocketBroker,
+  createNodeRealtimeSocketFactory,
+} from './realtime-socket-broker';
+import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
@@ -164,6 +169,11 @@ import {
   NativeSystemAudioController,
   type NativeSystemAudioBinding,
 } from './native-system-audio';
+import {
+  NativePerformanceLog,
+  nativeUnifiedLogAddonPath,
+  type NativeUnifiedLogBinding,
+} from './native-performance-log';
 import {
   migrateLegacyUserDataStoredSessionFile,
   migrateLegacyStoredSessionFile,
@@ -241,10 +251,6 @@ const UPDATE_SESSION_SETTLE_TIMEOUT_MS = 5_000;
  * canonical regional D1 read. Keep the verification bounded without treating
  * a normal cold request as an outage. */
 const PRODUCT_ANALYTICS_PREFERENCE_REQUEST_TIMEOUT_MS = 15_000;
-/** Preference verification may outlive the first window. Collection remains
- * fail-closed until it finishes, while the product never presents a long blank
- * launch because a regional request is merely slow. */
-const PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS = 2_000;
 /** Well inside the flag's poll interval, so a lost poll costs one round rather
  * than blocking the next. */
 const DEVELOPER_SETTINGS_FLAG_REQUEST_TIMEOUT_MS = 15_000;
@@ -303,6 +309,12 @@ async function reportTelemetryProductIntent(
   windowContext?: TelemetryWindowContext,
 ): Promise<void> {
   const intent = parseTelemetryProductIntent(value);
+  if (process.platform === 'darwin' && intent.kind === 'renderer_perf_flow') {
+    // Local persistence is independent of account telemetry consent: it never
+    // leaves the Mac, and remains available in Console.app even when the
+    // regional reporter suppresses or cannot upload the event.
+    nativePerformanceLog.write(intent);
+  }
   const operation: NewTelemetryBreadcrumb | null = intent.kind === 'workspace_create_requested'
     ? { kind: 'operation', operation: 'workspace_create', state: 'requested' }
     : intent.kind === 'workspace_activation_requested'
@@ -343,6 +355,16 @@ async function reportTelemetryProductIntent(
         windowContext,
         connectorOperationId,
       );
+      return;
+    }
+    case 'workstream_feed_visible':
+    case 'workstream_send_ready':
+    case 'workstream_open_started':
+    case 'workstream_open_outcome':
+    case 'workstream_socket_started':
+    case 'renderer_perf_flow': {
+      const { operationId, ...semanticIntent } = intent;
+      await telemetryReporter.semanticProductIntent(semanticIntent, windowContext, operationId);
       return;
     }
     case 'command_shortcuts_revealed':
@@ -415,6 +437,9 @@ let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
+const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
+  (url) => electronSession.defaultSession.resolveProxy(url),
+));
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
   route: 'global',
@@ -436,6 +461,17 @@ const applicationLifecycleTelemetry = new ApplicationLifecycleTelemetry((state) 
   const reporter = telemetryReporter;
   if (reporter) void reporter.applicationLifecycle(state).catch(() => undefined);
 });
+let applicationForegrounded: boolean | null = null;
+
+function observeApplicationForeground(foregrounded: boolean): void {
+  const changed = applicationForegrounded !== foregrounded;
+  applicationForegrounded = foregrounded;
+  applicationLifecycleTelemetry.observeFocused(foregrounded);
+  if (!changed) return;
+  for (const window of rallyWindows()) {
+    window.webContents.send('application:foreground-changed', foregrounded);
+  }
+}
 let nativeCrashUploader: NativeCrashUploader | null = null;
 let nativeCrashGenerationActive = false;
 let nativeCrashGenerationInvalidated = false;
@@ -474,6 +510,19 @@ const nativeSystemAudioController = new NativeSystemAudioController(() => {
   });
   return requireNativeModule(addonPath) as NativeSystemAudioBinding;
 });
+const nativePerformanceLog = new NativePerformanceLog(
+  () => {
+    if (process.platform !== 'darwin') throw new Error('macOS Unified Logging is unavailable');
+    return requireNativeModule(nativeUnifiedLogAddonPath({
+      currentDirectory,
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+    })) as NativeUnifiedLogBinding;
+  },
+  () => app.getVersion(),
+  () => new Date(),
+  (error) => logWarn('rally', 'could not write renderer performance data to macOS Unified Logging', error),
+);
 
 function telemetryWindowContext(contents: WebContents): TelemetryWindowContext | undefined {
   const window = BrowserWindow.fromWebContents(contents);
@@ -1569,7 +1618,8 @@ async function initializeTelemetry(launchAuth: StoredAuth | null): Promise<void>
       return telemetryIdentity;
     },
     route: () => telemetryRoute.route,
-    productAnalyticsEnabled: () => productAnalyticsSettingsController.state().effectiveEnabled,
+    productAnalyticsEnabled: () => productAnalyticsSettingsController.admissionEnabled(),
+    productAnalyticsDeliveryEnabled: () => productAnalyticsSettingsController.state().effectiveEnabled,
     crashReportingEligible: () => telemetryContinuouslyEligible,
     authenticatedSession: telemetryAuthenticatedSession,
     anonymousSession: () => telemetryRoute.anonymous,
@@ -2331,6 +2381,13 @@ function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
   }
 }
 
+function assertMainWindowIpcSender(event: IpcMainInvokeEvent): void {
+  assertTrustedIpcSender(event);
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('Only the main Rally window can open realtime sockets');
+  }
+}
+
 function meetingAudioPermissionDependencies() {
   return {
     askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
@@ -2339,9 +2396,19 @@ function meetingAudioPermissionDependencies() {
 }
 
 function registerIpc(): void {
+  registerRealtimeSocketIpc({
+    apiBaseUrls: Object.values(runtimeConfig().api),
+    assertSender: assertMainWindowIpcSender,
+    broker: realtimeSocketBroker,
+    ipc: ipcMain,
+  });
   ipcMain.handle('runtime:get-config', (event) => {
     assertTrustedIpcSender(event);
     return runtimeConfig();
+  });
+  ipcMain.handle('application:foreground-get', (event) => {
+    assertTrustedIpcSender(event);
+    return applicationForegrounded ?? BrowserWindow.getFocusedWindow() !== null;
   });
   ipcMain.handle('application-settings:get', async (event) => {
     assertTrustedIpcSender(event);
@@ -3254,16 +3321,24 @@ async function createMainWindow(): Promise<void> {
       allowRunningInsecureContent: false,
     },
   });
+  const mainWindowWebContentsId = mainWindow.webContents.id;
 
   installWindowDiagnostics(mainWindow, 'main');
+  mainWindow.webContents.on('render-process-gone', () => {
+    realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+  });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     // Hash-router transitions are same-document navigations. Treating them as
     // a renderer restart strands later OAuth/invitation callbacks in the main
     // process queue because React never remounts to consume that queue.
-    if (isMainFrame && !isInPlace) rendererReady = false;
+    if (isMainFrame && !isInPlace) {
+      realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+      rendererReady = false;
+    }
   });
   mainWindow.on('closed', () => {
+    realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
     rendererReady = false;
     mainWindow = null;
   });
@@ -3406,20 +3481,12 @@ if (!singleInstanceLock) {
     // renderer window can issue concurrent session requests.
     const launchAuth = await loadStoredAuth();
     try {
+      // The durable device choice admits early events to the local spool. A
+      // cold regional preference read is reconciliation, not a launch
+      // dependency: waiting here both spent the opening budget and suppressed
+      // every nonessential event produced before the request settled. Delivery
+      // remains closed until the canonical read below succeeds.
       await productAnalyticsSettingsController.initialize(launchAuth !== null);
-      if (launchAuth) {
-        // Catch on the underlying promise before the launch deadline can win:
-        // verification keeps running in the background and must never become
-        // an unhandled rejection after the first window is allowed through.
-        const refresh = productAnalyticsSettingsController.refresh().catch((error: unknown) => {
-          logWarn('rally', 'could not synchronize the Product analytics preference', error);
-        });
-        await withDeadline(
-          refresh,
-          PRODUCT_ANALYTICS_LAUNCH_BARRIER_MS,
-          'Product analytics preference verification continues after launch',
-        ).catch(() => undefined);
-      }
     } catch (error) {
       logWarn('rally', 'could not synchronize the Product analytics preference', error);
     }
@@ -3429,6 +3496,17 @@ if (!singleInstanceLock) {
       // Telemetry is observational. A disk, Crashpad, or route-gate failure
       // cannot prevent the product from opening.
       logWarn('rally', 'could not initialize telemetry', error);
+    }
+    if (launchAuth) {
+      // Never awaited by launch or by the renderer's first telemetry intents.
+      // A canonical disable purges the held nonessential rows; a failed read
+      // leaves them durable and keeps delivery closed for a future retry.
+      void productAnalyticsSettingsController.refresh()
+        .then(() => telemetryReporter?.applicationSettingsState(applicationSettingsTelemetryState()))
+        .then(() => { flushTelemetryAndRetryLink(); })
+        .catch((error: unknown) => {
+          logWarn('rally', 'could not synchronize the Product analytics preference', error);
+        });
     }
     // Launching with a credential already on disk broadcasts no session change,
     // so the first poll is asked for here. Developer stays closed until it
@@ -3500,7 +3578,7 @@ if (!singleInstanceLock) {
     // Rally with nothing on screen and nothing in the menu bar, reachable only
     // by hunting for it in the Dock.
     const startsHidden = openedAtLogin && menuBarController.present();
-    if (startsHidden) applicationLifecycleTelemetry.observeFocused(false);
+    if (startsHidden) observeApplicationForeground(false);
     else await createMainWindow();
     await telemetryReporter?.applicationLifecycle('ready');
     await telemetryBreadcrumbs?.add({ kind: 'lifecycle', phase: 'ready' }).catch(() => undefined);
@@ -3549,7 +3627,7 @@ process.on('uncaughtExceptionMonitor', (error, origin) => {
 });
 
 app.on('browser-window-focus', () => {
-  applicationLifecycleTelemetry.observeFocused(true);
+  observeApplicationForeground(true);
 });
 
 app.on('browser-window-blur', () => {
@@ -3557,7 +3635,7 @@ app.on('browser-window-blur', () => {
   // one turn and observe the application as backgrounded only if no Rally
   // window acquired focus.
   setImmediate(() => {
-    applicationLifecycleTelemetry.observeFocused(BrowserWindow.getFocusedWindow() !== null);
+    observeApplicationForeground(BrowserWindow.getFocusedWindow() !== null);
   });
 });
 

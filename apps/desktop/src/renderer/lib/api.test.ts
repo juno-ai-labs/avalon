@@ -89,6 +89,18 @@ const detail = {
   openElicitations: [],
   suggestions: [],
   latestHarnessRunId: null,
+  transcript: {
+    snapshotId: '00000000-0000-7000-8000-000000000777',
+    snapshotThrough: 0,
+    eventSequence: 0,
+    snapshotAtUtc: timestamp,
+    unreadAnchorSequence: null,
+    unreadReason: 'no_unread' as const,
+    ranges: [],
+    activities: [],
+    activeActivities: [],
+    activeTurns: [],
+  },
 };
 
 const message = {
@@ -900,6 +912,54 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ scope: 'personal' });
   });
 
+  it('archives a work stream through the same update endpoint', async () => {
+    const archivedAt = '2026-08-25T12:00:00.000Z';
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ ...detail, archivedAt }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.archiveWorkstream(workstreamId)).resolves.toMatchObject({
+      id: workstreamId,
+      archivedAt,
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`https://api.rally.test/workstreams/${workstreamId}`);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
+    // Only `archived` travels. Resending the title or the description would be
+    // read as somebody having authored them at the moment they archived it.
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ archived: true });
+  });
+
+  it('previews and enqueues a generic filtered work-stream batch update', async () => {
+    const operationId = '00000000-0000-7000-8000-000000000099';
+    const filter = {
+      lastActivityAt: {
+        atOrAfter: '2026-08-01T00:00:00.000Z',
+        before: '2026-08-08T00:00:00.000Z',
+      },
+      pinned: false,
+      includeSystem: false,
+    } as const;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ matchedCount: 20 }))
+      .mockResolvedValueOnce(json({ operationId, enqueuedCount: 20 }, { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.previewWorkstreamBatch(filter)).resolves.toBe(20);
+    await expect(api.applyWorkstreamBatch(operationId, filter, { kind: 'archive' })).resolves.toBe(20);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.rally.test/workstreams/batch/preview');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ filter });
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('https://api.rally.test/workstreams/batch');
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      operationId,
+      filter,
+      update: { kind: 'archive' },
+    });
+  });
+
   it('creates an attachment-only work stream with its draft resource IDs', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
@@ -920,6 +980,41 @@ describe('Rally API wire adapter', () => {
       participantUserIds: [],
       clientMessageId: expect.any(String),
       attachmentIds: [resourceId],
+    });
+  });
+
+  it('encodes an opening mention with the normal message resolver and seats its identity', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({
+        items: [{ user, role: 'owner', status: 'active', joinedAt: timestamp }],
+      }))
+      .mockResolvedValueOnce(json({
+        workstream: detail,
+        messageId,
+        harnessRunId: null,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.createWorkstream({
+      openingMessage: 'Ask @Adam to review',
+      participantIds: [],
+      mentions: [{ type: 'person', label: 'Adam', userId, connectorType: null }],
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/workspace/members');
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+      openingMessage: 'Ask @Adam to review',
+      participantUserIds: [userId],
+      clientMessageId: expect.any(String),
+      attachmentIds: [],
+      mentions: [{
+        type: 'person',
+        userId,
+        connectorType: null,
+        startOffset: 4,
+        endOffset: 9,
+      }],
     });
   });
 
@@ -1249,6 +1344,32 @@ describe('message mention resolution', () => {
       { type: 'connector', userId: null, connectorType: 'google', startOffset: 4, endOffset: 17 },
     ]);
   });
+
+  it('preserves which same-name person was selected for each occurrence', async () => {
+    const secondUserId = '00000000-0000-7000-8000-000000000012';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/workspace/members')) {
+        return json({
+          items: [
+            { user: { ...user, name: 'Alex' }, role: 'owner', status: 'active', joinedAt: timestamp },
+            { user: { ...user, id: secondUserId, email: 'other@example.com', name: 'Alex' }, role: 'member', status: 'active', joinedAt: timestamp },
+          ],
+        });
+      }
+      throw new Error(`unexpected request: ${String(input)}`);
+    }));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    const mentions = await api.messageMentionPayload('Ask @Alex then @Alex', [
+      { type: 'person', label: 'Alex', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+      { type: 'person', label: 'Alex', userId: secondUserId, connectorType: null, startOffset: 15, endOffset: 20 },
+    ]);
+
+    expect(mentions).toEqual([
+      { type: 'person', userId, connectorType: null, startOffset: 4, endOffset: 9 },
+      { type: 'person', userId: secondUserId, connectorType: null, startOffset: 15, endOffset: 20 },
+    ]);
+  });
 });
 
 describe('socket ticket transport', () => {
@@ -1345,6 +1466,29 @@ describe('request correlation', () => {
     });
 
     expect(new Headers(sent[0]?.headers).get('x-request-id')).toBe('trace-from-the-screen');
+  });
+
+  it('correlates work-stream detail attempts separately from each request and socket start', async () => {
+    const sent: Array<RequestInit | undefined> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(init);
+      return String(input).endsWith('/control-socket')
+        ? json({ url: 'wss://api.rally.test/control', ticket: 'ticket' })
+        : json(detail);
+    }));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await api.getWorkstream(workstreamId, undefined, 'feed-visible-operation');
+    await api.getWorkstreamControlSocketTicket(workstreamId, 'control-start-operation');
+
+    const requestIds = sent.map((init) => new Headers(init?.headers).get('x-request-id'));
+    expect(requestIds[0]).toMatch(/^[A-Za-z0-9._:-]{1,100}$/u);
+    expect(requestIds[0]).not.toBe('feed-visible-operation');
+    expect(requestIds[1]).toBe('control-start-operation');
+    expect(sent.map((init) => new Headers(init?.headers).get('x-rally-operation-id'))).toEqual([
+      'feed-visible-operation',
+      null,
+    ]);
   });
 });
 

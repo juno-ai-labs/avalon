@@ -7,6 +7,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
   type BlockDashboardBlockRun,
@@ -51,6 +52,10 @@ import {
   type BlockDashboardBlockDispatch,
 } from "../src/durable-objects/block-dashboard-protocol";
 import { WorkspaceActivityEventListResultSchema } from "../src/durable-objects/workspace-activity-event-protocol";
+import {
+  LegacyWorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventClaimResultSchema,
+} from "../src/durable-objects/workspace-connector-event-protocol";
 import {
   WorkspaceOpportunityClaimStartResultSchema,
   type WorkspaceOpportunityPersistRequest,
@@ -143,6 +148,22 @@ function tableNames(state: DurableObjectState): string[] {
 
 function nextMessage(socket: WebSocket): Promise<MessageEvent> {
   return new Promise((resolve) => socket.addEventListener("message", resolve, { once: true }));
+}
+
+function nextMessageOfType(socket: WebSocket, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const decoded = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (decoded.type !== type) return;
+        socket.removeEventListener("message", onMessage);
+        resolve(decoded);
+      } catch {
+        // Heartbeat frames and unrelated messages are not the requested event.
+      }
+    };
+    socket.addEventListener("message", onMessage);
+  });
 }
 
 function nextClose(socket: WebSocket): Promise<CloseEvent> {
@@ -857,6 +878,8 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_workstream_viewers",
           "workspace_sync_events",
           "workspace_socket_ticket_receipts",
+          "workspace_batch_dispatches",
+          "workspace_batch_dispatch_targets",
           "workspace_activity_events",
           "workspace_activity_event_targets",
           "opportunity_batch_windows",
@@ -1958,6 +1981,275 @@ describe("Durable Objects in the Workers runtime", () => {
     return socket;
   }
 
+  it("orders presence across hibernation and clears it when directory visibility changes", async () => {
+    await seedOpenAuthority();
+    const otherUserId = asUserId("00000000-0000-7000-8000-00000000040a");
+    const otherSessionId = `${SESSION_ID}-presence`;
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+        VALUES (?, ?, 'active', 'member', '2026-08-26T20:00:00.000Z')`).bind(WORKSPACE_ID, otherUserId),
+      env.DB.prepare(`INSERT INTO sessions
+        (id, user_id, workspace_id, region, revoked_at, expires_at)
+        VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
+        .bind(otherSessionId, otherUserId, WORKSPACE_ID),
+    ]);
+    const workspace = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
+    const at = "2026-08-26T20:00:00.000Z";
+    const common = {
+      kind: "directory_common" as const,
+      title: "Foreground presence",
+      description: "Presence does not follow pooled sockets",
+      preview: "idle",
+      scope: "workspace" as const,
+      state: "idle",
+      systemKind: null,
+      lastActivityAt: at,
+      completedAt: null,
+      archivedAt: null,
+      originType: "ad_hoc" as const,
+      createdByUserId: null,
+      latestAttentionOrdinal: 0,
+      unreadTrackingStartOrdinal: 0,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const viewer = (userId: string, isParticipant: boolean) => ({
+      kind: "directory_user" as const,
+      userId,
+      isParticipant,
+      unreadCount: 0,
+      youAreMentioned: false,
+      listable: isParticipant,
+      seenAttentionOrdinal: 0,
+      manualUnreadFromOrdinal: null,
+      manualUnreadGeneration: 0,
+      latestMentionAttentionOrdinal: 0,
+    });
+    await workspace.applyWorkstreamDirectoryEffects({
+      workspaceId: WORKSPACE_ID,
+      envelopes: [
+        effectEnvelope(common, "00000000-0000-7000-8000-00000000040b"),
+        effectEnvelope(
+          viewer(USER_ID, true),
+          "00000000-0000-7000-8000-00000000040f",
+        ),
+      ],
+    });
+
+    const first = await openWorkspaceSocket(
+      workspace,
+      "00000000-0000-7000-8000-00000000040c",
+    );
+    const second = await openWorkspaceSocket(
+      workspace,
+      "00000000-0000-7000-8000-00000000040d",
+      otherSessionId,
+      otherUserId,
+    );
+    try {
+      const firstUpdate = nextMessage(first);
+      first.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(JSON.parse(String((await firstUpdate).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      await evictDurableObject(workspace);
+      // An auth query yields the DO input gate. A newer revision must fence an
+      // older handler that resumes later, even when the newer state itself did
+      // not change and therefore emitted no snapshot.
+      first.send(JSON.stringify({
+        type: "set_presence",
+        revision: 2,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      first.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "background",
+        foregroundWorkstreamId: null,
+      }));
+      const firstAfterWake = nextMessage(first);
+      const secondAfterWake = nextMessage(second);
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 1,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      expect(JSON.parse(String((await firstAfterWake).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [otherUserId],
+      });
+      expect(JSON.parse(String((await secondAfterWake).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [USER_ID],
+      });
+
+      const firstBackgrounded = nextMessage(first);
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 2,
+        applicationState: "background",
+        foregroundWorkstreamId: null,
+      }));
+      expect(JSON.parse(String((await firstBackgrounded).data))).toMatchObject({
+        type: "workspace_presence",
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      expect(first.readyState).toBe(WebSocket.OPEN);
+      expect(second.readyState).toBe(WebSocket.OPEN);
+
+      const firstReforegrounded = nextMessageOfType(first, "workspace_presence");
+      const secondReforegrounded = nextMessageOfType(second, "workspace_presence");
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 3,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      await Promise.all([firstReforegrounded, secondReforegrounded]);
+
+      // Narrowing a workspace stream to personal removes a foreground viewer
+      // who has no participant row. The remaining viewer gets a canonical
+      // empty set while the removed socket stays connected but backgrounded.
+      const afterScopeRestriction = nextMessageOfType(first, "workspace_presence");
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          { ...common, scope: "personal", updatedAt: "2026-08-26T20:01:00.000Z" },
+          "00000000-0000-7000-8000-000000000410",
+          2,
+        )],
+      });
+      expect(await afterScopeRestriction).toMatchObject({
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+      await runInDurableObject(workspace, (_instance, state) => {
+        const removed = state.getWebSockets()
+          .map((socket) => socket.deserializeAttachment() as Record<string, unknown>)
+          .find((candidate) => candidate.userId === otherUserId);
+        expect(removed).toMatchObject({
+          applicationState: "background",
+          foregroundWorkstreamId: null,
+        });
+      });
+
+      // Restore broad visibility, seat the second viewer, then narrow again.
+      // Restoring access alone must not resurrect the cleared attachment.
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [
+          effectEnvelope(
+            { ...common, updatedAt: "2026-08-26T20:02:00.000Z" },
+            "00000000-0000-7000-8000-000000000411",
+            3,
+          ),
+          effectEnvelope(
+            viewer(otherUserId, true),
+            "00000000-0000-7000-8000-000000000412",
+          ),
+        ],
+      });
+      const firstAfterParticipantJoin = nextMessageOfType(first, "workspace_presence");
+      const secondAfterParticipantJoin = nextMessageOfType(second, "workspace_presence");
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 4,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      await Promise.all([firstAfterParticipantJoin, secondAfterParticipantJoin]);
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          { ...common, scope: "personal", updatedAt: "2026-08-26T20:03:00.000Z" },
+          "00000000-0000-7000-8000-000000000413",
+          4,
+        )],
+      });
+
+      const afterParticipantRemoval = nextMessageOfType(first, "workspace_presence");
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          viewer(otherUserId, false),
+          "00000000-0000-7000-8000-000000000414",
+          2,
+        )],
+      });
+      expect(await afterParticipantRemoval).toMatchObject({
+        workstreamId: WORKSTREAM_ID,
+        userIds: [],
+      });
+
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          viewer(otherUserId, true),
+          "00000000-0000-7000-8000-000000000415",
+          3,
+        )],
+      });
+      const firstBeforeArchive = nextMessageOfType(first, "workspace_presence");
+      const secondBeforeArchive = nextMessageOfType(second, "workspace_presence");
+      second.send(JSON.stringify({
+        type: "set_presence",
+        revision: 5,
+        applicationState: "foreground",
+        foregroundWorkstreamId: WORKSTREAM_ID,
+      }));
+      await Promise.all([firstBeforeArchive, secondBeforeArchive]);
+
+      await workspace.applyWorkstreamDirectoryEffects({
+        workspaceId: WORKSPACE_ID,
+        envelopes: [effectEnvelope(
+          {
+            ...common,
+            scope: "personal",
+            archivedAt: "2026-08-26T20:04:00.000Z",
+            updatedAt: "2026-08-26T20:04:00.000Z",
+          },
+          "00000000-0000-7000-8000-000000000416",
+          5,
+        )],
+      });
+      await runInDurableObject(workspace, (_instance, state) => {
+        const attachments = state.getWebSockets()
+          .map((socket) => socket.deserializeAttachment() as Record<string, unknown>);
+        expect(attachments).toHaveLength(2);
+        expect(attachments).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            userId: USER_ID,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          }),
+          expect.objectContaining({
+            userId: otherUserId,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          }),
+        ]));
+      });
+    } finally {
+      first.close(1000, "test complete");
+      second.close(1000, "test complete");
+    }
+  });
+
   it("re-evaluates a changed product flag privately for subscribed users", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -2269,6 +2561,17 @@ describe("Durable Objects in the Workers runtime", () => {
         (id, user_id, workspace_id, region, revoked_at, expires_at)
         VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
         .bind(`${SESSION_ID}-${participantId}`, participantId, WORKSPACE_ID),
+      // Naming somebody on the create is an add, and an add is told about, so
+      // the effects the create enqueues carry both people's display names.
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+        VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+        .bind(USER_ID),
+      env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+        VALUES (?, 'participant@example.com', 'Participant', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+        .bind(participantId),
     ]);
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -2712,6 +3015,103 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(page.notes.waterline).toBeGreaterThan(0);
     } finally {
       socket!.close(1000, "test complete");
+    }
+  });
+
+  it("includes every live-state work stream beyond both the recent page and 1,250 rows", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.transactionSync(() => {
+        state.storage.sql.exec(
+          `WITH digits(d) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)),
+           sequence(n) AS (
+             SELECT ones.d + tens.d * 10 + hundreds.d * 100 + thousands.d * 1000 + 1
+             FROM digits ones CROSS JOIN digits tens CROSS JOIN digits hundreds
+             CROSS JOIN digits thousands
+             WHERE ones.d + tens.d * 10 + hundreds.d * 100 + thousands.d * 1000 < 1252
+           )
+           INSERT INTO workspace_workstream_directory
+             (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+              title, description, preview, scope, exact_state, system_kind, last_activity_at,
+              completed_at, archived_at, email_address, origin_type, origin_label,
+              created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+              title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+              source_created_at, source_updated_at, projected_at)
+           SELECT printf('00000000-0000-7000-8002-%012d', n), 1, n,
+             printf('00000000-0000-7000-8003-%012d', n), 'test',
+             printf('Old live state %d', n), '', '', 'workspace',
+             CASE n % 4
+               WHEN 1 THEN 'running'
+               WHEN 2 THEN 'interrupting'
+               WHEN 3 THEN 'preparing_context'
+               ELSE 'waiting_capacity'
+             END,
+             NULL, n, NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+             'settled', 0, 0, NULL, NULL, NULL, n, n, n
+           FROM sequence`,
+          USER_ID,
+        );
+        state.storage.sql.exec(
+          `WITH RECURSIVE sequence(n) AS (
+             SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 251
+           )
+           INSERT INTO workspace_workstream_directory
+             (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+              title, description, preview, scope, exact_state, system_kind, last_activity_at,
+              completed_at, archived_at, email_address, origin_type, origin_label,
+              created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+              title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+              source_created_at, source_updated_at, projected_at)
+           SELECT printf('00000000-0000-7000-8004-%012d', n), 1, 1252 + n,
+             printf('00000000-0000-7000-8005-%012d', n), 'test',
+             printf('Recent completed %d', n), '', '', 'workspace', 'completed', NULL,
+             10000 + n, 10000 + n, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+             'settled', 0, 0, NULL, NULL, NULL, 10000 + n, 10000 + n, 10000 + n
+           FROM sequence`,
+          USER_ID,
+        );
+        state.storage.sql.exec(
+          `UPDATE workspace_directory_state SET waterline = 1503, updated_at = 10251 WHERE id = 1`,
+        );
+      });
+    });
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000709",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      const answer = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const event = JSON.parse(String((await answer).data)) as {
+        sidebar: { workstreams: { items: Array<{ id: string }>; nextCursor: string | null } };
+      };
+      const page = event.sidebar.workstreams;
+      expect(page.nextCursor).not.toBeNull();
+      expect(page.items).toHaveLength(1_502);
+      for (let sequence = 1; sequence <= 4; sequence += 1) {
+        expect(page.items.some((item) =>
+          item.id === `00000000-0000-7000-8002-${String(sequence).padStart(12, "0")}`)).toBe(true);
+      }
+    } finally {
+      socket.close(1000, "test complete");
     }
   });
 
@@ -3897,7 +4297,7 @@ describe("Durable Objects in the Workers runtime", () => {
     });
   });
 
-  it("owns connector events, deduplicates Queue replays, and fences Workflow settlement", async () => {
+  it("owns connector events, deduplicates Queue replays, and fences processing settlement", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
       workspaceDOName("global", WORKSPACE_ID),
@@ -3928,35 +4328,187 @@ describe("Durable Objects in the Workers runtime", () => {
       processingStatus: "pending",
       processingAttempt: -1,
     });
-    const workflowInstanceId = `connector-event:${firstId}`;
-    const claim = await stub.claimConnectorEvent({
-      workspaceId: WORKSPACE_ID,
-      eventId: firstId,
-      workflowInstanceId,
-      attempt: 0,
-    });
-    expect(claim).toMatchObject({
+    const legacyWorkflowId = `connector-event-${firstId}-5`;
+    const legacyClaim = LegacyWorkspaceConnectorEventClaimResultSchema.parse(
+      await stub.claimConnectorEvent({
+        workspaceId: WORKSPACE_ID,
+        eventId: firstId,
+        workflowInstanceId: legacyWorkflowId,
+        attempt: 5,
+      }),
+    );
+    expect(legacyClaim).toEqual({
       outcome: "claimed",
-      event: { connectorType: "github", activity: { id: firstId, workspaceId: WORKSPACE_ID } },
+      event: connectorEvent(firstId),
+    });
+    if (legacyClaim.outcome !== "claimed") throw new Error("expected legacy Workflow claim");
+    const replayedLegacyClaim = LegacyWorkspaceConnectorEventClaimResultSchema.parse(
+      await stub.claimConnectorEvent({
+        workspaceId: WORKSPACE_ID,
+        eventId: firstId,
+        workflowInstanceId: legacyWorkflowId,
+        attempt: 5,
+      }),
+    );
+    expect(replayedLegacyClaim).toEqual({
+      outcome: "claimed",
+      event: connectorEvent(firstId),
     });
     await expect(stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId: "connector-event:other",
-      attempt: 0,
+      workflowInstanceId: `connector-event-${firstId}-4`,
+      attempt: 5,
     })).resolves.toEqual({ outcome: "busy" });
+    await runInDurableObject(stub, (_instance, state) => {
+      // Simulate an active claim written before migration 12 added the
+      // orchestrator discriminator, and age it past the Queue lease window.
+      state.storage.sql.exec(
+        `UPDATE workspace_connector_events
+            SET processing_orchestrator = NULL, claimed_at = ?
+          WHERE event_id = ?`,
+        Date.now() - 15 * 60_000 - 1,
+        firstId,
+      );
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000306",
+      attempt: 5,
+      orchestrator: "queue",
+    })).resolves.toEqual({
+      outcome: "busy",
+      reason: "legacy_workflow_active",
+      retryAt: null,
+    });
     await stub.settleConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId,
+      workflowInstanceId: legacyWorkflowId,
+      outcome: "failed",
+      error: "legacy Workflow retry handoff",
+    });
+    const processingOwnerId = "00000000-0000-7000-8000-000000000304";
+    const claim = WorkspaceConnectorEventClaimResultSchema.parse(await stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
+      attempt: 5,
+      orchestrator: "queue",
+    }));
+    expect(claim).toMatchObject({
+      outcome: "claimed",
+      event: { connectorType: "github", activity: { id: firstId, workspaceId: WORKSPACE_ID } },
+      processingLeaseId: expect.any(String),
+      processingLeaseExpiresAt: expect.any(Number),
+    });
+    if (claim.outcome !== "claimed") throw new Error("expected initial connector claim");
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
+      attempt: 5,
+      orchestrator: "queue",
+    })).resolves.toMatchObject({
+      outcome: "busy",
+      reason: "active_lease_not_expired",
+      retryAt: expect.any(Number),
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000305",
+      attempt: 5,
+      orchestrator: "queue",
+    })).resolves.toMatchObject({
+      outcome: "busy",
+      reason: "active_lease_not_expired",
+      retryAt: expect.any(Number),
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE workspace_connector_events SET claimed_at = ? WHERE event_id = ?`,
+        Date.now() - 15 * 60_000 - 1,
+        firstId,
+      );
+    });
+    const recovered = WorkspaceConnectorEventClaimResultSchema.parse(await stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
+      attempt: 5,
+      orchestrator: "queue",
+    }));
+    expect(recovered).toMatchObject({
+      outcome: "claimed",
+      processingLeaseId: expect.any(String),
+    });
+    if (recovered.outcome !== "claimed") throw new Error("expected recovered connector claim");
+    expect(recovered.processingLeaseId).not.toBe(claim.processingLeaseId);
+    await runInDurableObject(stub, async (instance) => {
+      await expect(instance.settleConnectorEvent({
+        workspaceId: WORKSPACE_ID,
+        eventId: firstId,
+        processingOwnerId,
+        processingLeaseId: claim.processingLeaseId,
+        outcome: "failed",
+        error: "stale handler",
+      })).rejects.toThrow("connector_event_settlement_fenced");
+    });
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
+      processingLeaseId: recovered.processingLeaseId,
+      outcome: "failed",
+      error: "injected retry",
+    });
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000305",
+      attempt: 4,
+      orchestrator: "queue",
+    })).resolves.toEqual({
+      outcome: "busy",
+      reason: "failed_attempt_not_advanced",
+      retryAt: null,
+    });
+    const retried = WorkspaceConnectorEventClaimResultSchema.parse(await stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
+      attempt: 5,
+      orchestrator: "queue",
+    }));
+    expect(retried).toMatchObject({ outcome: "claimed", processingLeaseId: expect.any(String) });
+    if (retried.outcome !== "claimed") throw new Error("expected retried connector claim");
+    await expect(stub.claimConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId: "00000000-0000-7000-8000-000000000305",
+      attempt: 5,
+      orchestrator: "queue",
+    })).resolves.toMatchObject({
+      outcome: "busy",
+      reason: "active_lease_not_expired",
+      retryAt: expect.any(Number),
+    });
+    await stub.settleConnectorEvent({
+      workspaceId: WORKSPACE_ID,
+      eventId: firstId,
+      processingOwnerId,
+      processingLeaseId: retried.processingLeaseId,
       outcome: "processed",
       error: null,
     });
     await expect(stub.claimConnectorEvent({
       workspaceId: WORKSPACE_ID,
       eventId: firstId,
-      workflowInstanceId,
-      attempt: 0,
+      processingOwnerId,
+      attempt: 5,
+      orchestrator: "queue",
     })).resolves.toEqual({ outcome: "processed" });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
@@ -4528,27 +5080,32 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     await evictDurableObject(stub);
 
-    const delivered = nextMessages(socket, 2);
-    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 1 }));
-    const frames = (await delivered).map((event) => JSON.parse(String(event.data)) as {
+    const delivered = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 1, publishPresence: false }));
+    const frame = JSON.parse(String((await delivered).data)) as {
       type: string;
       sequence: number;
-      messageFeed?: { items: { sequenceNumber: number }[] };
-      resumeFeed?: { items: { sequenceNumber: number }[] } | null;
-    });
+      workstream: { viewers: unknown[] };
+      messageFeed: { items: { sequenceNumber: number }[] };
+      resumeFeed: { items: { sequenceNumber: number }[] } | null;
+    };
 
-    expect(frames[0]).toMatchObject({ type: "snapshot", sequence: 2 });
-    expect(frames[0]!.messageFeed?.items.at(-1)?.sequenceNumber).toBe(60);
+    expect(frame).toMatchObject({ type: "snapshot", sequence: 2 });
+    expect(frame.workstream.viewers).toEqual([]);
+    expect(frame.messageFeed.items.at(-1)?.sequenceNumber).toBe(60);
     // A repair always installs the newest canonical page. Sending the reader's
     // older first-unread window here would make a pre-fix desktop treat the
     // first frame seen by a fresh hook as an arrival and visibly roll back.
-    expect(frames[0]!.resumeFeed).toBeNull();
-    expect(frames[1]).toMatchObject({ type: "presence_changed", sequence: 3 });
+    expect(frame.resumeFeed).toBeNull();
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
         afterSequence: 2,
+        publishPresence: false,
         subscribed: true,
       });
+      expect(state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence).toBe(2);
     });
     socket.close(1000, "test complete");
   });
@@ -4715,6 +5272,158 @@ describe("Durable Objects in the Workers runtime", () => {
       const attachment = state.getWebSockets()[0]!.deserializeAttachment() as { subscribed: boolean };
       expect(attachment.subscribed).toBe(true);
     });
+  });
+
+  it("publishes a routed participant turn to a subscribed viewer without a reconnect", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000141",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    await runInDurableObject(stub, (_instance, state) => {
+      const server = state.getWebSockets()[0]!;
+      server.serializeAttachment({
+        ...(server.deserializeAttachment() as Record<string, unknown>),
+        subscribed: true,
+      });
+    });
+
+    try {
+      const delivered = nextMessageOfType(socket, "transcript_turn_upserted");
+      const append = await stub.fetch("https://substream.test/internal/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          operation: "appendMessage",
+          args: [{
+            messageId: "00000000-0000-7000-8000-000000000142",
+            clientMessageId: "routed-live-message",
+            authorType: "external",
+            authorUserId: null,
+            externalActorJson: JSON.stringify({ provider: "slack", displayName: "Release bot" }),
+            messageType: "text",
+            text: "The deploy finished.",
+            structuredContentJson: null,
+            producedByRunId: null,
+            now: Date.parse("2026-08-26T20:00:00.000Z"),
+          }],
+        }),
+      });
+      expect(append.status).toBe(200);
+      expect(await append.json()).toMatchObject({ ok: true, value: { outcome: "appended" } });
+      expect(await delivered).toMatchObject({
+        type: "transcript_turn_upserted",
+        turn: {
+          turnId: "00000000-0000-7000-8000-000000000142",
+          clientMessageId: "routed-live-message",
+          actor: "external",
+          blocks: [{ type: "text", text: "The deploy finished." }],
+        },
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
+  it("forces subscribed viewers to resync when a committed runtime event exceeds the frame", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000143",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    await runInDurableObject(stub, (_instance, state) => {
+      const server = state.getWebSockets()[0]!;
+      server.serializeAttachment({
+        ...(server.deserializeAttachment() as Record<string, unknown>),
+        subscribed: true,
+      });
+    });
+
+    try {
+      const resync = nextMessageOfType(socket, "resync_required");
+      await runInDurableObject(stub, async (instance) => {
+        await (instance as unknown as TestableSubstreamAgent).publishAgentRuntimeEvent({
+          type: "transcript_turn_upserted",
+          turn: {
+            transcriptSequence: 1,
+            turnId: "00000000-0000-7000-8000-000000000144",
+            entryKind: "conversation",
+            actor: "external",
+            authorUserId: null,
+            clientMessageId: "oversized-runtime-event",
+            externalActor: null,
+            attentionOrdinal: null,
+            createdAtUtc: "2026-08-26T20:00:00.000Z",
+            revision: 1,
+            blocks: [{
+              type: "text",
+              blockId: "00000000-0000-7000-8000-000000000144:text",
+              blockIndex: 0,
+              text: "x".repeat(WORKSTREAM_REALTIME_MAX_FRAME_BYTES),
+              streaming: false,
+              mentions: [],
+              attachments: [],
+              messageType: "text",
+              structuredContent: null,
+            }],
+            activityId: null,
+            turnManifestRef: null,
+            manifestByteLength: null,
+            manifestSha256: null,
+          },
+        });
+      });
+      expect(await resync).toMatchObject({
+        type: "resync_required",
+        reason: "history_unavailable",
+        sequence: 1,
+        latestSequence: 1,
+      });
+    } finally {
+      socket.close(1000, "test complete");
+    }
   });
 
   it("pages a subscribed feed in both directions without advancing the shared room cursor", async () => {

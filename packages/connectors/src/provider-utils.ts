@@ -3,6 +3,11 @@ import {
   connectorCredentialRotation,
   type ConnectorConnectionContext,
 } from "./types";
+import {
+  connectorObservationErrorCode,
+  connectorObservationFailureLevel,
+  observeConnectorConnection,
+} from "./observability";
 
 const DEFAULT_RESPONSE_BYTES = 1_000_000;
 
@@ -52,14 +57,79 @@ export async function withProviderReauthorization<T>(
     return await call();
   } catch (error) {
     if (!input.isRejection(error)) throw error;
-    if (input.canRefresh && !input.canRefresh(connection)) throw error;
-    if (isAbortError(error)) throw error;
-    input.signal.throwIfAborted();
+    observeConnectorConnection(connection, "warn", "connector_credential_reauthorization_started", {
+      reason: "provider_credential_rejected",
+    });
+    if (input.canRefresh && !input.canRefresh(connection)) {
+      observeConnectorConnection(connection, "warn", "connector_credential_reauthorization_finished", {
+        outcome: "not_refreshable",
+        code: connectorObservationErrorCode(error),
+      });
+      throw error;
+    }
+    if (isAbortError(error)) {
+      observeConnectorConnection(connection, "warn", "connector_credential_reauthorization_finished", {
+        outcome: "aborted",
+        code: "request_aborted",
+      });
+      throw error;
+    }
+    if (input.signal.aborted) {
+      observeConnectorConnection(connection, "warn", "connector_credential_reauthorization_finished", {
+        outcome: "aborted",
+        code: "request_aborted",
+      });
+      input.signal.throwIfAborted();
+    }
     const rotate = connectorCredentialRotation(connection);
-    connection.credentials = rotate
-      ? await rotate(refused, input.signal)
-      : await input.refresh(connection, input.signal);
-    return await call();
+    const rotationSource = rotate ? "host_serialized" : "adapter";
+    observeConnectorConnection(connection, "debug", "connector_credential_refresh_started", {
+      reason: "provider_credential_rejected",
+      rotation_source: rotationSource,
+    });
+    try {
+      connection.credentials = rotate
+        ? await rotate(refused, input.signal)
+        : await input.refresh(connection, input.signal);
+      observeConnectorConnection(connection, "info", "connector_credential_refresh_finished", {
+        outcome: "succeeded",
+        rotation_source: rotationSource,
+      });
+    } catch (refreshError) {
+      const level = connectorObservationFailureLevel(refreshError);
+      const fields = {
+        outcome: "failed",
+        code: connectorObservationErrorCode(refreshError),
+        rotation_source: rotationSource,
+      };
+      observeConnectorConnection(connection, level, "connector_credential_refresh_finished", fields);
+      observeConnectorConnection(connection, level, "connector_credential_reauthorization_finished", fields);
+      throw refreshError;
+    }
+    observeConnectorConnection(connection, "debug", "connector_provider_retry_started", {
+      reason: "credential_refreshed",
+      rotation_source: rotationSource,
+    });
+    try {
+      const result = await call();
+      observeConnectorConnection(connection, "info", "connector_credential_reauthorization_finished", {
+        outcome: "recovered",
+        rotation_source: rotationSource,
+      });
+      return result;
+    } catch (retryError) {
+      observeConnectorConnection(
+        connection,
+        connectorObservationFailureLevel(retryError),
+        "connector_credential_reauthorization_finished",
+        {
+          outcome: "failed",
+          code: connectorObservationErrorCode(retryError),
+          rotation_source: rotationSource,
+        },
+      );
+      throw retryError;
+    }
   }
 }
 
@@ -84,9 +154,35 @@ export async function refreshExpiringCredentials(
   signal: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const rotate = connectorCredentialRotation(connection);
-  return rotate
-    ? rotate({ ...connection.credentials }, signal)
-    : refresh(connection, signal);
+  const rotationSource = rotate ? "host_serialized" : "adapter";
+  observeConnectorConnection(connection, "debug", "connector_credential_refresh_started", {
+    reason: "credential_expiring",
+    rotation_source: rotationSource,
+  });
+  try {
+    const credentials = await (rotate
+      ? rotate({ ...connection.credentials }, signal)
+      : refresh(connection, signal));
+    observeConnectorConnection(connection, "info", "connector_credential_refresh_finished", {
+      outcome: "succeeded",
+      reason: "credential_expiring",
+      rotation_source: rotationSource,
+    });
+    return credentials;
+  } catch (error) {
+    observeConnectorConnection(
+      connection,
+      connectorObservationFailureLevel(error),
+      "connector_credential_refresh_finished",
+      {
+        outcome: "failed",
+        reason: "credential_expiring",
+        code: connectorObservationErrorCode(error),
+        rotation_source: rotationSource,
+      },
+    );
+    throw error;
+  }
 }
 
 /**

@@ -1,24 +1,53 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  abandonPendingWorkstreamFeedOpen,
+  abandonWorkstreamFeedOpenOutsideRoute,
   javascriptErrorCandidate,
+  cancelWorkstreamFeedOpen,
+  completeWorkstreamFeedPaint,
+  markWorkstreamFeedCacheState,
+  markWorkstreamFeedDataReady,
+  markWorkstreamFeedOpenStarted,
+  markWorkstreamFeedSocketLease,
   markWorkstreamNavigation,
   noteNavigation,
   reportJavascriptError,
+  reportWorkstreamFeedAfterPaint,
+  reportWorkstreamSendReady,
   reportTelemetryProductIntent,
   reportTelemetryScreen,
   telemetryScreenForPath,
   telemetrySurfaceForPath,
   telemetryVisibility,
   uuidV7,
+  workstreamFeedOpenCacheState,
+  workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
   workstreamNavigation,
+  workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 
 const desktopBridge = vi.hoisted(() => vi.fn());
 vi.mock('./platform', () => ({ desktopBridge }));
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  desktopBridge.mockReset();
+});
 
 describe('renderer semantic telemetry helpers', () => {
+  it('keeps work-stream opening lineage and REST windows in distinct cache keys', () => {
+    const workstreamId = '00000000-0000-4000-8000-000000000200';
+    expect(workstreamFeedSourceQueryKey(workstreamId))
+      .toEqual(['workstream-feed-source', workstreamId]);
+    expect(workstreamRecoveryFeedQueryKey(workstreamId))
+      .toEqual(['workstream-recovery-feed', workstreamId]);
+    expect(workstreamSocketSnapshotGenerationQueryKey(workstreamId))
+      .toEqual(['workstream-socket-snapshot-generation', workstreamId]);
+  });
+
   it('maps only planned router destinations to stable screen enums', () => {
     expect(telemetryScreenForPath('/')).toBeNull();
     expect(telemetryScreenForPath('/workstreams/new')).toBe('workspace_home');
@@ -50,6 +79,248 @@ describe('renderer semantic telemetry helpers', () => {
     expect(noteNavigation(noteId)).toBe('reopened');
     expect(telemetryVisibility('personal')).toBe('private');
     expect(telemetryVisibility('workspace')).toBe('public');
+  });
+
+  it('measures the first sidebar click through data readiness and a painted feed', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const workstreamId = '00000000-0000-4000-8000-000000000204';
+    const socketLeaseId = '018f22f2-4c22-7abc-8def-012345678901';
+    const operationId = markWorkstreamFeedOpenStarted(
+      workstreamId,
+      'pinned',
+      'control_warmup',
+      100,
+      socketLeaseId,
+    );
+    expect(markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 110))
+      .toBe(operationId);
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBe(operationId);
+    markWorkstreamFeedCacheState(workstreamId, 'detail_cached');
+    expect(workstreamFeedOpenCacheState(workstreamId)).toBe('detail_cached');
+    expect(markWorkstreamFeedDataReady(workstreamId, 320)).toBe(true);
+    expect(markWorkstreamFeedDataReady(workstreamId, 340)).toBe(false);
+
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_open_started', operationId, workstreamId, socketLeaseId,
+    }));
+    expect(completeWorkstreamFeedPaint(workstreamId, 'socket_snapshot', 'six_to_twenty', 360, socketLeaseId))
+      .toEqual({
+        operationId,
+        intent: {
+          kind: 'workstream_feed_visible',
+          operationId,
+          workstreamId,
+          socketLeaseId,
+          durationMs: 260,
+          dataReadyDurationMs: 220,
+          sidebarSection: 'pinned',
+          cacheState: 'detail_cached',
+          socketPoolState: 'control_warmup',
+          feedSource: 'socket_snapshot',
+          messageCount: 'six_to_twenty',
+        },
+        outcomeIntent: {
+          kind: 'workstream_open_outcome',
+          operationId,
+          workstreamId,
+          outcome: 'visible',
+          durationMs: 260,
+          socketLeaseId,
+        },
+      });
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined();
+    expect(reportWorkstreamSendReady(workstreamId, 'reconnecting', 380)).toBe(true);
+    expect(reportWorkstreamSendReady(workstreamId, 'connected', 390)).toBe(false);
+    expect(report).toHaveBeenCalledWith({
+      kind: 'workstream_send_ready',
+      operationId,
+      workstreamId,
+      durationMs: 280,
+      workspaceSocketState: 'reconnecting',
+    });
+  });
+
+  it('records send readiness once when it paints before the feed', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const workstreamId = '00000000-0000-4000-8000-000000000214';
+    const operationId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
+    report.mockClear();
+
+    expect(reportWorkstreamSendReady(workstreamId, 'connecting', 130)).toBe(true);
+    markWorkstreamFeedCacheState(workstreamId, 'cold');
+    markWorkstreamFeedDataReady(workstreamId, 140);
+    expect(completeWorkstreamFeedPaint(workstreamId, 'boot_payload', 'one', 160)?.operationId)
+      .toBe(operationId);
+    expect(reportWorkstreamSendReady(workstreamId, 'connected', 170)).toBe(false);
+    expect(report).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not attach a late send-ready frame to an attempt superseded after feed paint', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const first = '00000000-0000-4000-8000-000000000216';
+    const second = '00000000-0000-4000-8000-000000000217';
+    markWorkstreamFeedOpenStarted(first, 'recent', 'retained_pair', 100);
+    markWorkstreamFeedCacheState(first, 'feed_cached');
+    markWorkstreamFeedDataReady(first, 110);
+    completeWorkstreamFeedPaint(first, 'feed_cache', 'one', 120);
+    markWorkstreamFeedOpenStarted(second, 'recent', 'cold', 130);
+    report.mockClear();
+
+    expect(reportWorkstreamSendReady(first, 'connected', 140)).toBe(false);
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('replaces a pending feed measurement when another sidebar row is chosen', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const first = '00000000-0000-4000-8000-000000000205';
+    const second = '00000000-0000-4000-8000-000000000206';
+    const firstLease = '018f22f2-4c22-7abc-8def-012345678903';
+    const secondLease = '018f22f2-4c22-7abc-8def-012345678904';
+    const firstAttempt = markWorkstreamFeedOpenStarted(first, 'recent', 'cold', 10, firstLease);
+    const secondAttempt = markWorkstreamFeedOpenStarted(second, 'recent', 'retained_pair', 20, secondLease);
+    expect(report).toHaveBeenCalledWith({
+      kind: 'workstream_open_outcome',
+      operationId: firstAttempt,
+      workstreamId: first,
+      outcome: 'superseded',
+      durationMs: 10,
+      socketLeaseId: firstLease,
+      supersedingWorkstreamId: second,
+    });
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_open_started', operationId: secondAttempt, workstreamId: second,
+    }));
+    expect(workstreamFeedOpenAttemptId(first)).toBeUndefined();
+    expect(markWorkstreamFeedDataReady(first, 30)).toBe(false);
+    markWorkstreamFeedCacheState(second, 'feed_cached');
+    expect(workstreamFeedOpenCacheState(second)).toBe('feed_cached');
+    expect(markWorkstreamFeedDataReady(second, 30)).toBe(true);
+    expect(completeWorkstreamFeedPaint(second, 'feed_cache', 'zero', 40, secondLease)?.intent)
+      .toMatchObject({
+        workstreamId: second,
+        durationMs: 20,
+        socketPoolState: 'retained_pair',
+        feedSource: 'feed_cache',
+      });
+  });
+
+  it('reports feed visibility only after the committed transcript crosses a paint', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const workstreamId = '00000000-0000-4000-8000-000000000207';
+    markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
+    report.mockClear();
+    markWorkstreamFeedCacheState(workstreamId, 'cold');
+    markWorkstreamFeedDataReady(workstreamId, 120);
+
+    reportWorkstreamFeedAfterPaint(workstreamId, 'boot_payload', 'one');
+    expect(report).not.toHaveBeenCalled();
+    frames[0]?.(130);
+    expect(report).not.toHaveBeenCalled();
+    frames[1]?.(140);
+    await Promise.resolve();
+
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_feed_visible',
+      workstreamId,
+      dataReadyDurationMs: 20,
+    }));
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_open_outcome',
+      workstreamId,
+      outcome: 'visible',
+    }));
+  });
+
+  it('assigns fresh attempt IDs across a rapid A to B to A switch', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const first = '00000000-0000-4000-8000-000000000208';
+    const second = '00000000-0000-4000-8000-000000000209';
+    const firstAttempt = markWorkstreamFeedOpenStarted(first, 'recent', 'cold', 10);
+    const firstLease = '018f22f2-4c22-7abc-8def-012345678907';
+    markWorkstreamFeedSocketLease(first, firstLease);
+    const secondAttempt = markWorkstreamFeedOpenStarted(second, 'recent', 'cold', 20);
+    const returnAttempt = markWorkstreamFeedOpenStarted(first, 'recent', 'retained_pair', 30);
+
+    expect(new Set([firstAttempt, secondAttempt, returnAttempt])).toHaveLength(3);
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_open_outcome',
+      operationId: firstAttempt,
+      outcome: 'superseded',
+      socketLeaseId: firstLease,
+      supersedingWorkstreamId: second,
+    }));
+    expect(report).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'workstream_open_outcome',
+      operationId: secondAttempt,
+      outcome: 'superseded',
+      supersedingWorkstreamId: first,
+    }));
+    expect(markWorkstreamFeedDataReady(second, 35)).toBe(false);
+    markWorkstreamFeedCacheState(first, 'feed_cached');
+    expect(markWorkstreamFeedDataReady(first, 40)).toBe(true);
+    expect(completeWorkstreamFeedPaint(first, 'feed_cache', 'one', 50)?.operationId)
+      .toBe(returnAttempt);
+  });
+
+  it('abandons a pending click when its route is left and starts a fresh clock on return', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const workstreamId = '00000000-0000-4000-8000-000000000211';
+    const firstAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 100);
+
+    abandonWorkstreamFeedOpenOutsideRoute(workstreamId, 140);
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBe(firstAttempt);
+    abandonWorkstreamFeedOpenOutsideRoute(null, 160);
+
+    expect(report).toHaveBeenCalledWith({
+      kind: 'workstream_open_outcome',
+      operationId: firstAttempt,
+      workstreamId,
+      outcome: 'abandoned',
+      durationMs: 60,
+    });
+    const returnAttempt = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 60_100);
+    expect(returnAttempt).not.toBe(firstAttempt);
+    abandonPendingWorkstreamFeedOpen(60_120);
+  });
+
+  it('ends a failed opening with the same attempt and socket lease IDs', () => {
+    const report = vi.fn(async () => undefined);
+    desktopBridge.mockReturnValue({ reportTelemetryProductIntent: report });
+    const workstreamId = '00000000-0000-4000-8000-000000000210';
+    const socketLeaseId = '018f22f2-4c22-7abc-8def-012345678906';
+    const operationId = markWorkstreamFeedOpenStarted(
+      workstreamId,
+      'pinned',
+      'retained_pair',
+      100,
+      socketLeaseId,
+    );
+
+    cancelWorkstreamFeedOpen(workstreamId, 145, socketLeaseId);
+
+    expect(report).toHaveBeenCalledWith({
+      kind: 'workstream_open_outcome',
+      operationId,
+      workstreamId,
+      outcome: 'load_failed',
+      durationMs: 45,
+      socketLeaseId,
+    });
+    expect(workstreamFeedOpenAttemptId(workstreamId)).toBeUndefined();
   });
 
   it('reduces renderer stacks to bounded bundle-relative frame coordinates', () => {

@@ -22,6 +22,7 @@ sockets, and effects — belong to
 | `apps/api/src/durable-objects/scheduled-alarms.ts` | The whole capability: the `_internal_durable_alarms` schema statements, `ScheduledAlarmStore`, and the `ScheduledDurableObject` base every scheduling object extends. |
 | `apps/api/src/durable-objects/migratable-durable-object.ts` | The base `ScheduledDurableObject` itself extends. It owns the schema half — the migration pass, its report, and `migrationsReady()`, which every method here awaits before touching `_internal_durable_alarms`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, and the opportunity/ranking product pass. Owns `refreshSchedule`. |
+| `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
 | `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — automations, connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, so a wake-up a run scheduled fires from the object that owns it. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for regional-effect and block-dashboard outboxes, all of which stay derived. |
@@ -195,6 +196,34 @@ opportunity and ranking pass wants its instant computed differently depending on
 the caller (an enqueue wants a past-due instant honoured; the alarm that
 launched nothing wants past-due rows left parked behind a dormant member), and a
 derived source has no way to carry that distinction.
+
+### Workspace phase instrumentation
+
+`WorkspaceDO` wraps the recovery re-arm, authority check, each stored target,
+its two derived phases — activity retention and schedule reconciliation — and
+the final exact re-arm in
+`rally.workspace.scheduled_alarm.phase`. The matching structured rows are
+`workspace_scheduled_alarm_phase_started`, `_completed`, and `_failed`; a final
+`workspace_scheduled_alarm_work_completed` row names the slowest phase and,
+for a stored target, its bounded kind. Durations are compared with the same
+two-second cancellation-recovery horizon used by the pre-work arm.
+
+The fields intentionally contain only fixed enums, counters, booleans, and
+durations. They do not contain a workspace id, alarm key, due time, payload,
+connector value, or error message. Cloudflare already puts the invocation id
+and Durable Object id on the enclosing row and trace, which is enough to find
+the hot instance without copying product identity or content into the custom
+diagnostic. A target error is marked with the fixed
+`workspace_scheduled_alarm_phase_failed` code inside the custom span and the
+original error is rethrown only after that span settles. This matters because
+Cloudflare automatically records errors thrown from span callbacks, including
+details the target supplied.
+
+A started phase with neither a matching completion nor failure means the
+continuation ended while that phase was active. On an already-migrated hot
+object, a `clientDisconnected` alarm invocation with no phase start did not
+enter Rally's alarm work at all; it is a queued runtime delivery, not evidence
+that a particular target was interrupted.
 
 ## Invariants
 
@@ -375,6 +404,9 @@ a failing target a free immediate attempt.
   failure and stall hooks in the Node suite: which attempt warns, which logs at
   `error`, that exactly one operator notification is posted, and that an
   episode mixing throws and stalls posts once.
+- `apps/api/test/workspace-alarm-instrumentation.test.ts` proves the phase
+  fields stay content-free, unknown stored kinds collapse to `unknown`, and the
+  summary identifies work that crosses the recovery horizon.
 - `apps/api/test/workspace-schedule-targets.test.ts` runs the due-time queries
   against the object's own ledger, for the arms the Node snapshots cannot
   exercise: the draft arm's exclusion of linked drafts, and the rounding of a
@@ -406,7 +438,59 @@ a failing target a free immediate attempt.
   callback returns); two separate calls leave a window the drain can win, which
   is how `agent-run-lifecycle.test.ts` became intermittent.
 
+## Operations
+
+In Workers Logs, select the `WorkspaceDO` namespace and filter
+`event = workspace_scheduled_alarm_work_completed` with
+`crossed_recovery_horizon = true`. Group by `slowest_phase` and then
+`slowest_alarm_kind`; the latter is present only when the slowest phase is a
+stored target. Open the enclosing invocation or trace to see the ordered phase
+rows and Cloudflare's automatic binding spans beneath the custom phase span. If
+multiple phases tie at the maximum millisecond duration, the summary names the
+first one that completed; inspect the completion rows to see every tied phase.
+
+For an alarm reported as `clientDisconnected`, first filter the same invocation
+for `workspace_scheduled_alarm_phase_started`. No start row means the queued
+delivery never entered application work. A start without its corresponding
+completion or failure names the phase active when the continuation ended. Do
+not join on workspace ids or alarm keys within these phase rows: neither is
+emitted, and `$workers.durableObjectId` is the platform-owned correlation
+field.
+
 ## Changelog
+
+### 2026-08-25 — Phase timing distinguishes slow work from a cancelled queued alarm
+
+**What changed:** Workspace alarms now emit content-free start, completion, and
+failure rows around both re-arms, the authority check, each stored target, the
+activity-retention pass, and the schedule reconcile. A final summary records
+total work time, the slowest phase, the bounded alarm kind when applicable, and
+whether the two-second recovery horizon was crossed. Each phase is also a child
+span of the platform's alarm invocation trace; target errors cross that span
+only as a fixed error code and are rethrown after it settles.
+
+**Why:** After the recovery-arm fix, alarm `clientDisconnected` outcomes fell by
+about 95% but did not reach zero. Production invocation traces showed the
+remaining rows were short queued alarms being superseded while a successful
+alarm was still running, concentrated in two objects. The platform outcome says
+which waiter was cancelled but not which application phase kept the successful
+invocation active past the recovery horizon; target-specific timing is needed
+before moving or changing any scheduled work.
+
+**Considered and rejected:** Logging alarm keys or workspace ids would make a
+query easier to copy between systems, but Cloudflare already indexes the Durable
+Object id and invocation id and those product identifiers add no diagnostic
+power. Logging only a final duration would miss an invocation whose continuation
+ends before the summary. Moving slow work out of the alarm before measuring it
+would choose an architecture from an aggregate symptom rather than from the
+target actually responsible.
+
+**Consequences:** Each WorkspaceDO alarm produces bounded phase rows and spans;
+the extra observability volume is the cost of distinguishing a queued runtime
+cancellation from interrupted application work. Operators must use the
+platform's Durable Object id for correlation. An unknown stored kind is reported
+as `unknown`, never copied from storage, and no future field may add a target
+key, due time, payload, connector value, or error message.
 
 ### 2026-08-24 — The durability re-arm is a recovery wake, not an immediate duplicate
 

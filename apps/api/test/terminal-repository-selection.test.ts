@@ -7,10 +7,15 @@ import { TerminalSandboxCoordinator } from "../src/services/terminal/coordinator
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalRepositorySelector } from "../src/services/terminal/repository-selection";
 import {
+  createTerminalFinalDiffPreserver,
+  createTerminalWorkspaceBackup,
+} from "../src/services/terminal/lifecycle";
+import {
   createGitHubTerminalCatalogGateway,
   type TerminalRepositoryCatalogGateway,
 } from "../src/services/terminal/workstream-state";
 import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import type { WorkstreamRuntimeResourceAttachment } from "../src/services/workstream-object-client";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
@@ -161,6 +166,7 @@ async function fixture(input?: {
     clearGitHubReadAccess: vi.fn(async () => undefined),
     readFile: vi.fn(async () => backupBytes),
     writeFile: vi.fn(),
+    runUtilityCommand: vi.fn(),
     runCommand: vi.fn(async (_sandbox, command) => ({
       exitCode: 0,
       stdout: command.taskName.includes("cleanup")
@@ -170,6 +176,11 @@ async function fixture(input?: {
     })),
     publishGitBundle: vi.fn(),
   };
+  const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
+  provider.runUtilityCommand = vi.fn((id, command) => utilityImplementation(id, {
+    ...command,
+    taskName: command.operation === "lifecycle.backup_cleanup" ? "cleanup" : "terminal-utility",
+  }));
   const catalog: TerminalRepositoryCatalogGateway = {
     resolveRepository: vi.fn(async () => ({
       id: 41,
@@ -182,7 +193,9 @@ async function fixture(input?: {
   const payloadPut = vi.fn(async () => undefined);
   // Wrapped the way the harness wraps its execution environment, so the
   // routed DB carries object statements to the store while
-  // `regionalDatabase(env)` still reaches the raw regional binding.
+  // `regionalDatabase(env)` still reaches the raw regional binding. That is
+  // an intentional guard: an accidental escape from the routed `env.DB`
+  // reaches the retired schema and fails this fixture.
   const baseEnv = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -239,6 +252,114 @@ async function fixture(input?: {
 }
 
 describe("Terminal model repository selection", () => {
+  it("keeps final-diff preservation ownership in WorkspaceDO after D1 retirement", async () => {
+    const regional = preRetirementProductSqliteDatabase();
+    databases.push(regional);
+    regional.exec("DROP TABLE resource_object_deletion_outbox");
+
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    const payloadPut = vi.fn(async () => undefined);
+    const attachRuntimeResource = vi.fn(() => ({ status: 200, bodyJson: JSON.stringify({ ok: true }) }));
+    const runtimeStatements: string[] = [];
+    const workstreamEnv = withWorkstreamRuntimeDatabase(
+      createTestEnv({
+        DB: sqliteD1(regional),
+        AVALON_REGION: "global",
+        PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, { extra: { attachRuntimeResource } }),
+      }),
+      W,
+      S,
+      "0",
+      async (statements) => {
+        runtimeStatements.push(...statements.map(({ sql }) => sql));
+        return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
+      },
+    );
+    const env = withWorkspaceRuntimeDatabase(workstreamEnv, W, async (statements) => {
+      runtimeStatements.push(...statements.map(({ sql }) => sql));
+      return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
+    });
+    const provider = {
+      runUtilityCommand: vi.fn(async () => ({
+        exitCode: 0,
+        stdout: "diff --git a/file.txt b/file.txt\n+preserved\n",
+        stderr: "",
+      })),
+    } satisfies Pick<TerminalSandboxProvider, "runUtilityCommand">;
+
+    await expect(
+      createTerminalFinalDiffPreserver(env, provider, W, S)("provider-1", 1),
+    ).resolves.toBeUndefined();
+
+    expect(runtimeStatements.some((sql) => sql.includes("INSERT OR IGNORE INTO resource_object_deletion_outbox")))
+      .toBe(true);
+    expect(runtimeStatements.some((sql) => sql.includes("INSERT INTO resources"))).toBe(true);
+    expect(payloadPut).toHaveBeenCalledOnce();
+    expect(attachRuntimeResource).toHaveBeenCalledOnce();
+  });
+
+  it("keeps repository-replacement backup ownership in WorkspaceDO after D1 retirement", async () => {
+    const regional = preRetirementProductSqliteDatabase();
+    databases.push(regional);
+    regional.exec("DROP TABLE resource_object_deletion_outbox");
+
+    const backupBytes = new TextEncoder().encode("workspace-backup");
+    const backupSha = await sha256Hex(backupBytes);
+    const payloadPut = vi.fn(async () => undefined);
+    const runtimeStatements: string[] = [];
+    const workstreamEnv = withWorkstreamRuntimeDatabase(
+      createTestEnv({
+        DB: sqliteD1(regional),
+        AVALON_REGION: "global",
+        PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
+      }),
+      W,
+      S,
+      "0",
+      async (statements) => {
+        runtimeStatements.push(...statements.map(({ sql }) => sql));
+        return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
+      },
+    );
+    const env = withWorkspaceRuntimeDatabase(workstreamEnv, W, async (statements) => {
+      runtimeStatements.push(...statements.map(({ sql }) => sql));
+      return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
+    });
+    const provider = {
+      readFile: vi.fn(async () => backupBytes),
+      runUtilityCommand: vi.fn(async (_sandboxId: string, command: { operation: string }) => ({
+        exitCode: 0,
+        stdout: command.operation === "lifecycle.backup_cleanup"
+          ? ""
+          : `READY ${backupBytes.byteLength} ${backupSha}\n`,
+        stderr: "",
+      })),
+    } satisfies Pick<TerminalSandboxProvider, "readFile" | "runUtilityCommand">;
+    const attach = vi.fn(async () => undefined);
+
+    await expect(createTerminalWorkspaceBackup(env, provider, {
+      workspaceId: W,
+      workstreamId: S,
+      toolCallId: "post-d1-retirement-backup",
+      repositoryFullName: "acme/widget",
+      providerSandboxId: "provider-1",
+      generation: 1,
+      signal: new AbortController().signal,
+    }, attach)).resolves.toMatchObject({
+      title: "Terminal backup before acme/widget",
+      sizeBytes: backupBytes.byteLength,
+      sourceSha256: backupSha,
+    });
+
+    expect(runtimeStatements.some((sql) => sql.includes("INSERT OR IGNORE INTO resource_object_deletion_outbox")))
+      .toBe(true);
+    expect(runtimeStatements.some((sql) => sql.includes("INSERT INTO resources"))).toBe(true);
+    expect(payloadPut).toHaveBeenCalledOnce();
+    expect(attach).toHaveBeenCalledOnce();
+  });
+
   it("prefers read-only remote authority while keeping local edits available and backs up before replacement", async () => {
     const {
       objectStore,
@@ -273,13 +394,13 @@ describe("Terminal model repository selection", () => {
     });
     expect(payloadPut).toHaveBeenCalledOnce();
     expect(residentResourceAttacher).toHaveBeenCalledOnce();
-    const archiveCommand = vi.mocked(provider.runCommand).mock.calls.find(([, command]) => (
-      command.taskName.includes("workspace-backup") && !command.taskName.includes("cleanup")
+    const archiveCommand = vi.mocked(provider.runUtilityCommand).mock.calls.find(([, command]) => (
+      command.operation === "lifecycle.backup"
     ))?.[1].command;
     expect(archiveCommand).toContain("git bundle create");
     expect(archiveCommand).toContain("--exclude='*/.git'");
     expect(archiveCommand).toContain("--exclude='*/node_modules'");
-    expect(provider.runCommand).toHaveBeenCalledBefore(vi.mocked(provider.deleteSandbox));
+    expect(provider.runUtilityCommand).toHaveBeenCalledBefore(vi.mocked(provider.deleteSandbox));
     expect(provider.deleteSandbox).toHaveBeenCalledWith("provider-1");
     expect(workstreamObjectGet(
       objectStore,
@@ -434,7 +555,7 @@ describe("Terminal model repository selection", () => {
          VALUES (1, 'daytona', ?, 'repo-sandbox', 'provider-1', 1, 'authority', 1, 1, ?, ?, ?)`,
         state, Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"), Date.parse("2026-08-13T00:00:00.000Z"),
       );
-      vi.mocked(provider.runCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
+      vi.mocked(provider.runUtilityCommand).mockRejectedValueOnce(new Error("R2 backup failed"));
 
       await expect(selector.checkout(context, {
         repositoryFullName: "acme/widget",

@@ -33,6 +33,13 @@ vi.mock('./workspace-socket', () => ({
 vi.mock('./use-workstream-control-socket', () => ({ useWorkstreamControlSocket: vi.fn() }));
 
 import type * as TelemetryModule from './telemetry';
+import {
+  cancelWorkstreamFeedOpen,
+  markWorkstreamFeedOpenStarted,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
+} from './telemetry';
 
 const reportTelemetryProductIntent = vi.hoisted(() => vi.fn());
 vi.mock('./telemetry', async (importOriginal) => ({
@@ -44,6 +51,12 @@ function socketTelemetry(): unknown[] {
   return reportTelemetryProductIntent.mock.calls
     .map(([intent]) => intent as { kind: string })
     .filter((intent) => intent.kind === 'realtime_socket_state');
+}
+
+function socketStartedTelemetry(): Array<Record<string, unknown>> {
+  return reportTelemetryProductIntent.mock.calls
+    .map(([intent]) => intent as Record<string, unknown>)
+    .filter((intent) => intent['kind'] === 'workstream_socket_started');
 }
 
 class FakeWebSocket extends EventTarget {
@@ -178,13 +191,28 @@ function workstreamDetail(overrides: Partial<WorkstreamDetail> = {}): Workstream
   };
 }
 
-/** `getWorkstream` answers the whole of an open now, not just the detail. */
+function emptyTranscriptSnapshot(): WorkstreamBoot['transcript'] {
+  return {
+    snapshotId: '00000000-0000-7000-8000-000000000777',
+    snapshotThrough: 0,
+    eventSequence: 0,
+    snapshotAtUtc: '2026-07-31T19:00:00.000Z',
+    unreadAnchorSequence: null,
+    unreadReason: 'no_unread',
+    ranges: [],
+    activities: [],
+    activeActivities: [],
+    activeTurns: [],
+  };
+}
+
+/** `getWorkstream` is the complete REST recovery twin of a socket snapshot. */
 function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBoot {
   return {
     ...workstreamDetail(overrides),
+    transcript: emptyTranscriptSnapshot(),
     messageFeed: { items: [], nextCursor: null, newerCursor: null },
     resumeFeed: null,
-    blockDashboardPreference: { visible: false, updatedAt: null },
   };
 }
 
@@ -258,6 +286,7 @@ function snapshotFrame(input: {
     sequence: input.sequence,
     occurredAt: '2026-07-31T19:20:00.000Z',
     workstream: wireWorkstreamDetail(input.workstream),
+    transcript: emptyTranscriptSnapshot(),
     messageFeed: { items: input.messages ?? [], nextCursor: null, newerCursor: null },
     resumeFeed: input.resumeFeed ?? null,
     activeStreams: [],
@@ -412,6 +441,8 @@ describe('useWorkstreamSocket', () => {
     });
 
     await flushPromises();
+    expect(result.current.sendReady).toBe(true);
+    expect(result.current.workspaceSocketState).toBe('connected');
     await expect(result.current.createMessage({
         text: 'Please continue.',
         clientId: clientMessageId,
@@ -570,6 +601,31 @@ describe('useWorkstreamSocket', () => {
       nextCursor: '21',
       newerCursor: null,
     });
+  });
+
+  it('lets a reopened reader request base state from an already-connected room', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const workstreamId = '00000000-0000-7000-8000-000000000625';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => result.current.requestSnapshot());
+
+    expect(sentFrames(socket)).toEqual([
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
+      { type: 'request_snapshot' },
+    ]);
   });
 
   it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
@@ -977,7 +1033,7 @@ describe('useWorkstreamSocket', () => {
 
     expect(transcript).toHaveLength(1);
     expect(transcript[0]).toMatchObject({
-      id: messageId,
+      id: 'turn-cold-join',
       text: 'Already streamed and live',
       streaming: true,
     });
@@ -1011,7 +1067,7 @@ describe('useWorkstreamSocket', () => {
 
     const merged = mergeCanonicalTranscript(checkpoint, canonical);
 
-    expect(merged.map((message) => message.id)).toEqual([canonical[0]?.id, messageId]);
+    expect(merged.map((message) => message.id)).toEqual([canonical[0]?.id, 'turn-cold-order']);
     expect(merged[1]?.realtimeOrder?.anchorSequenceNumber).toBe(40);
   });
 
@@ -1094,7 +1150,7 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: 'lo',
     }, workstreamId, cursors);
-    expect(transcript.find((message) => message.id === messageId)?.text).toBe('Hello');
+    expect(transcript.find((message) => message.id === 'turn-one')?.text).toBe('Hello');
 
     transcript = applyStreamingSocketEvent(transcript, {
       type: 'stream_started',
@@ -1152,10 +1208,11 @@ describe('useWorkstreamSocket', () => {
       reset: false,
       delta: ' stale',
     }, workstreamId, cursors);
-    expect(transcript.find((message) => message.id === messageId)?.text).toBe('Hello world');
+    expect(transcript.find((message) => message.id === 'turn-one')?.text).toBe('Hello');
+    expect(transcript.find((message) => message.id === 'turn-two')?.text).toBe(' world');
   });
 
-  it('appends Bind post-tool turns and keeps tool order across REST refreshes', async () => {
+  it('appends Bind post-tool turns without coalescing narration around tools', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const frames = stubAnimationFrames();
     const queryClient = new QueryClient();
@@ -1274,7 +1331,11 @@ describe('useWorkstreamSocket', () => {
     await frames.flush();
 
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])
-      ?.find((message) => message.id === assistantMessageId)?.text).toBe('I will check. Here is the result.');
+      ?.filter((message) => message.id === 'turn-one' || message.id === 'turn-two')
+      .map((message) => [message.id, message.text])).toEqual([
+        ['turn-one', 'I will check. '],
+        ['turn-two', 'Here is the result.'],
+      ]);
 
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -1319,9 +1380,10 @@ describe('useWorkstreamSocket', () => {
     const live = queryClient.getQueryData<Message[]>(['messages', workstreamId]) ?? [];
     expect(live.map((message) => message.id)).toEqual([
       humanMessage.id,
+      'turn-one',
       `tool-${toolOneId}`,
       `tool-${toolTwoId}`,
-      assistantMessage.id,
+      'turn-two',
     ]);
 
     const refreshedBeforePersistence = mergeCanonicalTranscript(live, [humanMessage, assistantMessage]);
@@ -1549,7 +1611,7 @@ describe('useWorkstreamSocket', () => {
       delta: 'The first attempt, mostly unrevealed.',
     }, workstreamId, cursors, { paced: true });
     // Partially reveal the first attempt, then let a reset replace it.
-    cursors.get(messageId)!.revealed = 9;
+    cursors.get('turn-retry')!.revealed = 9;
     transcript = applyStreamingSocketEvent(transcript, {
       type: 'stream_delta',
       sequence: 2,
@@ -1564,8 +1626,8 @@ describe('useWorkstreamSocket', () => {
 
     // The retracted text disappears at once — the reveal clamps back to the
     // turn's start — and the replacement paces in from there.
-    expect(transcript.find((message) => message.id === messageId)?.text).toBe('');
-    expect(cursors.get(messageId)).toMatchObject({
+    expect(transcript.find((message) => message.id === 'turn-retry')?.text).toBe('');
+    expect(cursors.get('turn-retry')).toMatchObject({
       receivedText: 'A fresh attempt.',
       revealed: 0,
     });
@@ -1618,7 +1680,7 @@ describe('useWorkstreamSocket', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(750); });
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
-    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2 }));
+    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2, publishPresence: false }));
 
     act(() => second.message({
       type: 'stream_delta',
@@ -1733,7 +1795,7 @@ describe('useWorkstreamSocket', () => {
     // The cursor is the reconciliation: the reconnect subscribes, and the room
     // answers a cursor it cannot replay from with the canonical snapshot. No
     // REST call is made for it — `socketApiWith` throws on any it did not stub.
-    expect(sentFrames(second)).toEqual([{ type: 'subscribe', afterSequence: 0 }]);
+    expect(sentFrames(second)).toEqual([{ type: 'subscribe', afterSequence: 0, publishPresence: false }]);
     act(() => second.message(snapshotFrame({
       sequence: 6,
       workstream: { id: workstreamId, harnessStatus: 'completed' },
@@ -1846,6 +1908,11 @@ describe('useWorkstreamSocket', () => {
       harnessStatus: 'completed',
     } as WorkstreamDetail);
     queryClient.setQueryData(['messages', workstreamId], [{ id: 'message-1' }] as Message[]);
+    queryClient.setQueryData(['messages-newer-cursor', workstreamId], 'message-cursor');
+    queryClient.setQueryData(['block-dashboard', workstreamId], { blocks: [{ sensitive: true }] });
+    queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'legacy_page');
+    queryClient.setQueryData(workstreamRecoveryFeedQueryKey(workstreamId), { resumeFeed: null });
+    queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
     setCachedWorkstreams(queryClient, [
       { id: workstreamId, title: 'Compensation review' },
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
@@ -1877,6 +1944,11 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['block-dashboard', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
     ]);
@@ -1888,16 +1960,26 @@ describe('useWorkstreamSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     const workstreamId = '00000000-7000-7000-8000-000000000407';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
+    const getSocketTicket = vi.fn(async (id: string, substreamId?: string, requestId?: string) => {
+      void id;
+      void substreamId;
+      void requestId;
+      return {
         url: `wss://api.rally.test/workstreams/${workstreamId}`,
         ticket: 'socket-ticket',
         protocols: socketTicketProtocols('socket-ticket'),
-      })),
+      };
+    });
+    const api = socketApiWith({
+      getSocketTicket,
       getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'completed' })),
       getMessages: vi.fn(async () => []),
     });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+    const openAttemptId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 0);
+    renderHook(
+      () => useWorkstreamSocket(api, workstreamId, true, false, 'background_workstream'),
+      { wrapper: createWrapper(queryClient) },
+    );
 
     await flushPromises();
     act(() => FakeWebSocket.instances[0]!.open());
@@ -1907,6 +1989,26 @@ describe('useWorkstreamSocket', () => {
 
     // The revoked case must not have turned every close into a dead end.
     expect(api.getSocketTicket).toHaveBeenCalledTimes(2);
+    const started = socketStartedTelemetry();
+    expect(new Set(started.map((intent) => intent['socketLeaseId']))).toHaveLength(1);
+    expect(started[0]?.['socketLeaseId']).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(started.map(({ operationId, ...intent }) => {
+      expect(operationId).toMatch(/^[0-9a-f-]{36}$/u);
+      delete intent['socketLeaseId'];
+      return intent;
+    })).toEqual([
+      {
+        kind: 'workstream_socket_started', workstreamId, socket: 'substream_feed',
+        openAttemptId, reason: 'background_workstream', attempts: 'zero',
+      },
+      {
+        kind: 'workstream_socket_started', workstreamId, socket: 'substream_feed',
+        openAttemptId, reason: 'reconnect', attempts: 'one',
+      },
+    ]);
+    expect(getSocketTicket.mock.calls.map((call) => call[2]))
+      .toEqual(started.map((intent) => intent['operationId']));
+    cancelWorkstreamFeedOpen(workstreamId, 100);
   });
 
   it('refreshes run metadata when a new run starts in another client', async () => {
@@ -1957,7 +2059,7 @@ describe('useWorkstreamSocket', () => {
     // client asks the room for canonical state over the socket it already
     // holds rather than spending two REST reads on it.
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
     queryClient.setQueryData(['workstream-context', workstreamId, null], { resources: [] });
@@ -2089,7 +2191,7 @@ describe('useWorkstreamSocket', () => {
       status: 'completed',
     }));
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
 
@@ -2120,7 +2222,7 @@ describe('useWorkstreamSocket', () => {
       status: 'idle',
     }));
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
       { type: 'request_snapshot' },
     ]);
@@ -2206,7 +2308,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
     act(() => socket.message(snapshotFrame({
@@ -2235,6 +2337,10 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const socket = FakeWebSocket.instances[0]!;
     act(() => socket.open());
+    queryClient.setQueryData(workstreamRecoveryFeedQueryKey(workstreamId), {
+      messageFeed: { items: [], nextCursor: null, newerCursor: null },
+      resumeFeed: null,
+    });
 
     // Arriving: the reader is behind, so the resume window is what they see.
     act(() => socket.message(snapshotFrame({
@@ -2250,6 +2356,9 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
       .toEqual([12]);
+    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
+    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
+    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBe(1);
 
     // Reconciling: the same frame shape, but the reader has been watching this
     // run. Read acknowledgement stops while the window is unfocused, so their
@@ -2276,6 +2385,7 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
       .toEqual([91]);
     expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeNull();
+    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBe(2);
   });
 
   it('does not re-ask for a snapshot as a run streams under it', async () => {
@@ -2331,7 +2441,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
 
@@ -2351,7 +2461,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
       { type: 'request_snapshot' },
     ]);
@@ -2400,7 +2510,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
       { type: 'request_snapshot' },
     ]);
@@ -2454,7 +2564,7 @@ describe('useWorkstreamSocket', () => {
 
     await flushPromises();
     act(() => FakeWebSocket.instances[0]?.open());
-    expect(FakeWebSocket.instances[0]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+    expect(FakeWebSocket.instances[0]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0, publishPresence: false }));
 
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'harness_status_changed',
@@ -2466,7 +2576,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     act(() => FakeWebSocket.instances[1]?.open());
 
-    expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+    expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0, publishPresence: false }));
   });
 
   it('hands a running stream between foreground and background subscribers without gaps or duplicate text', async () => {
@@ -2520,7 +2630,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const firstSocket = latestSocketFor(firstWorkstreamId);
     act(() => firstSocket.open());
-    expect(firstSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+    expect(firstSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0, publishPresence: false }));
     act(() => firstSocket.message({
       type: 'stream_started',
       sequence: 1,
@@ -2548,7 +2658,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const backgroundSocket = latestSocketFor(firstWorkstreamId);
     act(() => backgroundSocket.open());
-    expect(backgroundSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2 }));
+    expect(backgroundSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2, publishPresence: false }));
     // A retried Bind frame can occupy a new room sequence. The stream cursor
     // crossing the component handoff must reject it before the next real chunk.
     act(() => backgroundSocket.message({
@@ -2581,7 +2691,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const returnedSocket = latestSocketFor(firstWorkstreamId);
     act(() => returnedSocket.open());
-    expect(returnedSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 4 }));
+    expect(returnedSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 4, publishPresence: false }));
     act(() => returnedSocket.message({
       type: 'stream_delta',
       sequence: 5,
@@ -2928,7 +3038,7 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
     act(() => FakeWebSocket.instances[1]?.open());
     expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: 'subscribe', afterSequence: 14 }),
+      JSON.stringify({ type: 'subscribe', afterSequence: 14, publishPresence: false }),
     );
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
     expect(queryClient.getQueryData(['workstreams'])).toEqual([

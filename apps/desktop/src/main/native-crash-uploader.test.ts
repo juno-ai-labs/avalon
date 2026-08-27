@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 
@@ -10,12 +10,19 @@ const runtime = {
   release: '1.96.0', buildId: 'build-1', platform: 'darwin' as const, architecture: 'arm64' as const,
   launchId: '018f0000-0000-7000-8000-000000000004', channel: 'stable' as const,
 };
+const generationEpoch = Date.now() - 60 * 60_000;
+const generationTime = (minute: number): Date => new Date(generationEpoch + minute * 60_000);
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-08-12T20:05:00.000Z'));
+});
 
 async function fixture(): Promise<{ root: string; dump: string }> {
   const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-'));
   roots.push(root);
   const first = await prepareNativeCrashGeneration({
-    rootDirectory: root, route: 'global', now: new Date('2026-08-12T20:00:00.000Z'),
+    rootDirectory: root, route: 'global', now: generationTime(0),
     generationId: '018f0000-0000-7000-8000-000000000001',
     runtime,
   });
@@ -25,7 +32,7 @@ async function fixture(): Promise<{ root: string; dump: string }> {
   bytes.set(new TextEncoder().encode('MDMP'));
   await writeFile(dump, bytes);
   await prepareNativeCrashGeneration({
-    rootDirectory: root, route: 'global', now: new Date('2026-08-12T20:01:00.000Z'),
+    rootDirectory: root, route: 'global', now: generationTime(1),
     generationId: '018f0000-0000-7000-8000-000000000002',
     runtime,
   });
@@ -37,6 +44,7 @@ async function fixture(): Promise<{ root: string; dump: string }> {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  vi.useRealTimers();
 });
 
 describe('NativeCrashUploader', () => {
@@ -44,7 +52,7 @@ describe('NativeCrashUploader', () => {
     const root = await mkdtemp(join(tmpdir(), 'rally-native-upload-eu-'));
     roots.push(root);
     const first = await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: new Date('2026-08-12T20:00:00.000Z'),
+      rootDirectory: root, route: 'eu', now: generationTime(0),
       generationId: '018f0000-0000-7000-8000-000000000021',
       runtime,
     });
@@ -53,7 +61,7 @@ describe('NativeCrashUploader', () => {
     bytes.set(new TextEncoder().encode('MDMP'));
     await writeFile(join(first.activeCrashpadDirectory!, 'completed', 'renderer.dmp'), bytes);
     await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: new Date('2026-08-12T20:01:00.000Z'),
+      rootDirectory: root, route: 'eu', now: generationTime(1),
       generationId: '018f0000-0000-7000-8000-000000000022',
       runtime,
     });
@@ -119,7 +127,7 @@ describe('NativeCrashUploader', () => {
   it('uses a Global onboarding capability and leaves a valid EU-designated generation untouched', async () => {
     const { root, dump } = await fixture();
     const euFirst = await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'eu', now: new Date('2026-08-12T20:02:00.000Z'),
+      rootDirectory: root, route: 'eu', now: generationTime(2),
       generationId: '018f0000-0000-7000-8000-000000000098', runtime,
     });
     const euActiveDump = join(euFirst.activeCrashpadDirectory!, 'completed', 'eu.dmp');
@@ -128,7 +136,7 @@ describe('NativeCrashUploader', () => {
     euBytes.set(new TextEncoder().encode('MDMP'));
     await writeFile(euActiveDump, euBytes);
     await prepareNativeCrashGeneration({
-      rootDirectory: root, route: 'global', now: new Date('2026-08-12T20:03:00.000Z'),
+      rootDirectory: root, route: 'global', now: generationTime(3),
       generationId: '018f0000-0000-7000-8000-000000000099', runtime,
     });
     const euDirectory = join(root, 'upload', 'eu', '018f0000-0000-7000-8000-000000000098');

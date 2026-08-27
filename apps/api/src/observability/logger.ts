@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { HonoAppEnv } from "../env";
 import type { Env } from "../env";
+import { ApiError } from "../lib/api-error";
 
 const REDACTED = "[REDACTED]";
 const sensitiveKey = /token|secret|authorization|cookie|credential|code_verifier|prompt|email_?body|connector_?content|file_?content|model_?context/i;
@@ -47,6 +48,19 @@ export type LogEnv = Pick<Env, "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "
 // caller from putting a structured value in the slot and losing it — the
 // runtime falls back to the derived summary, which cannot carry it.
 export type LogFields = Record<string, unknown> & { message?: string };
+
+/**
+ * Extract a stable error code without copying an arbitrary provider/runtime
+ * message into an indexed log field.
+ */
+export function diagnosticErrorCode(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) return error.code;
+  if (!(error instanceof Error)) return fallback;
+  const direct = error.message.trim();
+  if (/^[a-z][a-z0-9_]{0,119}$/u.test(direct)) return direct;
+  const tagged = /\(([a-z][a-z0-9._]{0,119})\)/u.exec(direct)?.[1];
+  return tagged?.replaceAll(".", "_") ?? fallback;
+}
 
 export function logEvent(
   c: Context<HonoAppEnv>,

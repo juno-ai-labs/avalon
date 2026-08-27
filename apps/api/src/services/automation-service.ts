@@ -20,7 +20,6 @@ import { isReconnectRequiredConnectorError } from "./connector-connection-access
 import type { AutomationCompilerStreamEvent } from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
-import { workstreamAudienceAllowsUser } from "../lib/audience-containment";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
@@ -51,7 +50,6 @@ import { WorkstreamDirectoryService } from "./workstream-directory-service";
 import { createMessageObjectPort } from "../runtime/message-port";
 import {
   attachWorkstreamRuntimeResource,
-  readWorkstreamRuntimeAudience,
 } from "./workstream-object-client";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
@@ -748,15 +746,13 @@ export class AutomationService {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       ).bind(newId(), this.auth.workspaceId, subscriptionId, schedule.type, schedule.rrule, schedule.intervalSeconds, schedule.timezone, schedule.nextRunAt, at, at)),
     ]);
-    let emailRouteNeedsReconciliation = false;
     try {
       await emailRouting.activateAutomationRoute(routeInput);
     } catch (error) {
       if (!isRecoverableEmailRouteTransition(error)) throw error;
-      emailRouteNeedsReconciliation = true;
     }
     if (schedules.length > 0) await this.refreshScheduler();
-    const detail = await this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    const detail = await this.get(subscriptionId);
     await emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -781,14 +777,12 @@ export class AutomationService {
     return detail;
   }
 
-  async get(id: string, options: { reconcileEmail?: boolean } = {}) {
+  async get(id: string) {
     const row = await this.loadSubscription(id);
-    // Same as the list: a draft holds no address until it is promoted, so
-    // reading one must not go and reserve it.
-    const emailAddress = options.reconcileEmail === false || row.status === "draft"
-      ? row.email_address == null ? null : String(row.email_address)
-      : (await new WorkstreamEmailRoutingService(this.env)
-          .ensureAutomationAddress(this.automationRouteInput(id))).emailAddress;
+    // Detail is a regional read. Route reservation and repair belong to the
+    // lifecycle transitions that own them, so opening an already-active
+    // automation never depends on Global availability.
+    const emailAddress = row.email_address == null ? null : String(row.email_address);
     const updateAvailable = Number(row.latest_version_number) > Number(row.version_number);
     const plannedWorkstream = row.next_run_at == null
       ? null
@@ -797,7 +791,7 @@ export class AutomationService {
           String(row.next_run_at),
         );
     const [runs, latestVersion, deliveryTargets, calendarSchedules] = await Promise.all([
-      this.runs(id, 20),
+      this.loadRuns(id, 20),
       updateAvailable
         ? this.env.DB.prepare(
             `SELECT id, version_number, overview, instructions, trigger_definitions_json,
@@ -1264,24 +1258,23 @@ export class AutomationService {
 
   async runs(id: string, limit = 50) {
     await this.loadSubscription(id);
+    return this.loadRuns(id, limit);
+  }
+
+  private async loadRuns(id: string, limit: number) {
     const result = await this.env.DB.prepare(
       `SELECT * FROM automation_runs WHERE workspace_id = ? AND automation_subscription_id = ?
        ORDER BY created_at DESC LIMIT ?`,
     ).bind(this.auth.workspaceId, id, Math.min(limit, 100)).all<Record<string, unknown>>();
-    const items: ReturnType<typeof toAutomationRun>[] = [];
-    // Keep these reads serial: one history request must not turn a long run list
-    // into enough simultaneous Durable Object calls to exhaust the Worker's
-    // outbound connection allowance.
-    for (const row of result.results ?? []) {
-      const run = toAutomationRun(row);
-      const audience = await readWorkstreamRuntimeAudience(
-        this.env,
-        this.auth.workspaceId,
-        run.workstreamId,
-      );
-      if (workstreamAudienceAllowsUser(audience, this.auth.userId)) items.push(run);
-    }
-    return { items };
+    const runs = (result.results ?? []).map(toAutomationRun);
+    if (runs.length === 0) return { items: [] };
+    const readableIds = new Set(await new WorkstreamDirectoryService(this.env, this.auth)
+      .readableIds(runs.map((run) => run.workstreamId)));
+    // New runs copy the automation scope, so loading the subscription is their
+    // authorization boundary. The one parent-object projection read preserves the
+    // narrower audience of personal objects created before that invariant,
+    // without waking one SubstreamAgent per history row.
+    return { items: runs.filter((run) => readableIds.has(run.workstreamId)) };
   }
 
   async nextRun(id: string) {
@@ -1493,15 +1486,13 @@ export class AutomationService {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)`,
       ).bind(newId(), this.auth.workspaceId, subscriptionId, schedule.type, schedule.rrule, schedule.intervalSeconds, schedule.timezone, schedule.nextRunAt, at, at)),
     ]);
-    let emailRouteNeedsReconciliation = false;
     try {
       await emailRouting.activateAutomationRoute(routeInput);
     } catch (error) {
       if (!isRecoverableEmailRouteTransition(error)) throw error;
-      emailRouteNeedsReconciliation = true;
     }
     if (schedules.length) await this.refreshScheduler();
-    const detail = await this.get(subscriptionId, { reconcileEmail: !emailRouteNeedsReconciliation });
+    const detail = await this.get(subscriptionId);
     await emitProductUsageTelemetry(this.env, {
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
@@ -1670,15 +1661,15 @@ export class AutomationService {
       // run and resource links below belong to the newly bootstrapped object.
       const inserted = await runStatement.run();
       controlRunInserted = (inserted.meta.changes ?? 0) > 0;
-      // Every automation run is a private work stream. The member who starts
-      // it is both its durable creator and its initial participant, so every
-      // later read uses the ordinary work-stream visibility rule.
+      // Every run copies the automation's scope. The member who starts it is
+      // still its durable creator and initial participant; workspace-scoped
+      // runs are additionally visible through ordinary workspace membership.
       await provisionWorkstreamObject(this.env, {
         workspaceId: asWorkspaceId(this.auth.workspaceId),
         workstreamId: asWorkstreamId(workstreamId),
         title: String(subscription.name),
         objective: String(subscription.description),
-        scope: "personal",
+        scope: String(subscription.scope) as Scope,
         originType: "automation",
         createdByUserId: this.auth.userId,
         participantUserIds: [this.auth.userId],
@@ -1781,9 +1772,10 @@ export class AutomationService {
         try {
           const deleted = await this.env.DB.prepare(
             `DELETE FROM automation_runs
-              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL`,
-          ).bind(runId, this.auth.workspaceId).run();
-          if ((deleted.meta.changes ?? 0) !== 1) {
+              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL
+              RETURNING id`,
+          ).bind(runId, this.auth.workspaceId).first<{ id: string }>();
+          if (deleted?.id !== runId) {
             throw new Error("automation_run_compensation_not_applied", { cause: error });
           }
         } catch (compensationError) {

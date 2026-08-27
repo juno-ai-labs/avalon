@@ -338,11 +338,6 @@ export class WorkstreamToolReceiptStorage {
     now: number;
   }): ToolReceiptAdmission {
     return this.storage.transactionSync(() => {
-      const held = this.#fence(input.fence, input.now);
-      if (held !== "held") {
-        return { state: held === "cancelled" ? "cancelled" : "ownership_lost" };
-      }
-
       const existing = first(this.sql.exec<EffectRow>(
         `SELECT effect_intent_id, request_hash, execution_plan_hash, execution_plan_json,
                 status, checkpoint_index
@@ -350,6 +345,25 @@ export class WorkstreamToolReceiptStorage {
         input.fence.runId,
         input.toolCallId,
       ));
+
+      // Exact replay of a completed receipt is a read, not a new execution or
+      // mutation. A replacement object expires the dead instance's run lease
+      // before it resumes that same attempt, so requiring the old lease here
+      // would hide the durable result during the recovery window. Only the
+      // exact immutable plan may bypass the live fence; rebinds, mismatches,
+      // admitted reads, and every write still prove current ownership below.
+      const existingPlanMatches = existing?.execution_plan_hash === input.executionPlanHash
+        || input.compatiblePriorPlanHashes.includes(existing?.execution_plan_hash ?? "");
+      if (existing?.status === "completed"
+        && existing.request_hash === input.requestHash
+        && existingPlanMatches) {
+        return { state: "replay_completed", effectIntentId: existing.effect_intent_id };
+      }
+
+      const held = this.#fence(input.fence, input.now);
+      if (held !== "held") {
+        return { state: held === "cancelled" ? "cancelled" : "ownership_lost" };
+      }
 
       if (!existing) {
         // `MAX(tool_position) + 1`, never `COUNT(*)`. The table is
@@ -408,8 +422,7 @@ export class WorkstreamToolReceiptStorage {
       // `attempt_epoch` is a real question the view's projection hid, and a
       // behavior change; it is not this slice's to make.)
 
-      const planMatches = existing.execution_plan_hash === input.executionPlanHash
-        || input.compatiblePriorPlanHashes.includes(existing.execution_plan_hash ?? "");
+      const planMatches = existingPlanMatches;
       if (existing.request_hash !== input.requestHash || !planMatches) {
         // A settled *read* whose result nothing depends on may be rebound to
         // the call that landed on its coordinates; anything else is ambiguous.
