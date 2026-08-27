@@ -168,9 +168,23 @@ version, remove); readable content appears nowhere in the sidebar, only
 in the message-attachment lightbox. A citation that opens a metadata
 card would be a dead end, so this PRD adds the missing half: the detail
 view renders the resource's readable content through the shared renderer
-via the authorized preview route, beneath the existing metadata. This is
-the largest single piece of desktop work in the PRD, and the earlier
-draft under-stated it.
+via the authorized preview route, beneath the existing metadata —
+reusing the lightbox's existing document-rendering path rather than
+building a second one. This is the largest single piece of desktop work
+in the PRD, and the earlier draft under-stated it.
+
+**Citation metadata resolves across the workspace boundary.** A chip's
+label is the model's text, but its icon, kind, and the popover's source
+line come from the resource record — and a cited resource is not
+guaranteed to be in the work stream's loaded resource set (it may be
+cited from another work stream, or simply not yet loaded). The renderer
+therefore resolves citation metadata against the workspace's resource
+authority, under the viewer's existing authorization, with the
+established degradation when resolution fails or is denied: label text,
+no affordance. Whether that lookup rides the workspace socket or a REST
+endpoint is genuinely open (open question 4);
+[`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md)
+governs the call.
 
 During streaming, either form renders as plain text until its syntax
 closes, then becomes the chip or card — the same progressive settling
@@ -322,6 +336,32 @@ None yet.
    outright (a cross-cutting identity migration for a benefit the alias
    delivers), and owning the column here (identity belongs to the
    resource system's PRD, not the renderer's).
+9. **A typed renderer registry covers every scheme × citation position,
+   with exhaustiveness enforced by types.** Per review: rather than an
+   if-chain that leaves cells implicit, the implementation is a registry
+   keyed by (scheme, position) whose type requires a renderer — or an
+   explicit degradation — for every cell, so adding a scheme is adding
+   components the compiler demands, never silent gaps. The full matrix:
+
+   | Scheme | link `[..](..)` | image `![..](..)` | footnote definition |
+   | --- | --- | --- | --- |
+   | `resource://` | inline chip | embed card | pill popover → rail |
+   | `https` / `http` | external link (unchanged) | **a real image** (unchanged) | pill popover → browser |
+   | `person:` / `connector:` | mention chip, non-navigable (unchanged) | identity card, non-navigable | pill popover with the identity, no open action |
+   | anything else | plain text | plain text | plain text |
+
+   The image + `https` cell is deliberately *not* a citation: the
+   renderer's CSP permits external images and markdown images render
+   today, so that syntax is live and means what it means everywhere —
+   hijacking it as a web-citation card would collide with the model
+   legitimately embedding an image. An external-site embed card, if
+   ever wanted, is its own future decision with its own privacy story.
+   Identity embeds and identity footnotes are defined and non-navigable,
+   consistent with decision 4's navigation-by-protocol rule. The
+   renderer additionally accepts the legacy bare `resource:` spelling
+   alongside `resource://` — parsing is lenient across both formats so
+   nothing already emitted breaks — while emission guidance teaches
+   `resource://` only.
 
 ## Data model
 
@@ -441,3 +481,11 @@ passing through unmangled.
 3. **Popover and card interaction details on touch/keyboard** — hover
    has no touch equivalent and focus order matters for the pills; settle
    against the real window during implementation.
+4. **Transport for cross-workspace citation-metadata resolution** —
+   workspace socket or a REST endpoint? Flagged genuinely open in
+   review. [`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md)
+   governs: its default pushes data down the socket proactively, but a
+   viewer-triggered lookup for an arbitrary cited id is close to its
+   "when a GET is still right" territory. Decide at implementation
+   against that document; changes the lookup's plumbing, not any
+   rendering or degradation behavior.
