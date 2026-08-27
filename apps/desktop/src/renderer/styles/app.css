@@ -1680,7 +1680,7 @@ pre {
   z-index: 300;
 }
 
-.dropdown-select-viewport { max-height: 378px; overflow-y: auto; }
+.dropdown-select-viewport { display: grid; gap: 4px; max-height: 378px; overflow-y: auto; }
 .dropdown-select-item {
   align-items: center;
   border-radius: var(--av-sys-size-radius-md);
