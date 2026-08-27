@@ -31,7 +31,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   label: string;
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left';
-  /** Set false when the icon's meaning is already obvious from its position (e.g. a dialog's close X). */
+  /**
+   * Set false when the icon's meaning is already obvious from its position (e.g. a
+   * dialog's close X) — skips mounting the Tooltip.Root/Portal/Content subtree entirely.
+   */
   showTooltip?: boolean;
 }
 
