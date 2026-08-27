@@ -99,8 +99,9 @@ export class WorkstreamSchedulingStorage {
    * The transcript authority, over this same object storage.
    *
    * Composed for the reason `WorkstreamHarnessRunStorage` composes it: asking a
-   * question and answering one each write a transcript part in the same
-   * transaction as the row this class owns, and `parts` has exactly one writer.
+   * question and answering one each write a transcript message in the same
+   * transaction as the row this class owns, and `workstream_message_records`
+   * has exactly one writer.
    * Both wrap the same `DurableObjectStorage`, so the nested `transactionSync`
    * is the same transaction rather than a second one.
    */

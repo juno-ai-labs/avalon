@@ -1039,7 +1039,7 @@ describe("settling the residual receipts of a terminal run", () => {
          FROM workstream_message_records record
          JOIN transcript_facts fact ON fact.fact_id = record.fact_id
          JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE record.message_id = 'effect-1'`,
+        WHERE record.id = 'effect-1'`,
     ).one();
     expect(canonical.tool_status).toBe("failed");
     expect(canonical.edited_at).toBe(NOW);

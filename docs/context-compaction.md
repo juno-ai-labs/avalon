@@ -138,7 +138,7 @@ participant history remains in `participant_transcript_turns` plus the activity
 interval. Two compactions produce two identities and two timings.
 
 Pre-cutover checkpoint arrays and summaries were moved into canonical model-only
-facts by the explicit v30 fleet transfer. Schema v31 verifies every retained
+facts by the explicit v30 fleet transfer. Schema v32 verifies every retained
 legacy checkpoint against that fact before dropping the old owner. Canonical-only
 post-cutover checkpoints are allowed and remain untouched. Retirement never
 rewrites participant compaction statuses, activities, intervals, or Bind state;
@@ -281,7 +281,7 @@ results.
 
 ### 2026-08-27 — Legacy checkpoint storage retired without rewriting edges
 
-**What changed:** Schema v31 removes the old checkpoint table after exact
+**What changed:** Schema v32 removes the old checkpoint table after exact
 payload reconciliation. All runtime reads and writes now use the canonical
 checkpoint fact committed atomically with the Bind replacement.
 

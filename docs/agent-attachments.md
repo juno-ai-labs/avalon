@@ -94,10 +94,11 @@ corrective turn and cannot publish attachment facts. Cursor reads attach their
 
 The person-facing ordered transcript uses the same durable relationship. The
 snapshot storage layer joins each participant text part to its ordered
-`part_attachments`, emits metadata only, and the desktop reconstructs attachment
-tiles from that descriptor. An optimistic tile may disappear only when a
-canonical turn with the same message identity has arrived; reconnect must not
-depend on the optimistic row or the resource rail to reconstruct ownership.
+`workstream_message_attachments`, emits metadata only, and the desktop
+reconstructs attachment tiles from that descriptor. An optimistic tile may
+disappear only when a canonical turn with the same message identity has arrived;
+reconnect must not depend on the optimistic row or the resource rail to
+reconstruct ownership.
 resolved resource identity to structured failures so a successful restart by
 resource ID clears the same guard entry instead of leaving a tool-call-only
 false positive. A run
@@ -476,6 +477,23 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-27 — Message attachments use the canonical transcript relationship
+
+**What changed:** Participant transcript hydration now reads
+`workstream_message_attachments`, whose parent is the canonical message record;
+the retired `part_attachments` table is no longer a runtime or payload owner.
+
+**Why:** After historical ownership transfer, retaining a second attachment
+relationship would leave two plausible answers for which resource belongs to a
+message.
+
+**Considered and rejected:** Keeping the old relationship as a fallback. That
+would hide incomplete migration and permit the copies to diverge.
+
+**Consequences:** Schema retirement fails closed unless the two relationships
+match exactly before deletion. Attachment hydration and optimistic replacement
+continue to use the same stable message and resource identities.
 
 ### 2026-08-27 — Resource versions retain prior originals and model derivatives
 

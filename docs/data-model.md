@@ -121,7 +121,7 @@ compaction lookup.
 all message payloads. Canonical attachment and mention relations reference the
 message record directly. `transcript_compaction_checkpoints` references the
 exact model-only checkpoint fact. The pre-v27 projection and payload-transfer
-receipts were one-time migration evidence and are removed after schema v31's
+receipts were one-time migration evidence and are removed after schema v32's
 fail-closed reconciliation; they are not runtime sources of truth.
 
 `WorkspaceDO` is the relational authority for workspace product state and
@@ -295,11 +295,13 @@ hash-checked RPCs rather than cross-object SQL joins.
   because the attention row does not exist for somebody who has only been added.
   See [`workstream-markers.md`](workstream-markers.md). Viewer presence is
   intentionally absent from durable storage.
-- Object-local `parts` has a per-work-stream `sequence_number`; the root
+- Object-local `workstream_message_records` has a per-work-stream
+  `sequence_number`; the root
   `workstream.next_sequence_number` allocates ordered events. Conversation rows
   belong to a `substreams` row, with the main chat fixed at substream `0`.
-- `part_mentions` stores validated person and connector spans.
-- `part_attachments` relates a resource to one exact owning part. A
+- `workstream_message_mentions` stores validated person and connector spans.
+- `workstream_message_attachments` relates a resource to one exact owning
+  message. A
   resource can appear in multiple work streams, so projections that report
   attachment state must use the current object's link; existence anywhere in the
   workspace is not the relationship for the current work stream.
@@ -418,8 +420,9 @@ no projection fallback when that object is unavailable.
   early-open and alarm-driven scheduled-run creation.
 - Object-local `runs` records each bounded model loop. `tool_effects` is unique on
   `(run_id, tool_call_id)` and stores input hashes plus side-effect state.
-- `compaction_checkpoints` stores the raw LLM continuation
-  summary per execution principal and immutable run/sequence event, with its
+- `transcript_compaction_checkpoints` references the model-only fact that owns
+  the raw LLM continuation summary per execution principal and immutable
+  run/sequence event, with its
   sequence boundary, resource-inventory revision, and deterministic template
   version. Current authorized totals are regenerated on apply and replay and
   are intentionally absent from the principal-scoped row. A final conditional
@@ -801,7 +804,7 @@ perform the regional audit/control write explicitly through
 
 ### 2026-08-27 — Canonical transcript records become the sole payload owner
 
-**What changed:** SubstreamAgent schema v31 verifies the v30 transfer receipt
+**What changed:** SubstreamAgent schema v32 verifies the v30 transfer receipt
 and every source row, atomically swaps foreign keys onto
 `workstream_message_records`, removes the old message/relation/checkpoint tables,
 and deletes the one-time operator RPCs and scripts.
