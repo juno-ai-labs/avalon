@@ -1045,6 +1045,177 @@ address, delivery configuration, memory/table definitions, run identities, and
 receipts. The old rows become a frozen migration source and projection rather
 than a writable fallback. There is no long-lived dual authority.
 
+## Implementation guidelines
+
+Implementation shares the ordered transcript and exact Bind SQLite substrate as
+code and immutable schema fragments. It never shares one database, migration
+ledger, or lifecycle authority among AutomationAgent, SubstreamAgent, and
+BlockDashboardAgent. All shared SQL executes synchronously inside the Durable
+Object that owns the state.
+
+### Finding the current seams
+
+An implementer should start from these stable files and named sections rather
+than from review-sensitive line positions:
+
+- [`packages/agent-harness/src/bind-loop-projection.ts`](../../../packages/agent-harness/src/bind-loop-projection.ts)
+  contains the pure Bind transition reducer, canonical projection, hashing, and
+  provider-boundary verification. Search for `BindLoopTransition`,
+  `applyBindLoopTransition`, `canonicalizeBindLoop`, and `hashBindLoop`.
+- [`apps/api/src/durable-objects/workstream-object-schema.ts`](../../../apps/api/src/durable-objects/workstream-object-schema.ts)
+  contains the SubstreamAgent object migration history. Find the migration
+  whose description says it adds the canonical ordered transcript and lossless
+  Bind-loop projections; its statements define the first shared schema version.
+- [`apps/api/src/durable-objects/sqlite-migrations.ts`](../../../apps/api/src/durable-objects/sqlite-migrations.ts)
+  contains `applyDurableObjectSqliteMigrations` and
+  `durableObjectMigrationHash`. This remains the one migration runner; the
+  automation implementation does not introduce another ledger or runner.
+- [`apps/api/src/durable-objects/scheduled-alarms.ts`](../../../apps/api/src/durable-objects/scheduled-alarms.ts)
+  documents the existing composition precedent: immutable shared schema
+  statements are imported into each object's own append-only migration history.
+  The ordered transcript follows the same pattern as
+  `SCHEDULED_ALARM_SCHEMA_STATEMENTS`.
+- [`apps/api/src/durable-objects/workstream-transcript-storage.ts`](../../../apps/api/src/durable-objects/workstream-transcript-storage.ts)
+  is the current combined storage implementation. Read the method groups for
+  Bind transition/compaction commits, provider-boundary recording, participant
+  turns and tool lifecycle, activities, snapshots/ranges, fact preparation, and
+  sequence allocation. Those groups identify the shared stores and the
+  work-stream adapter that must be separated.
+- [`apps/api/src/durable-objects/workstream-transcript-protocol.ts`](../../../apps/api/src/durable-objects/workstream-transcript-protocol.ts)
+  is the current object-port surface. Its operation list is the place to replace
+  storage-class reflection with an explicit ordered-transcript port and typed
+  mutation effects.
+- [`packages/contracts/src/workstream-transcript.ts`](../../../packages/contracts/src/workstream-transcript.ts)
+  contains both reusable transcript schemas and work-stream socket/snapshot
+  envelopes. The activity, interval, block, turn, and basic range schemas move
+  to a product-neutral contract; unread/opening and socket envelopes remain
+  work-stream contracts.
+- [`apps/desktop/src/renderer/lib/transcript.ts`](../../../apps/desktop/src/renderer/lib/transcript.ts)
+  contains the client-side range coverage, gap calculation, and realtime merge
+  reducers. Those reducers are reusable; conversion into existing work-stream
+  `Message` rows remains a work-stream renderer adapter.
+
+### Shared SQLite module
+
+The API keeps one internal ordered-transcript SQLite module, split by semantic
+responsibility rather than by product host:
+
+```text
+durable-objects/ordered-transcript-sqlite/
+  schema-v1.ts
+  canonical-payload-store.ts
+  bind-loop-ledger.ts
+  participant-transcript-store.ts
+  activity-store.ts
+  snapshot-store.ts
+  ordered-transcript-kernel.ts
+```
+
+This starts as an API-internal module because all three current hosts run in the
+same Worker deployment surface. It becomes a workspace package only if another
+deployment surface needs it; package extraction is not a prerequisite for code
+reuse among Durable Objects in `apps/api`.
+
+The module owns:
+
+1. Canonical JSON byte preparation and SHA-256 hashing. The Bind projector and
+   transcript fact store must call one implementation so provider hashes,
+   payload deduplication, replay, and conflict checks cannot drift.
+2. Canonical payload/fact insertion and lookup, including audience-separated
+   deduplication.
+3. Bind head conflict checks, state/message commits, exact reconstruction, and
+   provider-boundary receipts.
+4. Transcript and loop sequence allocation.
+5. Product-neutral turn/block insertion, range reads, activity/interval
+   lifecycle, and snapshot fences.
+6. Pure hydration, lifecycle mapping, ordering, and typed row conversion that
+   does not consult product-owned tables.
+
+The module exposes typed storage methods, not raw SQL strings or a generic
+query builder. Schema and the queries enforcing that schema remain together so
+a table or invariant cannot change for one host while another silently keeps an
+old query.
+
+### Migration composition
+
+Shared schema is published as immutable, ordered statement arrays by capability,
+for example a canonical-fact schema, Bind-loop ledger schema, participant
+transcript schema, activity schema, and snapshot schema. Dependency order is
+explicit: Bind and participant rows depend on canonical facts, and snapshots
+depend on transcript counters.
+
+The fragments never own an object migration number. Each object imports the
+fragments into its own next migration version and records that version in its
+own `_sql_schema_migrations` ledger. SubstreamAgent preserves the existing
+ordered-transcript migration number and statement order; AutomationAgent uses
+the appropriate version in its independent history. A block source installs
+only the fragments required at the authority that owns its Bind context.
+BlockDashboardAgent does not acquire transcript tables merely to make the three
+hosts symmetrical.
+
+The first extracted arrays are named as immutable versioned artifacts, such as
+`*_SCHEMA_V1`. Once a migration can have been applied, its statements, order,
+and whitespace are not edited. A later schema change adds a new versioned delta
+array and a new migration entry in every consuming object's own ledger. Tests
+pin the existing SubstreamAgent migration hash before and after extraction so a
+mechanical move cannot rewrite released history.
+
+### Transaction and query boundaries
+
+The top-level ordered transcript kernel owns `transactionSync` for compound
+commits. Lower-level stores operate on its transaction-scoped `SqlStorage` and
+do not open independent transactions when one accepted Bind transition spans
+facts, exact loop state, participant projection, activities, and mutation
+effects. Canonicalization and cryptographic hashing finish before the
+synchronous transaction begins; there is no `await`, RPC, Queue operation, or
+external I/O inside the object-local commit.
+
+The shared query layer includes fact deduplication, Bind head fencing and
+reconstruction, provider-boundary recording, sequence allocation, generic
+turn/block and activity hydration, snapshot fencing, and bounded range reads.
+Mutations return structured effects such as changed turn and activity IDs.
+Each host publishes those effects through its own realtime protocol rather than
+switching on storage method names or teaching the shared store about sockets.
+
+Compaction separates the shared atomic operation from the host fence. The
+shared kernel commits the exact `state_replaced` transition and checkpoint fact;
+a synchronous typed host adapter verifies and writes the continuation metadata
+required by the same transaction. SubstreamAgent supplies its resource
+inventory and execution-principal fence. AutomationAgent supplies the draft's
+attachment, connector-grant, and accepted-definition fence. Neither host's
+columns enter the common schema.
+
+### Product adapters that stay separate
+
+The following remain outside the shared module because they are product policy
+or references to another authority:
+
+- Work-stream `parts` compatibility joins and human-content hydration.
+- Work-stream attention ordinals, unread anchors, opening-window selection, and
+  reads from work-stream realtime state.
+- Participant and automation-author authorization, audience expansion, and
+  socket ticket/event publication.
+- Work-stream resource-inventory compaction fences and AutomationAgent draft or
+  accepted-definition fences.
+- Automation lifecycle/configuration, timer occurrence, evaluator, delivery,
+  and child-run projection tables and queries.
+- BlockDashboardAgent dispatch, stream checkpoint, and settlement authority.
+
+WorkstreamTranscriptView composes the shared snapshot/range primitives into its
+unread-plus-latest opening policy. AutomationDraftTranscriptView composes them
+into the latest draft conversation plus active compiler turn. Block dashboard
+execution may use the exact Bind ledger through the source-context owner's typed
+port without moving block dispatch authority or copying source context into
+BlockDashboardAgent.
+
+Tests cover the shared stores once for invariant behavior, then exercise each
+host adapter in real workerd. Migration tests apply every consuming object's
+complete ledger, pin historical migration hashes, run foreign-key checks, and
+prove the indexes used by head reconstruction, range reads, active activities,
+and provider-boundary lookup. At least one integration test commits a complete
+Bind transition through each participating host so shared unit coverage cannot
+hide a broken object-local transaction or port adapter.
+
 ## Regional impact
 
 AutomationAgent is a workspace-scoped product object. It is resolved only
