@@ -101,7 +101,7 @@ interface SidebarProps {
   onRunAutomation: (automation: AutomationSummary) => Promise<void>;
   onOpenMeetingNotes: (noteId?: string) => Promise<void>;
   onPreviewWorkstreamBatch: (filter: WorkstreamBatchFilter) => Promise<number>;
-  onCreateProject?: (input: CreateProjectRequest) => Promise<void>;
+  onCreateProject?: (input: CreateProjectRequest) => Promise<ProjectSummary>;
   onAddWorkstreamToProject?: (projectId: string, workstreamId: string) => Promise<void>;
   onReorderProjects?: (projectIds: string[]) => Promise<void>;
   onRestoreProject?: (projectId: string) => Promise<void>;
@@ -860,7 +860,9 @@ export function Sidebar({
   onRunAutomation,
   onOpenMeetingNotes,
   onPreviewWorkstreamBatch,
-  onCreateProject = async () => undefined,
+  onCreateProject = async () => {
+    throw new Error('Project creation is unavailable.');
+  },
   onAddWorkstreamToProject = async () => undefined,
   onReorderProjects = async () => undefined,
   onRestoreProject = async () => undefined,

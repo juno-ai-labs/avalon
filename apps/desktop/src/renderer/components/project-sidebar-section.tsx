@@ -30,7 +30,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   PROJECT_COLOR_KEYS,
   PROJECT_ICON_KEYS,
@@ -141,7 +141,7 @@ interface ProjectSidebarSectionProps {
   inactiveProjects: ProjectSummary[];
   workstreams: WorkstreamSummary[];
   loading: boolean;
-  onCreate: (input: CreateProjectRequest) => Promise<void>;
+  onCreate: (input: CreateProjectRequest) => Promise<ProjectSummary>;
   onAddWorkstream: (projectId: string, workstreamId: string) => Promise<void>;
   onReorder: (projectIds: string[]) => Promise<void>;
   onRestore: (projectId: string) => Promise<void>;
@@ -157,6 +157,7 @@ export function ProjectSidebarSection({
   onReorder,
   onRestore,
 }: ProjectSidebarSectionProps): React.JSX.Element {
+  const location = useLocation();
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
@@ -189,9 +190,11 @@ export function ProjectSidebarSection({
     setSaving(true);
     setModalError(null);
     try {
-      await onCreate({ name: name.trim(), iconKey, colorKey, scope });
+      const created = await onCreate({ name: name.trim(), iconKey, colorKey, scope });
+      setExpanded((current) => new Set(current).add(created.id));
       setSaving(false);
       closeCreate();
+      void navigate(`/projects/${created.id}`);
     } catch (cause) {
       setModalError(cause instanceof Error ? cause.message : 'The project could not be created.');
       setSaving(false);
@@ -286,8 +289,13 @@ export function ProjectSidebarSection({
                     <NavLink
                       className={({ isActive }) => clsx('project-row-link', isActive && 'is-active')}
                       onClick={() => setExpanded((current) => {
-                        if (current.has(project.id)) return current;
-                        return new Set(current).add(project.id);
+                        const next = new Set(current);
+                        if (location.pathname === `/projects/${project.id}` && next.has(project.id)) {
+                          next.delete(project.id);
+                        } else {
+                          next.add(project.id);
+                        }
+                        return next;
                       })}
                       onKeyDown={(event) => {
                         if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;

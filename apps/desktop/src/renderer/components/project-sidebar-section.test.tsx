@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { useState } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -43,7 +44,7 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectSidebar
           inactiveProjects={[]}
           loading={false}
           onAddWorkstream={async () => undefined}
-          onCreate={async () => undefined}
+          onCreate={async () => hiring}
           onReorder={async () => undefined}
           onRestore={async () => undefined}
           projects={[hiring]}
@@ -56,14 +57,46 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectSidebar
   );
 }
 
+function CreateFlowHarness({
+  onCreate,
+}: {
+  onCreate: React.ComponentProps<typeof ProjectSidebarSection>['onCreate'];
+}): React.JSX.Element {
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  return (
+    <>
+      <ProjectSidebarSection
+        inactiveProjects={[]}
+        loading={false}
+        onAddWorkstream={async () => undefined}
+        onCreate={async (input) => {
+          const created = await onCreate(input);
+          setProjects((current) => [...current, created]);
+          return created;
+        }}
+        onReorder={async () => undefined}
+        onRestore={async () => undefined}
+        projects={projects}
+        workstreams={[]}
+      />
+      <Location />
+    </>
+  );
+}
+
 describe('the Projects sidebar section', () => {
-  it('given one project, when each row control is used, then accordion, project link, and plus navigate independently', () => {
+  it('given one project, when its row opens the dashboard and is clicked again, then the selected row closes its accordion', () => {
     renderSection();
 
     fireEvent.click(screen.getByRole('link', { name: /Hiring/u }));
     expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${hiring.id}`);
     expect(screen.getByRole('button', { name: 'Collapse Hiring' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('No work streams')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('link', { name: /Hiring/u }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${hiring.id}`);
+    expect(screen.getByRole('button', { name: 'Expand Hiring' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('No work streams')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'New work stream in Hiring' }));
     expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${hiring.id}/workstreams/new`);
@@ -98,6 +131,39 @@ describe('the Projects sidebar section', () => {
     expect(scope).toHaveClass('dropdown-select-trigger-primary');
     fireEvent.click(scope);
     expect(screen.getByRole('option', { name: 'Project participants' })).toBeVisible();
+  });
+
+  it('given project creation is pending, when it succeeds, then the dialog waits before opening and selecting the project', async () => {
+    const created = project('00000000-0000-7000-8000-0000000000f5', 'Planning');
+    let finishCreate!: (project: ProjectSummary) => void;
+    const onCreate = vi.fn(() => new Promise<ProjectSummary>((resolve) => { finishCreate = resolve; }));
+    render(
+      <Tooltip.Provider>
+        <MemoryRouter initialEntries={['/workstreams/new']}>
+          <CreateFlowHarness onCreate={onCreate} />
+        </MemoryRouter>
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Planning' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(onCreate).toHaveBeenCalledWith({
+      colorKey: 'gray',
+      iconKey: 'briefcase',
+      name: 'Planning',
+      scope: 'personal',
+    });
+    expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/new');
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled();
+
+    await act(async () => { finishCreate(created); });
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${created.id}`));
+    expect(screen.getByRole('link', { name: /Planning/u })).toHaveClass('is-active');
+    expect(screen.getByRole('button', { name: 'Collapse Planning' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('dialog', { name: 'New project' })).not.toBeInTheDocument();
   });
 
   it('given the color grid, when a color receives focus, then its name appears in the standard tooltip', async () => {
