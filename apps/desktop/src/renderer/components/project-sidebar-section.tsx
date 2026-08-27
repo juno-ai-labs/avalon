@@ -163,7 +163,7 @@ export function ProjectSidebarSection({
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [name, setName] = useState('');
   const [iconKey, setIconKey] = useState<ProjectIconKey>('briefcase');
-  const [colorKey, setColorKey] = useState<ProjectColorKey>('blue');
+  const [colorKey, setColorKey] = useState<ProjectColorKey>('gray');
   const [scope, setScope] = useState<'personal' | 'workspace'>('personal');
   const [saving, setSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
@@ -179,7 +179,7 @@ export function ProjectSidebarSection({
     setCreateOpen(false);
     setName('');
     setIconKey('briefcase');
-    setColorKey('blue');
+    setColorKey('gray');
     setScope('personal');
     setModalError(null);
   };
