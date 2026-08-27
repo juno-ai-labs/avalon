@@ -614,6 +614,8 @@ typed IPC schemas and the route-kind validator rather than accepting an
 arbitrary URL. The renderer must retain one multiplexed bridge subscription;
 adding one preload listener per socket makes every frame scale with the swarm.
 
+Shipped in #341.
+
 ### 2026-08-26 — Workspace presence describes foreground attention, not socket warmth
 
 **What changed:** The WorkspaceDO protocol now accepts explicit application and

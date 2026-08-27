@@ -658,6 +658,8 @@ correlation still separates the service portion. Chromium NetLog no longer
 contains these two socket types, while the renderer flow remains in Unified Log
 and regional telemetry.
 
+Shipped in #341.
+
 ### 2026-08-26 — Renderer traces persist locally and cold wakes expose initialization
 
 **What changed:** macOS builds now package a native Unified Logging bridge that
