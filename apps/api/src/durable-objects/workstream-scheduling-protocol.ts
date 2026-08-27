@@ -1,3 +1,4 @@
+import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
 import { z } from "zod";
 
 import {
@@ -11,14 +12,14 @@ import type { WorkstreamSchedulingStorage } from "./workstream-scheduling-storag
 export const OpenElicitationInputSchema = z.object({
   elicitationId: z.string().min(1),
   runId: z.string().min(1),
-  prompt: z.string(),
+  prompt: z.string().max(MESSAGE_MAX_CHARACTERS),
   responseType: z.string().min(1),
   optionsJson: z.string(),
   minimumSelections: z.number().int().nonnegative(),
   maximumSelections: z.number().int().nonnegative().nullable(),
   targetUserId: z.string().min(1).nullable(),
   messageId: z.string().min(1),
-  structuredContentJson: z.string(),
+  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
   now: z.number().finite(),
 }).strict();
 
@@ -28,7 +29,7 @@ export const AnswerElicitationExternallyInputSchema = z.object({
   externalActorJson: z.string(),
   messageId: z.string().min(1),
   clientMessageId: z.string().min(1),
-  structuredContentJson: z.string(),
+  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
   now: z.number().finite(),
 }).strict();
 
