@@ -1271,6 +1271,46 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-27 — Replacement instances resume the attempt their predecessor fenced
+
+**What changed:** SubstreamAgent construction replaces still-live local harness
+lease owners left by the previous object instance with a durable
+recovery-pending owner and expires those leases together with the dispatch
+lease. A later replacement recognizes that marker even though its timestamp is
+expired, so it preserves recovery intent across consecutive evictions before a
+claim; already-expired unmarked leases remain stale-reaper failures. The
+replacement reclaims the same attempt ID under a new owner and epoch before it
+runs the stale-lease sweep, preserving frozen scope, completed tool receipts,
+and resumable child attempts. If cancellation was requested before the owner
+vanished, the replacement uses the recovery-pending owner as the attempt fence
+to settle the run as stopped instead of misclassifying it as stale failure. An
+exact completed tool receipt remains replayable
+while ownership transfers; receipt mutation and mismatched-plan paths still
+require the live lease. HyperSight roots remain untouched because their executor
+belongs to a separate BlockDashboardAgent.
+
+**Why:** Cloudflare can stop a Durable Object while external I/O is in flight;
+that I/O may finish before the next local SQLite access is rejected. Production
+recorded a completed Terminal command followed by exactly that storage error.
+The dispatch lease was released on reconstruction, but the harness lease was
+still honored for five minutes, leaving the tool visibly active until the stale
+reaper failed the whole run.
+
+**Considered and rejected:** Waiting for the existing lease, immediately
+terminalizing the recovered run, clearing every run in the shared authority,
+and creating a new attempt ID. They respectively preserve the five-minute
+spinner, discard replayable completed work, steal live HyperSight execution,
+or invalidate the frozen scope and receipts keyed to the original attempt.
+
+**Consequences:** An object restart can resume a local run immediately without
+weakening ordinary live-owner exclusion. The recovery-pending owner immediately
+fences the vanished executor, survives another eviction, and is replaced by the
+new instance-nonce lease owner with an advanced epoch when execution resumes.
+Normal unmarked expiration still follows the stale-run policy; real-workerd
+coverage verifies consecutive replacement, cancellation during handoff, and
+that constructor recovery touches only leases whose executor died with this
+SubstreamAgent instance.
+
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 
 **What changed:** The face-pile presence signal now follows Tailwind's

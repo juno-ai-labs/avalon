@@ -142,7 +142,7 @@ Every connector adapter supplies a static agent-plugin descriptor whose provider
 - Automation runs include explicitly bound connection/capability pairs and eligible connections attached through work-stream resources. Attached connections remain limited to the immutable grants frozen for the run.
 - Inbound-email runs remove external connector writes.
 
-Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. Activation is durably recorded before the plugin's tools or trusted guidance become visible.
+Bound connections, attached resources, and previously used plugins are activation hints, not extra authority. Hints are filtered through the frozen scope and reauthorized before restoration. Other eligible plugins appear only in a bounded catalog and are discovered and activated with the always-active `rally_discovery` tools: `list_plugins`, `search_plugins`, and `load_plugin`. Search normalizes case and punctuation, ranks exact field matches ahead of distinct keyword overlap across ids, names, aliases, and descriptions, and returns at most twenty matches plus `totalMatches` so a truncated result can be narrowed. It uses OR discovery rather than requiring the entire query to occur in one catalog field. An explicit load may run a convergent host-owned `onActivate` preparation hook after reauthorization and dynamic tool loading. Successful preparation is single-flighted for the run, then activation is durably recorded before the plugin's tools or trusted guidance become visible. Failed preparation remains retryable only when the host returns model-safe retry guidance; provider details are not exposed.
 
 A hosted-MCP connection may supply `HarnessPlugin.loadTools` instead of a
 code-authored tool array. It still appears through the same static trusted
@@ -160,14 +160,17 @@ validation, and provider declaration are owned by
 Every run owns a fresh Bind registry. Canonical tool names are local to their owning plugin and contain no repeated plugin prefix; Bind adds the plugin's stable short name when it renders the model-facing wire name. `rally_discovery` intentionally retains the global controls `list_plugins`, `search_plugins`, and `load_plugin`. The always-active `rally_core` plugin owns exact time and structured elicitation, and `rally_automation_architect` owns automation research and draft submission. Workstream agents load `rally_workstream` by default for current-workstream context, resources, and delegation. Specialized memory and table capabilities retain their own stable plugin identities. The public-web tools live in the loadable `rally_web` plugin. A runtime registers only the applicable bundles, so plugin instructions and durable receipt identities cannot advertise tools absent from that run.
 
 In a provider-verified region, ordinary work-stream runs also register the
-deferred built-in `rally:terminal` plugin. It has no connection row and loading
-it is allocation-free: activation exposes its static supported-language prompt
-and complete eight-tool family, while the first tool execution acquires the
-separate Terminal mutation lease and Daytona sandbox. It is absent—not merely
-tool-filtered—when the region is unsupported or emergency-disabled. All eight
-tools stay visible together after activation; current principal/resource and
-repository/publication checks remain executor preconditions rather than scopes.
-The sandbox lifecycle and authority fence are owned by
+deferred built-in `rally:terminal` plugin. It has no connection row. An explicit
+`load_plugin` acquires and initializes its Daytona sandbox and prepares the
+selected repository before the complete nine-tool family becomes visible.
+Repository failures that the nine-tool surface itself can repair are deferred,
+so `checkout_repository` remains available. A restored durable activation skips
+this hook: it does not eagerly allocate on every later run, and its first tool
+retains the ordinary acquisition path. Terminal is absent when the region is
+unsupported; the emergency breaker keeps it discoverable but makes explicit
+activation and every provider operation fail with host-authored guidance. Current
+principal/resource and repository/publication checks remain executor
+preconditions rather than scopes. The sandbox lifecycle and authority fence are owned by
 [`terminal-workspaces.md`](terminal-workspaces.md), not by Bind.
 
 Loading never widens the frozen scope. At run start, before credential decryption, before every tool call, and between model turns, Rally revalidates the execution principal, work-stream state, automation subscription and pinned template version, trigger evidence and status, connection identity/scope/owner, current grants, capability, and whether a person has disabled it. Revocation drops a plugin. A stored `needs_reconnect` does not: it is a belief about a past moment, and a call it would have withheld now reaches the provider and fails on the provider's answer. Workspace calls use the workspace principal while preserving the initiating user in audit data; personal calls remain owner-only.
@@ -801,6 +804,34 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
+
+**What changed:** Deferred plugins may provide an `onActivate` hook with a
+plugin-specific deadline. Bind runs it only for an explicit `load_plugin`, after
+authorization and dynamic tool discovery but before durable activation. A
+successful hook is single-flighted for the run; a failed hook may be retried.
+Restored activation hints skip the hook. Bind rechecks cancellation before
+persisting and forwards only host-authored retry guidance. Terminal uses the
+hook to acquire and initialize Daytona before its tools become visible.
+
+**Why:** Production behavior showed that loading Terminal is almost always
+followed immediately by a Terminal tool, while cold sandbox acquisition was the
+largest first-tool cost. Paying that setup inside the explicit load overlaps it
+with the model's capability-selection step and makes the next tool warm.
+
+**Considered and rejected:** Eager preparation for restored hints, one maximum
+deadline shared by every plugin, persisting after a timed-out detached hook,
+and failing Terminal activation for a repository state only
+`checkout_repository` can repair. Those respectively allocate for unrelated
+runs, inflate every plugin load, create a durable state the model was told
+failed, or hide the repair tool.
+
+**Consequences:** Plugin hooks must be convergent and must not perform an
+outward-facing provider/data write. Restored hints remain allocation-free.
+Future hook failures may expose only bounded host-authored guidance, and a new
+deadline must be scoped to the requested plugin rather than the discovery tool
+globally.
 
 ### 2026-08-26 — Every Bind provider boundary is losslessly reproducible
 
