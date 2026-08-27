@@ -95,4 +95,63 @@ describe('desktop realtime socket adapter', () => {
     emit!({ type: 'close', socketId: secondId, code: 1000, reason: '', wasClean: true });
     expect(emit).toBeNull();
   });
+
+  it('never transitions from locally closing back to open', () => {
+    let emit: ((event: DesktopRealtimeSocketEvent) => void) | null = null;
+    const bridge = {
+      openRealtimeSocket: vi.fn(async () => undefined),
+      sendRealtimeSocket: vi.fn(async () => undefined),
+      closeRealtimeSocket: vi.fn(async () => undefined),
+      onRealtimeSocketEvent(listener: (event: DesktopRealtimeSocketEvent) => void) {
+        emit = listener;
+        return () => { emit = null; };
+      },
+    } satisfies RealtimeSocketBridge;
+    const input = {
+      socketId: crypto.randomUUID(),
+      kind: 'substream_feed' as const,
+      url: 'wss://api.rallywith.ai/socket/workstreams/00000000-0000-7000-8000-000000000001/substreams/0',
+      protocols: ['rally.ticket.v1', 't'.repeat(40)] as [string, string],
+    };
+    const socket = createBrokeredRealtimeSocket(bridge, input);
+    const onOpen = vi.fn();
+    const onMessage = vi.fn();
+    socket.addEventListener('open', onOpen);
+    socket.addEventListener('message', onMessage);
+
+    socket.close();
+    emit!({ type: 'open', socketId: input.socketId, protocol: 'rally.ticket.v1', extensions: '' });
+    emit!({ type: 'message', socketId: input.socketId, data: 'late' });
+
+    expect(socket.readyState).toBe(REALTIME_SOCKET_CLOSING);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(() => socket.send('ping')).toThrow('not open');
+  });
+
+  it('rejects invalid close frames before changing state or invoking main', () => {
+    const closeRealtimeSocket = vi.fn(async () => undefined);
+    const bridge = {
+      openRealtimeSocket: vi.fn(async () => undefined),
+      sendRealtimeSocket: vi.fn(async () => undefined),
+      closeRealtimeSocket,
+      onRealtimeSocketEvent: vi.fn(() => () => undefined),
+    } satisfies RealtimeSocketBridge;
+    const input = {
+      socketId: crypto.randomUUID(),
+      kind: 'workstream_control' as const,
+      url: 'wss://api.rallywith.ai/socket/workstreams/00000000-0000-7000-8000-000000000001',
+      protocols: ['rally.ticket.v1', 't'.repeat(40)] as [string, string],
+    };
+    const invalidCode = createBrokeredRealtimeSocket(bridge, input);
+    expect(() => invalidCode.close(1_005)).toThrow(DOMException);
+    expect(invalidCode.readyState).not.toBe(REALTIME_SOCKET_CLOSING);
+
+    const invalidReason = createBrokeredRealtimeSocket(bridge, {
+      ...input, socketId: crypto.randomUUID(),
+    });
+    expect(() => invalidReason.close(1_000, '💡'.repeat(31))).toThrow(DOMException);
+    expect(invalidReason.readyState).not.toBe(REALTIME_SOCKET_CLOSING);
+    expect(closeRealtimeSocket).not.toHaveBeenCalled();
+  });
 });

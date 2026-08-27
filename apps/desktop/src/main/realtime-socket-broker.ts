@@ -1,5 +1,7 @@
 import { IdSchema } from '@rally/contracts';
 import { SOCKET_TICKET_SUBPROTOCOL } from '@rally/contracts/socket-tickets';
+import { getCACertificates } from 'node:tls';
+import { ProxyAgent } from 'proxy-agent';
 import { WebSocket } from 'ws';
 import {
   RALLY_RENDERER_ORIGIN,
@@ -25,13 +27,14 @@ export type RealtimeSocketFactory = (
   protocols: readonly string[],
 ) => RealtimeSocketClient;
 
+export type RealtimeSocketProxyResolver = (url: string) => Promise<string>;
+
 interface OwnedSocket {
   active: boolean;
   client: RealtimeSocketClient;
 }
 
-function defaultSocketFactory(url: string, protocols: readonly string[]): RealtimeSocketClient {
-  const socket = new WebSocket(url, [...protocols], { origin: RALLY_RENDERER_ORIGIN });
+function wrapWebSocket(socket: WebSocket): RealtimeSocketClient {
   return {
     get extensions() { return socket.extensions; },
     get protocol() { return socket.protocol; },
@@ -44,6 +47,50 @@ function defaultSocketFactory(url: string, protocols: readonly string[]): Realti
     send: (data) => socket.send(data),
     terminate: () => socket.terminate(),
   };
+}
+
+function defaultSocketFactory(url: string, protocols: readonly string[]): RealtimeSocketClient {
+  return wrapWebSocket(new WebSocket(url, [...protocols], { origin: RALLY_RENDERER_ORIGIN }));
+}
+
+export function proxyUrlFromElectronResolution(resolution: string): string {
+  const directive = resolution.split(';', 1)[0]?.trim() ?? '';
+  if (!directive || directive === 'DIRECT') return '';
+  const separator = directive.indexOf(' ');
+  if (separator < 1) throw new Error('Electron returned an invalid proxy directive');
+  const kind = directive.slice(0, separator).toUpperCase();
+  const address = directive.slice(separator + 1).trim();
+  if (!address) throw new Error('Electron returned an invalid proxy directive');
+  switch (kind) {
+    case 'PROXY': return `http://${address}`;
+    case 'HTTPS': return `https://${address}`;
+    case 'SOCKS':
+    case 'SOCKS5': return `socks5://${address}`;
+    case 'SOCKS4': return `socks4://${address}`;
+    default: throw new Error('Electron returned an unsupported proxy directive');
+  }
+}
+
+/**
+ * Keep Node-owned sockets independent of Chromium's per-renderer connection
+ * scheduling while preserving the operating system proxy and trust settings
+ * that Electron uses for the rest of the application.
+ */
+export function createNodeRealtimeSocketFactory(
+  resolveProxy: RealtimeSocketProxyResolver,
+): RealtimeSocketFactory {
+  const ca = [...new Set([
+    ...getCACertificates('default'),
+    ...getCACertificates('system'),
+  ])];
+  const agent = new ProxyAgent({
+    ca,
+    getProxyForUrl: async (url) => proxyUrlFromElectronResolution(await resolveProxy(url)),
+  });
+  return (url, protocols) => wrapWebSocket(new WebSocket(url, [...protocols], {
+    agent,
+    origin: RALLY_RENDERER_ORIGIN,
+  }));
 }
 
 function socketOrigin(apiBaseUrl: string): string | null {
@@ -77,6 +124,8 @@ function validSocketPath(input: DesktopRealtimeSocketOpenInput, url: URL): boole
  * Keep the renderer bridge from becoming an arbitrary network primitive. The
  * renderer may dial only Rally's configured regional work-stream endpoints;
  * main supplies the privileged Origin header and never accepts one over IPC.
+ * Protocols cross IPC only because the first entry is constrained to Rally's
+ * ticket protocol and the remaining entry is the short-lived ticket.
  */
 export function realtimeSocketTargetAllowed(
   input: DesktopRealtimeSocketOpenInput,
@@ -145,6 +194,9 @@ export class RealtimeSocketBroker {
         socketId: input.socketId,
         code,
         reason: Buffer.from(reason).toString('utf8'),
+        // ws exposes the peer close code but not the browser's internal clean-
+        // shutdown bit. An abnormal-closure sentinel is the closest public
+        // equivalent and is sufficient for the renderer's reconnect policy.
         wasClean: code !== 1006,
       });
       owned.active = false;
@@ -164,7 +216,14 @@ export class RealtimeSocketBroker {
     const owned = this.sockets.get(this.key(ownerId, socketId));
     if (!owned) return;
     if (owned.client.readyState === WebSocket.CLOSING || owned.client.readyState === WebSocket.CLOSED) return;
-    owned.client.close(code, reason);
+    try {
+      owned.client.close(code, reason);
+    } catch (error) {
+      owned.active = false;
+      this.sockets.delete(this.key(ownerId, socketId));
+      owned.client.terminate();
+      throw error;
+    }
   }
 
   closeOwner(ownerId: number): void {

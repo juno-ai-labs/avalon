@@ -132,7 +132,11 @@ import {
   type MessageExportWindow,
 } from './message-export';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
-import { RealtimeSocketBroker, realtimeSocketTargetAllowed } from './realtime-socket-broker';
+import {
+  RealtimeSocketBroker,
+  createNodeRealtimeSocketFactory,
+  realtimeSocketTargetAllowed,
+} from './realtime-socket-broker';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
@@ -438,7 +442,9 @@ let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
-const realtimeSocketBroker = new RealtimeSocketBroker();
+const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
+  (url) => electronSession.defaultSession.resolveProxy(url),
+));
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
   route: 'global',
@@ -3337,6 +3343,9 @@ async function createMainWindow(): Promise<void> {
   const mainWindowWebContentsId = mainWindow.webContents.id;
 
   installWindowDiagnostics(mainWindow, 'main');
+  mainWindow.webContents.on('render-process-gone', () => {
+    realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+  });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     // Hash-router transitions are same-document navigations. Treating them as

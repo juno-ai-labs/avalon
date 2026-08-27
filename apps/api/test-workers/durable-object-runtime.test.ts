@@ -3017,6 +3017,73 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("includes an old running work stream beyond the first directory page", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const oldRunningId = "00000000-0000-7000-8002-000000000001";
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.transactionSync(() => {
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_directory
+            (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+             title, description, preview, scope, exact_state, system_kind, last_activity_at,
+             completed_at, archived_at, email_address, origin_type, origin_label,
+             created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+             title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+             next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+             source_created_at, source_updated_at, projected_at)
+           VALUES (?, 1, 252, '00000000-0000-7000-8003-000000000001', 'test',
+             'Old and still running', '', '', 'workspace', 'running', NULL, 1,
+             NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+             'settled', 0, 0, NULL, NULL, NULL, 1, 1, 1)`,
+          oldRunningId,
+          USER_ID,
+        );
+        state.storage.sql.exec(
+          `WITH RECURSIVE sequence(n) AS (
+             SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 251
+           )
+           INSERT INTO workspace_workstream_directory
+             (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+              title, description, preview, scope, exact_state, system_kind, last_activity_at,
+              completed_at, archived_at, email_address, origin_type, origin_label,
+              created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+              title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+              source_created_at, source_updated_at, projected_at)
+           SELECT printf('00000000-0000-7000-8004-%012d', n), 1, n,
+             printf('00000000-0000-7000-8005-%012d', n), 'test',
+             printf('Recent completed %d', n), '', '', 'workspace', 'completed', NULL,
+             1000 + n, 1000 + n, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+             'settled', 0, 0, NULL, NULL, NULL, 1000 + n, 1000 + n, 1000 + n
+           FROM sequence`,
+          USER_ID,
+        );
+        state.storage.sql.exec(
+          `UPDATE workspace_directory_state SET waterline = 252, updated_at = 1251 WHERE id = 1`,
+        );
+      });
+    });
+
+    const page = await stub.listWorkstreams({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      limit: 250,
+      includeSystem: false,
+    });
+
+    expect(page.nextCursor).not.toBeNull();
+    expect(page.items).toHaveLength(251);
+    expect(page.items.find((item) => item.id === oldRunningId)).toMatchObject({
+      title: "Old and still running",
+      harnessStatus: "running",
+    });
+  });
+
   it("pushes the automation list when a write lands, including the scheduler's", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
