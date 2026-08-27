@@ -238,6 +238,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
     enabled: Boolean(api),
     staleTime: 30_000,
   });
+  const inactiveProjects = useQuery({
+    queryKey: ['projects-inactive'],
+    queryFn: ({ signal }) => {
+      if (!api) throw new Error('Your session is no longer active. Sign in again.');
+      return api.getInactiveProjects(signal);
+    },
+    enabled: Boolean(api),
+    staleTime: 30_000,
+  });
   const featureFlags = useClientFeatureFlags(api);
   const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
@@ -291,6 +300,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         loading={workstreams.data === undefined}
         notes={notes.data ?? []}
         projects={projects.data?.items ?? []}
+        inactiveProjects={inactiveProjects.data?.items ?? []}
         meetingRecordingAvailable={featureFlags.data?.meetingRecordingEnabled === true}
         automationWorkspaceTemplatesAvailable={featureFlags.data?.automationWorkspaceTemplatesEnabled === true}
         onArchiveDraftAutomation={async (automation) => {
@@ -482,10 +492,30 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           }));
           void queryClient.invalidateQueries({ queryKey: ['projects'] });
         }}
+        onAddWorkstreamToProject={async (projectId, workstreamId) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const updated = await api.addWorkstreamToProject(projectId, workstreamId);
+          queryClient.setQueryData<ProjectDirectory>(['projects'], (current) => current ? {
+            ...current,
+            items: current.items.map((project) => project.id === updated.id ? updated : {
+              ...project,
+              workstreamIds: project.workstreamIds.filter((id) => id !== workstreamId),
+            }),
+          } : current);
+          void queryClient.invalidateQueries({ queryKey: ['projects'] });
+        }}
         onReorderProjects={async (projectIds) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');
           const directory = await api.reorderProjects(projectIds);
           queryClient.setQueryData(['projects'], directory);
+        }}
+        onRestoreProject={async (projectId) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          await api.restoreProject(projectId);
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: ['projects'] }),
+            queryClient.invalidateQueries({ queryKey: ['projects-inactive'] }),
+          ]);
         }}
         onSignOut={() => {
           void signOut().catch(() => undefined);

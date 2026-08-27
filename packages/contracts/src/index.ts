@@ -11,7 +11,7 @@ import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
-import { ProjectDirectorySchema } from "./projects";
+import { ProjectDirectorySchema, ProjectIdSchema } from "./projects";
 
 export * from "./attachment-contracts";
 export * from "./resource-relationships";
@@ -1513,6 +1513,8 @@ export const UpdateDigestScheduleRequestSchema = z.object({
 );
 
 export const CreateWorkstreamRequestSchema = z.object({
+  /** Optional organizer chosen by the caller; the API reauthorizes it. */
+  projectId: ProjectIdSchema.optional(),
   title: z.string().min(1).max(180).optional(),
   objective: z.string().trim().min(1).max(WORKSTREAM_DESCRIPTION_MAX_CHARACTERS).optional(),
   /**

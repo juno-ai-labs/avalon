@@ -12,7 +12,7 @@ import { PROJECT_COLOR_KEYS, PROJECT_ICON_KEYS } from "@rally/contracts";
 
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 
-const PROJECT_SCHEMA_VERSION = 13;
+const PROJECT_SCHEMA_VERSION = 15;
 
 function apply(database: DatabaseSync, through: number, after = 0): void {
   database.exec("PRAGMA foreign_keys = ON");
@@ -98,5 +98,29 @@ describe("the WorkspaceDO project authority migration", () => {
       name: " HIRING ",
       normalizedName: "hiring",
     })).toThrow();
+  });
+
+  it("given one work stream, when two historical project memberships exist, then the schema keeps both", () => {
+    const database = new DatabaseSync(":memory:");
+    apply(database, PROJECT_SCHEMA_VERSION);
+    insertProject(database);
+    insertProject(database, {
+      projectId: "00000000-0000-7000-8000-0000000000b7",
+      name: "Second",
+      normalizedName: "second",
+    });
+
+    const insert = database.prepare(
+      `INSERT INTO project_workstream_memberships
+         (project_id, workstream_id, state, generation, joined_at, updated_at, removed_at)
+       VALUES (?, ?, 'removed', 1, 1, 2, 2)`,
+    );
+    const workstreamId = "00000000-0000-7000-8000-0000000000b8";
+    insert.run("00000000-0000-7000-8000-0000000000b1", workstreamId);
+    insert.run("00000000-0000-7000-8000-0000000000b7", workstreamId);
+
+    expect(database.prepare(
+      "SELECT project_id FROM project_workstream_memberships WHERE workstream_id = ? ORDER BY project_id",
+    ).all(workstreamId)).toHaveLength(2);
   });
 });

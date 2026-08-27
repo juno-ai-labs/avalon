@@ -258,17 +258,37 @@ import {
 import { WorkspaceProductStorage } from "./workspace-product-storage";
 import {
   WorkspaceProjectCreateRequestSchema,
+  WorkspaceProjectAudienceRequestSchema,
+  ProjectDefaultResourceQueueMessageSchema,
+  WorkspaceProjectDefaultResourceRequestSchema,
+  WorkspaceProjectDefaultResultSchema,
   WorkspaceProjectDirectoryResultSchema,
   WorkspaceProjectListRequestSchema,
+  WorkspaceProjectLifecycleRequestSchema,
+  WorkspaceProjectMembershipPlanResultSchema,
+  WorkspaceProjectMembershipPrepareRequestSchema,
+  WorkspaceProjectMembershipSettleRequestSchema,
   WorkspaceProjectMutationResultSchema,
   WorkspaceProjectReorderRequestSchema,
   WorkspaceProjectUpdateRequestSchema,
+  WorkspaceProjectWorkstreamConstraintRequestSchema,
+  WorkspaceProjectWorkstreamConstraintResultSchema,
   type WorkspaceProjectCreateRequest,
+  type WorkspaceProjectAudienceRequest,
+  type ProjectDefaultResourceQueueMessage,
+  type WorkspaceProjectDefaultResourceRequest,
+  type WorkspaceProjectDefaultResult,
   type WorkspaceProjectDirectoryResult,
   type WorkspaceProjectListRequest,
+  type WorkspaceProjectLifecycleRequest,
+  type WorkspaceProjectMembershipPlanResult,
+  type WorkspaceProjectMembershipPrepareRequest,
+  type WorkspaceProjectMembershipSettleRequest,
   type WorkspaceProjectMutationResult,
   type WorkspaceProjectReorderRequest,
   type WorkspaceProjectUpdateRequest,
+  type WorkspaceProjectWorkstreamConstraintRequest,
+  type WorkspaceProjectWorkstreamConstraintResult,
 } from "./workspace-project-protocol";
 import { WorkspaceProjectStorage } from "./workspace-project-storage";
 import {
@@ -1176,6 +1196,60 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
     ) STRICT`,
     `INSERT INTO workspace_project_state (id, waterline, updated_at) VALUES (1, 0, 0)`,
+  ],
+}, {
+  version: 15,
+  description: "stage many-to-many project membership for work streams",
+  statements: [
+    `CREATE TABLE project_workstream_memberships (
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      workstream_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('joining', 'active', 'removing', 'removed')),
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      joined_at INTEGER NOT NULL CHECK (joined_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      removed_at INTEGER CHECK (removed_at IS NULL OR removed_at >= 0),
+      CHECK ((state = 'removed') = (removed_at IS NOT NULL)),
+      PRIMARY KEY (project_id, workstream_id)
+    ) STRICT`,
+    `CREATE INDEX project_workstream_memberships_workstream_state_idx
+      ON project_workstream_memberships(workstream_id, state, project_id)`,
+    `CREATE INDEX project_workstream_memberships_project_state_idx
+      ON project_workstream_memberships(project_id, state, workstream_id)`,
+  ],
+}, {
+  version: 16,
+  description: "store project defaults and their per-work-stream Queue targets",
+  statements: [
+    `CREATE TABLE project_default_resources (
+      project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+      resource_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('active', 'removed')),
+      generation INTEGER NOT NULL DEFAULT 1 CHECK (generation > 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      removed_at INTEGER CHECK (removed_at IS NULL OR removed_at >= 0),
+      CHECK ((state = 'removed') = (removed_at IS NOT NULL)),
+      PRIMARY KEY (project_id, resource_id)
+    ) STRICT`,
+    `CREATE TABLE project_default_resource_targets (
+      project_id TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      default_generation INTEGER NOT NULL CHECK (default_generation > 0),
+      workstream_id TEXT NOT NULL,
+      membership_generation INTEGER NOT NULL CHECK (membership_generation > 0),
+      state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'terminal')),
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+      applied_at INTEGER CHECK (applied_at IS NULL OR applied_at >= 0),
+      last_error_code TEXT,
+      PRIMARY KEY (project_id, resource_id, default_generation, workstream_id, membership_generation),
+      FOREIGN KEY (project_id, resource_id) REFERENCES project_default_resources(project_id, resource_id)
+        ON DELETE CASCADE
+    ) STRICT`,
+    `CREATE INDEX project_default_resource_targets_pending_idx
+      ON project_default_resource_targets(state, project_id, resource_id, workstream_id)`,
   ],
 }];
 
@@ -2426,6 +2500,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
+  async listInactiveProjects(input: WorkspaceProjectListRequest): Promise<WorkspaceProjectDirectoryResult> {
+    await this.initialized;
+    const request = WorkspaceProjectListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    return WorkspaceProjectDirectoryResultSchema.parse({
+      ok: true,
+      directory: this.projectStorage().listInactive(request.userId),
+    });
+  }
+
+  async archiveProject(input: WorkspaceProjectLifecycleRequest): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectLifecycleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().archive(request);
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async restoreProject(input: WorkspaceProjectLifecycleRequest): Promise<WorkspaceProjectDefaultResult> {
+    await this.initialized;
+    const request = WorkspaceProjectLifecycleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().restore(request);
+    return WorkspaceProjectDefaultResultSchema.parse(project === "conflict"
+      ? { ok: false, code: "project_restore_conflict" }
+      : project
+        ? { ok: true, project: project.project, targets: project.targets }
+        : { ok: false, code: "project_not_found" });
+  }
+
   async reorderProjects(
     input: WorkspaceProjectReorderRequest,
   ): Promise<WorkspaceProjectDirectoryResult> {
@@ -2456,6 +2571,155 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       : project === null
         ? { ok: false, code: "project_name_conflict" }
         : { ok: true, project });
+  }
+
+  async updateProjectAudience(input: WorkspaceProjectAudienceRequest): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectAudienceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const activeMemberIds = await Promise.all(request.audience.participantUserIds.map(async (userId) => (
+      await this.activeWorkspaceMember(request.workspaceId, userId) ? userId : null
+    )));
+    if (activeMemberIds.some((userId) => userId === null)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().updateAudience(request);
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async prepareProjectMembership(
+    input: WorkspaceProjectMembershipPrepareRequest,
+  ): Promise<WorkspaceProjectMembershipPlanResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipPrepareRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    return WorkspaceProjectMembershipPlanResultSchema.parse(
+      this.projectStorage().prepareMembership(request),
+    );
+  }
+
+  async projectWorkstreamConstraints(
+    input: WorkspaceProjectWorkstreamConstraintRequest,
+  ): Promise<WorkspaceProjectWorkstreamConstraintResult> {
+    await this.initialized;
+    const request = WorkspaceProjectWorkstreamConstraintRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return WorkspaceProjectWorkstreamConstraintResultSchema.parse({
+        activeProject: false,
+        requiresWorkspaceScope: false,
+      });
+    }
+    return WorkspaceProjectWorkstreamConstraintResultSchema.parse(
+      this.projectStorage().workstreamConstraints(request.workstreamId),
+    );
+  }
+
+  async finalizeProjectMembership(
+    input: WorkspaceProjectMembershipSettleRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().finalizeMembership(request);
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async cancelProjectMembership(
+    input: WorkspaceProjectMembershipSettleRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().cancelMembership(request);
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async removeProjectMembership(
+    input: WorkspaceProjectMembershipPrepareRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectMembershipPrepareRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().removeMembership(
+      request.userId,
+      request.projectId,
+      request.workstreamId,
+    );
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async addProjectDefaultResource(
+    input: WorkspaceProjectDefaultResourceRequest,
+  ): Promise<WorkspaceProjectDefaultResult> {
+    await this.initialized;
+    const request = WorkspaceProjectDefaultResourceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    return WorkspaceProjectDefaultResultSchema.parse(
+      this.projectStorage().addDefaultResource(request),
+    );
+  }
+
+  async removeProjectDefaultResource(
+    input: WorkspaceProjectDefaultResourceRequest,
+  ): Promise<WorkspaceProjectMutationResult> {
+    await this.initialized;
+    const request = WorkspaceProjectDefaultResourceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { ok: false, code: "project_access_denied" };
+    }
+    const project = this.projectStorage().removeDefaultResource(request);
+    return WorkspaceProjectMutationResultSchema.parse(project
+      ? { ok: true, project }
+      : { ok: false, code: "project_not_found" });
+  }
+
+  async projectDefaultTargetCurrent(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().defaultTargetCurrent(request);
+  }
+
+  async projectDefaultTargetActors(input: ProjectDefaultResourceQueueMessage): Promise<string[]> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().defaultTargetActors(request);
+  }
+
+  async completeProjectDefaultTarget(input: ProjectDefaultResourceQueueMessage): Promise<boolean> {
+    await this.initialized;
+    const request = ProjectDefaultResourceQueueMessageSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.projectStorage().completeDefaultTarget(request);
   }
 
   /**
