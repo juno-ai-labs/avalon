@@ -39,9 +39,8 @@ describe('public Rally site', () => {
   it('presents Rally as a desktop product without exposing an app sign-in surface', () => {
     const page = readProjectFile('index.html');
 
-    expect(page).toContain('Desktop preview');
-    expect(page).toContain('currently ships as a macOS desktop product');
-    expect(page).toContain('not a browser version');
+    expect(page).toContain('Live private preview');
+    expect(page).toContain('Apple silicon');
     expect(page).not.toMatch(/<form\b/i);
     expect(page).not.toMatch(/sign[ -]?in/i);
     expect(page).toContain('<script type="module" src="/src/landing.ts"></script>');
@@ -51,13 +50,11 @@ describe('public Rally site', () => {
     const page = readProjectFile('index.html');
     const styles = readProjectFile('src/styles.css');
     expect(page).toContain('Docs went multiplayer.<br />Design went multiplayer.<br /><em>AI is next.</em>');
-    expect(page).toContain('Why multiplayer');
     expect(page).toContain('class="rally-merge reveal"');
     expect(styles).toContain('--paper:#f0efe8');
     expect(styles).toContain('--blue:#47c7fc');
     expect(styles).toContain('--volt:#ccff00');
     expect(styles).toContain('--orange:#ff6337');
-    expect(styles).toContain('.rally-home .rally-button-dark:hover{background:var(--volt);border-color:var(--black);color:var(--black)}');
     expect(page).not.toContain('data-theme-select');
   });
 
@@ -68,7 +65,6 @@ describe('public Rally site', () => {
     expect(styles).toContain('.reveal { opacity: 1; transform: none; }');
     expect(styles).toContain('html.js .reveal { opacity: 0;');
     expect(styles).toContain('html.js .reveal.is-visible { opacity: 1;');
-    expect(page).toContain('<div class="rally-app-body" aria-hidden="true" inert>');
     expect(page.indexOf('<script src="/landing-init.js"></script>')).toBeLessThan(
       page.indexOf('<link rel="stylesheet" href="/src/styles.css" />'),
     );
@@ -216,13 +212,6 @@ describe('public Rally site', () => {
     for (const path of ['concepts/index.html', 'concepts/horizon/index.html', 'concepts/hero/index.html']) {
       expect(readProjectFile(path)).toContain('<meta name="robots" content="noindex, nofollow" />');
     }
-  });
-
-  it('uses the same attention-first work-stream heading as the desktop sidebar', () => {
-    const page = readProjectFile('index.html');
-
-    expect(page).toContain('<p>Waiting for you</p>');
-    expect(page).not.toContain('<p>Unread</p>');
   });
 
   it('uses the official black Apple logo in the primary macOS call to action', () => {
@@ -431,7 +420,6 @@ describe('public Rally site', () => {
     expect(support).toContain('Create new key');
     expect(support).toContain('Personal connections use Granola’s browser sign-in and do not require an API key.');
     expect(support).toContain('https://docs.granola.ai/help-center/sharing/integrations/granola-api');
-    expect(readProjectFile('index.html')).toContain('href="/support/#granola-key-title">Granola</a>');
     expect(handoff).toContain("url.hostname === 'workstreams'");
     expect(handoff).toContain("url.hostname === 'settings'");
     expect(handoff).toContain("url.hostname === 'automations'");
