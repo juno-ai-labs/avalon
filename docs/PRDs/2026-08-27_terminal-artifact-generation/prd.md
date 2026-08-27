@@ -198,7 +198,78 @@ the document is viewing and creates no participation. No clause moves.
 
 ## Decision log
 
-None yet.
+### 2026-08-27 — Acceptance criterion 1 is blocked: nothing in the client reads a published document
+
+**Decided:** The guidance and the publish-path refinement ship; this PRD stays
+`in progress` rather than reaching `completed`.
+
+**Why:** Product behavior and non-goal 1 both rest on "the rail's existing
+preview surfaces are the V1 reading experience". Checked in a real window, that
+premise is false. A generated resource appears in the rail under **Artifacts**
+and opening it shows a metadata panel — title, provider, type, direction,
+version, last updated, `Remove` — with no content. `InspectorDetail` renders no
+body, and `AttachmentLightbox`, the one surface that fetches
+`/resources/:id/preview`, is wired only to attachments on a message.
+
+**Changes:** Acceptance criterion 1 cannot be demonstrated, and goal 1 ships
+without a reader. To pick it up: a body renderer in the rail's resource detail,
+or `AttachmentLightbox` wired to rail resources — a desktop change this PRD
+excludes outright ("no desktop release"), so it wants its own PRD. The durable
+limitation is recorded in [`agent-harness.md`](../../agent-harness.md) under
+Failure modes and limits.
+
+### 2026-08-27 — Latest-only republish does not ship; the versioning layer landed first
+
+**Decided:** A republish is an ordinary semantic write, and the superseded
+object is deliberately **not** enqueued for cleanup.
+
+**Why:** Key design decision 3 and non-goal 3 accepted a destructive
+latest-only update because resource versioning had not landed. It landed the
+same day, before this. WorkspaceDO's `resources_create_semantic_version`
+captures the superseded original and derivative, and the reaper treats a ref a
+version row still names as active — so the "existing superseded-content
+cleanup" this PRD expected to fire would be a deletion the reaper immediately
+cancels.
+
+**Changes:** Key design decision 3 is superseded and the fourth rollout risk
+does not apply. A future change must not reinstate an explicit enqueue of the
+old pointer.
+
+### 2026-08-27 — Slack-origin runs are excluded from the guidance
+
+**Decided:** The policy does not render for a run carrying a `slackOrigin`.
+
+**Why:** Non-goal 6 defers automation, inbound-email and delegated child runs
+because their delivery paths cannot carry a document reference. Slack delivery
+cannot either, and it was not named. A Slack participant would be told a
+document exists and given no way to open it — worse than today's inline answer.
+
+**Changes:** Non-goal 6's list widens by one. Turning it on later is one
+condition removed from `runPublishesDocuments`.
+
+### 2026-08-27 — The work-stream prompt version is not bumped
+
+**Decided:** `WORKSTREAM_PROMPT_VERSION` is unchanged, settling the first
+rollout risk this PRD left to implementation.
+
+**Why:** It is hashed into the immutable run scope, so bumping it fails every
+in-flight run resuming across the deploy with `immutable_run_scope_mismatch`.
+This section grants no capability and moves no authority — eligible
+capabilities and the tool surface hash are unchanged — and its flag derives
+from environment and run input already frozen for the run.
+
+**Changes:** A later prompt change that does move authority still needs the
+bump; this decision is not a precedent for prompt edits in general.
+
+### 2026-08-27 — The guidance ships as standing policy, not a skill
+
+**Decided:** Open question 1 resolved in favour of standing policy.
+
+**Why:** Measured rather than argued — the rendered standing prompt is 6,172
+bytes against its 8,000 ceiling, so it fits, and a skill would pay a load round
+trip for a rule whose trigger is evaluated on any request.
+
+**Changes:** Open question 1 is answered and removed below.
 
 ## Key design decisions
 
@@ -371,17 +442,14 @@ module itself are still made deliberately, as for any prompt change.
 
 ## Open questions
 
-1. **Does the guidance fit the standing-policy byte budget, or ship as a
-   skill?** The budget has historically been held by moving content out,
-   not raising it. Changes implementation placement only; blocks nothing.
-2. **Should automation runs get the guidance once their delivery paths
+1. **Should automation runs get the guidance once their delivery paths
    can carry a document reference?** Deferred with non-goal 6; the answer
    arrives with the digest/delivery work, not here.
-3. **Cold-start presentation.** Whether the sandbox-acquisition wait needs
+2. **Cold-start presentation.** Whether the sandbox-acquisition wait needs
    its own activity copy ("Setting up the work stream's workspace…") or
    the existing tool rows suffice — settle against real screenshots
    during implementation.
-4. **A token-friendly resource identifier.** The model handles resource
+3. **A token-friendly resource identifier.** The model handles resource
    ids here only occasionally — publish outputs return one, and the
    recycle-recovery path passes one to import — but the suggestion of a
    short slug alias for resources (raised against the citations sibling,

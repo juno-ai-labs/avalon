@@ -118,7 +118,25 @@ receives R2 credentials or a signed R2 URL.
 `AVALON_RESOURCE_DIR` into regional R2, creates a normal generated `resources`
 row, attaches it to the work stream, and uses the existing cleanup outbox. The
 published bytes do not enter model context. The resource inventory and existing
-attachment tools become the durable participant/model surface.
+attachment tools become the durable participant/model surface — though the
+desktop rail today lists a published resource without rendering its content, so
+the participant half is not yet delivered ([`agent-harness.md`](agent-harness.md),
+Failure modes and limits).
+
+A published file's identity is the document's own coordinates — the work stream
+and the normalized published path, as `terminal:<workstream-id>:<path>` — so
+publishing the same path again updates the resource the first publish created
+instead of minting a sibling, and the same file name published from another work
+stream stays a different document. An equal content hash returns the existing
+resource untouched, which covers both a crash-replay of a settled call and a
+republish that changed nothing; a different hash swaps the content in place
+under a compare-and-swap against the pointer that was read, applying a title
+only when the call supplies one. WorkspaceDO's resource versions retain the
+superseded original, so a revision does not destroy its predecessor. Publications
+recorded under the earlier per-call identity keep it, and a path-identity miss
+falls back to looking that identity up, so an attempt that already published a
+file cannot publish it twice across the change. A receipt is still required
+before any bytes reach R2.
 
 ### Git and GitHub
 
@@ -213,6 +231,13 @@ personless; it is not duplicated into these product events.
   authority fingerprint.** Reusing it after a principal, resource visibility,
   GitHub connection, or repository change would make old filesystem bytes a new
   caller's unauthorized input, so a mismatch destroys and reprovisions it.
+- **A published document's identity is the work stream plus its normalized
+  publish path, and that derivation is frozen once documents exist.** Changing
+  the normalization, or how `publish_resource` resolves a path against
+  `AVALON_RESOURCE_DIR`, re-keys every published document: each one's next
+  republish mints a sibling instead of updating it, silently and with no failing
+  test, because a test that publishes and republishes within one run sees only
+  one derivation. Widen it only with a migration of the stored identities.
 - **Loading Terminal never allocates provider compute.** Discovery is common
   and execution is exceptional; allocating at load would turn model routing
   mistakes into cost and persistent state.
@@ -261,6 +286,11 @@ network proxy, or a general GitHub administration surface.
   probe. The emergency switch keeps the plugin and its complete tool family
   discoverable, but new executions fail closed with `sandbox_unavailable` while
   retained work remains available for lifecycle reconciliation.
+- A republish that loses the content compare-and-swap to a concurrent one
+  deletes the bytes it wrote and reports what the document now holds, rather
+  than clobbering the winner. The model is handed a successful result whose
+  hash is not the bytes it published, so a revision can be dropped without a
+  run-visible signal.
 - An opted-in but incomplete Daytona environment degrades to `unsupported`
   instead of failing Worker startup. This keeps ordinary local development
   usable without provider credentials; a complete but malformed configuration
@@ -549,6 +579,45 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-27 — A published document is identified by its path, not by the call
+
+**What changed:** `resource-bridge.ts` derives a publication's
+`provider_resource_id` from `terminal:<workstream-id>:<normalized-path>` rather
+than `terminal:<effect-intent-id>`. A hit with an equal content hash returns the
+existing resource unchanged; a hit with a different hash swaps content, mime
+type, metadata and title onto the same row under a compare-and-swap against the
+pointer that was read, resets the derivative to pending, and keeps the resource
+id and its work-stream link. A path miss still looks up the per-call identity.
+
+**Why:** The per-call identity is unique by construction, so the
+workspace-scoped lookup behind it could only ever recognize a replay of that one
+call. Publishing a revised draft of the same file was a legitimately different
+call and minted a sibling resource: three revisions read as four documents in
+the rail, and a revision had no stable object to land on. Standing policy now
+steers document-shaped requests through this path
+([`agent-harness.md`](agent-harness.md)), which makes republishing the ordinary
+case rather than an edge one.
+
+**Considered and rejected:** A new resource per publish, which is what shipped
+before — it is honest about provenance and wrong about identity, and it leaves
+resource versioning nothing to hang history on. Keying identity to the tool call
+and reconciling siblings afterwards, which needs a second concept of sameness
+that only the path can supply anyway. Enqueuing the superseded object for
+cleanup, which the pre-versioning design assumed was necessary — the version row
+still names that object and the reaper treats a ref a version names as active,
+so enqueuing it would be a deletion the reaper immediately cancels.
+
+**Consequences:** A revision keeps its predecessor readable, because the
+WorkspaceDO version triggers capture the superseded state on the same update;
+the "latest-only until versioning lands" limitation the terminal-artifact
+generation PRD accepted does not ship, since that layer landed first. Two work
+streams publishing `report.md` stay distinct, and two different files in one
+work stream stay distinct. A lost compare-and-swap deletes the bytes this call
+wrote and reports what the document now holds rather than clobbering the winner.
+The model-facing contract — name, inputs, outputs, receipt behavior — does not
+change, and an unreceipted publish is still refused before anything is written.
+`createTerminalWorkspaceBackup` remains keyed to `toolCallId`, unchanged by this.
 
 ### 2026-08-27 — Typed publication reuses the authorized repository sandbox
 

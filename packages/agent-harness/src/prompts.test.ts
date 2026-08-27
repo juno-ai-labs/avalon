@@ -110,6 +110,14 @@ describe("prompt renderers", () => {
         }),
         hash: "0d0a1f189edb0d426b884ac70c4aa75576cc11311708fbaf09e8c4b19b1cc121",
       },
+      workstreamWithDocuments: {
+        actual: renderWorkstreamSystemPrompt({
+          title: "Investigate checkout failures",
+          objective: "Find the cause and create a concise incident note.",
+          documentPublishing: true,
+        }),
+        hash: "80e573612c097fc19146409e9e64613a8e1a07e693eb2156c2f0bb0dddf28734",
+      },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Weekly engineering brief: 2026-08-07",
@@ -212,6 +220,41 @@ describe("prompt renderers", () => {
     )).toEqual(Object.fromEntries(
       Object.entries(goldenCases).map(([name, golden]) => [name, golden.hash]),
     ));
+  });
+
+  it("steers document-shaped work into the terminal workspace, and only where a run can publish one", () => {
+    const withDocuments = renderWorkstreamSystemPrompt({
+      title: "Draft the launch press release",
+      objective: "Write the press release for the launch.",
+      documentPublishing: true,
+    });
+    const withoutDocuments = renderWorkstreamSystemPrompt({
+      title: "Draft the launch press release",
+      objective: "Write the press release for the launch.",
+    });
+
+    expect(withDocuments).toContain("# Documents");
+    // The trigger, the procedure, the narration discipline, the revision rule
+    // and the override are each a rule the product behavior rests on, so a
+    // tidy-up rewrite has to move one deliberately rather than drop it.
+    expect(withDocuments).toContain("a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable");
+    expect(withDocuments).toContain("publish it as a work-stream resource");
+    expect(withDocuments).toContain("Never restate, summarize section by section, or quote the body of a document you just published");
+    expect(withDocuments).toContain("publishing to the same path again");
+    expect(withDocuments).toContain("under the title it already has");
+    expect(withDocuments).toContain("import the published resource back into it first");
+    expect(withDocuments).toContain('"answer in chat"');
+    expect(withDocuments).toContain('"Make that a document"');
+    // The fallback, so a run that cannot reach the workspace answers rather
+    // than stalling on a procedure it cannot follow.
+    expect(withDocuments).toContain("answer in the chat and inform the user you are unable to create a resource");
+    // No wire tool name in standing policy: the plugin's activated system
+    // message owns the mechanics, and this section renders for runs whose
+    // plugin is not loaded yet.
+    expect(withDocuments).not.toMatch(/terminal_[a-z_]+/u);
+    // Where a run cannot publish a document, the prompt is what it was.
+    expect(withoutDocuments).not.toContain("# Documents");
+    expect(withoutDocuments).not.toContain("work-stream resource");
   });
 
   it("tells an automation run that Rally delivers its result, and where", () => {
@@ -605,9 +648,18 @@ describe("prompt renderers", () => {
       title: "T",
       objective: "O",
     });
+    // Measured with the document section rendered: it is charged to every
+    // interactive run in a region where Terminal is supported, so the ceiling
+    // that matters is the one that run pays.
+    const documentPrompt = renderWorkstreamSystemPrompt({
+      title: "T",
+      objective: "O",
+      documentPublishing: true,
+    });
     const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
 
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
+    expect(Buffer.byteLength(documentPrompt, "utf8")).toBeLessThan(8_000);
     // The compiler's ceiling is 2 KB above the work stream's: it gained a
     // permanent `# Narration` section that the 8 KB figure predates, and then
     // the delivery rules — a destination is not a step, and the result's output

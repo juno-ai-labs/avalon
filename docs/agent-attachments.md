@@ -198,9 +198,11 @@ states `overwrite: true`.
 `terminal_publish_resource` reads one stable nonempty regular file from the
 host-provided output directory, classifies it with the attachment MIME/kind
 registry, pre-registers the regional object in the cleanup outbox, writes R2,
-then creates and attaches a normal generated `resources` row. The tool receipt
-derives `provider_resource_id`, so replay returns the same resource rather than
-duplicating bytes. Detachment and deletion therefore follow the existing
+then creates and attaches a normal generated `resources` row. The work stream
+and the normalized published path derive `provider_resource_id`, so publishing
+that path again updates the document rather than duplicating it; a settled
+call's replay returns the same resource by content hash, and one recorded under
+the earlier receipt-derived identity is still found by it. Detachment and deletion therefore follow the existing
 inventory revision, derivative, replay-dependency, and cleanup rules. Command
 logs and expiry diffs use the same generated-resource shape. The sandbox bridge
 itself is documented in [`terminal-workspaces.md`](terminal-workspaces.md).
@@ -494,6 +496,28 @@ would hide incomplete migration and permit the copies to diverge.
 **Consequences:** Schema retirement fails closed unless the two relationships
 match exactly before deletion. Attachment hydration and optimistic replacement
 continue to use the same stable message and resource identities.
+
+### 2026-08-27 — A published document keeps one identity across its revisions
+
+**What changed:** A Terminal publication's `provider_resource_id` is the work
+stream plus the normalized published path rather than the publishing call's
+receipt. Republishing the path updates that resource in place; the receipt
+identity is still consulted when the path lookup misses.
+
+**Why:** Standing policy now steers document-shaped requests through the publish
+path, so revising a draft is the ordinary case. Under the receipt-derived
+identity each revision was a new resource, and a rail showing four entries for
+one document is not a document.
+
+**Considered and rejected:** Reconciling siblings after the fact by source path,
+which is the same key applied later and with a window in which participants see
+duplicates.
+
+**Consequences:** The in-place update is an ordinary semantic write, so the
+version triggers capture the superseded original and derivative and the reaper
+keeps both — history beneath a republished document comes from the existing
+versioning layer with nothing added here. Resources published before the change
+keep their receipt-derived identities and are never rewritten in place.
 
 ### 2026-08-27 — Resource versions retain prior originals and model derivatives
 
