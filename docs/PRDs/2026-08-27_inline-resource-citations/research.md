@@ -80,6 +80,17 @@ more sophisticated citation block. The PRD recommends plain link syntax
 A bespoke citation block was rejected on the familiarity principle: it
 is out-of-distribution syntax with no degradation story.
 
+**Superseded in review (2026-08-27):** the PRD now adopts *both* forms
+with distinct renderings — link → inline chip, image → embedded block
+card — with guidance recommending the embed form for announcing
+generated artifacts, on the argument that models place image syntax
+block-level by training, so the card never splits a sentence. The
+semantics objection dissolved (the card is the first true embed); the
+degradation objection stands and is carried as an accepted cost in the
+PRD's key design decision 2. The scheme also moved to true URL style
+(`resource://`). This file records the original analysis as prior art;
+`prd.md` is authoritative.
+
 ## Also consulted
 
 - A reverse-engineering write-up of ChatGPT's and Claude's inline

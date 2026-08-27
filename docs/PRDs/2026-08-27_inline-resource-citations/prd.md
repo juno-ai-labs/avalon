@@ -28,13 +28,15 @@ attached PDF it read, a web page it fetched — the answer says so inline,
 and the reference is a live affordance rather than prose. Two
 presentation modes, one protocol:
 
-1. **Chip.** A citation of a work-stream resource renders as an inline
-   chip carrying its title — and, when the citation stands alone as its
-   own paragraph, as a compact block card. Clicking opens the resource in
-   the right rail. This is how a generated document is announced in chat:
-   `I've drafted [Mute windows PRD](resource:0192…) — tell me what to
-   change` renders as a sentence with a clickable chip where the
-   superseded PRD would have built a dedicated card message.
+1. **Chip and embed — two syntaxes, two renderings.** Link syntax
+   (`[Title](resource://<id>)`) renders as an inline chip carrying the
+   resource's title; image syntax (`![Title](resource://<id>)`) renders
+   as an embedded block card. Guidance recommends the embed style for
+   announcing generated artifacts — models place image syntax on its own
+   line by training, the way they treat actual images, so the card never
+   splits a sentence — and the chip for passing references inside prose.
+   Clicking either opens the resource in the right rail, whose detail
+   view gains a readable content preview (today it is metadata only).
 2. **Footnote.** Grounding and research answers cite sources
    GitHub-footnote style — a superscript number after the punctuation,
    with a hover popover naming the source and offering to open it.
@@ -42,10 +44,10 @@ presentation modes, one protocol:
    browser.
 
 The whole feature is a syntax convention plus a renderer hook: the model
-emits ordinary markdown link and footnote syntax with a `resource:`
-scheme for internal targets, and the single shared markdown renderer —
-which already hijacks link syntax to render mention chips — dispatches on
-the scheme. No wire change, no schema change, no new tables. The prompt
+emits ordinary markdown link, image, and footnote syntax with a
+`resource://` scheme for internal targets, and the single shared
+markdown renderer — which already hijacks link syntax to render mention
+chips — dispatches on the scheme and the syntax form. No wire change, no schema change, no new tables. The prompt
 guidance that steers emission ships server-side and retunes by deploy;
 the renderer branch ships once in the desktop.
 
@@ -82,12 +84,14 @@ data.
 ## Goals
 
 1. One citation protocol, entirely markdown-compatible, that a model
-   emits reliably from prompt guidance alone: link syntax with a
-   `resource:` scheme for internal targets, ordinary URLs for external
-   ones, GFM footnote syntax for the grounding mode.
-2. An internal citation renders as an inline chip (title, resource-kind
-   icon), and as a compact block card when it is a paragraph of its own;
-   clicking opens that resource's detail in the right rail.
+   emits reliably from prompt guidance alone: link and image syntax with
+   a `resource://` scheme for internal targets, ordinary URLs for
+   external ones, GFM footnote syntax for the grounding mode.
+2. Link form renders as an inline chip (title, resource-kind icon);
+   image form renders as an embedded block card; clicking either opens
+   that resource's detail in the right rail — and that detail gains a
+   readable content preview of the resource, rendered through the shared
+   renderer, since today it shows metadata only.
 3. A grounding citation renders as a numbered superscript after the text
    it supports, with a hover/focus popover naming the source; open goes
    to the rail for internal sources and to the system browser for
@@ -134,28 +138,47 @@ data.
 
 ## Product behavior
 
-**Chips.** `I've drafted [Mute windows PRD](resource:0192…)` renders as
-the sentence with a chip: icon by resource kind, the title as label. On
-hover, the chip hints openability; on click, the right rail opens (or
-switches) to that resource's detail — the same surface reached from the
-rail's own list. (Mechanically, a small exposed action over the existing
-rail state: open the context rail, then select the resource inspector —
-that selection is today reachable only from inside the rail, and the
-rail-opening actions deliberately clear it, so the ordering is part of
-the contract. A cited resource missing from the loaded set lands on the
-rail's existing unavailable state.) A citation that is its own paragraph
-renders as a small
-block card with the same information at slightly larger presentation and
-the same click behavior. During streaming, the text renders plainly
-until the link syntax closes, then becomes a chip — the same progressive
-settling every markdown construct already has.
+**Chips and embeds.** Two syntax forms, two renderings, one scheme:
+
+- `[Mute windows PRD](resource://0192…)` — link form — renders as an
+  inline chip: icon by resource kind, title as label, sitting inside the
+  sentence the way a mention chip does.
+- `![Mute windows PRD](resource://0192…)` — image form — renders as an
+  embedded block card at larger presentation. This is the recommended
+  form for announcing a generated artifact, and the reason is model
+  behavior, not aesthetics: models place image syntax on its own line by
+  training, the way they place actual images, so the card lands between
+  sentences instead of cutting one into three pieces. The syntax choice
+  does the placement work; no renderer heuristic guesses.
+
+On click, both open the right rail on that resource's detail — the same
+surface reached from the rail's own list. (Mechanically, a small exposed
+action over the existing rail state: open the context rail, then select
+the resource inspector — that selection is today reachable only from
+inside the rail, and the rail-opening actions deliberately clear it, so
+the ordering is part of the contract. A cited resource missing from the
+loaded set lands on the rail's existing unavailable state.)
+
+**The detail view gains a content preview — named as new scope.** The
+rail's resource detail today shows metadata only (type, direction,
+version, remove); readable content appears nowhere in the sidebar, only
+in the message-attachment lightbox. A citation that opens a metadata
+card would be a dead end, so this PRD adds the missing half: the detail
+view renders the resource's readable content through the shared renderer
+via the authorized preview route, beneath the existing metadata. This is
+the largest single piece of desktop work in the PRD, and the earlier
+draft under-stated it.
+
+During streaming, either form renders as plain text until its syntax
+closes, then becomes the chip or card — the same progressive settling
+every markdown construct already has.
 
 **Footnotes.** "Q3 revenue grew 40%.[^1]" renders the sentence with a
 superscript ¹; the message's footnote definitions render as a compact
 source list at the message's end, as GFM footnotes do. Hovering or
 focusing the superscript raises a popover with the source's title and an
 **Open** action; clicking the superscript or the popover's action opens
-the source — right rail for `resource:` targets, the system browser for
+the source — right rail for `resource://` targets, the system browser for
 external URLs, routed through the app's existing navigation-denial
 interception that already sends every external link to the OS browser.
 During streaming, a footnote whose definition has not yet arrived
@@ -163,14 +186,14 @@ renders literally until the message settles — the renderer's existing,
 documented behavior for split footnotes — while chips settle
 progressively as their link syntax closes.
 
-**Failure and degradation states, exhaustively.** A `resource:` target
+**Failure and degradation states, exhaustively.** A `resource://` target
 that is malformed, unknown, or not visible to the viewer renders as the
 plain label text — never a broken chip, and never information the
 message text did not already carry (the label is model-written text; the
 chip adds affordance, not disclosure). If the rail cannot open the
 resource (revoked since citation), the rail's existing unavailable state
 shows. A footnote reference without a definition renders as text. In the
-email digest's markdown renderer, `resource:` links degrade to their
+email digest's markdown renderer, `resource://` citations degrade to their
 label text (optionally suffixed with the work-stream link, that
 renderer's owner to decide) and external links remain links. Offline,
 chips render (labels and titles are local); opening follows the rail's
@@ -203,21 +226,27 @@ None yet.
    superseded PRD's dedicated message type — costs a wire enum, cache
    and dispatch branches, and version-skew handling on every client, to
    deliver what a link already carries.
-2. **Link syntax with a bare `resource:` scheme, not image syntax and
-   not a custom block.** `[Title](resource:<uuid>)` is the exact shape
-   models already emit for mentions in Rally (`[@Name](person:<uuid>)`),
-   matches the house scheme style (no `//`), and degrades to its label
-   everywhere markdown renders. The rejected alternatives: image syntax
-   `![Title](resource://…)` misdeclares semantics (an image embeds; a
-   citation references), reads as a broken image in any non-Rally
-   renderer, and burns the syntax the product will want later for true
-   inline embeds; bespoke citation blocks are out-of-distribution and
-   fail the familiarity principle the research settled on. One deliberate
-   divergence from the mention precedent: where `person:` validates a
-   strict UUID, the `resource:` pattern accepts an opaque token — bounded
-   length, safe alphabet — because the identifier's shape belongs to the
-   resource system, not the renderer. A future token-friendly resource
-   slug or alias (open question 4) then needs no renderer change.
+2. **Both markdown forms, one `resource://` scheme: link renders a chip,
+   image renders an embed card.** Revised in review from the draft's
+   link-only recommendation. `[Title](resource://<id>)` is the inline
+   reference; `![Title](resource://<id>)` is the embed, recommended for
+   announcing generated artifacts because models treat image syntax as
+   block-level by training — the card places itself between sentences
+   with no renderer heuristic. The draft's objection that image syntax
+   "burns the embed vocabulary" dissolves: the card *is* the first
+   embed, and richer inline previews later deepen the same form rather
+   than needing a new one. The `//` is the reviewed choice of true URL
+   style (a divergence from bare `person:`, which stays as it is), and
+   it buys a natural slot for future addressing (`?v=3` for version
+   pinning). Bespoke citation blocks remain rejected as
+   out-of-distribution. The identifier part stays an opaque token —
+   bounded length, safe alphabet, never a strict-UUID pattern — because
+   its shape belongs to the resource system, not the renderer; a future
+   token-friendly slug or alias (open question 4) needs no renderer
+   change. The known cost, accepted: the image form degrades worse than
+   the link form outside Rally (a broken-image placeholder rather than
+   label text), which makes the email renderer's degradation rule
+   load-bearing rather than nice-to-have.
 3. **GFM footnotes for the grounding mode.** `[^1]` with a
    link-carrying definition is deeply in training data, parses under the
    renderer's existing GFM support, renders acceptably as plain
@@ -225,37 +254,39 @@ None yet.
    upgrade point (superscript + popover). The rejected alternative —
    inline bracketed URLs after every claim — is what long grounded
    answers look like today, and it is unreadable.
-4. **Citations navigate; mentions still do not.** The asymmetry is
-   deliberate and stays: a mention is an identity token (navigation was
-   explicitly excluded by the renderer's security posture), while a
-   citation is a reference to openable content, and its two click paths
-   — rail navigation in-app, the sanctioned external-open path for URLs
-   — are both existing, guarded routes. The scheme dispatch is an
-   allowlist; unknown schemes render as text, and nothing in message
-   content can reach any other protocol handler.
+4. **Navigation is a property of the protocol.** `resource://` and
+   `http(s)` navigate — rail in-app, the sanctioned external-open path
+   for the browser — because they name openable content; `person:` and
+   `connector:` never navigate, because they name identities, exactly as
+   the renderer's existing security posture holds. The scheme dispatch
+   is an allowlist; unknown schemes render as text, and nothing in
+   message content can reach any other protocol handler.
 5. **Degradation-first syntax.** Every choice above biases toward "if
    nothing special happens, the text still reads correctly": labels are
    real text, footnotes are real footnotes, and the one non-desktop
    markdown surface Rally owns (digest email) gets an explicit
    degradation rule rather than a hope.
-6. **The renderer ships before the prompt.** The desktop branch is inert
-   until policy starts emission, so rollout has no skew window in which
-   participants see raw scheme URLs — and rollback is a prompt revert
-   that leaves already-sent citations rendering forever.
+6. **Renderer and prompt land together.** Revised in review from the
+   draft's two-phase sequencing: with no production users, the skew
+   window the phasing protected against costs nothing, and an older
+   build degrades to label text anyway — so the desktop branch and the
+   prompt module ship as one coordinated push. Rollback remains a prompt
+   revert that leaves already-sent citations rendering forever.
 
 ## Data model
 
 None. No tables, no columns, no wire changes, no migrations. The feature
-is a prompt module (server) and a renderer branch plus click routing
-(desktop), with one small degradation rule in the email markdown
-renderer.
+is a prompt module (server) and desktop work in four pieces — the
+renderer branch (chip, embed card, footnote hooks), click routing, the
+rail detail's content preview, and one small degradation rule in the
+email markdown renderer.
 
 ## Security and trust model
 
 - All parsing and rendering stays inside the single shared markdown
   renderer and inherits its posture: model text is untrusted, the scheme
   dispatch is a strict allowlist (`person:` and `connector:` as today,
-  `resource:` added, `http`/`https` as today), and anything else is
+  `resource://` added, `http`/`https` as today), and anything else is
   text.
 - Internal navigation goes only to the rail's existing resource detail,
   under the viewer's existing authorization; a citation grants no
@@ -273,43 +304,48 @@ contract.
 
 A standing-policy module (or an extension of the response-formatting
 policy — implementation's call within the byte budget) instructs, in its
-own wording: when the answer produces or leans on a work-stream resource,
-cite it inline as a markdown link with the `resource:` scheme, using the
-resource's real identifier from context — publish results and resource
-listings carry them — and its human title as the label; for grounded and
-research answers, cite with GFM footnotes placed after punctuation; never
-fabricate an identifier — cite by plain name when no identifier is in
-context; cite the load-bearing sources, not everything touched. The
-guidance renders for ordinary participant-triggered work-stream runs;
-inbound-email runs are excluded so email-delivered answers do not carry
-syntax their renderer only degrades.
+own wording: when announcing a document or artifact the answer produced,
+use the embed form (`![Title](resource://<id>)`) on its own line; when
+referring to a resource in passing inside prose, use the link form
+(`[Title](resource://<id>)`); use the resource's real identifier from
+context — publish results and resource listings carry them — and its
+human title as the label; for grounded and research answers, cite with
+GFM footnotes placed after punctuation; never fabricate an identifier —
+cite by plain name when no identifier is in context; cite the
+load-bearing sources, not everything touched. The guidance renders for
+ordinary participant-triggered work-stream runs; inbound-email runs are
+excluded so email-delivered answers do not carry syntax their renderer
+only degrades.
 
-Model-usability acceptance: prompt evaluations on a small fallback-stage
-model must show a publish followed by a correctly-cited announcement
-chip; a grounded answer with correctly-numbered footnotes after
-punctuation; no fabricated identifiers when context carries none; and
-un-cited plain conversation left alone. The renderer's guard tests (the
-single-mount rule, the stylesheet rules) and the normalization pipeline's
-tests extend to cover citation syntax passing through unmangled.
+Verification: formal prompt evaluations are deferred until Rally has an
+evaluation suite; until then the Acceptance flows are walked manually in
+dogfooding. What still lands as automated tests now: the renderer's
+guard tests (the single-mount rule, the stylesheet rules) and the
+normalization pipeline's tests extend to cover both citation forms
+passing through unmangled.
 
 ## Rollout
 
-1. Desktop release first: scheme dispatch, chip/card, footnote
-   presentation, click routing, and the digest-renderer degradation —
-   all inert with no citations in the wild.
-2. Prompt deploy second: emission begins; rollback is reverting the
-   module, and everything already sent keeps rendering.
+1. One coordinated push (key design decision 6): the desktop branch —
+   scheme dispatch, chip and embed card, footnote presentation, click
+   routing, the rail detail's content preview, the digest-renderer
+   degradation — and the prompt module land together. With no production
+   users, any skew between the two is acceptable and degrades to label
+   text.
+2. Rollback is reverting the prompt module; everything already sent
+   keeps rendering.
 
 **Migration and compatibility risks, stated plainly:**
 
-- Old desktop builds render a citation as a dead anchor carrying its
-  label: the renderer's default URL transform empties unknown schemes,
-  producing a link-styled element that goes nowhere — the exact behavior
-  the retired legacy mention scheme has a test pinning. Readable, not
-  broken, but link-styled; acceptable for the release-before-prompt
-  window and one more reason rollout step 1 precedes step 2.
-- The digest email renderer must ship its degradation rule no later than
-  the prompt deploy, or emails show raw `resource:` URLs.
+- Old desktop builds render a link-form citation as a dead anchor
+  carrying its label (the default URL transform empties unknown schemes
+  — the retired legacy mention scheme has a test pinning exactly this),
+  and an image-form citation as a broken image. Acceptable with no
+  production users; the reason the coordinated push should still be
+  genuinely coordinated.
+- The digest email renderer must ship its degradation rule with the
+  push, or emails show raw `resource://` URLs and broken images — the
+  image form makes this rule load-bearing, not cosmetic.
 - The model-text normalization pass sits between the model and the
   renderer; a test proves it passes citation syntax through unchanged.
 - Footnote parsing already works: the pinned GFM plugin (4.0.1) renders
@@ -321,9 +357,11 @@ tests extend to cover citation syntax passing through unmangled.
 
 ## Acceptance
 
-1. A published document's announcement renders with a working chip;
-   clicking opens that resource's detail in the right rail; the same
-   citation as its own paragraph renders as the block card.
+1. A published document's announcement in embed form renders as the
+   block card, and a link-form reference renders as an inline chip;
+   clicking either opens that resource's detail in the right rail, and
+   the detail shows the resource's readable content beneath its
+   metadata.
 2. A grounded answer renders numbered superscripts after punctuation
    with popovers; internal sources open in the rail, external sources in
    the system browser.
@@ -343,13 +381,14 @@ tests extend to cover citation syntax passing through unmangled.
 1. **Popover depth** — title-and-open only, or an excerpt line? Settle
    against real screenshots; excerpts require deciding what text is safe
    and local to show.
-2. **The block-card form's threshold** — own-paragraph only, or also
-   list items? Presentation call during implementation.
+2. **Embed card contents** — icon, title, and kind now; later an inline
+   excerpt or live preview of the resource inside the card itself?
+   Presentation call to revisit once the rail preview exists.
 3. **Version pinning** — once the versioning sibling lands, should a
    citation open the version that existed when it was written, or
    current? V1 opens current; the question returns with that PRD's
-   version list, and the syntax reserves nothing either way (a future
-   `resource:<uuid>@v3` remains available).
+   version list, and the URL-style scheme reserves a natural slot either
+   way (a future `resource://<uuid>?v=3` remains available).
 4. **A token-friendly resource identifier.** Citations make the model
    emit resource identifiers routinely, and a UUID is the worst shape
    for that: ~36 characters tokenizing to roughly four times a short
