@@ -81,6 +81,17 @@ describe('the Projects sidebar section', () => {
       const name = `${color[0]!.toUpperCase()}${color.slice(1)}`;
       expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
     }
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Red' }));
+    for (const icon of PROJECT_ICON_KEYS) {
+      const name = icon.split('-').map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(' ');
+      expect(within(dialog).getByRole('button', { name }).querySelector('svg'))
+        .toHaveAttribute('stroke', 'var(--av-sys-color-project-red)');
+    }
+
+    const scope = within(dialog).getByRole('combobox', { name: 'Project scope' });
+    expect(scope).toHaveClass('dropdown-select-trigger-primary');
+    fireEvent.click(scope);
+    expect(screen.getByRole('option', { name: 'Project participants' })).toBeVisible();
   });
 
   it('given the color grid, when a color receives focus, then its name appears in the standard tooltip', async () => {
