@@ -198,6 +198,13 @@ describe("work-stream transcript on workerd SQLite", () => {
       expect(state.storage.sql.exec(`SELECT COUNT(*) AS count
         FROM legacy_transcript_backfills`).one().count).toBe(1);
       expect(state.storage.sql.exec<{
+        exact_state: string;
+        state_reason_code: string;
+      }>(`SELECT exact_state, state_reason_code FROM workstream WHERE id = 1`).one()).toEqual({
+        exact_state: "failed",
+        state_reason_code: "runtime_failed",
+      });
+      expect(state.storage.sql.exec<{
         operator_run_id: string;
         abandoned_run_count: number;
       }>(`SELECT operator_run_id, abandoned_run_count
@@ -208,29 +215,66 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
-  it("refuses to abandon a pre-cutover run that acquired a durable lease", async () => {
+  it.each([
+    { name: "attempt id", attemptId: "live-attempt", leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: false, openReceipt: false },
+    { name: "lease owner", attemptId: null, leaseOwner: "live-owner",
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: false, openReceipt: false },
+    { name: "lease deadline", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: 4_102_444_800_000, heartbeatAt: null, afterCutover: false, openReceipt: false },
+    { name: "heartbeat", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: 1, afterCutover: false, openReceipt: false },
+    { name: "post-cutover start", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: true, openReceipt: false },
+    { name: "open tool receipt", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: false, openReceipt: true },
+  ])("refuses to abandon a run with a $name", async ({
+    attemptId,
+    leaseOwner,
+    leaseExpiresAt,
+    heartbeatAt,
+    afterCutover,
+    openReceipt,
+  }) => {
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
     );
     const stub = env.SUBSTREAM_AGENTS.get(id);
     await runInDurableObject(stub, async (instance, state) => {
       seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const cutover = Number(state.storage.sql.exec<{ applied_at: number }>(
+        `SELECT applied_at FROM _sql_schema_migrations WHERE version = 27`,
+      ).one().applied_at);
       state.storage.sql.exec(`INSERT INTO runs
         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
          next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
          idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
          input_tokens, output_tokens, cost_micros, output_bytes, legacy_attempt_id,
          lease_owner, lease_expires_at, heartbeat_at, created_at, updated_at)
-        VALUES ('leased-pre-cutover-run', '0', 'running', '{}', 0, 0, '', 0, 0, 1,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'live-attempt',
-                'live-owner', 4102444800000, 1, 1, 1)`);
+        VALUES ('guarded-pre-cutover-run', '0', 'running', '{}', 0, 0, '', 0, 0, ?1,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?2, ?3, ?4, ?5, 1, 1)`,
+      afterCutover ? cutover + 1 : cutover - 1,
+      attemptId,
+      leaseOwner,
+      leaseExpiresAt,
+      heartbeatAt);
+      if (openReceipt) {
+        state.storage.sql.exec(`INSERT INTO tool_effects
+          (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+           tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json)
+          VALUES ('guarded-open-tool', 'guarded-pre-cutover-run', 0, 0,
+                  'guarded-open-tool', 'search', 'read', 'request', 'authority',
+                  'admitted', 'guarded-open-provider-call', '{}')`);
+      }
       await expect(instance.abandonPreCutoverRunsForTranscriptBackfill({
         objectId: id.toString(),
         operatorRunId: "00000000-0000-7000-8000-000000000718",
         cutoverVersion: 27,
-      })).rejects.toThrow("legacy_transcript_pre_cutover_run_not_abandonable");
+      })).rejects.toThrow(openReceipt
+        ? "legacy_transcript_pre_cutover_run_has_open_receipt"
+        : "legacy_transcript_pre_cutover_run_not_abandonable");
       expect(state.storage.sql.exec<{ status: string }>(
-        `SELECT status FROM runs WHERE run_id = 'leased-pre-cutover-run'`,
+        `SELECT status FROM runs WHERE run_id = 'guarded-pre-cutover-run'`,
       ).one().status).toBe("running");
     });
   });
