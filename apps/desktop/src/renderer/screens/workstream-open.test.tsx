@@ -5,11 +5,13 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
+  addParticipant: vi.fn(),
   clientFeatureFlags: vi.fn(),
   getMessagePage: vi.fn(),
   getWorkstreamContext: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkstream: vi.fn(),
+  removeParticipant: vi.fn(),
 }));
 const retainedSocket = vi.hoisted(() => vi.fn());
 const scrollTranscriptToEnd = vi.hoisted(() => vi.fn());
@@ -230,6 +232,53 @@ describe('socket-first work-stream open', () => {
 
     expect(screen.queryByText('Ready to begin')).not.toBeInTheDocument();
     await waitFor(() => expect(api.getWorkstreamContext).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the error from the latest participant action', async () => {
+    const adam = {
+      id: '00000000-0000-7000-8000-000000000651',
+      name: 'Adam',
+      email: 'adam@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const katherine = {
+      id: '00000000-0000-7000-8000-000000000652',
+      name: 'Katherine',
+      email: 'katherine@example.test',
+      timezone: 'America/Los_Angeles',
+    };
+    const jordan = {
+      id: '00000000-0000-7000-8000-000000000653',
+      name: 'Jordan',
+      email: 'jordan@example.test',
+      timezone: 'America/Los_Angeles',
+      status: 'active' as const,
+    };
+    const boot = recoveryBoot({ participants: [adam, katherine] });
+    const { messageFeed: _messageFeed, resumeFeed: _resumeFeed, ...detail } = boot;
+    void _messageFeed;
+    void _resumeFeed;
+    api.getWorkspaceMembers.mockResolvedValue([adam, katherine, jordan]);
+    api.addParticipant.mockRejectedValue(new Error('Adam cannot add Jordan'));
+    api.removeParticipant.mockRejectedValue(new Error('Adam cannot remove Katherine'));
+
+    renderScreen((queryClient) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
+      queryClient.setQueryData<Message[]>(['messages', workstreamId], []);
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: /Add participant/u }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Jordan to work stream' }));
+    expect(await screen.findByText('Adam cannot add Jordan')).toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Katherine participant actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from work stream' }));
+
+    expect(await screen.findByText('Adam cannot remove Katherine')).toBeInTheDocument();
+    expect(screen.queryByText('Adam cannot add Jordan')).not.toBeInTheDocument();
   });
 
   it('offers REST recovery after the first socket attempt fails', async () => {

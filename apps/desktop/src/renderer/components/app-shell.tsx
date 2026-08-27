@@ -489,6 +489,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             ['projects'],
             (current) => upsertProjectDirectory(current, created),
           );
+          return created;
         }}
         onAddWorkstreamToProject={async (projectId, workstreamId) => {
           if (!api) throw new Error('Your session is no longer active. Sign in again.');

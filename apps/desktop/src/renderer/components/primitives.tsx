@@ -190,28 +190,30 @@ export function AvatarStack({
     >
       {visible.map((member) => {
         const showingPresence = present.has(member.id) && member.id !== currentUserId;
-        if (!showingPresence) {
-          return (
-            <span className="avatar-stack-item" key={member.id}>
-              <Avatar member={member} size="small" />
-            </span>
-          );
-        }
         const presenceDescription = `${member.name} is viewing this workstream.`;
         return (
-          <Tooltip.Root delayDuration={300} key={member.id}>
-            <Tooltip.Trigger asChild>
-              <span className="avatar-stack-item is-present">
-                <span aria-hidden="true" className="avatar-presence-ping" />
-                <Avatar member={member} size="small" title={null} />
+          <Tooltip.Root
+            delayDuration={300}
+            key={member.id}
+          >
+            <Tooltip.Trigger
+              asChild
+              onFocus={showingPresence ? undefined : (event) => event.preventDefault()}
+              onPointerMove={showingPresence ? undefined : (event) => event.preventDefault()}
+            >
+              <span className={clsx('avatar-stack-item', showingPresence && 'is-present')}>
+                {showingPresence && <span aria-hidden="true" className="avatar-presence-ping" />}
+                <Avatar member={member} size="small" title={showingPresence ? null : member.name} />
               </span>
             </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
-                {presenceDescription}
-                <Tooltip.Arrow className="tooltip-arrow" />
-              </Tooltip.Content>
-            </Tooltip.Portal>
+            {showingPresence && (
+              <Tooltip.Portal>
+                <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+                  {presenceDescription}
+                  <Tooltip.Arrow className="tooltip-arrow" />
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            )}
           </Tooltip.Root>
         );
       })}

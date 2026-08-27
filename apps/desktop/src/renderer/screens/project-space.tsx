@@ -51,7 +51,7 @@ export function ProjectSpaceScreen(): React.JSX.Element {
   const [savingScope, setSavingScope] = useState(false);
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [editIconKey, setEditIconKey] = useState<ProjectIconKey>('briefcase');
-  const [editColorKey, setEditColorKey] = useState<ProjectColorKey>('blue');
+  const [editColorKey, setEditColorKey] = useState<ProjectColorKey>('gray');
   const [editParticipants, setEditParticipants] = useState<Set<string>>(new Set());
   const { active: projects, inactive: inactiveProjects } = useProjectDirectories();
   const resources = useQuery({
