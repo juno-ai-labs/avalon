@@ -100,8 +100,14 @@ Three pressures, one of them now urgent:
 6. The layer accommodates future storage shapes: a version row names the
    kind of thing it points at, so a collaborative editor's materialized
    snapshots join the same history without schema change.
-7. No backfill: existing resources need nothing done to them, and a
-   resource that has never changed simply has no version rows.
+7. No backfill for versions: existing resources need nothing done to
+   them, and a resource that has never changed simply has no version
+   rows.
+8. Every resource gains a short, token-friendly slug alias, allocated by
+   the authority and exposed in model-facing outputs and listings, so
+   surfaces where a model reads or emits resource identifiers — the
+   citations sibling above all — stop paying UUID cost. The UUID
+   remains the internal primary key everywhere.
 
 ## Non-goals
 
@@ -237,6 +243,18 @@ None yet.
    semantics — immutable, openable, diffable. The rejected alternative,
    designing the CRDT storage itself now, is exactly what the commission
    forbade.
+8. **The resource slug alias rides this PRD.** The proposal's condition
+   was "if you're actually touching the resource application" — this is
+   that change, so it carries the alias: a short slug from the existing
+   slug generator, allocated by the authority under a unique index with
+   regenerate-on-conflict (at the quoted one-in-a-billion collision
+   odds, a collision costs a retry, never correctness), stored beside
+   the UUID, which remains the primary key in every internal reference,
+   storage key, and receipt. Model-facing outputs and listings carry the
+   slug; the citations sibling consumes it through its opaque-token
+   pattern with no ordering dependency. The rejected alternative —
+   replacing the primary key with the slug — is a cross-cutting identity
+   migration for a benefit the alias delivers on its own.
 
 ## Data model
 
@@ -257,6 +275,14 @@ the resource authority:
   matching identity column (run, user, connection), and `cause`
   (`published` | `refetched` | `replaced`).
 - `created_at`.
+
+One addition to the `resources` table itself (goal 8, key design
+decision 8): a `slug` column — short, from the existing slug generator,
+unique per workspace with regenerate-on-conflict at allocation —
+assigned at creation for new resources and backfilled once for the
+existing rows (a bounded pass; the dataset is small and the operation
+idempotent). The slug appears in model-facing tool outputs and listings;
+nothing internal re-keys.
 
 Lifecycle integration, named precisely because it is the risky part.
 Today *two* triggers enqueue superseded pointers into the deletion
