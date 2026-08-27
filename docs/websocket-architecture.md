@@ -27,8 +27,10 @@ protocol inside each Durable Object.
 | `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Owns the SubstreamAgent feed protocol, ticket request, snapshot/replay application, heartbeat, pagination, and reconnect state machine. |
 | `apps/desktop/src/renderer/lib/realtime-socket.ts` | Presents a browser-shaped socket to both work-stream hooks and maps Electron sockets onto one socket-ID-multiplexed preload listener. Browser development falls back to the native `WebSocket` constructor. |
 | `apps/desktop/src/common/realtime-socket.ts` | Defines the closed IPC schemas for opening, sending, closing, and receiving brokered socket events. |
+| `apps/desktop/src/common/realtime-socket-validation.ts` | Defines dependency-free channel names and strict main-to-preload event validation. |
 | `apps/desktop/src/preload/index.ts` | Exposes only the typed broker operations to the sandboxed renderer and validates events arriving from main. |
-| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Node `ws` connections, validates every destination, follows Electron's system/PAC proxy resolution and operating-system CA trust, supplies the Rally application Origin, relays events, and terminates sockets with their renderer owner. |
+| `apps/desktop/src/main/realtime-socket-ipc.ts` | Registers the main-window-only IPC boundary, parses every request, confines destinations, and relays broker events. |
+| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Node `ws` connections, follows Electron's complete ordered system/PAC route and operating-system CA trust, supplies the Rally application Origin, enforces the shared frame ceiling, relays events, and terminates sockets with their renderer owner. |
 | `apps/api/src/routes/socket.ts` | Receives public WebSocket upgrades and sends each accepted request through the correct regional Durable Object namespace. |
 | `apps/api/src/services/socket-service.ts` | Issues and verifies purpose-specific socket tickets and constructs the clean upgrade subrequest. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the workspace synchronization/command socket through Cloudflare's hibernation API. |
@@ -63,11 +65,12 @@ routing, or the Worker-to-object hop.
 The WorkspaceDO socket stays in Chromium because there is exactly one for the
 active workspace and therefore no swarm to serialize. It supplies the sidebar's
 authoritative directory and the command queue used to send messages. A
-WorkstreamDO control socket supplies complete work-stream metadata and viewer
-state. The matching SubstreamAgent socket for substream `0` supplies the
+WorkstreamDO control socket supplies complete work-stream metadata. The
+matching SubstreamAgent socket for substream `0` supplies the
 canonical feed snapshot, ordered live events, replay, and older-page responses.
 Neither member of the pair carries message creation: the composer submits a
-command through WorkspaceDO.
+command through WorkspaceDO. WorkspaceDO's explicit foreground signal is the
+sole source for current-client viewer presence; socket warmth is not attention.
 
 HyperSight block sockets and dictation sockets keep their existing transports
 and lifecycles. They are not brokered by this module and are not part of the
@@ -112,8 +115,12 @@ renderer hooks therefore retain ownership of protocol parsing, caches,
 heartbeats, reconnect jitter, replay, and telemetry; main owns raw transport
 only. Main asks Electron to resolve the destination through the configured
 system or PAC proxy and gives Node both its bundled and operating-system CA
-roots. The broker therefore avoids Chromium's handshake queue without silently
-bypassing a managed network or interception certificate.
+roots. A semicolon-delimited PAC result remains ordered: a connection advances
+to the next proxy only when a pre-open attempt fails, and uses `DIRECT` only
+when the resolved policy included it. Every client and server control/feed
+frame is bounded to the shared 1 MB protocol ceiling. The broker therefore
+avoids Chromium's handshake queue without silently bypassing a managed network,
+interception certificate, or fallback policy.
 
 In browser development, the same adapter uses the native `WebSocket`
 constructor. That path preserves development compatibility but does not provide
@@ -245,7 +252,12 @@ open transport as success.
   compute active or loses required state on eviction.
 - **A warm connection is not presence.** Foreground work-stream identity is
   reported separately over WorkspaceDO; proactively opening a feed must not make
-  another member appear to be viewing it.
+  another member appear to be viewing it. Current Electron feed subscriptions
+  explicitly disable the legacy SubstreamAgent presence publication, and the UI
+  ignores that legacy event in favor of WorkspaceDO's foreground snapshot.
+- **The client and both object endpoints share one frame ceiling.** Raising or
+  lowering the 1 MB bound in only Node, WorkstreamDO, or SubstreamAgent creates a
+  transport-dependent protocol and must not be done.
 
 ## Boundary
 
@@ -279,9 +291,14 @@ move WorkspaceDO, HyperSight block, or dictation transport into Node.
 - **The main process or renderer exits:** operating-system socket teardown is the
   final backstop, and explicit owner teardown terminates connections during a
   managed navigation, close, or renderer-process crash.
-- **The system proxy or trusted CA changes:** each new connection resolves its
-  proxy through Electron; application restart rebuilds the broker with the
-  current bundled and operating-system CA roots.
+- **A proxy attempt fails before open:** the broker tries the next directive in
+  Electron's resolved PAC order. It never invents a direct fallback; `DIRECT`
+  is attempted only when the policy returned it. Application restart rebuilds
+  the broker with current bundled and operating-system CA roots.
+- **A frame exceeds 1 MB:** the producing object refuses an oversized control
+  payload, and Node closes an oversized inbound frame. This keeps the two
+  Electron transports on the same application limit rather than inheriting
+  `ws`'s 100 MB default.
 - **Many work streams qualify:** every pin and every running work stream is
   intentionally included, plus five recent unpinned rows and retained pairs.
   This architecture adds no unmeasured defensive cap; changing that product
@@ -297,7 +314,8 @@ move WorkspaceDO, HyperSight block, or dictation transport into Node.
 
 | Suite | Command | Covers |
 | --- | --- | --- |
-| `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, parallel admission, event relay, sends, closes, and renderer-owner teardown. |
+| `apps/desktop/src/main/realtime-socket-broker.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-broker.test.ts` | Destination confinement, ordered PAC fallback, shared payload limit, event relay, normal close cleanup, sends, and renderer-owner teardown. |
+| `apps/desktop/src/main/realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/main/realtime-socket-ipc.test.ts src/common/realtime-socket-validation.test.ts` | Shared channel wiring, main-window authorization, request confinement, broker relay, and strict dependency-free event validation. |
 | `apps/desktop/src/renderer/lib/realtime-socket.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/realtime-socket.test.ts` | Browser-shaped state/events, IPC calls, and one multiplexed preload listener for a socket swarm. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/workstream-socket-pool.test.tsx` | Pair ownership, independent starts, route retention, expiry, overlap, and control-only hover warming. |
 | `apps/desktop/src/renderer/components/app-shell.test.tsx` | `pnpm --filter @rally/desktop exec vitest run src/renderer/components/app-shell.test.tsx` | Active/background selection, including all pins, five recent unpinned rows, and additional running rows. |
@@ -379,6 +397,34 @@ rows while intentionally leaving pins and active runs uncapped because those are
 explicit product states rather than speculative guesses.
 
 ## Changelog
+
+### 2026-08-26 — Warm feeds are presence-free and broker limits are end-to-end
+
+**What changed:** Electron feed subscriptions now opt out of legacy
+SubstreamAgent viewer publication, and the work-stream screen derives every
+current viewer from WorkspaceDO foreground presence. The broker preserves and
+tries Electron's complete PAC route in order, shares a 1 MB frame ceiling with
+both work-stream object endpoints, and keeps background-only connection churn
+out of the renderer's active-connection context. The IPC registration and
+dependency-free preload validator are independently tested.
+
+**Why:** Proactively opening pins and recent rows otherwise makes an idle Rally
+window report false viewers. Discarding PAC fallbacks strands managed-network
+users behind a failed first proxy, and Node's 100 MB default disagrees with the
+server protocol. Publishing every background socket through React context also
+turns a transport swarm into avoidable foreground render work.
+
+**Considered and rejected:** Keeping legacy feed-derived presence and filtering
+only the face pile would leave other presence consumers incorrect. Dialing
+directly after any proxy failure would bypass policy. Independent per-process
+frame limits would drift again.
+
+**Consequences:** Older clients that omit `publishPresence` retain the legacy
+default, while current Electron subscriptions send `false`. Future presence
+consumers must read WorkspaceDO, proxy changes must preserve directive order,
+and frame-limit changes must update the one shared contract.
+
+Shipped in #341.
 
 ### 2026-08-26 — Broker hardening preserves managed networks and complete prewarm discovery
 

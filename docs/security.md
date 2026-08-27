@@ -17,6 +17,8 @@ outside this document can break without their own tests failing.
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
+| `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the main-window-only socket IPC boundary. |
+| `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
 | `apps/desktop/src/renderer/index.html` | The Content Security Policy. |
 | `apps/desktop/src/main/theme-assets.ts` | The two theme-asset schemes: a backdrop document's policy, and the remote-font cache that keeps the renderer off remote hosts. |
 | `apps/desktop/src/main/session-encryption.ts`, `stored-auth.ts`, `stored-session.ts`, `session-file.ts` | The versioned credential envelope and the serialized session-mutation boundary. |
@@ -235,7 +237,10 @@ route shape, rejects credentials, query, and fragment, requires the public
 ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
 renderer chooses only the validated ticket subprotocol offer that becomes
 `Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
-into an arbitrary network client. Runtime URL schemas likewise name their
+into an arbitrary network client. Main tries only the ordered proxy directives
+Electron resolved, including `DIRECT` only when policy supplied it, and Node
+accepts no work-stream control/feed frame over the shared 1 MB application
+limit. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
 because it accepts non-web schemes such as `javascript:` and `data:` while hiding
@@ -671,6 +676,28 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-26 — Broker fallback and payload policy stay inside the capability
+
+**What changed:** Brokered work-stream sockets preserve Electron's complete PAC
+directive order and advance only after a pre-open failure. The main/preload
+event boundary has one dependency-free strict validator, and Node plus both
+server objects enforce one shared 1 MB frame ceiling.
+
+**Why:** Keeping only the first PAC directive changes enterprise network policy
+and can make the authenticated HTTP surface work while all realtime transport
+fails. A 100 MB Node default also widens the privileged IPC transport far past
+the application protocol accepted by the Durable Objects.
+
+**Considered and rejected:** An unconditional direct fallback would bypass PAC
+policy. Importing the renderer's full Zod graph into the sandboxed preload would
+increase that bridge's dependency surface merely to share four event shapes.
+
+**Consequences:** `DIRECT` is permitted only when Electron returns it, malformed
+events stop at preload, and every future frame-limit change must use the shared
+contract constant rather than transport defaults.
+
+Shipped in #341.
 
 ### 2026-08-26 — The Node socket broker is a route-confined capability
 

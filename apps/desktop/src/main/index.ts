@@ -65,11 +65,6 @@ import {
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
-import {
-  DesktopRealtimeSocketCloseInputSchema,
-  DesktopRealtimeSocketOpenInputSchema,
-  DesktopRealtimeSocketSendInputSchema,
-} from '../common/realtime-socket';
 import { backdropScheme, fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
@@ -135,8 +130,8 @@ import { MenuBarOpenObserver } from './menu-bar-open-observer';
 import {
   RealtimeSocketBroker,
   createNodeRealtimeSocketFactory,
-  realtimeSocketTargetAllowed,
 } from './realtime-socket-broker';
+import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
@@ -2401,29 +2396,15 @@ function meetingAudioPermissionDependencies() {
 }
 
 function registerIpc(): void {
+  registerRealtimeSocketIpc({
+    apiBaseUrls: Object.values(runtimeConfig().api),
+    assertSender: assertMainWindowIpcSender,
+    broker: realtimeSocketBroker,
+    ipc: ipcMain,
+  });
   ipcMain.handle('runtime:get-config', (event) => {
     assertTrustedIpcSender(event);
     return runtimeConfig();
-  });
-  ipcMain.handle('realtime-socket:open', (event, rawInput: unknown) => {
-    assertMainWindowIpcSender(event);
-    const input = DesktopRealtimeSocketOpenInputSchema.parse(rawInput);
-    if (!realtimeSocketTargetAllowed(input, Object.values(runtimeConfig().api))) {
-      throw new Error('Blocked realtime socket target');
-    }
-    realtimeSocketBroker.open(event.sender.id, input, (socketEvent) => {
-      if (!event.sender.isDestroyed()) event.sender.send('realtime-socket:event', socketEvent);
-    });
-  });
-  ipcMain.handle('realtime-socket:send', (event, rawInput: unknown) => {
-    assertMainWindowIpcSender(event);
-    const input = DesktopRealtimeSocketSendInputSchema.parse(rawInput);
-    realtimeSocketBroker.send(event.sender.id, input.socketId, input.data);
-  });
-  ipcMain.handle('realtime-socket:close', (event, rawInput: unknown) => {
-    assertMainWindowIpcSender(event);
-    const input = DesktopRealtimeSocketCloseInputSchema.parse(rawInput);
-    realtimeSocketBroker.close(event.sender.id, input.socketId, input.code, input.reason);
   });
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);

@@ -88,7 +88,7 @@ import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, Participant, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -109,6 +109,19 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
     ...(session.user.avatarUrl ? { avatarUrl: session.user.avatarUrl } : {}),
     role: session.workspace.role,
   };
+}
+
+/** Resolve WorkspaceDO's foreground IDs through the roster for the inspector. */
+export function workstreamPresenceViewers(
+  participants: readonly Pick<Participant, 'id'>[],
+  members: readonly WorkspaceMember[],
+  presentUserIds: readonly string[],
+): Participant[] {
+  const participantIds = new Set(participants.map((participant) => participant.id));
+  const presentIds = new Set(presentUserIds);
+  return members
+    .filter((member) => presentIds.has(member.id) && !participantIds.has(member.id))
+    .map((member) => ({ ...member, viewing: true }));
 }
 
 type WorkstreamRecoveryFeed = Pick<WorkstreamBoot, 'messageFeed' | 'resumeFeed'>;
@@ -1863,6 +1876,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       && message.attentionSequenceNumber >= firstUnreadSequenceNumber);
   const displayedDetail: WorkstreamDetail = {
     ...detail,
+    viewers: workstreamPresenceViewers(
+      detail.participants,
+      members.data ?? [],
+      presenceUserIdsByWorkstream[id] ?? [],
+    ),
     automationRuns: deferredContext.data?.automationRuns ?? detail.automationRuns,
     ...(deferredContext.data?.automationSubscription
       ? { automationSubscription: deferredContext.data.automationSubscription }
