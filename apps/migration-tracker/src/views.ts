@@ -26,6 +26,7 @@ const STATUS_ORDER: ObjectStatus[] = [
   "unreported",
   "current",
   "not_reporting",
+  "empty",
   "absent",
 ];
 
@@ -35,6 +36,7 @@ const STATUS_LABEL: Record<ObjectStatus, string> = {
   unreported: "Unreported",
   current: "Current",
   not_reporting: "Not reporting",
+  empty: "Empty",
   absent: "Absent",
 };
 
@@ -114,7 +116,7 @@ const STYLES = `
           font-size: 12px; font-weight: 600; }
   .pill.failed { color: var(--failed); background: var(--failed-bg); }
   .pill.behind { color: var(--behind); background: var(--behind-bg); }
-  .pill.unreported, .pill.absent, .pill.not_reporting, .pill.retired {
+  .pill.unreported, .pill.empty, .pill.absent, .pill.not_reporting, .pill.retired {
     color: var(--unreported); background: var(--unreported-bg); }
   .pill.current, .pill.applied { color: var(--current); background: var(--current-bg); }
   .muted { color: var(--muted); }
@@ -250,7 +252,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                 <tr>
                   <th>Component</th><th>Class</th><th>Region</th><th>Head</th>
                   <th>Worker version</th><th>Current</th><th>Behind</th><th>Failed</th>
-                  <th>Unreported</th><th>Absent</th><th>Seen</th>
+                  <th>Unreported</th><th>Empty</th><th>Absent</th><th>Seen</th>
                 </tr>
               </thead>
               <tbody>
@@ -268,6 +270,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                     <td>${component.behind > 0 ? html`<span class="pill behind">${component.behind}</span>` : "0"}</td>
                     <td>${component.failed > 0 ? html`<span class="pill failed">${component.failed}</span>` : "0"}</td>
                     <td class="muted">${component.unreported}</td>
+                    <td class="muted">${component.empty}</td>
                     <td class="muted">${component.absent}</td>
                     <td class="muted">${timestamp(component.observedAt)}</td>
                   </tr>`)}
@@ -302,7 +305,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
           : html`<table>
               <thead>
                 <tr>
-                  <th>Script</th><th>Class</th><th>Storage</th><th>Objects</th><th>Swept</th>
+                  <th>Script</th><th>Class</th><th>Storage</th><th>Stored</th><th>IDs</th><th>Swept</th>
                 </tr>
               </thead>
               <tbody>
@@ -316,6 +319,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
                     </td>
                     <td>${namespace.className}</td>
                     <td class="muted">${namespace.usesSqlite ? "SQLite" : "key-value"}</td>
+                    <td>${namespace.storedObjectCount}</td>
                     <td>${namespace.objectCount}</td>
                     <td class="muted">${namespace.retiredAt === null
                       ? timestamp(namespace.lastSweptAt)
@@ -329,7 +333,7 @@ export function overviewPage(overview: RegistryOverview): HtmlEscapedString | Pr
         ${sweep === null
           ? "No sweep recorded."
           : html`Last sweep ${sweep.status}, ${sweep.namespaceCount} namespaces,
-              ${sweep.objectCount} objects, finished ${timestamp(sweep.finishedAt)}.
+              ${sweep.objectCount} object IDs, finished ${timestamp(sweep.finishedAt)}.
               ${sweep.truncatedNamespaces.length > 0
                 ? html`<strong>${sweep.truncatedNamespaces.length} namespace(s) truncated.</strong>`
                 : ""}
@@ -455,8 +459,12 @@ export function objectPage(detail: ObjectDetail): HtmlEscapedString | Promise<Ht
       <h2>Report history</h2>
       <div class="panel scroll">
         ${detail.events.length === 0
-          ? html`<p class="empty">This object has never reported. The inventory sweep found it,
-              and it has not woken since.</p>`
+          ? object.status === "empty"
+            ? html`<p class="empty">Cloudflare still enumerates this object ID, but the latest
+                inventory sweep found no stored data. It is retained as history and is not a
+                forced-migration target.</p>`
+            : html`<p class="empty">This object has never reported. The inventory sweep found it,
+                and it has not woken since.</p>`
           : eventTable(detail.events, false)}
       </div>
     </section>`;
@@ -513,7 +521,7 @@ export function migrationsPage(
         </form>
         <p class="note">Every live object of the class is sent one message, and each
           message wakes that object so it applies whatever its schema ledger is
-          missing. Objects already marked absent are not woken. Nothing here is
+          missing. Empty and absent identities are not woken. Nothing here is
           instant: the objects report back as they wake, and the
           <a href="/">overview</a> is where that arrives.</p>
         </div>

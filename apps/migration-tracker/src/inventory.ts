@@ -6,14 +6,17 @@
  * never says anything, and those are precisely the objects a schema change is
  * most likely to strand. Cloudflare's account API can list them: a paged call
  * for the namespaces, then a paged call per namespace for the object IDs it
- * holds.
+ * holds. The object listing also says whether each identity currently has
+ * stored data, which distinguishes an object awaiting its first report from a
+ * cleared identity Cloudflare still enumerates.
  *
  * What the sweep deliberately does *not* do is ask each object for its version.
  * A Durable Object binding can address another script's class, so it would be
  * possible — and it would wake every hibernating object in the account on every
  * sweep, turning a monitor into the largest single source of Durable Object
- * duration in the bill. Enumerate cheaply, let the objects report on their own
- * wakes, and treat "seen but never reported" as a first-class state instead.
+ * duration in the bill. Enumerate cheaply, let stored objects report on their
+ * own wakes, and retain enumerated identities without treating cleared storage
+ * as a live migration target.
  */
 import type { InventoryNamespace, InventoryObject, InventorySweep } from "./protocol";
 

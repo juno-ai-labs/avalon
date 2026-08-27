@@ -33,11 +33,11 @@ const MIGRATIONS_TABLE = `
  * One row per Durable Object the tracker has ever heard of, from either source.
  *
  * `object_id` is the primary key because it is the only identifier both sources
- * produce: the Cloudflare inventory API returns IDs and nothing else, and a
- * report carries the same ID from `state.id.toString()`. Everything else on the
- * row is nullable because either source may be the first to arrive — an object
- * discovered by a sweep has no version until it next wakes, and an object that
- * reported before the first sweep has no namespace until one runs.
+ * produce: the Cloudflare inventory API returns an ID plus its storage-presence
+ * flag, and a report carries the same ID from `state.id.toString()`. Everything
+ * else on the row is nullable because either source may be the first to arrive —
+ * an object discovered by a sweep has no version until it next wakes, and an
+ * object that reported before the first sweep has no namespace until one runs.
  */
 const V1_DURABLE_OBJECTS = `
   CREATE TABLE IF NOT EXISTS durable_objects (
@@ -50,6 +50,9 @@ const V1_DURABLE_OBJECTS = `
     region TEXT,
     app_env TEXT,
     worker_version_id TEXT,
+    -- The latest inventory fact. Report-only rows are explicitly inserted as
+    -- 1; the default is not interpreted until last_swept_at proves an inventory
+    -- observation exists.
     has_stored_data INTEGER NOT NULL DEFAULT 0,
     -- The sweep that last listed this object. A monotonic receipt id rather
     -- than a timestamp: absence is decided by comparing against the current

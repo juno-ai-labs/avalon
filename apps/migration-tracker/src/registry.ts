@@ -184,6 +184,12 @@ const RESOLVED_OBJECTS = `
       ns.retired_at AS namespace_retired_at,
       CASE
         WHEN o.absent_since IS NOT NULL THEN 'absent'
+        -- Report-only rows use the column's default until the first sweep, and
+        -- old deployments did not flip it on reports, so `0` means empty only
+        -- when inventory observed it and no newer report supersedes it.
+        WHEN o.last_swept_at IS NOT NULL
+          AND o.has_stored_data = 0
+          AND o.last_swept_at >= COALESCE(o.last_reported_at, 0) THEN 'empty'
         WHEN o.report_status = 'failed' THEN 'failed'
         WHEN o.class_name IS NOT NULL
           AND o.class_name NOT IN (${REPORTING_CLASS_LIST}) THEN 'not_reporting'
@@ -283,10 +289,10 @@ export class MigrationRegistry extends DurableObject<Env> {
     sql.exec(
       `INSERT INTO durable_objects (
          object_id, object_name, class_name, component, region, app_env,
-         worker_version_id, report_status, schema_version, failure_message,
+         worker_version_id, has_stored_data, report_status, schema_version, failure_message,
          failure_version, first_seen_at, last_reported_at, last_failed_at,
          absent_since
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT(object_id) DO UPDATE SET
          object_name = COALESCE(excluded.object_name, durable_objects.object_name),
          class_name = excluded.class_name,
@@ -294,6 +300,14 @@ export class MigrationRegistry extends DurableObject<Env> {
          region = excluded.region,
          app_env = excluded.app_env,
          worker_version_id = excluded.worker_version_id,
+         -- A report newer than the latest inventory observation proves the
+         -- object woke and applied its schema. An older Queue delivery cannot
+         -- resurrect storage a later sweep observed as cleared.
+         has_stored_data = CASE
+           WHEN excluded.last_reported_at > COALESCE(durable_objects.last_swept_at, 0)
+             THEN excluded.has_stored_data
+           ELSE durable_objects.has_stored_data
+         END,
          report_status = excluded.report_status,
          schema_version = excluded.schema_version,
          failure_message = excluded.failure_message,
@@ -521,7 +535,9 @@ export class MigrationRegistry extends DurableObject<Env> {
            WHEN 'behind' THEN 1
            WHEN 'unreported' THEN 2
            WHEN 'current' THEN 3
-           ELSE 4
+           WHEN 'not_reporting' THEN 4
+           WHEN 'empty' THEN 5
+           ELSE 6
          END,
          COALESCE(last_reported_at, last_swept_at, first_seen_at) DESC,
          object_id
@@ -567,6 +583,7 @@ export class MigrationRegistry extends DurableObject<Env> {
       unreported: 0,
       current: 0,
       not_reporting: 0,
+      empty: 0,
       absent: 0,
       all: 0,
     };
@@ -586,13 +603,14 @@ export class MigrationRegistry extends DurableObject<Env> {
       behind: number;
       failed: number;
       unreported: number;
+      empty: number;
       absent: number;
       total: number;
       retired: number;
     }>(
-      // `total` counts only live objects, so the absent ones are reported
-      // beside it rather than folded into it — a component reading "0 of 40"
-      // says something a component reading "0" does not.
+      // `total` counts only live objects, so empty and absent identities are
+      // reported beside it rather than folded into it — a component reading
+      // "0 of 40" says something a component reading "0" does not.
       //
       // `retired` is decided by the namespaces, not by the object counts. Every
       // object being absent means only that no instance is alive right now,
@@ -615,8 +633,9 @@ export class MigrationRegistry extends DurableObject<Env> {
               COALESCE(SUM(r.status = 'behind'), 0) AS behind,
               COALESCE(SUM(r.status = 'failed'), 0) AS failed,
               COALESCE(SUM(r.status = 'unreported'), 0) AS unreported,
+              COALESCE(SUM(r.status = 'empty'), 0) AS empty,
               COALESCE(SUM(r.status = 'absent'), 0) AS absent,
-              COALESCE(SUM(r.status != 'absent'), 0) AS total,
+              COALESCE(SUM(r.status NOT IN ('empty', 'absent')), 0) AS total,
               COALESCE(MAX(ns.live), 1) = 0 AS retired
          FROM component_versions c
          LEFT JOIN resolved r
@@ -637,15 +656,20 @@ export class MigrationRegistry extends DurableObject<Env> {
       class_name: string;
       uses_sqlite: number;
       object_count: number;
+      stored_object_count: number;
       last_swept_at: number;
       retired_at: number | null;
     }>(
       // Retired namespaces sort to the bottom rather than out of the list: what
       // used to be deployed here is exactly what somebody wants to see when a
       // class disappeared and its objects went absent on the same sweep.
-      `SELECT namespace_id, script_name, class_name, uses_sqlite, object_count,
-              last_swept_at, retired_at
-         FROM durable_object_namespaces
+      `SELECT n.namespace_id, n.script_name, n.class_name, n.uses_sqlite, n.object_count,
+              COALESCE((SELECT COUNT(*) FROM durable_objects o
+                         WHERE o.namespace_id = n.namespace_id
+                           AND o.last_sweep_id = n.last_sweep_id
+                           AND o.has_stored_data = 1), 0) AS stored_object_count,
+              n.last_swept_at, n.retired_at
+         FROM durable_object_namespaces n
         ORDER BY retired_at IS NOT NULL, script_name, class_name`,
     ).toArray();
 
@@ -685,6 +709,7 @@ export class MigrationRegistry extends DurableObject<Env> {
         behind: row.behind,
         failed: row.failed,
         unreported: row.unreported,
+        empty: row.empty,
         absent: row.absent,
         total: row.total,
         retired: row.retired === 1,
@@ -695,6 +720,7 @@ export class MigrationRegistry extends DurableObject<Env> {
         className: row.class_name,
         usesSqlite: row.uses_sqlite === 1,
         objectCount: row.object_count,
+        storedObjectCount: row.stored_object_count,
         lastSweptAt: row.last_swept_at,
         retiredAt: row.retired_at,
       })),
@@ -744,9 +770,9 @@ export class MigrationRegistry extends DurableObject<Env> {
    *
    * Only the classes that run the reporter, because those are the ones the API
    * Worker holds a `forceMigration` dispatcher for; a class outside that list
-   * has no schema to move. Only live objects, because forcing an `absent` one
-   * would address an ID that no longer has an object behind it and create an
-   * empty one — the opposite of what a migration pass is for.
+   * has no schema to move. Only live objects: forcing an `absent` identity or
+   * one the latest sweep found `empty` would manufacture storage — the
+   * opposite of what a migration pass is for.
    *
    * `behind`, `failed`, and `unreported` are carried beside the count because
    * they are why somebody forces a class. A row of zeroes is a class that needs
@@ -769,7 +795,7 @@ export class MigrationRegistry extends DurableObject<Env> {
               COALESCE(SUM(status = 'unreported'), 0) AS unreported
          FROM (SELECT o.class_name, o.status, ${RESOLVED_REGION} AS region
                  FROM resolved o
-                WHERE o.absent_since IS NULL
+                WHERE o.status NOT IN ('empty', 'absent')
                   AND o.class_name IN (${REPORTING_CLASS_LIST}))
         WHERE region IS NOT NULL
         GROUP BY class_name, region
@@ -815,11 +841,12 @@ export class MigrationRegistry extends DurableObject<Env> {
     // own lint rule refuses.
     const regionFilter = request.region ?? null;
     const matched = this.storage.sql.exec<{ matched: number; unroutable: number }>(
-      `SELECT COUNT(*) AS matched,
+      `${RESOLVED_OBJECTS}
+       SELECT COUNT(*) AS matched,
               COALESCE(SUM(region IS NULL), 0) AS unroutable
          FROM (SELECT ${RESOLVED_REGION} AS region
-                 FROM durable_objects o
-                WHERE o.absent_since IS NULL
+                 FROM resolved o
+                WHERE o.status NOT IN ('empty', 'absent')
                   AND o.class_name IN (${REPORTING_CLASS_LIST})
                   AND o.class_name = ?)
         WHERE ?2 IS NULL OR region IS NULL OR region = ?2`,
@@ -832,11 +859,12 @@ export class MigrationRegistry extends DurableObject<Env> {
       object_name: string | null;
       region: string;
     }>(
-      `SELECT object_id, object_name, region FROM (
+      `${RESOLVED_OBJECTS}
+       SELECT object_id, object_name, region FROM (
          SELECT o.object_id, o.object_name, o.last_reported_at,
                 ${RESOLVED_REGION} AS region
-           FROM durable_objects o
-          WHERE o.absent_since IS NULL
+          FROM resolved o
+          WHERE o.status NOT IN ('empty', 'absent')
             AND o.class_name IN (${REPORTING_CLASS_LIST})
             AND o.class_name = ?
        )
@@ -1041,7 +1069,14 @@ function toTrackedObject(row: ObjectRow): TrackedObject {
     region: row.region,
     appEnv: row.app_env,
     workerVersionId: row.worker_version_id,
-    hasStoredData: row.has_stored_data === 1,
+    // Older deployments left the inventory flag unchanged when a report
+    // arrived. A report strictly newer than the latest sweep is stronger proof
+    // of current storage than that stale flag; the next sweep makes it raw fact
+    // again.
+    hasStoredData: row.has_stored_data === 1 || (
+      row.last_reported_at !== null
+      && (row.last_swept_at === null || row.last_reported_at > row.last_swept_at)
+    ),
     schemaVersion: row.schema_version,
     componentLatestVersion: row.component_latest_version,
     status: isObjectStatus(row.status) ? row.status : "unreported",
