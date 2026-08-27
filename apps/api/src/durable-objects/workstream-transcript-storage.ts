@@ -225,6 +225,10 @@ export class WorkstreamTranscriptStorage {
     return this.storage.sql;
   }
 
+  hasLegacyBackfillReceipt(): boolean {
+    return this.legacyBackfillReceipt() !== undefined;
+  }
+
   /**
    * Project the participant-visible pre-v27 feed into the ordered transcript.
    *
