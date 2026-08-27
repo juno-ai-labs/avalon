@@ -122,6 +122,8 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 An automation run's final message is what Rally delivers, so the run is told which destinations Rally will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Rally and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
+A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the trigger — an explicit document type, a composition past roughly three paragraphs organized with headings or a table, or a result long enough to bury the conversation — plus the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is rendered only for a run that can produce one — the region reports Terminal supported, and the run is not an automation, a scheduled digest, an inbound email, or Slack-originated, each of which delivers a final message that a rail entry is not part of. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the rule steers into.
+
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
 ### Automation compilation
@@ -683,6 +685,8 @@ and general child participants remain deferred product work.
 
 Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
+A published document has no reading surface in the desktop client. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel shows metadata only — title, provider, type, direction, version, last updated, `Remove`. `InspectorDetail` renders no body, and `AttachmentLightbox`, the one surface that fetches `/resources/:id/preview`, is wired only to attachments on a message. So the `# Documents` policy can produce a document a participant cannot read in the app, and the run's short chat message is the only thing they see. This is why [the terminal-artifact generation PRD](PRDs/2026-08-27_terminal-artifact-generation/prd.md) is not `completed`; building the viewer is a desktop change that PRD excludes.
+
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
 When OpenRouter refuses a call, the harness extracts the provider's own classification — code and provider name — from the error body. The provider's free-text message is never written to structured Workers Logs or the object-local operational inference ledger: some upstreams quote the rejected request back inside it, and a key-based redactor cannot recognise member content arriving inside a provider's prose. For Global inference it is retained only inside the deliberately sensitive inference-lakehouse record, alongside the prompt it may quote, so lossless provider diagnosis does not turn the ordinary log surface into a content store. For EU inference it is not retained for later analysis.
@@ -760,6 +764,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
+| `apps/api/test/document-run-context.test.ts` | Which runs are told to write documents: an interactive run in a region with Terminal is, and a region without Terminal, an inbound-email run and a Slack-origin run are not. The automation and digest origins are pinned in their own suites, beside the delivery context each already proves. **The trap:** the gate reads the whole Terminal region configuration, so a test asserting the section's *absence* must set `TERMINAL_REGION_CAPABILITY`, all four `DAYTONA_*` variables and `TERMINAL_EMERGENCY_DISABLED` — otherwise it passes because the region is unsupported rather than because of the origin it names. |
 | `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
@@ -804,6 +809,66 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-27 — A document request becomes a published resource, not a wall of chat
+
+**What changed:** `DOCUMENT_GENERATION_POLICY` joined the work-stream system
+prompt as a `# Documents` section, rendered only when `loadRunPromptContext`
+resolves `documentPublishing` — the region reports Terminal supported, and the
+run is not an automation, a scheduled digest, an inbound email, or
+Slack-originated. It carries the trigger, the write-then-publish procedure, the
+narration discipline, the same-path revision rule, the override, and the inline
+fallback.
+
+**Why:** A request like "draft the launch press release" produced one assistant
+message spanning many viewport heights, which buried the conversation, read as
+finished output rather than a draft under discussion, and repeated itself on
+every revision. Every mechanism the alternative needs already existed — the
+per-work-stream sandbox, the publish path, the resource rail, the read tools,
+the compaction inventory — and only the instruction to use them was missing.
+The predecessor design reached the same surface through a new message type, two
+dedicated tools, an artifact version ledger and a new rail pane; this is the
+same experience as prompt policy plus one publish-path derivation.
+
+**Considered and rejected:** Naming the publish tool in the section, which
+`writing-prompts.md` permits where a prompt owns a protocol — rejected because
+this renders before the Terminal plugin loads and for runs that never load it,
+so the name would teach a call that may not exist. Shipping it as an
+always-available skill, the PRD's open question — rejected on measurement: the
+rendered standing prompt is 6,172 bytes against its 8,000 ceiling, so it fits
+policy and a skill would pay a load round trip for a rule that applies to any
+request. A feature flag — rejected because the behavior is a prompt module, so
+the deploy is the rollout and the revert is the rollback; an admission-consulted
+flag is the recorded escalation if staged rollout is later wanted.
+
+**Consequences:** `WORKSTREAM_PROMPT_VERSION` is deliberately not bumped. It is
+hashed into the immutable run scope, so bumping it fails every in-flight run
+resuming across the deploy with `immutable_run_scope_mismatch`. The section
+grants no capability and moves no authority — eligible capabilities and the tool
+surface hash are unchanged — and its flag derives from environment and run input
+already frozen for the run, so a resumed attempt's scope is the same scope. A
+prompt change that did move authority would still need the bump.
+
+Slack is the one excluded origin the PRD does not name, and it is excluded on
+the reason the PRD gives for the others: Slack delivery cannot yet carry a
+reference to a resource, so a Slack participant would be told a document exists
+and given no way to open it. EU workspaces get nothing from this until Terminal
+is regionally supported there; the gate is the plugin's own regional rule, so
+that follows automatically rather than needing its own condition.
+
+**A published document currently has no reading surface in the desktop client,
+and the PRD assumed it had one.** Verified in a real window: a generated
+resource appears in the rail under `Artifacts`, and opening it shows the
+metadata panel — title, provider, type, direction, version, last updated,
+`Remove` — with no content. `InspectorDetail` in `inspector-rail.tsx` renders
+no body, and `AttachmentLightbox`, the one surface that fetches
+`/resources/:id/preview`, is wired only to attachments on messages. So the
+guidance can produce a document that nobody can read in the app, which is why
+this PRD is not `completed`: what it specifies has shipped, and its first
+acceptance criterion — a rail entry that opens to the formatted document —
+cannot be met until the rail can show one. That is a client change the PRD
+deliberately excluded ("no desktop release"), so it is named here rather than
+smuggled in.
 
 ### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
 
