@@ -64,11 +64,16 @@ describe('BlockDashboardRail', () => {
   });
 
   it('tracks the pointer from wherever it was grabbed, clamps to 320–560, and stops after release', () => {
-    render(
+    const { container } = render(
       <Tooltip.Provider>
         <BlockDashboardRail blockCount={2} onClose={vi.fn()}>content</BlockDashboardRail>
       </Tooltip.Provider>,
     );
+    // The class is the whole contract: `.rail-scroll` in `app.css` owns the
+    // scrolling, the reserved gutter and the overscroll containment for this
+    // rail and the inspector rail alike, and renaming it here would take all
+    // three away with nothing else noticing.
+    expect(container.querySelector('.rail-scroll')).not.toBeNull();
     const handle = screen.getByRole('separator', { name: 'Resize HyperSight' });
 
     // The handle stands beside the sidebar rather than on its edge, so a grab
