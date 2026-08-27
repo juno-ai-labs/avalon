@@ -103,6 +103,15 @@ that saves a replayable LLM conversation: SubstreamAgent and the draft-state
 AutomationAgent use it; BlockDashboardAgent continues to retain derived block
 dispatch/output state and reaches its source transcript through SubstreamAgent.
 
+The implementation is a one-merge breaking cutover, not a staged product
+rollout. The merge-triggered workflow migrates every visible accepted
+automation from WorkspaceDO into its named AutomationAgent, verifies the new
+authority, discards every legacy draft, and removes the old WorkspaceDO
+automation-lifecycle schema. New drafts created after deployment use the
+AutomationAgent design above. Rally has no customer automations whose saved
+draft setup must survive this cut, so a compatibility writer or frozen legacy
+copy would add authority ambiguity without preserving a customer contract.
+
 ## Motivation
 
 Rally already promises that automation setup is durable work. A draft appears
@@ -138,6 +147,12 @@ architecture review, not by measured production incident volume. Rally has no
 load history or automation reliability series from which to claim a capacity or
 outage reduction. The required result is therefore stated in observable
 behavior and failure containment, not projected scale.
+
+There are internal accepted automations whose configured behavior and history
+must survive the change, but no customer draft setup to preserve. The least
+ambiguous migration is consequently destructive at the old boundary: import
+accepted automations once, delete old drafts, remove the legacy lifecycle
+tables, and let the post-merge system have exactly one canonical writer.
 
 ## Goals
 
@@ -176,9 +191,11 @@ behavior and failure containment, not projected scale.
     and publication contracts.
 11. Preserve personal-draft privacy, generated-run privacy, regional residency,
    inbound-email defenses, and content-free product telemetry.
-12. Move existing drafts and active automations without changing their IDs,
-    schedules, permanent email addresses, version pins, run history, or effective
-    user settings, and without admitting a trigger twice.
+12. Migrate every visible accepted automation, including `active`, `paused`, and
+    `error` states, without changing its ID, schedule, permanent email address,
+    version pin, run history, or effective user settings and without admitting a
+    trigger twice. Delete every legacy draft and remove the old WorkspaceDO
+    automation-lifecycle tables in the same merge-triggered cutover.
 13. Replace untyped deterministic activity-filter records with a closed,
     versioned evaluator grammar whose structure is parsed at every wire and
     storage boundary and whose fields and operators are validated against the
@@ -234,6 +251,12 @@ behavior and failure containment, not projected scale.
     context, and safe default inform the local grammar. Automation routing stays
     regional and workspace-authoritative, and this PRD does not add a Flagship
     binding, percentage rollout, or remote flag dependency.
+12. **A staged automation-authority rollout or legacy compatibility path.** The
+    implementation does not dual-write, flip automations individually, retain
+    old lifecycle tables for rollback, or migrate pre-cutover drafts. All
+    implementation code may land in one PR, but it reaches `main` in one merge
+    whose deployment workflow completes the coordinated cutover.
+
 ## Product behavior
 
 ### Starting and returning to a draft
@@ -857,7 +880,21 @@ to a paged list on their automation home. Active automation semantics,
 `You`/`Workspace` scope badges, generated work-stream privacy, and typed
 authorized tool execution remain unchanged.
 
+The cutover deliberately removes any pre-cutover internal drafts instead of
+migrating them. That is a one-time deployment decision enabled by the absence of
+customers, not a change to the post-cutover product promise: a draft created in
+AutomationAgent remains durable and returnable from its first admitted turn.
+
 ## Decision log
+
+- **2026-08-27 — Cut over in one merge, migrate accepted automations, and
+  discard legacy drafts.** There are no customer automations to support through
+  a compatibility window. The merge-triggered workflow imports every visible
+  accepted automation, including paused and error states, verifies its new
+  authority, deletes legacy drafts, and removes the old lifecycle schema. A
+  staged per-automation flag, dual writes, and a frozen legacy rollback source
+  were rejected because they would make the migration and its failure modes
+  harder to reason about without preserving customer work.
 
 - **2026-08-26 — Use typed evaluators for ordinary external-event triggers.**
   Accepted automation definitions compile into the closed, versioned,
@@ -1039,11 +1076,34 @@ source as a no-op. AutomationAgent applies the shared alarm schema through its
 own append-only object migration history and inherits the migration readiness
 gate from `ScheduledDurableObject`'s base.
 
-Existing WorkspaceDO automation rows are imported into the named
-AutomationAgent with their current definition, lifecycle, schedule cursor,
-address, delivery configuration, memory/table definitions, run identities, and
-receipts. The old rows become a frozen migration source and projection rather
-than a writable fallback. There is no long-lived dual authority.
+Every WorkspaceDO subscription with `lifecycle_state = 'visible'` and status
+`active`, `paused`, or `error` is an accepted automation for cutover purposes.
+It is imported into the named AutomationAgent with its current definition,
+lifecycle, authority generation, schedule and next-occurrence cursor, permanent
+email route, delivery configuration, memory/table definitions, connector and
+resource references, model/settings overrides, run identities and history, and
+deduplication and delivery receipts. The import preserves the existing
+subscription ID as the object identity and is accepted only after source and
+destination hashes and trigger-registration receipts agree.
+
+Legacy rows with status `draft` are not imported, regardless of visibility.
+The cutover deletes those subscriptions, their compiler conversation, and any
+private template versions, memory scopes, resources, or other rows reachable
+only from those drafts. Archived and deleted legacy subscriptions are likewise
+not promoted into new runnable authorities; the permanent inbound-email
+tombstone remains in its existing Global control-plane authority.
+
+After all accepted imports have receipts, the same merge-triggered workflow
+removes WorkspaceDO's former lifecycle tables: `automation_subscriptions`,
+`automation_runs`, `automation_delivery_targets`,
+`automation_email_receipts`, `automation_email_rate_windows`, and
+`automation_resources`. It rebuilds the shared `schedules` table without its
+automation-subscription branch while retaining connector and digest schedules.
+The generic memory tables remain because other products use them, but no
+automation-owned source rows remain there after import or draft deletion.
+`automation_templates` and `automation_template_versions` remain only as the
+shared template catalog described above; rows reachable only from discarded
+drafts are removed. They are no longer a lifecycle or execution fallback.
 
 ## Implementation guidelines
 
@@ -1159,6 +1219,34 @@ and whitespace are not edited. A later schema change adds a new versioned delta
 array and a new migration entry in every consuming object's own ledger. Tests
 pin the existing SubstreamAgent migration hash before and after extraction so a
 mechanical move cannot rewrite released history.
+
+### Legacy WorkspaceDO schema removal
+
+The regional D1 migration named for dropping legacy product tables has already
+removed D1's former automation tables; it is historical and is not edited. This
+cutover removes the newer WorkspaceDO SQLite lifecycle schema declared in the
+automation and shared-schedule portions of `workspace-domain-schema.ts`.
+
+The cleanup is an append-only WorkspaceDO migration applied by the existing
+Durable Object migration campaign only after all imports have receipts. SQLite
+cannot drop the automation foreign-key branch from `schedules` in place, so the
+migration rebuilds that shared table with the connector and digest branches,
+copies only those rows, recreates its indexes and constraints, and validates
+foreign keys before recording success. It then drops the automation
+subscription, run, delivery, email receipt/rate-window, and resource tables.
+Shared template tables and generic memory tables are retained for their other
+documented roles, but draft-only template rows and all imported or discarded
+automation-owned memory descendants are deleted before their source foreign
+keys disappear.
+
+The cross-object import is not represented as one SQLite transaction. A typed,
+versioned WorkspaceDO snapshot and a named AutomationAgent import receipt carry
+source version, canonical payload hash, destination authority generation, and
+registration status. RPC awaits occur outside object-local transactions. Each
+side rereads its final authority before acknowledging, and the migration
+campaign begins destructive cleanup only when every accepted source row has one
+matching destination receipt. The campaign ledger, rather than a retained old
+automation table, is the durable restart cursor.
 
 ### Transaction and query boundaries
 
@@ -1325,76 +1413,67 @@ names. Each host's existing tool catalog and product policy remain distinct.
 
 ## Rollout
 
-The `automation-agent-authority` flag selects the object-owned path for new
-automations and migration eligibility. It gates effective authority; it does
-not rewrite stored user settings, scope, pause state, schedules, destinations,
-or model overrides.
+This ships as one implementation PR and one merge to `main`. That merge starts
+one coordinated deployment workflow; there is no product feature flag,
+per-automation authority flip, dual-write period, separately merged migration
+release, or later cleanup PR. Transitional migration RPCs exist only for that
+workflow and are removed from the serving surface by the same commit's final
+deployment phase.
 
-1. Land the 2026-08-26 coordinated breaking cutover from the ordered-turn PRD
-   first. Its SubstreamAgent transcript substrate, exact Bind-loop projection,
-   stable terminal turn references, activity/snapshot fences, and conformance
-   fixtures are the baseline for this work. Do not build AutomationAgent
-   against the aggregate run-level transcript protocol that cutover removes.
-2. Replace `deterministicFilters` and `deterministicPrefilter` records with the
-   strict predicate schemas and branded registry-aware compiler. Make connector
-   normalizers emit a closed evaluation context for each declared event type.
-   Add the reviewed event families and context needed by the conformance table:
-   bounded Slack message text; Linear project/issue change families and parent
-   project relations; Granola folder and participant-person relations; GitHub
-   repository relations plus the precise opened, merged, published, and created
-   expansions; and Notion page-update families, parent-page relations, and
-   author-person mappings. Prove the conversion on current connector fixtures
-   without retaining an arbitrary-metadata fallback, and keep each unsupported
-   trigger unavailable until its descriptor and normalizer are complete.
-3. Extract the remaining durable Bind execution kernel behind existing hosts,
-   proving no product behavior change in SubstreamAgent and
-   BlockDashboardAgent. Add AutomationAgent as a `ScheduledDurableObject`
-   subclass using the existing alarm schema and base-class lifecycle, and add
-   its personal-author adapter to the ordered transcript substrate; no separate
-   alarm or transcript framework ships.
-4. Enable object-owned authoring for new internal drafts. Keep acceptance on the
-   object path only; do not introduce a draft-only object that transfers back to
-   WorkspaceDO.
-5. Migrate existing drafts. Their IDs and saved conversations are normalized
-   once into ordered canonical facts and exact post-healing Bind state in the
-   named objects; migration verifies the canonical projection hashes rather
-   than retaining `draft_conversation_json` as a fallback. In-flight
-   request-scoped runs settle on the old path before the authority fence flips.
-6. Add the full-snapshot AutomationAgent-to-WorkspaceDO evaluator projection,
-   shared destination-typed registration compiler, exact candidate index,
-   receipt-backed WorkspaceDO evaluation outbox, and ID-only delivery wake-up.
-   The same-version payload hash fence and generation-aware destination
-   admission must be live before any external activity automation or resource
-   watch migrates.
-7. Compile the existing versioned watched-resource link projection into the
-   shared registration index and add its typed SubstreamAgent delivery adapter.
-   Migrate the current direct-watch resource scan/append behind the same
-   authority fence, then remove that parallel fan-out loop; do not retain it as
-   fallback after the per-workspace cutover.
-8. Migrate paused and manual-only active automations, then timer, external
-   activity, and inbound-email automations. Each migration fences old trigger
-   admission, imports and hash-verifies canonical state, arms object-local
-   timers or acknowledges the external evaluator snapshot as applicable,
-   updates the directory projection, and only then flips the per-automation
-   authority marker.
-9. Replace direct SubstreamAgent writes to workspace-owned `automation_runs`
-   with the versioned child-to-AutomationAgent projection. Suppress generated
-   children from global work-stream listability and make the automation home
-   consume its paged object-local run list before enabling the new authority for
-   active automations.
-10. Reconcile schedule occurrences, evaluator delivery receipts, inbound-email
-   receipts, and run idempotency keys across the cut so every trigger is either
-   absent or present once. A migrated object never falls back to writable legacy
-   rows.
-11. After both regions have no legacy automation authorities and rollback
-   evidence has expired, remove the WorkspaceDO canonical automation/schedule
-   rows, old compiler endpoint, and compatibility paths. Keep only the new
-   projections and shared workspace authorities.
+1. Use the already-merged 2026-08-26 ordered-turn cutover as the baseline. Build
+   the AutomationAgent against its SubstreamAgent transcript substrate, exact
+   Bind-loop projection, stable terminal-turn references, activity/snapshot
+   fences, and conformance fixtures, never the removed aggregate run-level
+   transcript protocol.
+2. In the one implementation PR, add the typed evaluator grammar and connector
+   normalizers; the shared destination-typed evaluator/resource-watch engine;
+   the extracted durable Bind kernel; the AutomationAgent
+   `ScheduledDurableObject` subclass; its ordered-transcript author adapter;
+   child-run projections and automation-home history; and the final serving
+   paths for draft creation, acceptance, trigger admission, and lifecycle
+   control. The same PR removes the old compiler, direct resource-watch fan-out,
+   direct child writes to workspace-owned `automation_runs`, and compatibility
+   readers from the final runtime.
+3. Before mutating authority, the merge workflow deploys the new Durable Object
+   class and migration-only RPC surface from the final commit, enumerates
+   workspaces through the existing regional control-plane routes, and fails
+   closed unless every legacy compiler request has settled and every legacy
+   automation run is terminal. No live execution lease is transferred across
+   objects. Because there are no customers, the internal team can settle or
+   remove the unexpected work and rerun the same workflow instead of specifying
+   an ambiguous partial-run conversion.
+4. For every visible accepted subscription (`active`, `paused`, or `error`) in
+   both regions, WorkspaceDO emits one versioned source snapshot to the named
+   AutomationAgent. The destination imports idempotently, returns its canonical
+   hash and registration receipts, and is reread through the final typed API.
+   The workflow preserves IDs, settings, schedules and next occurrences,
+   permanent email routes, evaluator definitions, delivery targets, memory and
+   table definitions, resources, run history, and deduplication receipts. Timer,
+   external-event, inbound-email, and manual admission stay fenced until the
+   destination and required projections agree, so no occurrence can enter both
+   authorities.
+5. Only after every accepted automation in a workspace has a verified receipt,
+   delete every legacy draft and draft-only dependent row. Apply the checked-in
+   WorkspaceDO cleanup migration through the existing migration campaign
+   machinery: drop the former automation lifecycle tables, rebuild shared
+   `schedules` without its automation branch, remove imported automation-owned
+   generic memory rows, and retain only the shared template catalog and
+   non-automation shared records described in the data model. Record the
+   campaign result outside the tables it removes.
+6. Activate the final AutomationAgent serving paths, reconcile every timer,
+   evaluator registration, resource watch, email route, occurrence key, and
+   directory projection from canonical state, and verify Global and EU. New
+   drafts are created directly in AutomationAgent; a legacy draft cannot
+   reappear because neither its data nor a compatibility reader remains.
 
-Before an individual authority flip, rollback means abandoning the initialized
-object and reopening the unchanged WorkspaceDO source. After the flip, rollback
-means stopping migration and repairing/exporting that object's authoritative
-state; the flag must not silently reopen a stale writer.
+The workflow is restartable but the product migration is not reversible. A
+failure before cleanup leaves the previous deployment serving while the
+idempotent import is resumed from its receipts. Once old-table cleanup starts,
+recovery is roll-forward from AutomationAgent and the migration campaign
+ledger; the workflow never reopens WorkspaceDO as automation lifecycle
+authority. `main` therefore has one post-cutover authority and one schema, even
+though its deployment workflow performs the unavoidable ordered cross-object
+steps.
 
 ## Acceptance
 
@@ -1451,9 +1530,12 @@ state; the flag must not silently reopen a stale writer.
     kernel suite against SubstreamAgent, AutomationAgent, and the Block Dashboard
     source-runtime adapter, including lease loss, receipt replay, ambiguous
     write, checkpoint recovery, cancellation, and terminal repair.
-13. Migrate representative drafts and every active trigger class in Global and
-    EU. IDs, addresses, settings, next occurrences, history, and receipts are
-    unchanged; no content or telemetry crosses the EU boundary.
+13. Seed visible `active`, `paused`, and `error` subscriptions plus visible and
+    archived drafts in Global and EU, then run the one merge-triggered cutover.
+    Every accepted automation exists once in its named AutomationAgent with
+    unchanged ID, address, settings, next occurrence, history, and receipts;
+    every legacy draft and draft-only dependent row is absent; and no content or
+    telemetry crosses the EU boundary.
 14. Inspect emitted analytics and logs for all flows above and verify that no
     conversation, prompt, elicitation text/answer, attachment content, tool
     argument/result, or generated transcript is present.
@@ -1465,8 +1547,8 @@ state; the flag must not silently reopen a stale writer.
 16. Prove the implementation consumes the schema and terminal-turn contract
     installed by the 2026-08-26 ordered-turn cutover. No AutomationAgent code
     reads or writes the removed run-level aggregate transcript protocol, and
-    draft migration does not retain `draft_conversation_json` as a writable
-    fallback.
+    no migration path imports legacy `draft_conversation_json` or retains it as
+    a readable or writable fallback.
 17. Parse table-driven legal and illegal evaluator fixtures at every boundary.
     Reject unknown schema versions and keys, empty groups and values, duplicate
     IDs and source tuples, non-finite numbers, mismatched field kinds,
@@ -1526,6 +1608,20 @@ state; the flag must not silently reopen a stale writer.
     DLQ message, log, or telemetry event. Repeat person and resource fixtures
     across provider renames; canonical IDs continue to match, while unresolved
     or ambiguous people and absent resource relationships fail closed.
+27. Inspect each migrated WorkspaceDO after cutover. The former subscription,
+    run, delivery, email-receipt/rate-window, and automation-resource tables do
+    not exist; `schedules` has no automation-subscription branch; imported or
+    discarded automation-owned memory rows are absent; connector and digest
+    schedules still work; and the shared template catalog contains no row that
+    was reachable only from a deleted draft. Exercise the final API and prove no
+    request can read, write, or recreate the removed schema.
+28. Interrupt the merge workflow before import, during an idempotent import,
+    after all import receipts, and after WorkspaceDO cleanup. Before cleanup it
+    resumes without duplicate AutomationAgents or triggers; after cleanup it
+    rolls forward without reopening legacy authority. At no point does the
+    serving product dual-write or expose a per-automation authority flag, and
+    the completed implementation requires no follow-up cleanup merge.
+
 ## Open questions
 
 None. The implementation plan may choose concrete class, table, RPC, and event
