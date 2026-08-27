@@ -212,6 +212,41 @@ describe('the exported document', () => {
     expect(html).toMatch(/\.markdown-code-language\s*\{[^}]*\bdisplay:\s*block;/u);
   });
 
+  /**
+   * The card shares `MarkdownBody`'s markup and none of its stylesheet, so a
+   * class introduced there has no rule here until somebody writes one — and the
+   * miss shows up as an unstyled element in the first card anybody looks at,
+   * not as a failure anywhere near the change that caused it. This is the guard
+   * that turns that into a test failure instead.
+   */
+  it.each([
+    'citation-chip',
+    'citation-chip-icon',
+    'citation-chip-label',
+    'citation-card',
+    'citation-card-icon',
+    'citation-card-text',
+    'citation-card-title',
+    'citation-card-kind',
+    'citation-card-chevron',
+    'citation-pill',
+    'citation-pill-wrap',
+    'citation-pill-popover',
+    'citation-identity-card',
+  ])('styles .%s, which the renderer emits and this document would not', (className) => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    expect(html).toMatch(new RegExp(`\\.${className}\\b[^{]*\\{`, 'u'));
+  });
+
+  it('drops the popover and the chevron, which are affordances a still card cannot offer', () => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    for (const className of ['citation-pill-popover', 'citation-card-chevron']) {
+      expect(html).toMatch(new RegExp(`\\.${className}\\b[^{]*\\{[^}]*display:\\s*none;`, 'u'));
+    }
+  });
+
   it('splashes two different messages differently and the same message the same way', () => {
     const splash = (contentHtml: string): string =>
       messageExportDocument({ format: 'image', contentHtml, logoDataUrl: LOGO })

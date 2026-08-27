@@ -1173,6 +1173,16 @@ export function WorkstreamScreen(): React.JSX.Element {
   // work stream to draw at all — hence `routedDetail?`, and hence the hoisted
   // empty array, which keeps the identity stable while there is nothing loaded.
   const citations = useCitations({ api, resources: routedDetail?.resources ?? NO_RESOURCES });
+  // The rail's detail reads a resource's stored bytes through the same
+  // authorized route the lightbox uses; the identity is stable so the preview's
+  // effect does not refire on every commit of the screen around it.
+  const loadResourceContent = useCallback(
+    (resourceId: string, signal?: AbortSignal) => {
+      if (!api) return Promise.reject(new Error('No API session'));
+      return api.getResourceContent(resourceId, signal);
+    },
+    [api],
+  );
   const automationSubscriptionId = routedDetail?.automationSubscriptionId;
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, automationSubscriptionId ?? null],
@@ -2184,6 +2194,7 @@ export function WorkstreamScreen(): React.JSX.Element {
 
       <InspectorRail
         dropTarget={railDrop}
+        {...(api ? { loadResourceContent: loadResourceContent } : {})}
         error={deferredContext.error?.message
           ?? watchResource.error?.message
           ?? detachResource.error?.message

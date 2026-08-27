@@ -6,14 +6,13 @@ import {
   Copy,
   ExternalLink,
   Eye,
-  File,
-  FileText,
-  Link2,
+  LoaderCircle,
   Plus,
   Trash2,
   UserPlus,
   X,
 } from 'lucide-react';
+import { classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useState } from 'react';
 import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
@@ -25,11 +24,19 @@ import type {
 } from '../lib/types';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { ResourceIcon } from './markdown-citations';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
+import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
 
 interface InspectorRailProps {
   error?: string;
+  /**
+   * Reads a resource's stored bytes, so the detail can show what the thing
+   * actually says. Absent on a surface that has no API session, where the
+   * detail stays the metadata card it has always been.
+   */
+  loadResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   workstream?: WorkstreamDetail;
   runs?: AutomationRunSummary[];
   onAddParticipant?: () => void;
@@ -58,13 +65,6 @@ function Section({ title, action, children }: { title: string; action?: React.Re
       {children}
     </section>
   );
-}
-
-function ResourceIcon({ type }: { type: string }): React.JSX.Element {
-  const normalized = type.toLowerCase();
-  if (normalized.includes('doc') || normalized.includes('text')) return <FileText size={15} />;
-  if (normalized.includes('url') || normalized.includes('web')) return <Link2 size={15} />;
-  return <File size={15} />;
 }
 
 function ResourceCards({
@@ -340,7 +340,77 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
   );
 }
 
-function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailProps, 'workstream' | 'onDetachResource'>): React.JSX.Element | null {
+/**
+ * Whether a resource's bytes are worth rendering as prose.
+ *
+ * The same question the attachment lightbox asks, asked the same way: the
+ * classifier owns what a file is, and a second opinion here would be a second
+ * answer for the same file on two surfaces. An image or a binary is not
+ * previewed at all rather than rendered as mojibake — the rail is 360 pixels
+ * wide and a PNG's bytes as text is worse than the metadata alone.
+ */
+function readableAsText(resource: WorkstreamResource): boolean {
+  if (!resource.contentAvailable) return false;
+  const mimeType = resource.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  if (mimeType.startsWith('image/')) return false;
+  if (mimeType.startsWith('text/')) return true;
+  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) === 'document';
+}
+
+/**
+ * What the resource says, under what the record says about it.
+ *
+ * The rail's detail was metadata only — type, direction, version, remove — and
+ * a citation that opened onto it landed on a card describing a document without
+ * showing any of it. This is the missing half, and it is the reason a citation
+ * is worth clicking.
+ *
+ * It renders `verbatim`, which is the one thing here that is not a preference:
+ * the model-text repair exists to fix what a *model* wrote on its way to a
+ * reader, and a stored document is a file. Rewriting its bytes would show
+ * somebody something their document does not say.
+ */
+function ResourceContentPreview({ loadResourceContent, resource }: {
+  loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
+  resource: WorkstreamResource;
+}): React.JSX.Element | null {
+  const [state, setState] = useState<{ id: string; text?: string; failed?: boolean }>({ id: resource.id });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setState({ id: resource.id });
+    void loadResourceContent(resource.id, controller.signal)
+      .then((blob) => blob.text())
+      .then((text) => {
+        if (!controller.signal.aborted) setState({ id: resource.id, text });
+      })
+      .catch(() => {
+        // A resource whose content was never hydrated, or whose object has since
+        // gone, is not an error the reader can act on — the metadata above is
+        // still true, and saying so beats an empty panel.
+        if (!controller.signal.aborted) setState({ failed: true, id: resource.id });
+      });
+    return () => controller.abort();
+  }, [loadResourceContent, resource.id]);
+
+  if (state.failed) {
+    return <p className="inspector-detail-preview-status">This preview is not available.</p>;
+  }
+  if (state.text === undefined) {
+    return (
+      <p className="inspector-detail-preview-status" role="status">
+        <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading preview…
+      </p>
+    );
+  }
+  return (
+    <article className="inspector-detail-preview">
+      <MarkdownBody verbatim>{state.text}</MarkdownBody>
+    </article>
+  );
+}
+
+function InspectorDetail({ loadResourceContent, workstream, onDetachResource }: Pick<InspectorRailProps, 'loadResourceContent' | 'workstream' | 'onDetachResource'>): React.JSX.Element | null {
   const inspector = useUiStore((state) => state.inspector);
   if (!inspector || !workstream) return null;
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
@@ -358,6 +428,9 @@ function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailPro
           {resource.direction === 'source' && <div><dt>Watch status</dt><dd>{resource.watchStatus === 'unsupported' ? 'Not supported' : resource.watchStatus === 'error' ? 'Needs attention' : resource.watchEnabled ? 'Watching for changes' : 'Not watched'}</dd></div>}
           {resource.updatedAt && <div><dt>Last updated</dt><dd>{formatDateTime(resource.updatedAt)}</dd></div>}
         </dl>
+        {loadResourceContent && readableAsText(resource) && (
+          <ResourceContentPreview loadResourceContent={loadResourceContent} resource={resource} />
+        )}
         <div className="inspector-detail-actions">
           {resource.canonicalUrl && <Button onClick={() => void window.rally?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
           {onDetachResource && <Button onClick={() => onDetachResource(resource)}><Trash2 size={14} /> Remove</Button>}
@@ -411,7 +484,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       <div className="rail-scroll">
         {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
         {inspector ? (
-          <InspectorDetail onDetachResource={props.onDetachResource} workstream={props.workstream} />
+          <InspectorDetail
+            {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
+            onDetachResource={props.onDetachResource}
+            workstream={props.workstream}
+          />
         ) : railVariant === 'context' ? (
           <ContextContent {...props} />
         ) : (
