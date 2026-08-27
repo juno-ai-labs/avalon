@@ -1235,7 +1235,8 @@ directory write at all.
 `animate-ping` treatment: a translucent filled copy of the avatar expands to
 twice its size and fades on a one-second loop. It shares the avatar's stacking
 layer, paints beneath its own solid avatar, and follows face-pile order so a
-participant's ping stays above earlier avatars and below later ones.
+participant's ping stays above earlier avatars and below later avatars or the
+overflow badge.
 Reduced-motion users keep a static translucent halo.
 
 **Why:** The tooltip opens after 300 ms, but the previous 550 ms inset phase was
@@ -1249,8 +1250,8 @@ expanding geometry.
 
 **Consequences, and what a future change has to respect:** The looping presence
 signal must use the avatar's face-pile layer without obscuring its own face or
-crossing later avatars, and remain a non-animated outer halo in reduced-motion
-mode.
+crossing later avatars or the overflow count, and remain a non-animated outer
+halo in reduced-motion mode.
 
 ### 2026-08-26 — Legacy transcript rows gain faithful canonical projections
 
