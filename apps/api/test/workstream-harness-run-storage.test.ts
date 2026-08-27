@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
 import {
   expireLocalAttemptLeasesFromPreviousInstance,
+  PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX,
   WorkstreamHarnessRunStorage,
 } from "../src/durable-objects/workstream-harness-run-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
@@ -141,12 +142,26 @@ describe("claiming a run's attempt", () => {
 
     const recoverable = expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 1_000);
     expect(recoverable).toEqual([{ runId: RUN, attemptId: "attempt-1" }]);
+    expect(sql.exec(
+      `SELECT lease_owner, lease_expires_at FROM runs WHERE run_id = ?`,
+      RUN,
+    ).one()).toEqual({
+      lease_owner: `${PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX}attempt-1`,
+      lease_expires_at: NOW + 1_000,
+    });
+
+    // Recovery intent is durable rather than resident in one replacement's
+    // in-memory map. A second reconstruction before the claim rediscovers the
+    // same attempt even though its deliberately expired lease is no longer
+    // "live" by time alone.
+    expect(expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 2_000))
+      .toEqual([{ runId: RUN, attemptId: "attempt-1" }]);
 
     const resumed = storage.claimAttempt({
       runId: RUN,
       attemptId: "attempt-1",
       owner: "owner-2",
-      now: NOW + 1_000,
+      now: NOW + 2_000,
       leaseSeconds: 300,
       lifecycleEventId: "event-2",
     });
@@ -161,7 +176,7 @@ describe("claiming a run's attempt", () => {
     ).one()).toMatchObject({
       legacy_attempt_id: "attempt-1",
       lease_owner: "owner-2",
-      lease_expires_at: NOW + 301_000,
+      lease_expires_at: NOW + 302_000,
     });
   });
 

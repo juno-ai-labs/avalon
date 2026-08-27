@@ -36,6 +36,9 @@ import {
 } from "@rally/contracts";
 
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
+import {
+  PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX,
+} from "../src/durable-objects/workstream-harness-run-storage";
 import type { HarnessRunObjectPort } from "../src/durable-objects/workstream-harness-run-protocol";
 import { claimHarnessAttempt } from "../src/runtime/harness-run-runtime";
 import { seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
@@ -262,7 +265,10 @@ describe("a dispatched agent run is never orphaned", () => {
         leaseExpiresAt: oldLeaseExpiresAt,
       });
       previousOwner = (instance as unknown as {
-        harnessAttemptOwner(input: { substreamId: string; harnessRunId: string }, attemptId: string): string;
+        harnessAttemptOwner(
+          input: { substreamId: string; harnessRunId: string },
+          attemptId: string,
+        ): string;
       }).harnessAttemptOwner({ substreamId: "0", harnessRunId: RUN_ID }, "attempt-that-survived");
       state.storage.sql.exec(
         `UPDATE runs
@@ -291,7 +297,9 @@ describe("a dispatched agent run is never orphaned", () => {
         `SELECT lease_owner, lease_expires_at, attempt_epoch FROM runs WHERE run_id = ?`,
         RUN_ID,
       ).one();
-      expect(run.lease_owner).toBe(previousOwner);
+      expect(run.lease_owner).toBe(
+        `${PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX}attempt-that-survived`,
+      );
       expect(run.lease_expires_at).not.toBeNull();
       expect(run.lease_expires_at!).toBeLessThanOrEqual(Date.now());
       expect(run.lease_expires_at).not.toBe(oldLeaseExpiresAt);
@@ -302,6 +310,21 @@ describe("a dispatched agent run is never orphaned", () => {
       };
       const recoverable = resident.recoverableHarnessAttempts;
       expect(recoverable.get(RUN_ID)).toBe("attempt-that-survived");
+    });
+
+    // Evict the replacement before it can claim. The next constructor must
+    // rebuild recovery intent from durable state rather than stale-reap the
+    // deliberately expired attempt.
+    await evictDurableObject(stub);
+    await boot(stub, "https://object.test/health");
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const resident = instance as unknown as {
+        recoverableHarnessAttempts: Map<string, string>;
+        harnessRuns: HarnessRunObjectPort;
+        harnessAttemptOwner(input: { substreamId: string; harnessRunId: string }, attemptId: string): string;
+      };
+      expect(resident.recoverableHarnessAttempts.get(RUN_ID)).toBe("attempt-that-survived");
       const replacementOwner = resident.harnessAttemptOwner(
         { substreamId: "0", harnessRunId: RUN_ID },
         "attempt-that-survived",
