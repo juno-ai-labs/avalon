@@ -24,6 +24,9 @@ const S = "10000000-0000-4000-8000-000000000002";
 const R = "10000000-0000-4000-8000-000000000003";
 const U = asUserId("10000000-0000-4000-8000-000000000004");
 const I = "10000000-0000-4000-8000-000000000005";
+// A second run's receipt. A republish is a different call with a different
+// intent, which is exactly what the per-call identity could not recognize.
+const I2 = "10000000-0000-4000-8000-000000000007";
 const RESOURCE = "10000000-0000-4000-8000-000000000006";
 
 const context: HarnessToolContext = {
@@ -83,6 +86,10 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
   // records its effect against this row.
   seedToolReceipt(objectStore, {
     id: I, runId: R, toolCallId: "resource-call", toolName: "terminal_publish_resource",
+  });
+  seedToolReceipt(objectStore, {
+    id: I2, runId: R, toolCallId: "resource-recall", toolName: "terminal_publish_resource",
+    position: 1,
   });
   const objects = new Map<string, Uint8Array>();
   const put = vi.fn(async (key: string, value: Uint8Array | string) => {
@@ -347,6 +354,159 @@ describe("Terminal resource bridge", () => {
     // any other identity would create a second copy on every attempt.
     expect(put).not.toHaveBeenCalled();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 0 });
+  });
+
+  it("republishes the same sandbox path onto the same resource instead of a sibling", async () => {
+    const { database, objects, put, bridge } = fixture();
+    const first = await bridge.publishResource(
+      context,
+      { filePath: "mute-windows-prd.md", displayName: "Mute windows PRD" },
+      new TextEncoder().encode("# Mute windows\n\nFirst draft.\n"),
+    );
+    const revised = new TextEncoder().encode("# Mute windows\n\nTighter goals.\n");
+    const second = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "mute-windows-prd.md" },
+      revised,
+    );
+
+    expect(second.resourceId).toBe(first.resourceId);
+    // One entry in the rail, not one per draft: the rewrite is the same
+    // document, so the row it lands on is the one the first publish created.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });
+    const row = database.prepare(
+      `SELECT provider_resource_id, title, content_ref, content_sha256, metadata_json, model_content_status
+         FROM resources WHERE id = ?`,
+    ).get(String(first.resourceId)) as {
+      provider_resource_id: string;
+      title: string;
+      content_ref: string;
+      content_sha256: string;
+      metadata_json: string;
+      model_content_status: string;
+    };
+    // The work stream is in the identity, so the same file name published from
+    // another work stream is a different document.
+    expect(row.provider_resource_id).toBe(`terminal:${S}:mute-windows-prd.md`);
+    expect(objects.get(row.content_ref)).toEqual(revised);
+    expect(row.content_sha256).toBe(second.sourceSha256);
+    expect(row.content_sha256).not.toBe(first.sourceSha256);
+    // A title is applied when the republish gives one and kept when it does not.
+    expect(row.title).toBe("Mute windows PRD");
+    expect(second.title).toBe("Mute windows PRD");
+    expect(JSON.parse(row.metadata_json)).toMatchObject({
+      sourcePath: "mute-windows-prd.md",
+      size: revised.byteLength,
+    });
+    // New bytes invalidate the derivative the old bytes produced.
+    expect(row.model_content_status).toBe("pending");
+    expect(second.derivativeStatus).toBe("pending");
+    expect(put).toHaveBeenCalledTimes(2);
+    // A won compare-and-swap cancels the new object's pre-registered deletion.
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
+      .toEqual({ count: 0 });
+  });
+
+  it("applies a new title to a republished document and keeps the old one otherwise", async () => {
+    const { database, bridge } = fixture();
+    const first = await bridge.publishResource(
+      context,
+      { filePath: "brief.md", displayName: "Launch brief" },
+      new TextEncoder().encode("# Brief\n"),
+    );
+    const renamed = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "brief.md", displayName: "Launch brief v2" },
+      new TextEncoder().encode("# Brief\n\nMore.\n"),
+    );
+
+    expect(renamed.resourceId).toBe(first.resourceId);
+    expect(renamed.title).toBe("Launch brief v2");
+    expect(database.prepare("SELECT title FROM resources WHERE id = ?").get(String(first.resourceId)))
+      .toEqual({ title: "Launch brief v2" });
+  });
+
+  it("returns the published document unchanged when the same path republishes identical bytes", async () => {
+    const { database, put, bridge } = fixture();
+    const bytes = new TextEncoder().encode("# Unchanged\n");
+    const first = await bridge.publishResource(context, { filePath: "notes.md" }, bytes);
+    const again = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "notes.md" },
+      bytes,
+    );
+
+    // One branch covers a crash-replay of a settled call and a no-change
+    // republish: equal content on the same path writes nothing.
+    expect(again).toEqual(first);
+    expect(put).toHaveBeenCalledOnce();
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });
+  });
+
+  it("keeps distinct sandbox paths as distinct documents", async () => {
+    const { database, bridge } = fixture();
+    const prd = await bridge.publishResource(context, { filePath: "prd.md" }, new TextEncoder().encode("# PRD\n"));
+    const release = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "press-release.md" },
+      new TextEncoder().encode("# Release\n"),
+    );
+
+    expect(release.resourceId).not.toBe(prd.resourceId);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 2 });
+  });
+
+  it("returns the settled resource when a publish recorded under the per-call identity replays", async () => {
+    const { database, objects, put, bridge } = fixture();
+    // A publication that settled before path-scoped identity shipped. Its
+    // attempt replaying must find that row, not publish the file a second time.
+    database.prepare(
+      `INSERT INTO resources
+       (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
+        content_ref, content_sha256, metadata_json, attachment_status, model_content_status,
+        created_at, updated_at)
+       VALUES (?, ?, 'generated_file', 'avalon_generated', ?, 'Legacy report', 'text/markdown',
+               'global/legacy', ?, ?, 'attached', 'ready', '2026-08-13', '2026-08-13')`,
+    ).run(
+      RESOURCE,
+      W,
+      `terminal:${I}`,
+      "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d208286a2e6f937dc8",
+      JSON.stringify({ sourcePath: "report.md", size: 5, attachmentKind: "document", contentMode: "read" }),
+    );
+    objects.set("global/legacy", new TextEncoder().encode("hello"));
+
+    const replayed = await bridge.publishResource(
+      context,
+      { filePath: "report.md" },
+      new TextEncoder().encode("# Report\n"),
+    );
+
+    expect(replayed.resourceId).toBe(RESOURCE);
+    expect(put).not.toHaveBeenCalled();
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 1 });
+  });
+
+  it("reattaches a republished document that is no longer linked to the work stream", async () => {
+    const { objectStore, bridge } = fixture();
+    const first = await bridge.publishResource(
+      context,
+      { filePath: "plan.md" },
+      new TextEncoder().encode("# Plan\n"),
+    );
+    objectStore.prepare("DELETE FROM workstream_resource_links WHERE resource_id = ?")
+      .run(String(first.resourceId));
+
+    const second = await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "plan.md" },
+      new TextEncoder().encode("# Plan\n\nRevised.\n"),
+    );
+
+    expect(second.resourceId).toBe(first.resourceId);
+    expect(objectStore.prepare(
+      "SELECT relationship_type FROM workstream_resource_links WHERE resource_id = ?",
+    ).get(String(first.resourceId))).toEqual({ relationship_type: "generated" });
   });
 
   it("publishes opaque binaries as download-only resources", async () => {
