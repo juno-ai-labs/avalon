@@ -37,6 +37,7 @@ import {
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
+import { useCitations } from '../lib/use-citations';
 import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
 import { answerElicitationOptimistically } from '../lib/elicitation';
 import { formatDateTime } from '../lib/format';
@@ -906,6 +907,9 @@ export function RunStoppedNotice({
   );
 }
 
+/** Hoisted for identity: a `?? []` per render would re-key the citation lookup. */
+const NO_RESOURCES: WorkstreamDetail['resources'] = [];
+
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
   const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
@@ -1164,6 +1168,11 @@ export function WorkstreamScreen(): React.JSX.Element {
     readSocketOpenContext,
     workstreamId: id,
   });
+  // Citations resolve against the loaded work stream first and the workspace
+  // second, so the transcript needs this before the screen has decided it has a
+  // work stream to draw at all — hence `routedDetail?`, and hence the hoisted
+  // empty array, which keeps the identity stable while there is nothing loaded.
+  const citations = useCitations({ api, resources: routedDetail?.resources ?? NO_RESOURCES });
   const automationSubscriptionId = routedDetail?.automationSubscriptionId;
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, automationSubscriptionId ?? null],
@@ -2109,6 +2118,7 @@ export function WorkstreamScreen(): React.JSX.Element {
                       <div className="unread-divider" role="separator"><span>Unread messages</span></div>
                     )}
                     <MessageBlock
+                      citations={citations}
                       currentUserId={session?.user.id}
                       loadAttachmentContent={loadAttachmentContent}
                       message={message}

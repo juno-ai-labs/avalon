@@ -768,7 +768,8 @@ function exportStatusMessage(saving: MessageExportFormat | null, failed: Message
   return '';
 }
 
-function AssistantMessageActions({ mentions, telemetry, text }: {
+function AssistantMessageActions({ citations, mentions, telemetry, text }: {
+  citations?: CitationContext;
   mentions: MessageMention[];
   telemetry?: MessageCopyTelemetry;
   text: string;
@@ -791,7 +792,10 @@ function AssistantMessageActions({ mentions, telemetry, text }: {
     setFailed(null);
     try {
       await saveMessageExport({
-        content: <MarkdownBody mentions={mentions}>{text}</MarkdownBody>,
+        // The same context the turn above was rendered with: the card is the
+        // turn, saved, and a chip that is a chip on screen must not be plain
+        // text in the file somebody keeps.
+        content: <MarkdownBody citations={citations} mentions={mentions}>{text}</MarkdownBody>,
         // The file name slugs the first line the way the card *shows* it — a
         // saved image named `…-backlog-rightarrow-done` outlives the render
         // that repaired the text it pictures. Copy stays the stored bytes.
@@ -855,6 +859,7 @@ function AssistantMessageActions({ mentions, telemetry, text }: {
 }
 
 export function AssistantMessageContent({
+  citations,
   // The hoisted constant, not `= []`: a per-render array here would feed
   // MarkdownBody an always-new `mentions` and defeat its streaming memo.
   mentions = NO_MENTIONS,
@@ -863,6 +868,7 @@ export function AssistantMessageContent({
   text,
   telemetry,
 }: {
+  citations?: CitationContext;
   mentions?: MessageMention[];
   showCopy?: boolean;
   streaming?: boolean;
@@ -871,9 +877,9 @@ export function AssistantMessageContent({
 }): React.JSX.Element {
   return (
     <>
-      {text ? <MarkdownBody mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
+      {text ? <MarkdownBody citations={citations} mentions={mentions} streaming={streaming} telemetry={telemetry}>{text}</MarkdownBody> : null}
       {showCopy && !streaming && text && (
-        <AssistantMessageActions mentions={mentions} telemetry={telemetry} text={text} />
+        <AssistantMessageActions citations={citations} mentions={mentions} telemetry={telemetry} text={text} />
       )}
       {streaming && <span className="streaming-caret" aria-hidden="true" />}
     </>
@@ -1334,6 +1340,12 @@ function SuggestionBlock({
 }
 
 interface MessageBlockProps {
+  /**
+   * How this transcript resolves and opens a citation. Absent on a surface
+   * without a work stream behind it, which is exactly when every citation in a
+   * message degrades to the label text it already carried.
+   */
+  citations?: CitationContext;
   currentUserId?: string;
   message: Message;
   loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
@@ -1344,6 +1356,7 @@ interface MessageBlockProps {
 }
 
 export function MessageBlock({
+  citations,
   currentUserId,
   loadAttachmentContent,
   message,
@@ -1468,6 +1481,7 @@ export function MessageBlock({
                 />
               ) : null}
               <AssistantMessageContent
+                citations={citations}
                 mentions={message.mentions}
                 streaming={message.streaming}
                 text={message.text ?? ''}
