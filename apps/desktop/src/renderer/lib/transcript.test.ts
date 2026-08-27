@@ -9,6 +9,7 @@ import {
   orderedTranscriptMessages,
   mergeRealtimeTranscriptActivity,
   mergeRealtimeTranscriptTurn,
+  mergeTranscriptRange,
   transcriptCoverage,
   transcriptGaps,
   transientMessagesWithoutCanonicalMatch,
@@ -110,6 +111,7 @@ describe('ordered turn rendering', () => {
             manifestSha256: null,
           },
         ],
+        activities: [],
       }],
       activities: [],
       activeActivities: [],
@@ -141,6 +143,53 @@ describe('ordered turn rendering', () => {
     ]).map((message) => message.id)).toEqual(['turn-3', 'turn-4']);
   });
 
+  it('assigns collision-free render order without imposing a block count limit', () => {
+    const blocks = Array.from({ length: 1_001 }, (_, blockIndex) => ({
+      type: 'text' as const,
+      blockId: `block-${blockIndex}`,
+      blockIndex,
+      text: String(blockIndex),
+      streaming: false,
+    }));
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'snapshot-large-turn', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 'turn-large', entryKind: 'conversation',
+          actor: 'assistant', authorUserId: null, attentionOrdinal: null,
+          createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1, blocks,
+          activityId: 'turn-large:activity', turnManifestRef: null,
+          manifestByteLength: null, manifestSha256: null,
+        }],
+        activities: [],
+      }],
+      activities: [
+        {
+          activityId: 'run-large', parentActivityId: null, scope: 'response',
+          subjectId: 'run-large', callIndex: null, label: 'Working', state: 'completed',
+          intervals: [], revision: 2,
+        },
+        {
+          activityId: 'turn-large:activity', parentActivityId: 'run-large', scope: 'assistant_turn',
+          subjectId: 'turn-large', callIndex: 0, label: 'Assistant turn', state: 'completed',
+          intervals: [], revision: 2,
+        },
+      ],
+      activeActivities: [], activeTurns: [],
+    };
+
+    const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
+    expect(messages).toHaveLength(1_002);
+    expect(new Set(messages.map((message) => message.sequenceNumber)).size).toBe(messages.length);
+    expect(messages.slice(0, blocks.length).map((message) => message.id))
+      .toEqual(blocks.map((block) => block.blockId));
+    expect(messages.at(-1)?.id).toBe('run-large');
+  });
+
   it('uses the server elapsed baseline and a local monotonic start for mid-stream opens', () => {
     const snapshot: WorkstreamTranscriptSnapshot = {
       snapshotId: 'snapshot-active',
@@ -168,6 +217,7 @@ describe('ordered turn rendering', () => {
           manifestByteLength: null,
           manifestSha256: null,
         }],
+        activities: [],
       }],
       activities: [
         {
@@ -233,9 +283,9 @@ describe('explicit transcript range coverage', () => {
     unreadAnchorSequence: null,
     unreadReason: 'no_unread',
     ranges: [
-      { purpose: 'requested', requested: { startInclusive: 10, endExclusive: 20 }, covered: { startInclusive: 10, endExclusive: 20 }, turns: [] },
-      { purpose: 'requested', requested: { startInclusive: 15, endExclusive: 25 }, covered: { startInclusive: 15, endExclusive: 25 }, turns: [] },
-      { purpose: 'latest', requested: { startInclusive: 46, endExclusive: 51 }, covered: { startInclusive: 46, endExclusive: 51 }, turns: [] },
+      { purpose: 'requested', requested: { startInclusive: 10, endExclusive: 20 }, covered: { startInclusive: 10, endExclusive: 20 }, turns: [], activities: [] },
+      { purpose: 'requested', requested: { startInclusive: 15, endExclusive: 25 }, covered: { startInclusive: 15, endExclusive: 25 }, turns: [], activities: [] },
+      { purpose: 'latest', requested: { startInclusive: 46, endExclusive: 51 }, covered: { startInclusive: 46, endExclusive: 51 }, turns: [], activities: [] },
     ],
     activities: [],
     activeActivities: [],
@@ -275,6 +325,7 @@ describe('explicit transcript range coverage', () => {
       manifestSha256: null,
     };
     const merged = mergeRealtimeTranscriptTurn(snapshot, turn, 2);
+    expect(merged.snapshotThrough).toBe(50);
     expect(transcriptCoverage(merged)).toEqual([
       { startInclusive: 10, endExclusive: 25 },
       { startInclusive: 46, endExclusive: 52 },
@@ -308,14 +359,30 @@ describe('explicit transcript range coverage', () => {
     expect(completed.activeActivities).toEqual([]);
   });
 
+  it('merges lifecycle timing delivered with a lazily loaded range', () => {
+    const activity = {
+      activityId: 'historical-tool', parentActivityId: null, scope: 'tool_call' as const,
+      subjectId: 'call-old', callIndex: 0, label: 'Search', state: 'completed' as const,
+      intervals: [], revision: 2,
+    };
+    const merged = mergeTranscriptRange(snapshot, {
+      purpose: 'requested',
+      requested: { startInclusive: 1, endExclusive: 10 },
+      covered: { startInclusive: 1, endExclusive: 10 },
+      turns: [],
+      activities: [activity],
+    });
+    expect(merged.activities).toContainEqual(activity);
+  });
+
   it('satisfies range union and complement algebra for generated small intervals', () => {
     for (let leftStart = 1; leftStart <= 5; leftStart += 1) {
       for (let leftEnd = leftStart; leftEnd <= 6; leftEnd += 1) {
         for (let rightStart = 1; rightStart <= 5; rightStart += 1) {
           for (let rightEnd = rightStart; rightEnd <= 6; rightEnd += 1) {
             const ranges = [
-              { purpose: 'requested' as const, requested: { startInclusive: leftStart, endExclusive: leftEnd }, covered: { startInclusive: leftStart, endExclusive: leftEnd }, turns: [] },
-              { purpose: 'requested' as const, requested: { startInclusive: rightStart, endExclusive: rightEnd }, covered: { startInclusive: rightStart, endExclusive: rightEnd }, turns: [] },
+              { purpose: 'requested' as const, requested: { startInclusive: leftStart, endExclusive: leftEnd }, covered: { startInclusive: leftStart, endExclusive: leftEnd }, turns: [], activities: [] },
+              { purpose: 'requested' as const, requested: { startInclusive: rightStart, endExclusive: rightEnd }, covered: { startInclusive: rightStart, endExclusive: rightEnd }, turns: [], activities: [] },
             ];
             const generated = { ...snapshot, snapshotThrough: 5, ranges };
             const reversed = { ...generated, ranges: [...ranges].reverse() };

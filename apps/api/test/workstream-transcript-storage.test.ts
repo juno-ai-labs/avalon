@@ -138,6 +138,69 @@ describe("canonical ordered work-stream transcript", () => {
     ]);
   });
 
+  it("retains participant-safe tool input when a terminal lifecycle fact replaces started", async () => {
+    const { transcript } = open();
+    await transcript.commitBindTransition(initialize(), NOW);
+    await transcript.commitBindTransition(assistant(2, 1, "Checking", 1), NOW + 1);
+    await transcript.upsertToolLifecycle({
+      toolCallId: "run-1:turn:1:tool:0",
+      pluginId: "github",
+      toolName: "tool-0",
+      status: "started",
+      participantSafeInput: { query: "open pull requests" },
+      occurredAtUtc: new Date(NOW + 2).toISOString(),
+    });
+    await transcript.upsertToolLifecycle({
+      toolCallId: "run-1:turn:1:tool:0",
+      pluginId: "github",
+      toolName: "tool-0",
+      status: "completed",
+      participantSafeResult: "Found two",
+      occurredAtUtc: new Date(NOW + 3).toISOString(),
+    });
+
+    const tool = transcript.participantTurn("run-1:turn:1")?.blocks
+      .find((block) => block.type === "tool");
+    expect(tool).toMatchObject({
+      status: "completed",
+      participantSafeInput: { query: "open pull requests" },
+      participantSafeResult: "Found two",
+    });
+  });
+
+  it("rejects an invalid tool lifecycle timestamp before writing a fact", async () => {
+    const { transcript, sql } = open();
+    await transcript.commitBindTransition(initialize(), NOW);
+    await transcript.commitBindTransition(assistant(2, 1, "Checking", 1), NOW + 1);
+
+    await expect(transcript.upsertToolLifecycle({
+      toolCallId: "run-1:turn:1:tool:0",
+      pluginId: "github",
+      toolName: "tool-0",
+      status: "started",
+      occurredAtUtc: "not-a-timestamp",
+    })).rejects.toThrow("invalid_tool_lifecycle_timestamp");
+    expect(sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+      `SELECT COUNT(*) AS count FROM transcript_facts
+        WHERE fact_id = 'run-1:turn:1:tool:0:participant:started'`,
+    ).one().count).toBe(0);
+  });
+
+  it("rejects non-JSON array values instead of hashing them as null", async () => {
+    const { transcript } = open();
+    await transcript.commitBindTransition(initialize(), NOW);
+    await transcript.commitBindTransition(assistant(2, 1, "Checking", 1), NOW + 1);
+
+    await expect(transcript.upsertToolLifecycle({
+      toolCallId: "run-1:turn:1:tool:0",
+      pluginId: "github",
+      toolName: "tool-0",
+      status: "started",
+      participantSafeInput: [undefined],
+      occurredAtUtc: new Date(NOW + 2).toISOString(),
+    })).rejects.toThrow("transcript_non_json_value");
+  });
+
   it("never exposes provider reasoning content in a participant thinking block", async () => {
     const { transcript } = open();
     await transcript.commitBindTransition(initialize(), NOW);
@@ -178,6 +241,82 @@ describe("canonical ordered work-stream transcript", () => {
     expect(JSON.stringify(thinking)).not.toContain("private provider reasoning");
   });
 
+  it("hydrates only range-owned activities and active ancestry in one bounded snapshot", async () => {
+    const { transcript } = open();
+    await transcript.commitBindTransition(initialize(), NOW);
+    const rootId = "run-1:activity";
+    const turnId = "run-1:turn:1";
+    const assistantId = `${turnId}:activity`;
+    const pluginId = `${turnId}:plugin:github`;
+    const toolId = `${turnId}:tool:0:activity`;
+    transcript.upsertActivity({
+      activityId: rootId, parentActivityId: null, scope: "response", subjectId: "run-1",
+      callIndex: null, label: "Working", action: "start", revision: 1,
+      occurredAtUtc: new Date(NOW).toISOString(),
+    });
+    transcript.upsertActivity({
+      activityId: assistantId, parentActivityId: rootId, scope: "assistant_turn", subjectId: turnId,
+      callIndex: 1, label: "Assistant turn", action: "start", revision: 1,
+      occurredAtUtc: new Date(NOW + 1).toISOString(),
+    });
+    await transcript.commitBindTransition(assistant(2, 1, "Checking", 1), NOW + 2);
+    transcript.upsertActivity({
+      activityId: pluginId, parentActivityId: assistantId, scope: "plugin", subjectId: "github",
+      callIndex: 0, label: "GitHub", action: "start", revision: 1,
+      occurredAtUtc: new Date(NOW + 3).toISOString(),
+    });
+    await transcript.upsertToolLifecycle({
+      toolCallId: `${turnId}:tool:0`, pluginId: "github", toolName: "tool-0", status: "started",
+      participantSafeInput: { query: "one" }, occurredAtUtc: new Date(NOW + 3).toISOString(),
+    });
+    transcript.upsertActivity({
+      activityId: toolId, parentActivityId: pluginId, scope: "tool_call", subjectId: `${turnId}:tool:0`,
+      callIndex: 0, label: "Search", action: "start", revision: 1,
+      occurredAtUtc: new Date(NOW + 3).toISOString(),
+    });
+    transcript.upsertActivity({
+      activityId: toolId, parentActivityId: pluginId, scope: "tool_call", subjectId: `${turnId}:tool:0`,
+      callIndex: 0, label: "Search", action: "complete", revision: 2,
+      occurredAtUtc: new Date(NOW + 4).toISOString(),
+    });
+    for (const [activityId, parentActivityId, scope, subjectId] of [
+      [pluginId, assistantId, "plugin", "github"],
+      [assistantId, rootId, "assistant_turn", turnId],
+      [rootId, null, "response", "run-1"],
+    ] as const) {
+      transcript.upsertActivity({
+        activityId, parentActivityId, scope, subjectId, callIndex: null,
+        label: subjectId, action: "complete", revision: 2,
+        occurredAtUtc: new Date(NOW + 5).toISOString(),
+      });
+    }
+    for (let index = 0; index < 25; index += 1) {
+      transcript.upsertActivity({
+        activityId: `historical:${index}`, parentActivityId: null, scope: "response",
+        subjectId: `historical:${index}`, callIndex: null, label: "Historical",
+        action: "complete", revision: 1, occurredAtUtc: new Date(NOW - index - 1).toISOString(),
+      });
+    }
+
+    const snapshot = transcript.createOpeningSnapshot({
+      unreadHighWaterAttentionOrdinal: null,
+      now: NOW + 6,
+    });
+    expect(snapshot.activities.map((activity) => activity.activityId)).toEqual([
+      rootId,
+      assistantId,
+      pluginId,
+      toolId,
+    ]);
+    const loaded = transcript.range(snapshot, { startInclusive: 1, endExclusive: 2 });
+    expect(loaded.activities.map((activity) => activity.activityId)).toEqual([
+      rootId,
+      assistantId,
+      pluginId,
+      toolId,
+    ]);
+  });
+
   it("returns unread-centered and latest ranges from one immutable snapshot fence and exposes gaps", async () => {
     const { transcript } = open();
     for (let index = 1; index <= 30; index += 1) {
@@ -206,7 +345,7 @@ describe("canonical ordered work-stream transcript", () => {
         [26, 27, 28, 29, 30],
       ]);
 
-    const gap = transcript.range(snapshot.snapshotId, { startInclusive: 17, endExclusive: 26 });
+    const gap = transcript.range(snapshot, { startInclusive: 17, endExclusive: 26 });
     expect(gap.covered).toEqual({ startInclusive: 17, endExclusive: 26 });
     expect(gap.turns).toHaveLength(9);
     await transcript.appendParticipantMessage({
@@ -217,7 +356,7 @@ describe("canonical ordered work-stream transcript", () => {
       createdAtUtc: new Date(NOW + 101).toISOString(),
       attentionOrdinal: 31,
     });
-    expect(transcript.range(snapshot.snapshotId, { startInclusive: 30, endExclusive: 40 }).covered)
+    expect(transcript.range(snapshot, { startInclusive: 30, endExclusive: 40 }).covered)
       .toEqual({ startInclusive: 30, endExclusive: 31 });
   });
 
@@ -266,7 +405,7 @@ describe("canonical ordered work-stream transcript", () => {
     expect(snapshot.activeActivities.map((activity) => activity.intervals[0]!.elapsedMsAtSnapshot))
       .toEqual([7_000, 6_000, 5_000]);
 
-    transcript.upsertActivity({
+    const completed = transcript.upsertActivity({
       activityId: "tool:1",
       parentActivityId: "plugin:github",
       scope: "tool_call",
@@ -277,10 +416,6 @@ describe("canonical ordered work-stream transcript", () => {
       revision: 2,
       occurredAtUtc: new Date(NOW + 8_000).toISOString(),
     });
-    const completed = transcript.createOpeningSnapshot({
-      unreadHighWaterAttentionOrdinal: null,
-      now: NOW + 9_000,
-    }).activities.find((activity) => activity.activityId === "tool:1")!;
     expect(completed.state).toBe("completed");
     expect(completed.intervals[0]).toMatchObject({ durationMs: 6_000, elapsedMsAtSnapshot: null });
   });
@@ -307,15 +442,10 @@ describe("canonical ordered work-stream transcript", () => {
       ...edge, action: "start", revision: 3,
       occurredAtUtc: new Date(NOW + 10_000).toISOString(),
     });
-    transcript.upsertActivity({
+    const activity = transcript.upsertActivity({
       ...edge, action: "complete", revision: 4,
       occurredAtUtc: new Date(NOW + 13_000).toISOString(),
     });
-
-    const activity = transcript.createOpeningSnapshot({
-      unreadHighWaterAttentionOrdinal: null,
-      now: NOW + 20_000,
-    }).activities[0]!;
     expect(activity.state).toBe("completed");
     expect(activity.intervals.map((interval) => interval.durationMs)).toEqual([2_000, 3_000]);
   });

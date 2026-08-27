@@ -909,7 +909,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           throw new Error("bind_loop_system_message_missing");
         }
         const currentSystem = bindLoopProjection.systemProjection.message;
-        const nextSystemRevision = await hashBindLoop(currentSystem) === await hashBindLoop(preparedSystemMessage)
+        const [currentSystemHash, preparedSystemHash] = await Promise.all([
+          hashBindLoop(currentSystem),
+          hashBindLoop(preparedSystemMessage),
+        ]);
+        const nextSystemRevision = currentSystemHash === preparedSystemHash
           ? bindLoopProjection.systemProjection.revision
           : bindLoopProjection.systemProjection.revision + 1;
         await commitBindTransition({
@@ -995,6 +999,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       },
       runToolCall: async (toolCall) => {
         if (signal.aborted) throw abortReason(signal);
+        const position = toolCallPositions.get(toolCall.id);
+        const participantToolCallId = position
+          ? `${input.harnessRunId}:turn:${position.turn}:tool:${position.index}`
+          : toolCall.id;
         if (toolCall.type !== "function") {
           return { toolMessage: toolResultMessage(toolCall.id, {
               success: false,
@@ -1022,7 +1030,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         } catch {
           await emit({
             type: "tool_failed",
-            toolCallId: toolCall.id,
+            toolCallId: participantToolCallId,
             toolName: toolCall.function.name,
             pluginId: dispatched.pluginId,
             policy,
@@ -1041,7 +1049,6 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         // planning so `1` and `"1"` are the same request everywhere downstream.
         args = normalizeToolArguments(args, dispatched.tool.definition.inputSchema);
         const inputHash = await canonicalToolInputHash(args);
-        const position = toolCallPositions.get(toolCall.id);
         const receiptId = position
           ? `${input.harnessRunId}:turn:${position.turn}:tool:${position.index}`
           : `${input.harnessRunId}:tool:${toolCall.function.name}:${inputHash.slice(0, 32)}`;

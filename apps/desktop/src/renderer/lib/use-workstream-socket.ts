@@ -51,6 +51,7 @@ import {
   isSameLogicalMessage,
   mergeRealtimeTranscriptActivity,
   mergeRealtimeTranscriptTurn,
+  mergeTranscriptRange,
   removeTranscriptMessage,
   upsertTranscriptMessage,
   visibleTranscriptMessages,
@@ -1009,7 +1010,7 @@ export function useWorkstreamSocket(
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
           ['ordered-transcript', workstreamId],
           (current) => current && current.snapshotId === event.snapshotId
-            ? { ...current, ranges: [...current.ranges, event.result] }
+            ? mergeTranscriptRange(current, event.result)
             : current,
         );
         const pending = pendingTranscriptRanges.get(event.requestId);

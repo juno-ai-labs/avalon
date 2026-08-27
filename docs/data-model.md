@@ -101,8 +101,10 @@ protocol messages and compaction replacements. Both projections reference
 `transcript_facts`; identical payloads are not independently copied merely to
 serve another ordering.
 
-`transcript_snapshots` fences half-open range membership and the room event
-waterline. `transcript_activities` and `transcript_activity_intervals` store
+The admitted feed socket's hibernation attachment owns its half-open range
+snapshot fence and room event waterline; there is no append-only snapshot table
+or guessed expiry window. `transcript_activities` and
+`transcript_activity_intervals` store
 nestable response, assistant-turn, plugin, tool, thinking, and compaction
 lifecycle edges with UTC boundaries. `transcript_compaction_checkpoints` keeps
 the principal/inventory-fenced private continuation. Query-shape indexes cover
@@ -777,7 +779,10 @@ perform the regional audit/control write explicitly through
 
 **What changed:** The SubstreamAgent schema gained canonical payload/fact rows,
 participant turn/block ordering, exact Bind-loop states and boundary hashes,
-snapshot fences, nested activity intervals, and compaction replacement records.
+nested activity intervals, and compaction replacement records. Each admitted
+feed socket keeps its current range fence in its hibernation attachment, and
+range replies carry only the lifecycle rows referenced by their turns plus
+required ancestry.
 
 **Why:** Participant rendering and provider continuation have different
 visibility and ordering domains, but duplicating their common text would create
@@ -786,7 +791,9 @@ lossless post-compaction Bind state.
 
 **Considered and rejected:** One sequence containing private protocol rows, and
 two independently copied transcripts. The former leaks or forces sparse public
-bounds; the latter permits identical semantic bytes to diverge.
+bounds; the latter permits identical semantic bytes to diverge. Persisting every
+reader snapshot forever was also rejected, as was expiring it after an invented
+TTL: socket-owned fences are naturally bounded by the reader session.
 
 **What a future change has to respect:** One semantic datum has one owner.
 Projection rows may add only ordering, visibility, and lifecycle metadata unless

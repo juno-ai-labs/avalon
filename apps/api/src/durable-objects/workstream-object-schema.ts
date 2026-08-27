@@ -1547,14 +1547,6 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
       `CREATE INDEX transcript_active_interval_idx
          ON transcript_activity_intervals(activity_id, started_at)
          WHERE stopped_at IS NULL`,
-      `CREATE TABLE transcript_snapshots (
-        snapshot_id TEXT PRIMARY KEY,
-        snapshot_through INTEGER NOT NULL CHECK (snapshot_through >= 0),
-        event_sequence INTEGER NOT NULL CHECK (event_sequence >= 0),
-        snapshot_at INTEGER NOT NULL
-      ) STRICT`,
-      `CREATE INDEX transcript_snapshot_recency_idx
-         ON transcript_snapshots(snapshot_at DESC, snapshot_id)`,
     ],
   },
 ];

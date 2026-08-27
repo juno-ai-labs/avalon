@@ -102,7 +102,9 @@ An admitted SubstreamAgent feed also accepts correlated
 half-open sequence interval, and `resumeAfterEventSequence`; the answer names
 the interval actually inspected. The socket's existing admitted identity is
 reused for the range—there is no authorization call per returned turn or block.
-A snapshot-expired or sequence-ahead request returns a resync outcome rather
+The corresponding fence and snapshot UTC live in that socket's hibernation
+attachment. They survive object eviction and are replaced by the next snapshot;
+no global snapshot row or timeout is needed. A snapshot-expired or sequence-ahead request returns a resync outcome rather
 than silently reading a new fence. Active response/plugin/tool/thinking and
 compaction intervals carry their original UTC start plus the snapshot UTC and
 elapsed baseline; the client advances clocks locally.
@@ -593,15 +595,18 @@ waterline/replay log. Presence has no REST fallback.
 
 **What changed:** Feed snapshots now carry the ordered transcript fence, two
 opening ranges, active turns, and nested activity baselines. Correlated range
-requests fill explicit gaps over the same socket and snapshot.
+requests fill explicit gaps over the same socket and snapshot. The socket's
+hibernation attachment owns that reader fence, and each range result carries the
+bounded activity rows referenced by its turns.
 
 **Why:** Cursor pages could not distinguish missing history from an empty page
 or retain a disjoint unread island and live tail. Reconnect also needed an
 authoritative elapsed baseline without streaming clock ticks.
 
-**Considered and rejected:** A REST request per gap and a fresh participant
-authorization per row. The SubstreamAgent already owns the open admitted socket
-and the transcript SQL.
+**Considered and rejected:** A REST request per gap, a fresh participant
+authorization per row, an append-only table of every open, and a guessed
+snapshot TTL. The SubstreamAgent already owns the admitted socket, its durable
+attachment, and the transcript SQL.
 
 **Consequences:** Clients must retain `snapshotId`, coverage, and event fence
 together. A range reply does not advance the room event sequence and cannot be

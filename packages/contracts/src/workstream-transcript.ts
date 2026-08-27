@@ -90,6 +90,7 @@ export const TranscriptRangeResultSchema = z.object({
   requested: TranscriptRangeSchema,
   covered: TranscriptRangeSchema,
   turns: z.array(TranscriptTurnSchema),
+  activities: z.array(TranscriptActivitySchema),
 });
 
 export const WorkstreamTranscriptSnapshotSchema = z.object({

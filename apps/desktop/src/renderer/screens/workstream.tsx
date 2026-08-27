@@ -27,7 +27,13 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
+import {
+  MESSAGE_MAX_CHARACTERS,
+  MESSAGE_TOO_LONG_MESSAGE,
+  type TranscriptActivity,
+  type TranscriptTurn,
+  type WorkstreamTranscriptSnapshot,
+} from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
@@ -126,6 +132,28 @@ export function workstreamRunTiming(
   const canonicalCompletedAt = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
   const completedAt = Number.isFinite(canonicalCompletedAt) ? canonicalCompletedAt : now;
   return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
+}
+
+interface OrderedTimingSnapshot {
+  activities: readonly Pick<TranscriptActivity, 'activityId' | 'parentActivityId' | 'scope' | 'subjectId'>[];
+  ranges: readonly { turns: readonly Pick<TranscriptTurn, 'activityId'>[] }[];
+  activeTurns: readonly Pick<TranscriptTurn, 'activityId'>[];
+}
+
+export function orderedTranscriptOwnsRunTiming(
+  snapshot: OrderedTimingSnapshot | undefined,
+  runId: string | undefined,
+): boolean {
+  if (!runId || !snapshot) return false;
+  const response = snapshot.activities.find((activity) =>
+    activity.scope === 'response' && activity.subjectId === runId);
+  if (!response) return false;
+  const assistantActivityIds = new Set(snapshot.activities.flatMap((activity) =>
+    activity.scope === 'assistant_turn' && activity.parentActivityId === response.activityId
+      ? [activity.activityId]
+      : []));
+  return [...snapshot.ranges.flatMap((range) => range.turns), ...snapshot.activeTurns]
+    .some((turn) => turn.activityId !== null && assistantActivityIds.has(turn.activityId));
 }
 
 /**
@@ -1821,6 +1849,10 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const detail = routedDetail;
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
+  const orderedOwnsRunTiming = orderedTranscriptOwnsRunTiming(
+    orderedTranscript.data,
+    detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
+  );
   const visibleTranscript = transcript;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
@@ -1989,7 +2021,9 @@ export function WorkstreamScreen(): React.JSX.Element {
             && detail.harnessStatus === 'running'
             && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
             ? <AgentCompactionIndicator />
-            : runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
+            : !orderedOwnsRunTiming
+              && runTiming
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}

@@ -108,7 +108,10 @@ conversation turns on each side, and the latest five conversation turns. They
 share one server snapshot fence but do not imply that the middle was loaded.
 The desktop unions each response's explicit half-open `covered` interval and
 treats its complement as known gaps. An empty covered response still closes the
-gap; overlapping responses are de-duplicated by stable turn revision.
+gap; overlapping responses are de-duplicated by stable turn revision. Each lazy
+range also carries the bounded lifecycle activities referenced by those turns;
+the reducer merges them by stable activity identity and revision so historical
+“worked for” timing appears when its owning turn enters memory.
 
 Approaching a loaded edge requests only the adjacent 20-sequence interval over
 the already-open SubstreamAgent socket and preserves the visible prepend
@@ -258,7 +261,12 @@ coverage loop forever; the latest island makes the eager download unnecessary.
 
 **Consequences:** New range transports must preserve half-open coverage and the
 snapshot fence. Scroll restoration still goes through `useTranscriptFollow`;
-range loading does not gain a second `scrollTop` writer.
+range loading does not gain a second `scrollTop` writer. Range activity payloads
+remain proportional to loaded turns and their ancestry, not total work-stream
+history. The existing run-metadata timer remains the live fallback until a
+canonical response activity has a loaded assistant-turn anchor; after that
+point the ordered timing row is the only renderer, avoiding both a reconnect
+gap before the first committed assistant turn and a duplicate historical row.
 
 ### 2026-08-23 — The follow now runs per reveal tick, and that was re-verified, not assumed
 
