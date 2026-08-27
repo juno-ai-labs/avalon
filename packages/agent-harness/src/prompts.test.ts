@@ -116,7 +116,7 @@ describe("prompt renderers", () => {
           objective: "Find the cause and create a concise incident note.",
           documentPublishing: true,
         }),
-        hash: "d86576530e16ea6d4c5f4ac052ce5a54c40e802ed3ba396569c0833417807be4",
+        hash: "80e573612c097fc19146409e9e64613a8e1a07e693eb2156c2f0bb0dddf28734",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -237,18 +237,17 @@ describe("prompt renderers", () => {
     // The trigger, the procedure, the narration discipline, the revision rule
     // and the override are each a rule the product behavior rests on, so a
     // tidy-up rewrite has to move one deliberately rather than drop it.
-    expect(withDocuments).toContain("a PRD, press release, plan, spec, brief, report, proposal, memo, or comparable");
-    expect(withDocuments).toContain("organized with headings, sections, or a standalone table");
+    expect(withDocuments).toContain("a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable");
     expect(withDocuments).toContain("publish it as a work-stream resource");
     expect(withDocuments).toContain("Never restate, summarize section by section, or quote the body of a document you just published");
-    expect(withDocuments).toContain("publishing the same path again");
+    expect(withDocuments).toContain("publishing to the same path again");
     expect(withDocuments).toContain("under the title it already has");
     expect(withDocuments).toContain("import the published resource back into it first");
-    expect(withDocuments).toContain('"just answer in chat"');
-    expect(withDocuments).toContain('"make that a document"');
+    expect(withDocuments).toContain('"answer in chat"');
+    expect(withDocuments).toContain('"Make that a document"');
     // The fallback, so a run that cannot reach the workspace answers rather
     // than stalling on a procedure it cannot follow.
-    expect(withDocuments).toContain("answer in the chat and say that is why");
+    expect(withDocuments).toContain("answer in the chat and inform the user you are unable to create a resource");
     // No wire tool name in standing policy: the plugin's activated system
     // message owns the mechanics, and this section renders for runs whose
     // plugin is not loaded yet.
