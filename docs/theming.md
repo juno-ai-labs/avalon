@@ -663,6 +663,28 @@ Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-26 — Raised dropdowns use the raised hover state
+
+**What changed:** An ordinary highlighted dropdown row now paints with
+`sys.color.surface.raised-hover`; danger rows keep their dedicated danger tint.
+
+**Why:** The dropdown panel itself is `sys.color.surface.raised`, but its rows
+used `sys.color.surface.elevated-hover`. Terra Light deliberately gives
+`surface.elevated-hover` the same value as `surface.raised`, so ordinary rows
+showed no visible hover or keyboard-highlight state while danger rows still did.
+
+**Considered and rejected:** changing Terra Light's elevated-hover value. That
+would alter every genuinely elevated control to repair a menu whose base surface
+was raised. Pairing the row state with the panel's own surface role fixes the
+semantic mismatch in every theme instead.
+
+**What a future change has to respect:** an interactive surface's state token
+must match its base role: raised with raised-hover, elevated with
+elevated-hover. The stylesheet test holds the dropdown pair together and also
+protects the danger override.
+
+Shipped in TBD.
+
 ### 2026-08-24 — Work-stream markers get a token group of their own
 
 **What changed:** `sys.color.stopped.base` is gone, and the six colours the

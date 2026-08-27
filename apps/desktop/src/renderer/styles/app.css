@@ -477,7 +477,7 @@ pre {
    button, which would otherwise shrink to fit its label and centre it. Both
    restate what an item rendered onto Radix's own div already computes. */
 .menu-item { align-items: center; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; width: 100%; }
-.menu-item[data-highlighted] { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-sys-color-text-default); }
+.menu-item[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .menu-item[data-disabled] { opacity: 0.42; }
 .menu-item-danger { color: var(--av-sys-color-danger-base); }
 .menu-item-danger[data-highlighted] { background: var(--av-sys-color-danger-tint); color: var(--av-sys-color-danger-strong); }
