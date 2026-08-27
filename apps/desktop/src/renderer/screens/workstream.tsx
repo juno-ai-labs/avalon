@@ -27,7 +27,13 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import {
+  MESSAGE_MAX_CHARACTERS,
+  MESSAGE_TOO_LONG_MESSAGE,
+  type TranscriptActivity,
+  type TranscriptTurn,
+  type WorkstreamTranscriptSnapshot,
+} from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
@@ -39,16 +45,26 @@ import { workstreamDraftKey } from '../lib/draft-keys';
 import { desktopBridge } from '../lib/platform';
 import {
   currentSurfaceEntrypoint,
+  cancelWorkstreamFeedOpen,
   reportTelemetryProductIntent,
   telemetryCountBucket,
   telemetryVisibility,
+  type WorkstreamFeedSource,
+  workstreamFeedOpenAttemptId,
+  workstreamFeedSourceQueryKey,
+  workstreamRecoveryFeedQueryKey,
+  workstreamSocketSnapshotGenerationQueryKey,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
   appendDismissedSuggestionId,
+  adjacentTranscriptRange,
   createTextMessage,
   dismissedSuggestionIdsQueryKey,
   removeTranscriptMessage,
+  orderedTranscriptMessages,
+  transientMessagesWithoutCanonicalMatch,
+  transcriptGaps,
   visibleTranscriptMessages,
 } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
@@ -56,19 +72,23 @@ import { useFileDrop } from '../lib/use-file-drop';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useTextClipped } from '../lib/use-text-clipped';
 import { TRANSCRIPT_END_SLACK, useTranscriptFollow } from '../lib/use-transcript-follow';
+import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-telemetry';
+import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import {
   insertMessage,
   nextTranscriptSequence,
+  orderTranscript,
   reconcileCanonicalTranscript,
   type SocketState,
 } from '../lib/use-workstream-socket';
-import { useRetainedWorkstreamSocket } from '../lib/workstream-socket-pool';
+import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
+import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkspaceMember, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, Participant, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -91,6 +111,28 @@ export function workspaceMemberFromSession(session: DesktopSession | null): Work
   };
 }
 
+/** Resolve WorkspaceDO's foreground IDs through the roster for the inspector. */
+export function workstreamPresenceViewers(
+  participants: readonly Pick<Participant, 'id'>[],
+  members: readonly WorkspaceMember[],
+  presentUserIds: readonly string[],
+): Participant[] {
+  const participantIds = new Set(participants.map((participant) => participant.id));
+  const presentIds = new Set(presentUserIds);
+  return members
+    .filter((member) => presentIds.has(member.id) && !participantIds.has(member.id))
+    .map((member) => ({ ...member, viewing: true }));
+}
+
+type WorkstreamRecoveryFeed = Pick<WorkstreamBoot, 'messageFeed' | 'resumeFeed'>;
+
+function detailFromRecoveryBoot(boot: WorkstreamBoot): WorkstreamDetail {
+  const { messageFeed, resumeFeed, ...detail } = boot;
+  void messageFeed;
+  void resumeFeed;
+  return detail;
+}
+
 export function workstreamRunTiming(
   status: HarnessStatus,
   run: HarnessRunMetadata | undefined,
@@ -103,6 +145,59 @@ export function workstreamRunTiming(
   const canonicalCompletedAt = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
   const completedAt = Number.isFinite(canonicalCompletedAt) ? canonicalCompletedAt : now;
   return { active: false, durationMs: Math.max(0, completedAt - startedAt) };
+}
+
+/** An admitted run is already work, even before its Workflow starts. */
+export function workstreamShowsReadyState(
+  transcriptLength: number,
+  hasActiveElicitation: boolean,
+  status: HarnessStatus,
+): boolean {
+  return transcriptLength === 0
+    && !hasActiveElicitation
+    && status !== 'scheduled'
+    && status !== 'running';
+}
+
+interface OrderedTimingSnapshot {
+  activities: readonly Pick<TranscriptActivity, 'activityId' | 'parentActivityId' | 'scope' | 'subjectId'>[];
+  ranges: readonly { turns: readonly Pick<TranscriptTurn, 'activityId'>[] }[];
+  activeTurns: readonly Pick<TranscriptTurn, 'activityId'>[];
+}
+
+export function orderedTranscriptOwnsRunTiming(
+  snapshot: OrderedTimingSnapshot | undefined,
+  runId: string | undefined,
+): boolean {
+  if (!runId || !snapshot) return false;
+  const response = snapshot.activities.find((activity) =>
+    activity.scope === 'response' && activity.subjectId === runId);
+  if (!response) return false;
+  const assistantActivityIds = new Set(snapshot.activities.flatMap((activity) =>
+    activity.scope === 'assistant_turn' && activity.parentActivityId === response.activityId
+      ? [activity.activityId]
+      : []));
+  return [...snapshot.ranges.flatMap((range) => range.turns), ...snapshot.activeTurns]
+    .some((turn) => turn.activityId !== null && assistantActivityIds.has(turn.activityId));
+}
+
+/**
+ * Fence the reused route subtree to the work stream named by the current URL.
+ *
+ * The socket pool deliberately keeps `WorkstreamScreen` mounted while its
+ * route parameter changes. Query observers and socket-owned caches do not all
+ * change in the same React phase, so a render during that handoff can still
+ * hold the previous detail or transcript. Those values remain valid in their
+ * own keyed caches, but they must never paint under the next work stream's URL.
+ */
+export function workstreamPayloadBelongsToRoute(
+  routeWorkstreamId: string,
+  workstream: Pick<WorkstreamDetail, 'id'> | undefined,
+  messages: readonly Pick<Message, 'workstreamId'>[] | undefined,
+): boolean {
+  return workstream?.id === routeWorkstreamId
+    && messages !== undefined
+    && messages.every((message) => message.workstreamId === routeWorkstreamId);
 }
 
 /**
@@ -282,21 +377,23 @@ export function WorkstreamHeader({
   socketState,
   blockDashboardOpen,
   blockDashboardAvailable = false,
-  blockDashboardPreferencePending,
   onAddParticipant,
   onOpenRail,
   onRename,
   onToggleBlockDashboard,
+  presentUserIds = [],
+  currentUserId = null,
 }: {
   workstream: WorkstreamDetail;
   socketState: SocketState;
   blockDashboardOpen: boolean;
   blockDashboardAvailable?: boolean;
-  blockDashboardPreferencePending: boolean;
   onAddParticipant: () => void;
   onOpenRail: (variant: RailVariant) => void;
   onRename: (title: string) => Promise<void>;
   onToggleBlockDashboard: () => void;
+  presentUserIds?: readonly string[];
+  currentUserId?: string | null;
 }): React.JSX.Element {
   const railOpen = useUiStore((state) => state.railOpen);
   const railVariant = useUiStore((state) => state.railVariant);
@@ -540,7 +637,11 @@ export function WorkstreamHeader({
       <div className="workstream-header-actions window-no-drag">
         <SocketStatusIndicator state={socketState} />
         <button className="participant-header-button" onClick={onAddParticipant} type="button">
-          <AvatarStack members={workstream.participants} />
+          <AvatarStack
+            currentUserId={currentUserId}
+            members={workstream.participants}
+            presentUserIds={presentUserIds}
+          />
           <UserPlus aria-hidden="true" size={13} />
           <span className="sr-only">Add participant</span>
         </button>
@@ -550,7 +651,6 @@ export function WorkstreamHeader({
           <IconButton
             className={clsx('panel-toggle', 'block-dashboard-toggle', blockDashboardOpen && 'is-active')}
             aria-pressed={blockDashboardOpen}
-            disabled={blockDashboardPreferencePending}
             label={blockDashboardOpen ? 'Hide HyperSight' : 'Show HyperSight'}
             onClick={onToggleBlockDashboard}
           >
@@ -759,8 +859,10 @@ export function RunStoppedNotice({
 
 export function WorkstreamScreen(): React.JSX.Element {
   const { id = '' } = useParams();
+  const readSocketOpenContext = useWorkstreamSocketOpenContext(id);
   const navigate = useNavigate();
   const { api, session } = useAppSession();
+  const { presenceUserIdsByWorkstream } = useWorkspaceSocket();
   const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
@@ -835,32 +937,48 @@ export function WorkstreamScreen(): React.JSX.Element {
     return () => window.clearTimeout(timeout);
   }, [resourceDialogOpen, resourceSearch]);
 
-  // The one fetcher for `['workstream', id]`. Both this query and the transcript
-  // query below fetch that key, and only one of the two runs — TanStack dedups
-  // onto whichever it starts first, which is hook declaration order. A queryFn
-  // that writes the panel preference sitting beside one that does not would make
-  // that ordering load-bearing, so neither has a side effect the other lacks.
-  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal) => {
-    const detail = await api!.getWorkstream(id, signal);
-    // The detail carries the panel preference for the case where it arrives
-    // before the control socket's boot frame. Null means this frame did not
-    // carry it — the SubstreamAgent snapshot embeds the same shape and leaves
-    // it null — so it must not be written as `false`.
-    if (detail.blockDashboardPreference) {
-      queryClient.setQueryData(['block-dashboard-preference', id], detail.blockDashboardPreference);
+  // These fetchers are recovery paths, not the normal open. Selecting a work
+  // stream admits its feed socket immediately; the first snapshot populates
+  // both query keys. Keeping the REST readers attached to disabled observers
+  // gives the reconnecting/unavailable Retry button an explicit canonical fallback
+  // without racing a second boot against the room on every navigation.
+  const initialFeedCacheState = useMemo(() => (
+    queryClient.getQueryData(['messages', id]) !== undefined
+      ? 'feed_cached'
+      : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
+  ), [id, queryClient]);
+  const fetchWorkstreamDetail = useCallback(async (signal?: AbortSignal): Promise<WorkstreamDetail> => {
+    const snapshotGeneration = queryClient.getQueryData<number>(
+      workstreamSocketSnapshotGenerationQueryKey(id),
+    ) ?? 0;
+    const boot = await api!.getWorkstream(id, signal, workstreamFeedOpenAttemptId(id));
+    if ((queryClient.getQueryData<number>(
+      workstreamSocketSnapshotGenerationQueryKey(id),
+    ) ?? 0) !== snapshotGeneration) {
+      const socketDetail = queryClient.getQueryData<WorkstreamDetail>(['workstream', id]);
+      if (socketDetail) return socketDetail;
+      throw new Error('Socket snapshot superseded REST work-stream recovery');
     }
-    return detail;
+    queryClient.setQueryData<WorkstreamRecoveryFeed>(workstreamRecoveryFeedQueryKey(id), {
+      messageFeed: boot.messageFeed,
+      resumeFeed: boot.resumeFeed,
+    });
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', id],
+      boot.transcript,
+    );
+    return detailFromRecoveryBoot(boot);
   }, [api, id, queryClient]);
-  const workstream = useQuery({
+  const workstream = useQuery<WorkstreamDetail>({
     queryKey: ['workstream', id],
     queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
-    enabled: Boolean(api && id),
+    enabled: false,
     staleTime: 5_000,
   });
   const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
   useEffect(() => {
     const detail = workstream.data;
-    if (!detail || telemetryOpenedWorkstreamRef.current === detail.id) return;
+    if (!detail || detail.id !== id || telemetryOpenedWorkstreamRef.current === detail.id) return;
     telemetryOpenedWorkstreamRef.current = detail.id;
     reportTelemetryProductIntent({
       kind: 'workstream_opened',
@@ -870,7 +988,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       origin: detail.systemKind ? 'system' : detail.origin,
       pinned: detail.pinPosition !== null,
     });
-  }, [workstream.data]);
+  }, [id, workstream.data]);
   const messageCursor = useQuery<string | null>({
     queryKey: ['messages-cursor', id],
     queryFn: async () => null,
@@ -888,11 +1006,23 @@ export function WorkstreamScreen(): React.JSX.Element {
   const messages = useQuery({
     queryKey: ['messages', id],
     queryFn: async ({ signal }) => {
+      const snapshotGeneration = queryClient.getQueryData<number>(
+        workstreamSocketSnapshotGenerationQueryKey(id),
+      ) ?? 0;
+      const socketMessagesIfSuperseded = (): Message[] | undefined => {
+        const currentGeneration = queryClient.getQueryData<number>(
+          workstreamSocketSnapshotGenerationQueryKey(id),
+        ) ?? 0;
+        if (currentGeneration === snapshotGeneration) return undefined;
+        return queryClient.getQueryData<Message[]>(['messages', id]);
+      };
       const detail = await queryClient.fetchQuery({
         queryKey: ['workstream', id],
         queryFn: ({ signal: detailSignal }) => fetchWorkstreamDetail(detailSignal),
         staleTime: 5_000,
       });
+      const socketMessagesAfterDetail = socketMessagesIfSuperseded();
+      if (socketMessagesAfterDetail !== undefined) return socketMessagesAfterDetail;
       // No second request: the detail above carries both windows. `resumeFeed`
       // is where this reader stopped, which is what the screen scrolls to, so
       // it is preferred whenever the room sent one. They are not contiguous, so
@@ -901,7 +1031,14 @@ export function WorkstreamScreen(): React.JSX.Element {
       // The fetch is the rollout fallback, not the normal path: a Worker that
       // predates the boot payload sends neither window, and an empty transcript
       // would be the wrong reading of that.
-      const page = detail.resumeFeed ?? detail.messageFeed ?? await api!.getMessagePage(id, {
+      const recoveryFeed = queryClient.getQueryData<WorkstreamRecoveryFeed>(
+        workstreamRecoveryFeedQueryKey(id),
+      );
+      const bootPage = recoveryFeed?.resumeFeed ?? recoveryFeed?.messageFeed;
+      if (recoveryFeed) {
+        queryClient.removeQueries({ queryKey: workstreamRecoveryFeedQueryKey(id), exact: true });
+      }
+      const page = bootPage ?? await api!.getMessagePage(id, {
         ...(detail.firstUnreadSequenceNumber !== null
           ? { around: detail.firstUnreadSequenceNumber }
           : {}),
@@ -910,6 +1047,12 @@ export function WorkstreamScreen(): React.JSX.Element {
         // cache the reader has left.
         signal,
       });
+      const socketMessagesAfterPage = socketMessagesIfSuperseded();
+      if (socketMessagesAfterPage !== undefined) return socketMessagesAfterPage;
+      queryClient.setQueryData<WorkstreamFeedSource>(
+        workstreamFeedSourceQueryKey(id),
+        bootPage ? 'boot_payload' : 'legacy_page',
+      );
       const previous = queryClient.getQueryData<Message[]>(['messages', id]);
       const pageOldestSequence = page.items.reduce(
         (oldest, message) => Math.min(oldest, message.sequenceNumber),
@@ -928,18 +1071,60 @@ export function WorkstreamScreen(): React.JSX.Element {
       );
       return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
     },
-    enabled: Boolean(api && id),
+    enabled: false,
     staleTime: 2_000,
   });
+  const payloadBelongsToRoute = workstreamPayloadBelongsToRoute(
+    id,
+    workstream.data,
+    messages.data,
+  );
+  const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
+  const routedMessages = payloadBelongsToRoute ? messages.data : undefined;
+  useEffect(() => {
+    if (workstream.isError || messages.isError) {
+      cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
+    }
+  }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
+  const feedSource = useQuery<WorkstreamFeedSource | null>({
+    queryKey: workstreamFeedSourceQueryKey(id),
+    queryFn: async () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const initialFeedTelemetrySnapshot = useMemo<{
+    feedSource: WorkstreamFeedSource;
+    messageCount: ReturnType<typeof telemetryCountBucket>;
+  } | null>(() => {
+    if (!routedDetail || !routedMessages) return null;
+    const resolvedFeedSource = initialFeedCacheState === 'feed_cached'
+      ? 'feed_cache'
+      : feedSource.data;
+    if (!resolvedFeedSource) return null;
+    return {
+      feedSource: resolvedFeedSource,
+      messageCount: telemetryCountBucket(routedMessages.length),
+    };
+  }, [feedSource.data, initialFeedCacheState, routedDetail, routedMessages]);
+  useWorkstreamFeedOpenTelemetry({
+    cacheState: initialFeedCacheState,
+    feedSource: initialFeedTelemetrySnapshot?.feedSource,
+    isReady: payloadBelongsToRoute,
+    messageCount: initialFeedTelemetrySnapshot?.messageCount,
+    readSocketOpenContext,
+    workstreamId: id,
+  });
+  const automationSubscriptionId = routedDetail?.automationSubscriptionId;
   const deferredContext = useQuery({
-    queryKey: ['workstream-context', id, workstream.data?.automationSubscriptionId ?? null],
-    queryFn: ({ signal }) => api!.getWorkstreamContext(id, workstream.data?.automationSubscriptionId, signal),
-    enabled: Boolean(api && id && workstream.isSuccess && messages.isSuccess),
+    queryKey: ['workstream-context', id, automationSubscriptionId ?? null],
+    queryFn: ({ signal }) => api!.getWorkstreamContext(id, automationSubscriptionId, signal),
+    enabled: Boolean(api && id && routedDetail && routedMessages),
     staleTime: 5_000,
   });
-  // No request of its own any more. Two frames carry it — the control socket's
-  // boot metadata and `GET /workstreams/:id` — and both write this key, so the
-  // query is a cache read with no fetcher behind it.
+  // No request and no open gate of its own. The independently-started control
+  // socket writes the preference when it arrives; until then the dashboard is
+  // simply closed and the feed remains fully usable.
   const blockDashboardPreference = useQuery<BlockDashboardPreference | null>({
     queryKey: ['block-dashboard-preference', id],
     queryFn: async () => null,
@@ -1002,11 +1187,54 @@ export function WorkstreamScreen(): React.JSX.Element {
   const socketConnection = useRetainedWorkstreamSocket(
     api,
     id,
-    workstream.isSuccess && messages.isSuccess,
+    Boolean(api && id),
   );
+  const requestSocketSnapshot = socketConnection.requestSnapshot;
+  useEffect(() => {
+    if (socketConnection.state !== 'connected' || payloadBelongsToRoute) return;
+    requestSocketSnapshot();
+  }, [payloadBelongsToRoute, requestSocketSnapshot, socketConnection.state]);
+  useWorkstreamSendReadyTelemetry({
+    isReady: socketConnection.sendReady,
+    workspaceSocketState: socketConnection.workspaceSocketState,
+    workstreamId: id,
+  });
   const socketState = socketConnection.state;
   const loadSocketMessagePage = socketConnection.loadMessagePage;
-  const transcript = messages.data ?? [];
+  const loadTranscriptRange = socketConnection.loadTranscriptRange;
+  const orderedTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
+    queryKey: ['ordered-transcript', id],
+    queryFn: async () => undefined,
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const orderedTranscriptGaps = useMemo(
+    () => orderedTranscript.data ? transcriptGaps(orderedTranscript.data) : [],
+    [orderedTranscript.data],
+  );
+  const transcript = useMemo(() => {
+    const ordered = orderedTranscriptMessages(
+      orderedTranscript.data,
+      id,
+      members.data ?? [],
+      routedMessages ?? [],
+    );
+    const transient = transientMessagesWithoutCanonicalMatch(ordered, routedMessages ?? []);
+    const lastAnchor = ordered.reduce(
+      (maximum, message) => Math.max(maximum, message.sequenceNumber),
+      0,
+    );
+    return orderTranscript([
+      ...ordered,
+      ...transient.map((message, index) => ({
+        ...message,
+        sequenceNumber: lastAnchor + index + 1,
+        realtimeOrder: message.realtimeOrder
+          ? { ...message.realtimeOrder, anchorSequenceNumber: lastAnchor + index + 1 }
+          : message.realtimeOrder,
+      })),
+    ]);
+  }, [id, members.data, orderedTranscript.data, routedMessages]);
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -1045,8 +1273,15 @@ export function WorkstreamScreen(): React.JSX.Element {
   );
 
   const loadOlderMessages = useCallback(async (): Promise<void> => {
+    const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', id],
+    );
+    const orderedRange = orderedSnapshot
+      ? adjacentTranscriptRange(orderedSnapshot, 'older')
+      : null;
     const before = queryClient.getQueryData<string | null>(['messages-cursor', id]);
-    if (!api || !before || loadingOlderRef.current) return;
+    if (orderedSnapshot && !orderedRange) return;
+    if (!api || (!orderedRange && !before) || loadingOlderRef.current) return;
     if (socketState !== 'connected') {
       pendingOlderAfterReconnectRef.current = true;
       setOlderMessagesError(undefined);
@@ -1060,6 +1295,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
     try {
+      if (orderedSnapshot && orderedRange) {
+        await loadTranscriptRange({
+          snapshotId: orderedSnapshot.snapshotId,
+          range: orderedRange,
+          resumeAfterEventSequence: orderedSnapshot.eventSequence,
+        });
+        if (activeWorkstreamIdRef.current !== id) return;
+        window.requestAnimationFrame(() => {
+          const element = transcriptRef.current;
+          if (!element) return;
+          scrollTranscriptTo(preservedPrependScrollTop(
+            previousScrollTop,
+            previousScrollHeight,
+            element.scrollHeight,
+          ));
+        });
+        return;
+      }
+      if (!before) return;
       const page = await loadSocketMessagePage({ before });
       if (activeWorkstreamIdRef.current !== id) return;
       const nextCursor = transcriptPageCursor(page, before, 'before');
@@ -1085,11 +1339,18 @@ export function WorkstreamScreen(): React.JSX.Element {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
+  }, [api, id, loadSocketMessagePage, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState]);
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
+    const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', id],
+    );
+    const orderedRange = orderedSnapshot
+      ? adjacentTranscriptRange(orderedSnapshot, 'newer')
+      : null;
     const after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
-    if (!api || !after || loadingNewerRef.current) return;
+    if (orderedSnapshot && !orderedRange) return;
+    if (!api || (!orderedRange && !after) || loadingNewerRef.current) return;
     if (socketState !== 'connected') {
       pendingNewerAfterReconnectRef.current = true;
       setOlderMessagesError(undefined);
@@ -1099,6 +1360,15 @@ export function WorkstreamScreen(): React.JSX.Element {
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
+      if (orderedSnapshot && orderedRange) {
+        await loadTranscriptRange({
+          snapshotId: orderedSnapshot.snapshotId,
+          range: orderedRange,
+          resumeAfterEventSequence: orderedSnapshot.eventSequence,
+        });
+        return;
+      }
+      if (!after) return;
       const page = await loadSocketMessagePage({ after });
       if (activeWorkstreamIdRef.current !== id) return;
       const newerCursor = transcriptPageCursor(page, after, 'after');
@@ -1114,7 +1384,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, loadSocketMessagePage, queryClient, socketState]);
+  }, [api, id, loadSocketMessagePage, loadTranscriptRange, queryClient, socketState]);
 
   const jumpToLatest = useCallback(async (): Promise<void> => {
     if (!api || loadingNewerRef.current) return;
@@ -1127,6 +1397,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
+      const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+        ['ordered-transcript', id],
+      );
+      if (orderedSnapshot && orderedSnapshot.snapshotThrough === 0) {
+        window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
+        return;
+      }
+      if (orderedSnapshot?.ranges.some((range) =>
+        range.covered.endExclusive === orderedSnapshot.snapshotThrough + 1)) {
+        window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
+        return;
+      }
       let after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
       while (after) {
         const page = await loadSocketMessagePage({ after });
@@ -1151,7 +1433,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, loadSocketMessagePage, queryClient, socketState, transcriptVirtualizer]);
+  }, [api, id, loadSocketMessagePage, queryClient, scrollTranscriptToEnd, socketState]);
 
   useEffect(() => {
     if (socketState !== 'connected') return;
@@ -1267,18 +1549,17 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
-    onSuccess: () => void Promise.all([
-      workstream.refetch(),
-      queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
-    ]),
+    onSuccess: () => {
+      requestSocketSnapshot();
+      void queryClient.invalidateQueries({ queryKey: ['workstream-context', id] });
+    },
   });
 
   const retry = useMutation({
     mutationFn: () => api!.retryHarness(id),
     onSuccess: async () => {
+      requestSocketSnapshot();
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
@@ -1326,7 +1607,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
-  const activeElicitation = (messages.data ?? []).find((message) =>
+  const activeElicitation = transcript.find((message) =>
     message.messageType === 'elicitation' && message.elicitation?.status === 'open')?.elicitation;
 
   const answerElicitation = async (
@@ -1342,9 +1623,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       previousMessage,
       submit: async () => {
         await api!.answerElicitation(id, elicitationId, answer, customResponse);
+        requestSocketSnapshot();
         await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
-          queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
           queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
           queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
         ]);
@@ -1359,7 +1639,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
   ): Promise<void> => {
-    if (!api || !workstream.data) throw new Error('This work stream is not ready to receive messages.');
+    if (!api || !routedDetail) throw new Error('This work stream is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
     // refuse must not appear in the transcript first and be pulled back out of
     // it, and the person is the only one who can resolve this.
@@ -1436,9 +1716,8 @@ export function WorkstreamScreen(): React.JSX.Element {
       });
       queryClient.setQueryData<Message[]>(['messages', id], (current) => insertMessage(current, created));
       attachmentDraft.consume();
+      requestSocketSnapshot();
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true }),
-        queryClient.invalidateQueries({ queryKey: ['messages', id], exact: true }),
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
@@ -1476,17 +1755,17 @@ export function WorkstreamScreen(): React.JSX.Element {
           ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
           : current);
       } else {
-        void workstream.refetch();
+        requestSocketSnapshot();
       }
       throw error;
     }
-    await Promise.all([messages.refetch(), workstream.refetch()]);
+    requestSocketSnapshot();
   };
 
   useEffect(() => {
-    if (!workstream.data || messages.isLoading || initialPositionedWorkstreamRef.current === id) return;
+    if (!routedDetail || initialPositionedWorkstreamRef.current === id) return;
     initialPositionedWorkstreamRef.current = id;
-    const anchorSequence = workstream.data.firstUnreadSequenceNumber;
+    const anchorSequence = routedDetail.firstUnreadSequenceNumber;
     window.requestAnimationFrame(() => {
       if (activeWorkstreamIdRef.current !== id) return;
       // A work stream created moments ago has no transcript yet and a run
@@ -1511,7 +1790,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       }
       scrollTranscriptToEnd();
     });
-  }, [id, messages.isLoading, transcript, transcriptVirtualizer, workstream.data]);
+  }, [id, routedDetail, transcript, transcriptVirtualizer]);
 
   const acknowledgeVisibleMessages = useCallback((): void => {
     const detail = queryClient.getQueryData<WorkstreamDetail>(['workstream', id]);
@@ -1548,11 +1827,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       setCachedWorkstreams(queryClient, (current) =>
         current?.map((item) => item.id === id ? { ...item, ...updated } : item));
     }).catch(() => {
-      void queryClient.invalidateQueries({ queryKey: ['workstream', id], exact: true });
+      requestSocketSnapshot();
     }).finally(() => {
       if (readAckInFlightRef.current === ackKey) readAckInFlightRef.current = null;
     });
-  }, [api, id, queryClient, transcript, transcriptVirtualizer]);
+  }, [api, id, queryClient, requestSocketSnapshot, transcript, transcriptVirtualizer]);
 
   const scheduleReadAcknowledgement = useCallback((): void => {
     if (readAckTimerRef.current !== null) window.clearTimeout(readAckTimerRef.current);
@@ -1577,21 +1856,33 @@ export function WorkstreamScreen(): React.JSX.Element {
     };
   }, [scheduleReadAcknowledgement]);
 
-  if (workstream.isLoading || messages.isLoading) {
+  if (!payloadBelongsToRoute || !routedDetail || !routedMessages) {
+    if (
+      socketConnection.state === 'reconnecting'
+      || socketConnection.state === 'unavailable'
+      || workstream.error
+      || messages.error
+    ) {
+      return (
+        <WorkstreamErrorState
+          description={workstream.error?.message ?? messages.error?.message
+            ?? (socketConnection.state === 'reconnecting'
+              ? 'The live connection could not be opened. Try the recovery reader while Rally reconnects.'
+              : 'This work stream is unavailable.')}
+          onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
+          workstreamId={id}
+        />
+      );
+    }
     return <OpeningState label="Opening work stream…" />;
   }
-  if (workstream.error || messages.error || !workstream.data) {
-    return (
-      <WorkstreamErrorState
-        description={workstream.error?.message ?? messages.error?.message ?? 'This work stream is unavailable.'}
-        onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
-        workstreamId={id}
-      />
-    );
-  }
 
-  const detail = workstream.data;
+  const detail = routedDetail;
   const runTiming = workstreamRunTiming(detail.harnessStatus, detail.latestHarnessRun);
+  const orderedOwnsRunTiming = orderedTranscriptOwnsRunTiming(
+    orderedTranscript.data,
+    detail.latestHarnessRunId ?? detail.latestHarnessRun?.id,
+  );
   const visibleTranscript = transcript;
   const firstUnreadSequenceNumber = detail.firstUnreadSequenceNumber;
   const firstUnreadIndex = firstUnreadSequenceNumber === null
@@ -1602,6 +1893,11 @@ export function WorkstreamScreen(): React.JSX.Element {
       && message.attentionSequenceNumber >= firstUnreadSequenceNumber);
   const displayedDetail: WorkstreamDetail = {
     ...detail,
+    viewers: workstreamPresenceViewers(
+      detail.participants,
+      members.data ?? [],
+      presenceUserIdsByWorkstream[id] ?? [],
+    ),
     automationRuns: deferredContext.data?.automationRuns ?? detail.automationRuns,
     ...(deferredContext.data?.automationSubscription
       ? { automationSubscription: deferredContext.data.automationSubscription }
@@ -1613,20 +1909,18 @@ export function WorkstreamScreen(): React.JSX.Element {
 
   return (
     <div className="workstream-screen">
-      {/* The HyperSight control is disabled only while the stored preference is
-          still unknown. Disabling it for the write as well would blur it
-          mid-click — Chromium blurs a focused element as it is disabled — so
-          the sidebar would capture the body rather than the toggle and have
-          nothing to hand focus back to when it closes. The write is optimistic;
-          there is nothing to wait for. */}
+      {/* The HyperSight preference is independent metadata, never an open or
+          interaction gate. The control is optimistic even before the control
+          socket's first metadata frame arrives. */}
       <WorkstreamHeader
         blockDashboardAvailable={featureFlags.data?.hypersightEnabled === true}
         blockDashboardOpen={blockDashboardOpen}
-        blockDashboardPreferencePending={blockDashboardPreference.isPending}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onOpenRail={openRailVariant}
         onRename={(title) => renameWorkstream.mutateAsync(title).then(() => undefined)}
         onToggleBlockDashboard={() => setBlockDashboardVisible(!blockDashboardOpen)}
+        currentUserId={session?.user.id ?? null}
+        presentUserIds={presenceUserIdsByWorkstream[id] ?? []}
         socketState={socketState}
         workstream={displayedDetail}
       />
@@ -1682,12 +1976,14 @@ export function WorkstreamScreen(): React.JSX.Element {
           const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < TRANSCRIPT_END_SLACK;
           if (shouldLoadEarlierFromScroll(
             element.scrollTop,
-            Boolean(messageCursor.data),
+            Boolean(messageCursor.data) || orderedTranscriptGaps.length > 0,
             loadingOlderRef.current,
           )) {
             void loadOlderMessages();
           }
-          if (nearBottom && newerMessageCursor.data && !loadingNewerRef.current) {
+          if (nearBottom
+            && (newerMessageCursor.data || orderedTranscriptGaps.length > 0)
+            && !loadingNewerRef.current) {
             void loadNewerMessages();
           }
           scheduleReadAcknowledgement();
@@ -1715,7 +2011,11 @@ export function WorkstreamScreen(): React.JSX.Element {
               it, and inviting the person to start it is both wrong and the
               opposite of what the timer below says. The turn arrives moments
               later; until then the timer is the whole of the state. */}
-          {visibleTranscript.length === 0 && !activeElicitation && !runTiming?.active ? (
+          {workstreamShowsReadyState(
+            visibleTranscript.length,
+            Boolean(activeElicitation),
+            detail.harnessStatus,
+          ) ? (
             <EmptyState title="Ready to begin" description="Send a message to start work in this stream." />
           ) : (
             <div
@@ -1760,7 +2060,9 @@ export function WorkstreamScreen(): React.JSX.Element {
             && detail.harnessStatus === 'running'
             && socketConnection.activeCompaction.harnessRunId === (detail.latestHarnessRunId ?? detail.latestHarnessRun?.id)
             ? <AgentCompactionIndicator />
-            : runTiming && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
+            : !orderedOwnsRunTiming
+              && runTiming
+              && <AgentWorkTiming key={detail.latestHarnessRunId ?? detail.latestHarnessRun?.id} {...runTiming} />}
           {detail.harnessStatus === 'failed' && detail.latestHarnessRun?.status === 'failed' && (
             <RunFailureNotice
               code={detail.latestHarnessRun.error?.code ?? 'harness_execution_failed'}
@@ -1778,7 +2080,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       </div>
 
       <div className="composer-dock">
-        {!(transcriptAtEnd && newerMessageCursor.data === null) && (
+        {!transcriptAtEnd && (
           <JumpToLatestButton onJump={() => void jumpToLatest()} />
         )}
         <div className="composer-stack">

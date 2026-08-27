@@ -17,6 +17,8 @@ outside this document can break without their own tests failing.
 | --- | --- |
 | `apps/desktop/src/main/index.ts` | Window creation, sandbox and `contextIsolation` flags, navigation denial, IPC handler registration. |
 | `apps/desktop/src/preload/index.ts` | The whole renderer-facing API. Nothing else crosses. |
+| `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Shared broker channel/event validation and the main-window-only socket IPC boundary. |
+| `apps/desktop/src/main/realtime-socket-broker.ts` | Route-confined Node socket transport, ordered system/PAC routing, OS trust roots, frame limits, and renderer-owner teardown. |
 | `apps/desktop/src/renderer/index.html` | The Content Security Policy. |
 | `apps/desktop/src/main/theme-assets.ts` | The two theme-asset schemes: a backdrop document's policy, and the remote-font cache that keeps the renderer off remote hosts. |
 | `apps/desktop/src/main/session-encryption.ts`, `stored-auth.ts`, `stored-session.ts`, `session-file.ts` | The versioned credential envelope and the serialized session-mutation boundary. |
@@ -225,9 +227,20 @@ server echoes only the sentinel, never the ticket, because a selected subprotoco
 is a response header. [`realtime-sockets.md`](realtime-sockets.md) owns the
 admission path.
 
-Renderer WebSockets may be constructed only from a URL returned by the
-authenticated work-stream or transcription ticket endpoints; ESLint enforces that
-provenance at each production constructor. Runtime URL schemas likewise name their
+Native renderer WebSockets may be constructed only from a URL returned by an
+authenticated ticket endpoint; ESLint enforces that provenance at each
+production constructor. Electron's WorkstreamDO and SubstreamAgent connections
+instead cross a typed preload bridge to the main-process broker. Main accepts
+that capability only from the primary application window, validates the URL
+against configured regional `ws`/`wss` origins and the declared control/feed
+route shape, rejects credentials, query, and fragment, requires the public
+ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
+renderer chooses only the validated ticket subprotocol offer that becomes
+`Sec-WebSocket-Protocol`; it cannot choose arbitrary headers or turn the broker
+into an arbitrary network client. Main tries only the ordered proxy directives
+Electron resolved, including `DIRECT` only when policy supplied it, and Node
+accepts no work-stream control/feed frame over the shared 1 MB application
+limit. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
 because it accepts non-web schemes such as `javascript:` and `data:` while hiding
@@ -513,8 +526,11 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   this repository can reach them. Legacy issuer response fields exist only for
   old desktop compatibility and must be removed at the declared compatibility
   cutoff rather than copied to HyperSight or any later role.
-- **A WebSocket in the renderer is constructed only from a URL an authenticated
-  ticket endpoint returned**, enforced by ESLint at each production constructor.
+- **A native WebSocket in the renderer is constructed only from a URL an
+  authenticated ticket endpoint returned; Electron's work-stream broker is
+  narrower still.** Its typed IPC accepts only configured regional
+  WorkstreamDO/SubstreamAgent paths from the main window and main supplies the
+  application Origin.
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
   validation accepts `javascript:` and `data:`.
 - **Every desktop HTTP header is covered by the regional CORS allowlist and an
@@ -660,6 +676,57 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-26 — Broker fallback and payload policy stay inside the capability
+
+**What changed:** Brokered work-stream sockets preserve Electron's complete PAC
+directive order and advance only after a pre-open failure. The main/preload
+event boundary has one dependency-free strict validator, and Node plus both
+server objects enforce one shared 1 MB frame ceiling.
+
+**Why:** Keeping only the first PAC directive changes enterprise network policy
+and can make the authenticated HTTP surface work while all realtime transport
+fails. A 100 MB Node default also widens the privileged IPC transport far past
+the application protocol accepted by the Durable Objects.
+
+**Considered and rejected:** An unconditional direct fallback would bypass PAC
+policy. Importing the renderer's full Zod graph into the sandboxed preload would
+increase that bridge's dependency surface merely to share four event shapes.
+
+**Consequences:** `DIRECT` is permitted only when Electron returns it, malformed
+events stop at preload, and every future frame-limit change must use the shared
+contract constant rather than transport defaults.
+
+Shipped in #341.
+
+### 2026-08-26 — The Node socket broker is a route-confined capability
+
+**What changed:** The primary Electron renderer may ask main to open, send on,
+or close WorkstreamDO control and SubstreamAgent feed sockets through typed IPC.
+Main parses every input, confines the URL to a configured regional socket
+origin and the route shape declared by the socket kind, requires the ticket
+sentinel, supplies the application Origin, and terminates all sockets on
+renderer navigation, destruction, or process exit. The Node transport resolves
+proxies through Electron and includes operating-system CA roots. Settings and
+Meeting renderers are denied.
+
+**Why:** Moving these two handshake types out of Chromium removes its
+same-endpoint connection queue, but a generic main-process WebSocket bridge
+would give compromised renderer content a privileged arbitrary-network
+primitive. The transport optimization must not widen the renderer's authority.
+
+**Considered and rejected:** Letting the renderer provide headers or Origin,
+accepting any configured-host path, and sharing the bridge with every Rally
+window. None is needed for work-stream warming, and each makes the capability
+broader than the authenticated ticket endpoints it replaces.
+
+**Consequences:** New brokered socket purposes require an explicit kind and
+path-validation branch. Tickets remain renderer-visible because the existing
+ticket protocol needs them, but main never logs protocols or URLs and no ticket
+is placed in a URL. Unsupported proxy directives fail the connection rather
+than falling back to a direct route that could bypass network policy.
+
+Shipped in #341.
 
 ### 2026-08-25 — The public Trust Center describes only implemented boundaries
 

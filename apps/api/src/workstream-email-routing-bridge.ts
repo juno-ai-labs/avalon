@@ -6,7 +6,9 @@ import {
   type WorkstreamEmailRouterRpcResult,
 } from "./services/workstream-email-routing-service";
 import {
+  AutomationEmailAddressClaimSchema,
   AutomationEmailRouteInputSchema,
+  WorkstreamEmailAddressClaimSchema,
   WorkstreamEmailRouteInputSchema,
   parseRpcInput,
   rpcBatch,
@@ -30,9 +32,21 @@ export class WorkstreamEmailRoutingBridge extends WorkerEntrypoint<Env> {
     ));
   }
 
+  claim(input: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).claimInGlobalRegistry(
+      parseRpcInput(WorkstreamEmailAddressClaimSchema, input, "claim"),
+    ));
+  }
+
   reserveAutomation(input: unknown) {
     return rpcResult(() => new WorkstreamEmailRoutingService(this.env).reserveAutomationInGlobalRegistry(
       parseRpcInput(AutomationEmailRouteInputSchema, input, "reserveAutomation"),
+    ));
+  }
+
+  claimAutomation(input: unknown) {
+    return rpcResult(() => new WorkstreamEmailRoutingService(this.env).claimAutomationInGlobalRegistry(
+      parseRpcInput(AutomationEmailAddressClaimSchema, input, "claimAutomation"),
     ));
   }
 

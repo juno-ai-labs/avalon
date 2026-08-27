@@ -35,10 +35,11 @@ which exposes all nine tools and the language guidance but performs no provider
 operation. The first tool execution asks `TerminalSandboxCoordinator` for the
 work stream's exclusive Terminal mutation lease. It creates, starts, or restores
 the stable private sandbox and records the provider result in the owning
-SubstreamAgent. A later tool in
-the same work stream reuses that generation only while its execution-principal,
-selected repository, connection, and visible-resource authority fingerprint
-still match.
+SubstreamAgent. That successful acquisition, authority/policy decision, and
+repository preparation are reused for later tools in the same harness run.
+Repository checkout explicitly invalidates the run-local acquisition because it
+can replace the sandbox generation; a later tool then acquires and prepares the
+replacement once. A new harness run performs its own acquisition.
 
 Rally uses Daytona's managed `daytona-small` container snapshot. On first
 creation an idempotent compatibility bootstrap creates the owned `/workspace`,
@@ -54,18 +55,22 @@ model not to install another runtime or manager.
 ### Files and commands
 
 The model receives `read_file`, `edit_file`, `write_file`, `apply_patch`, and
-`run_command`. File paths are workspace-relative and validated both before the
-provider call and inside the sandbox. `ls`, `find`, and `rg` through
+`run_command`. File paths are workspace-relative and their syntax is validated
+before provider I/O. For reads, writes, and generated publication, symlink/root
+containment is checked inside the same sandbox command that inspects or replaces
+the requested file, instead of by a separate provider command immediately
+before it. `ls`, `find`, and `rg` through
 `run_command` own discovery; there is deliberately no `list_files` tool.
 Model-facing revisions are also absent. Exact-match edits and context-bearing
 patches provide useful drift detection without forcing a medium model to manage
 content versions, while the coordinator keeps exclusive mutation locking and
 internal hashes.
 
-Commands are non-interactive foreground Bash. The provider runs each command in
-a named process session under GNU `timeout`, sends TERM at the deadline, sends
-KILL five seconds later, and retains the named session until the terminal local
-result is durable. It then deletes the session best-effort; an ordinary cleanup
+Participant-authored `run_command` calls are non-interactive foreground Bash.
+The provider runs each such command in a named process session under GNU
+`timeout`, sends TERM at the deadline, sends KILL five seconds later, and
+retains the named session until the terminal local result is durable. It then
+deletes the session best-effort; an ordinary cleanup
 failure does not stop an otherwise healthy sandbox. After a Worker interruption,
 Bind re-enters only an exact incomplete Terminal command receipt, verifies the
 command hash and sandbox generation, and reattaches to the sole command in that
@@ -79,6 +84,20 @@ tool. The SubstreamAgent stores the task, command hash,
 deadline, exit, termination reason, output byte counts, and bounded head/tail.
 Output beyond the inline allowance is also published as a generated log
 resource, capped at 25 MB.
+
+Rally-authored utility commands for file handling, resource transfer,
+repository preparation/inspection, backup, cleanup, and trusted publication use
+Daytona's direct `process.executeCommand` operation. These inputs are fixed by
+Rally and need neither participant-command replay nor a recoverable named
+session. They still run in the same bounded Bash envelope, working directory,
+and session environment. Daytona's direct response exposes one stdout-shaped
+result and no separate stderr stream, so these internal utilities use exit
+status plus fixed private stdout markers; participant `run_command` continues
+to preserve separate stdout and stderr through its named session. Cancellation
+of an accepted direct utility stops and restarts the sandbox before Rally lets
+the abandoned invocation return, establishing process quiescence without adding
+named-session setup to the success path. The trusted publisher uses the direct
+operation in its fresh ephemeral sandbox as well.
 
 Command results expose three deliberately different clocks. `durationMs` is
 the provider command interval derived from the durable task timestamps;
@@ -399,8 +418,8 @@ report; a deadline the pass finds nothing to do for does.
 
 See [`runbook.md`](runbook.md#terminal-provider-activation-and-recovery) for
 activation and recovery. Structured events are
-`terminal_tool_finished`, `terminal_sandbox_lifecycle_transition`, and
-`terminal_sandbox_lifecycle_failed`, plus
+`terminal_plugin_activation_finished`, `terminal_tool_finished`,
+`terminal_sandbox_lifecycle_transition`, and `terminal_sandbox_lifecycle_failed`, plus
 `terminal_operation_commit_failed` and
 `terminal_operation_alarm_schedule_failed` for the typed object-port boundary,
 plus
@@ -424,13 +443,89 @@ reconciliation.
 
 ## Performance and cost
 
-Allocation is lazy and reuse is scoped to one work stream. Five-minute warm stop
-reduces compute time, sixty-minute archive reduces retained live-disk cost, and
-thirty-day deletion bounds provider storage. Only user-visible generated files,
+An explicit Terminal `load_plugin` starts and initializes the sandbox because
+the next model action is overwhelmingly likely to use one of its tools. A
+restored durable activation remains lazy so an unrelated later run does not
+allocate merely because an earlier run used Terminal. Reuse is scoped to one
+work stream. Five-minute warm stop reduces compute time, sixty-minute archive
+reduces retained live-disk cost, and thirty-day deletion bounds provider storage. Only user-visible generated files,
 complete eligible command logs, and the last bounded Git diff are copied to R2;
 Rally does not pay to maintain a second cold filesystem archive. Provider time
 and output bytes are derivable from local `terminal_workspace` and
 `terminal_tasks`, so cost changes can be measured without exposing commands.
+
+Within one harness run, acquisition, authority/policy validation, repository
+preparation, and the loaded Daytona SDK sandbox object are reused rather than
+looked up before every tool or provider operation. The cached acquisition is
+discarded and performed again when its existing sixteen-minute exclusive
+operation lease expires; ordinary tools do not renew or recheck that lease one
+by one. Provider lifecycle changes evict every SDK-object alias so a stopped,
+archived, or deleted object cannot be returned by another cached key. A
+model-facing file read runs containment, regular-file validation, the 10 MiB
+limit, strict UTF-8 decoding, line selection, and the 256 KiB response bound in
+one sandbox-side Python operation; it does not download the complete file. A
+single UTF-8 line over that response bound returns actionable guidance to use a
+bounded CLI extraction instead of a non-advancing page cursor. A
+complete write uses one upload and one containment/metadata/atomic-replacement
+command; that command reports whether the file existed and its previous line
+count, so Rally does not download content that the model asked to replace.
+An exact edit passes its already-read UTF-8 content into replacement bookkeeping
+and does not repeat containment for that same path in the same tool invocation.
+Generated publication folds containment into its first of two stability
+inspections, leaving one download between them.
+
+Every Daytona SDK request emits `terminal_provider_request_finished` with a
+fixed content-free operation name, outcome, duration, request count, poll
+count, and transferred byte count. It includes the harness run, tool call,
+effect receipt when one exists, and model-facing tool name, but never includes
+the command, path, output, repository, resource title, or file contents. The
+operation vocabulary distinguishes sandbox get/create/refresh/lifecycle/policy,
+file upload/download, direct utility execution, named-session get/create/
+submit/poll/log/delete, and secret list/create/update/delete.
+
+The exact `operation` vocabulary is `sandbox.get`, `sandbox.refresh`,
+`sandbox.create`, `sandbox.start`, `sandbox.stop`, `sandbox.archive`,
+`sandbox.delete`, `sandbox.update_network`, `sandbox.update_secrets`,
+`file.download`, `file.upload`, `process.execute_utility`,
+`process.session_get`, `process.session_create`, `process.session_submit`,
+`process.session_poll`, `process.session_logs`, `process.session_delete`,
+`secret.list`, `secret.create`, `secret.update`, and `secret.delete`. A direct
+utility additionally supplies one fixed `operation_detail`: `path.resolve`,
+`file.inspect`, `file.read_page`, `file.replace`, `file.apply_patch`,
+`file.temp_cleanup`, `resource.publish.inspect_before`,
+`resource.publish.inspect_after`, `resource.import.inspect`,
+`resource.import.finalize`, `repository.bootstrap`, one of the six
+`repository.publish.*` inspection phases, `lifecycle.final_diff`,
+`lifecycle.backup`, or `lifecycle.backup_cleanup`.
+
+Each `terminal_provider_request_finished` record carries
+`workspace_id`, `workstream_id`, `harness_run_id`, nullable
+`tool_invocation_id`, `tool_call_id`, and `tool_name`, plus `operation`, nullable
+`operation_detail`, `provider_operation_index`, `state`, `duration_ms`,
+`provider_request_count`, `provider_poll_count`, and `bytes`. Each
+`terminal_tool_finished` record carries those correlation identities and
+`state`, failure `code` when applicable, `duration_ms`,
+`acquisition_duration_ms`, nullable `acquisition_cache_hit`,
+`provider_duration_ms`, provider request/poll/operation counts,
+`provider_bytes`, and residual `rally_duration_ms`.
+
+The terminal `terminal_tool_finished` event retains end-to-end duration and now
+also reports acquisition duration/cache hit, summed provider request duration,
+request/poll/operation counts, and transferred bytes. The residual wall-time
+estimate makes Rally-side work visible when Daytona calls are fast. These
+application events complement Cloudflare's automatic outbound-fetch spans: the
+automatic spans prove the HTTP path, while the semantic events identify which
+Terminal tool and provider operation caused it.
+
+`terminal_plugin_activation_finished` uses the same acquisition and provider
+timing fields under the fixed `terminal_plugin_activation` tool identity. It
+also records a one-based `activation_attempt`, gives every retry a distinct
+synthetic tool-call ID, and records `repository_state` as `prepared` or
+`deferred` and a bounded `repository_code` when the repair belongs to the
+visible Terminal tool surface.
+This separates cold sandbox/repository preparation from the subsequent tool and
+makes first-tool improvement measurable without logging repository identity or
+content.
 
 `pnpm terminal:analytics -- --days 7` queries Cloudflare's SQL API and prints
 the actual first/last observation time, sampled and sampling-weighted counts,
@@ -449,6 +544,144 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-27 — Terminal preservation follows resource authority into WorkspaceDO
+
+**What changed:** Repository-replacement backups and final-diff preservation
+now write their generated `resources` row and
+`resource_object_deletion_outbox` receipt through the routed WorkspaceDO
+database already installed on the Terminal plugin environment. The
+work-stream resource link remains a separate WorkstreamDO mutation after the
+resource row is durable.
+
+**Why:** Production repository checkout after the D1 product-state retirement
+successfully used the same sandbox and resource bridge, then failed while
+creating its mandatory recovery backup with `D1_ERROR: no such table:
+resource_object_deletion_outbox`. These two preservation helpers were still
+calling the old work-stream database's `regionalDatabase` escape hatch. That
+peeled both runtime routers and sent WorkspaceDO-owned resource SQL to the
+retired D1 copy. Ordinary `publish_resource` already used the routed database
+and passed in the same run, isolating the stale route.
+
+**Considered and rejected:** Restoring the outbox table in D1, falling back to
+D1 when the object call fails, or writing cleanup ownership into both stores.
+Each would recreate a second product-state authority instead of repairing the
+one stale caller.
+
+**What a future change has to respect:** `resources` and
+`resource_object_deletion_outbox` are WorkspaceDO authority. A Terminal helper
+that creates resource bytes must use the routed workspace database for both
+rows, then attach the resource through the work-stream object; regional
+database escape hatches are only for control-plane tables that D1 still owns.
+
+### 2026-08-27 — Explicit Terminal loading initializes the sandbox
+
+**What changed:** The explicit Terminal `load_plugin` path now acquires the
+work-stream sandbox and prepares a selected repository before exposing the nine
+tools. Repairable repository failures are deferred so checkout remains visible;
+a selected repository that failed preparation is removed from the shared
+preparation cache so ordinary tools revalidate it before touching retained
+files. A missing selection keeps the sandbox warm because there is no repository
+authorization to recheck.
+Restored activation hints skip preparation and retain first-tool acquisition.
+Explicit preparation populates the same per-run promise used by every tool, so
+the first tool does not reacquire or bootstrap the selected repository again.
+Activation emits correlated acquisition, provider-operation, repository-state,
+residual Rally timing, and a distinct attempt identity for each retry. Eight
+repeated explicit loads single-flight one activation, and a 64-operation utility
+burst proves one acquisition and one repository preparation.
+
+**Why:** Production use shows that loading Terminal is nearly always immediately
+followed by a Terminal tool. Cold setup therefore belonged in the load latency,
+where it can complete before the next model turn, instead of appearing as a
+surprise first-tool delay.
+
+**Considered and rejected:** Prewarming every restored hint, rerunning sandbox
+security/policy checks before every tool, and failing the whole plugin for a
+stale or repairable repository selection. They respectively allocate for
+unrelated runs, repay setup after the authority is already established, or hide
+the only repair operation.
+
+**Consequences:** Explicit load may take the bounded acquisition-plus-repository
+budget, but the first Terminal tool should be warm. Activation remains
+convergent and cancellation-fenced; provider details remain out of the model and
+traces. A revoked or stale selected repository cannot reuse activation's sandbox
+cache, while `checkout_repository` remains available to repair the selection.
+Performance comparisons must count `load_plugin` plus the first tool, not claim
+a faster tool by moving cold setup outside the measured boundary.
+
+### 2026-08-27 — Direct utilities, request tracing, and setup pay once
+
+**What changed:** A successful sandbox acquisition and repository preparation
+are memoized for the rest of that harness run. Repository checkout invalidates
+the memoized generation. Read and publication fold root containment into their
+existing file-inspection command, and complete writes fold containment,
+old-file metadata, and atomic replacement into one command after the upload.
+`write_file` no longer downloads the old file solely to calculate its result
+summary, and `edit_file` reuses the path/content validation from its required
+read instead of checking the same path again before replacement. All fixed
+Rally-authored commands use Daytona's direct execution API; only participant
+`run_command` retains a named session. `read_file` performs bounded UTF-8 line
+paging inside the sandbox. The provider SDK sandbox object is cached for the
+harness run. Each provider request and the aggregate tool execution now emit
+correlated content-free latency, request, poll, byte, and acquisition fields.
+Review hardening made the acquisition cache expire with its existing operation
+lease, evicts every alias on lifecycle changes, rejects oversized text lines
+without a stuck cursor, cleans uploaded temp files after provider failures, and
+quiesces cancelled direct utilities by stopping and restarting the sandbox.
+Named-session cancellation also repeats cleanup after an in-flight session
+creation settles, so an abort cannot leave a late-created empty session behind.
+
+**Why:** Production timing for a simple create-and-publish task showed that the
+implementation was paying repeated provider and authority round trips rather
+than doing useful work. A new text write took six Daytona operations: path
+check, metadata, old-byte download, the same path check again, upload, and
+replacement. It also entered the same sandbox acquisition/preparation path
+twice. Those steps did not represent independent trust decisions.
+Cloudflare's automatic trace also showed every fixed command paying named
+session get/create/submit/poll/log/delete operations, but automatic fetch spans
+could not assign those costs to a semantic Terminal sub-operation.
+
+**Considered and rejected:** Revalidating workspace policy, repository
+authority, repository credentials, and sandbox preparation before every tool,
+and retaining a standalone `realpath` provider command before each file
+operation or a named session for fixed Rally utilities. Explicit policy and repository mutations already stop, replace, or
+version the affected sandbox, while per-input containment can run in the command
+that consumes that input.
+
+**What a future change has to respect:** A new harness run acquires for itself,
+and an operation that can replace the sandbox generation must invalidate the
+run-local acquisition. Input-specific path validation remains at the consuming
+provider operation. Participant commands retain durable named-session recovery;
+fixed utilities must not silently acquire that overhead. Trace operation names
+must remain bounded and content-free. The operation lease is the cache lifetime:
+reacquire at expiry, not before every tool. Do not restore a separate preflight
+or per-tool setup check unless it protects a distinct authority transition that
+has no existing invalidation path. An accepted direct utility must establish
+process quiescence before cancellation returns.
+
+### 2026-08-25 — Start fresh authorizes once at the participant authority
+
+**What changed:** `startFresh` checks the calling member directly against the
+work stream's authoritative participant rows, then returns state through an
+internal post-authorization reader. It no longer checks the workspace directory
+before that participant lookup or calls the public visibility-checking `get`
+method afterward.
+
+**Why:** Starting fresh requires participation, which is stricter than visibility
+for workspace-scoped work streams and is already decided by WorkstreamDO. The
+two directory reads repeated weaker authorization before and after the mutation
+without protecting a separate resource.
+
+**Considered and rejected:** Keeping one visibility read to preserve the exact
+404/403 distinction for nonparticipants. That distinction would require a
+second authority lookup on every successful start and does not alter who may
+replace a Terminal workspace.
+
+**What a future change has to respect:** Public state reads still require
+visibility. Mutations that require participation authorize at the participant
+authority once and must use internal readers after that boundary rather than
+re-entering public authorization.
 
 ### 2026-08-25 — Sandbox paths are .rally
 

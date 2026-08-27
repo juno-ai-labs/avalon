@@ -48,9 +48,9 @@ export const NOTE_SIDEBAR_SQL = `SELECT * FROM notes
  * Columns `AUTOMATION_SIDEBAR_SQL` promises, checked rather than cast.
  *
  * `email_address` is nullable and is served exactly as stored, by both callers.
- * There is nothing to reconcile it against: Global records only that an address
- * is claimed, so a stored address is the whole truth and a missing one means
- * none was ever reserved.
+ * Detail reads verify that full address against the Global claim registry, but
+ * a sidebar snapshot deliberately does not make one cross-region RPC per row.
+ * A missing value still means no address was ever reserved.
  */
 export const AutomationSidebarRowSchema = z.object({
   id: z.string().min(1),

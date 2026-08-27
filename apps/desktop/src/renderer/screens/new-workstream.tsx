@@ -6,8 +6,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
+import {
+  completeMentionAtCaret,
+  mentionsInTrimmedText,
+  rebaseMentionIdentities,
+  upsertMentionIdentity,
+} from '../lib/mention-draft';
 import { formatRelative, workstreamMarkerStatus, workstreamNeedsAttention } from '../lib/format';
 import { PERSON_MENTION_TYPE } from '../lib/mention-constants';
+import type { MentionIdentity } from '../lib/api';
 import { startPerfTrace, type PerfTrace } from '../lib/perf-trace';
 import { useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
@@ -15,7 +22,7 @@ import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, MessageMention, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
@@ -30,7 +37,10 @@ interface CreateWorkstreamInput {
   attachments: MessageAttachment[];
   modelOverride: AgentModelOverride | null;
   openingMessage: string;
+  mentions: MentionIdentity[];
   participantIds: string[];
+  /** User-edit generation at submit; programmatic clearing does not advance it. */
+  draftRevision: number;
   /**
    * The submit instant the launch surface has been counting from. Seeded onto
    * the created run so the work timer does not jump at the navigation; the
@@ -62,6 +72,22 @@ interface LaunchingWorkstream {
   origin: 'composer' | 'suggested-work';
   /** Drives the work timer, which the created stream keeps counting from. */
   startedAt: number;
+}
+
+/** Presentation metadata for the accepted optimistic turn seeded after create. */
+function optimisticMessageMentions(mentions: readonly MentionIdentity[]): MessageMention[] {
+  return mentions.flatMap((mention) => (
+    mention.startOffset === undefined || mention.endOffset === undefined
+      ? []
+      : [{
+          type: mention.type,
+          ...(mention.userId ? { personId: mention.userId } : {}),
+          ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+          displayName: mention.label,
+          startOffset: mention.startOffset,
+          endOffset: mention.endOffset,
+        }]
+  ));
 }
 
 /**
@@ -262,12 +288,18 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
+  const draftRevisionRef = useRef(0);
   const opportunityKeys = useRef(new Map<string, string>());
   // The instant the suggested-work surface started counting from, carried to
   // `onSuccess` so the seeded run continues it rather than restarting.
   const opportunityStartedAt = useRef<string | null>(null);
   const draftKey = newWorkstreamDraftKey(workspace.id);
-  const { text: message, setText: setMessage } = useDraftText(draftKey);
+  const {
+    text: message,
+    setText: setMessage,
+    mentions: selectedMentions,
+    setMentions: setSelectedMentions,
+  } = useDraftText(draftKey);
   const [selectedMembers, setSelectedMembers] = useState<WorkspaceMember[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -342,6 +374,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       return trace.step('create_request', () => api!.createWorkstream({
         openingMessage: input.openingMessage,
         participantIds: input.participantIds,
+        ...(input.mentions.length > 0 ? { mentions: input.mentions } : {}),
         requestId: trace.traceId,
         ...(input.attachmentIds.length > 0 ? { attachmentIds: input.attachmentIds } : {}),
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
@@ -354,7 +387,13 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       // stood for a work stream that does not exist, so it cannot stay on
       // screen next to an error about why.
       setLaunching(null);
-      setMessage((current) => current.length > 0 ? current : input.openingMessage);
+      // Restore one coherent submitted snapshot only when no user edit landed
+      // after submit. Text and identity spans must never come from different
+      // draft generations.
+      if (draftRevisionRef.current === input.draftRevision) {
+        setMessage(input.openingMessage);
+        setSelectedMentions(input.mentions);
+      }
     },
     onSettled: () => {
       submittingRef.current = false;
@@ -379,6 +418,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
         author: workspace.currentUser,
         messageType: 'text',
         text: input.openingMessage,
+        mentions: optimisticMessageMentions(input.mentions),
         attachments: input.attachments,
         createdAt: created.createdAt,
       };
@@ -471,7 +511,8 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   }, [api, impressionKey, suggestedWorkEnabled]);
 
   const submit = (): void => {
-    const openingMessage = message.trim();
+    const submitted = mentionsInTrimmedText(message, selectedMentions);
+    const openingMessage = submitted.text;
     const readyAttachments = attachmentDraft.ready;
     if ((!openingMessage && readyAttachments.length === 0) || attachmentDraft.uploading || submittingRef.current) return;
     // Before the launch state, not after it. The screen below opens optimistically
@@ -484,7 +525,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     setTooLong(false);
     submittingRef.current = true;
     const participantIds = selectedMembers.map((member) => member.id);
+    const mentions = submitted.mentions;
     setMessage('');
+    setSelectedMentions([]);
     const createdAt = new Date().toISOString();
     const attachments = readyAttachments.map((attachment) => ({
       id: attachment.resource!.id,
@@ -504,7 +547,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
       attachments,
       modelOverride,
       openingMessage,
+      mentions,
       participantIds,
+      draftRevision: draftRevisionRef.current,
       startedAt: createdAt,
     });
   };
@@ -536,7 +581,9 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   );
 
   const updateMessage = (value: string): void => {
+    draftRevisionRef.current += 1;
     setMessage(value);
+    setSelectedMentions((current) => rebaseMentionIdentities(message, value, current));
     syncMentionQuery(value);
   };
 
@@ -560,7 +607,12 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   };
 
   const beginMention = (): void => {
-    const started = draftWithMentionStarted(message, textareaRef.current?.selectionStart);
+    const started = draftWithMentionStarted(
+      message,
+      textareaRef.current?.selectionStart,
+      textareaRef.current?.selectionEnd,
+    );
+    draftRevisionRef.current += 1;
     setMessage(started.value);
     setMentionQuery('');
     requestAnimationFrame(() => {
@@ -573,39 +625,37 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
     });
   };
 
-  /**
-   * Names the person in the opening message and adds them to the work stream
-   * being started. Nothing exists yet to mention someone *into*: `POST
-   * /workstreams` carries participant ids and no mention spans, so a name that
-   * only reached the text would leave with nobody attached to it. Adding here
-   * is the same silent toggle the picker above the composer performs, and shows
-   * in the same avatar row; deleting the text again does not remove them, for
-   * the same reason unticking is that row's job rather than the draft's.
-   */
+  /** Names the person in both the visible draft and its identity-bearing span. */
   const insertMention = (member: WorkspaceMember): void => {
     const textarea = textareaRef.current;
     const caret = textarea?.selectionStart ?? message.length;
-    const before = message.slice(0, caret);
-    const atIndex = before.lastIndexOf('@');
+    const completed = completeMentionAtCaret(message, caret, member.name, textarea?.selectionEnd ?? caret);
     // The caret has left the mention this list belongs to; there is nothing
     // here to complete, and `slice(0, -1)` would eat the character before it.
-    if (atIndex < 0) {
+    if (!completed) {
       setMentionQuery(null);
       return;
     }
-    const after = message.slice(caret);
-    // One separator, not two: the name brings its own unless the rest of the
-    // line already starts with one.
-    const separator = /^\s/u.test(after) ? '' : ' ';
-    setMessage(`${before.slice(0, atIndex)}@${member.name}${separator}${after}`);
+    draftRevisionRef.current += 1;
+    setMessage(completed.text);
+    setSelectedMentions((current) => upsertMentionIdentity(
+      rebaseMentionIdentities(message, completed.text, current),
+      {
+        type: 'person',
+        label: member.name,
+        userId: member.id,
+        connectorType: null,
+        startOffset: completed.startOffset,
+        endOffset: completed.endOffset,
+      },
+    ));
     if (member.id !== workspace.currentUser.id) {
       setSelectedMembers((current) => current.some((candidate) => candidate.id === member.id) ? current : [...current, member]);
     }
     setMentionQuery(null);
     requestAnimationFrame(() => {
       textarea?.focus();
-      const nextCaret = atIndex + member.name.length + 1 + separator.length;
-      textarea?.setSelectionRange(nextCaret, nextCaret);
+      textarea?.setSelectionRange(completed.caret, completed.caret);
     });
   };
   const participantSummary = participants.length <= 2

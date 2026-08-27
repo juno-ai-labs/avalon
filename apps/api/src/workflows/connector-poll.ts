@@ -180,6 +180,18 @@ export class ConnectorPollWorkflow extends WorkflowEntrypoint<Env, ConnectorPoll
       });
     }
 
+    logStructuredEvent(this.env, "info", "connector_poll_terminal", {
+      workspace_id: input.workspaceId,
+      connection_id: input.connectionId,
+      provider: connection.provider,
+      poll_schedule_id: input.pollScheduleId,
+      outcome: "processed",
+      activity_count: result.activityIds.length,
+      stream_error_count: result.streamErrors?.length ?? 0,
+      stream_error_codes: [...new Set(result.streamErrors?.map((error) => error.code) ?? [])],
+      cursor_commit: cursorCommit,
+      next_poll_scheduled: Boolean(result.nextPollAt && cursorCommit !== "superseded"),
+    });
     return { activityCount: result.activityIds.length };
   }
 }

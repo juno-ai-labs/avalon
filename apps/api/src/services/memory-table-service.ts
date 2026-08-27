@@ -12,6 +12,7 @@ import { sha256 } from "../lib/crypto";
 import {
   MEMORY_SCOPE_KINDS,
   resolveMemoryAccess,
+  writableScope,
   type MemoryScope,
   type MemoryScopeKind,
 } from "./memory-service";
@@ -1061,10 +1062,7 @@ async function createTable(
   const inputHash = await mutationInputHash("create", args);
   const replay = await loadMutationReceipt(env, input, receiptId, "create", inputHash);
   if (replay) return { output: replay, summary: `Created durable table “${args.name}”`, providerOperationId: String(replay.memoryTableId) };
-  const scopes = await resolveMemoryAccess(env, input);
-  const scope = scopes.find((candidate) => candidate.kind === args.scopeKind);
-  if (!scope) throw new Error(`memory_scope_not_available:${args.scopeKind}`);
-  if (!scope.writable) throw new Error(`memory_scope_not_writable:${args.scopeKind}`);
+  const scope = await writableScope(env, input, args.scopeKind);
   const mutationId = await deterministicId("mtm", input.harnessRunId, receiptId);
   const memoryTableId = await deterministicId("mtt", scope.memoryScopeId, args.name.toLocaleLowerCase());
   const existingRow = await env.DB.prepare(

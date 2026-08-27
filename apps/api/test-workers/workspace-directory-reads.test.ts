@@ -265,6 +265,110 @@ async function seedFeedback(input: {
 }
 
 describe("what the workspace object answers about its work streams", () => {
+  describe("batchUpdateTargets — generic filtered Queue fan-out", () => {
+    it("selects one viewer-visible unpinned date range without probing children", async () => {
+      const included = await seedWorkstream({
+        title: "Included",
+        lastActivityAt: "2020-03-12T12:00:00.000Z",
+      });
+      const pinned = await seedWorkstream({
+        title: "Pinned",
+        lastActivityAt: "2020-03-13T12:00:00.000Z",
+      });
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(
+          `INSERT INTO workspace_workstream_pins
+             (user_id, workstream_id, position, created_at, updated_at)
+           VALUES (?, ?, 0, 1, 1)`,
+          OWNER,
+          pinned,
+        );
+      });
+      await seedWorkstream({
+        title: "Too old",
+        lastActivityAt: "2020-03-09T12:00:00.000Z",
+      });
+      await seedWorkstream({
+        title: "Private to somebody else",
+        lastActivityAt: "2020-03-14T12:00:00.000Z",
+        scope: "personal",
+        participants: [OUTSIDER],
+        createdByUserId: OUTSIDER,
+      });
+      await seedWorkstream({
+        title: "System machinery",
+        lastActivityAt: "2020-03-15T12:00:00.000Z",
+        systemKind: "digest",
+      });
+      await seedWorkstream({
+        title: "Already archived",
+        lastActivityAt: "2020-03-16T12:00:00.000Z",
+        archivedAt: "2020-03-17T00:00:00.000Z",
+      });
+
+      const result = await workspace().batchUpdateTargets({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        filter: {
+          lastActivityAt: {
+            atOrAfter: "2020-03-10T00:00:00.000Z",
+            before: "2020-03-20T00:00:00.000Z",
+          },
+          pinned: false,
+          includeSystem: false,
+        },
+      });
+
+      expect(result.items).toEqual([included]);
+      expect(result.items).not.toContain(pinned);
+    });
+
+    it("freezes one operation and resumes only its undispatched targets", async () => {
+      const included = await seedWorkstream({
+        title: "Frozen target",
+        lastActivityAt: "2010-03-12T12:00:00.000Z",
+      });
+      const request = {
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        operationId: "00000000-0000-7000-8000-0000000008f1",
+        requestHash: "fnv1a64:1111111111111111",
+        filter: {
+          lastActivityAt: {
+            atOrAfter: "2010-03-10T00:00:00.000Z",
+            before: "2010-03-20T00:00:00.000Z",
+          },
+          pinned: false,
+          includeSystem: false,
+        },
+      } as const;
+
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [included],
+        targetCount: 1,
+      });
+      await seedWorkstream({
+        title: "Arrived after confirmation",
+        lastActivityAt: "2010-03-13T12:00:00.000Z",
+      });
+
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [included],
+        targetCount: 1,
+      });
+      await expect(workspace().advanceWorkstreamBatchDispatch({
+        workspaceId: WORKSPACE_ID,
+        operationId: request.operationId,
+        requestHash: request.requestHash,
+        workstreamIds: [included],
+      })).resolves.toEqual({ remainingCount: 0 });
+      await expect(workspace().beginWorkstreamBatchDispatch(request)).resolves.toEqual({
+        items: [],
+        targetCount: 1,
+      });
+    });
+  });
+
   describe("lookupWorkstreamDirectory — Slack's unfurl summaries", () => {
     it("returns exactly the ids asked for, and no others", async () => {
       const wanted = await seedWorkstream({
@@ -534,6 +638,33 @@ describe("what the workspace object answers about its work streams", () => {
   });
 
   describe("canReadWorkstream — what the activity router is allowed to route into", () => {
+    it("filters a bounded set through one directory audience read", async () => {
+      const shared = await seedWorkstream({
+        title: "Workspace scoped batch",
+        lastActivityAt: "2026-08-17T08:00:00.000Z",
+        scope: "workspace",
+        participants: [OUTSIDER],
+      });
+      const mine = await seedWorkstream({
+        title: "My private batch",
+        lastActivityAt: "2026-08-17T08:01:00.000Z",
+        scope: "personal",
+        participants: [OWNER],
+      });
+      const theirs = await seedWorkstream({
+        title: "Their private batch",
+        lastActivityAt: "2026-08-17T08:02:00.000Z",
+        scope: "personal",
+        participants: [OUTSIDER],
+      });
+
+      await expect(workspace().readableWorkstreamIds({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        workstreamIds: [theirs, shared, mine],
+      })).resolves.toEqual({ items: [shared, mine].sort() });
+    });
+
     it("admits a participant and a workspace-scoped work stream alike", async () => {
       const shared = await seedWorkstream({
         title: "Workspace scoped",

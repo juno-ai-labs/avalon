@@ -3,11 +3,13 @@ import {
   ActivitySuggestionSchema,
   AnswerElicitationRequestSchema,
   MESSAGE_MAX_CHARACTERS,
+  MentionSchema,
   MessageSchema,
   ParticipantSchema,
   ResourceSchema,
   ScopeSchema,
   UpdateWorkstreamRequestSchema,
+  WorkstreamBatchUpdateSchema,
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WorkstreamDetailSchema,
   WorkstreamSchema,
@@ -16,6 +18,7 @@ import {
   type Message,
   type Resource,
   type Workstream,
+  type WorkstreamBatchUpdate,
   type WorkstreamDetail,
   type WorkstreamWorkflowInput,
   WorkspaceIdSchema,
@@ -31,7 +34,6 @@ import {
 } from "@rally/contracts";
 import type { AddressingContextMessage } from "@rally/agent-harness";
 import { truncateUtf16Safe } from "@rally/contracts/text";
-import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
@@ -59,22 +61,15 @@ import {
   workspaceRegionalDatabase,
 } from "../services/workspace-runtime-database";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
-import type { WorkstreamObjectStore } from "./workstream-object-storage";
+import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
+import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
 
 type SqlRow = Record<string, SqlStorageValue>;
 
 export const WorkstreamObjectCreateMessageInputSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),
-  mentions: z.array(z.object({
-    type: z.enum(["person", "connector"]),
-    userId: z.string().uuid().nullable(),
-    connectorType: z.string().max(80).nullable(),
-    displayName: z.string().min(1).max(180).nullable().optional(),
-    avatarUrl: HttpUrlSchema.nullable().optional(),
-    startOffset: z.number().int().nonnegative(),
-    endOffset: z.number().int().positive(),
-  })).default([]),
+  mentions: z.array(MentionSchema).default([]),
   confirmedParticipantUserIds: z.array(z.string().uuid()).default([]),
   attachmentIds: z.array(z.string().uuid()).max(10).default([]),
   runMode: z.enum(["steer", "queue"]).optional(),
@@ -116,6 +111,7 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
   emailAddress: z.string().email().max(254).nullable(),
   creatorUserId: z.string().uuid(),
   openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
+  mentions: z.array(MentionSchema).default([]),
   openingStructuredContent: z.unknown().nullable().default(null),
   clientMessageId: z.string().min(1).max(120),
   participantUserIds: z.array(z.string().uuid()),
@@ -136,6 +132,25 @@ export const InitializeWorkstreamObjectInputSchema = z.object({
    * replaced object into a validation failure for the length of the deploy.
    */
   scope: ScopeSchema.default("personal"),
+  /**
+   * Whether the people in `participantUserIds` are told they were added.
+   *
+   * Separate from the list for the same reason `scope` is separate from it: the
+   * object cannot tell one kind of list from the other, and they are not the
+   * same event. A person picking names in "Add people" is inviting them, and
+   * being invited is worth a Slack DM and an inbox. A connector ingress fills
+   * the same field with a conversation's resolved roster — `CreateWorkstreamRequestSchema`
+   * says so where the cap used to be, and a Slack channel's audience "can be
+   * hundreds" — and nobody in that channel was added by anybody. Telling them
+   * so would DM a roster on somebody else's behalf about something that did not
+   * happen, in a thread they are already reading.
+   *
+   * Defaulted to `false`, which is both halves of the safe direction: a caller
+   * that has not thought about it does not send mail, and a rolling deploy in
+   * which the previous Worker's creation service names no value stays quiet
+   * rather than validating-failing every create against a replaced object.
+   */
+  notifyParticipants: z.boolean().default(false),
   modelOverride: z.string().max(200).nullable(),
   originType: z.enum(["ad_hoc", "automation"]).default("ad_hoc"),
   automationSubscriptionId: z.string().uuid().nullable().default(null),
@@ -334,6 +349,7 @@ export class WorkstreamObjectProductService {
     private readonly storage: DurableObjectStorage,
     private readonly objectStore: WorkstreamObjectStore,
     private readonly env: Env,
+    private readonly transcript = new WorkstreamTranscriptStorage(storage),
   ) {}
 
   private workspaceDatabase(workspaceId: string): D1Database {
@@ -451,13 +467,19 @@ export class WorkstreamObjectProductService {
     if (auth.workspaceId !== input.workspaceId || auth.userId !== input.creatorUserId) {
       throw new ApiError(403, "workstream_create_denied", "The work stream cannot be created for this identity");
     }
-    const memberIds = [...new Set([input.creatorUserId, ...input.participantUserIds])];
+    const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
+      mention.type === "person" && mention.userId ? [mention.userId] : []))];
+    const candidateMemberIds = [...new Set([
+      input.creatorUserId,
+      ...input.participantUserIds,
+      ...requestedPersonIds,
+    ])];
     const members = await this.env.DB.prepare(
       `SELECT user_id FROM workspace_members
         WHERE workspace_id = ? AND status = 'active'
-          AND user_id IN (${memberIds.map(() => "?").join(",")})`,
-    ).bind(input.workspaceId, ...memberIds).all<{ user_id: string }>();
-    if ((members.results ?? []).length !== memberIds.length) {
+          AND user_id IN (${candidateMemberIds.map(() => "?").join(",")})`,
+    ).bind(input.workspaceId, ...candidateMemberIds).all<{ user_id: string }>();
+    if ((members.results ?? []).length !== candidateMemberIds.length) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
     const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
@@ -509,6 +531,38 @@ export class WorkstreamObjectProductService {
         workflowInput: this.workflowInput(input, asHarnessRunId(run.run_id), part.id),
       };
     }
+    // Resolve from the authoritative workspace directory before accepting any
+    // visible range. The client sends identity and offsets, not Markdown; the
+    // object owns the durable spelling and target.
+    const needsNames = input.mentions.length > 0
+      || (input.notifyParticipants && candidateMemberIds.some((userId) => userId !== input.creatorUserId));
+    const names = needsNames
+      ? await this.messageUsers(candidateMemberIds)
+      : new Map<string, UserRow>();
+    const mentionPeople = new Map<string, MentionPerson>([...names].map(([userId, user]) => [userId, {
+      id: user.id,
+      name: user.name,
+      avatarUrl: user.avatar_url,
+    }]));
+    const prepared = prepareMentionMarkdown(input.openingMessage, input.mentions, mentionPeople);
+    const mentionedPersonIds = [...new Set(prepared.mentions.flatMap((mention) =>
+      mention.type === "person" && mention.userId ? [mention.userId] : []))];
+    // Only a mention that survived authoritative visible-range validation can
+    // grant mention-derived access. Raw IDs are candidates, not audience.
+    const memberIds = [...new Set([
+      input.creatorUserId,
+      ...input.participantUserIds,
+      ...mentionedPersonIds,
+    ])];
+    // Everybody the creator explicitly invited, minus the creator and anyone
+    // who receives the more specific mention notification. One action must not
+    // become both "you were added" and "you were mentioned" in Slack.
+    const invitedUserIds = input.notifyParticipants
+      ? [...new Set(input.participantUserIds)].filter((userId) => (
+          userId !== input.creatorUserId && !mentionedPersonIds.includes(userId)
+        ))
+      : [];
+    const actorName = names.get(input.creatorUserId)?.name ?? "A workspace member";
     const now = Date.now();
     const messageId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
@@ -518,6 +572,13 @@ export class WorkstreamObjectProductService {
           workspaceId: input.workspaceId,
           workstreamId: input.workstreamId,
         })).model;
+    const transcriptMessage = await this.transcript.prepareParticipantMessage({
+      turnId: messageId,
+      actor: "human",
+      authorUserId: input.creatorUserId,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: 1,
+    });
     this.storage.transactionSync(() => {
       this.storage.sql.exec(
         `UPDATE workstream SET authority_mode = 'authoritative', authority_generation = ?,
@@ -562,7 +623,7 @@ export class WorkstreamObjectProductService {
             author_type, author_user_id, content, client_message_id, visibility, pinned,
             message_type, structured_content_json, created_at, updated_at)
          VALUES (?, '0', 1, 1, 'user', 'text', 'member', ?, ?, ?, 'both', 0, 'text', ?, ?, ?)`,
-        messageId, input.creatorUserId, input.openingMessage, input.clientMessageId,
+        messageId, input.creatorUserId, prepared.text, input.clientMessageId,
         input.openingStructuredContent === null ? null : JSON.stringify(input.openingStructuredContent),
         now, now,
       );
@@ -574,6 +635,32 @@ export class WorkstreamObjectProductService {
          VALUES (?, 0, 1, NULL, 0, ?, 0, ?)`,
         input.creatorUserId, now, now,
       );
+      this.transcript.appendPreparedParticipantMessage(transcriptMessage);
+      prepared.mentions.forEach((mention, index) => {
+        this.storage.sql.exec(
+          `INSERT INTO part_mentions
+             (part_id, mention_index, mention_kind, target_user_id, connector_type,
+              start_offset, end_offset, attention_ordinal)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+          messageId, index, mention.type, mention.userId, mention.connectorType,
+          mention.startOffset, mention.endOffset,
+        );
+        if (mention.type === "person" && mention.userId) {
+          this.storage.sql.exec(
+            `INSERT INTO member_attention
+               (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+                manual_unread_from_ordinal, latest_mention_attention_ordinal,
+                last_seen_at, version, updated_at)
+             VALUES (?, 0, 0, NULL, 1, ?, 0, ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+               latest_mention_attention_ordinal = MAX(
+                 member_attention.latest_mention_attention_ordinal,
+                 excluded.latest_mention_attention_ordinal
+               ), updated_at = excluded.updated_at`,
+            mention.userId, now, now,
+          );
+        }
+      });
       input.attachmentIds.forEach((resourceId, position) => {
         const resource = attachments.find((candidate) => String(candidate.id) === resourceId)!;
         const descriptor = {
@@ -640,12 +727,72 @@ export class WorkstreamObjectProductService {
       () => undefined,
       () => {
         const root = this.root();
+        const occurredAt = new Date(now).toISOString();
+        const activity = {
+          partitionKey: `activity:${messageId}`,
+          sourceVersion: 1,
+          dedupeKey: `message:${messageId}`,
+          effect: {
+            kind: "activity_event" as const,
+            eventId: uuidV7(now),
+            eventType: "workstream_message_created",
+            subjectSequenceNumber: 1,
+            actorType: "user" as const,
+            actorUserId: input.creatorUserId,
+            actorLabel: actorName,
+            title: truncateUtf16Safe(root.title, 500),
+            body: truncateUtf16Safe(prepared.text, 8_000),
+            canonicalUrl: null,
+            digestible: true,
+            occurredAt,
+            sourceKind: "workstream_message",
+            sourceId: messageId,
+            dedupeKey: `message:${messageId}`,
+            metadata: {},
+            targets: memberIds.map((userId) => ({ userId, relation: "participant" })),
+          },
+        };
+        const mentionNotifications = mentionedPersonIds
+          .filter((userId) => userId !== input.creatorUserId)
+          .map((userId) => ({
+            partitionKey: `notification:${messageId}:${userId}`,
+            sourceVersion: 1,
+            dedupeKey: `mention:${messageId}:${userId}`,
+            dependsOnProjectionKey: `user:${userId}`,
+            effect: {
+              kind: "mention_notification" as const,
+              intentId: `mention:${messageId}:${userId}`,
+              messageId,
+              recipientUserId: userId,
+              authorUserId: input.creatorUserId,
+              authorNameSnapshot: actorName,
+              workstreamTitleSnapshot: truncateUtf16Safe(root.title, 500),
+              messageText: truncateUtf16Safe(prepared.text, 8_000),
+              occurredAt,
+            },
+          }));
         return [
           { partitionKey: "common", effect: this.commonEffect(root) },
           ...memberIds.map((userId) => ({
             partitionKey: `user:${userId}`,
             effect: this.userEffect(root, userId),
           })),
+          // After every viewer effect, which is all the gate below needs:
+          // each recipient's own directory row is written earlier in this same
+          // array. The epoch is a literal zero rather than a read — these rows
+          // were inserted by the transaction above with `participant_epoch = 0`
+          // and nothing can have removed them yet.
+          ...invitedUserIds.flatMap((userId) => this.participantAddedEffects({
+            root,
+            userId,
+            actorUserId: input.creatorUserId,
+            actorName,
+            recipientName: names.get(userId)?.name ?? "a workspace member",
+            epoch: 0,
+            now,
+          })),
+          ...(mentionedPersonIds.length > 0 ? [activity] : []),
+          ...mentionNotifications,
         ];
       },
     );
@@ -720,9 +867,8 @@ export class WorkstreamObjectProductService {
    *
    * **Never allowed to fail the open.** This is bookkeeping about a dot running
    * inside what every caller treats as a read, so a marker that stays lit until
-   * the next open is the better failure — the same rule
-   * `GET /workstreams/:id` already applies to the block-dashboard preference it
-   * fetches alongside the detail.
+   * the next open is the better failure. It must not turn an otherwise valid
+   * socket snapshot or REST recovery boot into an unavailable work stream.
    *
    * Not a guard against the authority fence, which was the first suspicion:
    * `commitWithRegionalEffects` refuses a non-authoritative object, but the
@@ -1037,6 +1183,119 @@ export class WorkstreamObjectProductService {
   }
 
   /**
+   * Apply one event from the generic regional batch-update queue.
+   *
+   * The receipt shares the transaction with the product rows and the regional
+   * outbox, so Queue redelivery cannot repeat the mutation or publish another
+   * projection waterline. A mass read settles the state that exists when the
+   * event reaches this authority without first loading a per-work-stream cursor.
+   */
+  async applyQueuedBatchUpdate(
+    auth: AuthContext,
+    input: {
+      operationId: string;
+      requestHash: string;
+      update: WorkstreamBatchUpdate;
+    },
+  ): Promise<"applied" | "replayed"> {
+    const update = WorkstreamBatchUpdateSchema.parse(input.update);
+    const before = await this.authorize(auth, update.kind === "archive");
+    const now = Date.now();
+    const committed = await this.objectStore.commitWithRegionalEffects(
+      (sql) => {
+        const receipt = first(sql.exec<{ request_hash: string }>(
+          `SELECT request_hash FROM durable_inbox_receipts
+            WHERE channel = 'workstream_batch_update'
+              AND source_kind = 'regional_service'
+              AND source_id = 'regional_worker'
+              AND source_generation = 1 AND message_id = ?`,
+          input.operationId,
+        ));
+        if (receipt) {
+          if (receipt.request_hash !== input.requestHash) {
+            throw new Error("workstream_batch_update_idempotency_conflict");
+          }
+          return "replayed" as const;
+        }
+
+        if (update.kind === "mark_read") {
+          const latest = Math.max(0, before.next_attention_ordinal - 1);
+          sql.exec(
+            `UPDATE participants SET first_opened_at = ?, updated_at = ?
+              WHERE user_id = ? AND status = 'active' AND first_opened_at IS NULL`,
+            now,
+            now,
+            auth.userId,
+          );
+          sql.exec(
+            `INSERT INTO member_attention
+               (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
+                manual_unread_from_ordinal, latest_mention_attention_ordinal,
+                last_seen_at, version, updated_at)
+             VALUES (?, ?, ?, NULL, 0, ?, 0, ?)
+             ON CONFLICT(user_id) DO UPDATE SET
+               seen_attention_ordinal = MAX(member_attention.seen_attention_ordinal,
+                                            excluded.seen_attention_ordinal),
+               manual_unread_from_ordinal = NULL,
+               version = member_attention.version + 1,
+               last_seen_at = excluded.last_seen_at,
+               updated_at = excluded.updated_at`,
+            auth.userId,
+            before.unread_tracking_start_ordinal,
+            latest,
+            now,
+            now,
+          );
+        } else if (before.archived_at === null) {
+          sql.exec(
+            `UPDATE runs SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
+                    cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user'),
+                    revision = revision + 1, updated_at = ?
+              WHERE substream_id = '0' AND origin != 'block_dashboard_block'
+                AND status IN ('admitted', 'running', 'waiting', 'steering')
+                AND terminalized_at IS NULL`,
+            now,
+            now,
+          );
+          sql.exec(
+            `UPDATE workstream SET archived_at = ?, exact_state = 'archived',
+                    listing_epoch = listing_epoch + 1, updated_at = ?
+              WHERE id = 1`,
+            now,
+            now,
+          );
+        }
+
+        sql.exec(
+          `INSERT INTO durable_inbox_receipts
+             (channel, source_kind, source_id, source_generation, message_id,
+              partition_key, source_version, source_epoch, request_hash,
+              result_code, result_hash, received_at)
+           VALUES ('workstream_batch_update', 'regional_service', 'regional_worker', 1, ?,
+                   ?, 1, 0, ?, 'applied', ?, ?)`,
+          input.operationId,
+          update.kind,
+          input.requestHash,
+          input.requestHash,
+          now,
+        );
+        return "applied" as const;
+      },
+      (_sql, outcome) => {
+        if (outcome === "replayed") return [];
+        const root = this.root();
+        return update.kind === "mark_read"
+          ? [{ partitionKey: `user:${auth.userId}`, effect: this.userEffect(root, auth.userId) }]
+          : [
+              { partitionKey: "common", effect: this.commonEffect(root) },
+              { partitionKey: `user:${auth.userId}`, effect: this.userEffect(root, auth.userId) },
+            ];
+      },
+    );
+    return committed.result;
+  }
+
+  /**
    * Everything needed to paint this work stream, read in one pass.
    *
    * The single assembler behind both the `snapshot` socket frame and
@@ -1051,7 +1310,7 @@ export class WorkstreamObjectProductService {
     resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
   }> {
     const workstream = await this.get(auth, viewers);
-    return { workstream, ...await this.bootFeeds(auth, workstream.firstUnreadSequenceNumber) };
+    return { workstream, ...await this.bootFeeds(auth, workstream.firstUnreadSequenceNumber, true) };
   }
 
   /**
@@ -1060,17 +1319,18 @@ export class WorkstreamObjectProductService {
    * `boot` has no way to know about, so re-reading it there would be a second
    * pass for a worse answer.
    */
-  async bootFeeds(auth: AuthContext, resumeAt: number | null): Promise<{
+  async bootFeeds(auth: AuthContext, resumeAt: number | null, authorizationAlreadyChecked = false): Promise<{
     messageFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>>;
     resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
   }> {
-    const messageFeed = await this.messages(auth, BOOT_LATEST_MESSAGES);
+    if (!authorizationAlreadyChecked) await this.authorize(auth);
+    const messageFeed = await this.messagesAfterAdmission(auth, BOOT_LATEST_MESSAGES);
     const oldestOnPage = messageFeed.items[0]?.sequenceNumber;
     // Skipped when the reader's position is already on the newest page: a
     // second copy of the same messages is not worth the frame.
     const resumeFeed = resumeAt !== null
       && (oldestOnPage === undefined || resumeAt < oldestOnPage)
-      ? await this.messages(auth, BOOT_RESUME_MESSAGES, undefined, undefined, resumeAt)
+      ? await this.messagesAfterAdmission(auth, BOOT_RESUME_MESSAGES, undefined, undefined, resumeAt)
       : null;
     return { messageFeed, resumeFeed };
   }
@@ -1132,6 +1392,16 @@ export class WorkstreamObjectProductService {
     around?: number,
   ): Promise<{ items: Message[]; nextCursor: string | null; newerCursor: string | null }> {
     await this.authorize(auth);
+    return this.messagesAfterAdmission(auth, limit, before, after, around);
+  }
+
+  private async messagesAfterAdmission(
+    auth: AuthContext,
+    limit: number,
+    before?: number,
+    after?: number,
+    around?: number,
+  ): Promise<{ items: Message[]; nextCursor: string | null; newerCursor: string | null }> {
     if (around !== undefined) {
       const olderLimit = Math.max(1, Math.min(50, Math.floor(limit / 4)));
       const newerLimit = Math.max(1, limit - olderLimit);
@@ -1547,59 +1817,17 @@ export class WorkstreamObjectProductService {
           `SELECT participant_epoch FROM participants WHERE user_id = ?`,
           userId,
         ))?.participant_epoch ?? 0;
-        const sourceId = `participant:${current.workstream_key}:${userId}:${epoch}`;
-        const intentId = `participant_added:${current.workstream_key}:${userId}:${epoch}`;
-        const occurredAt = new Date(now).toISOString();
         return [
           viewer,
-          {
-            partitionKey: `activity:${sourceId}`,
-            sourceVersion: 1,
-            dedupeKey: sourceId,
-            effect: {
-              kind: "activity_event" as const,
-              eventId: uuidV7(now),
-              eventType: "workstream_participant_added",
-              // Nothing in the transcript ordered this: a person joined the
-              // room, which sits outside the message sequence.
-              subjectSequenceNumber: null,
-              actorType: "user" as const,
-              actorUserId: auth.userId,
-              actorLabel: actorName,
-              title: truncateUtf16Safe(current.title, 500),
-              body: `${actorName} added ${recipientName} to this work stream.`,
-              canonicalUrl: null,
-              digestible: true,
-              occurredAt,
-              sourceKind: "workstream_participant",
-              sourceId,
-              dedupeKey: sourceId,
-              metadata: { participantUserId: userId, addedByUserId: auth.userId },
-              targets: [{ userId, relation: "added" }],
-            },
-          },
-          // Ordered after the viewer effect deliberately. Its
-          // `requiredProjectionVersion` is read from the projection key that
-          // effect has just advanced, so nobody is told about a work stream
-          // before their own directory row has reached the workspace — the
-          // notification and the sidebar row arrive in that order or not at all.
-          {
-            partitionKey: `notification:${intentId}`,
-            sourceVersion: 1,
-            dedupeKey: intentId,
-            dependsOnProjectionKey: `user:${userId}`,
-            effect: {
-              kind: "participant_notification" as const,
-              intentId,
-              sourceId,
-              recipientUserId: userId,
-              actorUserId: auth.userId,
-              actorNameSnapshot: actorName,
-              workstreamTitleSnapshot: truncateUtf16Safe(current.title, 500),
-              workstreamObjectiveSnapshot: truncateUtf16Safe(current.description, 500),
-              occurredAt,
-            },
-          },
+          ...this.participantAddedEffects({
+            root: current,
+            userId,
+            actorUserId: auth.userId,
+            actorName,
+            recipientName,
+            epoch,
+            now,
+          }),
         ];
       },
     );
@@ -1608,6 +1836,105 @@ export class WorkstreamObjectProductService {
       throw new ApiError(409, "participant_reload_failed", "The participant was added but could not be read back");
     }
     return ParticipantSchema.parse(participant);
+  }
+
+  /**
+   * The two effects that say "this person was put in this room", for one person.
+   *
+   * One copy because there are two callers and two more seating paths named in
+   * `docs/workstream-durable-object.md` that will want it: the payload is what
+   * a person reads in a Slack DM and an inbox, and two transcriptions of it
+   * would drift on the first change to either.
+   *
+   * **Every caller must place these after that recipient's own `directory_user`
+   * effect in the same returned array.** The notification's
+   * `requiredProjectionVersion` is read from the projection key that effect
+   * advances, in the same `commitWithRegionalEffects` loop pass — so the
+   * delivery side cannot tell somebody about a work stream their own sidebar
+   * row has not reached the workspace yet. Earlier in the array is the whole
+   * requirement; adjacency is not, and `createMessage` groups all viewer
+   * effects ahead of all notifications for that reason.
+   *
+   * `epoch` is what separates one participation from the next: re-adding
+   * somebody who was removed notifies them again, while a redelivery of the
+   * same add converges on one intent and one activity row. The work stream is
+   * in both identities because what they key is workspace-wide while the epoch
+   * is object-local and starts at zero — `workspace_activity_events.dedupe_key`
+   * is UNIQUE across the workspace, and an intent is fenced on its id and on
+   * `(source_message_id, recipient_user_id, notification_kind)`. Without it,
+   * adding one person to a second work stream reuses the first one's identity
+   * and the effect is refused as a conflict, then retried forever instead of
+   * delivered. A mention avoids this for free by keying on a message id.
+   */
+  private participantAddedEffects(input: {
+    root: RootRow;
+    userId: string;
+    actorUserId: string;
+    actorName: string;
+    recipientName: string;
+    epoch: number;
+    now: number;
+  }): RegionalEffectCommand[] {
+    const sourceId = `participant:${input.root.workstream_key}:${input.userId}:${input.epoch}`;
+    const intentId = `participant_added:${input.root.workstream_key}:${input.userId}:${input.epoch}`;
+    const occurredAt = new Date(input.now).toISOString();
+    const title = truncateUtf16Safe(input.root.title, 500);
+    return [
+      {
+        partitionKey: `activity:${sourceId}`,
+        sourceVersion: 1,
+        dedupeKey: sourceId,
+        effect: {
+          kind: "activity_event" as const,
+          eventId: uuidV7(input.now),
+          eventType: "workstream_participant_added",
+          // Nothing in the transcript ordered this: a person joined the room,
+          // which sits outside the message sequence.
+          subjectSequenceNumber: null,
+          actorType: "user" as const,
+          actorUserId: input.actorUserId,
+          // Both names are truncated to the schema's own ceiling rather than
+          // trusted: they are read from `users.name`, and a value over the
+          // effect schema's bound would throw inside the effect callback —
+          // which, on the create path, is after the root has already committed.
+          actorLabel: truncateUtf16Safe(input.actorName, 300),
+          title,
+          body: truncateUtf16Safe(
+            `${input.actorName} added ${input.recipientName} to this work stream.`,
+            8_000,
+          ),
+          canonicalUrl: null,
+          digestible: true,
+          occurredAt,
+          sourceKind: "workstream_participant",
+          sourceId,
+          dedupeKey: sourceId,
+          metadata: { participantUserId: input.userId, addedByUserId: input.actorUserId },
+          targets: [{ userId: input.userId, relation: "added" }],
+        },
+      },
+      {
+        partitionKey: `notification:${intentId}`,
+        sourceVersion: 1,
+        dedupeKey: intentId,
+        dependsOnProjectionKey: `user:${input.userId}`,
+        effect: {
+          kind: "participant_notification" as const,
+          intentId,
+          sourceId,
+          recipientUserId: input.userId,
+          actorUserId: input.actorUserId,
+          actorNameSnapshot: truncateUtf16Safe(input.actorName, 300),
+          workstreamTitleSnapshot: title,
+          workstreamObjectiveSnapshot: truncateUtf16Safe(input.root.description, 500),
+          // Read from the root rather than passed in, so both callers get it
+          // right: a create is always naming, and somebody hand-added during
+          // the seconds before the naming pass lands is in the same position.
+          titleIsProvisional: input.root.title_status === "naming",
+          occurredAt,
+        },
+      },
+    ];
   }
 
   async removeParticipant(auth: AuthContext, userId: string): Promise<void> {
@@ -2284,18 +2611,9 @@ export class WorkstreamObjectProductService {
       };
     }
 
-    if (root.scope === "personal" && input.confirmedParticipantUserIds.length > 0) {
-      const currentAudience = this.readerAudience(root);
-      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
-      this.assertAcceptedContentContains({
-        scope: "personal",
-        userIds: [...new Set([...currentAudience.userIds, ...input.confirmedParticipantUserIds])],
-      });
-    }
-
-    const personIds = [...new Set(input.mentions.flatMap((mention) =>
+    const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
-    const allMemberIds = [...new Set([auth.userId, ...personIds, ...input.confirmedParticipantUserIds])];
+    const allMemberIds = [...new Set([auth.userId, ...requestedPersonIds, ...input.confirmedParticipantUserIds])];
     const people = new Map<string, MentionPerson>();
     if (allMemberIds.length > 0) {
       const placeholders = allMemberIds.map(() => "?").join(",");
@@ -2314,14 +2632,28 @@ export class WorkstreamObjectProductService {
         throw new ApiError(422, "invalid_workspace_member", "A mentioned person is not an active workspace member");
       }
     }
+    const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
+    const personIds = [...new Set(prepared.mentions.flatMap((mention) =>
+      mention.type === "person" && mention.userId ? [mention.userId] : []))];
+    // Confirmation is authority for an accepted mention, not a second generic
+    // participant-add API. A malformed or spoofed range cannot smuggle its raw
+    // target into the audience after canonicalization rejects it.
+    const confirmedParticipantUserIds = input.confirmedParticipantUserIds.filter((userId) => personIds.includes(userId));
+    if (root.scope === "personal" && confirmedParticipantUserIds.length > 0) {
+      const currentAudience = this.readerAudience(root);
+      if (currentAudience.scope !== "personal") throw new Error("personal_reader_audience_expected");
+      this.assertAcceptedContentContains({
+        scope: "personal",
+        userIds: [...new Set([...currentAudience.userIds, ...confirmedParticipantUserIds])],
+      });
+    }
     const unconfirmed = personIds.filter((userId) =>
-      !this.isParticipant(userId) && !input.confirmedParticipantUserIds.includes(userId));
-    if (unconfirmed.length > 0) {
+      !this.isParticipant(userId) && !confirmedParticipantUserIds.includes(userId));
+    if (root.scope === "personal" && unconfirmed.length > 0) {
       throw new ApiError(409, "participant_confirmation_required", "Confirm before mentioning a nonparticipant", {
         people: unconfirmed.map((userId) => ({ userId, name: people.get(userId)?.name ?? "Workspace member" })),
       });
     }
-    const prepared = prepareMentionMarkdown(input.text, input.mentions, people);
     const attachmentRows = input.attachmentIds.length === 0 ? [] : (await this.workspaceDatabase(
       auth.workspaceId,
     ).prepare(
@@ -2360,7 +2692,14 @@ export class WorkstreamObjectProductService {
     const now = Date.now();
     const messageId = uuidV7(now);
     const runId = shouldInvoke ? asHarnessRunId(uuidV7(now)) : null;
-    const affectedUsers = [...new Set([auth.userId, ...personIds, ...input.confirmedParticipantUserIds])];
+    const transcriptMessage = await this.transcript.prepareParticipantMessage({
+      turnId: messageId,
+      actor: "human",
+      authorUserId: auth.userId,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: root.next_attention_ordinal,
+    });
+    const affectedUsers = [...new Set([auth.userId, ...personIds, ...confirmedParticipantUserIds])];
     const committed = await this.objectStore.commitWithRegionalEffects<LocalMessageWrite>(
       (sql) => {
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
@@ -2405,7 +2744,7 @@ export class WorkstreamObjectProductService {
           // Writing into a work stream is a stronger statement than opening it.
           auth.userId, auth.userId, now, now, now,
         );
-        for (const userId of input.confirmedParticipantUserIds) {
+        for (const userId of confirmedParticipantUserIds) {
           sql.exec(
             `INSERT INTO participants
                (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -2432,6 +2771,8 @@ export class WorkstreamObjectProductService {
                    0, 'text', NULL, ?, ?)`,
           messageId, sequence, attention, auth.userId, prepared.text, input.clientMessageId, now, now,
         );
+        transcriptMessage.input.attentionOrdinal = attention;
+        this.transcript.appendPreparedParticipantMessage(transcriptMessage);
         input.attachmentIds.forEach((resourceId, position) => {
           const row = attachmentRows.find((candidate) => String(candidate.id) === resourceId)!;
           const descriptor = {
@@ -2662,6 +3003,7 @@ export class WorkstreamObjectProductService {
     elicitation: Elicitation | undefined;
     harnessRunId: string | null;
     workflowInput: WorkstreamWorkflowInput | null;
+    responsePartId: string;
   }> {
     const input = AnswerElicitationRequestSchema.parse(rawInput);
     const root = await this.authorize(auth);
@@ -2686,6 +3028,13 @@ export class WorkstreamObjectProductService {
     const responsePartId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
     const model = await this.model(root);
+    const transcriptMessage = await this.transcript.prepareParticipantMessage({
+      turnId: responsePartId,
+      actor: "human",
+      authorUserId: auth.userId,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: null,
+    });
     let admittedRunId: HarnessRunId | null = null;
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -2731,6 +3080,10 @@ export class WorkstreamObjectProductService {
           JSON.stringify({ kind: "elicitation_response", elicitation: persisted }),
           now, now,
         );
+        this.transcript.appendPreparedParticipantMessage({
+          ...transcriptMessage,
+          input: { ...transcriptMessage.input, attentionOrdinal: attention },
+        });
         sql.exec(
           `INSERT INTO participants
              (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -2807,7 +3160,7 @@ export class WorkstreamObjectProductService {
       executionPrincipal: { type: "user", userId: auth.userId },
       reason: "elicitation_answer",
     } : null;
-    return { elicitation: answered, harnessRunId: admittedRunId, workflowInput };
+    return { elicitation: answered, harnessRunId: admittedRunId, workflowInput, responsePartId };
   }
 
   private validateElicitationAnswer(

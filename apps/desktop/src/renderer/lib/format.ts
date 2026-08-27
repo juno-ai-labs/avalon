@@ -1,3 +1,5 @@
+import type { WorkstreamBatchFilter } from '@rally/contracts';
+
 import type { HarnessStatus, WorkstreamSummary } from './types';
 
 const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
@@ -146,6 +148,66 @@ export function workstreamNeedsAttention(
 export type RecencyGroup = 'Last hour' | 'Today' | 'Yesterday' | 'This week' | 'This month' | 'Before this month';
 
 const hourInMilliseconds = 3_600_000;
+
+/** The next instant when a recency heading can change without new data. */
+export function nextRecencyBoundary(
+  items: ReadonlyArray<{ lastActivityAt: string }>,
+  now = new Date(),
+): number {
+  const nowTimestamp = now.getTime();
+  let next = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+  ).getTime();
+  for (const item of items) {
+    const timestamp = activityTimestamp(item);
+    const leavesLastHourAt = timestamp + hourInMilliseconds;
+    if (Number.isFinite(leavesLastHourAt) && leavesLastHourAt > nowTimestamp) {
+      next = Math.min(next, leavesLastHourAt);
+    }
+  }
+  return next;
+}
+
+/** The server-side range that describes one visible recency heading. */
+export function recencyGroupBatchFilter(
+  label: RecencyGroup,
+  now = new Date(),
+): WorkstreamBatchFilter {
+  const nowTimestamp = now.getTime();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfYesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
+  const startOfWeek = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - now.getDay(),
+  ).getTime();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const range = (() => {
+    switch (label) {
+      case 'Last hour': return { atOrAfter: new Date(nowTimestamp - hourInMilliseconds).toISOString() };
+      case 'Today': return {
+        atOrAfter: new Date(startOfToday).toISOString(),
+        before: new Date(nowTimestamp - hourInMilliseconds).toISOString(),
+      };
+      case 'Yesterday': return {
+        atOrAfter: new Date(startOfYesterday).toISOString(),
+        before: new Date(startOfToday).toISOString(),
+      };
+      case 'This week': return {
+        atOrAfter: new Date(startOfWeek).toISOString(),
+        before: new Date(startOfYesterday).toISOString(),
+      };
+      case 'This month': return {
+        atOrAfter: new Date(startOfMonth).toISOString(),
+        before: new Date(startOfWeek).toISOString(),
+      };
+      case 'Before this month': return { before: new Date(startOfMonth).toISOString() };
+    }
+  })();
+  return { lastActivityAt: range, pinned: false, includeSystem: false };
+}
 
 function activityTimestamp(item: { lastActivityAt: string }): number {
   const timestamp = new Date(item.lastActivityAt).getTime();

@@ -1,8 +1,17 @@
-import { WorkstreamSchema, type Workstream } from "@rally/contracts";
+import {
+  WorkstreamSchema,
+  type Workstream,
+  type WorkstreamBatchFilter,
+} from "@rally/contracts";
 import { z } from "zod";
 
 import { workspaceDOName } from "../durable-objects/names";
-import { WorkspaceDirectoryPageSchema } from "../durable-objects/workspace-directory-protocol";
+import {
+  WorkspaceBatchDispatchAdvanceResultSchema,
+  WorkspaceBatchDispatchBeginResultSchema,
+  WorkspaceDirectoryPageSchema,
+  WorkspaceDirectoryReadableIdsResultSchema,
+} from "../durable-objects/workspace-directory-protocol";
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -31,6 +40,55 @@ export class WorkstreamDirectoryService {
       userId: this.auth.userId,
       workstreamId,
     });
+  }
+
+  async readableIds(workstreamIds: string[]): Promise<string[]> {
+    if (workstreamIds.length === 0) return [];
+    const workspace = await this.workspace();
+    return WorkspaceDirectoryReadableIdsResultSchema.parse(await workspace.readableWorkstreamIds({
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      workstreamIds,
+    })).items;
+  }
+
+  async batchTargets(filter: WorkstreamBatchFilter): Promise<string[]> {
+    const workspace = await this.workspace();
+    const result = await workspace.batchUpdateTargets({
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      filter,
+    });
+    return result.items;
+  }
+
+  async beginBatchDispatch(input: {
+    operationId: string;
+    requestHash: string;
+    filter: WorkstreamBatchFilter;
+  }): Promise<{ items: string[]; targetCount: number }> {
+    const workspace = await this.workspace();
+    return WorkspaceBatchDispatchBeginResultSchema.parse(
+      await workspace.beginWorkstreamBatchDispatch({
+        workspaceId: this.auth.workspaceId,
+        userId: this.auth.userId,
+        ...input,
+      }),
+    );
+  }
+
+  async advanceBatchDispatch(input: {
+    operationId: string;
+    requestHash: string;
+    workstreamIds: string[];
+  }): Promise<{ remainingCount: number }> {
+    const workspace = await this.workspace();
+    return WorkspaceBatchDispatchAdvanceResultSchema.parse(
+      await workspace.advanceWorkstreamBatchDispatch({
+        workspaceId: this.auth.workspaceId,
+        ...input,
+      }),
+    );
   }
 
   async plannedForAutomation(

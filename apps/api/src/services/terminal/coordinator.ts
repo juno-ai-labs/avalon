@@ -59,6 +59,8 @@ export interface AcquiredTerminalSandbox {
   state: "running";
   authorityFingerprint: string;
   networkRevision: number;
+  /** Exclusive operation lease boundary; reacquire only after this instant. */
+  operationLeaseExpiresAt: number;
 }
 
 export interface TerminalSandboxMutationLease {
@@ -282,6 +284,7 @@ export class TerminalSandboxCoordinator {
       state: "running",
       authorityFingerprint,
       networkRevision: policy.revision,
+      operationLeaseExpiresAt: row.operationLeaseExpiresAt ?? now,
     };
   }
 

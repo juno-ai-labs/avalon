@@ -718,8 +718,8 @@ describes behaviour to replace, not a pattern to copy into something new.**
 | Work-stream common/viewer state | Pushed on both the WorkstreamDO and WorkspaceDO sockets, waterlined | Yes. |
 | Transcript parts, tool blocks, token frames, presence | SubstreamAgent socket, snapshot on subscribe | Yes. |
 | HyperSight block output | BlockDashboardAgent socket, checkpoint on connect | Yes. |
-| Transcript pagination | Correlated request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority. |
-| Opening a work stream | `GET /workstreams/:id`, whose response embeds the metadata **and** the first message window, then sockets take over | Partly. One round trip instead of a push, but one — not one per surface. |
+| Transcript range loading | Correlated, snapshot-fenced half-open range request on the SubstreamAgent socket | Yes — a pull the reader asked for, answered by the authority with explicit inspected coverage. |
+| Opening a work stream | Selecting the row immediately subscribes the SubstreamAgent feed; its first `snapshot` carries metadata, the unread-centered 5 + anchor + 5 range, the latest-five range, active turns, and reconnect timing baselines, while the WorkstreamDO control socket starts independently | Yes. `GET /workstreams/:id` remains only as an explicit manual recovery twin after the socket starts retrying or becomes unavailable. |
 | Workspace profile, members, invitations, connectors, resources, digest, flags, viewer preferences | `workspace_sync` invalidation on the socket → REST refetch of whichever surface is mounted | **No.** The socket carries the news; the data comes over HTTP. |
 | The sidebar's automations and notes | Carried on the `workspace_sync` answer to `subscribe`, then pushed whole as `workspace_sidebar_list` on every write, each with its own waterline | Yes. |
 | Suggested actions | `GET /work-opportunities?limit=4`, invalidated by the `activity` and `work_opportunities` topics | **No.** The rows are in the object holding the socket. |
@@ -811,3 +811,50 @@ converting this one back requires answering the ambiguity that produced it.
   checklist for the REST half of this boundary.
 - [`workstream-creation.md`](workstream-creation.md) — the create path, and what
   the caller is made to wait for.
+
+## Changelog
+
+### 2026-08-26 — Transcript history becomes range-addressed socket state
+
+**What changed:** Work-stream opening and history use snapshot-fenced transcript
+ranges with explicit coverage. The initial socket snapshot sends unread context
+and the latest tail together; REST retains the same shape only for recovery.
+
+**Why:** Cursor-only pages represented one contiguous list and forced a choice
+between quick unread paint and an instantly usable bottom.
+
+**Considered and rejected:** Fetching the middle eagerly and moving gap reads to
+REST. Both add round trips to data already owned by the open SubstreamAgent.
+
+**Consequences:** Range replies are state returned on request, not invalidation
+news. Realtime events above the snapshot fence extend only their own sequence;
+they do not imply middle coverage.
+
+### 2026-08-25 — A cold work-stream open becomes socket-first
+
+**What changed:** Selecting a work stream now admits its SubstreamAgent feed
+immediately and paints detail plus transcript from the first `snapshot`. The
+WorkstreamDO control socket starts alongside it, not ahead of it, and its
+viewer-specific HyperSight preference is optional metadata rather than an open
+gate. `GET /workstreams/:id` remains attached to the screen only as the explicit
+Retry path after the first socket attempt fails or the socket becomes unavailable.
+
+**Why:** Production timing showed the former detail request and the later
+socket subscription were two readings of the same room performed in series.
+The detail request alone was large enough to consume the two-second P90 budget,
+and the socket then paid another ticket, handshake, and canonical snapshot
+before the screen could become live.
+
+**Considered and rejected:** Starting REST and the feed in parallel still asks
+one Durable Object to assemble two equivalent boots and leaves their winner
+load-dependent. Awaiting the WorkstreamDO preference preserves a cross-object
+dependency for a panel that is closed safely while its metadata is unknown.
+Opening feeds on hover would publish presence for a work stream the person did
+not open; hover therefore remains control-only.
+
+**Consequences:** A normal open has one canonical payload and can send as soon
+as that payload is applied because message commands already use the persistent
+WorkspaceDO socket. A failed first ticket or handshake exposes Retry while the
+socket keeps reconnecting, so recovery is reachable without an arbitrary
+timeout. Recovery remains deliberately more expensive and does not define the
+cold-open percentile.

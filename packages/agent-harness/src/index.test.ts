@@ -15,6 +15,7 @@ import {
   classifyAddressingHeuristically,
   compileAutomation,
   composeBeforeToolCallHooks,
+  HarnessPluginActivationError,
   memberSafeHarnessFailureMessage,
   OpenRouterClient,
   openRouterProviderError,
@@ -22,8 +23,11 @@ import {
   renderAddressingMessages,
   runHarness,
   type AutomationCompilerStreamEvent,
+  type BindLoopTransition,
+  type BindProviderBoundary,
   type HarnessEvent,
   type HarnessPlugin,
+  type HarnessPluginActivationContext,
   type HarnessTool,
   type HarnessToolContext,
   type InferenceAttemptEvent,
@@ -1232,6 +1236,109 @@ describe("agent harness", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("names the draft field a rejected submission has to fix", async () => {
+    const trigger = {
+      type: "semantic_activity",
+      rrule: null,
+      timezone: null,
+      summary: null,
+      intervalSeconds: null,
+      connectorType: "google",
+      sourceBindingKey: "drive_source",
+      suggestedSourcePluginId: "plugin_google_2",
+      eventTypes: null,
+      deterministicFilters: null,
+      condition: "The changed file is a customer contract.",
+      resourceId: null,
+    };
+    const draft = {
+      name: "Contract watch",
+      description: "Escalate changed customer contracts.",
+      overview: "Watches the authorized Drive connection and escalates changed customer contracts.",
+      instructions: "1. Read the changed file.\n2. Escalate a customer contract.\n3. Record when nothing qualifies.",
+      expectedOutputs: ["Escalation"],
+      requestedDelivery: [],
+      defaultBehavior: "{}",
+      recommendedPlugins: [],
+      memoryTables: [],
+      suggestedScope: "personal",
+      ready: true,
+    };
+    const bodies: Array<Record<string, unknown>> = [];
+    const responses = [
+      automationToolResponse("load_plugin", { pluginId: "plugin_google_2" }),
+      // A ready semantic trigger whose prefilter declares no event type. The
+      // shape matches the schema the model was shown; only `AutomationDraftSchema`'s
+      // refinement rejects it, which is exactly the case the runtime used to
+      // report as an external fault the model was told not to work around.
+      automationSubmitResponse({ ...draft, triggers: [{ ...trigger, deterministicPrefilter: "{}" }] }),
+      automationSubmitResponse({
+        ...draft,
+        triggers: [{ ...trigger, deterministicPrefilter: '{"eventType":"drive.file_changed"}' }],
+      }),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return responses.shift()!;
+    }) as typeof fetch;
+
+    await expect(compileAutomation({
+      apiKey: "key",
+      model: "test/model",
+      messages: [{ role: "user", content: "Escalate changed customer contracts." }],
+      fetch: fetcher,
+      pluginCatalog: [{
+        pluginId: "plugin_google_2",
+        displayName: "Google Drive · Work",
+        icon: "brand-google-drive",
+        description: "Search an authorized Google Drive connection.",
+        scope: "personal",
+        searchAliases: ["drive"],
+        systemMessage: "Use Drive tools.",
+        activityTriggers: [{
+          eventType: "drive.file_changed",
+          label: "Drive file changed",
+          description: "A file changed in the connected Drive.",
+          filterFields: [],
+          digestible: false,
+        }],
+        tools: [],
+      }],
+    })).resolves.toMatchObject({
+      name: "Contract watch",
+      ready: true,
+      triggers: [{ type: "semantic_activity", deterministicPrefilter: { eventType: "drive.file_changed" } }],
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    const toolMessages = (bodies[2]!.messages as Array<{ role: string; content: unknown }>)
+      .filter((message) => message.role === "tool");
+    const rejection = JSON.parse(String(toolMessages.at(-1)!.content)) as {
+      success: boolean;
+      kind: string;
+      error: string;
+    };
+    // The correction has to name the field, because the model's only other move
+    // is to resubmit what it already sent. The sentence it used to get instead
+    // said the arguments were fine and told it not to change them.
+    //
+    // Parsed rather than substring-matched across every tool result, so this is
+    // provably about the rejected submission and not the `load_plugin` success
+    // beside it, and so it does not depend on how the result is serialized.
+    // The sentence is pinned verbatim because it is the behaviour under repair,
+    // and it is owned across two packages: `@rally/contracts` writes the
+    // refinement's words, `tool-arguments.ts` the `path: message` shape and the
+    // lowercased first letter. A reword in either is meant to fail here.
+    expect(rejection).toMatchObject({
+      success: false,
+      kind: "validation",
+      error: expect.stringContaining(
+        "triggers[0].deterministicPrefilter.eventType: ready semantic activity triggers require one declared event type",
+      ),
+    });
+    expect(rejection.error).not.toContain("instead of changing the arguments");
+  });
+
   it("keeps the automation loop running after an unsupported text-only stop turn", async () => {
     const fetcher = vi.fn(async () => streamResponse([{
       choices: [{ delta: { content: "I need more information." }, finish_reason: "stop" }],
@@ -1527,6 +1634,142 @@ describe("agent harness", () => {
     const stopped = await runHarness({ ...runInput(hangingFetch), signal: controller.signal });
     expect(stopped).toMatchObject({ status: "stopped" });
     expect(stopped.failure).toBeUndefined();
+  });
+
+  it("persists and hash-verifies the exact Bind array before and after a provider turn", async () => {
+    let providerBody: Record<string, unknown> | null = null;
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      providerBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([{
+        model: "test/model",
+        choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 4, completion_tokens: 1 },
+      }]);
+    }) as typeof fetch;
+    const transitions: BindLoopTransition[] = [];
+    const boundaries: BindProviderBoundary[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      messages: [{
+        role: "user",
+        content: "Do the work",
+        provenance: {
+          originKind: "derived",
+          sourceKind: "participant_turn",
+          sourceId: "message-1",
+          sourceRevision: 1,
+        },
+      }],
+      onBindLoopTransition: async (transition) => { transitions.push(transition); },
+      onBindProviderBoundary: async (boundary) => { boundaries.push(boundary); },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "Done" });
+    expect(transitions.map((transition) => transition.kind)).toEqual([
+      "state_initialized",
+      "state_reconciled",
+      "assistant_accepted",
+    ]);
+    expect(boundaries).toEqual([
+      expect.objectContaining({
+        stateRevision: 2,
+        generation: 1,
+        projectedHash: expect.any(String),
+        bindHash: expect.any(String),
+      }),
+    ]);
+    expect(boundaries[0]!.projectedHash).toBe(boundaries[0]!.bindHash);
+    const initialized = transitions[0];
+    expect(initialized?.kind).toBe("state_initialized");
+    if (initialized?.kind === "state_initialized") {
+      expect(initialized.nonSystemMessageOrigins).toEqual([{
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: "message-1",
+        sourceRevision: 1,
+      }]);
+    }
+    expect(JSON.stringify(providerBody)).not.toContain("provenance");
+    expect(JSON.stringify(providerBody)).not.toContain("participant_turn");
+  });
+
+  it("does not let Bind accept an assistant message whose durable transition failed", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      model: "test/model",
+      choices: [{ delta: { content: "Uncommitted" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 4, completion_tokens: 1 },
+    }])) as typeof fetch;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      onBindLoopTransition: async (transition) => {
+        if (transition.kind === "assistant_accepted") throw new Error("durable transcript unavailable");
+      },
+      onBindProviderBoundary: async () => undefined,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+  });
+
+  it("persists reverse-settling parallel tool results in Bind call order before the next request", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [
+            toolDelta(0, "call-first", "first"),
+            toolDelta(1, "call-second", "second"),
+          ] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{
+        choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+      }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    let markStarted!: () => void;
+    const bothStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    let started = 0;
+    const gate = (which: "first" | "second") => async () => {
+      started += 1;
+      if (started === 2) markStarted();
+      await new Promise<void>((resolve) => {
+        if (which === "first") releaseFirst = resolve;
+        else releaseSecond = resolve;
+      });
+      return { output: { which }, summary: which };
+    };
+    const transitions: BindLoopTransition[] = [];
+    const run = runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([
+        { ...harnessTool("first", "read", []), execute: gate("first") },
+        { ...harnessTool("second", "read", []), execute: gate("second") },
+      ])],
+      onBindLoopTransition: async (transition) => { transitions.push(transition); },
+    });
+
+    await bothStarted;
+    releaseSecond();
+    await Promise.resolve();
+    releaseFirst();
+    await expect(run).resolves.toMatchObject({ status: "completed", content: "Done" });
+
+    const accepted = transitions.filter((transition): transition is Extract<
+      BindLoopTransition,
+      { kind: "tool_result_accepted" }
+    > => transition.kind === "tool_result_accepted");
+    expect(accepted.map((transition) => [transition.toolCallId, transition.callIndex]))
+      .toEqual([["call-first", 0], ["call-second", 1]]);
+    const secondBoundary = transitions.findIndex((transition) =>
+      transition.kind === "state_reconciled" && transition.stateRevision > accepted[1]!.stateRevision);
+    expect(secondBoundary).toBeGreaterThan(transitions.indexOf(accepted[1]!));
   });
 
   // A work stream pinned from the developer-mode model selector routes with no
@@ -2773,31 +3016,36 @@ describe("agent harness", () => {
     // the persist is failing, so `timedOut` is genuinely true and the arm below
     // it is genuinely reachable. That is what makes this a test of the
     // ordering rather than of the platform arm, which the spec above covers.
-    const fetcher = vi.fn(async () => streamResponse([{
-      choices: [{
-        delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
-        finish_reason: "tool_calls",
-      }],
-    }])) as typeof fetch;
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async () => streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "provider-write", "create_record")] },
+          finish_reason: "tool_calls",
+        }],
+      }])) as typeof fetch;
 
-    const outcome = await runHarness({
-      ...runInput(fetcher, { maxWallClockMs: 5 }),
-      corePlugins: [testCorePlugin([harnessTool("create_record", "write", [])])],
-      persistToolExecutionPlan: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        throw new Error(
-          "D1_ERROR: Subrequest depth limit exceeded. This request recursed through Workers too many times.",
-        );
-      },
-    });
+      const outcome = await runHarness({
+        ...runInput(fetcher, { maxWallClockMs: 5 }),
+        corePlugins: [testCorePlugin([harnessTool("create_record", "write", [])])],
+        persistToolExecutionPlan: async () => {
+          await vi.advanceTimersByTimeAsync(25);
+          throw new Error(
+            "D1_ERROR: Subrequest depth limit exceeded. This request recursed through Workers too many times.",
+          );
+        },
+      });
 
-    expect(outcome).toMatchObject({
-      status: "failed",
-      failure: {
-        kind: "platform",
-        code: "platform_limit_exceeded",
-      },
-    });
+      expect(outcome).toMatchObject({
+        status: "failed",
+        failure: {
+          kind: "platform",
+          code: "platform_limit_exceeded",
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("files the count limit the same way as the depth limit", () => {
@@ -3273,6 +3521,16 @@ describe("agent harness", () => {
     }) as typeof fetch;
     const order: string[] = [];
     const events: HarnessEvent[] = [];
+    const onActivate = vi.fn(async (context: HarnessPluginActivationContext) => {
+      expect(context).toMatchObject({
+        workspaceId: "workspace-1",
+        workstreamId: "workstream-1",
+        harnessRunId: "run-1",
+        executionPrincipal: { type: "user", userId: "00000000-0000-4000-8000-000000000001" },
+      });
+      expect(context.signal.aborted).toBe(false);
+      order.push("activate");
+    });
     const plugin: HarnessPlugin = {
       canonicalId: "connection:github-1",
       modelId: "plugin_github",
@@ -3282,6 +3540,8 @@ describe("agent harness", () => {
       description: "Search authorized GitHub repositories.",
       systemMessage: "Use GitHub search only when repository context is relevant.",
       preload: false,
+      onActivate,
+      activationTimeoutMs: 20_000,
       tools: [{
         definition: {
           name: "search",
@@ -3307,7 +3567,8 @@ describe("agent harness", () => {
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "done", toolCalls: 2 });
-    expect(order).toEqual(["persist:connection:github-1", "execute"]);
+    expect(order).toEqual(["activate", "persist:connection:github-1", "execute"]);
+    expect(onActivate).toHaveBeenCalledOnce();
     expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).not.toContain("gh1_search");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("Use GitHub search only");
     expect(requestBodies[0]!.messages[0]!.content).not.toContain("connection:github-1");
@@ -3352,6 +3613,210 @@ describe("agent harness", () => {
         idempotency: "safe",
       },
     });
+  });
+
+  it("restores a durable plugin without repeating its explicit activation hook", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+      tools?: Array<{ function: { name: string } }>;
+    }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return streamResponse([{ choices: [{ delta: { content: "ready" }, finish_reason: "stop" }] }]);
+    }) as typeof fetch;
+    const plugin = credentialPlugin("connection:restored", "restored", "Restored plugin policy");
+    const onActivate = vi.fn(async () => undefined);
+    plugin.onActivate = onActivate;
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      activationHints: [plugin.canonicalId],
+      reauthorizePlugin: () => "authorized",
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "ready" });
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(requestBodies[0]!.tools?.map((tool) => tool.function.name)).toContain("restored_search");
+    expect(requestBodies[0]!.messages[0]!.content).toContain("Restored plugin policy");
+  });
+
+  it("leaves a plugin inactive and hides provider details when activation fails", async () => {
+    const requestBodies: Array<{
+      messages: Array<{ role: string; content?: unknown }>;
+      tools?: Array<{ function: { name: string } }>;
+    }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-load",
+            "load_plugin",
+            JSON.stringify({ pluginId: "plugin_broken" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "reported failure" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const plugin = credentialPlugin("connection:broken", "broken", "Broken plugin policy");
+    plugin.modelId = "plugin_broken";
+    plugin.onActivate = vi.fn(async () => { throw new Error("secret provider detail"); });
+    const persistActivation = vi.fn();
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => "authorized",
+      persistActivation,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "reported failure" });
+    expect(persistActivation).not.toHaveBeenCalled();
+    expect(requestBodies[1]!.tools?.map((tool) => tool.function.name)).not.toContain("broken_search");
+    const transcript = JSON.stringify(requestBodies[1]!.messages);
+    expect(transcript).toContain("plugin_activation_failed");
+    expect(transcript).not.toContain("secret provider detail");
+  });
+
+  it("returns only host-authored activation guidance and retry policy", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-load",
+            "load_plugin",
+            JSON.stringify({ pluginId: "plugin_disabled" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "reported guidance" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const plugin = credentialPlugin("connection:disabled", "disabled", "Disabled plugin policy");
+    plugin.modelId = "plugin_disabled";
+    plugin.onActivate = vi.fn(async () => {
+      throw new HarnessPluginActivationError(
+        "Wait for a workspace owner to re-enable this plugin.",
+        { retryable: false, cause: new Error("secret provider detail") },
+      );
+    });
+
+    await runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => "authorized",
+      persistActivation: vi.fn(),
+    });
+
+    const transcript = JSON.stringify(requestBodies[1]!.messages);
+    expect(transcript).toContain("Wait for a workspace owner to re-enable this plugin.");
+    expect(transcript).toContain('\\"retryable\\":false');
+    expect(transcript).not.toContain("secret provider detail");
+  });
+
+  it("uses only the requested plugin deadline and never persists detached completion", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDeltaWithArguments(
+            0,
+            "provider-load",
+            "load_plugin",
+            JSON.stringify({ pluginId: "plugin_slow" }),
+          )] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "timed out safely" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    let finishActivation!: () => void;
+    const activationSignals: AbortSignal[] = [];
+    const plugin = credentialPlugin("connection:slow", "slow", "Slow plugin policy");
+    plugin.modelId = "plugin_slow";
+    plugin.activationTimeoutMs = 5;
+    plugin.onActivate = vi.fn(async (context) => {
+      activationSignals.push(context.signal);
+      await new Promise<void>((resolve) => { finishActivation = resolve; });
+    });
+    const unused = credentialPlugin("connection:unused", "unused", "Unused plugin policy");
+    unused.activationTimeoutMs = 60_000;
+    const persistActivation = vi.fn();
+
+    const outcome = await runHarness({
+      ...runInput(fetcher, { toolTimeoutMs: 1 }),
+      plugins: [plugin, unused],
+      reauthorizePlugin: () => "authorized",
+      persistActivation,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "timed out safely" });
+    expect(activationSignals).toHaveLength(1);
+    expect(activationSignals[0]!.aborted).toBe(true);
+    finishActivation();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(persistActivation).not.toHaveBeenCalled();
+  }, 2_000);
+
+  it("single-flights expensive activation across a burst of repeated loads", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: {
+            tool_calls: Array.from({ length: 8 }, (_, index) => ({
+              index,
+              id: `provider-load-${index}`,
+              type: "function" as const,
+              function: {
+                name: "load_plugin",
+                arguments: JSON.stringify({ pluginId: "plugin_burst" }),
+              },
+            })),
+          },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "loaded once" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const plugin = credentialPlugin("connection:burst", "burst", "Burst plugin policy");
+    plugin.modelId = "plugin_burst";
+    let releaseActivation!: () => void;
+    const activationReleased = new Promise<void>((resolve) => {
+      releaseActivation = resolve;
+    });
+    plugin.onActivate = vi.fn(async () => activationReleased);
+    const persistActivation = vi.fn();
+
+    const outcomePromise = runHarness({
+      ...runInput(fetcher),
+      plugins: [plugin],
+      reauthorizePlugin: () => "authorized",
+      persistActivation,
+    });
+    await vi.waitFor(() => expect(plugin.onActivate).toHaveBeenCalledOnce());
+    releaseActivation();
+
+    await expect(outcomePromise).resolves.toMatchObject({
+      status: "completed",
+      content: "loaded once",
+      toolCalls: 8,
+    });
+    expect(plugin.onActivate).toHaveBeenCalledOnce();
+    expect(persistActivation).toHaveBeenCalledTimes(8);
   });
 
   it("loads a provider-owned tool surface once when a deferred plugin activates", async () => {
@@ -4281,11 +4746,18 @@ describe("agent harness", () => {
       return streamResponse([{ choices: [{ delta: { content: "healed" }, finish_reason: "stop" }] }]);
     }) as typeof fetch;
     const issues: Array<{ kind: string; healed?: boolean }> = [];
+    const transitions: BindLoopTransition[] = [];
 
     const outcome = await runHarness({
       ...runInput(fetcher),
       messages: [
-        { role: "user", content: "First request" },
+        {
+          role: "user",
+          content: "First request",
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "first", sourceRevision: 1,
+          },
+        },
         {
           role: "assistant",
           content: null,
@@ -4294,11 +4766,28 @@ describe("agent harness", () => {
             type: "function",
             function: { name: "missing_tool", arguments: "{}" },
           }],
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "dropped", sourceRevision: 2,
+          },
         },
-        { role: "tool", tool_call_id: "orphan-call", content: "{}" },
-        { role: "user", content: "Continue without the stale call" },
+        {
+          role: "tool",
+          tool_call_id: "orphan-call",
+          content: "{}",
+          provenance: {
+            originKind: "derived", sourceKind: "tool_receipt", sourceId: "orphan", sourceRevision: null,
+          },
+        },
+        {
+          role: "user",
+          content: "Continue without the stale call",
+          provenance: {
+            originKind: "derived", sourceKind: "participant_turn", sourceId: "last", sourceRevision: 4,
+          },
+        },
       ],
       onTranscriptIssues: (found) => { issues.push(...found); },
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
     });
 
     expect(outcome).toMatchObject({ status: "completed", content: "healed" });
@@ -4308,6 +4797,11 @@ describe("agent harness", () => {
     ]));
     expect(requestBodies[0]!.messages.some((message) => message.tool_call_id === "orphan-call")).toBe(false);
     expect(JSON.stringify(requestBodies[0]!.messages)).not.toContain("dangling-call");
+    const initialized = transitions.find((transition) => transition.kind === "state_initialized");
+    expect(initialized?.kind === "state_initialized" ? initialized.nonSystemMessageOrigins : []).toEqual([
+      expect.objectContaining({ sourceId: "first" }),
+      expect.objectContaining({ sourceId: "last" }),
+    ]);
   });
 
   it("normalizes what the compiler said the person asked for", () => {
@@ -4380,6 +4874,48 @@ describe("agent harness", () => {
     expect(schema).not.toContain('"requiredCapabilities"');
     expect(schema).toContain('"memoryTables"');
     expect(schema).toContain('"usageInstructions"');
+    // `deterministicPrefilter` is an opaque JSON string in the declared schema,
+    // so the one key a ready semantic trigger must put inside it cannot be
+    // expressed as schema — this sentence is the only place the model can read
+    // it. Losing it costs a rejected round trip on every such draft, and the
+    // correction that recovers from one names a path
+    // (`deterministicPrefilter.eventType`) that does not exist in the arguments
+    // the model writes, so nothing downstream would make the loss obvious.
+    expect(schema).toContain('{\\"eventType\\": \\"the.event.type\\"}');
+  });
+
+  it("hands a prefilter that is not a JSON object to the schema instead of emptying it", () => {
+    const trigger = (deterministicPrefilter: unknown) => (__testing.normalizeAutomationDraft({
+      name: "Contract watch",
+      description: "Escalate changed contracts.",
+      instructions: "Escalate a changed contract.",
+      triggers: [{
+        type: "semantic_activity",
+        connectorType: "google",
+        sourceBindingKey: "drive_source",
+        suggestedSourcePluginId: "plugin_google",
+        deterministicPrefilter,
+        condition: "The changed file is a customer contract.",
+      }],
+      expectedOutputs: ["Escalation"],
+      defaultBehavior: "{}",
+      suggestedScope: "personal",
+      elicitation: null,
+    }) as { triggers: Array<{ deterministicPrefilter: unknown }> }).triggers[0]!.deterministicPrefilter;
+
+    // Decoded when it is what it claims to be.
+    expect(trigger('{"eventType":"drive.file_changed"}')).toEqual({ eventType: "drive.file_changed" });
+    expect(trigger(null)).toEqual({});
+
+    // Handed through when it is not. Emptying these was how the model came to
+    // be told it had declared no event type while looking at one it had
+    // plainly written — the shapes differ, the correction did not, and it
+    // resubmitted. A draft that survives this also keeps a filter the model
+    // wrote rather than matching every event of its kind.
+    expect(trigger("{eventType: drive.file_changed}")).toBe("{eventType: drive.file_changed}");
+    expect(trigger(JSON.stringify('{"eventType":"drive.file_changed"}')))
+      .toBe('"{\\"eventType\\":\\"drive.file_changed\\"}"');
+    expect(trigger("[]")).toBe("[]");
   });
 
   it("normalizes every supported automation trigger shape", () => {

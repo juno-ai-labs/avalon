@@ -292,13 +292,42 @@ pre {
   display: inline-flex;
 }
 
-.avatar-stack .avatar + .avatar,
+.avatar-stack-item + .avatar-stack-item,
 .avatar-overflow {
   margin-left: -7px;
 }
 
+.avatar-stack-item {
+  display: inline-flex;
+  position: relative;
+}
+
 .avatar-stack .avatar {
   border: 2px solid var(--av-sys-color-surface-default);
+  position: relative;
+  z-index: 1;
+}
+
+.avatar-presence-ping {
+  animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;
+  background: color-mix(in srgb, var(--av-sys-color-success-base) 35%, transparent);
+  border-radius: var(--av-sys-size-radius-pill);
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+@keyframes avatar-presence-ping {
+  75%, 100% { opacity: 0; transform: scale(2); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar-presence-ping {
+    animation: none;
+    opacity: .3;
+    transform: scale(1.35);
+  }
 }
 
 .avatar-overflow {
@@ -313,6 +342,8 @@ pre {
   justify-content: center;
   min-width: 24px;
   padding: 0 4px;
+  position: relative;
+  z-index: 1;
 }
 
 .status-indicator {
@@ -446,9 +477,13 @@ pre {
 .menu-separator { background: var(--av-sys-color-border-default); height: 1px; margin: 4px; }
 /* `width` and `text-align` matter for the items rendered `asChild` onto a
    button, which would otherwise shrink to fit its label and centre it. Both
-   restate what an item rendered onto Radix's own div already computes. */
+   restate what an item rendered onto Radix's own div already computes. The
+   menu is `surface-raised`, so its ordinary highlight uses that surface's own
+   hover partner; Terra Light's `elevated-hover` is the same as the menu base.
+   The danger rule has equal specificity and follows this one, so source order
+   preserves its dedicated tint. */
 .menu-item { align-items: center; border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); display: flex; font-size: 12px; gap: 8px; min-height: 30px; outline: 0; padding: 4px 8px; text-align: start; width: 100%; }
-.menu-item[data-highlighted] { background: var(--av-sys-color-surface-elevated-hover); color: var(--av-sys-color-text-default); }
+.menu-item[data-highlighted] { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
 .menu-item[data-disabled] { opacity: 0.42; }
 .menu-item-danger { color: var(--av-sys-color-danger-base); }
 .menu-item-danger[data-highlighted] { background: var(--av-sys-color-danger-tint); color: var(--av-sys-color-danger-strong); }
@@ -635,7 +670,34 @@ pre {
   text-transform: var(--av-sys-label-transform);
 }
 .sidebar-group { margin-top: var(--av-sys-space-group-gap); }
-.sidebar-group h3 { padding: 0 8px var(--av-cmp-group-label-gap); }
+.sidebar-group-heading {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  padding: 0 4px var(--av-cmp-group-label-gap) 8px;
+}
+.sidebar-group-heading h3 { flex: 1; min-width: 0; }
+.sidebar-group-menu-trigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--av-sys-size-radius-sm);
+  color: var(--av-ref-color-neutral-9);
+  display: inline-flex;
+  height: 22px;
+  justify-content: center;
+  padding: 0;
+  width: 22px;
+}
+.sidebar-group-menu-trigger:hover,
+.sidebar-group-menu-trigger[data-state='open'] {
+  background: var(--av-sys-color-surface-subtle);
+  color: var(--av-ref-color-neutral-12);
+}
+.sidebar-group-menu-trigger:focus-visible {
+  outline: 2px solid var(--av-sys-color-border-highlight);
+  outline-offset: 1px;
+}
 .sidebar-list { display: grid; gap: var(--av-sys-space-row-gap); }
 .sidebar-context-target { min-width: 0; }
 .sidebar-context-target .sidebar-row { width: 100%; }
@@ -3962,10 +4024,13 @@ pre {
   width: 100%;
 }
 
+/* This popover is `surface-raised` too. Terra Light gives `elevated-hover` the
+   same value as that base, so command rows use the raised surface's visible
+   hover partner for pointer, focus, and selected states. */
 .command-popover > button:hover,
 .command-popover > button:focus-visible,
 .command-popover > button.is-selected {
-  background: var(--av-sys-color-surface-elevated-hover);
+  background: var(--av-sys-color-surface-raised-hover);
 }
 
 .command-popover strong {

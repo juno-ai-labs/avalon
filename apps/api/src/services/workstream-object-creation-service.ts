@@ -26,7 +26,10 @@ import { WorkstreamEmailRoutingService } from "./workstream-email-routing-servic
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
-type CreateInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
+type ParsedCreateInput = z.infer<typeof CreateWorkstreamRequestSchema>;
+type CreateInput = Omit<ParsedCreateInput, "mentions"> & {
+  /** Optional at this internal boundary because the schema fills the empty case. */
+  mentions?: ParsedCreateInput["mentions"];
   descriptionSource?: "authored" | "derived";
   /**
    * Who may read the work stream from birth, for the callers that know. Omitted
@@ -63,6 +66,16 @@ interface CreateOptions {
   slackSearchAuthorization?: SlackSearchAuthorization;
   reason?: string;
   telemetryOperationId?: string;
+  /**
+   * Whether the people in `participantUserIds` are told they were added.
+   *
+   * The caller's to state, never the object's to infer, for the reason `scope`
+   * is also an argument: this service is reached both by a person picking names
+   * in "Add people" and by a connector ingress handing over a conversation's
+   * resolved roster, and only the caller can tell those apart. Omitted means
+   * quiet.
+   */
+  notifyParticipants?: boolean;
   /**
    * The caller's open `workstream_create` span. Creation is the slowest thing
    * a person waits on in Avalon, and every step below is an awaited round trip
@@ -113,8 +126,13 @@ export class WorkstreamObjectCreationService {
     // workspace-readable work stream the first attempt had already committed.
     // In the hash, that mismatch is the 409 the receipt exists to raise.
     const scope = input.scope ?? "personal";
+    const { mentions: requestMentions, ...hashBody } = body;
     const requestHash = workstreamImportHash({
-      ...body,
+      ...hashBody,
+      // Keep empty mentions compatible with receipts reserved by the previous
+      // Worker during a rolling deploy. Non-empty spans change the durable
+      // message and therefore remain part of the idempotency identity.
+      ...(requestMentions.length > 0 ? { mentions: requestMentions } : {}),
       descriptionSource: input.descriptionSource ?? "derived",
       scope,
     });
@@ -214,9 +232,11 @@ export class WorkstreamObjectCreationService {
       emailAddress: email.emailAddress,
       creatorUserId: this.auth.userId,
       openingMessage: body.openingMessage,
+      mentions: body.mentions,
       openingStructuredContent: options.openingStructuredContent ?? null,
       clientMessageId: body.clientMessageId,
       participantUserIds: body.participantUserIds,
+      notifyParticipants: options.notifyParticipants ?? false,
       attachmentIds: body.attachmentIds,
       scope,
       originResourceIds: options.originResourceIds ?? [],

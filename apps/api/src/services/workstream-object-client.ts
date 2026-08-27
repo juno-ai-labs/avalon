@@ -5,6 +5,7 @@ import {
   ParticipantSchema,
   ResourceSchema,
   WorkstreamDetailSchema,
+  WorkstreamTranscriptSnapshotSchema,
   WorkstreamSchema,
   type Elicitation,
   type Message,
@@ -14,6 +15,7 @@ import {
   type Resource,
   type Workstream,
   type WorkstreamDetail,
+  type WorkstreamTranscriptSnapshot,
 } from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -48,6 +50,7 @@ const MessagePageSchema = z.object({
 });
 const BootPayloadSchema = z.object({
   workstream: WorkstreamDetailSchema,
+  transcript: WorkstreamTranscriptSnapshotSchema,
   messageFeed: MessagePageSchema,
   resumeFeed: MessagePageSchema.nullable(),
 });
@@ -231,6 +234,7 @@ export class WorkstreamObjectClient {
   /** Detail plus both transcript windows, in one call to the room. */
   async boot(): Promise<{
     workstream: WorkstreamDetail;
+    transcript: WorkstreamTranscriptSnapshot;
     messageFeed: MessagePage;
     resumeFeed: MessagePage | null;
   }> {

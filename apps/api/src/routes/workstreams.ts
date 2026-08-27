@@ -5,6 +5,7 @@ import {
   AcknowledgeWorkstreamReadRequestSchema,
   ActivitySuggestionSchema,
   AddParticipantRequestSchema,
+  ApplyWorkstreamBatchRequestSchema,
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
   CreateWorkstreamRequestSchema,
@@ -14,12 +15,15 @@ import {
   BlockDashboardSchema,
   MessageSchema,
   ParticipantSchema,
+  PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
   ResourceSchema,
   UpdateBlockDashboardPreferenceRequestSchema,
   UpdateBlockDashboardRequestSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamBootSchema,
+  WorkstreamBatchAcceptedSchema,
+  WorkstreamBatchPreviewSchema,
   WorkstreamSchema,
   WorkspaceWorkstreamCursorSchema,
 } from "@rally/contracts";
@@ -33,6 +37,7 @@ import { WorkstreamService } from "../services/workstream-service";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { WorkstreamDirectoryService } from "../services/workstream-directory-service";
 import { WorkstreamObjectCreationService } from "../services/workstream-object-creation-service";
+import { WorkstreamBatchUpdateService } from "../services/workstream-batch-update";
 import { requireOpenWorkstreamAuthority } from "../services/workstream-authority";
 import { BlockDashboardService } from "../services/block-dashboard-service";
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry, telemetryOperationId } from '../telemetry/api-emitter';
@@ -200,7 +205,9 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
         new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
           ...body,
           descriptionSource: body.objective ? "authored" : "derived",
-        }, { span }))
+          // The one caller whose `participantUserIds` is people somebody picked
+          // by hand, which is what makes telling them the right thing to do.
+        }, { span, notifyParticipants: true }))
     );
     span.setAttributes({
       "rally.workstream.id": created.workstream.id,
@@ -218,6 +225,18 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
 });
 // Registered ahead of every `/:id` route so the literal segment is never read
 // as an id, whatever order Hono would otherwise resolve them in.
+workstreamRoutes.post("/batch/preview", zValidator("json", PreviewWorkstreamBatchRequestSchema), async (c) => {
+  await requireOpenWorkstreamAuthority(c.env);
+  const result = await new WorkstreamBatchUpdateService(c.env, getAuth(c))
+    .preview(c.req.valid("json").filter);
+  return c.json(WorkstreamBatchPreviewSchema.parse(result));
+});
+workstreamRoutes.post("/batch", zValidator("json", ApplyWorkstreamBatchRequestSchema), async (c) => {
+  await requireOpenWorkstreamAuthority(c.env);
+  const result = await new WorkstreamBatchUpdateService(c.env, getAuth(c))
+    .enqueue(c.req.valid("json"));
+  return c.json(WorkstreamBatchAcceptedSchema.parse(result), 202);
+});
 workstreamRoutes.put("/pins", zValidator("json", ReorderWorkstreamPinsRequestSchema), async (c) => {
   await requireOpenWorkstreamAuthority(c.env);
   const result = await new WorkstreamDirectoryService(c.env, getAuth(c)).reorderPins(c.req.valid("json").workstreamIds);
@@ -255,29 +274,22 @@ workstreamRoutes.put("/:id/block-dashboard", zValidator("param", idParam), zVali
 );
 workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   const id = c.req.valid("param").id;
+  const operationId = telemetryOperationId(readRallyHeader((name) => c.req.header(name), RALLY_HEADERS.OPERATION_ID));
   return requestFlowSpan(c, "workstream.detail.read", {
     flow: "workstream_open",
     identity: { workstreamId: id },
+    attributes: {
+      ...(operationId ? { "rally.operation.id": operationId } : {}),
+    },
   }, async (span) => {
     const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
-    // Everything an open needs, in one response. The room answers the detail and
-    // both transcript windows in a single call; the panel preference is
-    // WorkstreamDO's row, so it is fetched beside that rather than the room
-    // reaching sideways for it. Issued together, so folding four former
-    // requests in here costs one parallel binding call and no round trip.
-    const [boot, blockDashboardPreference] = await span.step(
+    // This route is the socket-first reader's explicit recovery twin. The room
+    // answers detail and both transcript windows in one call. HyperSight's
+    // optional preference belongs to the independently-started WorkstreamDO
+    // control socket and must never extend recovery latency either.
+    const boot = await span.step(
       "workstream.detail.load",
-      () => Promise.all([
-        client.boot(),
-        // Never allowed to fail the open. This is a second object answering an
-        // optional field that the control socket's boot frame also carries, so
-        // a preference WorkstreamDO cannot produce is a panel that stays shut
-        // for a moment — not a work stream that will not open. Before the two
-        // calls shared a request that was true by construction; folding them
-        // together is what made it something to state.
-        new BlockDashboardService(c.env, getAuth(c)).preferenceForDetail(id)
-          .catch(() => undefined),
-      ]),
+      () => client.boot(),
     );
     span.setAttributes({
       "rally.workstream.participant_count": boot.workstream.participants.length,
@@ -288,9 +300,9 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
     });
     return c.json(WorkstreamBootSchema.parse({
       ...boot.workstream,
+      transcript: boot.transcript,
       messageFeed: boot.messageFeed,
       resumeFeed: boot.resumeFeed,
-      blockDashboardPreference,
     }));
   });
 });

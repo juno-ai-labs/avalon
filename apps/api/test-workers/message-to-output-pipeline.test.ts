@@ -20,7 +20,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
@@ -148,12 +148,12 @@ interface RunRow extends Record<string, SqlStorageValue> {
 
 /** Polls the object until the run settles; a run that never settles fails here. */
 async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRow> {
-  // Invoke the public object alarm while holding the object-local test fence.
-  // This joins an automatically consumed alarm instead of racing a wall-clock
-  // poll against it, and proves the same production callback deterministically.
-  await runInDurableObject(stub, async (instance) => {
-    await (instance as unknown as { alarm(): Promise<void> }).alarm();
-  });
+  // Use the workerd test helper so the alarm's execution context, including
+  // waitUntil work, is joined before inspecting the terminal run. Calling the
+  // instance method directly joins only the handler promise and can leave the
+  // claimed dispatch running until the suite's wall-clock poll expires under
+  // cross-file contention.
+  await runDurableObjectAlarm(stub);
   let lastRow: RunRow | null = null;
   let lastDispatches = "[]";
   let lastAlarm: number | null = null;

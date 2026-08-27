@@ -6,13 +6,24 @@ import {
   type WorkstreamControlMetadata,
 } from '@rally/contracts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { logWarn } from '../../common/logger';
 import { normalizeHarnessStatus, type RallyApi } from './api';
 import type { WorkstreamSummary } from './types';
 import { applyVersionedWorkstreamState } from './workstream-state-store';
-import { realtimeSocketTelemetry } from './socket-telemetry';
-import { setCachedWorkstreams } from './workstreams-cache';
+import { realtimeSocketTelemetry, reportWorkstreamSocketStarted } from './socket-telemetry';
+import {
+  createRealtimeSocket,
+  REALTIME_SOCKET_CONNECTING,
+  REALTIME_SOCKET_OPEN,
+  type RealtimeSocket,
+} from './realtime-socket';
+import {
+  type WorkstreamSocketStartReason,
+  uuidV7,
+  workstreamFeedOpenAttemptId,
+} from './telemetry';
+import { evictCachedWorkstream } from './workstreams-cache';
 
 type WorkstreamControlSocketApi = Pick<RallyApi, 'getWorkstreamControlSocketTicket'>;
 const HEARTBEAT_MS = 50_000;
@@ -54,7 +65,11 @@ function metadataState(metadata: WorkstreamControlMetadata): {
     scope: metadata.scope,
     systemKind: metadata.systemKind ?? undefined,
     nextPendingWakeup: metadata.nextPendingWakeup,
-    preview: metadata.preview,
+    // The sidebar's subtitle is the standing description. `preview` is a
+    // legacy WorkstreamDO field and is empty for newly created object-owned
+    // work streams; letting the direct socket copy it here makes the subtitle
+    // disappear only while that work stream is open.
+    preview: metadata.description,
   };
   const viewer: Partial<WorkstreamSummary> = {
     readThroughSequenceNumber: seen,
@@ -96,7 +111,7 @@ function metadataState(metadata: WorkstreamControlMetadata): {
       systemKind: metadata.systemKind ?? undefined,
       nextPendingWakeup: metadata.nextPendingWakeup,
       pinPosition: null,
-      preview: metadata.preview,
+      preview: metadata.description,
     },
   };
 }
@@ -106,18 +121,25 @@ export function useWorkstreamControlSocket(
   api: WorkstreamControlSocketApi | null,
   workstreamId: string,
   enabled: boolean,
+  initialReason: Exclude<WorkstreamSocketStartReason, 'reconnect'> = 'active_workstream',
+  socketLeaseId?: string,
 ): void {
   const queryClient = useQueryClient();
+  const [generatedSocketLeaseId] = useState(() => socketLeaseId ?? uuidV7());
+  const resolvedSocketLeaseId = socketLeaseId ?? generatedSocketLeaseId;
+  const initialReasonRef = useRef(initialReason);
+  initialReasonRef.current = initialReason;
   useEffect(() => {
     if (!api || !enabled) return;
     let stopped = false;
     let accessRevoked = false;
-    let socket: WebSocket | null = null;
+    let socket: RealtimeSocket | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
     let connecting = false;
     let attempt = 0;
+    let startedOnce = false;
     let protocolWarningReported = false;
     const socketTelemetry = realtimeSocketTelemetry('workstream_control');
     const isOffline = (): boolean => navigator.onLine === false;
@@ -132,15 +154,15 @@ export function useWorkstreamControlSocket(
       heartbeatTimer = null;
       pongTimer = null;
     };
-    const scheduleHeartbeat = (target: WebSocket): void => {
+    const scheduleHeartbeat = (target: RealtimeSocket): void => {
       clearHeartbeat();
       heartbeatTimer = window.setTimeout(() => {
         heartbeatTimer = null;
-        if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
+        if (stopped || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
         target.send('ping');
         pongTimer = window.setTimeout(() => {
           pongTimer = null;
-          if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
+          if (stopped || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
           socketTelemetry.willClose('heartbeat_timeout');
           target.close();
         }, PONG_TIMEOUT_MS);
@@ -184,12 +206,23 @@ export function useWorkstreamControlSocket(
     };
     const connect = async (): Promise<void> => {
       if (stopped || accessRevoked || connecting) return;
-      if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
+      if (socket?.readyState === REALTIME_SOCKET_CONNECTING || socket?.readyState === REALTIME_SOCKET_OPEN) return;
       if (navigator.onLine === false) return;
       connecting = true;
       clearReconnect();
+      const operationId = uuidV7();
+      reportWorkstreamSocketStarted(
+        workstreamId,
+        resolvedSocketLeaseId,
+        'workstream_control',
+        startedOnce ? 'reconnect' : initialReasonRef.current,
+        attempt,
+        operationId,
+        workstreamFeedOpenAttemptId(workstreamId),
+      );
+      startedOnce = true;
       try {
-        const ticket = await api.getWorkstreamControlSocketTicket(workstreamId);
+        const ticket = await api.getWorkstreamControlSocketTicket(workstreamId, operationId);
         if (stopped) return;
         // See `workspace-socket.tsx`: an offline transition during the ticket
         // request is invisible to the offline handler, because there was no
@@ -198,7 +231,7 @@ export function useWorkstreamControlSocket(
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           return;
         }
-        const next = new WebSocket(ticket.url, ticket.protocols);
+        const next = createRealtimeSocket('workstream_control', ticket.url, ticket.protocols);
         socket = next;
         next.addEventListener('open', () => {
           if (stopped || socket !== next) return;
@@ -251,8 +284,7 @@ export function useWorkstreamControlSocket(
           if (event.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             accessRevoked = true;
             socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'access_revoked' });
-            setCachedWorkstreams(queryClient, (current) => current?.filter((item) => item.id !== workstreamId));
-            queryClient.removeQueries({ queryKey: ['workstream', workstreamId], exact: true });
+            evictCachedWorkstream(queryClient, workstreamId);
             return;
           }
           if (!stopped) {
@@ -301,5 +333,5 @@ export function useWorkstreamControlSocket(
       clearHeartbeat();
       socket?.close();
     };
-  }, [api, enabled, queryClient, workstreamId]);
+  }, [api, enabled, queryClient, resolvedSocketLeaseId, workstreamId]);
 }

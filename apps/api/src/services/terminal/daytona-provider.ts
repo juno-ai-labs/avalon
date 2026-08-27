@@ -6,6 +6,11 @@ import {
   terminalManagedSnapshotBootstrapCommand,
   terminalSnapshotProbeCommand,
 } from "./snapshot-manifest";
+import type {
+  TerminalProviderRequestMeasurement,
+  TerminalProviderRequestOperation,
+  TerminalUtilityOperation,
+} from "./tracing";
 
 type SupportedTerminalConfiguration = Extract<TerminalRegionConfiguration, { capability: "supported" }>;
 
@@ -43,9 +48,10 @@ export interface TerminalProviderOperationMeasurement {
   installedCapabilities: TerminalManagedBootstrapCapability[];
 }
 
-interface TerminalProviderInstrumentation {
+export interface TerminalProviderInstrumentation {
   now?: () => number;
   observe?: (measurement: TerminalProviderOperationMeasurement) => void;
+  observeRequest?: (measurement: TerminalProviderRequestMeasurement) => void;
 }
 
 export interface CreateTerminalSandboxInput {
@@ -143,6 +149,14 @@ export interface TerminalSandboxProvider {
   clearGitHubReadAccess(idOrName: string): Promise<void>;
   readFile(idOrName: string, path: string): Promise<Uint8Array>;
   writeFile(idOrName: string, path: string, bytes: Uint8Array, signal: AbortSignal): Promise<void>;
+  /** Execute one Rally-authored bounded utility command without a durable named session. */
+  runUtilityCommand(idOrName: string, input: {
+    operation: TerminalUtilityOperation;
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  }): Promise<{ exitCode: number; stdout: string; stderr: string; timedOut?: boolean }>;
   runCommand(idOrName: string, input: {
     taskName: string;
     command: string;
@@ -305,7 +319,6 @@ export function createDaytonaTerminalProvider(
     requestTimeoutMs: DAYTONA_REQUEST_TIMEOUT_MS,
   });
 
-  const load = async (idOrName: string): Promise<DaytonaSandboxLike> => client.get(idOrName);
   const now = instrumentation.now ?? Date.now;
   const observe = (measurement: TerminalProviderOperationMeasurement): void => {
     try {
@@ -315,6 +328,67 @@ export function createDaytonaTerminalProvider(
     }
   };
   const elapsed = (start: number, end: number): number => Math.max(0, end - start);
+  const measureRequest = async <T>(
+    operation: TerminalProviderRequestOperation,
+    callback: () => Promise<T>,
+    options: {
+      bytes?: number | ((result: T | undefined) => number);
+      detail?: TerminalUtilityOperation;
+      poll?: boolean;
+    } = {},
+  ): Promise<T> => {
+    if (!instrumentation.observeRequest) return callback();
+    const startedAt = now();
+    let outcome: TerminalProviderRequestMeasurement["outcome"] = "completed";
+    let result: T | undefined;
+    try {
+      result = await callback();
+      return result;
+    } catch (error) {
+      outcome = "failed";
+      throw error;
+    } finally {
+      try {
+        instrumentation.observeRequest?.({
+          operation,
+          detail: options.detail ?? null,
+          outcome,
+          durationMs: elapsed(startedAt, now()),
+          requestCount: 1,
+          pollCount: options.poll ? 1 : 0,
+          bytes: typeof options.bytes === "function"
+            ? Math.max(0, options.bytes(result))
+            : options.bytes ?? 0,
+        });
+      } catch {
+        // Measurement must never change provider behavior or sandbox durability.
+      }
+    }
+  };
+  // One provider instance belongs to one harness run. The coordinator already
+  // acquires and verifies the sandbox once, so reuse the SDK object instead of
+  // issuing a provider GET before every file or process operation.
+  const loadedSandboxes = new Map<string, DaytonaSandboxLike>();
+  const remember = (requested: string, sandbox: DaytonaSandboxLike): DaytonaSandboxLike => {
+    loadedSandboxes.set(requested, sandbox);
+    loadedSandboxes.set(sandbox.id, sandbox);
+    loadedSandboxes.set(sandbox.name, sandbox);
+    return sandbox;
+  };
+  const forget = (sandbox: DaytonaSandboxLike): void => {
+    for (const [key, cached] of loadedSandboxes) {
+      if (cached === sandbox) loadedSandboxes.delete(key);
+    }
+  };
+  const load = async (idOrName: string): Promise<DaytonaSandboxLike> => {
+    const cached = loadedSandboxes.get(idOrName);
+    if (cached) return cached;
+    return remember(idOrName, await measureRequest("sandbox.get", () => client.get(idOrName)));
+  };
+  const loadFresh = async (idOrName: string): Promise<DaytonaSandboxLike> => remember(
+    idOrName,
+    await measureRequest("sandbox.get", () => client.get(idOrName)),
+  );
   const emptyDurations = {
     providerCreateMs: 0,
     policyReadbackMs: 0,
@@ -326,10 +400,10 @@ export function createDaytonaTerminalProvider(
   const clearReadSecrets = async (idOrName: string): Promise<void> => {
     if (!client.secret) return;
     const prefix = secretPrefix(idOrName);
-    const page = await client.secret.list({ name: prefix, limit: 20 });
+    const page = await measureRequest("secret.list", () => client.secret!.list({ name: prefix, limit: 20 }));
     await Promise.all(page.items
       .filter((secret) => secret.name.startsWith(prefix))
-      .map((secret) => client.secret!.delete(secret.id).catch(() => undefined)));
+      .map((secret) => measureRequest("secret.delete", () => client.secret!.delete(secret.id)).catch(() => undefined)));
   };
 
   return {
@@ -339,7 +413,7 @@ export function createDaytonaTerminalProvider(
       let phase: TerminalProviderOperationMeasurement["failurePhase"] = "provider_create";
       try {
         const domains = input.domainAllowList.join(",");
-        const sandbox = await client.create({
+        const sandbox = await measureRequest("sandbox.create", () => client.create({
           name: input.stableName,
           language: "typescript",
           snapshot: configuration.snapshot,
@@ -355,14 +429,14 @@ export function createDaytonaTerminalProvider(
             "rally.workstream": input.workstreamId,
             "rally.generation": String(input.generation),
           },
-        }, { timeout: 60 });
+        }, { timeout: 60 }));
         createFinishedAt = now();
         phase = "policy_readback";
         // A successful create response only proves that Daytona accepted the
         // request. Read the provider-owned state back before the coordinator is
         // allowed to treat the egress policy as verified.
         const observed = await load(sandbox.id);
-        await observed.refreshData?.();
+        if (observed.refreshData) await measureRequest("sandbox.refresh", () => observed.refreshData!());
         const finishedAt = now();
         observe({
           operation: "sandbox_create",
@@ -406,7 +480,7 @@ export function createDaytonaTerminalProvider(
       let observed: DaytonaSandboxLike | null = null;
       try {
         observed = await load(idOrName);
-        await observed.refreshData?.();
+        if (observed.refreshData) await measureRequest("sandbox.refresh", () => observed!.refreshData!());
         const observedSnapshot = snapshot(observed);
         sourceState = observedSnapshot.state;
         readbackFinishedAt = now();
@@ -429,24 +503,24 @@ export function createDaytonaTerminalProvider(
         }
         if (!observed.process?.executeCommand) throw new Error("Daytona process execution is unavailable");
         phase = "install";
-        const initialized = await observed.process.executeCommand(
+        const initialized = await measureRequest("process.execute_utility", () => observed!.process!.executeCommand!(
           `bash -lc ${shellQuote(terminalManagedSnapshotBootstrapCommand())}`,
           undefined,
           undefined,
           120,
-        );
+        ));
         if (initialized.exitCode !== 0) throw new Error("Rally workspace initialization failed");
         installFinishedAt = now();
         installedCapabilities = parseInstalledCapabilities(
           initialized.result ?? initialized.artifacts?.stdout ?? "",
         );
         phase = "verify";
-        const verified = await observed.process.executeCommand(
+        const verified = await measureRequest("process.execute_utility", () => observed!.process!.executeCommand!(
           `bash -lc ${shellQuote(terminalSnapshotProbeCommand())}`,
           undefined,
           undefined,
           120,
-        );
+        ));
         if (verified.exitCode !== 0) throw new Error("Rally workspace verification failed");
         const finishedAt = now();
         observe({
@@ -482,13 +556,15 @@ export function createDaytonaTerminalProvider(
           verifyMs: phase === "verify" ? elapsed(installFinishedAt, finishedAt) : 0,
           installedCapabilities,
         });
-        await observed?.delete?.(60, true).catch(() => undefined);
+        if (observed?.delete) {
+          await measureRequest("sandbox.delete", () => observed!.delete!(60, true)).catch(() => undefined);
+        }
         throw new TerminalSandboxInitializationError();
       }
     },
     async getSandbox(idOrName) {
       const sandbox = await load(idOrName);
-      await sandbox.refreshData?.();
+      if (sandbox.refreshData) await measureRequest("sandbox.refresh", () => sandbox.refreshData!());
       return snapshot(sandbox);
     },
     async startSandbox(idOrName) {
@@ -498,7 +574,7 @@ export function createDaytonaTerminalProvider(
         const sandbox = await load(idOrName);
         sourceState = sandboxState(sandbox.state);
         if (!sandbox.start) throw new Error("Daytona sandbox does not support start");
-        await sandbox.start(60);
+        await measureRequest("sandbox.start", () => sandbox.start!(60));
         const finishedAt = now();
         observe({
           operation: "sandbox_start", outcome: "completed", snapshot: configuration.snapshot,
@@ -518,24 +594,30 @@ export function createDaytonaTerminalProvider(
     async stopSandbox(idOrName) {
       const sandbox = await load(idOrName);
       if (!sandbox.stop) throw new Error("Daytona sandbox does not support stop");
-      await sandbox.stop(60);
+      await measureRequest("sandbox.stop", () => sandbox.stop!(60));
+      forget(sandbox);
     },
     async archiveSandbox(idOrName) {
       const sandbox = await load(idOrName);
       if (!sandbox.archive) throw new Error("Daytona sandbox does not support archive");
-      await sandbox.archive();
+      await measureRequest("sandbox.archive", () => sandbox.archive!());
+      forget(sandbox);
     },
     async deleteSandbox(idOrName) {
       const sandbox = await load(idOrName);
       if (!sandbox.delete) throw new Error("Daytona sandbox does not support delete");
       await clearReadSecrets(sandbox.id);
       try {
-        await sandbox.delete(60, true);
+        await measureRequest("sandbox.delete", () => sandbox.delete!(60, true));
+        forget(sandbox);
       } catch (deleteError) {
         try {
-          await load(sandbox.id);
+          await loadFresh(sandbox.id);
         } catch (observationError) {
-          if (isTerminalProviderNotFound(observationError)) return;
+          if (isTerminalProviderNotFound(observationError)) {
+            forget(sandbox);
+            return;
+          }
         }
         throw deleteError;
       }
@@ -545,9 +627,9 @@ export function createDaytonaTerminalProvider(
       if (!sandbox.updateNetworkSettings) {
         throw new Error("Daytona sandbox does not support network policy updates");
       }
-      await sandbox.updateNetworkSettings(domains === null
+      await measureRequest("sandbox.update_network", () => sandbox.updateNetworkSettings!(domains === null
         ? { networkBlockAll: false }
-        : { domainAllowList: domains.join(",") });
+        : { domainAllowList: domains.join(",") }));
     },
     async configureGitHubReadAccess(idOrName, input) {
       if (!client.secret) throw new Error("Daytona Secrets are unavailable for GitHub repository access");
@@ -558,35 +640,42 @@ export function createDaytonaTerminalProvider(
         { env: "GITHUB_READ_BASIC", name: `${prefix}GIT`, value: input.gitBasicCredential, hosts: ["github.com"] },
         { env: "GH_TOKEN", name: `${prefix}API`, value: input.ghToken, hosts: ["api.github.com"] },
       ] as const;
-      const existing = await client.secret.list({ name: prefix, limit: 20 });
+      const existing = await measureRequest("secret.list", () => client.secret!.list({ name: prefix, limit: 20 }));
       let attachedNewSecret = false;
       for (const specification of specifications) {
         const current = existing.items.find((secret) => secret.name === specification.name);
         if (current) {
-          await client.secret.update(current.id, { value: specification.value, hosts: [...specification.hosts] });
+          await measureRequest("secret.update", () => client.secret!.update(current.id, { value: specification.value, hosts: [...specification.hosts] }));
         } else {
-          await client.secret.create({
+          await measureRequest("secret.create", () => client.secret!.create({
             name: specification.name,
             value: specification.value,
             description: `Rally GitHub repository access for ${sandbox.id}`,
             hosts: [...specification.hosts],
-          });
+          }));
           attachedNewSecret = true;
         }
       }
-      if (attachedNewSecret && sandbox.state === "started" && sandbox.stop) await sandbox.stop(60);
-      await sandbox.updateSecrets(Object.fromEntries(specifications.map((specification) => [specification.env, specification.name])));
-      if (attachedNewSecret && sandbox.start) await sandbox.start(60);
+      if (attachedNewSecret && sandbox.state === "started" && sandbox.stop) {
+        await measureRequest("sandbox.stop", () => sandbox.stop!(60));
+      }
+      await measureRequest("sandbox.update_secrets", () => sandbox.updateSecrets!(Object.fromEntries(specifications.map((specification) => [specification.env, specification.name]))));
+      if (attachedNewSecret && sandbox.start) await measureRequest("sandbox.start", () => sandbox.start!(60));
     },
     async clearGitHubReadAccess(idOrName) {
       const sandbox = await load(idOrName);
-      await sandbox.updateSecrets?.({});
+      if (sandbox.updateSecrets) await measureRequest("sandbox.update_secrets", () => sandbox.updateSecrets!({}));
       await clearReadSecrets(sandbox.id);
     },
     async readFile(idOrName, path) {
       const sandbox = await load(idOrName);
       if (!sandbox.fs) throw new Error("Daytona sandbox filesystem is unavailable");
-      return new Uint8Array(await sandbox.fs.downloadFile(path, 120));
+      const bytes = new Uint8Array(await measureRequest(
+        "file.download",
+        () => sandbox.fs!.downloadFile(path, 120),
+        { bytes: (value) => value?.byteLength ?? 0 },
+      ));
+      return bytes;
     },
     async writeFile(idOrName, path, bytes, signal) {
       throwIfFileTransferCancelled(signal);
@@ -595,24 +684,96 @@ export function createDaytonaTerminalProvider(
       throwIfFileTransferCancelled(signal);
       // Daytona's streaming helper is Node-only. uploadFile selects its Web
       // FormData implementation in Cloudflare Workers.
-      await sandbox.fs.uploadFile(Buffer.from(bytes), path, 120);
+      await measureRequest("file.upload", () => sandbox.fs!.uploadFile(Buffer.from(bytes), path, 120), { bytes: bytes.byteLength });
       throwIfFileTransferCancelled(signal);
+    },
+    async runUtilityCommand(idOrName, input) {
+      if (input.signal?.aborted) throw new Error("Terminal utility command cancelled");
+      const sandbox = await load(idOrName);
+      if (input.signal?.aborted) throw new Error("Terminal utility command cancelled");
+      if (!sandbox.process?.executeCommand) throw new Error("Daytona process execution is unavailable");
+      const timeoutSeconds = Math.max(1, Math.ceil(input.timeoutMs / 1_000));
+      // executeCommand exposes one stdout-shaped result and no stderr channel,
+      // so the private timeout marker must use that result before we strip it.
+      const command = `(cd -- ${shellQuote(input.cwd)} || exit $?; if [ -f /workspace/.rally/session.env ]; then . /workspace/.rally/session.env || exit $?; fi; timeout --signal=TERM --kill-after=5s ${timeoutSeconds}s bash -lc ${shellQuote(input.command)}; rally_status=$?; if [ "$rally_status" -eq 124 ]; then printf '\\nAVALON_COMMAND_TIMED_OUT\\n'; fi; exit "$rally_status")`;
+      const execution = measureRequest(
+        "process.execute_utility",
+        () => sandbox.process!.executeCommand!(command, undefined, undefined, timeoutSeconds + 10),
+        {
+          bytes: (value) => new TextEncoder().encode(value?.result ?? value?.artifacts?.stdout ?? "").byteLength,
+          detail: input.operation,
+        },
+      );
+      const cancelled = Symbol("terminal_utility_cancelled");
+      let settleCancellation: ((value: typeof cancelled) => void) | null = null;
+      const cancelledAfterQuiescence = new Promise<typeof cancelled>((resolve) => {
+        settleCancellation = resolve;
+      });
+      let cancellationQuiescence: Promise<void> | null = null;
+      const cancel = (): void => {
+        if (cancellationQuiescence) return;
+        cancellationQuiescence = (async () => {
+          if (!sandbox.stop || !sandbox.start) {
+            await execution.catch(() => undefined);
+            return;
+          }
+          await measureRequest("sandbox.stop", () => sandbox.stop!(60));
+          await measureRequest("sandbox.start", () => sandbox.start!(60));
+        })();
+        void cancellationQuiescence.then(
+          () => settleCancellation?.(cancelled),
+          async () => {
+            // If quiescence could not be established, do not let ownership
+            // hand off until the bounded provider execution itself settles.
+            await execution.catch(() => undefined);
+            settleCancellation?.(cancelled);
+          },
+        );
+      };
+      input.signal?.addEventListener("abort", cancel, { once: true });
+      if (input.signal?.aborted) cancel();
+      let outcome: Awaited<typeof execution> | typeof cancelled;
+      try {
+        outcome = await Promise.race([execution, cancelledAfterQuiescence]);
+      } finally {
+        input.signal?.removeEventListener("abort", cancel);
+      }
+      if (outcome === cancelled || input.signal?.aborted) {
+        if (cancellationQuiescence) await cancellationQuiescence;
+        void execution.catch(() => undefined);
+        throw new Error("Terminal utility command cancelled");
+      }
+      const result = outcome;
+      const stdout = result.result ?? result.artifacts?.stdout ?? "";
+      const timedOut = result.exitCode === 124 && stdout.includes("AVALON_COMMAND_TIMED_OUT");
+      return {
+        exitCode: result.exitCode,
+        stdout: stdout.replace(/\n?AVALON_COMMAND_TIMED_OUT\n?/gu, ""),
+        stderr: "",
+        ...(timedOut ? { timedOut: true } : {}),
+      };
     },
     async runCommand(idOrName, input) {
       const sandbox = await load(idOrName);
       if (!sandbox.process) throw new Error("Daytona sandbox process service is unavailable");
-      let cleaned = false;
+      let cleanupRequest: Promise<void> | null = null;
       let cancelled = false;
       let terminal = false;
       const cleanup = async (suppressFailure: boolean): Promise<void> => {
-        if (cleaned) return;
-        cleaned = true;
-        try {
-          await sandbox.process!.deleteSession(input.taskName);
-        } catch (error) {
-          if (!suppressFailure && !isTerminalProviderNotFound(error)) throw error;
-        }
+        if (cleanupRequest) return cleanupRequest;
+        cleanupRequest = (async () => {
+          try {
+            await measureRequest("process.session_delete", () => sandbox.process!.deleteSession(input.taskName));
+          } catch (error) {
+            if (!suppressFailure && !isTerminalProviderNotFound(error)) throw error;
+          }
+        })();
+        return cleanupRequest;
       };
+      let closeCreationWindow!: () => void;
+      const creationWindowClosed = new Promise<void>((resolve) => {
+        closeCreationWindow = resolve;
+      });
       try {
         const timeoutSeconds = Math.max(1, Math.ceil(input.timeoutMs / 1_000));
         if (input.signal?.aborted) {
@@ -631,7 +792,7 @@ export function createDaytonaTerminalProvider(
         const execution = (async () => {
           let commands: Array<{ id: string; command: string; exitCode?: number | null }> = [];
           try {
-            commands = (await sandbox.process!.getSession!(input.taskName)).commands;
+            commands = (await measureRequest("process.session_get", () => sandbox.process!.getSession!(input.taskName))).commands;
           } catch {
             if (input.signal?.aborted) {
               cancelled = true;
@@ -639,11 +800,11 @@ export function createDaytonaTerminalProvider(
             }
             await input.assertSubmissionAuthority?.();
             try {
-              await sandbox.process!.createSession(input.taskName);
+              await measureRequest("process.session_create", () => sandbox.process!.createSession(input.taskName));
             } catch {
               // A create response can be lost after Daytona created the named
               // session. Resolve that ambiguity by loading the same name.
-              commands = (await sandbox.process!.getSession!(input.taskName)).commands;
+              commands = (await measureRequest("process.session_get", () => sandbox.process!.getSession!(input.taskName))).commands;
             }
           }
           if (commands.length > 1) {
@@ -652,20 +813,21 @@ export function createDaytonaTerminalProvider(
           if (commands[0] && commands[0].command !== command) {
             await input.assertSubmissionAuthority?.();
             try {
-              await sandbox.process!.deleteSession(input.taskName);
+              await measureRequest("process.session_delete", () => sandbox.process!.deleteSession(input.taskName));
             } catch (error) {
-              await sandbox.stop?.();
+              if (sandbox.stop) await measureRequest("sandbox.stop", () => sandbox.stop!());
               throw error;
             }
             await input.assertSubmissionAuthority?.();
             try {
-              await sandbox.process!.createSession(input.taskName);
+              await measureRequest("process.session_create", () => sandbox.process!.createSession(input.taskName));
               commands = [];
             } catch (error) {
-              await sandbox.stop?.();
+              if (sandbox.stop) await measureRequest("sandbox.stop", () => sandbox.stop!());
               throw error;
             }
           }
+          closeCreationWindow();
           let commandId = commands[0]?.id;
           let observedExitCode = commands[0]?.exitCode ?? undefined;
           let initialStdout: string | undefined;
@@ -676,11 +838,11 @@ export function createDaytonaTerminalProvider(
               throw new Error("Terminal command cancelled");
             }
             await input.assertSubmissionAuthority?.();
-            const submitted = await sandbox.process!.executeSessionCommand(input.taskName, {
+            const submitted = await measureRequest("process.session_submit", () => sandbox.process!.executeSessionCommand(input.taskName, {
               command,
               runAsync: true,
               suppressInputEcho: true,
-            }, timeoutSeconds + 10);
+            }, timeoutSeconds + 10));
             if (!submitted.cmdId) throw new Error("Daytona did not return a command identifier");
             commandId = submitted.cmdId;
             observedExitCode = submitted.exitCode ?? undefined;
@@ -694,7 +856,11 @@ export function createDaytonaTerminalProvider(
             if (Date.now() >= observationDeadline) {
               throw new Error("Daytona command outcome is still unknown after the observation deadline");
             }
-            const observed = await sandbox.process!.getSessionCommand!(input.taskName, commandId);
+            const observed = await measureRequest(
+              "process.session_poll",
+              () => sandbox.process!.getSessionCommand!(input.taskName, commandId),
+              { poll: true },
+            );
             observedExitCode = observed.exitCode ?? undefined;
             if (observedExitCode === undefined) {
               await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
@@ -715,11 +881,15 @@ export function createDaytonaTerminalProvider(
             if (stream === "stdout") stdoutChunks.push(boundedChunk);
             else stderrChunks.push(boundedChunk);
           };
-          const logs = await sandbox.process!.getSessionCommandLogs!(
-            input.taskName,
-            commandId,
-            (chunk) => capture("stdout", chunk),
-            (chunk) => capture("stderr", chunk),
+          const logs = await measureRequest(
+            "process.session_logs",
+            () => sandbox.process!.getSessionCommandLogs!(
+              input.taskName,
+              commandId,
+              (chunk) => capture("stdout", chunk),
+              (chunk) => capture("stderr", chunk),
+            ),
+            { bytes: () => capturedBytes },
           );
           const stdout = stdoutChunks.join("") || logs?.stdout || "";
           const stderr = stderrChunks.join("") || logs?.stderr || "";
@@ -728,11 +898,19 @@ export function createDaytonaTerminalProvider(
             stdout: stdout || initialStdout || "",
             stderr: stderr || initialStderr || "",
           };
-        })();
+        })().finally(closeCreationWindow);
         const abort = input.signal ? new Promise<never>((_resolve, reject) => {
           const onAbort = () => {
             cancelled = true;
-            void cleanup(true).finally(() => reject(new Error("Terminal command cancelled")));
+            void (async () => {
+              // A delete can win before an in-flight create reaches Daytona.
+              // Wait only for that pre-submission window, then delete again.
+              await cleanup(true);
+              await creationWindowClosed;
+              cleanupRequest = null;
+              await cleanup(true);
+              reject(new Error("Terminal command cancelled"));
+            })();
           };
           input.signal!.addEventListener("abort", onAbort, { once: true });
           void execution.finally(() => input.signal!.removeEventListener("abort", onAbort)).catch(() => undefined);
@@ -754,7 +932,7 @@ export function createDaytonaTerminalProvider(
       const sandbox = await load(idOrName);
       if (!sandbox.process) throw new Error("Daytona sandbox process service is unavailable");
       try {
-        await sandbox.process.deleteSession(taskName);
+        await measureRequest("process.session_delete", () => sandbox.process!.deleteSession(taskName));
         return "deleted";
       } catch (error) {
         // Recovery is token-fenced in the work-stream object, but an abandoned
@@ -773,19 +951,19 @@ export function createDaytonaTerminalProvider(
       if (!client.secret) throw new Error("Daytona Secrets are unavailable for trusted Git publication");
       const operationKey = input.operationId.replace(/[^a-zA-Z0-9_-]/gu, "_").slice(0, 80);
       const secretName = `AVALON_GH_${operationKey}`;
-      const existingSecrets = await client.secret.list({ name: secretName, limit: 20 });
+      const existingSecrets = await measureRequest("secret.list", () => client.secret!.list({ name: secretName, limit: 20 }));
       for (const existing of existingSecrets.items.filter((secret) => secret.name === secretName)) {
-        await client.secret.delete(existing.id);
+        await measureRequest("secret.delete", () => client.secret!.delete(existing.id));
       }
-      const secret = await client.secret.create({
+      const secret = await measureRequest("secret.create", () => client.secret!.create({
         name: secretName,
         value: input.githubBasicCredential,
         description: `Ephemeral Rally publication ${input.operationId}`,
         hosts: ["github.com"],
-      });
+      }));
       let publisher: DaytonaSandboxLike | null = null;
       try {
-        publisher = await client.create({
+        publisher = await measureRequest("sandbox.create", () => client.create({
           name: `rally-publisher-${operationKey}`.slice(0, 100),
           language: "typescript",
           snapshot: configuration.snapshot,
@@ -798,9 +976,9 @@ export function createDaytonaTerminalProvider(
           domainAllowList: "github.com",
           secrets: { GITHUB_WRITE_BASIC: secret.name },
           labels: { "rally.publisher": input.operationId },
-        }, { timeout: 60 });
+        }, { timeout: 60 }));
         if (!publisher.fs || !publisher.process) throw new Error("The Daytona publisher sandbox is missing required services");
-        await publisher.fs.uploadFile(Buffer.from(input.bundle), "/workspace/publication.bundle", 120);
+        await measureRequest("file.upload", () => publisher!.fs!.uploadFile(Buffer.from(input.bundle), "/workspace/publication.bundle", 120), { bytes: input.bundle.byteLength });
         const repositoryUrl = `https://github.com/${input.repositoryFullName}.git`;
         const expectedOld = input.expectedOldSha ?? "";
         const command = [
@@ -821,25 +999,20 @@ export function createDaytonaTerminalProvider(
           `test "$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)" = ${shellQuote(input.headSha)}`,
           "printf 'published\\n'",
         ].join("\n");
-        const sessionId = `rally-publisher-${operationKey}`;
-        await publisher.process.createSession(sessionId);
-        let result;
-        try {
-          result = await publisher.process.executeSessionCommand(sessionId, {
-            command,
-            runAsync: false,
-            suppressInputEcho: true,
-          }, 180);
-        } finally {
-          await publisher.process.deleteSession(sessionId);
-        }
+        if (!publisher.process.executeCommand) throw new Error("The Daytona publisher sandbox cannot execute commands");
+        const result = await measureRequest("process.execute_utility", () => publisher!.process!.executeCommand!(
+          `bash -lc ${shellQuote(command)}`,
+          "/workspace",
+          undefined,
+          180,
+        ));
         if ((result.exitCode ?? 1) !== 0) {
           throw new Error(`Trusted Git publication failed with exit code ${result.exitCode ?? 1}`);
         }
         return { publishedSha: input.headSha };
       } finally {
-        if (publisher?.delete) await publisher.delete(60, true).catch(() => undefined);
-        await client.secret.delete(secret.id).catch(() => undefined);
+        if (publisher?.delete) await measureRequest("sandbox.delete", () => publisher!.delete!(60, true)).catch(() => undefined);
+        await measureRequest("secret.delete", () => client.secret!.delete(secret.id)).catch(() => undefined);
       }
     },
   };

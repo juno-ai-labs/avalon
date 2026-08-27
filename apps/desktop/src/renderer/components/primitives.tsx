@@ -130,7 +130,15 @@ export function SocketStatusIndicator({ state }: { state: SocketState }): React.
   );
 }
 
-export function Avatar({ member, size = 'medium' }: { member: WorkspaceMember; size?: 'small' | 'medium' | 'large' }): React.JSX.Element {
+export function Avatar({
+  member,
+  size = 'medium',
+  title = member.name,
+}: {
+  member: WorkspaceMember;
+  size?: 'small' | 'medium' | 'large';
+  title?: string | null;
+}): React.JSX.Element {
   const initials = member.name
     .split(/\s+/)
     .map((part) => part[0])
@@ -138,7 +146,7 @@ export function Avatar({ member, size = 'medium' }: { member: WorkspaceMember; s
     .slice(0, 2)
     .toUpperCase();
   return (
-    <AvatarPrimitive.Root className={clsx('avatar', `avatar-${size}`)} title={member.name}>
+    <AvatarPrimitive.Root className={clsx('avatar', `avatar-${size}`)} title={title ?? undefined}>
       {member.avatarUrl && <AvatarPrimitive.Image alt="" className="avatar-image" src={member.avatarUrl} />}
       <AvatarPrimitive.Fallback className="avatar-fallback" delayMs={200}>
         {initials || '?'}
@@ -147,14 +155,56 @@ export function Avatar({ member, size = 'medium' }: { member: WorkspaceMember; s
   );
 }
 
-export function AvatarStack({ members, limit = 4 }: { members: WorkspaceMember[]; limit?: number }): React.JSX.Element {
+export function AvatarStack({
+  members,
+  limit = 4,
+  presentUserIds = [],
+  currentUserId = null,
+}: {
+  members: WorkspaceMember[];
+  limit?: number;
+  presentUserIds?: readonly string[];
+  currentUserId?: string | null;
+}): React.JSX.Element {
   const visible = members.slice(0, limit);
   const overflow = members.length - visible.length;
+  const present = new Set(presentUserIds);
   return (
-    <span aria-label={members.map((member) => member.name).join(', ')} className="avatar-stack">
-      {visible.map((member) => (
-        <Avatar key={member.id} member={member} size="small" />
-      ))}
+    <span
+      aria-label={members.map((member) => (
+        present.has(member.id) && member.id !== currentUserId
+          ? `${member.name} is viewing this workstream.`
+          : member.name
+      )).join('; ')}
+      className="avatar-stack"
+    >
+      {visible.map((member) => {
+        const showingPresence = present.has(member.id) && member.id !== currentUserId;
+        if (!showingPresence) {
+          return (
+            <span className="avatar-stack-item" key={member.id}>
+              <Avatar member={member} size="small" />
+            </span>
+          );
+        }
+        const presenceDescription = `${member.name} is viewing this workstream.`;
+        return (
+          <Tooltip.Root delayDuration={300} key={member.id}>
+            <Tooltip.Trigger asChild>
+              <span className="avatar-stack-item is-present">
+                <span aria-hidden="true" className="avatar-presence-ping" />
+                <Avatar member={member} size="small" title={null} />
+              </span>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content className="tooltip" side="bottom" sideOffset={6}>
+                {presenceDescription}
+                <Tooltip.Arrow className="tooltip-arrow" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
+        );
+      })}
       {overflow > 0 && <span className="avatar-overflow">+{overflow}</span>}
     </span>
   );

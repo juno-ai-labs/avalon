@@ -6,6 +6,8 @@ import {
   AutomationDraftStateSchema as WireAutomationDraftStateSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
+  WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
+  WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
   ClientFeatureFlagsSchema as WireClientFeatureFlagsSchema,
   ConnectionSchema as WireConnectionSchema,
   GitHubRepositoryAccessSettingsSchema as WireGitHubRepositoryAccessSettingsSchema,
@@ -47,6 +49,8 @@ import {
   type Resource as WireResource,
   type User as WireUser,
   type Workstream as WireWorkstream,
+  type WorkstreamBatchFilter,
+  type WorkstreamBatchUpdate,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
 } from '@rally/contracts';
@@ -56,6 +60,7 @@ import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
+import { resolveMentionPayload } from './mention-draft';
 import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
 import { newRequestId } from './perf-trace';
 import { logDebug } from '../../common/logger';
@@ -240,6 +245,9 @@ export interface MentionIdentity {
   label: string;
   userId: string | null;
   connectorType: string | null;
+  /** UTF-16 offsets for the exact autocomplete selection in the draft. */
+  startOffset?: number;
+  endOffset?: number;
 }
 
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
@@ -1251,6 +1259,48 @@ export class RallyApi {
     return mapWorkstreamSummary(workstream);
   }
 
+  /**
+   * Take a work stream out of every listing, for everyone who could see it.
+   *
+   * The same `PATCH` a rename and a visibility change use, because being
+   * archived is a field of the work stream rather than a lifecycle of its own.
+   * The row that comes back is the archived one; nothing here removes it from
+   * the sidebar, because WorkstreamDO answers this write with a directory
+   * tombstone and `applyVersionedWorkstreamState` drops the row and its detail
+   * query off the back of that — the same path an archive from another window
+   * already takes.
+   */
+  async archiveWorkstream(id: string): Promise<WorkstreamSummary> {
+    const workstream = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { archived: true },
+      schema: WireWorkstreamSchema,
+    });
+    return mapWorkstreamSummary(workstream);
+  }
+
+  async previewWorkstreamBatch(filter: WorkstreamBatchFilter): Promise<number> {
+    const result = await this.request('/workstreams/batch/preview', {
+      method: 'POST',
+      body: { filter },
+      schema: WireWorkstreamBatchPreviewSchema,
+    });
+    return result.matchedCount;
+  }
+
+  async applyWorkstreamBatch(
+    operationId: string,
+    filter: WorkstreamBatchFilter,
+    update: WorkstreamBatchUpdate,
+  ): Promise<number> {
+    const result = await this.request('/workstreams/batch', {
+      method: 'POST',
+      body: { operationId, filter, update },
+      schema: WireWorkstreamBatchAcceptedSchema,
+    });
+    return result.enqueuedCount;
+  }
+
   async acknowledgeWorkstreamRead(
     id: string,
     readThroughSequenceNumber: number,
@@ -1315,11 +1365,19 @@ export class RallyApi {
   async createWorkstream(input: {
     openingMessage: string;
     participantIds: string[];
+    mentions?: MentionIdentity[];
     attachmentIds?: string[];
     modelOverride?: AgentModelOverride;
     /** The caller's open `workstream_create` trace id, when it has one. */
     requestId?: string;
   }): Promise<CreatedWorkstream> {
+    const mentions = input.openingMessage.includes('@') || (input.mentions?.length ?? 0) > 0
+      ? await this.messageMentionPayload(input.openingMessage, input.mentions)
+      : [];
+    const participantUserIds = [...new Set([
+      ...input.participantIds,
+      ...mentions.flatMap((mention) => mention.type === 'person' && mention.userId ? [mention.userId] : []),
+    ])];
     const clientMessageId = crypto.randomUUID();
     const operationId = uuidV7();
     reportTelemetryProductIntent({ kind: 'workstream_create_requested', entrypoint: 'composer', operationId });
@@ -1329,9 +1387,10 @@ export class RallyApi {
       headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
       body: {
         openingMessage: input.openingMessage,
-        participantUserIds: input.participantIds,
+        participantUserIds,
         clientMessageId,
         attachmentIds: input.attachmentIds ?? [],
+        ...(mentions.length > 0 ? { mentions } : {}),
         // Omitted rather than sent as null when nothing was pinned, so the work
         // stream stays on whatever `agent-model-workstream` serves it.
         ...(input.modelOverride ? { modelOverride: input.modelOverride } : {}),
@@ -1349,17 +1408,23 @@ export class RallyApi {
   }
 
   /**
-   * The whole of an open, in one request.
+   * The REST recovery twin of the socket snapshot.
    *
-   * Returns the detail plus both transcript windows and the viewer's panel
-   * preference, which used to be three further requests. The caller decides
-   * which window to render; `resumeFeed` is where this reader stopped and is
-   * null when that is already the newest page.
+   * Returns the detail plus both transcript windows in one request. The
+   * viewer-specific HyperSight preference belongs to the independently started
+   * WorkstreamDO control socket. The caller decides which window to render;
+   * `resumeFeed` is where this reader stopped and is null when that is already
+   * the newest page.
    */
-  async getWorkstream(id: string, signal?: AbortSignal): Promise<WorkstreamBoot> {
-    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, { schema: WireWorkstreamBootSchema, signal });
+  async getWorkstream(id: string, signal?: AbortSignal, openAttemptId?: string): Promise<WorkstreamBoot> {
+    const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
+      schema: WireWorkstreamBootSchema,
+      signal,
+      ...(openAttemptId ? { headers: { [RALLY_HEADERS.OPERATION_ID]: openAttemptId } } : {}),
+    });
     return {
       ...mapWorkstreamDetail(raw),
+      transcript: raw.transcript,
       // Undefined, not empty, when the Worker predates this field — the caller
       // falls back to fetching a page rather than showing an empty transcript.
       messageFeed: raw.messageFeed
@@ -1376,7 +1441,6 @@ export class RallyApi {
           newerCursor: raw.resumeFeed.newerCursor,
         }
         : null,
-      blockDashboardPreference: raw.blockDashboardPreference,
     };
   }
 
@@ -1478,31 +1542,10 @@ export class RallyApi {
     // `@<connection>` still left as a connector span — a chip in the transcript
     // for something the composer had already stopped naming. A connector
     // mention a caller states outright still travels, through `selected` below.
-    const discovered = members.map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
-    const explicitlySelectedLabels = new Set(selected.map((candidate) => candidate.label.toLocaleLowerCase()));
-    const candidates = [
-      ...selected,
-      ...discovered.filter((candidate) => !explicitlySelectedLabels.has(candidate.label.toLocaleLowerCase())),
-    ].filter((candidate, index, list) => list.findIndex((item) =>
-      item.type === candidate.type && item.userId === candidate.userId && item.connectorType === candidate.connectorType && item.label === candidate.label,
-    ) === index);
-    return candidates.flatMap((candidate) => {
-      const escaped = candidate.label.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-      const expression = new RegExp(`@${escaped}(?=$|[\\s\\p{P}])`, 'giu');
-      return [...text.matchAll(expression)].filter((match) => {
-        const startOffset = match.index;
-        return startOffset === 0 || /[\s([{]/u.test(text[startOffset - 1] ?? '');
-      }).map((match) => {
-        const startOffset = match.index;
-        return {
-          type: candidate.type,
-          userId: candidate.userId,
-          connectorType: candidate.connectorType,
-          startOffset,
-          endOffset: startOffset + match[0].length,
-        };
-      });
-    }).sort((left, right) => left.startOffset - right.startOffset);
+    const discovered = members
+      .filter((member) => (member.status ?? 'active') === 'active')
+      .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
+    return resolveMentionPayload(text, selected, discovered);
   }
 
   async createMessage(id: string, input: {
@@ -1731,9 +1774,10 @@ export class RallyApi {
     return this.request('/workspace/socket', { schema: socketTicketSchema });
   }
 
-  getWorkstreamControlSocketTicket(id: string): Promise<SocketTicket> {
+  getWorkstreamControlSocketTicket(id: string, requestId?: string): Promise<SocketTicket> {
     return this.request(`/workstreams/${encodeURIComponent(id)}/control-socket`, {
       schema: socketTicketSchema,
+      ...(requestId ? { requestId } : {}),
     });
   }
 

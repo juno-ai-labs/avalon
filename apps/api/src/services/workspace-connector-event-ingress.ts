@@ -2,14 +2,30 @@ import type { NormalizedActivity } from "@rally/contracts";
 
 import {
   WorkspaceConnectorEventQueueMessageSchema,
+  WorkspaceConnectorEventProcessQueueMessageSchema,
   WorkspaceConnectorEventSchema,
   type WorkspaceConnectorEvent,
   type WorkspaceConnectorEventQueueMessage,
+  type WorkspaceConnectorEventProcessQueueMessage,
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { sha256Hex } from "../lib/crypto";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 
 const MAX_CONNECTOR_EVENT_QUEUE_BYTES = 120_000;
+
+/**
+ * Two-stage handoff on one Queue:
+ *
+ * 1. `workspace_connector_event` carries the bounded event into WorkspaceDO.
+ * 2. Only after that commit, `connector_event_process` carries IDs and claim
+ *    fences; the consumer reloads the canonical event from WorkspaceDO.
+ *
+ * Ingress is acknowledged only after the second send is accepted. A crash or
+ * send failure therefore replays the idempotent ingest instead of losing the
+ * processing wake-up. Keeping event content out of stage 2 also keeps repeated
+ * processing deliveries and the DLQ content-free. See `docs/connectors.md`.
+ */
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -62,8 +78,80 @@ export async function enqueueWorkspaceConnectorEvent(
   input: Parameters<typeof workspaceConnectorEventQueueMessage>[0],
 ): Promise<void> {
   const message = await workspaceConnectorEventQueueMessage(input);
-  if (new TextEncoder().encode(JSON.stringify(message)).byteLength > MAX_CONNECTOR_EVENT_QUEUE_BYTES) {
+  const payloadBytes = new TextEncoder().encode(JSON.stringify(message)).byteLength;
+  if (payloadBytes > MAX_CONNECTOR_EVENT_QUEUE_BYTES) {
+    logWarn(env, "connector_event_enqueue_failed", {
+      workspace_id: message.request.workspaceId,
+      connector_type: message.request.event.connectorType,
+      ingress_event_id: message.request.ingressEventId,
+      attempt: message.attempt,
+      payload_bytes: payloadBytes,
+      reason: "queue_payload_too_large",
+    });
     throw new Error("workspace_connector_event_queue_payload_too_large");
   }
-  await env.ACTIVITY_QUEUE.send(message);
+  try {
+    await env.ACTIVITY_QUEUE.send(message);
+  } catch (error) {
+    logWarn(env, "connector_event_enqueue_failed", {
+      workspace_id: message.request.workspaceId,
+      connector_type: message.request.event.connectorType,
+      ingress_event_id: message.request.ingressEventId,
+      attempt: message.attempt,
+      payload_bytes: payloadBytes,
+      reason: diagnosticErrorCode(error, "queue_send_failed"),
+      error_name: error instanceof Error ? error.name : typeof error,
+    });
+    throw error;
+  }
+  logInfo(env, "connector_event_enqueued", {
+    workspace_id: message.request.workspaceId,
+    connector_type: message.request.event.connectorType,
+    ingress_event_id: message.request.ingressEventId,
+    attempt: message.attempt,
+    payload_bytes: payloadBytes,
+    outcome: "queued",
+  });
+}
+
+export function workspaceConnectorEventProcessQueueMessage(input: {
+  region: WorkspaceConnectorEventProcessQueueMessage["region"];
+  workspaceId: WorkspaceConnectorEventProcessQueueMessage["workspaceId"];
+  eventId: string;
+  processingOwnerId: string;
+  processingAttempt: number;
+}): WorkspaceConnectorEventProcessQueueMessage {
+  return WorkspaceConnectorEventProcessQueueMessageSchema.parse({
+    kind: "connector_event_process",
+    schemaVersion: 1,
+    ...input,
+  });
+}
+
+/** Enqueue the content-free second stage described by the module contract above. */
+export async function enqueueWorkspaceConnectorEventProcess(
+  env: Env,
+  input: Parameters<typeof workspaceConnectorEventProcessQueueMessage>[0],
+): Promise<void> {
+  const message = workspaceConnectorEventProcessQueueMessage(input);
+  try {
+    await env.ACTIVITY_QUEUE.send(message);
+  } catch (error) {
+    logWarn(env, "connector_event_process_enqueue_failed", {
+      workspace_id: message.workspaceId,
+      connector_event_id: message.eventId,
+      processing_owner_id: message.processingOwnerId,
+      processing_attempt: message.processingAttempt,
+      reason: diagnosticErrorCode(error, "queue_send_failed"),
+      error_name: error instanceof Error ? error.name : typeof error,
+    });
+    throw error;
+  }
+  logInfo(env, "connector_event_process_enqueued", {
+    workspace_id: message.workspaceId,
+    connector_event_id: message.eventId,
+    processing_owner_id: message.processingOwnerId,
+    processing_attempt: message.processingAttempt,
+    outcome: "queued",
+  });
 }

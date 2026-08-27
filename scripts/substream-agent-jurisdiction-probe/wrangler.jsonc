@@ -1,0 +1,19 @@
+{
+  "name": "rally-substream-agent-jurisdiction-probe",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-08-26",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GLOBAL_SUBSTREAM_AGENTS",
+        "class_name": "SubstreamAgent",
+        "script_name": "avalon-api-global"
+      },
+      {
+        "name": "EU_SUBSTREAM_AGENTS",
+        "class_name": "SubstreamAgent",
+        "script_name": "avalon-api-eu"
+      }
+    ]
+  }
+}

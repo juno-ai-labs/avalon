@@ -273,8 +273,8 @@ export async function bootstrapTerminalRepository(
     "fi",
     "grep -qxF '.rally/' .git/info/exclude || printf '.rally/\\n' >> .git/info/exclude",
   ].join("\n");
-  const result = await provider.runCommand(sandbox.providerSandboxId, {
-    taskName: `avalon-bootstrap-${sandbox.generation}`,
+  const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
+    operation: "repository.bootstrap",
     command,
     cwd: "/workspace",
     timeoutMs: 180_000,
@@ -359,11 +359,11 @@ export async function admitTerminalPublicationGrant(
 async function runInspection(
   provider: TerminalSandboxProvider,
   sandboxId: string,
-  operation: string,
+  operation: "status" | "branch" | "head" | "ancestry" | "paths" | "bundle",
   command: string,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return provider.runCommand(sandboxId, {
-    taskName: `avalon-publish-${operation}`,
+  return provider.runUtilityCommand(sandboxId, {
+    operation: `repository.publish.${operation}`,
     command,
     cwd: "/workspace",
     timeoutMs: 60_000,

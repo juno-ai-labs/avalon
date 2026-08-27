@@ -57,6 +57,54 @@ through their callers.
 
 ## Changelog
 
+### 2026-08-26 — Connector processing removes its external Workflow ID
+
+**What changed:** New connector events use a generated internal processing-owner
+UUID carried by the existing regional Queue instead of constructing a
+Cloudflare Workflow instance ID. The now-unused Workflow-ID constructor, brand,
+and example-specific tests are removed. The legacy Workflow input remains
+string-shaped only so already-created instances can finish.
+
+**Why:** Native Queue retry removes the external identifier boundary entirely.
+Keeping a constructor with no production caller would advertise a template that
+new code should not use and preserve a correctness obligation the architecture
+no longer needs.
+
+**Considered and rejected:** Retaining the constructor for hypothetical future
+Workflow call sites. A future external-ID boundary should define and test the
+platform contract it actually needs rather than inherit a connector-specific
+artifact.
+
+**Consequences:** Internal processing ownership is an ordinary validated UUID
+and is logged directly. The historical entry below explains why the constructor
+was correct while per-event Workflows existed; it is not current guidance.
+
+### 2026-08-25 — Workflow instance IDs are valid by construction
+
+**What changed:** `cloudflareWorkflowInstanceId` hashes a typed identity tuple
+behind the fixed `wf_` prefix, validates the resulting 67-character value
+against Cloudflare's user-supplied Workflow ID contract, and returns a branded
+`CloudflareWorkflowInstanceId`. Connector-event Workflow creation now accepts
+provider and Rally identifiers only as hash input.
+
+**Why:** A colon-delimited internal idempotency key crossed unchanged into
+Cloudflare's stricter external identifier boundary. The Workflow test double
+accepted the malformed string, so tests asserted the mistake instead of
+exercising the platform contract. Fixed-alphabet digest construction makes
+validity independent of provider content or delimiter choice.
+
+**Considered and rejected:** Sanitizing arbitrary templates, because two
+different inputs can sanitize to the same value and every new call site has to
+remember the rule. Testing one hand-written example, because it proves only that
+example. Letting Cloudflare generate the ID, because connector Queue replay
+needs deterministic instance identity to converge on the already-running
+Workflow.
+
+**Consequences:** Code that needs a deterministic external Workflow ID should
+derive it through the constructor rather than interpolate internal identifiers.
+Logs carry the unhashed opaque Rally/provider IDs separately, so correlation
+does not depend on making the external ID human-readable.
+
 ### 2026-08-20 — Introduced, and applied through the execution spine
 
 **What changed:** The six brands and their validating casts in contracts;

@@ -3,6 +3,12 @@ import type { ApplicationIconId, DesktopApplicationIconState } from './applicati
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type { ClientFeatureFlags, TelemetryEventProperties } from '@rally/contracts';
+import type {
+  DesktopRealtimeSocketCloseInput,
+  DesktopRealtimeSocketEvent,
+  DesktopRealtimeSocketOpenInput,
+  DesktopRealtimeSocketSendInput,
+} from './realtime-socket';
 
 export type RallyRegion = 'global' | 'eu';
 
@@ -121,6 +127,31 @@ export type DesktopTelemetryConnectorSetupIntent = {
   operationId?: string;
 } & TelemetryEventProperties<'connector_setup_requested_v2'>;
 
+export type DesktopTelemetryWorkstreamFeedVisibleIntent = {
+  kind: 'workstream_feed_visible';
+  operationId: string;
+} & TelemetryEventProperties<'workstream_feed_visible'>;
+
+export type DesktopTelemetryWorkstreamSendReadyIntent = {
+  kind: 'workstream_send_ready';
+  operationId: string;
+} & TelemetryEventProperties<'workstream_send_ready'>;
+
+export type DesktopTelemetryWorkstreamSocketStartedIntent = {
+  kind: 'workstream_socket_started';
+  operationId: string;
+} & TelemetryEventProperties<'workstream_socket_started'>;
+
+export type DesktopTelemetryRendererPerfFlowIntent = {
+  kind: 'renderer_perf_flow';
+  operationId: string;
+} & TelemetryEventProperties<'renderer_perf_flow'>;
+
+export type DesktopTelemetryWorkstreamOpenLifecycleIntent = {
+  [Name in 'workstream_open_started' | 'workstream_open_outcome']:
+  { kind: Name; operationId: string } & TelemetryEventProperties<Name>;
+}['workstream_open_started' | 'workstream_open_outcome'];
+
 export type DesktopTelemetryProductIntent =
   | { kind: 'onboarding_region_selected'; selectedRegion: RallyRegion; entrypoint: 'first_run' | 'settings' | 'invitation' }
   | { kind: 'workspace_create_requested'; selectedRegion: RallyRegion; entrypoint: 'first_run' | 'settings'; operationId: string }
@@ -128,6 +159,11 @@ export type DesktopTelemetryProductIntent =
   | { kind: 'workstream_create_requested'; entrypoint: 'composer'; operationId: string }
   | { kind: 'run_requested'; entrypoint: 'composer'; operationId: string }
   | DesktopTelemetryConnectorSetupIntent
+  | DesktopTelemetryWorkstreamFeedVisibleIntent
+  | DesktopTelemetryWorkstreamSendReadyIntent
+  | DesktopTelemetryWorkstreamSocketStartedIntent
+  | DesktopTelemetryRendererPerfFlowIntent
+  | DesktopTelemetryWorkstreamOpenLifecycleIntent
   | { kind: 'command_shortcuts_revealed'; availableCount: number }
   | {
     kind: 'command_shortcut_used';
@@ -291,6 +327,9 @@ export interface DesktopSystemAudioCaptureInfo {
 
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
+  /** Whether any Rally window currently owns application focus. */
+  getApplicationForegroundState: () => Promise<boolean>;
+  onApplicationForegroundChanged: (listener: (foregrounded: boolean) => void) => () => void;
   getApplicationSettings: () => Promise<DesktopApplicationSettings>;
   setLockdownMode: (enabled: boolean) => Promise<DesktopApplicationSettings>;
   setDebugEnabled: (enabled: boolean) => Promise<DesktopApplicationSettings>;
@@ -378,6 +417,10 @@ export interface RallyDesktopBridge {
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
+  openRealtimeSocket: (input: DesktopRealtimeSocketOpenInput) => Promise<void>;
+  sendRealtimeSocket: (input: DesktopRealtimeSocketSendInput) => Promise<void>;
+  closeRealtimeSocket: (input: DesktopRealtimeSocketCloseInput) => Promise<void>;
+  onRealtimeSocketEvent: (listener: (event: DesktopRealtimeSocketEvent) => void) => () => void;
   /** Mirrors a signed server answer into main-process-only surfaces such as the menu bar. */
   observeClientFeatureFlags: (flags: ClientFeatureFlags) => Promise<void>;
 }

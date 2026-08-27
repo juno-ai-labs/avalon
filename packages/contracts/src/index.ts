@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  TranscriptActivitySchema,
+  TranscriptRangeResultSchema,
+  TranscriptTurnSchema,
+  WorkstreamTranscriptRangeRequestSchema,
+  WorkstreamTranscriptSnapshotSchema,
+} from "./workstream-transcript";
+export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
@@ -181,6 +189,47 @@ export const AGENT_MODEL_OVERRIDES = [
 ] as const;
 export const AgentModelOverrideSchema = z.enum(AGENT_MODEL_OVERRIDES);
 export type AgentModelOverride = z.infer<typeof AgentModelOverrideSchema>;
+
+/** Every distinct model-using Rally task whose route is controlled by Flagship. */
+export const AGENT_MODEL_ROLES = [
+  "workstream",
+  "inline_child",
+  "automation_compiler",
+  "block_dashboard",
+  "meeting_notes",
+  "addressing_classifier",
+  "workstream_naming",
+  "activity_structured",
+  "work_opportunity_admission",
+  "work_opportunity_ranking",
+  "workstream_description",
+] as const;
+export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
+
+/** Flagship flag key per model-using task. */
+export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
+  workstream: "agent-model-workstream",
+  inline_child: "agent-model-inline-child",
+  automation_compiler: "agent-model-automation-compiler",
+  block_dashboard: "agent-model-block-dashboard",
+  meeting_notes: "agent-model-meeting-notes",
+  addressing_classifier: "agent-model-addressing-classifier",
+  workstream_naming: "agent-model-workstream-naming",
+  activity_structured: "agent-model-activity-structured",
+  work_opportunity_admission: "agent-model-work-opportunity-admission",
+  work_opportunity_ranking: "agent-model-work-opportunity-ranking",
+  workstream_description: "agent-model-workstream-description",
+};
+
+/** One task's primary OpenRouter model and its ordered fallback route. */
+export const AgentModelRoutingSchema = z.object({
+  model: z.string().trim().min(1),
+  // Older or manually-authored Flagship values may omit the array. Treating
+  // that shape as no fallbacks keeps every evaluator and operator surface in
+  // agreement instead of silently substituting a different checked-in route.
+  fallbackModels: z.array(z.string().trim().min(1)).default([]),
+});
+export type AgentModelRouting = z.infer<typeof AgentModelRoutingSchema>;
 
 export const MemberRoleSchema = z.enum(["owner", "admin", "member"]);
 export const IanaTimezoneSchema = z.string().trim().min(1).max(100).refine((value) => {
@@ -1456,6 +1505,7 @@ export const CreateWorkstreamRequestSchema = z.object({
    */
   participantUserIds: z.array(IdSchema).default([]),
   openingMessage: z.string().max(MESSAGE_MAX_CHARACTERS),
+  mentions: z.array(MentionSchema).default([]),
   clientMessageId: z.string().min(1).max(120),
   attachmentIds: z.array(IdSchema).max(10).default([]),
   /**
@@ -1502,6 +1552,61 @@ export const UpdateWorkstreamRequestSchema = z.object({
    */
   scope: ScopeSchema.optional()
 });
+
+/**
+ * A reusable cross-work-stream selection, expressed in product fields rather
+ * than in the name of the surface that happened to build it.
+ *
+ * Both timestamps follow the ordinary half-open range convention. `pinned`
+ * is viewer-specific; omitting it includes both pinned and unpinned rows.
+ */
+export const WorkstreamBatchFilterSchema = z.object({
+  lastActivityAt: z.object({
+    atOrAfter: TimestampSchema.optional(),
+    before: TimestampSchema.optional(),
+  }).strict().optional(),
+  pinned: z.boolean().optional(),
+  includeSystem: z.boolean().default(false),
+}).strict().superRefine((filter, context) => {
+  const atOrAfter = filter.lastActivityAt?.atOrAfter;
+  const before = filter.lastActivityAt?.before;
+  if (
+    atOrAfter !== undefined
+    && before !== undefined
+    && Date.parse(atOrAfter) >= Date.parse(before)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["lastActivityAt", "before"],
+      message: "must be later than atOrAfter",
+    });
+  }
+});
+
+/** The mutations the generic batch surface can currently enqueue. */
+export const WorkstreamBatchUpdateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("mark_read") }).strict(),
+  z.object({ kind: z.literal("archive") }).strict(),
+]);
+
+export const PreviewWorkstreamBatchRequestSchema = z.object({
+  filter: WorkstreamBatchFilterSchema,
+}).strict();
+
+export const WorkstreamBatchPreviewSchema = z.object({
+  matchedCount: z.number().int().nonnegative(),
+}).strict();
+
+export const ApplyWorkstreamBatchRequestSchema = z.object({
+  operationId: IdSchema,
+  filter: WorkstreamBatchFilterSchema,
+  update: WorkstreamBatchUpdateSchema,
+}).strict();
+
+export const WorkstreamBatchAcceptedSchema = z.object({
+  operationId: IdSchema,
+  enqueuedCount: z.number().int().nonnegative(),
+}).strict();
 
 export const AcknowledgeWorkstreamReadRequestSchema = z.object({
   readThroughSequenceNumber: z.number().int().nonnegative(),
@@ -1621,21 +1726,18 @@ export const MessageFeedPageSchema = z.object({
 }).strict();
 
 /**
- * Everything the desktop needs to paint a work stream, in one response.
+ * The REST recovery twin of the SubstreamAgent `snapshot` frame.
  *
- * The REST twin of the SubstreamAgent `snapshot` frame, and assembled by the
- * same code so the two cannot drift. Opening used to be five sequential
- * requests — detail, transcript, context, panel preference, Terminal — of which
- * four read state the room already had in hand while answering the first. They
- * are folded in here rather than kept separate because none of them was a
- * decision the client made; they were fields it went and collected.
- *
- * `blockDashboardPreference` is the exception that proves the shape: its row
- * belongs to WorkstreamDO, so the route fetches it beside the room call rather
- * than the room reaching sideways for it. That keeps snapshot assembly free of
- * cross-object calls, which is the cost this whole change removes.
+ * Normal opens subscribe directly and paint the first snapshot. This response
+ * remains for an explicit unavailable-state retry and is assembled by the same
+ * room code so recovery cannot drift. The viewer-specific WorkstreamDO
+ * `blockDashboardPreference` metadata is deliberately absent: its control
+ * socket starts independently and an optional panel preference must not
+ * lengthen either feed admission or REST recovery.
+ * That preference continues to arrive on the WorkstreamDO control socket.
  */
 export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
+  transcript: WorkstreamTranscriptSnapshotSchema,
   /**
    * Newest page. Bounded: a screen shows tens of messages, not hundreds.
    *
@@ -1650,8 +1752,6 @@ export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
   messageFeed: MessageFeedPageSchema.optional(),
   /** The window around where this viewer stopped, or null if that is this page. */
   resumeFeed: MessageFeedPageSchema.nullable().default(null),
-  /** Absent from an older Worker; the control socket's boot frame also carries it. */
-  blockDashboardPreference: BlockDashboardPreferenceSchema.optional(),
 });
 
 
@@ -1660,8 +1760,19 @@ const MessageFeedCursorSchema = z.string().regex(/^\d+$/u).max(16).refine((value
 const PositiveMessageFeedCursorSchema = MessageFeedCursorSchema.refine((value) =>
   Number(value) > 0, "Cursor must be positive");
 
+export const WORKSTREAM_REALTIME_MAX_FRAME_BYTES = 1_000_000;
+
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("subscribe"), afterSequence: z.number().int().nonnegative() }),
+  z.object({
+    type: z.literal("subscribe"),
+    afterSequence: z.number().int().nonnegative(),
+    /**
+     * Old desktop builds derived viewer presence from feed subscriptions. The
+     * current desktop reports foreground presence through WorkspaceDO instead,
+     * so its proactive feeds opt out while omitted remains legacy-compatible.
+     */
+    publishPresence: z.boolean().default(true),
+  }).strict(),
   // Re-send the canonical `snapshot` frame on a socket that is already
   // subscribed. It carries no cursor on purpose: a viewer asking for canonical
   // state is saying its own state may be wrong, so a cursor it supplied is the
@@ -1669,6 +1780,11 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
   // the same sequenced snapshot an initial subscription receives, which is what
   // lets the client's ordinary ordering guard decide whether to apply it.
   z.object({ type: z.literal("request_snapshot") }).strict(),
+  z.object({
+    type: z.literal("load_transcript_range"),
+    requestId: IdSchema,
+    request: WorkstreamTranscriptRangeRequestSchema,
+  }).strict(),
   z.object({
     type: z.literal("load_message_page"),
     requestId: IdSchema,
@@ -1724,6 +1840,12 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     afterWaterline: z.number().int().nonnegative(),
   }).strict(),
   z.object({
+    type: z.literal("set_presence"),
+    revision: z.number().int().positive(),
+    applicationState: z.enum(["foreground", "background"]),
+    foregroundWorkstreamId: WorkstreamIdSchema.nullable(),
+  }).strict(),
+  z.object({
     type: z.literal("create_message"),
     workstreamId: IdSchema,
     substreamId: z.union([z.literal("0"), IdSchema]),
@@ -1737,7 +1859,17 @@ export const WorkspaceSocketClientEventSchema = z.discriminatedUnion("type", [
     before: WorkspaceWorkstreamCursorSchema.optional(),
     includeSystem: z.boolean(),
   }).strict(),
-]);
+]).superRefine((event, context) => {
+  if (event.type === "set_presence"
+    && event.applicationState === "background"
+    && event.foregroundWorkstreamId !== null) {
+    context.addIssue({
+      code: "custom",
+      path: ["foregroundWorkstreamId"],
+      message: "must be null while the application is backgrounded",
+    });
+  }
+});
 
 const WorkstreamStateEventIdSchema = IdSchema.refine((value) => value[14] === "7", "must be UUIDv7");
 
@@ -1780,8 +1912,8 @@ export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchem
  */
 const workspaceWorkstreamPageFields = {
   directoryWaterline: z.number().int().nonnegative(),
-  items: z.array(WorkstreamSchema).max(1_250),
-  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
+  items: z.array(WorkstreamSchema),
+  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
 } as const;
 
@@ -1895,6 +2027,21 @@ export const WorkspaceSocketSyncEventSchema = z.object({
     });
   }
 });
+
+/**
+ * Ephemeral presence for the work stream foregrounded by this socket.
+ *
+ * The event is deliberately viewer-scoped rather than a workspace-wide map:
+ * personal work-stream identities must not leak to members who cannot read
+ * them, and the face pile needs only the room currently on screen. The current
+ * user is omitted by the server.
+ */
+export const WorkspacePresenceEventSchema = z.object({
+  type: z.literal("workspace_presence"),
+  occurredAt: TimestampSchema,
+  workstreamId: WorkstreamIdSchema.nullable(),
+  userIds: z.array(UserIdSchema),
+}).strict();
 
 /**
  * User-specific flags sent outside the workspace waterline. Two people in one
@@ -2053,6 +2200,7 @@ export const WorkstreamControlSocketEventSchema = z.discriminatedUnion("type", [
 export type WorkspaceSyncTopic = z.infer<typeof WorkspaceSyncTopicSchema>;
 export type WorkspaceSocketClientEvent = z.infer<typeof WorkspaceSocketClientEventSchema>;
 export type WorkspaceSocketSyncEvent = z.infer<typeof WorkspaceSocketSyncEventSchema>;
+export type WorkspacePresenceEvent = z.infer<typeof WorkspacePresenceEventSchema>;
 export type WorkspaceFeatureFlagsEvent = z.infer<typeof WorkspaceFeatureFlagsEventSchema>;
 export type WorkspaceWorkstreamPageEvent = z.infer<typeof WorkspaceWorkstreamPageEventSchema>;
 export type WorkspaceSidebar = z.infer<typeof WorkspaceSidebarSchema>;
@@ -2218,6 +2366,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
     workstream: WorkstreamDetailSchema,
+    transcript: WorkstreamTranscriptSnapshotSchema,
     /** Newest canonical transcript page, downloaded over the SubstreamAgent socket. */
     messageFeed: MessageFeedPageSchema.default({ items: [], nextCursor: null, newerCursor: null }),
     /**
@@ -2245,6 +2394,21 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   }),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
   ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("transcript_turn_upserted"),
+    turn: TranscriptTurnSchema,
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("transcript_activity_upserted"),
+    activity: TranscriptActivitySchema,
+    snapshotAtUtc: z.string().datetime({ offset: true }),
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("transcript_range"),
+    requestId: IdSchema,
+    snapshotId: IdSchema,
+    result: TranscriptRangeResultSchema,
+  }),
   /** The title changed — a person renamed the work stream, or Avalon named it. */
   ServerEventBaseSchema.extend({
     type: z.literal("workstream_renamed"),
@@ -2304,7 +2468,7 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({ type: z.literal("block_dashboard_block_run_updated"), run: BlockDashboardBlockRunSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("resync_required"),
-    reason: z.enum(["history_unavailable", "sequence_ahead"]),
+    reason: z.enum(["history_unavailable", "snapshot_expired", "sequence_ahead"]),
     latestSequence: z.number().int().nonnegative(),
     /** Preserves an in-flight response while canonical REST state is refreshed. */
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
@@ -2986,6 +3150,10 @@ export type DigestSchedule = z.infer<typeof DigestScheduleSchema>;
 export type DigestDeliveryTarget = z.infer<typeof DigestDeliveryTargetSchema>;
 export type DigestDeliveryTargetType = z.infer<typeof DigestDeliveryTargetTypeSchema>;
 export type UpdateDigestScheduleRequest = z.infer<typeof UpdateDigestScheduleRequestSchema>;
+export type WorkstreamBatchFilter = z.infer<typeof WorkstreamBatchFilterSchema>;
+export type WorkstreamBatchUpdate = z.infer<typeof WorkstreamBatchUpdateSchema>;
+export type PreviewWorkstreamBatchRequest = z.infer<typeof PreviewWorkstreamBatchRequestSchema>;
+export type ApplyWorkstreamBatchRequest = z.infer<typeof ApplyWorkstreamBatchRequestSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type ConnectorOAuthProvider = z.infer<typeof ConnectorOAuthProviderSchema>;
 export type ConnectorOAuthAttemptStatus = z.infer<typeof ConnectorOAuthAttemptStatusSchema>;
@@ -3114,6 +3282,7 @@ const FORWARDED_FAILURE_DETAIL_KEYS = [
   "expected",
   "available",
   "reconnectRequired",
+  "retryable",
   "retryAfterMs",
   "actualMimeType",
   "attachmentKind",
@@ -3157,6 +3326,7 @@ function sanitizeForwardedFailureDetail(key: typeof FORWARDED_FAILURE_DETAIL_KEY
         ? { valid: true, value }
         : { valid: false };
     case "reconnectRequired":
+    case "retryable":
       return typeof value === "boolean" ? { valid: true, value } : { valid: false };
     case "retryAfterMs":
       return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 86_400_000

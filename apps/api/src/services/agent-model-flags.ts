@@ -1,5 +1,12 @@
-import { AgentModelOverrideSchema, type AgentModelOverride } from "@rally/contracts";
-import { z } from "zod";
+import {
+  AGENT_MODEL_FLAG_KEYS,
+  AGENT_MODEL_ROLES,
+  AgentModelOverrideSchema,
+  AgentModelRoutingSchema,
+  type AgentModelOverride,
+  type AgentModelRole,
+  type AgentModelRouting,
+} from "@rally/contracts";
 import { BLOCK_DASHBOARD_MODEL, type Env } from "../env";
 import { logStructuredEvent } from "../observability/logger";
 import {
@@ -10,60 +17,22 @@ import {
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
- * Every distinct model-using agent in Avalon. Each one owns a Flagship flag
- * carrying the OpenRouter model it runs on and the OpenRouter models it may
- * route onward to, so a model swap is a flag change rather than a deploy.
+ * Every distinct model-using task is declared in the shared contract above.
+ * Each one owns a Flagship flag carrying the OpenRouter model it runs on and
+ * the OpenRouter models it may route onward to, so a model swap is a flag
+ * change rather than a deploy.
  *
  * The first five names match `AgentInferenceSource` in
  * `agent-inference-logging.ts`, so a lakehouse record and a flag key describe
  * the same agent. The rest are the standalone structured-output agents, which
  * call OpenRouter directly rather than through the harness.
  *
- * A new model-using service belongs here. One that reads `OPENROUTER_*`
- * directly cannot be retargeted or rolled out, and nothing in the type system
- * will point that out.
+ * A new model-using service belongs in that shared catalog and in the default
+ * resolver below. One that reads `OPENROUTER_*` directly cannot be retargeted
+ * or rolled out, and nothing in the type system will point that out.
  */
-export const AGENT_MODEL_ROLES = [
-  "workstream",
-  "inline_child",
-  "automation_compiler",
-  "block_dashboard",
-  "meeting_notes",
-  "addressing_classifier",
-  "workstream_naming",
-  "activity_structured",
-  "work_opportunity_admission",
-  "work_opportunity_ranking",
-  "workstream_description",
-] as const;
-
-export type AgentModelRole = (typeof AGENT_MODEL_ROLES)[number];
-
-/** Flagship flag key per agent. Provisioned per app; see `docs/feature-flags.md`. */
-export const AGENT_MODEL_FLAG_KEYS: Readonly<Record<AgentModelRole, string>> = {
-  workstream: "agent-model-workstream",
-  inline_child: "agent-model-inline-child",
-  automation_compiler: "agent-model-automation-compiler",
-  block_dashboard: "agent-model-block-dashboard",
-  meeting_notes: "agent-model-meeting-notes",
-  addressing_classifier: "agent-model-addressing-classifier",
-  workstream_naming: "agent-model-workstream-naming",
-  activity_structured: "agent-model-activity-structured",
-  work_opportunity_admission: "agent-model-work-opportunity-admission",
-  work_opportunity_ranking: "agent-model-work-opportunity-ranking",
-  workstream_description: "agent-model-workstream-description",
-};
-
-/** One agent's OpenRouter route plan: the default model, then its fallbacks in order. */
-export interface AgentModelRouting {
-  model: string;
-  fallbackModels: string[];
-}
-
-const AgentModelRoutingSchema = z.object({
-  model: z.string().trim().min(1),
-  fallbackModels: z.array(z.string().trim().min(1)).default([]),
-});
+export { AGENT_MODEL_FLAG_KEYS, AGENT_MODEL_ROLES };
+export type { AgentModelRole, AgentModelRouting };
 
 /**
  * Who the evaluation is for. The identifiers are all a caller has to supply;

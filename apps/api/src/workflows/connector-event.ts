@@ -8,16 +8,14 @@ import {
 } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { logStructuredEvent } from "../observability/logger";
+import { diagnosticErrorCode, logStructuredEvent } from "../observability/logger";
 import { processConnectorEvent } from "../queues/activity-consumer";
 import { enqueueWorkspaceConnectorEvent } from "../services/workspace-connector-event-ingress";
 
 /**
- * Durable product processing for one WorkspaceDO-owned connector event.
- *
- * Queue delivery ends after the event is accepted and this deterministic
- * instance exists. Routing, automation matching, digest projection, and
- * suggested-work admission then run here with Workflow retries and history.
+ * Drain-only compatibility for WorkspaceDO-owned connector events whose
+ * Workflow instance was created before Queue-native processing shipped.
+ * New connector ingress never creates this Workflow.
  */
 export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEventWorkflowInput> {
   override async run(
@@ -36,11 +34,40 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       WorkspaceConnectorEventClaimResultSchema.parse(await workspace.claimConnectorEvent({
         workspaceId: input.workspaceId,
         eventId: input.eventId,
-        workflowInstanceId: input.workflowInstanceId,
+        processingOwnerId: input.workflowInstanceId,
         attempt: input.attempt,
+        orchestrator: "workflow",
       })));
-    if (claim.outcome === "processed") return { outcome: "already_processed" };
-    if (claim.outcome === "busy") throw new Error("connector_event_claim_busy");
+    logStructuredEvent(this.env, "info", "connector_event_workflow_claimed", {
+      workspace_id: input.workspaceId,
+      connector_event_id: input.eventId,
+      workflow_instance_id: input.workflowInstanceId,
+      workflow_attempt: input.attempt,
+      processing_lease_id: claim.outcome === "claimed" ? claim.processingLeaseId : null,
+      outcome: claim.outcome,
+    });
+    if (claim.outcome === "processed") {
+      logStructuredEvent(this.env, "info", "connector_event_workflow_terminal", {
+        workspace_id: input.workspaceId,
+        connector_event_id: input.eventId,
+        workflow_instance_id: input.workflowInstanceId,
+        workflow_attempt: input.attempt,
+        outcome: "already_processed",
+        reason: "authoritative_event_already_settled",
+      });
+      return { outcome: "already_processed" };
+    }
+    if (claim.outcome === "busy") {
+      logStructuredEvent(this.env, "warn", "connector_event_workflow_deferred", {
+        workspace_id: input.workspaceId,
+        connector_event_id: input.eventId,
+        workflow_instance_id: input.workflowInstanceId,
+        workflow_attempt: input.attempt,
+        outcome: "busy",
+        reason: claim.reason,
+      });
+      throw new Error("connector_event_claim_busy");
+    }
 
     try {
       await step.do(
@@ -53,11 +80,14 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message.slice(0, 1_000) : "connector_event_processing_failed";
+      const errorCode = diagnosticErrorCode(error, "connector_event_processing_failed");
+      const errorName = error instanceof Error ? error.name : typeof error;
       await step.do("record-workspace-connector-event-failure", async () => {
         await workspace.settleConnectorEvent({
           workspaceId: input.workspaceId,
           eventId: input.eventId,
-          workflowInstanceId: input.workflowInstanceId,
+          processingOwnerId: input.workflowInstanceId,
+          processingLeaseId: claim.processingLeaseId,
           outcome: "failed",
           error: reason,
         });
@@ -66,7 +96,8 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
         workspace_id: input.workspaceId,
         connector_event_id: input.eventId,
         workflow_instance_id: input.workflowInstanceId,
-        reason,
+        reason: errorCode,
+        error_name: errorName,
       });
       if (input.attempt < 5) {
         await step.do("enqueue-connector-event-redrive", async () => {
@@ -76,6 +107,28 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
             attempt: input.attempt + 1,
           });
         });
+        logStructuredEvent(this.env, "warn", "connector_event_workflow_redriven", {
+          workspace_id: input.workspaceId,
+          connector_type: claim.event.connectorType,
+          connector_event_id: input.eventId,
+          workflow_instance_id: input.workflowInstanceId,
+          workflow_attempt: input.attempt,
+          next_attempt: input.attempt + 1,
+          reason: errorCode,
+          error_name: errorName,
+        });
+      } else {
+        logStructuredEvent(this.env, "error", "connector_event_workflow_terminal", {
+          workspace_id: input.workspaceId,
+          connector_type: claim.event.connectorType,
+          connector_event_id: input.eventId,
+          workflow_instance_id: input.workflowInstanceId,
+          workflow_attempt: input.attempt,
+          outcome: "failed",
+          reason: "redrive_attempts_exhausted",
+          error_code: errorCode,
+          error_name: errorName,
+        });
       }
       throw error;
     }
@@ -83,10 +136,21 @@ export class ConnectorEventWorkflow extends WorkflowEntrypoint<Env, ConnectorEve
       await workspace.settleConnectorEvent({
         workspaceId: input.workspaceId,
         eventId: input.eventId,
-        workflowInstanceId: input.workflowInstanceId,
+        processingOwnerId: input.workflowInstanceId,
+        processingLeaseId: claim.processingLeaseId,
         outcome: "processed",
         error: null,
       });
+    });
+    logStructuredEvent(this.env, "info", "connector_event_workflow_terminal", {
+      workspace_id: input.workspaceId,
+      connector_type: claim.event.connectorType,
+      connection_id: claim.event.activity.connectionId,
+      connector_event_id: input.eventId,
+      workflow_instance_id: input.workflowInstanceId,
+      workflow_attempt: input.attempt,
+      outcome: "processed",
+      reason: "authoritative_event_settled",
     });
     return { outcome: "processed" };
   }

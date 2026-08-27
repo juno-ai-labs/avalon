@@ -17,9 +17,11 @@ import {
   WorkspaceWorkstreamStateEventSchema,
   WorkspaceSocketClientEventSchema,
   WorkspaceFeatureFlagsEventSchema,
+  WorkspacePresenceEventSchema,
   WorkspaceSocketSyncEventSchema,
   WorkspaceSyncTopicSchema,
   WORKSTREAM_NAMING_GRACE_MS,
+  WorkstreamIdSchema,
   WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
   type AutomationSummary,
@@ -28,6 +30,7 @@ import {
   type Workstream,
   type WorkspaceSocketSyncEvent,
   type WorkspaceSyncTopic,
+  type WorkstreamBatchFilter,
   ProductFeatureFlagKeySchema,
   type ProductFeatureFlagKey,
 } from "@rally/contracts";
@@ -44,7 +47,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
+import { logInfo, logWarn } from "../observability/logger";
 import { identityAttributes, inFlowSpan } from "../observability/tracing";
 import {
   acceptsNewWorkstreamWork,
@@ -76,6 +79,12 @@ import {
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
+import {
+  observableWorkspaceScheduledAlarmKind,
+  WorkspaceAlarmInstrumentation,
+  type ObservableWorkspaceScheduledAlarmKind,
+  type WorkspaceScheduledAlarmPhase,
+} from "./workspace-alarm-instrumentation";
 import type { DurableObjectMigrationPlan } from "./migratable-durable-object";
 import {
   recordWorkspaceScheduleFailure,
@@ -89,6 +98,12 @@ import { workspaceDOName } from "./names";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
+  WorkspaceDirectoryBatchTargetsRequestSchema,
+  WorkspaceDirectoryBatchTargetsResultSchema,
+  WorkspaceBatchDispatchAdvanceRequestSchema,
+  WorkspaceBatchDispatchAdvanceResultSchema,
+  WorkspaceBatchDispatchBeginRequestSchema,
+  WorkspaceBatchDispatchBeginResultSchema,
   WorkspaceDirectoryExistsRequestSchema,
   WorkspaceDirectoryApplyResultSchema,
   WorkspaceDirectoryDueRequestSchema,
@@ -98,6 +113,8 @@ import {
   WorkspaceDirectoryLookupRequestSchema,
   WorkspaceDirectoryLookupResultSchema,
   WorkspaceDirectoryRecentRequestSchema,
+  WorkspaceDirectoryReadableIdsRequestSchema,
+  WorkspaceDirectoryReadableIdsResultSchema,
   WorkspaceDirectoryNotificationRequestSchema,
   WorkspaceDirectoryNotificationStateSchema,
   WorkspaceDirectoryPageSchema,
@@ -118,6 +135,9 @@ import {
   WorkspaceRegionalEffectApplyRequestSchema,
   WorkspaceRegionalEffectApplyResultSchema,
   type WorkspaceDirectoryApplyRequest,
+  type WorkspaceDirectoryBatchTargetsRequest,
+  type WorkspaceBatchDispatchAdvanceRequest,
+  type WorkspaceBatchDispatchBeginRequest,
   type WorkspaceDirectoryApplyResult,
   type WorkspaceDirectoryDueRequest,
   type WorkspaceDirectoryExistsRequest,
@@ -127,6 +147,8 @@ import {
   type WorkspaceDirectoryLookupRequest,
   type WorkspaceDirectoryLookupResult,
   type WorkspaceDirectoryRecentRequest,
+  type WorkspaceDirectoryReadableIdsRequest,
+  type WorkspaceDirectoryReadableIdsResult,
   type WorkspaceDirectoryPage,
   type WorkspaceDirectoryPinRequest,
   type WorkspaceDirectoryPlannedAutomationRequest,
@@ -149,20 +171,24 @@ import {
 } from "./workspace-directory-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
+  LegacyWorkspaceConnectorEventClaimResultSchema,
+  WorkspaceConnectorEventClaimRpcRequestSchema,
   WorkspaceConnectorEventClaimRequestSchema,
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventIngestRequestSchema,
   WorkspaceConnectorEventIngestResultSchema,
   WorkspaceConnectorEventRequestSchema,
   WorkspaceConnectorEventSchema,
-  WorkspaceConnectorEventSettleRequestSchema,
+  WorkspaceConnectorEventSettleRpcRequestSchema,
   type WorkspaceConnectorEvent,
   type WorkspaceConnectorEventClaimRequest,
-  type WorkspaceConnectorEventClaimResult,
+  type WorkspaceConnectorEventClaimRpcRequest,
+  type WorkspaceConnectorEventClaimRpcResult,
   type WorkspaceConnectorEventIngestRequest,
   type WorkspaceConnectorEventIngestResult,
   type WorkspaceConnectorEventRequest,
   type WorkspaceConnectorEventSettleRequest,
+  type WorkspaceConnectorEventSettleRpcRequest,
 } from "./workspace-connector-event-protocol";
 import { WORKSPACE_PRODUCT_SCHEMA_STATEMENTS } from "./workspace-product-schema";
 import {
@@ -235,6 +261,30 @@ import {
   insertWorkstreamEffectReceipt,
 } from "./workspace-regional-effect-storage";
 import {
+  WorkspaceNotificationIntentClaimResultSchema,
+  WorkspaceNotificationIntentMaintenanceRequestSchema,
+  WorkspaceNotificationIntentMaintenanceTargetSchema,
+  WorkspaceNotificationIntentReapRequestSchema,
+  WorkspaceNotificationIntentReapResultSchema,
+  WorkspaceNotificationIntentRequestSchema,
+  WorkspaceNotificationIntentTransitionRequestSchema,
+  WorkspaceNotificationIntentTransitionResultSchema,
+  type WorkspaceNotificationIntentClaimResult,
+  type WorkspaceNotificationIntentMaintenanceRequest,
+  type WorkspaceNotificationIntentMaintenanceTarget,
+  type WorkspaceNotificationIntentReapRequest,
+  type WorkspaceNotificationIntentReapResult,
+  type WorkspaceNotificationIntentRequest,
+  type WorkspaceNotificationIntentTransitionRequest,
+  type WorkspaceNotificationIntentTransitionResult,
+} from "./workspace-notification-intent-protocol";
+import {
+  claimWorkspaceNotificationIntent as claimStoredWorkspaceNotificationIntent,
+  reapSettledWorkspaceNotificationIntents as reapStoredWorkspaceNotificationIntents,
+  transitionWorkspaceNotificationIntent as transitionStoredWorkspaceNotificationIntent,
+  workspaceNotificationIntentMaintenanceTarget as storedWorkspaceNotificationIntentMaintenanceTarget,
+} from "./workspace-notification-intent-storage";
+import {
   responseToRpcResult,
   type DurableObjectRpcResult,
 } from "./rpc-result";
@@ -258,6 +308,14 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "slack_link_challenges",
   "slack_unfurled_links",
 ]);
+
+const WORKSPACE_TYPED_RPC_ONLY_TABLES = ["workstream_notification_intents"] as const;
+
+function typedRpcOnlyWorkspaceTable(sql: string): string | null {
+  return WORKSPACE_TYPED_RPC_ONLY_TABLES.find((table) => (
+    new RegExp(`\\b${table}\\b`, "iu").test(sql)
+  )) ?? null;
+}
 
 /**
  * Which sidebar list a write invalidates, by the table it writes.
@@ -324,6 +382,9 @@ interface WorkspaceSocketAttachment extends SocketIdentity {
   connectedAt: string;
   subscribed: boolean;
   lastWaterline: number;
+  presenceRevision: number;
+  applicationState: "foreground" | "background";
+  foregroundWorkstreamId: string | null;
 }
 
 interface WorkspaceDirectoryRow extends Record<string, SqlStorageValue> {
@@ -393,10 +454,17 @@ interface WorkspaceConnectorEventRow extends Record<string, SqlStorageValue> {
   external_people_json: string;
   processing_status: "pending" | "processing" | "processed" | "failed";
   processing_attempt: number;
+  workflow_instance_id: string | null;
+  processing_orchestrator: "queue" | "workflow" | null;
+  claimed_at: number | null;
 }
 
 const MAX_WORKSPACE_PINS_PER_USER = 1_000;
 const CONNECTOR_EVENT_INGRESS_RECEIPT_RETENTION_MS = 30 * 24 * 60 * 60_000;
+// Queue consumers have a 15-minute platform wall-time limit. This expiry is
+// only for Queue claims. A retiring Workflow can retry multiple 15-minute
+// processing attempts, so its claim remains exclusive until it settles.
+const CONNECTOR_EVENT_PROCESSING_LEASE_MS = 15 * 60_000;
 // Thirteen months, deliberately the most generous window in the fleet: event
 // bodies are provenance input, and the 10 GB object ceiling is the only hard
 // bound this fence exists to protect.
@@ -860,6 +928,39 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE workspace_workstream_viewers
        ADD COLUMN unseen INTEGER NOT NULL DEFAULT 0 CHECK (unseen IN (0, 1))`,
   ],
+}, {
+  version: 11,
+  description: "freeze and resume generic work-stream batch Queue dispatch",
+  statements: [
+    `CREATE TABLE workspace_batch_dispatches (
+      operation_id TEXT PRIMARY KEY,
+      request_hash TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      target_count INTEGER NOT NULL CHECK (target_count >= 0),
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
+    ) STRICT`,
+    `CREATE TABLE workspace_batch_dispatch_targets (
+      operation_id TEXT NOT NULL REFERENCES workspace_batch_dispatches(operation_id) ON DELETE CASCADE,
+      workstream_id TEXT NOT NULL,
+      dispatched_at INTEGER CHECK (dispatched_at IS NULL OR dispatched_at >= 0),
+      PRIMARY KEY (operation_id, workstream_id)
+    ) STRICT`,
+    `CREATE INDEX workspace_batch_dispatch_targets_pending_idx
+      ON workspace_batch_dispatch_targets(operation_id, workstream_id)
+      WHERE dispatched_at IS NULL`,
+  ],
+}, {
+  version: 12,
+  description: "distinguish expiring Queue claims from drain-only Workflow ownership",
+  statements: [
+    // NULL is intentionally meaningful for rows already processing when this
+    // migration lands: Queue claims did not exist before this version, so such
+    // a row is a pre-cutover Workflow claim and remains exclusive until settle.
+    `ALTER TABLE workspace_connector_events
+       ADD COLUMN processing_orchestrator TEXT
+       CHECK (processing_orchestrator IS NULL OR processing_orchestrator IN ('queue', 'workflow'))`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
@@ -873,11 +974,29 @@ function readAttachment(socket: WebSocket): WorkspaceSocketAttachment | null {
       connectedAt: z.string().datetime({ offset: true }),
       subscribed: z.boolean(),
       lastWaterline: z.number().int().nonnegative(),
+      // Sockets accepted by the previous deployment carry none of these fields. They
+      // resume safely as backgrounded and write the explicit shape on their
+      // first presence event instead of being disconnected during rollout.
+      presenceRevision: z.number().int().nonnegative().default(0),
+      applicationState: z.enum(["foreground", "background"]).default("background"),
+      foregroundWorkstreamId: WorkstreamIdSchema.nullable().default(null),
     }).safeParse(socket.deserializeAttachment());
     return parsed.success ? parsed.data : null;
   } catch {
     return null;
   }
+}
+
+function contributesPresence(
+  attachment: WorkspaceSocketAttachment | null,
+): attachment is WorkspaceSocketAttachment & {
+  subscribed: true;
+  applicationState: "foreground";
+  foregroundWorkstreamId: string;
+} {
+  return attachment?.subscribed === true
+    && attachment.applicationState === "foreground"
+    && attachment.foregroundWorkstreamId !== null;
 }
 
 /**
@@ -911,21 +1030,24 @@ type WorkspaceSocketOperation =
   | "decode"
   | "validate"
   | "subscribe"
+  | "presence"
   | "list_workstreams"
   | "create_message";
+
+interface WorkspaceSocketCloseInput {
+  code: number;
+  reason: string;
+  cause: string;
+  operation: WorkspaceSocketOperation;
+  frameBytes?: number;
+  validationIssues?: ReadonlyArray<{ path: string; code: string }>;
+}
 
 function closeWorkspaceSocket(
   env: Env,
   socket: WebSocket,
   attachment: WorkspaceSocketAttachment | null,
-  input: {
-    code: number;
-    reason: string;
-    cause: string;
-    operation: WorkspaceSocketOperation;
-    frameBytes?: number;
-    validationIssues?: ReadonlyArray<{ path: string; code: string }>;
-  },
+  input: WorkspaceSocketCloseInput,
 ): void {
   logWarn(env, "workspace_socket_closed", {
     code: input.cause,
@@ -1162,6 +1284,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private readonly initialized: Promise<void>;
   /** This object's own `WORKSPACE_DOS` name; see {@link selfObjectName}. */
   private objectName: string | null = null;
+  /** Content-free phase timings for the alarm invocation currently running. */
+  private workspaceAlarmInstrumentation: WorkspaceAlarmInstrumentation | null = null;
 
   constructor(
     state: DurableObjectState,
@@ -1184,7 +1308,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       id: state.id,
       instance: this,
     });
-    this.initialized = state.blockConcurrencyWhile(async () => {
+    this.initialized = this.initializeDurableObject(async () => {
       await this.applyMigrations(() => applyDurableObjectSqliteMigrations({
         storage: state.storage,
         migrations: WORKSPACE_DO_SCHEMA_MIGRATIONS,
@@ -1261,7 +1385,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const attachment = readAttachment(socket);
     if (!attachment) {
-      closeWorkspaceSocket(this.env, socket, null, {
+      this.closeSocket(socket, null, {
         code: 1011,
         reason: "Missing workspace connection identity",
         cause: "missing_connection_identity",
@@ -1277,7 +1401,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     try {
       decoded = JSON.parse(raw);
     } catch {
-      closeWorkspaceSocket(this.env, socket, attachment, {
+      this.closeSocket(socket, attachment, {
         code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
         reason: "Workspace commands must be JSON",
         cause: "invalid_json",
@@ -1308,7 +1432,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     const parsed = WorkspaceSocketClientEventSchema.safeParse(decoded);
     if (!parsed.success) {
-      closeWorkspaceSocket(this.env, socket, attachment, {
+      this.closeSocket(socket, attachment, {
         code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
         reason: "Invalid workspace socket event",
         cause: "invalid_event",
@@ -1324,7 +1448,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (parsed.data.type === "subscribe") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
-        closeWorkspaceSocket(this.env, socket, attachment, {
+        this.closeSocket(socket, attachment, {
           code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
           reason: "Session no longer active",
           cause: "session_inactive",
@@ -1335,10 +1459,50 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.subscribe(socket, attachment, parsed.data.afterWaterline);
       return;
     }
+    if (parsed.data.type === "set_presence") {
+      const auth = await this.sessionAuth(attachment);
+      if (!auth) {
+        this.closeSocket(socket, attachment, {
+          code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
+          reason: "Session no longer active",
+          cause: "session_inactive",
+          operation: "presence",
+        });
+        return;
+      }
+      // D1 authentication yields the input gate. A newer focus transition can
+      // therefore finish while this one is waiting; re-read the attachment and
+      // fence the older command before it can restore stale presence.
+      const currentAttachment = readAttachment(socket);
+      if (!currentAttachment || parsed.data.revision <= currentAttachment.presenceRevision) return;
+      if (!currentAttachment.subscribed
+        || (parsed.data.foregroundWorkstreamId !== null
+          && !this.directoryVisible(currentAttachment.userId, parsed.data.foregroundWorkstreamId))) {
+        this.closeSocket(socket, currentAttachment, {
+          code: WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
+          reason: "Invalid workspace presence",
+          cause: currentAttachment.subscribed
+            ? "presence_workstream_inaccessible"
+            : "presence_before_subscribe",
+          operation: "presence",
+        });
+        return;
+      }
+      const presenceChanged = currentAttachment.applicationState !== parsed.data.applicationState
+        || currentAttachment.foregroundWorkstreamId !== parsed.data.foregroundWorkstreamId;
+      socket.serializeAttachment({
+        ...currentAttachment,
+        presenceRevision: parsed.data.revision,
+        applicationState: parsed.data.applicationState,
+        foregroundWorkstreamId: parsed.data.foregroundWorkstreamId,
+      } satisfies WorkspaceSocketAttachment);
+      if (presenceChanged) this.broadcastPresence();
+      return;
+    }
     if (parsed.data.type === "list_workstreams") {
       const auth = await this.sessionAuth(attachment);
       if (!auth) {
-        closeWorkspaceSocket(this.env, socket, attachment, {
+        this.closeSocket(socket, attachment, {
           code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
           reason: "Session no longer active",
           cause: "session_inactive",
@@ -1363,12 +1527,93 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.createMessage(socket, attachment, parsed.data);
   }
 
-  override webSocketClose(): void {
-    // Hibernating sockets carry all durable identity in their attachment.
+  override webSocketClose(socket: WebSocket): void {
+    if (contributesPresence(readAttachment(socket))) this.broadcastPresence(socket);
   }
 
-  override webSocketError(): void {
-    // The client reconnects with a new one-time ticket when it still has work.
+  override webSocketError(socket: WebSocket): void {
+    // The client reconnects with a new one-time ticket when it still has work;
+    // everyone else must stop seeing the failed connection immediately.
+    if (contributesPresence(readAttachment(socket))) this.broadcastPresence(socket);
+  }
+
+  private closeSocket(
+    socket: WebSocket,
+    attachment: WorkspaceSocketAttachment | null,
+    input: WorkspaceSocketCloseInput,
+  ): void {
+    const wasPresent = contributesPresence(attachment);
+    if (wasPresent) {
+      try {
+        socket.serializeAttachment({
+          ...attachment,
+          applicationState: "background",
+          foregroundWorkstreamId: null,
+        } satisfies WorkspaceSocketAttachment);
+      } catch {
+        // Closing and the exclusion fence below still remove this socket from
+        // the canonical set when its attachment cannot be rewritten.
+      }
+    }
+    closeWorkspaceSocket(this.env, socket, attachment, input);
+    // Exclusion is the cleanup fence even if attachment serialization failed
+    // while disconnecting. A broken socket cannot block or rejoin this rebuild.
+    if (wasPresent) this.broadcastPresence(socket);
+  }
+
+  /**
+   * Send each connection only the presence for the work stream it currently
+   * foregrounds. This both avoids leaking personal work-stream identities and
+   * keeps the frame equal to the one face pile the renderer can paint.
+   */
+  private broadcastPresence(excluding?: WebSocket): void {
+    const sockets: Array<{ socket: WebSocket; attachment: WorkspaceSocketAttachment }> = [];
+    for (const socket of this.state.getWebSockets()) {
+      if (socket === excluding) continue;
+      const attachment = readAttachment(socket);
+      if (!attachment?.subscribed) continue;
+      if (contributesPresence(attachment)
+        && !this.directoryVisible(attachment.userId, attachment.foregroundWorkstreamId)) {
+        try {
+          socket.serializeAttachment({
+            ...attachment,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          } satisfies WorkspaceSocketAttachment);
+        } catch {
+          // Fail closed: an attachment that cannot record lost visibility must
+          // reconnect before it can contribute or receive presence again.
+          disconnect(socket, WORKSPACE_SOCKET_INVALID_MESSAGE_CODE, "Invalid workspace presence");
+        }
+        continue;
+      }
+      sockets.push({ socket, attachment });
+    }
+    const presentUsers = new Map<string, Set<string>>();
+    for (const { attachment } of sockets) {
+      if (attachment.applicationState !== "foreground" || attachment.foregroundWorkstreamId === null) continue;
+      const users = presentUsers.get(attachment.foregroundWorkstreamId) ?? new Set<string>();
+      users.add(attachment.userId);
+      presentUsers.set(attachment.foregroundWorkstreamId, users);
+    }
+    const occurredAt = new Date().toISOString();
+    for (const { socket, attachment } of sockets) {
+      if (!contributesPresence(attachment)) continue;
+      const workstreamId = attachment.foregroundWorkstreamId;
+      const userIds = [...(presentUsers.get(workstreamId) ?? [])]
+        .filter((userId) => userId !== attachment.userId);
+      try {
+        socket.send(JSON.stringify(WorkspacePresenceEventSchema.parse({
+          type: "workspace_presence",
+          occurredAt,
+          workstreamId,
+          userIds,
+        })));
+      } catch {
+        // Presence is reconstructed from healthy attachments on the next
+        // foreground change. One stale socket must not block the others.
+      }
+    }
   }
 
   /**
@@ -1392,9 +1637,36 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * already overdue still resumes the moment the region reopens.
    */
   protected override async scheduledAlarmDeferral(now: number): Promise<number | null> {
-    const authority = await readWorkstreamAuthorityControl(this.env);
-    if (authority.phase === "durable_object_open" || authority.phase === "legacy_open") return null;
-    return now + MAINTENANCE_RECHECK_MS;
+    const deferral = await this.instrumentWorkspaceAlarmPhase("authority_check", undefined, async () => {
+      const authority = await readWorkstreamAuthorityControl(this.env);
+      if (authority.phase === "durable_object_open" || authority.phase === "legacy_open") {
+        return null;
+      }
+      return now + MAINTENANCE_RECHECK_MS;
+    });
+    // A deferred invocation returns from the base before the ordinary final
+    // re-arm hook. Close its summary here; the base's direct `setAlarm` is a
+    // platform storage span and not scheduled application work.
+    if (deferral !== null) this.finishWorkspaceAlarmInstrumentation();
+    return deferral;
+  }
+
+  protected override armAlarmBeforeDueWork(now: number): Promise<unknown> {
+    // This is the first awaited phase after the base has verified migrations,
+    // so a fresh recorder here also discards any incomplete recorder left by a
+    // continuation the runtime ended before the previous alarm could finish.
+    this.workspaceAlarmInstrumentation = new WorkspaceAlarmInstrumentation(this.env);
+    return this.instrumentWorkspaceAlarmPhase("recovery_rearm", undefined, async () =>
+      super.armAlarmBeforeDueWork(now));
+  }
+
+  protected override async armAlarmAfterDueWork(): Promise<unknown> {
+    try {
+      return await this.instrumentWorkspaceAlarmPhase("final_rearm", undefined, async () =>
+        super.armAlarmAfterDueWork());
+    } finally {
+      this.finishWorkspaceAlarmInstrumentation();
+    }
   }
 
   /**
@@ -1420,7 +1692,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * moves with every event this workspace records.
    */
   protected override async runDueAlarmWork(now: number): Promise<void> {
-    this.reapExpiredActivityEvents(now);
+    await this.instrumentWorkspaceAlarmPhase("activity_reap", undefined, async () => {
+      this.reapExpiredActivityEvents(now);
+    });
     const workspaceId = this.workspaceId();
     // Re-derive the whole index before this alarm ends, exactly as the object
     // that used to own it did. A target that just fired has advanced its own
@@ -1431,31 +1705,65 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     // this, the drain settles the one-shot entry it just ran and nothing arms
     // the occurrence that replaced it: a recurring automation fires once and
     // then never again until an unrelated mutation happens to reconcile.
-    if (workspaceId) await this.refreshSchedule(workspaceId);
+    if (workspaceId) {
+      await this.instrumentWorkspaceAlarmPhase("schedule_reconcile", undefined, async () => {
+        await this.refreshSchedule(workspaceId);
+      });
+    }
   }
 
   protected override async runScheduledAlarm(alarm: ScheduledAlarm): Promise<ScheduledAlarmOutcome> {
-    const workspaceId = this.workspaceId();
-    if (!workspaceId) return;
-    if (alarm.kind === PRODUCT_ALARM_KIND) {
-      await this.runProductAlarm(workspaceId);
-      return;
-    }
-    if (alarm.kind === SCHEDULE_BOOTSTRAP_ALARM_KIND) {
-      // One-shot, written by the migration that created this index: it exists
-      // so an object that has never been asked to reconcile does it once,
-      // unprompted. Settling deletes it.
-      await this.refreshSchedule(workspaceId);
-      return;
-    }
-    if (!isWorkspaceScheduleAlarmKind(alarm.kind)) {
-      throw new Error(`workspace_object_unknown_alarm_kind:${alarm.kind}`);
-    }
-    return runWorkspaceScheduleTarget(
-      this.scheduleContext(workspaceId),
-      { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
-      new Date(),
+    return this.instrumentWorkspaceAlarmPhase(
+      "stored_target",
+      observableWorkspaceScheduledAlarmKind(alarm.kind),
+      async () => {
+        const workspaceId = this.workspaceId();
+        if (!workspaceId) return;
+        if (alarm.kind === PRODUCT_ALARM_KIND) {
+          await this.runProductAlarm(workspaceId);
+          return;
+        }
+        if (alarm.kind === SCHEDULE_BOOTSTRAP_ALARM_KIND) {
+          // One-shot, written by the migration that created this index: it exists
+          // so an object that has never been asked to reconcile does it once,
+          // unprompted. Settling deletes it.
+          await this.refreshSchedule(workspaceId);
+          return;
+        }
+        if (!isWorkspaceScheduleAlarmKind(alarm.kind)) {
+          throw new Error(`workspace_object_unknown_alarm_kind:${alarm.kind}`);
+        }
+        return runWorkspaceScheduleTarget(
+          this.scheduleContext(workspaceId),
+          { kind: alarm.kind, id: alarm.key, dueAt: new Date(alarm.dueAt).toISOString() },
+          new Date(),
+        );
+      },
     );
+  }
+
+  /**
+   * Time one bounded, content-free phase of this WorkspaceDO alarm.
+   *
+   * Cloudflare adds the invocation and Durable Object ids itself. Keeping
+   * identity out of these fields means a phase row can explain a hot object
+   * without copying a workspace id, target key, due time, payload, or error
+   * message into Workers Logs or the Global trace export.
+   */
+  private instrumentWorkspaceAlarmPhase<T>(
+    phase: WorkspaceScheduledAlarmPhase,
+    alarmKind: ObservableWorkspaceScheduledAlarmKind | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    // Defensive for direct private-method tests and future internal callers;
+    // the normal alarm sequence initializes this in armAlarmBeforeDueWork.
+    this.workspaceAlarmInstrumentation ??= new WorkspaceAlarmInstrumentation(this.env);
+    return this.workspaceAlarmInstrumentation.phase(phase, alarmKind, run);
+  }
+
+  private finishWorkspaceAlarmInstrumentation(): void {
+    this.workspaceAlarmInstrumentation?.finish();
+    this.workspaceAlarmInstrumentation = null;
   }
 
   protected override onScheduledAlarmFailure(
@@ -1558,6 +1866,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceEnv: this.localWorkspaceEnv(workspaceId),
       workspaceId,
       directory: this,
+      notificationIntents: this,
     };
   }
 
@@ -1590,6 +1899,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   private runWorkspaceSql(request: WorkspaceRuntimeSqlRequest): WorkspaceRuntimeSqlResult[] {
     const lists = new Set<SidebarList>();
     for (const statement of request.statements) {
+      const typedOnlyTable = typedRpcOnlyWorkspaceTable(statement.sql);
+      if (typedOnlyTable) {
+        throw new Error(`workspace_runtime_table_requires_typed_rpc:${typedOnlyTable}`);
+      }
       const target = workspaceMutationTarget(statement.sql);
       const list = target === null ? undefined : SIDEBAR_LIST_SOURCE_TABLES.get(target);
       if (list) lists.add(list);
@@ -1804,6 +2117,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
     let closed = 0;
+    let presenceChanged = false;
     for (const socket of this.state.getWebSockets()) {
       const attachment = readAttachment(socket);
       // A revoked session closes only the windows that presented it; an ended
@@ -1811,10 +2125,25 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       // one place because the four socket roles disagree about their own
       // attachments — see `revocationClosesSocket`.
       if (!attachment || !revocationClosesSocket(request, attachment)) continue;
+      const wasPresent = contributesPresence(attachment);
+      presenceChanged ||= wasPresent;
+      if (wasPresent) {
+        try {
+          socket.serializeAttachment({
+            ...attachment,
+            applicationState: "background",
+            foregroundWorkstreamId: null,
+          } satisfies WorkspaceSocketAttachment);
+        } catch {
+          // `disconnect` still unsubscribes or closes the socket; a failed
+          // attachment rewrite must not interrupt access revocation.
+        }
+      }
       disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this workspace");
       closed += 1;
     }
     if (closed > 0) {
+      if (presenceChanged) this.broadcastPresence();
       logWarn(this.env, "workspace_socket_access_revoked", {
         workspace_id: this.workspaceId(),
         user_id: request.userId,
@@ -1875,7 +2204,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     this.assertWorkspace(request.workspaceId);
     const activity = request.event.activity;
-    return WorkspaceConnectorEventIngestResultSchema.parse(
+    const result = WorkspaceConnectorEventIngestResultSchema.parse(
       this.state.storage.transactionSync(() => {
         const receipt = this.state.storage.sql.exec<{
           payload_hash: string;
@@ -2014,6 +2343,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         };
       }),
     );
+    logInfo(this.env, "connector_event_authority_ingested", {
+      workspace_id: request.workspaceId,
+      connection_id: activity.connectionId,
+      connector_type: request.event.connectorType,
+      provider: activity.provider,
+      ingress_event_id: request.ingressEventId,
+      connector_event_id: result.eventId,
+      duplicate: result.duplicate,
+      processing_status: result.processingStatus,
+      processing_attempt: result.processingAttempt,
+      outcome: "committed",
+    });
+    return result;
   }
 
   async connectorEvent(input: WorkspaceConnectorEventRequest): Promise<WorkspaceConnectorEvent | null> {
@@ -2028,38 +2370,88 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   async claimConnectorEvent(
-    input: WorkspaceConnectorEventClaimRequest,
-  ): Promise<WorkspaceConnectorEventClaimResult> {
+    input: WorkspaceConnectorEventClaimRpcRequest,
+  ): Promise<WorkspaceConnectorEventClaimRpcResult> {
     await this.initialized;
-    const request = WorkspaceConnectorEventClaimRequestSchema.parse(input);
+    const rpcRequest = WorkspaceConnectorEventClaimRpcRequestSchema.parse(input);
+    const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
+    const request: WorkspaceConnectorEventClaimRequest = legacyWorkflowContract
+      ? {
+          workspaceId: rpcRequest.workspaceId,
+          eventId: rpcRequest.eventId,
+          processingOwnerId: rpcRequest.workflowInstanceId,
+          attempt: rpcRequest.attempt,
+          orchestrator: "workflow",
+        }
+      : WorkspaceConnectorEventClaimRequestSchema.parse(rpcRequest);
     this.assertWorkspace(request.workspaceId);
-    return WorkspaceConnectorEventClaimResultSchema.parse(
+    const result = WorkspaceConnectorEventClaimResultSchema.parse(
       this.state.storage.transactionSync(() => {
-        const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow & {
-          workflow_instance_id: string | null;
-        }>(
+        const row = this.state.storage.sql.exec<WorkspaceConnectorEventRow>(
           `SELECT * FROM workspace_connector_events WHERE event_id = ?`,
           request.eventId,
         ).toArray()[0];
         if (!row) throw new Error("connector_event_not_found");
         if (row.processing_status === "processed") return { outcome: "processed" as const };
-        if (
-          row.processing_status === "processing"
-          && row.workflow_instance_id !== request.workflowInstanceId
-        ) {
-          return { outcome: "busy" as const };
-        }
-        if (row.processing_status === "failed" && request.attempt <= row.processing_attempt) {
-          return { outcome: "busy" as const };
-        }
         const now = Date.now();
+        // A pre-cutover Workflow may replay its claim step after WorkspaceDO
+        // committed the claim but before Workflows persisted the step result.
+        // Reissuing that exact Workflow lease is idempotent. Queue owners are
+        // only correlation IDs, so Queue replays must never use this exception.
+        const sameLegacyWorkflowLease = request.orchestrator === "workflow"
+          && row.processing_status === "processing"
+          && (row.processing_orchestrator ?? "workflow") === "workflow"
+          && row.workflow_instance_id === request.processingOwnerId;
+        if (row.processing_status === "processing" && !sameLegacyWorkflowLease) {
+          // A pre-v12 active claim has no discriminator because only Workflows
+          // could create it. Workflow step timeouts apply per retry attempt, so
+          // no finite Queue lease can safely prove that handler has stopped.
+          // Its own terminal path either completes or enqueues a failed redrive.
+          if ((row.processing_orchestrator ?? "workflow") === "workflow") {
+            return {
+              outcome: "busy" as const,
+              reason: "legacy_workflow_active" as const,
+              retryAt: null,
+            };
+          }
+          const claimedAt = typeof row.claimed_at === "number" ? row.claimed_at : now;
+          const retryAt = claimedAt + CONNECTOR_EVENT_PROCESSING_LEASE_MS;
+          if (retryAt > now) {
+            return {
+              outcome: "busy" as const,
+              reason: "active_lease_not_expired" as const,
+              retryAt,
+            };
+          }
+        }
+        if (
+          (row.processing_status === "processing" || row.processing_status === "failed")
+          && request.attempt < row.processing_attempt
+        ) {
+          return {
+            outcome: "busy" as const,
+            reason: "failed_attempt_not_advanced" as const,
+            retryAt: null,
+          };
+        }
+        // `workflow_instance_id` is the compatibility-era physical column. A
+        // Workflow's instance ID remains its lease; Queue claims receive a new
+        // authority-generated UUID on every acquisition. Settlement fences on
+        // this value, so an expired handler cannot settle its successor's work.
+        const processingLeaseId = request.orchestrator === "workflow"
+          ? request.processingOwnerId
+          : uuidV7(now);
+        const processingLeaseExpiresAt = request.orchestrator === "workflow"
+          ? null
+          : now + CONNECTOR_EVENT_PROCESSING_LEASE_MS;
         this.state.storage.sql.exec(
           `UPDATE workspace_connector_events
               SET processing_status = 'processing', workflow_instance_id = ?,
-                  processing_attempt = ?, claimed_at = ?, processing_error = NULL,
-                  updated_at = ?
+                  processing_orchestrator = ?, processing_attempt = ?, claimed_at = ?,
+                  processing_error = NULL, updated_at = ?
             WHERE event_id = ?`,
-          request.workflowInstanceId,
+          processingLeaseId,
+          request.orchestrator,
           request.attempt,
           now,
           now,
@@ -2068,15 +2460,53 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         return {
           outcome: "claimed" as const,
           event: connectorEventFromRow(row, request.workspaceId, this.env.AVALON_REGION),
+          processingLeaseId,
+          processingLeaseExpiresAt,
         };
       }),
     );
+    logInfo(this.env, "connector_event_authority_claimed", {
+      workspace_id: request.workspaceId,
+      connector_event_id: request.eventId,
+      processing_owner_id: request.processingOwnerId,
+      processing_attempt: request.attempt,
+      processing_orchestrator: request.orchestrator,
+      processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
+      processing_lease_id: result.outcome === "claimed" ? result.processingLeaseId : null,
+      processing_lease_expires_at: result.outcome === "claimed"
+        ? result.processingLeaseExpiresAt
+        : result.outcome === "busy"
+          ? result.retryAt
+          : null,
+      outcome: result.outcome,
+      reason: result.outcome === "busy" ? result.reason : null,
+    });
+    if (!legacyWorkflowContract) return result;
+    return LegacyWorkspaceConnectorEventClaimResultSchema.parse(
+      result.outcome === "claimed"
+        ? { outcome: "claimed", event: result.event }
+        : { outcome: result.outcome },
+    );
   }
 
-  async settleConnectorEvent(input: WorkspaceConnectorEventSettleRequest): Promise<void> {
+  async settleConnectorEvent(input: WorkspaceConnectorEventSettleRpcRequest): Promise<void> {
     await this.initialized;
-    const request = WorkspaceConnectorEventSettleRequestSchema.parse(input);
+    const rpcRequest = WorkspaceConnectorEventSettleRpcRequestSchema.parse(input);
+    const legacyWorkflowContract = "workflowInstanceId" in rpcRequest;
+    const request: WorkspaceConnectorEventSettleRequest = legacyWorkflowContract
+      ? {
+          workspaceId: rpcRequest.workspaceId,
+          eventId: rpcRequest.eventId,
+          processingOwnerId: rpcRequest.workflowInstanceId,
+          outcome: rpcRequest.outcome,
+          error: rpcRequest.error,
+        }
+      : rpcRequest;
     this.assertWorkspace(request.workspaceId);
+    // A persisted pre-cutover Workflow claim has no separate lease in its step
+    // result; its instance ID is exactly the value stored in the physical lease
+    // column, so this fallback is both narrow and replay-compatible.
+    const processingLeaseId = request.processingLeaseId ?? request.processingOwnerId;
     const now = Date.now();
     const changed = this.state.storage.sql.exec<{ event_id: string }>(
       `UPDATE workspace_connector_events
@@ -2090,9 +2520,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.error,
       now,
       request.eventId,
-      request.workflowInstanceId,
+      processingLeaseId,
     ).toArray().length;
-    if (changed === 1) return;
+    if (changed === 1) {
+      logInfo(this.env, "connector_event_authority_terminal", {
+        workspace_id: request.workspaceId,
+        connector_event_id: request.eventId,
+        processing_owner_id: request.processingOwnerId,
+        processing_lease_id: processingLeaseId,
+        processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
+        outcome: request.outcome,
+        reason: "settlement_committed",
+      });
+      return;
+    }
     const settled = this.state.storage.sql.exec<{
       processing_status: WorkspaceConnectorEventRow["processing_status"];
       workflow_instance_id: string | null;
@@ -2102,9 +2543,31 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       request.eventId,
     ).toArray()[0];
     if (
-      settled?.workflow_instance_id === request.workflowInstanceId
+      settled?.workflow_instance_id === processingLeaseId
       && settled.processing_status === request.outcome
-    ) return;
+    ) {
+      logInfo(this.env, "connector_event_authority_terminal", {
+        workspace_id: request.workspaceId,
+        connector_event_id: request.eventId,
+        processing_owner_id: request.processingOwnerId,
+        processing_lease_id: processingLeaseId,
+        processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
+        outcome: request.outcome,
+        reason: "settlement_replayed",
+      });
+      return;
+    }
+    logWarn(this.env, "connector_event_authority_settlement_failed", {
+      workspace_id: request.workspaceId,
+      connector_event_id: request.eventId,
+      processing_owner_id: request.processingOwnerId,
+      processing_lease_id: processingLeaseId,
+      processing_rpc_contract: legacyWorkflowContract ? "legacy_workflow" : "current",
+      requested_outcome: request.outcome,
+      authoritative_outcome: settled?.processing_status ?? "missing",
+      authoritative_processing_owner_id: settled?.workflow_instance_id ?? null,
+      reason: "settlement_fenced",
+    });
     throw new Error("connector_event_settlement_fenced");
   }
 
@@ -2600,6 +3063,11 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       await this.refreshTerminalSchedule();
     }
     if (directoryChanged) {
+      // Scope, participant, generation, and archival effects can invalidate a
+      // foreground attachment without another client focus event. Rebuild now,
+      // before the async state publications yield, so removed viewers neither
+      // contribute to nor receive the next presence snapshot.
+      this.broadcastPresence();
       await Promise.all([
         ...commonChanges,
       ].map((workstreamId) => this.publishWorkstreamState(workstreamId)));
@@ -2632,6 +3100,100 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceRegionalEffectApplyResultSchema.parse(result);
   }
 
+  /** Claim one notification intent without exposing SQL or physical write counters. */
+  async claimWorkstreamNotificationIntent(
+    input: WorkspaceNotificationIntentRequest,
+  ): Promise<WorkspaceNotificationIntentClaimResult> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceNotificationIntentClaimResultSchema.parse(
+      claimStoredWorkspaceNotificationIntent(
+        this.state.storage,
+        request,
+        uuidV7(),
+        Date.now(),
+      ),
+    );
+    logInfo(this.env, "workstream_notification_intent_claim", {
+      workspace_id: request.workspaceId,
+      notification_intent_id: request.intentId,
+      workstream_id: result.outcome === "missing" ? null : result.intent.workstreamId,
+      recipient_user_id: result.outcome === "missing" ? null : result.intent.recipientUserId,
+      kind: result.outcome === "missing" ? null : result.intent.notificationKind,
+      state: result.outcome === "missing" ? null : result.intent.state,
+      lease_id: result.outcome === "claimed" ? result.leaseId : null,
+      outcome: result.outcome,
+    });
+    // A terminal replay can mean the earlier settle committed and its
+    // post-commit schedule refresh failed. Reconcile here so that failure
+    // cannot strand the terminal receipt past its retention window.
+    if (result.outcome === "terminal") await this.refreshSchedule(request.workspaceId);
+    return result;
+  }
+
+  /** Apply one lease-fenced notification lifecycle transition. */
+  async transitionWorkstreamNotificationIntent(
+    input: WorkspaceNotificationIntentTransitionRequest,
+  ): Promise<WorkspaceNotificationIntentTransitionResult> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentTransitionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceNotificationIntentTransitionResultSchema.parse(
+      transitionStoredWorkspaceNotificationIntent(this.state.storage, request, Date.now()),
+    );
+    logInfo(this.env, "workstream_notification_intent_transition", {
+      workspace_id: request.workspaceId,
+      notification_intent_id: request.intentId,
+      lease_id: request.leaseId,
+      transition: request.transition,
+      requested_state: request.transition === "settle" ? request.state : null,
+      error_code: request.transition === "settle" ? null : request.errorCode,
+      current_state: result.outcome === "lease_lost" ? result.state : null,
+      outcome: result.outcome,
+    });
+    if (
+      request.transition === "settle"
+      && (result.outcome === "applied"
+        || (result.outcome === "lease_lost"
+          && (result.state === "delivered" || result.state === "skipped")))
+    ) {
+      await this.refreshSchedule(request.workspaceId);
+    }
+    return result;
+  }
+
+  /** Derive the retention alarm target from terminal notification receipts. */
+  async notificationIntentMaintenanceTarget(
+    input: WorkspaceNotificationIntentMaintenanceRequest,
+  ): Promise<WorkspaceNotificationIntentMaintenanceTarget> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentMaintenanceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceNotificationIntentMaintenanceTargetSchema.parse(
+      storedWorkspaceNotificationIntentMaintenanceTarget(this.state.storage, request.workspaceId),
+    );
+  }
+
+  /** Reap terminal notification receipts and return exact deleted identities. */
+  async reapSettledWorkstreamNotificationIntents(
+    input: WorkspaceNotificationIntentReapRequest,
+  ): Promise<WorkspaceNotificationIntentReapResult> {
+    await this.initialized;
+    const request = WorkspaceNotificationIntentReapRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = WorkspaceNotificationIntentReapResultSchema.parse(
+      reapStoredWorkspaceNotificationIntents(this.state.storage, request, Date.now()),
+    );
+    logInfo(this.env, "workstream_notification_intent_reap", {
+      workspace_id: request.workspaceId,
+      reaped_intent_ids: result.reapedIntentIds,
+      reaped_count: result.reapedIntentIds.length,
+      outcome: result.reapedIntentIds.length > 0 ? "deleted" : "empty",
+    });
+    return result;
+  }
+
   async listWorkstreams(input: WorkspaceDirectoryListRequest): Promise<WorkspaceDirectoryPage> {
     await this.initialized;
     const request = WorkspaceDirectoryListRequestSchema.parse(input);
@@ -2639,11 +3201,178 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return WorkspaceDirectoryPageSchema.parse(this.listDirectory(request));
   }
 
+  /**
+   * Resolve a generic member-visible filter once, inside the object that owns
+   * the cross-work-stream index. The caller turns each returned id into one
+   * Queue event; it never probes child objects to rediscover this list.
+   */
+  async batchUpdateTargets(input: WorkspaceDirectoryBatchTargetsRequest) {
+    await this.initialized;
+    const request = WorkspaceDirectoryBatchTargetsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceDirectoryBatchTargetsResultSchema.parse({
+      items: this.batchTargetIds(request.userId, request.filter),
+    });
+  }
+
+  private batchTargetIds(userId: string, filter: WorkstreamBatchFilter): string[] {
+    const atOrAfter = filter.lastActivityAt?.atOrAfter;
+    const before = filter.lastActivityAt?.before;
+    const pinned = filter.pinned;
+    return this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id
+         FROM workspace_workstream_directory directory
+         LEFT JOIN workspace_workstream_viewers viewer
+           ON viewer.workstream_id = directory.workstream_id
+          AND viewer.user_id = ?
+          AND viewer.authority_generation = directory.authority_generation
+         LEFT JOIN workspace_workstream_pins pin
+           ON pin.workstream_id = directory.workstream_id AND pin.user_id = ?
+        WHERE directory.archived_at IS NULL
+          AND (? = 1 OR directory.system_kind IS NULL)
+          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+          AND (? IS NULL OR directory.last_activity_at >= ?)
+          AND (? IS NULL OR directory.last_activity_at < ?)
+          AND (? IS NULL
+            OR (? = 1 AND pin.user_id IS NOT NULL)
+            OR (? = 0 AND pin.user_id IS NULL))
+        ORDER BY directory.workstream_id`,
+      userId,
+      userId,
+      filter.includeSystem ? 1 : 0,
+      atOrAfter ?? null,
+      atOrAfter ? Date.parse(atOrAfter) : 0,
+      before ?? null,
+      before ? Date.parse(before) : 0,
+      pinned === undefined ? null : Number(pinned),
+      Number(pinned ?? false),
+      Number(pinned ?? false),
+    ).toArray().map((row) => row.workstream_id);
+  }
+
+  /** Freeze one target set and return only the Queue events not yet published. */
+  async beginWorkstreamBatchDispatch(input: WorkspaceBatchDispatchBeginRequest) {
+    await this.initialized;
+    const request = WorkspaceBatchDispatchBeginRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.state.storage.transactionSync(() => {
+      const existing = this.state.storage.sql.exec<{
+        request_hash: string;
+        user_id: string;
+        target_count: number;
+      }>(
+        `SELECT request_hash, user_id, target_count
+           FROM workspace_batch_dispatches WHERE operation_id = ?`,
+        request.operationId,
+      ).toArray()[0];
+      if (existing
+        && (existing.request_hash !== request.requestHash || existing.user_id !== request.userId)) {
+        throw new Error("workstream_batch_dispatch_conflict");
+      }
+
+      let targetCount = existing?.target_count;
+      if (!existing) {
+        const now = Date.now();
+        const targetIds = this.batchTargetIds(request.userId, request.filter);
+        this.state.storage.sql.exec(
+          `INSERT INTO workspace_batch_dispatches
+             (operation_id, request_hash, user_id, target_count, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          request.operationId,
+          request.requestHash,
+          request.userId,
+          targetIds.length,
+          now,
+          now,
+        );
+        this.state.storage.sql.exec(
+          `INSERT INTO workspace_batch_dispatch_targets
+             (operation_id, workstream_id, dispatched_at)
+           SELECT ?, value, NULL FROM json_each(?)`,
+          request.operationId,
+          JSON.stringify(targetIds),
+        );
+        targetCount = targetIds.length;
+      }
+
+      const pending = this.state.storage.sql.exec<{ workstream_id: string }>(
+        `SELECT workstream_id FROM workspace_batch_dispatch_targets
+          WHERE operation_id = ? AND dispatched_at IS NULL
+          ORDER BY workstream_id`,
+        request.operationId,
+      ).toArray();
+      return WorkspaceBatchDispatchBeginResultSchema.parse({
+        items: pending.map((row) => row.workstream_id),
+        targetCount: targetCount ?? 0,
+      });
+    });
+  }
+
+  /** Persist one successful Queue sendBatch chunk; redelivery is a no-op. */
+  async advanceWorkstreamBatchDispatch(input: WorkspaceBatchDispatchAdvanceRequest) {
+    await this.initialized;
+    const request = WorkspaceBatchDispatchAdvanceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.state.storage.transactionSync(() => {
+      const dispatch = this.state.storage.sql.exec<{ request_hash: string }>(
+        `SELECT request_hash FROM workspace_batch_dispatches WHERE operation_id = ?`,
+        request.operationId,
+      ).toArray()[0];
+      if (!dispatch || dispatch.request_hash !== request.requestHash) {
+        throw new Error("workstream_batch_dispatch_conflict");
+      }
+      const placeholders = request.workstreamIds.map(() => "?").join(", ");
+      const now = Date.now();
+      this.state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatch_targets SET dispatched_at = COALESCE(dispatched_at, ?)
+          WHERE operation_id = ? AND workstream_id IN (${placeholders})`,
+        now,
+        request.operationId,
+        ...request.workstreamIds,
+      );
+      this.state.storage.sql.exec(
+        `UPDATE workspace_batch_dispatches SET updated_at = ? WHERE operation_id = ?`,
+        now,
+        request.operationId,
+      );
+      const remaining = this.state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM workspace_batch_dispatch_targets
+          WHERE operation_id = ? AND dispatched_at IS NULL`,
+        request.operationId,
+      ).one();
+      return WorkspaceBatchDispatchAdvanceResultSchema.parse({ remainingCount: remaining.count });
+    });
+  }
+
   async canReadWorkstream(input: WorkspaceDirectoryVisibilityRequest): Promise<boolean> {
     await this.initialized;
     const request = WorkspaceDirectoryVisibilityRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return this.directoryVisible(request.userId, request.workstreamId);
+  }
+
+  async readableWorkstreamIds(
+    input: WorkspaceDirectoryReadableIdsRequest,
+  ): Promise<WorkspaceDirectoryReadableIdsResult> {
+    await this.initialized;
+    const request = WorkspaceDirectoryReadableIdsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const placeholders = request.workstreamIds.map(() => "?").join(", ");
+    const rows = this.state.storage.sql.exec<{ workstream_id: string }>(
+      `SELECT directory.workstream_id FROM workspace_workstream_directory directory
+       LEFT JOIN workspace_workstream_viewers viewer
+         ON viewer.workstream_id = directory.workstream_id
+        AND viewer.user_id = ?
+        AND viewer.authority_generation = directory.authority_generation
+       WHERE directory.workstream_id IN (${placeholders})
+         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+       ORDER BY directory.workstream_id`,
+      request.userId,
+      ...request.workstreamIds,
+    ).toArray();
+    return WorkspaceDirectoryReadableIdsResultSchema.parse({
+      items: rows.map((row) => row.workstream_id),
+    });
   }
 
   async visibleWorkstreamIds(input: WorkspaceDirectoryVisibleIdsRequest): Promise<WorkspaceDirectoryVisibleIdsPage> {
@@ -3132,6 +3861,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       connectedAt: new Date().toISOString(),
       subscribed: false,
       lastWaterline: 0,
+      presenceRevision: 0,
+      applicationState: "background",
+      foregroundWorkstreamId: null,
     };
     this.state.acceptWebSocket(server, [attachment.workspaceId, attachment.userId]);
     // Register the server end with the hibernation API before attaching the
@@ -3178,7 +3910,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         }));
         if (!auth) {
           span.setError("session_inactive");
-          closeWorkspaceSocket(this.env, socket, attachment, {
+          this.closeSocket(socket, attachment, {
             code: WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
             reason: "Session no longer active",
             cause: "session_inactive",
@@ -3527,6 +4259,8 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
+         AND directory.exact_state NOT IN ('running', 'interrupting', 'preparing_context',
+                                           'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
          AND (? IS NULL OR directory.last_activity_at < ?
@@ -3547,7 +4281,18 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const nextCursor = hasMore && last
       ? `${last.last_activity_at}:${last.workstream_id}`
       : null;
-    if (!request.before) rows.push(...this.pinnedDirectoryRows(request.userId, request.includeSystem));
+    if (!request.before) {
+      const selected = new Set(rows.map((row) => row.workstream_id));
+      const supplemental = [
+        ...this.pinnedDirectoryRows(request.userId, request.includeSystem),
+        ...this.runningDirectoryRows(request.userId, request.includeSystem),
+      ];
+      for (const row of supplemental) {
+        if (selected.has(row.workstream_id)) continue;
+        selected.add(row.workstream_id);
+        rows.push(row);
+      }
+    }
     return {
       items: rows.map((row) => directoryWorkstream(row, request.workspaceId)),
       stateVersions: rows.map(directoryStateVersion),
@@ -3591,6 +4336,26 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
        ORDER BY pin.position, directory.workstream_id`,
+      userId,
+      userId,
+      includeSystem ? 1 : 0,
+    ).toArray();
+  }
+
+  /**
+   * Running work streams are connection targets, not merely directory rows.
+   * Return every visible one with the first page so an old active stream is
+   * not hidden behind the recent-work cursor and omitted from socket prewarm.
+   */
+  private runningDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {
+    return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
+      `${SELECT_WORKSPACE_DIRECTORY}
+       WHERE directory.archived_at IS NULL
+         AND directory.exact_state IN ('running', 'interrupting', 'preparing_context',
+                                       'waiting_capacity')
+         AND (? = 1 OR directory.system_kind IS NULL)
+         AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
+       ORDER BY directory.last_activity_at DESC, directory.workstream_id`,
       userId,
       userId,
       includeSystem ? 1 : 0,

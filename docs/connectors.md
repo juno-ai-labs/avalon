@@ -27,10 +27,10 @@ recoverable post-commit edge.
 | `apps/api/src/services/connector-actor-identity.ts` | `resolveConnectorActorIdentity` over `external_user_identities`. |
 | `apps/api/src/services/user-delivery.ts` | Whether a connection is a personal delivery destination for a given user. |
 | `apps/api/src/lib/connector-registry.ts` | Which connectors this region registers. |
-| `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO and the reusable routing processor, including `activityIsDigestible`. |
+| `apps/api/src/queues/activity-consumer.ts` | Regional Queue admission into WorkspaceDO, native connector-event retry, and the reusable routing processor, including `activityIsDigestible`. |
 | `apps/api/src/workflows/connector-poll.ts` | `pollCheckpointedActivityStreams` and the shared checkpoint runner. |
-| `apps/api/src/workflows/connector-event.ts` | One durable processing Workflow per canonical WorkspaceDO event. |
-| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, Workflow claims, and settlement. |
+| `apps/api/src/workflows/connector-event.ts` | Drain-only compatibility for connector-event Workflow instances created before the Queue-processing cutover. New events never create one. |
+| `apps/api/src/durable-objects/workspace-do.ts`, `workspace-domain-schema.ts` | Connector credentials/configuration, external identities, workspace-local Slack/handoff state, normalized event authority, ingress receipts, processing claims, and settlement. |
 
 ## How it works
 
@@ -271,7 +271,7 @@ Docs and Sheets operations use their native provider APIs. Docs reads return bou
 
 The production-approved Google scope set uses `drive.readonly` for Drive discovery and native Docs/Sheets reads, and `drive.file` for native writes. Newly created Docs and Sheets can be edited. An existing file is writable only after it has been explicitly opened or shared with Rally under Google's per-file authorization model; an arbitrary existing file discovered through Drive search remains read-only. Rally does not yet include a Google Picker flow for granting that per-file write access. Drive search and metadata results expose `isAppAuthorized`, `canEdit`, and the derived `writableByRally`; Docs/Sheets update tools preflight the same metadata and fail with `details.reason = drive_file_not_writable` without attempting a mutation when either condition is false or the file is invisible to a `drive.file`-only token. This preflight is a fail-closed model-guidance and user-experience guard, not the security boundary: Google enforces the current authorization again when it receives the mutation.
 
-Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery.
+Google activity ingestion is polling-only. Gmail, Calendar, and Drive are independent named activity streams under one connection. Each commits its own provider-native high-watermark—Gmail history IDs, Calendar sync/completion tokens, or Drive change page tokens—only after its canonical activities are persisted. A transient failure in one stream preserves that stream's checkpoint without forcing successful sibling streams to replay; the scheduler uses the earliest backlog or retry deadline. Gmail and Calendar are digestible streams and Drive is not: a change feed reports a save, so a document written over an afternoon is one piece of news and dozens of events. `email.received`, `calendar.event_changed`, and `calendar.event_completed` are the digestible activity types; `email.updated` is a label or read-state change on mail already seen. Drive change polling classifies Google Workspace MIME types into `docs.document_changed` and `sheets.spreadsheet_changed`; other files produce `drive.file_changed`. Consequently `drive.read` is included in the Drive + Docs + Sheets preset and is the event source for Docs and Sheets changes. Operators can follow each normalized poll result into WorkspaceDO at `connector_event_authority_ingested`, before its Queue processing begins. Rally does not currently register Gmail Pub/Sub watches, Calendar notification channels, Drive push notifications, or any other Google webhook. Rally resource watches route the normalized polled activity and must not be confused with provider push delivery.
 
 A revoked refresh grant marks the connection `needs_reconnect`. Production smoke tests should create a Gmail draft rather than send unsolicited mail. A personal Gmail send tool is available only to its owner; if an administrator creates a workspace-scoped Gmail connection through the backend, its granted send capability rolls down to every work stream like every other workspace capability.
 
@@ -512,11 +512,53 @@ Manifests and facets are cross-validated at registry construction: a connector t
    in R2 behind `payloadRef`; the Queue message is independently parseable and
    does not need a D1 activity-body lookup.
 5. The Queue consumer resolves the workspace's jurisdiction and placement affinity and calls `WorkspaceDO.ingestConnectorEvent`. Provider identity and dedupe uniqueness are enforced inside that object's transaction, and an ingress receipt makes Queue/provider replay idempotent.
-6. After the object commits, the consumer creates deterministic `connector-event:<canonical-event-id>:<attempt>` in `CONNECTOR_EVENT_WORKFLOW` and acknowledges the Queue message. A duplicate Workflow-ID conflict means the earlier send won and is success.
-7. The Workflow claims the event from WorkspaceDO and evaluates explicit resource watches and deterministic automation triggers. Semantic trigger matching runs only after deterministic prefilters.
-8. Create automation work idempotently; contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The connector Workflow then settles the authoritative event as processed or failed. An exhausted processing attempt enqueues the next numbered attempt; duplicate redrive messages converge on the same Workflow ID and the object admits a new claimant only from `failed`.
+6. After the object commits, the consumer sends an ID-only
+   `connector_event_process` pointer to the same regional `ACTIVITY_QUEUE` and
+   acknowledges ingress. The pointer carries a generated processing-owner UUID
+   that remains stable across native Queue retries; it is not derived from or
+   formatted as an external platform identifier.
+7. A later Queue delivery claims and loads the event from WorkspaceDO over typed
+   RPC, then evaluates explicit resource watches and deterministic automation
+   triggers. Semantic trigger matching runs only after deterministic prefilters.
+   WorkspaceDO issues a fresh, 15-minute processing lease for each acquisition.
+   A duplicate returns `busy` with the lease's exact expiry; a delivery after
+   expiry can recover interrupted processing, and settlement is fenced by the
+   returned lease token so the expired handler cannot overwrite its successor.
+8. Create automation work idempotently; contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The Queue consumer then settles the authoritative event as processed or failed. A transient failure calls per-message `retry()` and an exhausted message enters the existing regional activities DLQ.
 9. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
 10. Persist accepted/dismissed feedback that decides what step 8 offers next.
+
+**Why the event is present in ingress but absent from processing:** the first
+Queue message must be self-contained because no canonical WorkspaceDO event
+exists yet. Once step 5 commits, WorkspaceDO is the only event authority. A
+second event copy would either have to be ignored or hash-checked against that
+authority, so it cannot remove the claim/load RPC; it could also become stale,
+increase every retry's payload, and leave normalized provider content in the DLQ when
+processing exhausts. The ID-only pointer makes processing retries and exhausted
+messages content-free. The cost is one additional same-Queue send after commit.
+That handoff is closed by acknowledging ingress only after Cloudflare accepts
+the pointer: if the send or invocation fails first, the self-contained ingress
+message replays and WorkspaceDO deduplicates it.
+
+A single-message alternative—ingest, process, and retry the original full
+message—would also be correct if every retry re-ingested idempotently and still
+loaded WorkspaceDO authority. It was rejected because it retains the normalized
+event for the entire processing retry/DLQ lifetime in exchange for saving only
+the second Queue send, not an object round trip.
+
+Every durable boundary above emits a structured outcome rather than leaving a
+Queue acknowledgement to stand in for downstream success. Follow one event by
+`workspace_id`, `connection_id`, `connector_event_id`, `ingress_id`, and
+`processing_owner_id`: `connector_event_enqueued`,
+`connector_event_authority_ingested`, `connector_event_queue_terminal`, the
+`connector_event_process_*` events, and
+`connector_event_authority_terminal` distinguish enqueue, authoritative
+acceptance, claim, retry/defer, and final settlement. Legacy
+`connector_event_workflow_*` logs identify only instances created before the
+cutover. `connector_poll_terminal` records the connector, successful
+activity count, per-stream error codes, cursor commit, and next scheduled poll.
+Provider content and credentials remain excluded; opaque provider and Rally IDs
+are correlation fields and should be logged.
 
 The canonical event remains the automation trigger's evidence after admission.
 Prompt construction and between-turn authorization revalidation load it from
@@ -527,15 +569,15 @@ consult a scrubbed D1 `activities` row.
 One normalized event is never sent to two WorkspaceDOs and is never shared
 between workspaces. Fan-out happens before normalization at the raw provider
 delivery boundary. Each target gets its own event identity, authorization,
-visibility, dedupe receipt, Workflow, and workspace-local durable row. A
-provider account installed twice in one workspace may likewise produce two
+visibility, dedupe receipt, processing owner, and workspace-local durable row.
+A provider account installed twice in one workspace may likewise produce two
 connection-scoped events; collapsing those requires an explicit workspace-level
 product rule rather than an accidental cross-connection dedupe.
 
 “Global ingress” means Cloudflare's edge Worker fleet, not one US data plane.
 The global router may inspect routing metadata, but EU workspace content is
-forwarded to the EU regional Worker, EU Queue, EU-locked WorkspaceDO, and EU
-Workflow. Normalized content never crosses through the global D1 routing plane.
+forwarded to the EU regional Worker, EU Queue, and EU-locked WorkspaceDO.
+Normalized content never crosses through the global D1 routing plane.
 
 Steps 1 through 6 are deterministic and are what this document owns. Step 7's
 speculative classifier, feedback gates, explicit candidate audience, and the
@@ -708,10 +750,14 @@ about which providers can deliver is written into the API or the client.
   failed; deploying a schema or model fix does not replay it. Operators verify the
   corrected path first, then use an explicit, bounded replay rather than resetting
   every activity indiscriminately.
-- **Connector-event processing gets six deterministic Workflow attempts (0–5).**
-  An exhausted attempt settles the WorkspaceDO event `failed` before enqueueing
-  the next numbered Queue wake-up. Duplicate wake-ups converge on the same
-  Workflow ID; after attempt 5 the cron does not create an unbounded redrive loop.
+- **Connector-event processing uses the shared Queue's six deliveries.** The
+  process pointer keeps one processing-owner UUID while Cloudflare's delivery
+  count remains transport telemetry; it does not advance or saturate the
+  compatibility-era 0–5 processing attempt. Each WorkspaceDO acquisition gets a
+  fresh 15-minute lease, active duplicates retry at its exact expiry, and
+  settlement is lease-fenced. A caught processing failure settles the event
+  `failed` before requesting an individual retry; an exhausted delivery remains
+  failed and enters the regional activities DLQ.
 - **Everything unknown is withheld from a digest** — a connector this region does
   not register, an event type a manifest has dropped, an activity older than the
   declaration. None of those are somebody confirming a person wants this in their
@@ -753,9 +799,10 @@ about which providers can deliver is written into the API or the client.
 | `apps/api/test/connector-tool-selection.test.ts` | Capability intersection and the `connectorCapabilityRefused` shape. |
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Workflow claim fencing, and terminal settlement. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
+| `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/connector-credential-freshness.test.ts`
@@ -767,6 +814,123 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-26 — Connector-event processing uses native Queue retry
+
+**What changed:** After canonical WorkspaceDO ingress, new connector events send
+an ID-only process pointer back to the existing regional `ACTIVITY_QUEUE`.
+Queue deliveries claim/load and settle through typed WorkspaceDO RPCs; native
+per-message retry and the existing regional DLQ replace creation of one
+Cloudflare Workflow per event. The pointer's stable internal owner is correlation
+identity; WorkspaceDO issues a fresh expiring lease for each acquisition and
+fences settlement on that lease. Queue delivery attempts remain independent
+transport telemetry. The Workflow class and binding remain deployed only so
+instances created before cutover can finish. WorkspaceDO accepts the frozen
+pre-cutover claim and settlement payloads, translates them into the current
+lease protocol internally, and projects claim results back to the old strict
+response shape. A process pointer whose product attempt is older than the
+authoritative attempt is terminally acknowledged rather than retried into the
+DLQ; only an active unexpired Queue lease receives a delayed Queue retry.
+WorkspaceDO persists whether the active claimant is Queue or Workflow. A
+draining Workflow claim never expires into Queue takeover because its processing
+step can make several independently timed retry attempts; a concurrent cutover
+pointer is acknowledged and the Workflow either settles success or enqueues its
+own failed redrive.
+
+**Why:** The Queue, Workflow, and WorkspaceDO were maintaining overlapping
+retry and terminal ledgers for one processing callback. That duplication added
+an external Workflow-instance identifier boundary and made transport drain look
+more meaningful than it was. WorkspaceDO is already the product authority and
+Queue already owns durable redelivery.
+
+**Considered and rejected:** Splitting the shared activity Queue was rejected
+because Rally has no capacity or isolation pressure that justifies additional
+resources; strict message kinds and terminal logs provide flow identity.
+Retaining new per-event Workflows was rejected because their only meaningful
+step is the Queue-shaped callback. Using Cloudflare's Queue message ID as the
+owner was rejected because its stability across redelivery is not part of this
+contract. Retrying the original content-bearing ingress message for processing
+was rejected because it would retain normalized provider content through every
+retry and in the DLQ while still requiring the authoritative WorkspaceDO load.
+
+**What a future change has to respect:** New connector events must never create
+`CONNECTOR_EVENT_WORKFLOW`. Keep the single regional Queue, canonical
+WorkspaceDO state, individual ack/retry, stable owner, authority-issued expiring
+lease, lease-fenced settlement, and content-free terminal logs. Do not use Queue
+delivery count as the product attempt fence: a pointer can begin at the legacy
+attempt ceiling. Until the drain completes, an exact same-Workflow claim replay
+must remain idempotent because the claim RPC can commit before the Workflow
+persists its step result. The legacy request and response wire shapes must also
+remain accepted: those Workflow instances execute versioned code whose strict
+schemas cannot adopt a new RPC contract after creation. Preserve the stored
+orchestrator discriminator too: `NULL` on an active claim means a pre-migration
+Workflow because Queue claims did not exist when that row could have been
+written. Remove that adapter, the legacy Workflow binding, discriminator
+compatibility, and the physical `workflow_instance_id` column only after live
+pre-cutover instances are proven drained.
+
+### 2026-08-25 — Every connector operation is observable at two layers
+
+**What changed:** The connector registry now wraps every adapter surface with
+shared structured lifecycle logging and wraps every configured provider fetch
+with a second transport-level log. Adapter starts are `debug`, successful
+terminal outcomes are `info`, expected refusals and degraded health are `warn`,
+and unexpected failures or provider 5xx/transport failures are `error`.
+Authorization, refresh, revoke, webhook verification and normalization,
+polling, dynamic-tool discovery, agent protocol execution, hydration, origin
+resolution, tool validation and execution, repair, and health checks all pass
+through the shared wrapper. The provider layer records origin, method, status,
+and duration independently. ID-shaped tool arguments and normalized provider
+resource IDs are retained as correlation fields; Slack timestamp identifiers
+use an explicit field-name allowlist, and non-ID arguments are not retained.
+Observer failures are swallowed so diagnostics cannot alter connector delivery.
+
+**Why:** Delivery-pipeline logs can prove that an event reached a Workflow or
+durable outbox, but they cannot distinguish an adapter decision from an HTTP
+refusal or show whether a connector branch was entered at all. Instrumenting
+both boundaries makes the redundancy intentional: when one layer stops before
+the other, that absence is itself useful evidence.
+
+**Considered and rejected:** Logging only individual adapters was rejected
+because the next connector would begin uninstrumented and hosted MCP/shared HTTP
+paths would remain blind. Logging full URLs, provider messages, inputs, outputs,
+or health text was rejected because those values can carry connector content or
+credentials. Pure Rally and provider identifiers remain present because they
+are the stable correlation keys needed to follow one operation.
+
+**What a future change has to respect:** A connector added to
+`createConnectorRegistry` must receive both wrappers. New adapter surfaces must
+join the shared lifecycle wrapper rather than relying on call-site logging.
+Keep starts at `debug` and terminal results at a production-visible level, keep
+expected versus unexpected failure levels distinct, and never let observer
+behavior or logging content affect the provider call.
+
+### 2026-08-25 — Connector delivery has an observable terminal outcome
+
+**What changed:** Connector-event Workflow instance IDs now use a branded,
+Cloudflare-validated `wf_<sha256>` value derived from the typed connector-event
+identity tuple. Provider and Rally identifiers influence only the digest, so
+they cannot alter the external ID's alphabet or length. Polling, regional
+enqueue, Queue admission, WorkspaceDO ingestion/claim/settlement, and Workflow
+completion now emit correlated structured outcomes, including replay, busy,
+redrive, exhaustion, and partial-stream poll results.
+
+**Why:** An invalid instance ID could make every Google poll appear to drain
+from the shared Queue while no processing Workflow was ever created. Queue
+depth proved only that the consumer acknowledged or exhausted a message; it did
+not prove where a connector event finished or whether a partial Google stream
+advanced its cursor.
+
+**Considered and rejected:** Treating Queue drain as delivery evidence, logging
+only thrown exceptions, and removing deterministic Workflow IDs were rejected.
+They respectively hide downstream state, leave expected skip/replay branches
+invisible, or weaken idempotency at the Workflow boundary.
+
+**What a future change has to respect:** Each connector boundary must log one
+content-free terminal or deferred outcome with stable correlation IDs. A new
+branch must not acknowledge, replay, skip, or settle an event without making
+that decision queryable, and Workflow instance IDs must remain deterministic
+and valid under Cloudflare's ID grammar.
 
 ### 2026-08-25 — Connection management makes scope and consequences explicit
 

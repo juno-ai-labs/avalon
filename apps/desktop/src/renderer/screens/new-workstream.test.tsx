@@ -304,8 +304,8 @@ describe('New work-stream home', () => {
     expect(screen.queryByRole('dialog', { name: 'Add people' })).not.toBeInTheDocument();
   });
 
-  it('walks the mention list with the arrow keys and adds the person Enter picks', async () => {
-    renderScreen();
+  it('walks the mention list and submits the identity behind the person Enter picks', async () => {
+    const queryClient = renderScreen();
     const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
 
     fireEvent.change(composer, { target: { value: 'ask @' } });
@@ -329,9 +329,33 @@ describe('New work-stream home', () => {
 
     await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
     expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
-    // Nothing exists yet to mention her into, so the pick has to add her.
+    // A mention is also an audience decision, so the person is seated before
+    // the work stream exists and the identity travels with the visible text.
     expect(screen.getByRole('button', { name: 'Manage participants: Adam Juhasz, Samantha Lee' })).toBeVisible();
-    expect(api.createWorkstream).not.toHaveBeenCalled();
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
+      openingMessage: 'ask @Samantha Lee',
+      participantIds: ['user-2'],
+      mentions: [{
+        type: 'person',
+        label: 'Samantha Lee',
+        userId: 'user-2',
+        connectorType: null,
+        startOffset: 4,
+        endOffset: 17,
+      }],
+    })));
+    await waitFor(() => expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([
+      expect.objectContaining({
+        mentions: [{
+          type: 'person',
+          personId: 'user-2',
+          displayName: 'Samantha Lee',
+          startOffset: 4,
+          endOffset: 17,
+        }],
+      }),
+    ]));
   });
 
   it('keeps a non-active membership out of both the mention list and the dialog', async () => {
@@ -921,6 +945,32 @@ describe('New work-stream home', () => {
     expect(composer).toHaveValue('');
     await waitFor(() => expect(composer).toHaveValue('Retry this request'));
     expect(await screen.findByText('offline')).toBeVisible();
+  });
+
+  it('does not restore submitted mention spans into a newer draft after creation fails', async () => {
+    let rejectCreate!: (error: Error) => void;
+    api.createWorkstream.mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectCreate = reject;
+    }));
+    renderScreen();
+
+    const composer = await screen.findByRole('textbox', { name: 'Opening work-stream message' });
+    fireEvent.change(composer, { target: { value: 'ask @' } });
+    fireEvent.keyDown(composer, { key: 'ArrowDown' });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(composer).toHaveValue('ask @Samantha Lee '));
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await screen.findByRole('status', { name: 'Rally is working' });
+
+    fireEvent.change(composer, { target: { value: 'A newer draft' } });
+    act(() => rejectCreate(new Error('offline')));
+
+    await waitFor(() => expect(composer).toHaveValue('A newer draft'));
+    expect(await screen.findByText('offline')).toBeVisible();
+    api.createWorkstream.mockReturnValueOnce(new Promise(() => undefined));
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledTimes(2));
+    expect(api.createWorkstream.mock.calls[1]?.[0]).toEqual(expect.not.objectContaining({ mentions: expect.anything() }));
   });
 
   it('brings back the drafted message and its attachment after the screen is reopened', async () => {

@@ -8,7 +8,9 @@ import {
   applyPinnedWorkstreamsIfCurrent,
   backgroundRealtimeWorkstreamIds,
   openWorkstreamId,
+  RUNNING_HARNESS_STATUSES,
   showsAutomation,
+  workstreamMatchesBatchFilter,
 } from './app-shell';
 
 const workstreamId = '00000000-0000-7000-8000-000000000001';
@@ -51,16 +53,76 @@ describe('openWorkstreamId', () => {
   });
 });
 
+describe('workstreamMatchesBatchFilter', () => {
+  it('matches the selected unpinned non-system row against the same half-open range', () => {
+    expect(workstreamMatchesBatchFilter(summary('completed'), {
+      lastActivityAt: {
+        atOrAfter: '2026-08-11T00:00:00.000Z',
+        before: '2026-08-12T00:00:00.000Z',
+      },
+      pinned: false,
+      includeSystem: false,
+    })).toBe(true);
+    expect(workstreamMatchesBatchFilter(summary('completed'), {
+      lastActivityAt: { before: '2026-08-11T10:00:00.000Z' },
+      pinned: false,
+      includeSystem: false,
+    })).toBe(false);
+  });
+});
+
+describe('RUNNING_HARNESS_STATUSES', () => {
+  // Which states get a stop before the archive. Archiving takes away every
+  // surface that could stop a run afterwards — `authorize` refuses an archived
+  // work stream, so the stop route and the transcript both 404 — so a state
+  // missing from this set is a run left burning with nothing left to reach it.
+  it('covers every state that still has a run to stop', () => {
+    expect([...RUNNING_HARNESS_STATUSES].sort()).toEqual(['needs_input', 'running', 'scheduled']);
+  });
+
+  it('leaves the finished states alone, so an idle row costs no request', () => {
+    // `needs_input` is in the set rather than out of it: the run is parked for a
+    // person who cannot answer once the row is gone from their sidebar.
+    for (const status of ['completed', 'failed', 'stopped'] as const) {
+      expect(RUNNING_HARNESS_STATUSES.has(status)).toBe(false);
+    }
+  });
+});
+
 describe('backgroundRealtimeWorkstreamIds', () => {
-  it('keeps other running work streams live without opening sockets for scheduled or foreground work', () => {
+  it('opens every pinned pair, five recent unpinned pairs, and any other running pair', () => {
     const running = summary('running');
     const scheduled = summary('scheduled', '00000000-0000-7000-8000-000000000002');
     const completed = summary('completed', '00000000-0000-7000-8000-000000000003');
+    const pinned = {
+      ...summary('completed', '00000000-0000-7000-8000-000000000004'),
+      pinPosition: 0,
+      lastActivityAt: '2025-01-01T00:00:00.000Z',
+    };
+    const unpinned = Array.from({ length: 7 }, (_, index) => ({
+      ...summary('completed', `00000000-0000-7000-8000-${String(index + 5).padStart(12, '0')}`),
+      lastActivityAt: `2026-08-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+    }));
+    const oldButRunning = {
+      ...running,
+      lastActivityAt: '2024-01-01T00:00:00.000Z',
+    };
+    const finishedOld = {
+      ...completed,
+      lastActivityAt: '2023-01-01T00:00:00.000Z',
+    };
 
-    expect(backgroundRealtimeWorkstreamIds(running.id, [running, scheduled, completed]))
-      .toEqual([]);
-    expect(backgroundRealtimeWorkstreamIds(null, [running, scheduled, completed]))
-      .toEqual([running.id]);
+    expect(backgroundRealtimeWorkstreamIds(scheduled.id, [
+      oldButRunning,
+      scheduled,
+      finishedOld,
+      pinned,
+      ...unpinned,
+    ])).toEqual([
+      oldButRunning.id,
+      pinned.id,
+      ...unpinned.slice(2).map((workstream) => workstream.id),
+    ]);
   });
 });
 

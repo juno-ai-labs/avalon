@@ -47,15 +47,15 @@ describe('public Rally site', () => {
     expect(page).toContain('<script type="module" src="/src/landing.ts"></script>');
   });
 
-  it('ships one deliberate Bauhaus/Braun direction with the Rally palette and tennis-seam motif', () => {
+  it('ships the convergence hero with the multiplayer thesis on the Rally palette', () => {
     const page = readProjectFile('index.html');
     const styles = readProjectFile('src/styles.css');
-    expect(page).toContain('AI is<br /><em>multiplayer</em><br />now.');
-    expect(page).toContain('See Rally in play');
-    expect(page).toContain('class="rally-seam"');
+    expect(page).toContain('Docs went multiplayer.<br />Design went multiplayer.<br /><em>AI is next.</em>');
+    expect(page).toContain('Why multiplayer');
+    expect(page).toContain('class="rally-merge reveal"');
     expect(styles).toContain('--paper:#f0efe8');
     expect(styles).toContain('--blue:#47c7fc');
-    expect(styles).toContain('--volt:#cedc00');
+    expect(styles).toContain('--volt:#ccff00');
     expect(styles).toContain('--orange:#ff6337');
     expect(styles).toContain('.rally-home .rally-button-dark:hover{background:var(--volt);border-color:var(--black);color:var(--black)}');
     expect(page).not.toContain('data-theme-select');
@@ -82,6 +82,7 @@ describe('public Rally site', () => {
       'index.html',
       'concepts/index.html',
       'concepts/horizon/index.html',
+      'concepts/hero/index.html',
       'invite/index.html',
       'slack/link/index.html',
       'open/index.html',
@@ -107,15 +108,15 @@ describe('public Rally site', () => {
     }
     expect(styles).toContain('@media(max-width:1050px)');
     expect(styles).toContain('@media(max-width:720px)');
-    expect(styles).toContain('.rally-hero h1{font-size:clamp(3.9rem,18vw,5.5rem)}');
+    expect(styles).toContain('.rally-hero h1{font-size:clamp(2.5rem,10.5vw,3.4rem)}');
     expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
   });
 
   it('keeps Rally inherent instead of presenting it as a removable participant', () => {
     const page = readProjectFile('index.html');
 
-    expect(page).toContain('2 people · Rally included');
-    expect(page).not.toContain('3 people · Rally included');
+    expect(page).toContain('4 people + Rally');
+    expect(page).not.toContain('5 people');
     expect(page).not.toContain('rally-chip');
   });
 
@@ -146,25 +147,29 @@ describe('public Rally site', () => {
     };
 
     expect(pages[0]).toContain('class="rally-symbol"');
-    expect(pages[0]).toContain('/brand/rally-mark.png');
+    expect(pages[0]).toContain('/brand/rally-mark.svg');
+    expect(pages[0]).toContain('/brand/rally-mark-small.svg');
     for (const page of pages.slice(1)) {
-      expect(page).toContain('/brand/rally-mark.png');
+      expect(page).toContain('/brand/rally-mark.svg');
     }
     for (const page of pages) {
       expect(page).not.toMatch(/Avalon|with-avalon|avalon-mark/iu);
-      expect(page).not.toContain('/brand/rally-mark.svg');
+      // Pages render the vector mark; the PNG stays on disk only because
+      // provider manifests hotlink it by URL.
+      expect(page).not.toContain('/brand/rally-mark.png');
       expect(page).toContain('/favicon.png');
       expect(page).not.toContain('✣');
       expect(page).not.toContain('/favicon.svg');
     }
-    expect(styles).toContain('--brand-primary: #cedc00');
+    expect(styles).toContain('--brand-primary: #ccff00');
     expect(styles).toContain('--brand-secondary: #47c7fc');
     expect(styles).toContain('--orange:#ff6337');
     expect(manifest.theme_color).toBe('#111210');
     expect(manifest.background_color).toBe('#111210');
     expect(manifest.icons.map(({ src }) => src)).toEqual(['/favicon.png', '/apple-touch-icon.png']);
     expect(existsSync(new URL('../public/brand/rally-mark.png', import.meta.url))).toBe(true);
-    expect(existsSync(new URL('../public/brand/rally-mark.svg', import.meta.url))).toBe(false);
+    expect(existsSync(new URL('../public/brand/rally-mark.svg', import.meta.url))).toBe(true);
+    expect(existsSync(new URL('../public/brand/rally-mark-small.svg', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/brand/avalon-mark.png', import.meta.url))).toBe(false);
     expect(existsSync(new URL('../public/favicon.png', import.meta.url))).toBe(true);
     expect(existsSync(new URL('../public/apple-touch-icon.png', import.meta.url))).toBe(true);
@@ -184,7 +189,7 @@ describe('public Rally site', () => {
       'utf8',
     );
     expect(migrationGuide).toContain('/brand/rally-mark.png');
-    expect(migrationGuide).not.toContain('/brand/rally-mark.svg');
+    expect(migrationGuide).toContain('/brand/rally-mark.svg');
   });
 
   it('keeps the shared invitation, auth handoff, and not-found surfaces styled and functional', () => {
@@ -208,7 +213,7 @@ describe('public Rally site', () => {
   });
 
   it('keeps internal landing-page studies out of search indexes', () => {
-    for (const path of ['concepts/index.html', 'concepts/horizon/index.html']) {
+    for (const path of ['concepts/index.html', 'concepts/horizon/index.html', 'concepts/hero/index.html']) {
       expect(readProjectFile(path)).toContain('<meta name="robots" content="noindex, nofollow" />');
     }
   });
@@ -261,13 +266,13 @@ describe('public Rally site', () => {
     // anyone running the site without the release transform gets a sane
     // fallback rather than a dead link.
     expect(page).toContain(
-      '<a class="rally-button rally-button-dark button-primary" href="#download">'
+      '<a class="rally-button rally-button-volt button-primary" href="#download">'
       + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>',
     );
 
     const rendered = renderDesktopRelease(page, release);
     expect(rendered).toContain(
-      `<a class="rally-button rally-button-dark button-primary" href="${desktopDmgUrl(release)}">`
+      `<a class="rally-button rally-button-volt button-primary" href="${desktopDmgUrl(release)}">`
       + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>',
     );
   });
@@ -278,7 +283,7 @@ describe('public Rally site', () => {
 
     const rendered = renderDesktopRelease(page, release);
     expect(rendered).toContain(
-      '<a class="rally-button rally-button-dark button-primary" href="#download">'
+      '<a class="rally-button rally-button-volt button-primary" href="#download">'
       + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>',
     );
   });
@@ -291,9 +296,9 @@ describe('public Rally site', () => {
     // survive the transform untouched — only proof of that, not a second
     // hardcoded copy of the markup, catches a renderer that regenerates the
     // button instead of rewriting its href in place.
-    const original = '<a class="rally-button rally-button-dark button-primary" href="#download">'
+    const original = '<a class="rally-button rally-button-volt button-primary" href="#download">'
       + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>';
-    const edited = '<a class="rally-button rally-button-dark button-primary" data-cta="hero" href="#download">'
+    const edited = '<a class="rally-button rally-button-volt button-primary" data-cta="hero" href="#download">'
       + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download the macOS app now <span>↘</span></a>';
     expect(page).toContain(original);
     const editedPage = page.replace(original, edited);
@@ -301,7 +306,7 @@ describe('public Rally site', () => {
     const rendered = renderDesktopRelease(editedPage, release);
 
     expect(rendered).toContain(
-      `<a class="rally-button rally-button-dark button-primary" data-cta="hero" href="${desktopDmgUrl(release)}">`
+      `<a class="rally-button rally-button-volt button-primary" data-cta="hero" href="${desktopDmgUrl(release)}">`
       + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download the macOS app now <span>↘</span></a>',
     );
   });
@@ -309,7 +314,7 @@ describe('public Rally site', () => {
   it('leaves the hero download button entirely untouched when its marker pair is missing or malformed', () => {
     const page = readProjectFile('index.html');
     const release = parseDesktopReleaseConfig(JSON.parse(readProjectFile('release.config.json')) as unknown);
-    const heroAnchor = '<a class="rally-button rally-button-dark button-primary" href="#download">'
+    const heroAnchor = '<a class="rally-button rally-button-volt button-primary" href="#download">'
       + '<img src="/brand/apple-logo.svg" width="14" height="17" alt="" /> Download for macOS <span>↘</span></a>';
     const startMarker = '<!-- rally-desktop-hero-cta:start -->';
     const endMarker = '<!-- rally-desktop-hero-cta:end -->';

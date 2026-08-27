@@ -127,6 +127,43 @@ describe("telemetry registry", () => {
       origin: "ad_hoc",
       pinned: true,
     }],
+    ["workstream_feed_visible", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",
+      durationMs: 842,
+      dataReadyDurationMs: 811,
+      sidebarSection: "pinned",
+      cacheState: "detail_cached",
+      socketPoolState: "control_warmup",
+      feedSource: "boot_payload",
+      messageCount: "six_to_twenty",
+    }],
+    ["workstream_send_ready", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      durationMs: 856,
+      workspaceSocketState: "reconnecting",
+    }],
+    ["workstream_socket_started", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",
+      openAttemptId: "018f22f2-4c22-7abc-8def-012345678902",
+      socket: "workstream_control",
+      reason: "hover_warmup",
+      attempts: "zero",
+    }],
+    ["workstream_open_started", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      sidebarSection: "recent",
+      socketPoolState: "retained_pair",
+      socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",
+    }],
+    ["workstream_open_outcome", "desktop-renderer", {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      outcome: "superseded",
+      durationMs: 42,
+      socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",
+      supersedingWorkstreamId: "00000000-0000-4000-8000-000000000102",
+    }],
     ["workstream_created", "api", {
       workstreamId: "00000000-0000-4000-8000-000000000101",
       visibility: "public",
@@ -217,6 +254,76 @@ describe("telemetry registry", () => {
       source,
       identityScope: "workspace-user",
     }).success).toBe(true);
+  });
+
+  it("rejects non-v7 opening lineage identifiers and impossible feed durations", () => {
+    const v4 = "00000000-0000-4000-8000-000000000111";
+    expect(TELEMETRY_EVENTS.workstream_open_started.properties.safeParse({
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      sidebarSection: "recent",
+      socketPoolState: "cold",
+      socketLeaseId: v4,
+    }).success).toBe(false);
+    expect(TELEMETRY_EVENTS.workstream_socket_started.properties.safeParse({
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      socketLeaseId: "018f22f2-4c22-7abc-8def-012345678901",
+      openAttemptId: v4,
+      socket: "substream_feed",
+      reason: "active_workstream",
+      attempts: "zero",
+    }).success).toBe(false);
+    expect(TELEMETRY_EVENTS.workstream_feed_visible.properties.safeParse({
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      durationMs: 99,
+      dataReadyDurationMs: 100,
+      sidebarSection: "recent",
+      cacheState: "cold",
+      socketPoolState: "cold",
+      feedSource: "boot_payload",
+      messageCount: "one",
+    }).success).toBe(false);
+  });
+
+  it("keeps renderer performance diagnostics closed and content-free", () => {
+    const properties = {
+      flow: "workstream_message_send",
+      clientMessageId: "00000000-0000-4000-8000-000000000102",
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      outcome: "completed",
+      durationMs: 402.7,
+      blockedMs: 0,
+      longTaskCount: "zero",
+      resolveMentionsMs: 2.1,
+      commandRoundTripMs: 400.6,
+      messageLength: "twenty_one_to_one_hundred",
+    };
+    expect(TELEMETRY_EVENTS.renderer_perf_flow.properties.safeParse(properties).success).toBe(true);
+    expect(TelemetryEnvelopeSchema.safeParse({
+      ...envelope("renderer_perf_flow", properties),
+      category: "diagnostic",
+      identityScope: "workspace-user",
+    }).success).toBe(true);
+    expect(TELEMETRY_EVENTS.renderer_perf_flow.properties.safeParse({
+      ...properties,
+      messageText: "must not leave the renderer",
+    }).success).toBe(false);
+    expect(TELEMETRY_EVENTS.renderer_perf_flow.properties.safeParse({
+      ...properties,
+      outcome: "message_created",
+    }).success).toBe(false);
+  });
+
+  it("accepts route abandonment without a superseding work stream", () => {
+    const abandoned = {
+      workstreamId: "00000000-0000-4000-8000-000000000101",
+      outcome: "abandoned",
+      durationMs: 42,
+    };
+    expect(TELEMETRY_EVENTS.workstream_open_outcome.properties.safeParse(abandoned).success).toBe(true);
+    expect(TELEMETRY_EVENTS.workstream_open_outcome.properties.safeParse({
+      ...abandoned,
+      supersedingWorkstreamId: "00000000-0000-4000-8000-000000000102",
+    }).success).toBe(false);
   });
 
   it("rejects shortcut and menu dimensions outside their bounded taxonomies", () => {

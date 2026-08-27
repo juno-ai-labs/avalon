@@ -214,9 +214,16 @@ to **Account Analytics: Read**. Its start/end line is the actual first and last
 Analytics Engine observation in the requested window, not merely the requested
 date boundary.
 
-Use the structured events `terminal_tool_finished`,
+Use the structured events `terminal_plugin_activation_finished`,
+`terminal_provider_request_finished`, `terminal_tool_finished`,
 `terminal_sandbox_lifecycle_transition`, and
 `terminal_sandbox_lifecycle_failed`. Commands and output are deliberately absent.
+Activation records acquisition/cache state, provider duration and request/poll
+counts, residual Rally time, a one-based `activation_attempt`, and whether
+repository preparation completed or was deferred to the visible repair tools.
+Provider-request events use a fixed
+content-free operation/detail vocabulary and correlate activation under the
+`terminal_plugin_activation` tool identity.
 For regional durable diagnosis, query counts/ages and exact IDs from
 the owning object's `terminal_workspace`, `terminal_tasks`, and
 `repository_publications`; inspect workspace-wide policy mutation history in
@@ -261,7 +268,7 @@ regional fallback registry.
 
 `RESEND_API_KEY` is shared by the two regional Workers and is used for both invitations and inbound-message retrieval. There are two checked-in senders, both `vars` in each region's Wrangler config: `RESEND_FROM_EMAIL` (`Rally <invites@rallywith.ai>`) for transactional mail, and `RESEND_NOTIFICATION_FROM_EMAIL` (`Rally <notifications@rallywith.ai>`) for mail Rally generates — digests, automation results, mention notifications. Resend verifies the domain rather than the address, so the second rides the same verification; keep both `rallywith.ai` and `with-avalon.com` verified with their own DKIM/SPF records — Resend verifies the sending domain, so the Rally senders do not inherit the Rally verification and mail from them is rejected until the Rally records are live. An unset notification sender does not fail: `sendResendEmail` falls back to the transactional one silently, which is why `GET /health` reports `resendNotificationSender` separately — check it after a deploy that touches either var. Resend acceptance confirms that the transactional request was queued, not final inbox delivery. A provider failure revokes the newly created invitation before the API reports failure.
 
-Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per work stream rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker routes on the local part and accepts either domain. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in both regions because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
+Inbound work-stream and automation mail uses the dedicated catch-all subdomain `automation.rallywith.ai`. Create it with Resend Receiving enabled, install the exact MX record returned by Resend in Cloudflare DNS, and create one `email.received` webhook pointing to `https://api.rallywith.ai/ingest/resend`. **Keep `automation.with-avalon.com` receiving, with its own MX record and webhook, for as long as any address on it exists.** Addresses are stored per work stream rather than derived, so every address issued before the rename still carries that domain, is printed in the sender's mail client, and is what mail rules forward to; the Worker accepts either domain and resolves the full recipient address in the Global registry. See [`domain-migration.md`](domain-migration.md). Store its `whsec_...` value as the Global `RESEND_WEBHOOK_SIGNING_SECRET`. Ensure the reused `RESEND_API_KEY` has Full access in both regions because the regional Worker retrieves the full received message after routing. Store one stable 32+ byte `WORKSTREAM_EMAIL_ADDRESS_KEY` in the Global Worker. Do not log any of these values. Existing deployments using `RESEND_WEBHOOK_SECRET` remain compatible during migration.
 
 For non-interactive Wrangler commands, prefer `CLOUDFLARE_API_TOKEN`. The older global-key method requires both `CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` in `.env.local`; an API key by itself cannot authenticate a deployment.
 
@@ -907,8 +914,9 @@ Because API deployment is continuous, a merge to `main` is a production release.
 
 The deploy job applies both regions' migrations before it deploys either Worker, so for the length of one deployment — around twenty seconds when it goes well — **the previous Worker is writing into the new schema**. That is the correct order, because new code must never meet an old table; the consequence is that a new column's `DEFAULT` is not a fallback during that window, it is the value.
 
-Migrations `0090_drop_legacy_product_tables.sql` and
-`0094_retire_agent_inference_payload_ledger.sql` are deliberate reverse-order
+Migrations `0090_drop_legacy_product_tables.sql`,
+`0094_retire_agent_inference_payload_ledger.sql`, and
+`0097_email_routes_use_full_address.sql` are deliberate reverse-order
 exceptions. Each deletes tables or columns the previous Worker still names, so
 applying either first would break live requests until deployment finished — or
 indefinitely if deployment failed. The deployment workflow reads each remote
@@ -922,7 +930,11 @@ reserving an identity anchor and can write both the through-0089 required-column
 shape and the final three-column shape. For 0094, the replacement Worker no
 longer reads `workspaces.log_agent_inference` or
 `agent_inference_payload_logs`, while it remains compatible with a database that
-still has them. Therefore a failed Worker deploy leaves the old schema untouched,
+still has them. For 0097, the replacement Worker probes
+`workstream_email_routes`: before the migration it reserves and resolves by the
+legacy `local_part`; afterward it writes and resolves the full `email_address`.
+Its owner-reconciliation path preserves the regional full address in both shapes.
+Therefore a failed Worker deploy leaves the old schema untouched,
 while a failed migration leaves the compatible Worker serving the old schema.
 Detection comes from the remote ledger, not the triggering Git diff, so a
 superseded workflow or later regional retry retains the barrier. Once no
@@ -992,10 +1004,16 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
   heartbeat. Every role waits 15 seconds for `pong` and reconnects with
   equal-jitter exponential backoff capped at 30 seconds. Auto-responses must not
   perform application work.
-- Expect one WorkspaceDO socket per signed-in Electron renderer/workspace, plus one
-  WorkstreamDO metadata socket and one SubstreamAgent feed for every selected or
-  background-running work stream. Navigation must not reopen the WorkspaceDO
-  socket. An idle, non-running work stream should retain neither child socket.
+- Expect one native Chromium WorkspaceDO socket per signed-in Electron
+  renderer/workspace, plus one main-process Node WorkstreamDO metadata socket
+  and one substream `0` feed for the active work stream, every pin, the five most
+  recent unpinned rows, every visible live-state row, and recently viewed pairs
+  still inside retention. Navigation must not reopen the WorkspaceDO socket. An
+  idle row outside those roles should retain neither child socket. Proactive
+  feeds send `publishPresence: false`; verify “Viewing now” against WorkspaceDO
+  foreground presence rather than socket counts. Brokered frames are limited to
+  1 MB, and a failed managed-network attempt must follow Electron's remaining
+  PAC directives in order rather than inventing a direct fallback.
   While the HyperSight panel is visible, Electron also opens one direct
   hibernating socket per configured `BlockDashboardAgent`; closing the panel
   closes those block sockets, and reopening replaces from durable checkpoints.
@@ -1196,7 +1214,40 @@ Filter `event = perf_flow` with a `flow` and a `duration_ms` threshold, group by
 [`performance-tracing.md`](performance-tracing.md) holds the span names, the
 attribute registry, and the investigation procedure.
 
-Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and `connection_id`. Compiler events additionally carry stage, schema, provider/model, fallback attempt, latency, response size, app version, and sanitized validation paths. Logs must never include prompts, email bodies, connector content, credentials, file contents, or model context.
+Correlate by `request_id`, `workspace_id`, `region`, `workflow_step`, and
+`connection_id`. Pure identifiers are not PII in Rally's logging policy and
+should be retained whenever they disambiguate a path: this includes Rally
+entity IDs and provider identifiers such as Slack team, user, channel,
+client-message, and message timestamp IDs or Linear issue IDs. Do not replace
+them with mutable names or email addresses. Compiler events additionally carry
+stage, schema, provider/model, fallback attempt, latency, response size, app
+version, and sanitized validation paths. Logs must never include prompts, email
+bodies, connector content, credentials, file contents, email addresses, or
+model context.
+
+Connector adapters add two deliberately redundant structured layers:
+
+| Event | Level and meaning | Useful fields |
+| --- | --- | --- |
+| `connector_operation_started` | `debug`; an adapter lifecycle branch was entered | `connector_type`, `operation`, IDs relevant to the branch |
+| `connector_operation_finished` | `info` for success, `warn` for expected refusal/degraded health, `error` for unexpected failure | preceding fields plus `outcome`, `code`, `duration_ms`, and bounded counts or provider operation ID |
+| `connector_provider_request_started` | `debug`; the shared provider transport was entered | `connector_type`, `provider_origin`, `method` |
+| `connector_provider_request_finished` | `info` for HTTP success, `warn` for non-5xx provider refusal, `error` for 5xx or transport failure | preceding fields plus `outcome`, `status` or `code`, and `duration_ms` |
+| `connector_credential_reauthorization_started` / `connector_credential_reauthorization_finished` | `warn` when a fresh credential is refused; `info` when refresh and retry recover it; `warn` or `error` when they do not | connector and connection IDs, `outcome`, `code`, `rotation_source` |
+| `connector_credential_refresh_started` / `connector_credential_refresh_finished` | `debug` at refresh entry, then `info`, `warn`, or `error` at its terminal result | preceding fields plus `reason` and `rotation_source` |
+| `connector_provider_retry_started` | `debug`; a rejected call is about to be repeated once with refreshed credentials | preceding fields plus `reason = credential_refreshed` |
+
+Production's normal `LOG_LEVEL=info` retains terminal outcomes while omitting
+the high-volume start rows. Temporarily setting a region to `debug` adds both
+starts, letting an operator distinguish “never entered” from “entered and did
+not reach a terminal log.” Query one operation first by `connection_id`, then
+`connector_type` and `operation`; ID-shaped tool arguments appear with a
+`provider_` prefix (for example `provider_channel_id` or `provider_issue_id`).
+Use provider request rows to determine whether
+the adapter called out and what HTTP class returned. Provider URLs are reduced
+to their origin. Tool arguments, results, webhook payloads, provider error
+messages, OAuth state, health text, headers, credentials, and response bodies
+are never fields in these events.
 
 ### Root-run analytics
 

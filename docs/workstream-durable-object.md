@@ -35,6 +35,7 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/queues/access-revocation-consumer.ts`, `apps/api/src/services/access-revocation.ts` | The only way an open socket is closed for lost access: a queue message per object, and the `revokeSocketAccess` walk it drives. Owned by [`access-revocation.md`](access-revocation.md). |
 | `apps/api/src/durable-objects/workspace-product-schema.ts`, `workspace-product-storage.ts` | Strict WorkspaceDO activity, opportunity/provenance, ranking, and resolved-suggestion schema plus its transaction/lease repository. |
 | `apps/api/src/durable-objects/workspace-domain-schema.ts`, `workspace-runtime-sql.ts` | Strict schemas for connector/Terminal/automation/digest/resource/note/memory/delivery domains and the transactionally executed trusted SQL RPC. |
+| `apps/api/src/durable-objects/workspace-notification-intent-protocol.ts`, `workspace-notification-intent-storage.ts` | Runtime-validated notification claim/transition/maintenance RPC contract and the private WorkspaceDO SQL state machine behind it. |
 | `apps/api/src/services/workspace-runtime-database.ts` | Allowlisted D1-compatible adapter: WorkspaceDO tables use native RPC, underlying control tables use D1, and mixed-authority transactions fail closed. |
 | `apps/api/src/services/sidebar-reads.ts` | The one statement and row mapping per sidebar list, used by WorkspaceDO's batch read and by the REST services that route back into it. |
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
@@ -47,6 +48,9 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/durable-objects/block-dashboard-protocol.ts` | Runtime-validated WorkstreamDO control, block dispatch, result, and maintenance-import contracts. |
 | `apps/api/src/durable-objects/rpc-result.ts` | Shared typed native-RPC status/body envelope used where former internal HTTP handlers must preserve status semantics without `stub.fetch()`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Normalized `SubstreamAgent` schema and append-only schema versions. |
+| `apps/api/src/durable-objects/workstream-transcript-storage.ts`, `workstream-transcript-protocol.ts` | Canonical transcript facts, participant and exact Bind-loop orderings, snapshot-fenced ranges, activity intervals, compaction replacement, and the typed object port. |
+| `packages/contracts/src/workstream-transcript.ts` | Socket-safe ordered turn, block, mention, attachment, external-actor, range, and activity schemas. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | Flattens ordered blocks into participant-visible rows and reconciles them with the authorized compatibility message page. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Product transactions, message/run admission, read waterlines, compaction inputs, and local regional-effect creation. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
 | `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
@@ -71,6 +75,89 @@ serve workspace product state or transcripts after cutover.
 | `packages/db/migrations/0083_workspace_product_do_authority.sql` | Per-workspace product import routes plus permanent D1 writer fences for the migrated activity and opportunity families. |
 
 ## How it works
+
+### Ordered transcript authority
+
+Main `SubstreamAgent("0")` owns one canonical transcript substrate. Semantic
+payloads and facts are stored once; two projections reference them:
+`transcript_sequence` orders participant-visible conversation turns and safe
+status entries, while `loop_sequence` orders the exact protocol messages Bind
+consumes. Participant rows and Bind rows are indexes over shared facts, not two
+transcript sources. Projection-only content is separate only when it is truly
+different, such as a participant-safe tool summary versus an exact tool result
+or a safe compaction status versus the private replacement.
+
+Participant turns retain the source part's client identity, author user or
+validated external actor, and message type. Each participant text block hydrates
+its canonical mentions, ordered message-local attachment descriptors, and
+validated structured content from the same `parts` row and its relationship
+tables. The transcript carries presentation-safe metadata, not resource bytes or
+mutable profile snapshots; the desktop resolves stable person IDs and maps the
+descriptors into its existing participant message renderer.
+
+Every Bind transition is committed before the adapter returns the accepted
+assistant or tool-result message to Bind. At every provider boundary the host
+reconstructs the exact array, including the freshly rendered system message,
+and requires its canonical SHA-256 to equal the array about to be sent.
+Compaction atomically records the private checkpoint, generation replacement,
+and safe status transition. Two compactions therefore create two immutable
+events while the current loop head advances twice.
+
+Schema v28 supports one explicit projection backfill for retained pre-v27
+history. The v27 migration receipt supplies the cutover fence. The operation
+orders every participant-visible legacy `parts` row by its existing
+`sequence_number`, inserts that prefix ahead of any post-cutover canonical
+suffix, and adds canonical references to exact legacy compaction checkpoints.
+It does not copy text, tool summaries/results, or checkpoint arrays: the old
+rows remain their sole payload owners and the normal canonical reader hydrates
+through the stable references. Aggregate legacy rows cannot reproduce Bind's
+exact provider array, so the operation creates no historical Bind head/message
+and records that limitation explicitly rather than inventing interleaving.
+
+The data operation is an object-owned RPC, not constructor work. It requires a
+main-feed (`external_substream_id = '0'`) authority. Before a first-time
+backfill, a separate explicit operator RPC may abandon an active pre-v27 run
+only when it has no attempt ID, lease owner, lease deadline, heartbeat, or open
+tool receipt. The abandonment records a terminal `failed` row with
+`migration_cutover_abandoned`; any post-cutover or leased shape aborts without
+mutation. Schema v29 commits the original operator run and abandonment count in
+the same transaction, so a later retry returns the same cleanup evidence even
+when the first backfill attempt failed. The backfill RPC then runs only the terminal-run residual-receipt phase of the existing
+reaper so a tool
+receipt left open after its owning run terminalized is settled through the same
+runtime path used at ordinary run admission. It does not expire or terminalize
+a nonterminal root or child. Repair failure aborts the
+operation; an already committed replay never runs repair. The operation then
+requires a quiescent writer,
+captures a real pre-write PITR bookmark, hashes and prepares
+the source outside the transaction, then re-reads the entire source inside the
+single SQLite transaction that shifts sequences, inserts projections, and
+commits the one-row receipt. Movement, partial state, or a uniqueness conflict
+rolls back everything. Replay recomputes the digest and reconciles exact counts
+and prefix order before returning `verified`.
+
+Participant history is read through snapshot-fenced half-open ranges. Opening
+creates one fence and returns the first-unread conversation turn with up to five
+conversation turns on either side, plus the latest five conversation turns.
+The admitted feed socket keeps that fence in its hibernation attachment, so it
+survives object eviction but disappears with the reader session instead of
+accumulating in an append-only table or depending on an arbitrary TTL.
+Safe status entries inside either sequence span are included without counting
+against those conversation limits. Each answer reports the interval it
+inspected even when no row was returned, so the desktop can distinguish an
+empty covered interval from an unknown gap. Range, unread-anchor, latest-tail,
+active-activity, and exact-loop reads have query-shape indexes in the object
+schema.
+
+Activity edges are durable and nestable: response, assistant turn, plugin,
+tool call, thinking, and compaction activities carry UTC interval boundaries,
+monotonic revisions, and a snapshot-time elapsed baseline for active intervals.
+Opening returns only lifecycle rows referenced by its two loaded islands and
+active turns, plus active ancestry. Later range replies carry the lifecycle rows
+their turns reference, and interval hydration is one bulk query rather than one
+query per historical activity. No clock ticks are streamed. An admitted socket or REST boot performs one
+participant authorization decision and reuses it for all transcript slices and
+hydration; socket session validation remains the separate connection check.
 
 ### Object hierarchy and identity
 
@@ -176,10 +263,10 @@ one persistent workspace connection
   <- versioned workspace query-topic invalidations
   -> create_message naming the target work stream/substream
 
-one connection per selected or background-running work stream
+one connection per active, pinned, recent-five, live-state, or retained work stream
   <- WorkstreamDO complete independently waterlined common + viewer metadata
 
-one connection per selected or background-running substream
+one substream `0` connection for the same proactive and retained work-stream set
   <- SubstreamAgent snapshot / stream frames / product events
   <- direct download and reconnect feed for exactly one substream
 
@@ -206,6 +293,25 @@ Electron does not fall back to a D1 work-stream list. A user message is never ac
 `create_message` sent there receives `workspace_socket_required`. This keeps
 workspace authorization and routing at the parent boundary while keeping the
 high-volume read/stream path direct to its child.
+
+The same persistent workspace socket carries explicit foreground presence. Each
+hibernation attachment records whether Rally itself is foregrounded and which
+work stream, if any, is foreground in that renderer window. WorkspaceDO
+validates that work stream against its local viewer directory, reconstructs the
+present-user set from all healthy attachments, and sends each connection only
+the set for its own foreground work stream. The recipient's user ID is omitted.
+Presence is not inferred from the selected work stream's retained metadata or
+feed sockets: those remain open in the background precisely to make switching
+instantaneous. There is no presence SQL table, alarm, timeout, or expiry guess;
+healthy attachments survive hibernation and socket close/error removes their
+contribution.
+Current Electron feed subscriptions explicitly set `publishPresence: false`,
+and the work-stream UI ignores the legacy `presence_changed` event. Older
+clients that omit the field keep its compatibility default, but WorkspaceDO is
+the sole presence authority for the current client.
+No presence state or recovery travels over REST. The existing HTTP ticket
+exchange may establish the WebSocket, but every presence update and snapshot
+after that handshake is a non-replayed socket frame.
 
 A window that only listens is never re-checked against D1. A socket is authorized
 when it connects and then holds until something closes it; no publish path asks
@@ -628,11 +734,13 @@ fan one raw provider delivery into multiple workspace targets only when the
 provider account is independently installed in each workspace; every normalized
 event then belongs to exactly one object. The regional Queue carries the bounded
 normalized event and hash; its consumer commits the complete event and replay
-receipt through typed RPC before creating a deterministic connector-event
-Workflow. Large/raw bytes remain in R2. Regional D1 carries only opaque ingress
-routes and provider-global receipts needed before one workspace is known; no
-live event body is written there. Connection-scoped webhook replay receipts live
-in WorkspaceDO. Legacy D1 activity bodies are imported and scrubbed during the maintenance
+receipt through typed RPC before sending an ID-only process pointer back to that
+same Queue. A later delivery claims, loads, and settles the canonical event
+through typed WorkspaceDO RPCs; no new per-event Workflow is created. Large/raw
+bytes remain in R2. Regional D1 carries only opaque ingress routes and
+provider-global receipts needed before one workspace is known; no live event
+body is written there. Connection-scoped webhook replay receipts live in
+WorkspaceDO. Legacy D1 activity bodies are imported and scrubbed during the maintenance
 cutover. When an event is attached/admitted to a
 particular work stream, the child stores its delivery receipt and relevant
 resource link; WorkstreamDO sends that link through Queue to WorkspaceDO's
@@ -659,14 +767,17 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 | WorkstreamDO | BlockDashboardAgent | typed RPC | parent dispatch outbox; block dispatch ledger |
 | BlockDashboardAgent | SubstreamAgent("0") | typed RPC | block run ledger plus source-local runtime/tool receipts |
 | BlockDashboardAgent | WorkstreamDO | typed RPC | terminal outcome retained until the parent result receipt accepts it |
+| regional Worker | regional Queue | Cloudflare Queue | a generic member-visible work-stream filter is resolved once in WorkspaceDO, then one bounded update event is published per selected work stream |
+| regional Queue Worker | SubstreamAgent("0") | typed RPC | an idempotent, receipt-backed mark-read or archive transaction against that work stream's authoritative SQLite state; membership is rechecked at delivery |
 | WorkstreamDO | regional Worker | Cloudflare Queue | every directory/user/feedback/activity/mention change is retained in the parent outbox; the message is an opaque UUIDv7 wake-up |
 | regional Queue Worker | WorkspaceDO | typed RPC | unordered directory/user/feedback envelope; generation + per-key waterline, hash receipt, and authoritative directory/index transaction |
 | regional Queue Worker | WorkspaceDO | typed RPC | first-party activity event, all target edges, and the replay receipt commit atomically; the object-local sequence is the digest/feed cursor |
 | regional Queue Worker | WorkspaceDO | typed RPC | notification intent, bounded destination payload, and the replay receipt commit atomically; current user/member identity is resolved from D1 before the call and crosses as data |
 | connector ingress Worker | regional Queue | Cloudflare Queue | one bounded normalized event plus region/workspace/ingress UUID/content hash per workspace target; raw bytes remain in R2 |
 | regional Queue Worker | WorkspaceDO | typed RPC | complete normalized connector event plus content hash; object-local provider/dedupe constraints and ingress receipt choose the canonical ID |
-| regional Queue Worker | ConnectorEventWorkflow | Workflow binding | deterministic instance created only after WorkspaceDO acceptance; duplicate instance conflict is success |
-| ConnectorEventWorkflow | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical event; Workflow retries never trust Queue delivery count or order |
+| regional Queue Worker | regional Queue | Cloudflare Queue | after authoritative ingress, an ID-only connector-process pointer returns to the same `ACTIVITY_QUEUE`; native per-message retry and the existing DLQ own redelivery |
+| regional Queue Worker | WorkspaceDO | typed RPC | claim/load/terminal settlement against the canonical connector event; WorkspaceDO-issued expiring leases fence active duplicates and stale settlement, while Queue attempts remain transport telemetry |
+| legacy ConnectorEventWorkflow | WorkspaceDO | typed RPC | drain-only compatibility for instances created before the Queue-processing cutover; no new instance is created |
 | WorkspaceDO alarm | WorkOpportunityWorkflow | Workflow binding | a deterministic instance receives only workspace, lease, and attempt fences; no model input body is copied into Workflow state |
 | WorkOpportunityWorkflow | WorkspaceDO | typed RPC | loads claimed source state and atomically persists admission/provenance or ranking/resolution settlement |
 
@@ -689,11 +800,15 @@ RPC is retained only for the maintenance/bootstrap activation fence that must
 materialize the initial directory row before the D1 route opens. Runtime state
 transitions never use that shortcut.
 
-Creation replays are repair operations. If the authoritative child transaction
-committed but building or delivering its parent snapshot failed, repeating
-`initialize` rebuilds the `common` and `user:<id>` effects. `projection_keys`
-suppresses an already-delivered identical snapshot, so retries close a missing
-directory gap without producing sidebar churn.
+Creation replays are repair operations, and they repair the directory only. If
+the authoritative child transaction committed but building or delivering its
+parent snapshot failed, repeating `initialize` rebuilds the `common` and
+`user:<id>` effects and nothing else — the participant activity event and
+notification a first pass would have emitted are deliberately not re-enqueued,
+because a notification is versioned on a projection key it only reads and would
+be refused under a new payload hash. `projection_keys` suppresses an
+already-delivered identical snapshot, so retries close a missing directory gap
+without producing sidebar churn.
 
 Mention intent delivery rechecks current D1 membership and WorkspaceDO-owned
 destination state only after WorkspaceDO reports the required viewer-directory version. This prevents an
@@ -701,6 +816,19 @@ out-of-order notification from emailing someone whose access or listability was
 removed. Delivery compute remains a regional Worker/service, but intent,
 attempt, idempotency key, frozen destination, and provider receipt are
 WorkspaceDO rows. They must not be copied into a child.
+
+The handoff is observable at each authority boundary. SubstreamAgent records
+forwarded or deferred child outbox batches; WorkstreamDO records Queue enqueue
+or enqueue failure; the regional consumer records the effect outcome and
+whether acknowledgement actually removed the parent row. Notification intent
+logs distinguish an active lease, a missing or already-terminal intent, pending
+directory projection, inactive or non-listable recipient, self-notification,
+Slack and email transport outcomes, final delivery, and retriable failure.
+Correlate `message_id`, `notification_intent_id`, `workspace_id`,
+`workstream_id`, and `recipient_user_id`. An empty Queue therefore says nothing
+about notification delivery by itself; `workstream_notification_terminal` is
+the terminal evidence, while `workstream_notification_deferred` and
+`workstream_notification_failed` explain why no terminal result exists yet.
 
 ### SQL-only schema migration
 
@@ -757,6 +885,8 @@ misrouted product statement now fails because the table or column is absent.
 - **`WorkstreamDO` runs no model and owns no transcript.** Putting an agent there recreates one serialization bottleneck across substreams.
 - **High-volume child reads and streams never proxy through a parent.** Doing so would turn the control plane into the throughput and availability ceiling for every child.
 - **User messages enter through `WorkspaceDO`; aggregate metadata streams from `WorkstreamDO`; transcript/token feeds stream directly from `SubstreamAgent`.** Accepting writes on either read socket creates another authorization and ordering boundary.
+- **An open work-stream socket is not foreground presence.** Electron reports application, window, and route foreground explicitly on its WorkspaceDO socket; retained metadata/feed sockets may stay open while their work stream is in the background.
+- **Workspace presence is ephemeral, attachment-backed, and viewer-scoped.** WorkspaceDO validates the reported work stream against its local directory, omits the receiving user, and never persists a presence table or sends a workspace-wide personal-work-stream map.
 - **Every Durable Object persists through explicit SQL.** KV calls create invisible schema and bypass migration, constraints, inspection, and lint.
 - **Room sequence and active text commit atomically.** Advancing only the cursor loses streamed text after eviction.
 - **One unexpired attempt lease owns a child run.** Two owners can duplicate an external tool effect or terminal assistant message.
@@ -792,16 +922,20 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Migration hash mismatch/schema ahead/foreign-key violation | Constructor activation fails; no request observes a partially migrated schema. |
 | Object ID has the wrong/no jurisdiction in staging or production | Constructor activation fails before serving state; callers cannot silently use the unrestricted graph. |
 | Location hint cannot be honored | Cloudflare selects the nearest available location inside the jurisdiction; correctness and residency do not depend on the best-effort hint. |
-| Workspace socket hibernates | Runtime restores attachments; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
+| Workspace socket hibernates | Runtime restores attachments, including explicit foreground presence; replayed tickets are rejected, topic waterlines resume, and pending commands resend under the same client message ID. |
+| Foreground renderer or application moves to the background | Electron sends a revisioned `set_presence` with no foreground work stream; WorkspaceDO immediately rebuilds viewer-scoped presence while the retained work-stream sockets remain open. An unclean socket close/error has the same removal effect, and the renderer clears its last snapshot until a live socket replaces it. |
+| Foreground viewer loses work-stream visibility | The applied directory effect revalidates live attachments before yielding, clears the inaccessible foreground state, and rebuilds only for the remaining authorized viewers. Restoring visibility does not resurrect the cleared state; the client must report a newer foreground revision. |
 | Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
 | Feed replay window lost | Child sends a canonical snapshot on the admitted socket, catches up events published during assembly, and keeps the subscription open. |
 | Transcript page requested | The agent accepts an opaque before/after cursor, defaults to 200 rows, and rejects limits above 250. A per-socket request has a 15-second desktop timeout and is queued again after reconnect without advancing the room cursor. |
 | Encoded transcript page would exceed 900 KB | The agent shortens the page toward the requested boundary and returns an adjusted continuation cursor. A single defensive oversize message produces a correlated `message_page_too_large` error instead of an oversized frame. |
 | Historical-page read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
+| A part predates the typed writer's ordered-turn projection | The authorized compatibility message page keeps the row visible and identity-matched in the desktop. This is not a durable backfill; the overlay must remain until a bounded historical repair has populated the ordered projection. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
 | RPC or Queue duplicates/reorders effects | Stable IDs/hashes deduplicate immutable effects; generation/version orders WorkspaceDO state and delivery receipts. |
 | WorkspaceDO, parent, or Queue unavailable | The source outbox remains pending and alarms retry with bounded backoff. User transcript commits are not rolled back. |
+| Crash between `initialize`'s root commit and its effect commit | The work stream exists and the retry replays it, but the invited participants' activity event and notification are lost permanently — the replay re-enqueues directory effects only, and a hand-add of somebody already active is a no-op, so nothing recovers them. Deliberate: the alternative wedges the create. |
 | D1 unavailable during a user command | Command fails closed before mutation because current session/membership cannot be established. |
 | Model/tool wait exceeds the attempt lease | Heartbeats extend an owned attempt; after genuine abandonment a new executor waits for expiry and replays through receipts. |
 | Substream child not provisioned | No feed ticket should be issued; the object must not bootstrap product authority from an untrusted socket route. |
@@ -828,12 +962,34 @@ schema history and compaction singleton lifecycle. The real runtime suite uses
 `evictDurableObject`. `test-workers/durable-object-runtime.test.ts` exercises
 constructor migrations, per-object SQL isolation across eviction, keep-alive
 alarms, `WorkstreamDO` aggregation and metadata snapshots, hibernating workspace
-and work-stream control sockets, typed native-RPC success/conflict envelopes,
+and work-stream control sockets, foreground presence across WorkspaceDO eviction
+plus inaccessible-work-stream rejection, typed native-RPC success/conflict envelopes,
+complete initial directory delivery across all four live execution states even
+past 1,250 combined rows, presence-free proactive feed subscriptions,
 bidirectional message pages without room-cursor movement, page revocation,
 compaction recovery, HyperSight checkpoint recovery/revocation, socket
 revocation across all four roles, obsolete queued
 run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
 ticket replay, and the read-only child socket.
+`test-workers/participant-notification.test.ts` covers what seating somebody
+enqueues, on both the create and the add-afterwards paths, plus identity-bearing
+mentions and attachment descriptors in an opening message, and member-authored
+elicitation answers. `test-workers/message-authority.test.ts` and
+`test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
+atomicity and malformed object-boundary inputs; the runtime suite proves a
+subscribed socket receives a typed external append without reconnecting.
+`apps/desktop/src/renderer/lib/transcript.test.ts` covers author, mention, and
+attachment flattening, routed identity bridging, and elicitation collapse. The
+participant-notification suite is also where the
+one trap in asserting on effects is recorded: **never read the child's own
+`durable_outbox`.** A commit arms the child's alarm for the current instant and
+the alarm forwards and then deletes, so any assertion against that table races
+the drain and gets quietly greener the fewer effects a path enqueues — an
+absence assertion written that way passes vacuously. Flush with
+`flushEffectsToWorkstreamDO` and read the parent, and take a projection version
+from the parent's `projection_keys` rather than from an outbox row, because the
+eager directory delivery inside `acceptSubstreamEffects` acknowledges directory
+rows out of the parent outbox without any Queue consumer.
 Node tests cover migration
 rollback/hash drift/ahead versions, normalized product SQL, compatibility-view
 replay deduplication and same-row tool settlement, authorization — including
@@ -858,9 +1014,10 @@ is under test.
 ## Data model
 
 The DDL in source is authoritative. This catalog defines ownership and joins.
-All Durable Object tables are SQLite `STRICT` tables, use integer Unix
-milliseconds internally, bound inline/JSON payloads, and keep external object
-identity in one singleton rather than repeating it on every child row. Live
+Durable Object tables are SQLite `STRICT` tables. Native work-stream-down
+schemas use integer Unix milliseconds; WorkspaceDO's imported workspace schema
+retains its ISO timestamp columns. Tables use bounded inline/JSON payloads and
+keep external object identity in one singleton rather than repeating it on every child row. Live
 WebSockets use hibernation attachments and therefore have no `sockets` table.
 No RPC or Queue send happens inside a local SQL transaction: the source commits
 a fact plus an outbox intent, and the receiver commits its mutation plus a
@@ -877,7 +1034,7 @@ already have committed across the object boundary.
 | `workspace_identity` | Singleton row (`id = 1`) binding the object to workspace, region, and immutable placement affinity. |
 | `workspace_socket_ticket_receipts` | One consumed workspace-scoped ticket including user, expiry, and consumption time; its expiry index supports bounded cleanup. |
 | `workspace_sync_events` | Monotonic `waterline`, UUIDv7 `event_id`, JSON topic set, and occurrence time for the bounded 1,024-event reconciliation window. Rows are invalidations only, never workspace data copies. |
-| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and Workflow claim/terminal state. It is never shared with another workspace. |
+| `workspace_connector_events` | Complete authoritative normalized provider event, connection/workspace scope, bounded JSON/text fields, provider/dedupe unique keys, local insertion sequence, and processing claim/terminal state. It is never shared with another workspace. |
 | `workspace_connector_event_ingress_receipts` | One ingress UUID/content-hash to canonical-event mapping. It makes provider replay and at-least-once Queue delivery idempotent even when a second delivery used a different UUIDv7; ingest opportunistically reaps the oldest receipts after 30 days while the provider/dedupe keys continue to resolve the canonical event. |
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
@@ -887,9 +1044,9 @@ already have committed across the object boundary.
 | `resources`, `resource_watches`, `automation_resources` | Workspace resource metadata and workspace-level attachment/watch relationships. `content_ref` and derivative refs point to regional R2; each SubstreamAgent separately owns its work-stream link and resource inventory revision. |
 | `resource_object_deletion_outbox`, `note_resource_deletion_outbox` | Durable lifecycle ownership for original, derivative, receipt, and note-linked R2 refs. Deletion bytes is a regional side effect performed only after an object-owned outbox claim. |
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
-| `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys. |
+| `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys — so this object validates no scope owner, and migration 0036's four owner rules, dropped by 0090 along with the D1 tables, are now held only by `resolveMemoryAccess`. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
-| `workstream_notification_intents` | Causally fenced person-notification intents, `notification_kind` in (`mention`, `participant_added`). Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal mention shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
+| `workstream_notification_intents` | Causally fenced person-notification intents, `notification_kind` in (`mention`, `participant_added`). Claim, defer, failure, terminal settlement, retention due time, and reap are typed WorkspaceDO RPCs; the generic SQL port refuses this table. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
 | `realtime_transcription_ticket_receipts`, `realtime_transcription_sessions` | Dictation socket admission: one-time consumption of the signed ticket's `jti` and the short concurrency leases the per-user/per-workspace session caps are counted over. The expiry sweep, ticket consume, and cap-checked insert run as one serialized transaction, which is what makes the caps race-free. Epochs are Unix seconds — the signed ticket's external contract and the one departure from the object's unix-ms rule — so the columns carry the unit (`*_s`); the import maps the unitless D1 names over. |
 | `workspace_directory_state` | Singleton monotonically increasing `waterline` used to order page membership/pin reconciliation. |
@@ -899,6 +1056,7 @@ already have committed across the object boundary.
 | `workspace_workstream_resource_links` | Inverted resource-to-work-stream/watch index derived from authoritative child relationships, enabling connector and authorization lookup without cross-object SQL. |
 | `workspace_workstream_suggestion_feedback` | Resolved work-stream action feedback indexed for workspace discovery and ranking. The action itself remains in its SubstreamAgent. |
 | `workspace_workstream_effect_receipts` | Message/hash receipts making WorkstreamDO-to-WorkspaceDO effect retries idempotent — directory effects and the regional activity/mention effects alike; each receipt commits in the same transaction as the row it acknowledges, and inserts age receipts out after 30 days. |
+| `workspace_batch_dispatches`, `workspace_batch_dispatch_targets` | Frozen generic mass-update intent and one dispatch receipt per selected work stream. The operation/request hash prevents intent reuse; pending rows resume Queue publication after partial failure, while child inbox receipts cover the send-succeeded/progress-write-failed window. |
 | `workspace_activity_events` | Append-only first-party event log with a local AUTOINCREMENT cursor, audience rule, derived title/body, digestibility decision, dedupe key, and source reference. |
 | `workspace_activity_event_targets` | Involvement edges such as mentioned/assigned; these never grant visibility and cascade with the event. |
 | `opportunity_batch_windows`, `opportunity_batch_events` | Debounced connector/message evidence, bounded attempts, Workflow leases, and terminal admission status; both share one not-yet-started token (`pending`), and the import maps legacy `queued` window rows onto it. Repeated mutation or settlement after `completed` is a no-op; a nonterminal lease mismatch remains fenced. |
@@ -923,9 +1081,14 @@ revalidates D1 membership, and each command invokes the selected child through
 the Worker-side client. Cross-object relationships carry stable IDs, versions,
 and hashes; no SQL join crosses a Durable Object boundary.
 
-Visibility enumeration is cursor-paged by work-stream ID with a hard 250-row
-page limit. Callers follow `nextCursor`; no RPC materializes every visible work
-stream for a large workspace in one object invocation.
+Generic visibility enumeration for mass operations is cursor-paged by
+work-stream ID with a hard 250-row page limit, and callers follow `nextCursor`.
+The desktop directory is a different recency cursor: its first response returns
+up to 250 recent unpinned rows plus every visible pin and every visible
+`running`, `interrupting`, `preparing_context`, or `waiting_capacity` row. That
+combined synchronization response has no separate row cap because those live
+rows are authoritative proactive-connection targets; subsequent recency pages
+remain bounded and exclude the supplemented rows.
 
 ### `WorkstreamDO`
 
@@ -1107,6 +1270,691 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-27 — Replacement instances resume the attempt their predecessor fenced
+
+**What changed:** SubstreamAgent construction replaces still-live local harness
+lease owners left by the previous object instance with a durable
+recovery-pending owner and expires those leases together with the dispatch
+lease. A later replacement recognizes that marker even though its timestamp is
+expired, so it preserves recovery intent across consecutive evictions before a
+claim; already-expired unmarked leases remain stale-reaper failures. The
+replacement reclaims the same attempt ID under a new owner and epoch before it
+runs the stale-lease sweep, preserving frozen scope, completed tool receipts,
+and resumable child attempts. If cancellation was requested before the owner
+vanished, the replacement uses the recovery-pending owner as the attempt fence
+to settle the run as stopped instead of misclassifying it as stale failure. An
+exact completed tool receipt remains replayable
+while ownership transfers; receipt mutation and mismatched-plan paths still
+require the live lease. HyperSight roots remain untouched because their executor
+belongs to a separate BlockDashboardAgent.
+
+**Why:** Cloudflare can stop a Durable Object while external I/O is in flight;
+that I/O may finish before the next local SQLite access is rejected. Production
+recorded a completed Terminal command followed by exactly that storage error.
+The dispatch lease was released on reconstruction, but the harness lease was
+still honored for five minutes, leaving the tool visibly active until the stale
+reaper failed the whole run.
+
+**Considered and rejected:** Waiting for the existing lease, immediately
+terminalizing the recovered run, clearing every run in the shared authority,
+and creating a new attempt ID. They respectively preserve the five-minute
+spinner, discard replayable completed work, steal live HyperSight execution,
+or invalidate the frozen scope and receipts keyed to the original attempt.
+
+**Consequences:** An object restart can resume a local run immediately without
+weakening ordinary live-owner exclusion. The recovery-pending owner immediately
+fences the vanished executor, survives another eviction, and is replaced by the
+new instance-nonce lease owner with an advanced epoch when execution resumes.
+Normal unmarked expiration still follows the stale-run policy; real-workerd
+coverage verifies consecutive replacement, cancellation during handoff, and
+that constructor recovery touches only leases whose executor died with this
+SubstreamAgent instance.
+
+### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
+
+**What changed:** The face-pile presence signal now follows Tailwind's
+`animate-ping` treatment: a translucent filled copy of the avatar expands to
+twice its size and fades on a one-second loop. It shares the avatar's stacking
+layer, paints beneath its own solid avatar, and follows face-pile order so a
+participant's ping stays above earlier avatars and below later avatars or the
+overflow badge.
+Reduced-motion users keep a static translucent halo.
+
+**Why:** The tooltip opens after 300 ms, but the previous 550 ms inset phase was
+fully covered by the avatar. A user could hover a correctly present participant,
+see the explanatory tooltip, and see no corresponding sonar pulse.
+
+**Considered and rejected:** Increasing the outlined ring's colour or width
+would make the later visible phase louder without matching the familiar radar
+ping treatment. The halo stays tokenized and subtle while adopting the filled,
+expanding geometry.
+
+**Consequences, and what a future change has to respect:** The looping presence
+signal must use the avatar's face-pile layer without obscuring its own face or
+crossing later avatars or the overflow count, and remain a non-animated outer
+halo in reduced-motion mode.
+
+### 2026-08-26 — Legacy transcript rows gain faithful canonical projections
+
+**What changed:** schema v28 adds one receipt for the explicit pre-v27
+transcript backfill. A guarded `SubstreamAgent` RPC projects the exact retained
+participant order and compaction checkpoints into the canonical range/checkpoint
+indexes, shifts a post-cutover suffix atomically, records a pre-write PITR
+bookmark and full source digest, and reconciles every replay. Legacy payloads
+remain in their existing owning rows; canonical facts store only stable source
+references. Historical Bind state is explicitly unavailable. An operator-only
+precursor terminalizes lease-less pre-v27 active rows with an explicit
+migration-abandonment reason; it refuses every run that acquired a durable
+attempt, lease, heartbeat, or open receipt. Schema v29 adds the singleton cleanup
+receipt that makes a cleanup-success/backfill-failure retry auditable.
+
+**Why:** the v27 breaking cutover created the correct durable substrate but did
+not make existing work-stream rows visible through it. The old `parts` table
+does preserve participant-visible order and the old checkpoint table preserves
+exact replacement arrays, so discarding those facts would be unnecessary data
+loss. It does not preserve the sequence of private messages Bind consumed, so a
+backfill cannot truthfully create that projection.
+
+**Considered and rejected:** copying legacy payloads into new fact payloads,
+because that creates two owners for identical semantic data; rebuilding Bind
+history from aggregate assistant text or the Global inference archive, because
+neither is an exact object-local continuation ledger; and performing the scan in
+the constructor, because unbounded content work would put every ordinary object
+wake on the migration path.
+
+**What a future change has to respect:** source rows referenced by a completed
+receipt are immutable transcript owners. A backfill must be quiescent,
+object-local, atomic with its receipt, PITR-recoverable, and replay-reconciled.
+Before the first receipt, terminal runs receive the established residual-tool
+repair phase, isolated from stale-run reaping; this may settle their `admitted`
+or `executing` receipts and make
+their legacy cards eligible. A still-open receipt after repair and connected
+clients holding immutable transcript snapshots remain quiescence failures: later
+receipt settlement would invalidate the recorded source digest, while prefix
+insertion would change an open fence's sequence meaning. A historical pending
+card without an open receipt has no settlement writer and is projected as the
+faithful `started` state it owns. An already committed replay is read-only and
+does not require disconnection.
+It may never claim exact historical Bind state unless a byte-faithful source for
+that loop boundary exists. Pre-cutover run abandonment must remain a separate,
+explicit operator action with a strict v27 timestamp plus null
+attempt/lease/heartbeat and no-open-receipt fence. It may not be generalized
+into ordinary backfill quiescence or used to expire current runs.
+Its object-local receipt must commit atomically with the run terminalization and
+remain the count returned by every retry; a later transcript failure may not
+erase or replace that evidence.
+
+### 2026-08-26 — Proactive feed warmth no longer changes viewer presence
+
+**What changed:** SubstreamAgent subscription attachments now carry a
+backward-compatible `publishPresence` flag. Current Electron feeds set it to
+false, legacy viewer broadcasts and close updates exclude those sockets, and
+the UI resolves current viewers from WorkspaceDO. The first directory response
+also accepts every live-state row beyond both the 250-row recent page and 1,250
+combined entries.
+
+**Why:** A proactive feed can stay connected for an inactive pin or recent work
+stream, so subscriber count is no longer foreground attention. The complete
+live-state set can legitimately exceed the former arithmetic parser maximum and
+must not make workspace subscription fail.
+
+**Considered and rejected:** Closing background feeds would forfeit the warm
+open. Filtering only at render time would retain false presence broadcasts and
+durable event churn. Truncating live rows would leave precisely the oldest
+active runs cold.
+
+**Consequences, and what a future change has to respect:** WorkspaceDO remains
+the current client's sole presence authority. Legacy clients continue working
+without the new field, while all new proactive feed clients must opt out. The
+recent directory remains paged, but pins and live states are complete on the
+first response.
+
+Shipped in #341.
+
+### 2026-08-26 — Opening a work stream no longer clears its sidebar description
+
+**What changed:** Electron now maps the direct WorkstreamDO metadata snapshot's
+standing `description` to the sidebar subtitle, matching the WorkspaceDO
+directory path. The row renderer also falls back to that description when a
+resident cache entry carries an empty legacy `preview`.
+
+**Why:** WorkstreamDO still carries `description` and `preview` as distinct
+metadata fields, but newly created object-owned work streams do not populate the
+legacy preview. The workspace socket correctly seeded the sidebar from
+`description`; selecting the row opened the direct socket, whose newer common
+waterline replaced that subtitle with the empty preview. The result looked like
+the description was deleted only for the active work stream even though the
+authoritative description remained intact.
+
+**Considered and rejected:** Backfilling `preview` from transcript text. The
+sidebar is documented to show the standing description, not a last-message
+excerpt, and coupling this repair to transcript projection would preserve two
+competing values for one surface. Removing the metadata field is a separate
+contract migration; this change makes the two current socket readers agree.
+
+**Consequences, and what a future change has to respect:** A common-state update
+from either socket must produce the same `WorkstreamSummary.preview` value for
+the sidebar. An empty legacy preview must not outrank a non-empty description.
+
+### 2026-08-26 — Ordered transcript reads preserve participant message semantics
+
+**What changed:** Participant transcript text blocks now bulk hydrate the
+canonical mentions, attachment descriptors, message type, and render-safe
+structured content stored beside their source part. Turns also expose their
+client-message identity and validated external actor. The desktop resolves human
+authors and person mentions through the workspace roster, using the routed
+message's already-authorized identity while that row is present, preserves
+attachment tiles, and reconstructs system, elicitation, suggestion, and
+external-message rendering. Message-port appends and scheduling's elicitation
+messages join their part write to the ordered projection in the same
+object-local transaction and publish the committed turn to subscribed readers.
+Those object-port message fields reuse the product's existing 100,000-character
+message ceiling. If any other committed runtime event still cannot fit the
+bounded realtime frame, publication advances the durable cursor, marks that
+sequence unavailable for replay, and sends subscribed readers an immediate
+`resync_required` frame instead of falsely reporting that the mutation failed.
+
+**Why:** The ordered-transcript cutover projected the human author's ID but
+dropped it while flattening a turn for the renderer, and did not project mention
+or attachment rows at all. Every human message consequently rendered as an unrelated
+“Workspace member,” used its message ID as a new accent identity, failed the
+signed-in-user comparison, and reduced canonical person links to plain text.
+Uploaded images were still in R2 and linked to the part, but their tiles vanished
+as soon as the ordered snapshot replaced the optimistic message. Slack actor
+identity and client reconciliation keys were also lost, while system and
+elicitation writers that still append through typed object ports did not enter
+the ordered projection. Mention attention and notification effects were still
+committed correctly; these were read/projection losses of already durable facts.
+
+**Considered and rejected:** Copying display names or avatars into the durable
+transcript projection. Those are mutable workspace identity attributes, while
+the transcript already stores the stable author and mention user IDs and the
+desktop already owns a roster query; the authorized message page bridges
+presentation while that roster loads or no longer contains a historical member.
+Also rejected was reconstructing attachment
+tiles from the work-stream resource rail: that relationship does not say which
+message displayed the file or its position. The object returns the durable IDs,
+offsets, frozen per-message descriptors, and validated structured fields; the
+reader resolves only current person presentation data.
+
+**Consequences, and what a future change has to respect:** Any participant
+transcript replacement for `Message` must preserve its complete participant-
+visible semantics, not only visible text. Author IDs determine own-versus-
+coworker layout and stable person color; mention IDs determine chips independently
+of notification delivery; attachment links determine message-local tiles; type
+and structured content determine specialized rows. Assistant output remains on
+the canonical Bind projection and must not also be appended through the legacy
+final-message path. A transcript contract change must compare its hydrated shape
+with the existing message-page mapper and cover both real object snapshots and
+the desktop flattening boundary. Rows written during a deployment that omitted
+the ordered projection remain readable through the identity-matched message
+overlay; that compatibility path is not a durable backfill and must remain until
+a historical repair has completed.
+Realtime publication must likewise never turn a committed mutation into a
+reported failure: an event that cannot be replayed as one bounded frame must
+force canonical snapshot repair for current readers and advance the replay
+floor for reconnecting readers.
+
+### 2026-08-26 — Foreground presence is explicit on the workspace socket
+
+**What changed:** Electron main now publishes application foreground changes
+through the preload bridge. Each renderer combines that signal with its own
+window focus and active work-stream route, then sends `set_presence` after its
+WorkspaceDO subscription is admitted. WorkspaceDO stores the explicit state in
+the socket's hibernation attachment, orders commands by a socket-local revision,
+validates foreground work-stream visibility against its local directory on both
+focus and directory changes, and broadcasts a viewer-scoped user set. The
+work-stream face pile gives other present participants a subtle repeating ring;
+hovering that avatar explains that the named participant is viewing this work
+stream. The current user is omitted and reduced-motion users receive a static ring.
+
+**Why:** The metadata/feed socket pool deliberately retains recently viewed
+work streams, so socket liveness describes warm transport rather than current
+attention. Presence must also disappear when Rally or the renderer window is in
+the background, and it needs a direct broadcast path compatible with the
+500 ms P50 and 1.5 s P90 product targets.
+
+**Considered and rejected:** Inferring presence from any open work-stream socket
+would mark pooled background work streams as active. Route state alone would
+leave a hidden or unfocused Rally window present. A class-memory map would be
+lost when WorkspaceDO hibernates. A SQL presence table plus TTL/alarm would add
+writes and guessed expiry behavior even though Cloudflare already preserves
+healthy socket attachments and reports close/error.
+
+**Consequences, and what a future change has to respect:** Presence remains
+ephemeral and must never become product authority. Every reconnect reasserts it
+only after the workspace subscription response, every reported work stream is
+authorized locally, directory visibility changes clear stale attachments, and
+each recipient receives only the set its visible face pile needs. Client
+snapshots are invalidated on route or transport loss. Presence must never gain a
+REST read/write or recovery path. The
+direct same-object broadcast is designed for the latency target,
+but production percentiles still require measurement; a future telemetry change
+must not include workspace membership or presence sets in analytics payloads.
+
+### 2026-08-26 — Canonical facts gain participant and exact Bind orderings
+
+**What changed:** `SubstreamAgent` now stores canonical transcript facts with a
+participant-visible turn projection and a restricted exact Bind-loop projection.
+It serves snapshot-fenced half-open ranges, dual unread/latest opening islands,
+nested activity intervals, provider-boundary hashes, and atomic compaction
+replacement/status records through one typed local authority.
+
+**Why:** Flat `parts` and aggregate final assistant messages could not preserve
+the order in which Bind produced text, tool calls, later text, and parallel tool
+lifecycle updates. They also could not prove a downloaded range was empty
+rather than missing, or reconstruct Bind's private post-healing/post-compaction
+message array exactly after recovery.
+
+**Considered and rejected:** Copying participant text into a second transcript,
+deriving historical interleaving from aggregate rows, and authorizing every
+returned block. Human text remains owned by its participant part and referenced
+by the transcript fact; model and participant projections share facts where the
+payload is identical; admission is constant per external read.
+
+**Consequences:** Main-feed readers must use transcript ranges and stable turn
+and block identities. Automation-wizard rendering is unchanged. Schema changes
+must preserve the single-owner fact invariant, both monotonic sequence domains,
+provider-boundary equality, same-fence dual boot ranges, and the indexes that
+make those reads bounded. A socket attachment, not durable history, owns each
+reader's range fence; activity payload growth must remain proportional to loaded
+turns and active ancestry rather than work-stream lifetime.
+
+### 2026-08-26 — Group actions use one generic filter and queued per-stream updates
+
+**What changed:** The work-stream API now accepts a reusable visibility, pin,
+and half-open activity-time filter for both preview and application, plus a
+discriminated update. WorkspaceDO resolves that filter in one index query and
+freezes the selected IDs under the generic operation ID. The regional Worker
+publishes one event per selected work stream through the existing regional
+Queue, records each successfully published `sendBatch` chunk, and resumes only
+undispatched IDs when the same operation is retried. Each consumer delivery asks that work stream's
+main SubstreamAgent to apply the update in its authoritative SQLite transaction.
+Per-object receipts make delivery idempotent; archive also stops an active run,
+and both updates reuse the existing regional-effect outbox for sidebar and
+socket convergence.
+
+**Why:** Recency headers need mass actions over rows the client may not have
+loaded, but neither a browser loop nor an API loop may read and mutate one work
+stream at a time. The workspace directory already owns the complete,
+member-visible cross-work-stream index, while each child still owns its product
+state. One directory query followed by queued independent events preserves
+both authorities and lets Queue provide buffering and delivery isolation.
+
+**Considered and rejected:** Dedicated `this-week` or `mark-group-read`
+endpoints would encode one sidebar layout into the backend. A synchronous
+Worker loop issuing one child RPC per target would hold the request open and
+turn partial fan-out into an HTTP retry problem. A direct workspace-wide SQL
+mutation is impossible because the rows belong to separate Durable Objects.
+
+**Consequences, and what a future change has to respect:** New groupings build
+the generic filter; they do not add routes. New supported mutations extend the
+shared update union and the one child transaction. Preview remains advisory;
+the first apply freezes the exact current target set and later transport
+retries reuse it. A Queue send may commit before its WorkspaceDO progress RPC,
+so the child receipt remains the final duplicate-delivery fence. Queue delivery
+may outlive the requesting session, so it rechecks active membership and never
+trusts delivery uniqueness or order. Dispatch receipts intentionally persist:
+deleting a completed operation would let a late HTTP retry select new targets.
+
+### 2026-08-26 — Connector processing closes over Queue and WorkspaceDO
+
+**What changed:** New canonical connector events no longer create a per-event
+Cloudflare Workflow. After ingress commits, the regional consumer sends an
+ID-only pointer back to the existing `ACTIVITY_QUEUE`; a later delivery claims,
+loads, and settles the event through typed WorkspaceDO RPCs. The claim carries a
+stable processing owner for correlation; WorkspaceDO issues a fresh 15-minute
+lease per acquisition, returns its exact expiry to active duplicates, and fences
+settlement by the lease token. Queue delivery count stays transport telemetry,
+not a product attempt generation. The physical `workflow_instance_id` column and
+Workflow binding remain temporarily compatible with already-created instances.
+The object also accepts their frozen `workflowInstanceId` claim/settlement wire
+shape and returns their smaller strict claim result. Queue pointers older than
+the object's authoritative product attempt are terminally acknowledged because
+no redelivery can make that generation current again. The row persists its
+processing orchestrator: Queue leases expire, but a drain-only Workflow remains
+exclusive until settlement because its processing step can perform multiple
+separately timed retries. An active `NULL` discriminator is a row written before
+the migration and therefore a Workflow claim, since Queue claims did not yet
+exist.
+
+**Why:** WorkspaceDO already owns the canonical event and terminal state, while
+Queue already owns durable retry and dead-letter retention. A one-callback
+Workflow duplicated both ledgers and introduced an unnecessary external
+instance-ID contract.
+
+**Considered and rejected:** Splitting the regional activity Queue was rejected
+at Rally's current scale; no capacity evidence requires it, and strict message
+kinds plus terminal logs retain flow identity. Replacing the internal owner
+with Cloudflare's Queue message ID was rejected because stability across
+redelivery is not a contract this design needs to assume.
+
+**Consequences, and what a future change has to respect:** Connector processing
+must remain an ID-only Queue wake followed by typed object RPC, with individual
+ack/retry and authoritative, lease-fenced settlement. Do not infer success from
+Queue drain, treat Queue delivery count as a product generation, or reintroduce
+raw SQL from the consumer. Remove the drain-only Workflow and rename its physical
+owner column only after pre-cutover instances are proven gone. Until then, keep
+both the legacy Workflow wire adapter and same-instance claim replay: a running
+Workflow remains on versioned code and may repeat an RPC whose object mutation
+committed before its step result did. Do not replace the persisted orchestrator
+with an ID-format inference or a longer guessed Workflow timeout.
+
+### 2026-08-26 — Notification lifecycle becomes a closed WorkspaceDO protocol
+
+**What changed:** Notification delivery no longer routes
+`workstream_notification_intents` statements through the D1-shaped workspace
+database adapter. WorkspaceDO now returns typed `claimed`, `terminal`, `busy`,
+and `missing` outcomes; applies lease-fenced defer, failure, and settlement
+transitions; derives the retention alarm target; and returns exact reaped intent
+IDs. The generic SQL executor refuses the table, including through the
+object-local scheduler adapter.
+
+**Why:** The returned-lease repair stopped one `meta.changes === 1` defect, but
+the lifecycle still exposed storage mechanics to every caller and every future
+branch. A D1-compatible result cannot make workerd's physical `rowsWritten`
+into a domain fact. The object owns the state machine and can return the fact
+directly.
+
+**Considered and rejected:** Leaving the generic path open and standardizing on
+`UPDATE ... RETURNING`. That statement pattern is correct locally, but it is a
+review convention rather than an enforceable boundary; another transition can
+still read `meta.changes`, and the alarm would remain a second raw-SQL caller.
+
+**Consequences, and what a future change has to respect:** Notification SQL is
+private storage implementation. New delivery states, retry rules, or retention
+behavior must extend `workspace-notification-intent-protocol.ts` and the
+WorkspaceDO methods rather than issuing SQL through `env.DB`. The Worker owns
+regional identity and provider calls; WorkspaceDO owns clocks, leases, and
+durable transitions. Real-workerd coverage asserts both that an indexed claim
+reaches its terminal decision and that the generic port returns a typed-only
+refusal.
+
+### 2026-08-25 — One SubstreamAgent snapshot opens the reader
+
+**What changed:** Selecting a work stream now subscribes its SubstreamAgent
+immediately, and the first canonical snapshot supplies both the detail and the
+transcript window the renderer needs. `GET /workstreams/:id` invokes the same
+room boot only for explicit recovery. It no longer calls WorkstreamDO for the
+viewer HyperSight preference; the independent control socket owns that value.
+
+**Why:** The old open called `boot()` over REST, awaited an optional second
+object, then admitted a feed whose subscription assembled another room
+snapshot. The serial duplication was visible in production timings and spent
+the latency budget before the message surface was live.
+
+**Considered and rejected:** Racing the two room boots moves the serialization
+inside the object and doubles snapshot work. Reaching from SubstreamAgent into
+WorkstreamDO would violate the authority boundary for optional UI metadata.
+
+**Consequences:** The normal open performs one canonical SubstreamAgent read.
+The recovery route remains a full twin so a failed first socket attempt exposes
+a safe manual path as soon as it enters reconnecting, without an arbitrary
+timeout. WorkstreamDO control metadata may arrive before or after the feed
+without affecting message readiness.
+
+### 2026-08-25 — Opening messages carry real person mentions
+
+**What changed:** The new-work-stream composer now retains the same selected
+mention identities as the in-work-stream composer and sends them through the
+same visible-text-to-span resolver. `POST /workstreams` accepts those spans,
+and `SubstreamAgent.initialize` resolves their people against active workspace
+membership, replaces accepted visible ranges with canonical
+`[@Name](person:<user-id>)` Markdown, writes `part_mentions` and mention
+attention in the opening-message transaction, and emits the normal durable
+mention activity and notification. A mentioned person is seated even if a
+direct API caller omitted them from `participantUserIds`. In an existing
+personal work stream, both Enter and the send button stop before a
+nonparticipant mention and ask whether to add the person, explicitly warning
+that without access they cannot see either the mention or the work stream;
+workspace-visible work streams do not raise that false warning.
+The optimistic opening turn carries those same bound spans, and a failed create
+restores text and spans only as one submitted draft generation so a newer draft
+cannot inherit stale mention identities. Workspace-visible sends accept a
+nonparticipant mention without confirmation or seating because active workspace
+membership already grants read access; the authority-side confirmation backstop
+applies only to personal work streams.
+
+**Why:** Selecting a name in the launch composer previously inserted only plain
+`@Name` text and separately added a participant ID. The opening message carried
+no identity or offsets, so its persisted text could not render a mention chip,
+create mention attention, or reach the Slack mention delivery path. The control
+looked like the existing mention autocomplete while producing a different
+domain fact.
+
+**Considered and rejected:** Building canonical Markdown in the renderer. That
+would make correctness depend on a client template and a possibly stale display
+name. The client identifies the intended visible span; the object verifies the
+active member and owns the durable spelling, mention row, attention state, and
+outbox effects. A separate launch-only span finder was also rejected in favor
+of the resolver already used for ordinary workspace messages.
+
+**Consequences, and what a future change has to respect:** Mention identities
+must survive draft editing and cross the create API as occurrence-bound spans;
+participant IDs alone are not mention metadata, and a display name cannot
+disambiguate two people who share it. Hand-typed ambiguous names remain plain
+text. Only person spans accepted by authoritative visible-range validation may
+derive audience or consume a participant confirmation; raw mention IDs are
+candidates, never access grants. A person selected as both participant and
+mention receives the specific mention notification, not an additional
+participant-added notification. The personal-work-stream confirmation must be
+shared by every submit gesture and must run before optimistic insertion; the
+object's `participant_confirmation_required` check remains the authority-side
+backstop. Empty mention arrays are omitted from creation
+receipt hashes for rolling-deploy compatibility, while non-empty spans remain
+part of the idempotency identity. The real-workerd test asserts canonical text,
+`part_mentions`, attention, directory projection, and the durable notification
+branch together. Renderer error recovery must treat draft text and its bound
+spans as one snapshot; independently restoring either half can attach an old
+identity to new words. Autocomplete and the mention toolbar follow textarea
+selection semantics: a non-collapsed selected range is replaced, not retained
+after the inserted mention.
+
+### 2026-08-25 — Notification claims prove the lease they wrote
+
+**What changed:** The WorkspaceDO notification claim now returns and verifies
+its `intent_id` and newly generated `lease_id`. It no longer decides whether the
+claim won from the D1-shaped adapter's `meta.changes`. Exact notification reaper
+progress likewise comes from returned intent identities. The same audit moved
+WorkspaceDO-routed connector cursor and GitHub policy compare-and-swaps,
+automation compensations, draft-resource reaping, and opportunity-window
+reaping to returned identities. Slack account-link redemption now routes to its
+WorkspaceDO authority and verifies the returned challenge and linked identity
+instead of two exact counters. [`durable-object-sqlite.md`](durable-object-sqlite.md)
+owns the cross-cutting rule.
+
+**Why:** A production mention claim updated one logical intent row and the
+indexes over its delivery and terminal fields. `WorkspaceDO.executeRuntimeSql`
+correctly exposed workerd's physical `rowsWritten`, which was greater than one;
+the notification service incorrectly required exactly one. It therefore wrote
+its lease, diagnosed that successful write as an active competitor, returned
+`busy`, and never reached Slack. Queue drain was real but described only the
+earlier handoff, not this later terminal outcome.
+
+**Considered and rejected:** Changing the predicate to `changes > 0`. That
+would survive index inflation but would still couple a domain ownership decision
+to a storage counter. Also rejected: normalizing the adapter globally to
+`changes()`. Existing callers and diagnostics already receive `rowsWritten`, and
+making the adapter look more like D1 would preserve the architectural mistake:
+the provable answer is the returned lease, not a more convenient count.
+
+**Consequences, and what a future change has to respect:** A claim, lease,
+compare-and-swap, or exact reaper count on Durable Object SQLite must use
+`RETURNING` or a typed object-owned outcome. A Node SQLite double is insufficient
+coverage for this rule because its logical affected-row count hides index
+writes; the notification regression therefore runs on real workerd and changes
+indexed columns. The test was proved by restoring the old exact-count branch and
+observing `busy` where the terminal result was `skipped`.
+### 2026-08-25 — Being named at creation tells the person, when the caller says to
+
+**What changed:** `initialize` emits, per invited participant, the same activity
+event and `participant_notification` that `addParticipant` does, behind that
+person's own viewer effect — but only when the caller passes the new
+`notifyParticipants`, which `POST /workstreams` sets and nothing else does. Both
+paths now build those two effects in one place, `participantAddedEffects`, and
+both mint the same identities (`participant:<work stream>:<user>:<epoch>` and
+`participant_added:<…>`), with a literal zero epoch at creation because the rows
+are inserted by the same call. The notification carries `titleIsProvisional`, and
+the Slack and email templates use it to avoid quoting a title the naming agent has
+not written yet. The two person-notification emails and both regions' Resend
+sender display names now say Rally.
+
+**Why:** the 2026-08-22 entry below, *Being added to a work stream tells the
+person*, closed with "Also rejected: notifying people named in
+`participantUserIds` at creation, which is a different path with a different
+audience question, left for its own change." Half of that was wrong and half was
+right, and the split is the whole of this entry.
+
+Wrong: it is not a different path in any way that matters. The new-work-stream
+screen has an "Add people" step, so being picked there is how most people are put
+in a work stream, and every one of them reached `participants` with only their
+sidebar row enqueued — no Slack DM, no email, and no `activity_events` row for the
+digest to fall back on. The hole was permanent rather than late, because the
+repair anybody reaches for does not work: adding somebody already active is a
+deliberate no-op that emits only the viewer effect, so a second, manual add tells
+them nothing either. That is the same "a colleague added to a work stream, told by
+nobody, who then could not find it" report the entry below was written to close,
+arriving through the door it left open.
+
+Right, and this is the part the first attempt at this change got wrong: there
+*is* a second audience question, and `participantUserIds` is where it lives.
+`CreateWorkstreamRequestSchema` says so where its `.max(25)` used to be — "a
+connector conversation is the other kind of caller and is routinely larger — a
+Slack channel's resolved audience can be hundreds" — and `slack-agent-service.ts`
+is that caller: when a linked member mentions the bot in a channel, the resolved
+roster goes straight into this field. Notifying it would have DMed up to fifty
+people, on somebody else's behalf, that they were "added" to a work stream nobody
+added them to, in a thread they were already reading — and only when the person
+who typed had linked their Slack account, because the unlinked branch provisions
+instead. So the decision moved to the caller, exactly as `scope` did and for the
+same reason: an audience is something an ingress *knows*, never something the
+state-holder infers.
+
+**Considered and rejected:** gating on `slackOrigin` being absent. It infers the
+answer from a value that means something else, so the next ingress to reach
+`initialize` inherits a decision instead of being made to state one.
+
+Also rejected: re-emitting the notification from the replay branch, which repairs
+an effect-construction failure through `enqueueDirectorySnapshot`. A directory
+effect is safe to re-enqueue because it *writes* the projection key it is
+versioned on, so an unchanged snapshot is skipped and a changed one advances. A
+notification only *reads* that key, so re-emitting one after the root has moved
+recomputes a different `requiredProjectionVersion`, and the parent refuses the
+same message id under a new payload hash — `child_effect_receipts` is keyed
+`(substream_id, message_id)` and its retention is 180 days, so the naive repair
+would wedge that work stream's creation for six months rather than lose one
+notification. Closing the window properly means giving `initialize` one
+transaction, which it cannot have while `commitWithRegionalEffects` asserts the
+authority this call is what establishes.
+
+**Consequences, and what a future change has to respect:**
+
+- **The two paths mint one identity per participation and must keep doing so.**
+  The epoch is zero at creation precisely so a later hand-add of the same person
+  converges on the intent already enqueued rather than minting a second.
+- **A notification effect must appear after its own recipient's viewer effect in
+  the returned array — not immediately after it.** The dependency is resolved in
+  the same `commitWithRegionalEffects` loop pass that wrote the key, so any
+  earlier position in the same array works; `createMessage` groups all viewer
+  effects ahead of all notifications and is correct. Adjacency is not the rule,
+  and a change that treats it as one will reject a legitimate grouping.
+- **A caller that seats somebody decides whether to tell them.** `provision` and
+  `admitConnectorAudience` are the two paths that seat people and do not, today,
+  and both are live rather than hypothetical: the four system producers each seat
+  a single owner the work stream is *for*, where "X added you" would be wrong, and
+  the connector audience is people already reading the conversation. Neither
+  question is settled here; what is settled is that the object will not answer it
+  for them.
+- **The crash window between `initialize`'s root commit and its effect commit
+  still loses the notification, and losing it is unrepairable by hand** for the
+  same no-op reason the original bug was. That is a smaller and quieter failure
+  than a create that cannot be retried, and it is the trade this entry accepts.
+- **A notification must not name a work stream by a title the naming agent has
+  not written.** Creation sets the title to the opening message's first line cut
+  at 180 characters and the objective to the same line cut at 4,000, and naming
+  runs after these effects commit. Every other surface re-renders when the real
+  name lands; an inbox does not, so `titleIsProvisional` exists and the templates
+  branch on it rather than quoting a fragment and then printing it twice.
+
+### 2026-08-25 — Durable notification handoffs expose every terminal branch
+
+**What changed:** The child and parent outboxes, regional effect consumer,
+WorkspaceDO notification intent, Slack/email transports, and parent
+acknowledgement now emit correlated structured outcomes. Inactive,
+non-listable, self-originated, replayed, busy, projection-pending, delivered,
+and failed branches are individually queryable.
+
+**Why:** Queue drain was being mistaken for end-user delivery even though the
+durable path has several later authorities and intentional terminal skips. The
+outbox guarantees retry until acknowledgement; it does not guarantee that the
+notification authority will choose a transport or that a provider will accept
+the intended destination.
+
+**Considered and rejected:** One success log at the Queue consumer and
+exception-only logging were rejected. Neither identifies the durable authority
+that committed a terminal state, and both erase expected decisions such as
+self-notification and inactive-recipient suppression.
+
+**What a future change has to respect:** Every retained effect must be traceable
+from child outbox through actual parent-row removal. Every notification branch
+must end in a terminal, deferred, or failure event with content-free IDs and a
+stable reason; Queue acknowledgement alone must never be presented as provider
+delivery.
+
+
+### 2026-08-25 — Automation opens stay on their authorized workspace state
+
+**What changed:** Automation detail uses its first authorized subscription row
+for the stored email address and calls an internal bounded run-history reader.
+The standalone run-history route retains the subscription authorization. The
+manual, scheduled, and activity-triggered provisioners now copy subscription
+scope to each generated WorkstreamDO. One batched WorkspaceDO directory read
+filters the bounded history IDs so pre-change personal run objects remain
+visible only to their projected participants.
+
+**Why:** Re-reading the same subscription did not change the permission result,
+and re-verifying an owner-verified email route made a regional detail read wait
+on Global. A generated object's scope must also agree with the automation's
+declared user/workspace audience so its native detail, directory, socket, and
+resource checks all enforce the same rule.
+
+**Considered and rejected:** Caching Global verification and adding an
+automation-specific reader exception inside WorkstreamDO. The former keeps an
+unnecessary cross-region dependency; the latter makes stored scope cease to be
+the reader authority.
+
+**What a future change has to respect:** Public entry points authorize once,
+then use internal helpers for subordinate reads. Route repair remains a
+lifecycle operation, and every automation run producer supplies the subscription
+scope during object provisioning.
+
+### 2026-08-25 — Automation history stops waking every run object
+
+**What changed:** An authorized automation detail or run-history read now returns
+its bounded `automation_runs` rows after one batched WorkspaceDO
+directory/viewer query. It no longer calls
+`SubstreamAgent.readerAudience` once per run before returning them, while legacy
+personal runs retain their narrower projected audience.
+
+**Why:** Reading an automation is the authorization boundary for the work streams
+created by that automation. Rechecking every generated work stream did not add a
+distinct permission decision, but it did wake one child object per history row.
+For an automation with 18 runs, production traces showed 18 child RPCs and
+double-digit request latency while cold children initialized their schemas and
+alarms.
+
+**Considered and rejected:** Parallelizing the child reads. That keeps the
+redundant authorization check, turns one history request into a burst of Durable
+Object calls, and retains latency whenever the outbound-connection allowance
+bounds the burst.
+
+**What a future change has to respect:** Loading the automation subscription
+remains mandatory before returning its runs. Until every historical generated
+object has the automation's scope, the single batched directory/viewer read is
+also mandatory. Direct content moves and reads that do not derive their
+authority from an already-authorized automation still use the current reader
+audience owned by the work stream.
 
 ### 2026-08-25 — Hibernation replay misses stay on the child socket
 

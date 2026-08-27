@@ -23,9 +23,28 @@ import {
   type AddressingContextMessage,
 } from "./prompts";
 import { toolActivityName } from "./tool-activity";
+import type {
+  BindLoopTransition,
+  BindProviderBoundary,
+} from "./bind-loop-projection";
 
 export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
+export {
+  applyBindLoopTransition,
+  BIND_LOOP_PROJECTOR_VERSION,
+  BIND_SYSTEM_RENDERER_VERSION,
+  canonicalizeBindLoop,
+  hashBindLoop,
+  projectBindLoopMessages,
+  verifyBindProviderBoundary,
+  type BindLoopMessage,
+  type BindLoopMessageOrigin,
+  type BindLoopProjectionState,
+  type BindLoopTransition,
+  type BindProviderBoundary,
+  type BindSystemProjection,
+} from "./bind-loop-projection";
 export {
   nonObjectRootUnionBranches,
   readableRootUnionBranch,
@@ -78,6 +97,15 @@ export interface ModelMessage {
   name?: string;
   tool_call_id?: string;
   tool_calls?: ModelToolCall[];
+  /** Durable source of an exact model-facing wrapper; never sent to a provider. */
+  provenance?: ModelMessageProvenance;
+}
+
+export interface ModelMessageProvenance {
+  originKind: "canonical" | "protocol" | "derived";
+  sourceKind: string | null;
+  sourceId: string | null;
+  sourceRevision: number | null;
 }
 
 export interface OpenRouterInferencePayload {
@@ -1016,7 +1044,12 @@ const automationDraftSubmissionJsonSchema = {
           },
           deterministicPrefilter: {
             type: ["string", "null"],
-            description: "A JSON-encoded object used before semantic classification."
+            // The one required key lives inside an opaque JSON string, so
+            // nothing else the model is shown can state it: the schema cannot
+            // constrain the encoded object, and the prose above says only that
+            // a prefilter is declared. Naming it here is what stops a ready
+            // semantic trigger being submitted without it.
+            description: "A JSON-encoded object of deterministic filters applied before semantic classification. A ready semantic_activity trigger must name exactly one declared event type from the plugin in suggestedSourcePluginId, as {\"eventType\": \"the.event.type\"}, optionally alongside that event's declared deterministic filter fields."
           },
           condition: { type: ["string", "null"] },
           resourceId: { type: ["string", "null"] }
@@ -1559,6 +1592,30 @@ export async function compileAutomation(input: {
     },
     {
       definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[3]!,
+      /**
+       * The draft's real contract is `AutomationDraftSchema`, and the parts of
+       * it that decide whether a submission is accepted — a ready activity
+       * trigger's binding key, its inspected plugin, its declared prefilter
+       * event type, unique memory-table names — are cross-field refinements no
+       * JSON Schema can state, so the declared `inputSchema` accepts arguments
+       * the executor then rejects.
+       *
+       * Without this hook the runtime sees arguments that match everything it
+       * was shown, files the executor's `ZodError` as downstream data
+       * validation, and hands the model "the tool could not validate its data;
+       * retry without changing the arguments". The model obeys: it resubmits
+       * the same draft, is refused identically, and the compile ends with no
+       * draft at all. That is request 8592b3f1 — four identical rejections of
+       * one missing `deterministicPrefilter.eventType`, then
+       * `automation_draft_not_submitted` and a 502 the person could only read
+       * as "try again". Re-running the same parse here is what turns that dead
+       * end into the named field, because it is the one signal that separates a
+       * correctable argument from an external fault.
+       */
+      validateInput: (raw) => {
+        const parsed = parseAutomationSubmission(raw);
+        return parsed.success ? null : parsed.error;
+      },
       execute: async (raw) => {
         await input.onDiagnostic?.({
           stage: "normalize",
@@ -1568,8 +1625,7 @@ export async function compileAutomation(input: {
           fallbackAttempt: 0,
           repairAttempt: 0,
         });
-        const normalized = normalizeAutomationDraft(raw);
-        const parsed = AutomationDraftSchema.safeParse(normalized);
+        const parsed = parseAutomationSubmission(raw);
         await input.onDiagnostic?.({
           stage: "validate",
           schemaName: "automation_draft",
@@ -2043,6 +2099,20 @@ function easyEnglishCurrentTime(
   ].join("\n");
 }
 
+/**
+ * The one parse a submitted draft gets.
+ *
+ * Both the executor and `validateInput` go through here, because the
+ * correction the model receives is only useful if it names a field the
+ * executor actually rejects. Two call sites that each normalized and parsed
+ * for themselves would be one edit away from disagreeing — and a correction
+ * naming a field the executor is fine with is the same unwinnable loop with a
+ * different field's name on it.
+ */
+function parseAutomationSubmission(raw: unknown): z.ZodSafeParseResult<AutomationDraft> {
+  return AutomationDraftSchema.safeParse(normalizeAutomationDraft(raw));
+}
+
 function normalizeAutomationDraft(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = value as Record<string, unknown>;
@@ -2113,7 +2183,7 @@ function normalizeAutomationTrigger(value: unknown): unknown {
         connectorType: trigger.connectorType,
         sourceBindingKey: trigger.sourceBindingKey,
         suggestedSourcePluginId: trigger.suggestedSourcePluginId,
-        deterministicPrefilter: parseJsonObject(trigger.deterministicPrefilter),
+        deterministicPrefilter: jsonObjectOrRaw(trigger.deterministicPrefilter),
         condition: trigger.condition
       };
     case "resource_watch":
@@ -2132,6 +2202,29 @@ function normalizeAutomationTrigger(value: unknown): unknown {
 
 function normalizeTriggerSummary(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+/**
+ * A JSON-encoded object, or whatever was sent when it is not one.
+ *
+ * `parseJsonObject` answers `{}` for a string it cannot decode, which is the
+ * right tolerance for a field nobody has to get right. It is the wrong one
+ * here: an empty prefilter fails the ready-trigger refinement, so a model that
+ * sent `{eventType: drive.file_changed}` — unquoted keys, or a JSON string
+ * encoded twice — is told it declared no event type while looking at one it
+ * plainly wrote, and resubmits. Handing the string through instead lets the
+ * schema reject the value that was actually sent. On a draft that is saved it
+ * also stops a filter the model wrote being dropped, which would leave the
+ * automation matching every event of its kind rather than the one asked for.
+ */
+function jsonObjectOrRaw(value: unknown): unknown {
+  if (typeof value !== "string") return parseJsonObject(value);
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : value;
+  } catch {
+    return value;
+  }
 }
 
 function parseJsonObject(value: unknown): Record<string, unknown> {
@@ -2423,8 +2516,9 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
     name: "load_plugin",
     description: "Load one available plugin from the catalog for this run.",
     capability: "rally.plugins.load",
-    // Activation changes only Avalon's durable run surface. It does not write
-    // to an external provider and is safe to resume from the same receipt.
+    // Activation may prepare convergent host-owned runtime infrastructure, but
+    // never performs an outward-facing provider/data write. Hooks must be safe
+    // to resume from the same receipt after an ambiguous interruption.
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2439,14 +2533,49 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 export interface HarnessTool {
   definition: ToolDefinition;
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
+  /** Resolve a host-only execution deadline after validated input is known. */
+  resolveTimeoutMs?: (input: unknown) => number | undefined;
   /**
    * Re-run code-authored input refinements when a Zod failure escapes the
    * executor. JSON Schema cannot represent every refinement, so this keeps a
    * correctable argument error distinct from downstream response validation.
+   *
+   * **A tool whose executor parses with a schema stricter than the one it
+   * advertises owes the runtime one of these.** Without it the runtime reads
+   * only the advertised schema, finds arguments that match it, files the
+   * tool's own rejection as somebody else's data problem, and tells the model
+   * to retry without changing them — which it does, until the run ends. That
+   * failure is silent in every log: `automation_submit_draft` shipped without
+   * one and cost a production compile before anyone could see why.
    */
   validateInput?: (input: unknown) => z.ZodError | null;
   /** Execute in model-declared order before concurrent tools in the same batch. */
   serial?: boolean;
+}
+
+/** Frozen run identity passed to a deferred plugin while it becomes active. */
+export interface HarnessPluginActivationContext {
+  workspaceId: string;
+  workstreamId: string;
+  harnessRunId: string;
+  executionPrincipal: ExecutionPrincipal;
+  signal: AbortSignal;
+}
+
+/** A host-authored, model-safe explanation for a rejected plugin activation. */
+export class HarnessPluginActivationError extends Error {
+  readonly retryable: boolean;
+  readonly retryAfterMs: number | undefined;
+
+  constructor(
+    message: string,
+    options: { retryable: boolean; retryAfterMs?: number; cause?: unknown },
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "HarnessPluginActivationError";
+    this.retryable = options.retryable;
+    this.retryAfterMs = options.retryAfterMs;
+  }
 }
 
 /** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
@@ -2469,6 +2598,22 @@ export interface HarnessPlugin {
    * definitions are replaced. Results are cached for the lifetime of one run.
    */
   loadTools?: () => Promise<HarnessTool[]>;
+  /**
+   * Prepare plugin-owned runtime state before this deferred plugin becomes
+   * model-visible after an explicit `load_plugin`. A rejection leaves the plugin
+   * inactive. Successful preparation is cached for the run; a failed hook may
+   * be retried by a later explicit load. Restored durable activations do not run
+   * the hook and retain their ordinary first-tool preparation path.
+   *
+   * `load_plugin` is read-safe: this hook may prepare convergent host-owned
+   * runtime infrastructure, but must be safe to repeat after response loss and
+   * must not perform an outward-facing provider or user-data write. Throw
+   * `HarnessPluginActivationError` only with host-authored model-safe guidance;
+   * other rejection details are hidden from the model.
+   */
+  onActivate?: (context: HarnessPluginActivationContext) => Promise<void>;
+  /** Extend `load_plugin`'s deadline for a blocking activation hook. */
+  activationTimeoutMs?: number;
   /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;
@@ -2550,6 +2695,11 @@ export interface HarnessCompactionConfig {
   persist?: (checkpoint: HarnessCompactionCheckpoint) => void | Promise<void>;
   /** Render fresh, authorized deterministic context for the live checkpoint only. */
   renderAppendix?: () => string | Promise<string>;
+}
+
+export interface BindCompactionCommit {
+  checkpoint: HarnessCompactionCheckpoint;
+  transition: Extract<BindLoopTransition, { kind: "state_replaced" }>;
 }
 
 /**
@@ -2729,6 +2879,16 @@ export interface RunHarnessInput {
   onInferenceRequest?: (request: InferenceRequestEvent) => void | Promise<void>;
   onInferenceAttempt?: (attempt: InferenceAttemptEvent) => void | Promise<void>;
   onTranscriptIssues?: (issues: Array<{ kind: string; index?: number; healed?: boolean }>) => void | Promise<void>;
+  /**
+   * Required by transcript-aware hosts. The callback must durably commit the
+   * transition before resolving; Bind will not accept the corresponding message
+   * or replacement into its private loop until it does.
+   */
+  onBindLoopTransition?: (transition: BindLoopTransition) => void | Promise<void>;
+  /** Called after the exact post-validation provider input has been hash-checked. */
+  onBindProviderBoundary?: (boundary: BindProviderBoundary) => void | Promise<void>;
+  /** Atomically owns the compaction checkpoint and Bind replacement transition. */
+  onBindCompaction?: (commit: BindCompactionCommit) => void | Promise<void>;
   onToolCallRejected?: (event: { toolCallId: string; code: string }) => void | Promise<void>;
   onProgress?: (progress: { outputTokens: number; toolCalls: number }) => void | Promise<void>;
   flushProgress?: (progress: {

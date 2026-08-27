@@ -1,11 +1,13 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import type { WorkstreamBatchFilter } from '@rally/contracts';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WorkstreamSocketPool } from '../lib/workstream-socket-pool';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
@@ -17,15 +19,40 @@ interface AppShellProps extends PropsWithChildren {
   workspace: Workspace;
 }
 
+/**
+ * The states in which a work stream still has a run to stop.
+ *
+ * Wider than `'running'` alone: a `scheduled` run has been admitted and is
+ * about to start, and a `needs_input` one is parked waiting for a person who
+ * will not be able to answer it once the work stream is archived. `stopHarness`
+ * is a no-op when no run matches, so a row that has already finished costs one
+ * request and changes nothing.
+ */
+export const RUNNING_HARNESS_STATUSES: ReadonlySet<WorkstreamSummary['harnessStatus']> = new Set([
+  'scheduled', 'running', 'needs_input',
+]);
+export const PROACTIVE_RECENT_WORKSTREAM_COUNT = 5;
+
 export function backgroundRealtimeWorkstreamIds(
   activeWorkstreamId: string | null,
   workstreams: WorkstreamSummary[] | undefined,
 ): string[] {
-  return (workstreams ?? []).flatMap((workstream) =>
-    workstream.id !== activeWorkstreamId
-      && workstream.harnessStatus === 'running'
+  const candidates = (workstreams ?? []).filter((workstream) => workstream.id !== activeWorkstreamId);
+  const recentUnpinned = new Set(candidates
+    .filter((workstream) => workstream.pinPosition === null)
+    .sort((left, right) => {
+      const activityOrder = Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt);
+      return activityOrder || left.id.localeCompare(right.id);
+    })
+    .slice(0, PROACTIVE_RECENT_WORKSTREAM_COUNT)
+    .map((workstream) => workstream.id));
+  return candidates.flatMap((workstream) => (
+    workstream.harnessStatus === 'running'
+      || workstream.pinPosition !== null
+      || recentUnpinned.has(workstream.id)
       ? [workstream.id]
-      : []);
+      : []
+  ));
 }
 
 /**
@@ -57,6 +84,22 @@ export function openWorkstreamId(pathname: string): string | null {
     // equal to the one the screen keys its detail query by.
     return id;
   }
+}
+
+/** Mirror the generic directory predicate only to decide whether this route must leave. */
+export function workstreamMatchesBatchFilter(
+  workstream: WorkstreamSummary,
+  filter: WorkstreamBatchFilter,
+): boolean {
+  if (!filter.includeSystem && workstream.systemKind != null) return false;
+  if (filter.pinned !== undefined && (workstream.pinPosition !== null) !== filter.pinned) return false;
+  const activityAt = Date.parse(workstream.lastActivityAt);
+  if (!Number.isFinite(activityAt)) return false;
+  const atOrAfter = filter.lastActivityAt?.atOrAfter;
+  const before = filter.lastActivityAt?.before;
+  if (atOrAfter !== undefined && activityAt < Date.parse(atOrAfter)) return false;
+  if (before !== undefined && activityAt >= Date.parse(before)) return false;
+  return true;
 }
 
 /**
@@ -187,8 +230,15 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   };
   const notes = useSocketOwnedList<NoteSummary>(['notes']);
   const featureFlags = useClientFeatureFlags(api);
+  const { setForegroundWorkstreamId } = useWorkspaceSocket();
 
   const activeWorkstreamId = openWorkstreamId(location.pathname);
+  useEffect(() => {
+    setForegroundWorkstreamId(activeWorkstreamId);
+  }, [activeWorkstreamId, setForegroundWorkstreamId]);
+  useEffect(() => {
+    return () => setForegroundWorkstreamId(null);
+  }, [setForegroundWorkstreamId]);
   const backgroundRealtimeIds = useMemo(
     () => backgroundRealtimeWorkstreamIds(activeWorkstreamId, workstreams.data),
     [activeWorkstreamId, workstreams.data],
@@ -205,7 +255,11 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   } as CSSProperties;
 
   return (
-    <>
+    <WorkstreamSocketPool
+      activeWorkstreamId={activeWorkstreamId}
+      api={api}
+      backgroundWorkstreamIds={backgroundRealtimeIds}
+    >
       <div className={showShellRail ? 'workspace-shell rail-open' : 'workspace-shell'} style={shellStyle}>
       {/*
         The main window only. The standalone Settings and meeting windows reach
@@ -253,6 +307,66 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           // The archived note's own screen would keep reading a note the API no
           // longer serves, so leave it the way a deleted automation does.
           if (location.pathname === `/notes/${note.id}`) void navigate('/workstreams/new');
+        }}
+        onArchiveWorkstream={async (workstream) => {
+          // Thrown rather than returned, unlike the handlers around it. The
+          // sidebar treats this promise resolving as the archive having
+          // happened: it reports the `archive` intent and closes the dialog. A
+          // signed-out `api` would therefore claim success for a request that
+          // was never sent — the one outcome the confirmation's failure dialog
+          // exists to prevent, and a false product event besides.
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          // Stopped before it is archived, because archiving takes away every
+          // surface that could stop it afterwards: `authorize` refuses an
+          // archived work stream, so `POST /:id/stop` and the transcript both
+          // 404 the moment this lands, and the row is gone from the sidebar.
+          // Left alone, a run would keep calling tools and spending against a
+          // work stream nobody can open — while the dialog just said it stopped
+          // reaching the agent.
+          //
+          // Two requests with no transaction between them, deliberately in this
+          // order: a stop that fails leaves the work stream exactly as it was,
+          // which is the recoverable direction. The reverse would archive first
+          // and strand the run it could no longer reach.
+          if (RUNNING_HARNESS_STATUSES.has(workstream.harnessStatus)) {
+            await api.stopHarness(workstream.id);
+          }
+          await api.archiveWorkstream(workstream.id);
+          // No list invalidation and no cache patch: WorkstreamDO answers this
+          // write with a directory tombstone, and `applyVersionedWorkstreamState`
+          // drops both the sidebar row and the `['workstream', id]` detail entry
+          // off the back of it — the same path an archive from another window
+          // takes, and the one that has the waterline to order it against
+          // whatever else is in flight for this row.
+          //
+          // Leaving the screen is this handler's, though. The socket removes the
+          // query but not the route, so the reader would be left on a work stream
+          // the API no longer serves. Replacing rather than pushing, so Back
+          // cannot return to it — as a deleted automation leaves, and
+          // deliberately not as the archived note above does: that one pushes,
+          // so Back returns to a note the API will refuse.
+          // The one thing that cannot wait for the tombstone. With the socket
+          // down the PATCH still succeeds, so the row stays until reconnect and
+          // clicking it would serve this cached transcript for a work stream the
+          // API now refuses. Idempotent with the tombstone, which removes the
+          // same key, and safe against a later frame: the state store only
+          // merges a detail entry `if (detail)`.
+          queryClient.removeQueries({ queryKey: ['workstream', workstream.id], exact: true });
+          if (openWorkstreamId(location.pathname) === workstream.id) {
+            void navigate('/workstreams/new', { replace: true });
+          }
+        }}
+        onApplyWorkstreamBatch={async (operationId, filter, update) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          const enqueuedCount = await api.applyWorkstreamBatch(operationId, filter, update);
+          const selected = activeWorkstreamId === null
+            ? undefined
+            : workstreams.data?.find((workstream) => workstream.id === activeWorkstreamId);
+          if (update.kind === 'archive' && selected && workstreamMatchesBatchFilter(selected, filter)) {
+            queryClient.removeQueries({ queryKey: ['workstream', selected.id], exact: true });
+            void navigate('/workstreams/new', { replace: true });
+          }
+          return enqueuedCount;
         }}
         onChangeNoteScope={async (note, scope) => {
           if (!api) return;
@@ -345,6 +459,10 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
           void navigate(`/workstreams/${workstream.id}`);
         }}
         onOpenMeetingNotes={() => desktopBridge().openMeetingNotes()}
+        onPreviewWorkstreamBatch={async (filter) => {
+          if (!api) throw new Error('Your session is no longer active. Sign in again.');
+          return api.previewWorkstreamBatch(filter);
+        }}
         onSignOut={() => {
           void signOut().catch(() => undefined);
         }}
@@ -371,15 +489,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
             <button onClick={() => void Promise.all([automations.refetch(), workstreams.refetch(), notes.refetch()])} type="button">Retry</button>
           </div>
         )}
-          <WorkstreamSocketPool
-            activeWorkstreamId={activeWorkstreamId}
-            api={api}
-            backgroundWorkstreamIds={backgroundRealtimeIds}
-          >
-            {children}
-          </WorkstreamSocketPool>
+          {children}
         </main>
       </div>
-    </>
+    </WorkstreamSocketPool>
   );
 }

@@ -1,6 +1,6 @@
 import { asUserId } from "@rally/contracts";
 import type { HarnessToolContext } from "@rally/agent-harness";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createTerminalToolExecutors,
@@ -24,7 +24,37 @@ function runtime(initial: Record<string, string> = {}) {
   );
   const value: TerminalRuntime = {
     async readFile(_context, path) { return files.get(path) ?? null; },
-    async writeFile(_context, path, bytes) { files.set(path, bytes); },
+    async readFilePage(_context, path, offset, limit) {
+      const bytes = files.get(path);
+      if (!bytes) return null;
+      const text = new TextDecoder().decode(bytes);
+      const lines = text ? text.split("\n") : [];
+      if (lines.at(-1) === "") lines.pop();
+      const selected: string[] = [];
+      let selectedBytes = 0;
+      for (const line of lines.slice(offset - 1, offset - 1 + limit)) {
+        const encoded = new TextEncoder().encode(`${selected.length ? "\n" : ""}${line}`);
+        if (selectedBytes + encoded.byteLength > 256 * 1_024) break;
+        selected.push(line);
+        selectedBytes += encoded.byteLength;
+      }
+      const endLine = selected.length ? offset + selected.length - 1 : Math.min(offset - 1, lines.length);
+      const truncated = endLine < lines.length;
+      return {
+        content: selected.join("\n"), startLine: offset, endLine, totalLines: lines.length, truncated,
+        ...(truncated ? { nextOffset: endLine + 1 } : {}),
+      };
+    },
+    async writeFile(_context, path, bytes, options) {
+      const previous = files.get(path);
+      const previousText = options?.previousText
+        ?? (previous ? new TextDecoder().decode(previous) : "");
+      const previousLines = previousText
+        ? previousText.split("\n").length - Number(previousText.endsWith("\n"))
+        : 0;
+      files.set(path, bytes);
+      return { created: previous === undefined, previousLines };
+    },
     async applyPatch() { return { files: [], additions: 0, deletions: 0 }; },
     async runCommand(_context, input) {
       return {
@@ -204,6 +234,36 @@ describe("Terminal file and command tools", () => {
       output: { filePath: "report.md", created: true, bytes: 9, additions: 1, deletions: 0 },
     });
     expect(new TextDecoder().decode(files.get("src/app.ts"))).toBe("const current = 1;\nconst current = 1;\n");
+  });
+
+  it("does not download a file before a complete replacement", async () => {
+    const { value } = runtime();
+    const readFile = vi.spyOn(value, "readFile");
+
+    await createTerminalToolExecutors(value).write_file({
+      filePath: "report.md",
+      content: "# Report\n",
+    }, context);
+
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("reuses the file an exact edit already read when it writes the replacement", async () => {
+    const { value } = runtime({ "report.md": "before\n" });
+    const writeFile = vi.spyOn(value, "writeFile");
+
+    await createTerminalToolExecutors(value).edit_file({
+      filePath: "report.md",
+      oldString: "before",
+      newString: "after",
+    }, context);
+
+    expect(writeFile).toHaveBeenCalledWith(
+      context,
+      "report.md",
+      expect.any(Uint8Array),
+      { previousText: "before\n" },
+    );
   });
 
   it.each(["../escape", "/absolute", "dir\\windows", "./../escape"])("rejects a path outside the root: %s", async (filePath) => {

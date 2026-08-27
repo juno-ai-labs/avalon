@@ -64,7 +64,10 @@ import { createIdentityObjectPort } from "../runtime/identity-port";
  * protect exactly the descriptions it exists to fix. Only a caller that knows a
  * person typed the text says so, and the default is the honest one.
  */
-type CreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema> & {
+type ParsedCreateWorkstreamInput = z.infer<typeof CreateWorkstreamRequestSchema>;
+type CreateWorkstreamInput = Omit<ParsedCreateWorkstreamInput, "mentions"> & {
+  /** Optional at this internal boundary because the schema fills the empty case. */
+  mentions?: ParsedCreateWorkstreamInput["mentions"];
   descriptionSource?: "authored" | "derived";
   /**
    * The connector place this work stream is being started from, when there is

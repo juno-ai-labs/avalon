@@ -103,6 +103,10 @@ function scheduleRunnerFor(fixture: Fixture) {
       workstreamScheduleTargets: async () => ({ items: [] }),
       plannedAutomationWorkstream: async () => null,
     },
+    notificationIntents: {
+      notificationIntentMaintenanceTarget: async () => ({ dueAt: null }),
+      reapSettledWorkstreamNotificationIntents: async () => ({ reapedIntentIds: [] }),
+    },
   };
   return {
     runDue: async (now = new Date()) => {
@@ -150,11 +154,17 @@ function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): RunWo
 describe("automation model override", () => {
   it("copies the automation's pinned model onto every run it creates", async () => {
     const fixture = seededDatabase();
+    fixture.database.exec(`
+      UPDATE automation_subscriptions
+         SET scope = 'workspace', owner_user_id = NULL,
+             execution_principal_json = '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}'
+       WHERE id = '${PINNED_SUBSCRIPTION_ID}'
+    `);
 
     const run = await serviceFor(fixture).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
 
-    expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
-      .toEqual({ model_override: "openai/gpt-5.6-terra" });
+    expect(workstreamObjectRootRow(fixture.objectStore, "model_override, scope"))
+      .toEqual({ model_override: "openai/gpt-5.6-terra", scope: "workspace" });
     // The run's expected model is recorded at schedule time, so the pin has to
     // reach `harness_runs` in the same batch that writes the work stream.
     expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
@@ -207,6 +217,10 @@ describe("automation model override", () => {
   it("carries the pin into a run the scheduler alarm creates", async () => {
     const fixture = seededDatabase();
     fixture.database.exec(`
+      UPDATE automation_subscriptions
+         SET scope = 'workspace', owner_user_id = NULL,
+             execution_principal_json = '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}'
+       WHERE id = '${PINNED_SUBSCRIPTION_ID}';
       INSERT INTO schedules
         (id, workspace_id, automation_subscription_id, schedule_type, rrule, timezone,
          next_run_at, enabled, version, created_at, updated_at)
@@ -219,7 +233,7 @@ describe("automation model override", () => {
     const workstream = runWorkstream(fixture.objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
     expect(workstream).toMatchObject({
-      scope: "personal",
+      scope: "workspace",
       created_by_user_id: USER_ID,
       participant_user_id: USER_ID,
     });
@@ -289,7 +303,7 @@ describe("automation model override", () => {
     const workstream = runWorkstream(objectStore, PINNED_SUBSCRIPTION_ID);
     expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
     expect(workstream).toMatchObject({
-      scope: "personal",
+      scope: "workspace",
       created_by_user_id: USER_ID,
       participant_user_id: USER_ID,
     });
