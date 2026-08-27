@@ -45,6 +45,7 @@ function fetcher(options = {}) {
         ...(objectId === options.failedObjectId ? { error: 'object_not_quiescent' } : { outcome: {
           applied: true,
           verified: true,
+          abandonedPreCutoverRunCount: objectId === options.abandonedObjectId ? 1 : 0,
           operatorRunId: body.operatorRunId,
           preBackfillBookmark: `bookmark:${objectId}`,
           sourceSha256: 'a'.repeat(64),
@@ -72,7 +73,10 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
         `--receipt=${receiptPath}`,
       ],
       environment: { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'token' },
-      fetcher: fetcher({ onBackfill: (body) => batches.push(body) }),
+      fetcher: fetcher({
+        abandonedObjectId: globalIds[0],
+        onBackfill: (body) => batches.push(body),
+      }),
       logger: { log() {} },
     });
     assert.deepEqual(result.regions, {
@@ -84,6 +88,7 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
         participantTurns: 3,
         sourceCheckpoints: 0,
         checkpointProjections: 0,
+        abandonedPreCutoverRuns: 0,
       },
       global: {
         objects: 389,
@@ -93,6 +98,7 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
         participantTurns: 389,
         sourceCheckpoints: 0,
         checkpointProjections: 0,
+        abandonedPreCutoverRuns: 1,
       },
     });
     assert.equal(batches.length, 5);
