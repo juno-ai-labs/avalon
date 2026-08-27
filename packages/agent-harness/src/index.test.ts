@@ -3022,10 +3022,12 @@ describe("agent harness", () => {
     }])) as typeof fetch;
 
     const outcome = await runHarness({
-      ...runInput(fetcher, { maxWallClockMs: 5 }),
+      // Leave enough pre-deadline budget to reach the persistence port even
+      // when the complete repository suite is contending for the event loop.
+      ...runInput(fetcher, { maxWallClockMs: 100 }),
       corePlugins: [testCorePlugin([harnessTool("create_record", "write", [])])],
       persistToolExecutionPlan: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 25));
+        await new Promise((resolve) => setTimeout(resolve, 200));
         throw new Error(
           "D1_ERROR: Subrequest depth limit exceeded. This request recursed through Workers too many times.",
         );
