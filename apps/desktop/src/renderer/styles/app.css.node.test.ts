@@ -211,6 +211,18 @@ describe('overscroll containment on the shared rail and sidebar scrollers', () =
   });
 });
 
+describe('Needs attention row geometry', () => {
+  it('reserves a project slot and pins time and chevron to stable columns', () => {
+    expect(rule('.waiting-workstream-row')).toContain(
+      'grid-template-columns: 112px auto minmax(0, 1fr) auto auto 15px;',
+    );
+    expect(rule('.waiting-workstream-projects')).toContain('min-width: 20px;');
+    expect(rule('.waiting-workstream-source')).toContain('grid-column: 4;');
+    expect(rule('.waiting-workstream-row time')).toContain('grid-column: 5;');
+    expect(rule('.waiting-workstream-row > svg')).toContain('grid-column: 6;');
+  });
+});
+
 describe('raised popover interaction states', () => {
   it('highlights ordinary menu rows and preserves the danger override', () => {
     const content = rule('.menu-content');

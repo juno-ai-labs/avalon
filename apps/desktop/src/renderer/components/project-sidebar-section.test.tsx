@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { useState } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -43,7 +44,7 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectSidebar
           inactiveProjects={[]}
           loading={false}
           onAddWorkstream={async () => undefined}
-          onCreate={async () => undefined}
+          onCreate={async () => hiring}
           onReorder={async () => undefined}
           onRestore={async () => undefined}
           projects={[hiring]}
@@ -56,8 +57,35 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectSidebar
   );
 }
 
+function CreateFlowHarness({
+  onCreate,
+}: {
+  onCreate: React.ComponentProps<typeof ProjectSidebarSection>['onCreate'];
+}): React.JSX.Element {
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  return (
+    <>
+      <ProjectSidebarSection
+        inactiveProjects={[]}
+        loading={false}
+        onAddWorkstream={async () => undefined}
+        onCreate={async (input) => {
+          const created = await onCreate(input);
+          setProjects((current) => [...current, created]);
+          return created;
+        }}
+        onReorder={async () => undefined}
+        onRestore={async () => undefined}
+        projects={projects}
+        workstreams={[]}
+      />
+      <Location />
+    </>
+  );
+}
+
 describe('the Projects sidebar section', () => {
-  it('given one project, when each row control is used, then accordion, project link, and plus navigate independently', () => {
+  it('given one project, when its row opens the dashboard and is clicked again, then the selected row closes its accordion', () => {
     renderSection();
 
     fireEvent.click(screen.getByRole('link', { name: /Hiring/u }));
@@ -65,11 +93,16 @@ describe('the Projects sidebar section', () => {
     expect(screen.getByRole('button', { name: 'Collapse Hiring' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText('No work streams')).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole('link', { name: /Hiring/u }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${hiring.id}`);
+    expect(screen.getByRole('button', { name: 'Expand Hiring' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('No work streams')).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole('button', { name: 'New work stream in Hiring' }));
     expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${hiring.id}/workstreams/new`);
   });
 
-  it('given the new-project dialog, when choices are inspected, then all shared icons and colors are named', () => {
+  it('given the new-project dialog, when choices are inspected, then gray is selected by default and all choices are named', () => {
     renderSection({ projects: [] });
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
     const dialog = screen.getByRole('dialog', { name: 'New project' });
@@ -80,6 +113,12 @@ describe('the Projects sidebar section', () => {
     for (const color of PROJECT_COLOR_KEYS) {
       const name = `${color[0]!.toUpperCase()}${color.slice(1)}`;
       expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
+    }
+    expect(within(dialog).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
+    for (const icon of PROJECT_ICON_KEYS) {
+      const name = icon.split('-').map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(' ');
+      expect(within(dialog).getByRole('button', { name }).querySelector('svg'))
+        .toHaveAttribute('stroke', 'var(--av-sys-color-project-gray)');
     }
     fireEvent.click(within(dialog).getByRole('button', { name: 'Red' }));
     for (const icon of PROJECT_ICON_KEYS) {
@@ -94,6 +133,39 @@ describe('the Projects sidebar section', () => {
     expect(screen.getByRole('option', { name: 'Project participants' })).toBeVisible();
   });
 
+  it('given project creation is pending, when it succeeds, then the dialog waits before opening and selecting the project', async () => {
+    const created = project('00000000-0000-7000-8000-0000000000f5', 'Planning');
+    let finishCreate!: (project: ProjectSummary) => void;
+    const onCreate = vi.fn(() => new Promise<ProjectSummary>((resolve) => { finishCreate = resolve; }));
+    render(
+      <Tooltip.Provider>
+        <MemoryRouter initialEntries={['/workstreams/new']}>
+          <CreateFlowHarness onCreate={onCreate} />
+        </MemoryRouter>
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Planning' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(onCreate).toHaveBeenCalledWith({
+      colorKey: 'gray',
+      iconKey: 'briefcase',
+      name: 'Planning',
+      scope: 'personal',
+    });
+    expect(screen.getByTestId('location')).toHaveTextContent('/workstreams/new');
+    expect(screen.getByRole('button', { name: 'Create project' })).toBeDisabled();
+
+    await act(async () => { finishCreate(created); });
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${created.id}`));
+    expect(screen.getByRole('link', { name: /Planning/u })).toHaveClass('is-active');
+    expect(screen.getByRole('button', { name: 'Collapse Planning' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('dialog', { name: 'New project' })).not.toBeInTheDocument();
+  });
+
   it('given the color grid, when a color receives focus, then its name appears in the standard tooltip', async () => {
     renderSection({ projects: [] });
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
@@ -104,10 +176,25 @@ describe('the Projects sidebar section', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('Blue');
   });
 
+  it('given a customized new-project form, when it is cancelled and reopened, then it starts from gray again', () => {
+    renderSection({ projects: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Temporary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Red' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    const reopened = screen.getByRole('dialog', { name: 'New project' });
+    expect(within(reopened).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(reopened).getByRole('textbox', { name: 'Name' })).toHaveValue('');
+  });
+
   it('given a failed restore, when recovery is closed and project creation opens, then the restore error stays out of the new-project form', async () => {
     const onRestore = vi.fn(async () => { throw new Error('Resolve the project conflict'); });
     renderSection({ inactiveProjects: [{ ...hiring, status: 'archived' }], onRestore, projects: [] });
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Temporary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Red' }));
     fireEvent.click(screen.getByRole('button', { name: 'Restore archived project' }));
     fireEvent.click(screen.getByRole('button', { name: /Hiring/u }));
     await screen.findByText('Resolve the project conflict');
@@ -116,6 +203,9 @@ describe('the Projects sidebar section', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
 
     expect(screen.queryByText('Resolve the project conflict')).not.toBeInTheDocument();
+    const reopened = screen.getByRole('dialog', { name: 'New project' });
+    expect(within(reopened).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(reopened).getByRole('textbox', { name: 'Name' })).toHaveValue('');
   });
 
   it('given fixed server order, when Alt+Arrow moves a row, then the complete new order is saved', async () => {

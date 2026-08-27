@@ -211,14 +211,16 @@ describe('New work-stream home', () => {
 
     expect(await screen.findByRole('heading', { name: 'Welcome back, Adam' })).toBeVisible();
     const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    expect(within(attention).getByRole('link', { name: /Board decision/u })).toHaveAttribute('href', '/workstreams/waiting');
+    const row = within(attention).getByRole('link', { name: /Board decision/u });
+    expect(row).toHaveAttribute('href', '/workstreams/waiting');
+    expect(row.querySelector('.waiting-workstream-projects')).toBeEmptyDOMElement();
     expect(within(attention).getByText('Needs input')).toBeVisible();
     expect(screen.queryByText('Pricing restructure')).not.toBeInTheDocument();
     expect(screen.queryByText('Release notes')).not.toBeInTheDocument();
     expect(screen.queryByText('Broken connector')).not.toBeInTheDocument();
   });
 
-  it('given a project work stream needing attention, when the row renders, then its project icon sits in the row', async () => {
+  it('given a project work stream needing attention, when the row renders, then its project icon sits in a dedicated row slot', async () => {
     const projects: ProjectDirectory = {
       waterline: 1,
       items: [{
@@ -241,7 +243,9 @@ describe('New work-stream home', () => {
     renderScreen(projects);
 
     const attention = await screen.findByRole('region', { name: 'Needs attention' });
-    expect(await within(attention).findByRole('img', { name: 'Projects: Hiring' })).toBeVisible();
+    const pile = await within(attention).findByRole('img', { name: 'Projects: Hiring' });
+    expect(pile).toBeVisible();
+    expect(pile.parentElement).toHaveClass('waiting-workstream-projects');
   });
 
   it('given a project launcher, when the first message is submitted, then it omits home sections and sends the project gate', async () => {
