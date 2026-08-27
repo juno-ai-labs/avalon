@@ -1455,7 +1455,7 @@ export async function terminalizeHarnessAttempt(
   runs: HarnessRunObjectPort,
   messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
-  lease: AttemptLease,
+  lease: AttemptIdentity,
   outcome: TerminalOutcome,
   receipts: ToolReceiptObjectPort,
   blocks: BlockDashboardObjectPort,

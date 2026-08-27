@@ -31,8 +31,10 @@ import {
   asBlockId,
   asHarnessRunId,
   asSubstreamId,
+  asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
@@ -49,7 +51,7 @@ beforeAll(async () => {
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000002a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000002a2");
-const USER_ID = "00000000-0000-7000-8000-0000000002a4";
+const USER_ID = asUserId("00000000-0000-7000-8000-0000000002a4");
 
 interface DispatchRow extends Record<string, SqlStorageValue> {
   run_id: string;
@@ -144,24 +146,28 @@ function seedSubstreamDispatch(
         lease_token, lease_expires_at, created_at, updated_at)
      VALUES (?, ?, ?, 0, ?, ?, ?, ?, 1, 1)`,
     runId,
-    JSON.stringify({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      harnessRunId: runId,
-      substreamId: "0",
-      region: "global",
-      triggerMessageId: null,
-      automationSubscriptionId: null,
-      activityId: null,
-      executionPrincipal: { type: "user", userId: USER_ID },
-      reason: "user_message",
-    }),
+    JSON.stringify(substreamWorkflowInput(runId)),
     row.state ?? "queued",
     row.availableAt ?? 1,
     row.startedAt ?? null,
     row.leaseToken ?? null,
     row.leaseExpiresAt ?? null,
   );
+}
+
+function substreamWorkflowInput(runId: string): WorkstreamWorkflowInput {
+  return {
+    workspaceId: WORKSPACE_ID,
+    workstreamId: WORKSTREAM_ID,
+    harnessRunId: asHarnessRunId(runId),
+    substreamId: asSubstreamId("0"),
+    region: "global",
+    triggerMessageId: null,
+    automationSubscriptionId: null,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: USER_ID },
+    reason: "user_message",
+  };
 }
 
 function dispatchRow(state: DurableObjectState, runId: string): DispatchRow | undefined {
@@ -344,6 +350,76 @@ describe("a dispatched agent run is never orphaned", () => {
         `SELECT lease_owner, attempt_epoch FROM runs WHERE run_id = ?`,
         RUN_ID,
       ).one()).toEqual({ lease_owner: replacementOwner, attempt_epoch: 2 });
+    });
+  });
+
+  it("settles a cancellation requested before the attempt owner vanished", async () => {
+    const stub = substreamStub();
+    await boot(stub, "https://object.test/health");
+    const input = substreamWorkflowInput(RUN_ID);
+
+    await runInDurableObject(stub, (instance, state) => {
+      seedSubstreamDispatch(state, RUN_ID, {
+        state: "running",
+        startedAt: 1,
+        availableAt: Date.now() + 60 * 60_000,
+        leaseToken: "dispatch-owner-that-died",
+        leaseExpiresAt: Date.now() + 10 * 60_000,
+      });
+      const previousOwner = (instance as unknown as {
+        harnessAttemptOwner(
+          input: { substreamId: string; harnessRunId: string },
+          attemptId: string,
+        ): string;
+      }).harnessAttemptOwner(
+        { substreamId: "0", harnessRunId: input.harnessRunId },
+        "cancelled-attempt-that-survived",
+      );
+      const now = Date.now();
+      state.storage.sql.exec(
+        `UPDATE runs
+            SET status = 'running', legacy_attempt_id = 'cancelled-attempt-that-survived',
+                attempt_epoch = 1, lease_owner = ?, lease_expires_at = ?,
+                cancellation_requested_at = ?, cancellation_reason = 'member_stop',
+                heartbeat_at = ?, updated_at = ?
+          WHERE run_id = ?`,
+        previousOwner,
+        now + 10 * 60_000,
+        now,
+        now,
+        now,
+        RUN_ID,
+      );
+    });
+
+    await evictDurableObject(stub);
+    await boot(stub, "https://object.test/health");
+
+    const outcome = await runInDurableObject(stub, async (instance) => (
+      (instance as unknown as {
+        runAgentExecution(input: WorkstreamWorkflowInput): Promise<{
+          status: string;
+          errorCode: string | null;
+          retryAt: number | null;
+        }>;
+      }).runAgentExecution(input)
+    ));
+    expect(outcome).toMatchObject({ status: "stopped" });
+
+    await runInDurableObject(stub, (instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT status, terminalized_at, cancellation_reason, lease_owner, lease_expires_at
+           FROM runs WHERE run_id = ?`,
+        RUN_ID,
+      ).one()).toMatchObject({
+        status: "cancelled",
+        cancellation_reason: "member_stop",
+        lease_owner: null,
+        lease_expires_at: null,
+      });
+      expect((instance as unknown as {
+        recoverableHarnessAttempts: Map<string, string>;
+      }).recoverableHarnessAttempts.has(RUN_ID)).toBe(false);
     });
   });
 

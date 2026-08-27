@@ -5,6 +5,7 @@ import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-o
 import {
   expireLocalAttemptLeasesFromPreviousInstance,
   PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX,
+  previousInstanceRecoveryOwner,
   WorkstreamHarnessRunStorage,
 } from "../src/durable-objects/workstream-harness-run-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
@@ -188,6 +189,43 @@ describe("claiming a run's attempt", () => {
     expect(expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 1_000)).toEqual([]);
     expect(sql.exec(`SELECT lease_owner, lease_expires_at FROM runs WHERE run_id = ?`, RUN).one())
       .toMatchObject({ lease_owner: "owner-1", lease_expires_at: NOW + 300_000 });
+  });
+
+  it("settles a recovered attempt whose cancellation preceded the eviction", () => {
+    const { binding, storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 300, lifecycleEventId: "event-1" });
+    sql.exec(
+      `UPDATE runs SET cancellation_requested_at = ?, cancellation_reason = 'member_stop'
+        WHERE run_id = ?`,
+      NOW + 500,
+      RUN,
+    );
+    expireLocalAttemptLeasesFromPreviousInstance(binding, NOW + 1_000);
+
+    expect(storage.terminalizeAttempt({
+      runId: RUN,
+      attemptId: "attempt-1",
+      owner: previousInstanceRecoveryOwner("attempt-1"),
+      now: NOW + 2_000,
+      status: "cancelled",
+      finalPartId: null,
+      model: null,
+      usageJson: null,
+      errorJson: null,
+      memberSafePayloadJson: '{"code":"run_cancelled"}',
+      lifecycleEventId: "event-terminal",
+      receiptMarkerEventKey: "residual_receipts_settled",
+    })).toMatchObject({ outcome: "terminalized" });
+    expect(sql.exec(
+      `SELECT status, terminalized_at, lease_owner, lease_expires_at FROM runs WHERE run_id = ?`,
+      RUN,
+    ).one()).toEqual({
+      status: "cancelled",
+      terminalized_at: NOW + 2_000,
+      lease_owner: null,
+      lease_expires_at: null,
+    });
   });
 
   it("leaves an already-expired attempt for the stale-run reaper", () => {

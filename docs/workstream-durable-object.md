@@ -1281,7 +1281,10 @@ expired, so it preserves recovery intent across consecutive evictions before a
 claim; already-expired unmarked leases remain stale-reaper failures. The
 replacement reclaims the same attempt ID under a new owner and epoch before it
 runs the stale-lease sweep, preserving frozen scope, completed tool receipts,
-and resumable child attempts. An exact completed tool receipt remains replayable
+and resumable child attempts. If cancellation was requested before the owner
+vanished, the replacement uses the recovery-pending owner as the attempt fence
+to settle the run as stopped instead of misclassifying it as stale failure. An
+exact completed tool receipt remains replayable
 while ownership transfers; receipt mutation and mismatched-plan paths still
 require the live lease. HyperSight roots remain untouched because their executor
 belongs to a separate BlockDashboardAgent.
@@ -1304,8 +1307,9 @@ weakening ordinary live-owner exclusion. The recovery-pending owner immediately
 fences the vanished executor, survives another eviction, and is replaced by the
 new instance-nonce lease owner with an advanced epoch when execution resumes.
 Normal unmarked expiration still follows the stale-run policy; real-workerd
-coverage verifies both consecutive replacement and that constructor recovery
-touches only leases whose executor died with this SubstreamAgent instance.
+coverage verifies consecutive replacement, cancellation during handoff, and
+that constructor recovery touches only leases whose executor died with this
+SubstreamAgent instance.
 
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 

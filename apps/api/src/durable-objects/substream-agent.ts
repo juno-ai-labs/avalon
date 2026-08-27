@@ -157,6 +157,7 @@ import {
 } from "./workstream-message-protocol";
 import {
   expireLocalAttemptLeasesFromPreviousInstance,
+  previousInstanceRecoveryOwner,
   WorkstreamHarnessRunStorage,
 } from "./workstream-harness-run-storage";
 import {
@@ -2655,7 +2656,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         leaseSeconds: 300,
       },
     );
-    if (recoverableAttemptId !== null && claim.state !== "busy") {
+    if (recoverableAttemptId !== null
+      && claim.state !== "busy"
+      && claim.state !== "cancelled") {
       this.recoverableHarnessAttempts.delete(input.harnessRunId);
     }
     if (recoverableAttemptId !== null && claim.state === "claimed") {
@@ -2719,18 +2722,32 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       }
     }
     if (claim.state === "cancelled") {
-      await terminalizeQueuedHarnessRun(
-        runs,
-        input,
-        { attemptId, owner: attemptOwner },
-        { code: "run_cancelled", message: "The run was stopped before it started" },
-        "stopped",
-      );
-      return this.persistAndSettleAgentRun(executionEnv, input, {
+      const stopped = {
         status: "stopped",
         error: { code: "run_cancelled", message: "The run was stopped before it started" },
         cancellationReason: "run_cancelled",
-      });
+      } as const;
+      if (recoverableAttemptId !== null) {
+        await terminalizeHarnessAttempt(
+          runs,
+          createMessageObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          input,
+          { attemptId, owner: previousInstanceRecoveryOwner(attemptId) },
+          stopped,
+          createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+        );
+        this.recoverableHarnessAttempts.delete(input.harnessRunId);
+      } else {
+        await terminalizeQueuedHarnessRun(
+          runs,
+          input,
+          { attemptId, owner: attemptOwner },
+          stopped.error,
+          "stopped",
+        );
+      }
+      return this.persistAndSettleAgentRun(executionEnv, input, stopped);
     }
 
     let outcome: WorkstreamHarnessResult;

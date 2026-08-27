@@ -299,6 +299,10 @@ export interface RecoverableAttempt {
 export const PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX =
   "substream-agent:previous-instance-recovery-pending:";
 
+export function previousInstanceRecoveryOwner(attemptId: string): string {
+  return `${PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX}${attemptId}`;
+}
+
 const RUN_COLUMNS = `run_id, status, origin, parent_run_id, parent_tool_call_id,
   legacy_attempt_id, attempt_epoch, lease_owner, lease_expires_at,
   cancellation_requested_at, cancellation_reason, terminalized_at, started_at,
@@ -1468,6 +1472,9 @@ export class WorkstreamHarnessRunStorage {
       const run = this.run({ runId: input.runId });
       if (!run || run.parent_tool_call_id !== null) return { outcome: "not_found" as const };
       const stopping = input.status === "cancelled";
+      const stoppingRecoveredAttempt = stopping
+        && run.cancellation_requested_at !== null
+        && run.lease_owner === previousInstanceRecoveryOwner(input.attemptId);
       if (run.legacy_attempt_id === input.attemptId
         && run.terminalized_at !== null
         && run.status === input.status) {
@@ -1489,7 +1496,7 @@ export class WorkstreamHarnessRunStorage {
         || run.terminalized_at !== null
         || (!stopping && run.cancellation_requested_at !== null)
         || run.lease_expires_at === null
-        || run.lease_expires_at <= input.now) {
+        || (run.lease_expires_at <= input.now && !stoppingRecoveredAttempt)) {
         return { outcome: "ownership_lost" as const };
       }
 
