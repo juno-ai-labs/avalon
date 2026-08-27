@@ -49,6 +49,7 @@ export default defineConfig(async () => {
           main: `${projectRoot}index.html`,
           concepts: `${projectRoot}concepts/index.html`,
           horizonConcepts: `${projectRoot}concepts/horizon/index.html`,
+          heroConcepts: `${projectRoot}concepts/hero/index.html`,
           invite: `${projectRoot}invite/index.html`,
           slackLink: `${projectRoot}slack/link/index.html`,
           desktopOpen: `${projectRoot}open/index.html`,
