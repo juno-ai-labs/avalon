@@ -239,6 +239,55 @@ describe("a dispatched agent run is never orphaned", () => {
     });
   });
 
+  it("makes the vanished instance's harness attempt immediately resumable", async () => {
+    const stub = substreamStub();
+    await boot(stub, "https://object.test/health");
+    const oldLeaseExpiresAt = Date.now() + 10 * 60_000;
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedSubstreamDispatch(state, RUN_ID, {
+        state: "running",
+        startedAt: 1,
+        availableAt: Date.now() + 60 * 60_000,
+        leaseToken: "dispatch-owner-that-died",
+        leaseExpiresAt: oldLeaseExpiresAt,
+      });
+      state.storage.sql.exec(
+        `UPDATE runs
+            SET status = 'running', legacy_attempt_id = 'attempt-that-survived',
+                attempt_epoch = 1, lease_owner = 'instance-that-died',
+                lease_expires_at = ?, heartbeat_at = ?, updated_at = ?
+          WHERE run_id = ?`,
+        oldLeaseExpiresAt,
+        Date.now(),
+        Date.now(),
+        RUN_ID,
+      );
+      await state.storage.deleteAlarm();
+    });
+
+    await evictDurableObject(stub);
+    await boot(stub, "https://object.test/health");
+
+    await runInDurableObject(stub, (instance, state) => {
+      const run = state.storage.sql.exec<{
+        lease_owner: string | null;
+        lease_expires_at: number | null;
+      }>(
+        `SELECT lease_owner, lease_expires_at FROM runs WHERE run_id = ?`,
+        RUN_ID,
+      ).one();
+      expect(run.lease_owner).toBe("instance-that-died");
+      expect(run.lease_expires_at).not.toBeNull();
+      expect(run.lease_expires_at!).toBeLessThanOrEqual(Date.now());
+      expect(run.lease_expires_at).not.toBe(oldLeaseExpiresAt);
+      const recoverable = (instance as unknown as {
+        recoverableHarnessAttempts: Map<string, string>;
+      }).recoverableHarnessAttempts;
+      expect(recoverable.get(RUN_ID)).toBe("attempt-that-survived");
+    });
+  });
+
   it("keeps an alarm armed across an eviction while work is outstanding", async () => {
     const stub = substreamStub();
     await boot(stub, "https://object.test/health");

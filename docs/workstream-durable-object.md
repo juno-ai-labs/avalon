@@ -1271,6 +1271,36 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-27 — Replacement instances resume the attempt their predecessor fenced
+
+**What changed:** SubstreamAgent construction now expires local harness leases
+left by the previous object instance together with its dispatch lease. The
+replacement reclaims the same attempt ID under a new owner and epoch before it
+runs the stale-lease sweep, preserving frozen scope, completed tool receipts,
+and resumable child attempts. An exact completed tool receipt remains replayable
+while ownership transfers; receipt mutation and mismatched-plan paths still
+require the live lease. HyperSight roots remain untouched because their executor
+belongs to a separate BlockDashboardAgent.
+
+**Why:** Cloudflare can stop a Durable Object while external I/O is in flight;
+that I/O may finish before the next local SQLite access is rejected. Production
+recorded a completed Terminal command followed by exactly that storage error.
+The dispatch lease was released on reconstruction, but the harness lease was
+still honored for five minutes, leaving the tool visibly active until the stale
+reaper failed the whole run.
+
+**Considered and rejected:** Waiting for the existing lease, immediately
+terminalizing the recovered run, clearing every run in the shared authority,
+and creating a new attempt ID. They respectively preserve the five-minute
+spinner, discard replayable completed work, steal live HyperSight execution,
+or invalidate the frozen scope and receipts keyed to the original attempt.
+
+**Consequences:** An object restart can resume a local run immediately without
+weakening ordinary live-owner exclusion. The old owner is fenced by the new
+lease owner and epoch; normal expiration still follows the stale-run policy;
+and real-workerd eviction coverage verifies that constructor recovery expires
+only leases whose executor died with this SubstreamAgent instance.
+
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 
 **What changed:** The face-pile presence signal now follows Tailwind's
