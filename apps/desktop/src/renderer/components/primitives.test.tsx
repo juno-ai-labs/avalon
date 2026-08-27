@@ -146,11 +146,11 @@ describe('AvatarStack', () => {
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
       'Ari Collaborator is viewing this workstream.',
     );
-    expect(collaboratorItem).toHaveAttribute(
-      'aria-label',
-      'Ari Collaborator is viewing this workstream.',
+    expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
+      'Current User, Ari Collaborator is viewing this workstream.',
     );
-    expect(collaboratorItem).toHaveAttribute('tabindex', '0');
+    expect(currentItem).not.toHaveAttribute('tabindex');
+    expect(collaboratorItem).not.toHaveAttribute('tabindex');
     expect(screen.queryByTitle('Ari Collaborator')).not.toBeInTheDocument();
   });
 });
