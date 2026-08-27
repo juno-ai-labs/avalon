@@ -829,7 +829,15 @@ describe("Daytona Terminal provider", () => {
   });
 
   it("publishes a verified bundle from a fresh ephemeral sandbox with a process-scoped credential", async () => {
-    const uploadFile = vi.fn(async () => undefined);
+    const uploadFile = vi.fn<(
+      source: Uint8Array,
+      path: string,
+      timeout?: number,
+    ) => Promise<void>>(async (source, path, timeout) => {
+      void source;
+      void path;
+      void timeout;
+    });
     const executeCommand = vi.fn<(
       command: string,
       cwd?: string,
@@ -879,33 +887,37 @@ describe("Daytona Terminal provider", () => {
       domainAllowList: "github.com",
     }), { timeout: 60 });
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty("secrets");
+    expect(uploadFile).toHaveBeenCalledTimes(3);
     expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/publication.bundle", 120);
+    expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/.rally-git-credential", 120);
+    expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/rally-publish.sh", 120);
     expect(executeCommand).toHaveBeenCalledWith(
-      expect.stringContaining("git fsck --strict"),
+      "/bin/bash /workspace/rally-publish.sh",
       "/workspace",
-      {
-        GIT_CONFIG_COUNT: "1",
-        GIT_CONFIG_KEY_0: "http.https://github.com/owner/repo.git.extraheader",
-        GIT_CONFIG_VALUE_0: "Authorization: Basic encoded-credential",
-      },
+      undefined,
       180,
     );
-    expect(executeCommand).toHaveBeenCalledWith(
-      expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
-      "/workspace",
-      {
-        GIT_CONFIG_COUNT: "1",
-        GIT_CONFIG_KEY_0: "http.https://github.com/owner/repo.git.extraheader",
-        GIT_CONFIG_VALUE_0: "Authorization: Basic encoded-credential",
-      },
-      180,
-    );
-    expect(executeCommand.mock.calls[0]?.[0]).not.toContain("encoded-credential");
-    expect(executeCommand.mock.calls[0]?.[0]).not.toContain("git config");
+    const uploadedScript = uploadFile.mock.calls.find((call) => call[1] === "/workspace/rally-publish.sh")?.[0];
+    expect(Buffer.from(uploadedScript!).toString()).toContain("git fsck --strict");
+    expect(Buffer.from(uploadedScript!).toString()).toContain('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"');
+    expect(Buffer.from(uploadedScript!).toString()).toContain("GIT_CONFIG_KEY_0='http.https://github.com/owner/repo.git.extraheader'");
+    expect(Buffer.from(uploadedScript!).toString()).not.toContain("encoded-credential");
+    expect(Buffer.from(uploadedScript!).toString()).not.toContain("git config");
+    const uploadedCredential = uploadFile.mock.calls.find((call) => call[1] === "/workspace/.rally-git-credential")?.[0];
+    expect(Buffer.from(uploadedCredential!).toString()).toBe("encoded-credential");
     expect(removePublisher).toHaveBeenCalledWith(60, true);
   });
 
   it("reports the safe trusted-publication stage when Daytona cannot execute it", async () => {
+    const uploadFile = vi.fn<(
+      source: Uint8Array,
+      path: string,
+      timeout?: number,
+    ) => Promise<void>>(async (source, path, timeout) => {
+      void source;
+      void path;
+      void timeout;
+    });
     const executeCommand = vi.fn<(
       command: string,
       cwd?: string,
@@ -918,7 +930,7 @@ describe("Daytona Terminal provider", () => {
     const removePublisher = vi.fn(async () => undefined);
     const publisherSandbox = {
       id: "publisher-1", name: "rally-publisher", state: "started",
-      fs: { uploadFile: vi.fn(async () => undefined), downloadFile: vi.fn() },
+      fs: { uploadFile, downloadFile: vi.fn() },
       process: {
         executeCommand,
         createSession: vi.fn(), executeSessionCommand: vi.fn(), deleteSession: vi.fn(),
@@ -940,11 +952,17 @@ describe("Daytona Terminal provider", () => {
       expectedOldSha: null,
       githubBasicCredential: "encoded-credential",
     })).rejects.toThrow("Trusted Git publication failed at remote_push with exit code -1");
-    expect(executeCommand.mock.calls[0]?.[0]).not.toContain("git config");
-    expect(executeCommand.mock.calls[0]?.[2]).toEqual(expect.objectContaining({
-      GIT_CONFIG_KEY_0: "http.https://github.com/owner/repo.git.extraheader",
-      GIT_CONFIG_VALUE_0: "Authorization: Basic encoded-credential",
-    }));
+    expect(executeCommand).toHaveBeenCalledWith(
+      "/bin/bash /workspace/rally-publish.sh",
+      "/workspace",
+      undefined,
+      180,
+    );
+    const failureScript = uploadFile.mock.calls.find(
+      (call) => call[1] === "/workspace/rally-publish.sh",
+    )?.[0];
+    expect(Buffer.from(failureScript!).toString()).not.toContain("encoded-credential");
+    expect(Buffer.from(failureScript!).toString()).not.toContain("git config");
     expect(removePublisher).toHaveBeenCalledWith(60, true);
   });
 });
