@@ -55,6 +55,15 @@ presentation adapter; the substrate supplies stable turn/block identity,
 explicit range coverage, active checkpoints, activity timing, snapshot/event
 fences, and exact Bind reconstruction.
 
+The Automation Draft Wizard also composes the same renderer conversation
+surface as a work stream. Its feed, transcript blocks, streaming and activity
+presentation, attachment affordances, follow/pagination behavior, and message
+composer are shared components and hooks, not parallel wizard implementations.
+WorkstreamScreen and the wizard remain thin product adapters: a work stream
+supplies participant, attention, resource, and run-control policy, while the
+wizard supplies single-author draft admission, compiler lifecycle, review, and
+acceptance policy.
+
 Acceptance changes the state of that same object. It freezes the accepted
 definition, validates the selected scope and authority, installs required
 trigger registrations, and moves through `activating` to `active`. It does not
@@ -215,6 +224,11 @@ tables, and let the post-merge system have exactly one canonical writer.
     the same typed and registry-aware boundary that acceptance and WorkspaceDO
     later enforce, without exposing authority-owned IDs or projection fields to
     the model.
+17. Reuse the Workstream screen's message-feed, transcript-block, attachment,
+    scrolling/follow, streaming/activity, and composer/input implementation in
+    the Automation Draft Wizard through product-neutral renderer ports, while
+    retaining separate Workstream and AutomationAgent data and lifecycle
+    adapters.
 
 ## Non-goals
 
@@ -263,6 +277,11 @@ tables, and let the post-merge system have exactly one canonical writer.
     old lifecycle tables for rollback, or migrate pre-cutover drafts. All
     implementation code may land in one PR, but it reaches `main` in one merge
     whose deployment workflow completes the coordinated cutover.
+13. **Turning the wizard into WorkstreamScreen.** Sharing the conversation
+    surface does not give an automation draft participants, unread state,
+    presence, work-stream resources, a block dashboard, substream routing, or
+    generated-run controls. Those are Workstream product policy, not reusable
+    conversation UI.
 
 ## Product behavior
 
@@ -273,6 +292,15 @@ the empty new-automation screen. The route remains the unpersisted new route,
 the composer follows the desktop's local draft behavior, and no AutomationAgent,
 automation ID, WorkspaceDO directory row, or Automations-sidebar draft exists
 yet. Navigating away without sending leaves nothing to clean up or return to.
+
+That empty screen and every durable draft use the same shared composer/input
+surface as a work stream, including attachment staging and preview, paste and
+file-drop behavior, dictation, keyboard/send semantics, error presentation, and
+local composer-draft recovery. The new-route adapter changes what `onSend`
+does: the first send performs AutomationAgent admission, while later sends name
+the admitted AutomationAgent. The visual conversation surface stays mounted as
+the server-minted ID replaces the new route, so first-send admission does not
+discard the typed draft, staged attachments, focus, or scroll/follow state.
 
 Sending the first prompt crosses the durable boundary. The renderer supplies a
 stable client creation key and client message ID, but the regional server mints
@@ -297,6 +325,14 @@ admitted run. Reopening the draft shows:
 - the current narration/tool checkpoint and run status when work is active;
 - a terminal failure with a safe retry action when work stopped; and
 - any attachment identities associated with their original turns.
+
+The settled and live rows render through the same shared feed and block family
+used by WorkstreamScreen: human and assistant messages, Markdown, attachments,
+thinking and tool activity, elicitation, streaming reveal, work timing,
+load/error states, transcript follow, **Jump to latest**, bounded history
+loading, and prepend scroll preservation. The wizard may add draft summary,
+configuration, review, and acceptance cards around that surface; it may not
+fork the conversation renderer or composer to do so.
 
 Those rows are projections of the same canonical turn/block facts and exact
 Bind transitions defined by the ordered-turn substrate. A human or assistant
@@ -1031,6 +1067,18 @@ AutomationAgent remains durable and returnable from its first admitted turn.
 
 ## Decision log
 
+- **2026-08-27 — Share one renderer conversation surface between Workstream
+  and the Automation Draft Wizard.** The wizard reuses the feed, transcript
+  blocks, attachments, scrolling/follow behavior, activity presentation, and
+  composer/input through product-neutral props and hooks. Workstream and
+  Automation remain adapters for different data, authorization, and lifecycle
+  contracts. Keeping `AutomationMessageBlock` plus a wizard-specific feed and
+  composer assembly was rejected because fixes to streaming, accessibility,
+  attachments, elicitation, draft recovery, and scrolling would continue to
+  land twice. Importing WorkstreamScreen wholesale was also rejected because it
+  would smuggle participant, unread, resource-rail, substream, and run-control
+  semantics into a single-author automation draft.
+
 - **2026-08-27 — Create AutomationAgent on the first prompt, not on screen
   open.** Selecting **New automation** remains ephemeral UI and creates no
   server-side draft. First-prompt submission uses a stable client creation key
@@ -1210,6 +1258,19 @@ AutomationAgent remains durable and returnable from its first admitted turn.
     projection disclose restricted activity after participant or watch state
     changed.
 
+17. **The Workstream and wizard conversation UI is one component family with
+    two adapters.** Product-neutral feed and composer ports consume ordered
+    message view models, attachment actions, activity state, paging/follow
+    controls, send state, and callbacks. WorkstreamScreen supplies multiplayer
+    identity, attention, resources, suggestions, stop/retry, and work-stream
+    realtime policy. The Automation Draft Wizard supplies single-author
+    identity, first-prompt creation, compiler retries, elicitation, draft
+    configuration, and acceptance. *Rejected:* sharing only CSS and leaf
+    controls while retaining two transcript loops, because behavior and
+    accessibility would still drift; and parameterizing one monolithic screen
+    with product-mode conditionals, because authority and lifecycle policy
+    would leak into reusable presentation.
+
 ## Data model
 
 The exact table names belong to the implementation plan and migrations. The
@@ -1330,6 +1391,103 @@ than from review-sensitive line positions:
   contains the client-side range coverage, gap calculation, and realtime merge
   reducers. Those reducers are reusable; conversion into existing work-stream
   `Message` rows remains a work-stream renderer adapter.
+- [`apps/desktop/src/renderer/screens/workstream.tsx`](../../../apps/desktop/src/renderer/screens/workstream.tsx)
+  contains `WorkstreamScreen`, the transcript viewport and virtualizer,
+  `JumpToLatestButton`, range paging, prepend scroll preservation, attachment
+  drop handling, and the composer dock. Extract the product-neutral
+  conversation surface from those named sections; leave headers, presence,
+  attention, resource rails, block dashboard, substream navigation, and
+  work-stream run controls in the screen adapter.
+- [`apps/desktop/src/renderer/screens/new-automation.tsx`](../../../apps/desktop/src/renderer/screens/new-automation.tsx)
+  contains `NewAutomationScreen`, `AutomationMessageBlock`, its own streaming
+  follow loop, and a screen-local `ComposerInput` assembly. Replace those
+  duplicate conversation paths with the shared surface. Keep the ephemeral
+  new-automation intro, templates, compiler/draft state adapter, source/plugin
+  configuration, review summary, and acceptance controls in the wizard.
+- [`apps/desktop/src/renderer/components/workstream-blocks.tsx`](../../../apps/desktop/src/renderer/components/workstream-blocks.tsx),
+  [`workstream-composer.tsx`](../../../apps/desktop/src/renderer/components/workstream-composer.tsx),
+  and [`composer-input.tsx`](../../../apps/desktop/src/renderer/components/composer-input.tsx)
+  are the existing reusable block and input family. Search for `MessageBlock`,
+  `ElicitationPanel`, `MessageAttachments`, `WorkstreamComposer`, and
+  `ComposerInput`. Split product-neutral mechanics from Workstream-only
+  mentions, participant confirmation, slash commands, and stop policy rather
+  than copying the components into an automation directory.
+- [`apps/desktop/src/renderer/lib/use-transcript-follow.ts`](../../../apps/desktop/src/renderer/lib/use-transcript-follow.ts),
+  [`apps/desktop/src/renderer/lib/use-draft-text.ts`](../../../apps/desktop/src/renderer/lib/use-draft-text.ts),
+  and [`apps/desktop/src/renderer/lib/elicitation.ts`](../../../apps/desktop/src/renderer/lib/elicitation.ts)
+  already hold shared follow, local composer-draft, and elicitation behavior.
+  Both adapters use those implementations; they do not keep wizard-specific
+  substitutes in a screen component.
+
+### Shared renderer conversation surface
+
+The desktop keeps one product-neutral conversation component family. Exact
+file names are implementation choices, but the ownership boundary is not:
+
+```text
+conversation surface
+  feed viewport and ordered row rendering
+  transcript block renderers and attachment presentation
+  streaming reveal, active work timing, and elicitation
+  history paging, follow state, and Jump to latest
+  composer shell, input, attachment staging, dictation, and draft cache
+
+Workstream adapter                    Automation draft adapter
+  participants and own-author style    single signed-in author
+  unread and attention anchors         no collaborative unread state
+  work-stream socket/range view        AutomationAgent snapshot/range view
+  resources, suggestions, stop/retry   compiler retry and draft review
+  work-stream send admission            first-create and later-turn admission
+```
+
+The shared surface accepts product-neutral view models and capabilities rather
+than a `WorkstreamDetail`, Workstream socket, AutomationAgent response, or
+product mode flag. In TypeScript terms, the boundary has the shape below; the
+names are illustrative, while the separation is required:
+
+```ts
+interface ConversationFeedProps {
+  messages: readonly Message[];
+  activeWork?: AgentWorkTimingState;
+  coverage: TranscriptCoverage;
+  loadingOlder: boolean;
+  onLoadOlder(): Promise<void>;
+  onAnswerElicitation(id: string, answer: ElicitationAnswer): Promise<void>;
+  onOpenAttachment(preview: AttachmentPreview): void;
+}
+
+interface ConversationComposerProps {
+  draftKey: string;
+  attachments: readonly PendingAttachment[];
+  sending: boolean;
+  uploading: boolean;
+  error?: string;
+  capabilities: ComposerCapabilities;
+  onSend(input: ConversationInput): Promise<void>;
+}
+```
+
+Capabilities express concrete optional behavior such as participant mentions,
+slash commands, stop, connector mentions, or suggested prompts. They do not
+select broad `workstream` versus `automation` branches inside shared leaf
+components. Both adapters normalize their authoritative protocol into the same
+ordered `Message` and activity view models before rendering; neither renderer
+reconstructs canonical Bind state from display rows.
+
+The ephemeral `/automations/new` route mounts the same composer used after
+admission. Its send adapter claims and creates the AutomationAgent on the first
+submission, then adopts the returned durable identity without replacing the
+conversation subtree. A route change must not reset text entered during an
+in-flight turn, attachments, dictation state, focus, measured row heights, or
+follow position. Reopening an existing draft supplies the same surface from the
+AutomationAgent snapshot and event stream.
+
+The implementation may retain an established component name such as
+`MessageBlock` when it is already product-neutral. It should rename a
+Workstream-prefixed component only when the name now misstates ownership; it
+must not perform a tree-wide cosmetic rename or create a generic UI framework.
+There are exactly two concrete consumers in scope, and extraction stops at the
+behavior they demonstrably share.
 
 ### Shared SQLite module
 
@@ -1464,6 +1622,12 @@ or references to another authority:
 - Automation lifecycle/configuration, timer occurrence, evaluator, delivery,
   and child-run projection tables and queries.
 - BlockDashboardAgent dispatch, stream checkpoint, and settlement authority.
+- Workstream header/presence, participant management, unread/attention policy,
+  inspector and block-dashboard rails, substream routing, resource suggestions,
+  and generated-run stop/retry policy.
+- Automation new-route intro and templates, first-prompt identity admission,
+  compiler retry, source/plugin/delivery configuration, draft summary/review,
+  activation, and acceptance controls.
 
 WorkstreamTranscriptView composes the shared snapshot/range primitives into its
 unread-plus-latest opening policy. AutomationDraftTranscriptView composes them
@@ -1623,6 +1787,8 @@ deployment phase.
    destination-typed evaluator/resource-watch engine; the extracted durable Bind
    kernel; the AutomationAgent
    `ScheduledDurableObject` subclass; its ordered-transcript author adapter;
+   the product-neutral desktop conversation feed/composer family and thin
+   Workstream/Automation draft renderer adapters;
    child-run projections and automation-home history; and the final serving
    paths for draft creation, acceptance, trigger admission, and lifecycle
    control. The same PR removes the old compiler, direct resource-watch fan-out,
@@ -1833,6 +1999,21 @@ steps.
     Prove that the tool performs no connector effect or WorkspaceDO write and
     that acceptance, not the model, resolves connections and mints canonical
     evaluator identities and projection metadata.
+30. In the Electron client, render equivalent settled, streaming, failed, and
+    elicitation transcripts through WorkstreamScreen and the Automation Draft
+    Wizard. Verify both use the same feed/block/composer implementations for
+    Markdown, attachments and preview, thought/tool rows, work timing,
+    streaming reveal, loading/error states, history paging, prepend scroll
+    preservation, follow and **Jump to latest**, keyboard/send behavior,
+    dictation, file paste/drop, and local draft recovery. The new-automation
+    first send must adopt the durable ID without remounting the conversation or
+    losing text typed during the request, staged attachments, focus, or scroll
+    state. Workstream-only participant/unread/resource/run controls and
+    automation-only template/review/acceptance controls must remain absent from
+    the other adapter. Component tests prove common fixtures exercise the same
+    shared components, and real-window screenshots verify the visible states;
+    no `AutomationMessageBlock`, wizard-only feed loop, or second composer
+    assembly remains.
 
 ## Open questions
 
