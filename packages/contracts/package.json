@@ -14,7 +14,8 @@
     "./workstream-links": "./src/workstream-links.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts",
-    "./model-markdown": "./src/model-markdown.ts"
+    "./model-markdown": "./src/model-markdown.ts",
+    "./citations": "./src/citations.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
