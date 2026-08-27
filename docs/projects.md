@@ -205,6 +205,22 @@ duplicate because the consumer rechecks target generations.
 
 ## Changelog
 
+### 2026-08-27 — New projects start neutral
+
+**What changed:** The New project dialog now selects gray for the initial icon
+color and restores gray whenever the dialog is closed and reopened.
+
+**Why:** A neutral default leaves color as an intentional project choice rather
+than suggesting that every new project begins in the blue category.
+
+**Considered and rejected:** Keeping blue as the historical implementation
+default. It remained valid in the palette, but no longer matched the intended
+starting presentation.
+
+**Consequences:** Creation-flow behavior checks must treat gray as selected and
+render every icon preview with the gray project color until the person chooses
+another swatch.
+
 ### 2026-08-27 — Project editing moves onto the owning surfaces
 
 **What changed:** The project icon opens the shared icon/color grid, the name

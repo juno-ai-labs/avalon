@@ -69,7 +69,7 @@ describe('the Projects sidebar section', () => {
     expect(screen.getByTestId('location')).toHaveTextContent(`/projects/${hiring.id}/workstreams/new`);
   });
 
-  it('given the new-project dialog, when choices are inspected, then all shared icons and colors are named', () => {
+  it('given the new-project dialog, when choices are inspected, then gray is selected by default and all choices are named', () => {
     renderSection({ projects: [] });
     fireEvent.click(screen.getByRole('button', { name: 'New project' }));
     const dialog = screen.getByRole('dialog', { name: 'New project' });
@@ -80,6 +80,12 @@ describe('the Projects sidebar section', () => {
     for (const color of PROJECT_COLOR_KEYS) {
       const name = `${color[0]!.toUpperCase()}${color.slice(1)}`;
       expect(within(dialog).getByRole('button', { name })).toBeInTheDocument();
+    }
+    expect(within(dialog).getByRole('button', { name: 'Gray' })).toHaveAttribute('aria-pressed', 'true');
+    for (const icon of PROJECT_ICON_KEYS) {
+      const name = icon.split('-').map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(' ');
+      expect(within(dialog).getByRole('button', { name }).querySelector('svg'))
+        .toHaveAttribute('stroke', 'var(--av-sys-color-project-gray)');
     }
     fireEvent.click(within(dialog).getByRole('button', { name: 'Red' }));
     for (const icon of PROJECT_ICON_KEYS) {
