@@ -825,7 +825,11 @@ fleet audit. Before a first-time object receipt, the RPC invokes only the
 terminal-run residual-receipt phase of the existing reaper; it cannot expire or
 terminalize a nonterminal root or child. A successfully repaired tool lifecycle is
 part of the source subsequently hashed and projected; any repair failure aborts
-that object, and receipt replay remains read-only.
+that object, and receipt replay remains read-only. The probe first invokes a
+separate operator cleanup that may terminalize only active rows predating v27
+whose attempt, lease, heartbeat, and open-receipt fields prove no executor can
+still own them. Each receipt records the cleanup count; any other active shape
+remains a hard failure.
 
 **Why:** waking the fleet installed schema v27 but did not project existing
 participant/checkpoint facts into the new canonical indexes. This is content
@@ -853,6 +857,10 @@ fleet command must record the failure and retry after settlement or
 disconnection, preserving both the source digest and every client's immutable
 sequence fence. An orphaned historical pending card has no future writer and is
 therefore retained as `started`, not treated as live execution.
+The only nonterminal cleanup is the separate pre-v27 abandonment RPC, fenced by
+the schema timestamp and absence of every durable attempt/lease/heartbeat and
+open receipt. It records an explicit failure reason and may never select a
+current or leased run.
 
 ### 2026-08-26 — A manual SubstreamAgent fleet wake respects jurisdictions
 

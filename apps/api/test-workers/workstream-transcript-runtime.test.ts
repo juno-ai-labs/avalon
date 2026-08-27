@@ -122,6 +122,82 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
+  it("explicitly abandons only a lease-less pre-cutover run before backfill", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, origin, created_at, updated_at)
+        VALUES ('pre-cutover-lease-less-run', '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'slack_workspace_opening_message', 1, 1)`);
+    });
+
+    const cleanup = await stub.abandonPreCutoverRunsForTranscriptBackfill({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000716",
+      cutoverVersion: 27,
+    });
+    expect(cleanup).toEqual({ abandonedRunCount: 1 });
+    const outcome = await stub.backfillLegacyTranscript({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000716",
+      cutoverVersion: 27,
+    });
+    expect(outcome).toMatchObject({ applied: true, verified: true });
+    expect(await stub.abandonPreCutoverRunsForTranscriptBackfill({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000717",
+      cutoverVersion: 27,
+    })).toEqual({ abandonedRunCount: 0 });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.storage.sql.exec<{
+        status: string;
+        terminal_reason: string | null;
+        error_code: string | null;
+      }>(`SELECT status, terminal_reason, json_extract(error_json, '$.code') AS error_code
+            FROM runs WHERE run_id = 'pre-cutover-lease-less-run'`).one()).toEqual({
+        status: "failed",
+        terminal_reason: "migration_cutover_abandoned",
+        error_code: "migration_cutover_abandoned",
+      });
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count
+        FROM legacy_transcript_backfills`).one().count).toBe(1);
+    });
+  });
+
+  it("refuses to abandon a pre-cutover run that acquired a durable lease", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, legacy_attempt_id,
+         lease_owner, lease_expires_at, heartbeat_at, created_at, updated_at)
+        VALUES ('leased-pre-cutover-run', '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'live-attempt',
+                'live-owner', 4102444800000, 1, 1, 1)`);
+      await expect(instance.abandonPreCutoverRunsForTranscriptBackfill({
+        objectId: id.toString(),
+        operatorRunId: "00000000-0000-7000-8000-000000000718",
+        cutoverVersion: 27,
+      })).rejects.toThrow("legacy_transcript_pre_cutover_run_not_abandonable");
+      expect(state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM runs WHERE run_id = 'leased-pre-cutover-run'`,
+      ).one().status).toBe("running");
+    });
+  });
+
   it("refuses to renumber while a client holds an immutable transcript snapshot", async () => {
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
