@@ -297,3 +297,60 @@ describe("email markdown rendering", () => {
     expect(html.indexOf("<h1")).toBeLessThan(html.indexOf("<h2"));
   });
 });
+
+describe("citations in outbound email", () => {
+  // Every one of these leaks today without the rewrite: the HTML path links
+  // only http(s) targets, so a `resource://` link passes through as literal
+  // bracket syntax; the text path appends raw link targets whatever their
+  // scheme; and footnote syntax has no handling at all in either part.
+  it("reduces a chip and an embed card to their label in the HTML part", () => {
+    const html = markdownToEmailHtml([
+      "Published the [Mute windows PRD](resource://prd-1) today.",
+      "",
+      "![Mute windows PRD](resource://prd-1)",
+    ].join("\n"));
+
+    expect(html).toContain("Published the Mute windows PRD today.");
+    expect(html).not.toContain("resource://");
+    expect(html).not.toContain("[Mute windows PRD]");
+  });
+
+  it("turns footnotes into a plain trailing source list in the HTML part", () => {
+    const html = markdownToEmailHtml([
+      "Revenue grew 40%.[^1] Costs held flat.[^2]",
+      "",
+      "[^1]: [Q3 board deck](resource://deck-01)",
+      "[^2]: [The filing](https://sec.gov/x)",
+    ].join("\n"));
+
+    expect(html).toContain("Revenue grew 40%.[1] Costs held flat.[2]");
+    expect(html).toContain("Sources:");
+    expect(html).toContain("Q3 board deck");
+    expect(html).toContain("https://sec.gov/x");
+    expect(html).not.toContain("[^1]");
+  });
+
+  it("reduces the same citations in the plain-text part and the preheader", () => {
+    const markdown = [
+      "Published the [Mute windows PRD](resource://prd-1).[^1]",
+      "",
+      "[^1]: [Q3 board deck](resource://deck-01)",
+    ].join("\n");
+
+    const text = markdownToEmailText(markdown);
+    expect(text).toContain("Published the Mute windows PRD.[1]");
+    expect(text).toContain("1. Q3 board deck");
+    expect(text).not.toContain("resource://");
+    expect(text).not.toContain("[^1]");
+
+    // The preheader drops list markers, as it does for every list: it is one
+    // line beside a subject, so the rank is spent space there.
+    expect(markdownToEmailPreheader(markdown)).toBe("Published the Mute windows PRD.[1] Sources: Q3 board deck");
+  });
+
+  it("keeps an external link and a real image, which mean what they mean in mail", () => {
+    const html = markdownToEmailHtml("See [the report](https://example.com/r).");
+
+    expect(html).toContain('href="https://example.com/r"');
+  });
+});

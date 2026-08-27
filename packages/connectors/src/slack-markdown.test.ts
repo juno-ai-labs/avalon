@@ -134,3 +134,42 @@ describe("Slack notification fallback", () => {
     expect(text.endsWith("…")).toBe(true);
   });
 });
+
+describe("citations in Slack delivery", () => {
+  // Slack renders neither the `resource://` scheme nor footnote syntax, so an
+  // unrewritten citation lands verbatim in a channel — and the embed form
+  // lands as a broken image. The rewrite is in the splitter because both
+  // delivery paths, the streaming one and the chunked one, go through it.
+  it("reduces chips and embed cards to their label before posting", () => {
+    const [message] = slackMarkdownMessages([
+      "Published the [Mute windows PRD](resource://prd-1).",
+      "",
+      "![Mute windows PRD](resource://prd-1)",
+    ].join("\n"));
+
+    expect(message?.blocks).toEqual([{
+      type: "markdown",
+      text: "Published the Mute windows PRD.\n\nMute windows PRD",
+    }]);
+  });
+
+  it("turns footnotes into a plain trailing source list", () => {
+    expect(splitSlackMarkdown([
+      "Revenue grew 40%.[^1]",
+      "",
+      "[^1]: [Q3 board deck](resource://deck-01)",
+    ].join("\n"))).toEqual([
+      "Revenue grew 40%.[1]\n\nSources:\n\n1. Q3 board deck",
+    ]);
+  });
+
+  it("keeps an external source as a link Slack can follow", () => {
+    expect(splitSlackMarkdown("A claim.[^1]\n\n[^1]: [The filing](https://sec.gov/x)"))
+      .toEqual(["A claim.[1]\n\nSources:\n\n1. The filing (https://sec.gov/x)"]);
+  });
+
+  it("leaves an answer that cites nothing exactly as the model wrote it", () => {
+    expect(splitSlackMarkdown("### Outcome\n\n- **File:** report.txt"))
+      .toEqual(["### Outcome\n\n- **File:** report.txt"]);
+  });
+});

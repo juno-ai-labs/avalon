@@ -1,3 +1,4 @@
+import { rewriteCitationsForPlainDelivery } from "@rally/contracts/citations";
 import { normalizeModelMarkdown, normalizeModelText } from "@rally/contracts/model-markdown";
 
 import { escapeHtml } from "./resend";
@@ -77,12 +78,32 @@ function indentWidth(value: string): number {
   return [...value].reduce((width, character) => width + (character === "\t" ? 4 : 1), 0);
 }
 
+/**
+ * Citations reduced to text a mail client can render.
+ *
+ * Every part below leaks them otherwise, in a different way: the HTML path
+ * links only `http(s)` targets, so a `resource://` link passes through as
+ * literal bracket syntax; the text path appends a raw link target whatever its
+ * scheme; and footnote syntax has no handling anywhere in this module. The
+ * embed form is worse still — an `<img>` at a scheme no client resolves is a
+ * broken image in somebody's inbox.
+ *
+ * It runs *before* the TeX repair, not after: `normalizeModelMarkdown` escapes
+ * the Markdown-active characters in what it unwraps, and a bracket it escaped
+ * is no longer a link this can read.
+ *
+ * The rule covers every email this module renders, not only digests.
+ */
+function forEmail(markdown: string): string {
+  return rewriteCitationsForPlainDelivery(markdown);
+}
+
 export function markdownToEmailHtml(markdown: string): string {
   // Every body this renders today is a model's words — a digest, an automation
   // result — so the TeX repair applies unconditionally. An email that one day
   // carries a person's words verbatim needs an opt-out here first, the way
   // `MarkdownBody` grew one for the human bubble.
-  return blocksFromMarkdown(normalizeModelMarkdown(markdown)).map(renderBlock).join("\n");
+  return blocksFromMarkdown(normalizeModelMarkdown(forEmail(markdown))).map(renderBlock).join("\n");
 }
 
 /**
@@ -98,7 +119,7 @@ export function markdownToEmailText(markdown: string): string {
   // The plain-text entry point, deliberately: nothing below parses Markdown,
   // so an escape manufactured by `normalizeModelMarkdown` would reach the
   // reader as a literal backslash.
-  markdown = normalizeModelText(markdown);
+  markdown = normalizeModelText(forEmail(markdown));
   const lines: string[] = [];
   let fenced = false;
   for (const raw of markdown.replace(/\r\n/gu, "\n").split("\n")) {
@@ -140,7 +161,7 @@ export function markdownToEmailText(markdown: string): string {
  * anything.
  */
 export function markdownToEmailPreheader(markdown: string, limit = 160): string {
-  const plain = normalizeModelText(markdown)
+  const plain = normalizeModelText(forEmail(markdown))
     .replace(/\r\n/gu, "\n")
     .replace(/^\s{0,3}(?:```|~~~).*$/gmu, " ")
     .replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gmu, " ")
