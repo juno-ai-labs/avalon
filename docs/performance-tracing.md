@@ -358,10 +358,13 @@ absent in jsdom and on some Chromium builds — the numbers then read zero, whic
 is a gap in the diagnosis and never a broken flow.
 
 `workstream_open` also splits the wait for its socket in two.
-**`dial`** closes on the line that constructs the `WebSocket` and **`handshake`**
-on its open event; nothing is awaited between the ticket resolving and `dial`,
-so a large `dial` can only mean the renderer was not running. One number across
-both read as a slow server either way. And **`sinceEffectMs`** reports how long
+**`dial`** closes when the renderer has created its socket adapter and admitted
+the open to main, and **`handshake`** closes on the open event relayed from the
+Node broker. Nothing is awaited between the ticket resolving and `dial`, so a
+large `dial` can only mean the renderer was not running; main-process IPC,
+network setup, TLS, the Worker upgrade, and the Durable Object acceptance are
+all inside `handshake`. One number across both read as a slow server either way.
+And **`sinceEffectMs`** reports how long
 the work stream was on screen before the attempt's first request left: on
 attempt zero that is dead time no trace can otherwise see, because the trace
 does not exist until `connect` runs. On a reconnect it is the age of the effect
@@ -629,6 +632,31 @@ authoritative boundary and its backend spans remain diagnostic components.
 cancelled opens record their outcome but never enter successful percentiles.
 Warm/cold, unread/latest overlap, disjoint islands, large history, and
 mid-stream cohorts remain separable without transcript content.
+
+### 2026-08-26 — Work-stream handshake timing follows the Electron Node broker
+
+**What changed:** Electron's control/feed transport moved from Chromium to a
+main-process Node broker without moving the renderer's `workstream_open` flow.
+`dial` now ends at renderer admission to the broker and `handshake` ends when
+the broker relays its open event. The existing durable `renderer_perf_flow`
+record therefore measures the complete IPC plus network handshake without a
+new trace graph.
+
+**Why:** Concurrent cold work-stream sockets were queuing behind Chromium's
+same-endpoint handshake lock. Moving transport fixes the queue, but moving the
+flow clock would split the click-to-snapshot measurement across processes and
+lose the renderer's painted/send-ready boundaries.
+
+**Considered and rejected:** A separate main-process performance flow would
+measure the broker precisely but would no longer be the person's full wait and
+would need another correlation graph. The existing phase boundary already
+separates renderer scheduling from everything after admission.
+
+**Consequences:** A slow `handshake` may now include main-process IPC delay as
+well as network, Worker, and Durable Object time; backend ticket and upgrade
+correlation still separates the service portion. Chromium NetLog no longer
+contains these two socket types, while the renderer flow remains in Unified Log
+and regional telemetry.
 
 ### 2026-08-26 — Renderer traces persist locally and cold wakes expose initialization
 

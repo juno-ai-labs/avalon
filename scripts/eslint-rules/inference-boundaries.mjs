@@ -148,6 +148,12 @@ export const requireWebSocketTicketRule = {
   },
   create(context) {
     const ticketBindings = new Set();
+    const isTicketUrl = (argument) => (
+      argument?.type === "MemberExpression"
+      && propertyName(argument) === "url"
+      && argument.object.type === "Identifier"
+      && ticketBindings.has(argument.object.name)
+    );
     return {
       VariableDeclarator(node) {
         const init = unwrapAwait(node.init);
@@ -171,13 +177,12 @@ export const requireWebSocketTicketRule = {
       },
       NewExpression(node) {
         if (node.callee.type !== "Identifier" || node.callee.name !== "WebSocket") return;
-        const argument = node.arguments[0];
-        if (
-          argument?.type === "MemberExpression"
-          && propertyName(argument) === "url"
-          && argument.object.type === "Identifier"
-          && ticketBindings.has(argument.object.name)
-        ) return;
+        if (isTicketUrl(node.arguments[0])) return;
+        context.report({ node, messageId: "ticket" });
+      },
+      CallExpression(node) {
+        if (node.callee.type !== "Identifier" || node.callee.name !== "createRealtimeSocket") return;
+        if (isTicketUrl(node.arguments[1])) return;
         context.report({ node, messageId: "ticket" });
       },
     };

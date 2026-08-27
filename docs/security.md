@@ -225,9 +225,16 @@ server echoes only the sentinel, never the ticket, because a selected subprotoco
 is a response header. [`realtime-sockets.md`](realtime-sockets.md) owns the
 admission path.
 
-Renderer WebSockets may be constructed only from a URL returned by the
-authenticated work-stream or transcription ticket endpoints; ESLint enforces that
-provenance at each production constructor. Runtime URL schemas likewise name their
+Native renderer WebSockets may be constructed only from a URL returned by an
+authenticated ticket endpoint; ESLint enforces that provenance at each
+production constructor. Electron's WorkstreamDO and SubstreamAgent connections
+instead cross a typed preload bridge to the main-process broker. Main accepts
+that capability only from the primary application window, validates the URL
+against configured regional `ws`/`wss` origins and the declared control/feed
+route shape, rejects credentials, query, and fragment, requires the public
+ticket sentinel, and supplies the exact `app://rallywithai` Origin itself. The
+renderer cannot choose a header or turn the broker into an arbitrary network
+client. Runtime URL schemas likewise name their
 accepted scheme contract explicitly — HTTP(S), HTTPS-only, `avalon:`, or the
 intentional HTTP(S)/Rally handoff union. Bare Zod URL validation is forbidden
 because it accepts non-web schemes such as `javascript:` and `data:` while hiding
@@ -513,8 +520,11 @@ bound it on the thing a placeholder cannot fake, and add the bound to
   this repository can reach them. Legacy issuer response fields exist only for
   old desktop compatibility and must be removed at the declared compatibility
   cutoff rather than copied to HyperSight or any later role.
-- **A WebSocket in the renderer is constructed only from a URL an authenticated
-  ticket endpoint returned**, enforced by ESLint at each production constructor.
+- **A native WebSocket in the renderer is constructed only from a URL an
+  authenticated ticket endpoint returned; Electron's work-stream broker is
+  narrower still.** Its typed IPC accepts only configured regional
+  WorkstreamDO/SubstreamAgent paths from the main window and main supplies the
+  application Origin.
 - **A URL schema names its accepted scheme contract explicitly.** Bare Zod URL
   validation accepts `javascript:` and `data:`.
 - **Every desktop HTTP header is covered by the regional CORS allowlist and an
@@ -660,6 +670,30 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-26 — The Node socket broker is a route-confined capability
+
+**What changed:** The primary Electron renderer may ask main to open, send on,
+or close WorkstreamDO control and SubstreamAgent feed sockets through typed IPC.
+Main parses every input, confines the URL to a configured regional socket
+origin and the route shape declared by the socket kind, requires the ticket
+sentinel, supplies the application Origin, and terminates all sockets on
+renderer navigation or destruction. Settings and Meeting renderers are denied.
+
+**Why:** Moving these two handshake types out of Chromium removes its
+same-endpoint connection queue, but a generic main-process WebSocket bridge
+would give compromised renderer content a privileged arbitrary-network
+primitive. The transport optimization must not widen the renderer's authority.
+
+**Considered and rejected:** Letting the renderer provide headers or Origin,
+accepting any configured-host path, and sharing the bridge with every Rally
+window. None is needed for work-stream warming, and each makes the capability
+broader than the authenticated ticket endpoints it replaces.
+
+**Consequences:** New brokered socket purposes require an explicit kind and
+path-validation branch. Tickets remain renderer-visible because the existing
+ticket protocol needs them, but main never logs protocols or URLs and no ticket
+is placed in a URL.
 
 ### 2026-08-25 — The public Trust Center describes only implemented boundaries
 

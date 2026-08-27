@@ -3,6 +3,12 @@ import type { ApplicationIconId, DesktopApplicationIconState } from './applicati
 import type { ThemeChoice } from './themes';
 import type { MessageExportRequest, MessageExportResult } from './message-export';
 import type { ClientFeatureFlags, TelemetryEventProperties } from '@rally/contracts';
+import type {
+  DesktopRealtimeSocketCloseInput,
+  DesktopRealtimeSocketEvent,
+  DesktopRealtimeSocketOpenInput,
+  DesktopRealtimeSocketSendInput,
+} from './realtime-socket';
 
 export type RallyRegion = 'global' | 'eu';
 
@@ -411,6 +417,10 @@ export interface RallyDesktopBridge {
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;
+  openRealtimeSocket: (input: DesktopRealtimeSocketOpenInput) => Promise<void>;
+  sendRealtimeSocket: (input: DesktopRealtimeSocketSendInput) => Promise<void>;
+  closeRealtimeSocket: (input: DesktopRealtimeSocketCloseInput) => Promise<void>;
+  onRealtimeSocketEvent: (listener: (event: DesktopRealtimeSocketEvent) => void) => () => void;
   /** Mirrors a signed server answer into main-process-only surfaces such as the menu bar. */
   observeClientFeatureFlags: (flags: ClientFeatureFlags) => Promise<void>;
 }

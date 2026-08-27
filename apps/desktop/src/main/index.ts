@@ -65,6 +65,11 @@ import {
 import { logError, logWarn } from '../common/logger';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
+import {
+  DesktopRealtimeSocketCloseInputSchema,
+  DesktopRealtimeSocketOpenInputSchema,
+  DesktopRealtimeSocketSendInputSchema,
+} from '../common/realtime-socket';
 import { backdropScheme, fontScheme } from '../common/theme-assets';
 import {
   defaultThemeChoice,
@@ -127,6 +132,7 @@ import {
   type MessageExportWindow,
 } from './message-export';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
+import { RealtimeSocketBroker, realtimeSocketTargetAllowed } from './realtime-socket-broker';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
@@ -432,6 +438,7 @@ let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
+const realtimeSocketBroker = new RealtimeSocketBroker();
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
   route: 'global',
@@ -2373,6 +2380,13 @@ function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
   }
 }
 
+function assertMainWindowIpcSender(event: IpcMainInvokeEvent): void {
+  assertTrustedIpcSender(event);
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('Only the main Rally window can open realtime sockets');
+  }
+}
+
 function meetingAudioPermissionDependencies() {
   return {
     askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
@@ -2384,6 +2398,26 @@ function registerIpc(): void {
   ipcMain.handle('runtime:get-config', (event) => {
     assertTrustedIpcSender(event);
     return runtimeConfig();
+  });
+  ipcMain.handle('realtime-socket:open', (event, rawInput: unknown) => {
+    assertMainWindowIpcSender(event);
+    const input = DesktopRealtimeSocketOpenInputSchema.parse(rawInput);
+    if (!realtimeSocketTargetAllowed(input, Object.values(runtimeConfig().api))) {
+      throw new Error('Blocked realtime socket target');
+    }
+    realtimeSocketBroker.open(event.sender.id, input, (socketEvent) => {
+      if (!event.sender.isDestroyed()) event.sender.send('realtime-socket:event', socketEvent);
+    });
+  });
+  ipcMain.handle('realtime-socket:send', (event, rawInput: unknown) => {
+    assertMainWindowIpcSender(event);
+    const input = DesktopRealtimeSocketSendInputSchema.parse(rawInput);
+    realtimeSocketBroker.send(event.sender.id, input.socketId, input.data);
+  });
+  ipcMain.handle('realtime-socket:close', (event, rawInput: unknown) => {
+    assertMainWindowIpcSender(event);
+    const input = DesktopRealtimeSocketCloseInputSchema.parse(rawInput);
+    realtimeSocketBroker.close(event.sender.id, input.socketId, input.code, input.reason);
   });
   ipcMain.handle('application:foreground-get', (event) => {
     assertTrustedIpcSender(event);
@@ -3300,6 +3334,7 @@ async function createMainWindow(): Promise<void> {
       allowRunningInsecureContent: false,
     },
   });
+  const mainWindowWebContentsId = mainWindow.webContents.id;
 
   installWindowDiagnostics(mainWindow, 'main');
   mainWindow.once('ready-to-show', () => mainWindow?.show());
@@ -3307,9 +3342,13 @@ async function createMainWindow(): Promise<void> {
     // Hash-router transitions are same-document navigations. Treating them as
     // a renderer restart strands later OAuth/invitation callbacks in the main
     // process queue because React never remounts to consume that queue.
-    if (isMainFrame && !isInPlace) rendererReady = false;
+    if (isMainFrame && !isInPlace) {
+      realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+      rendererReady = false;
+    }
   });
   mainWindow.on('closed', () => {
+    realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
     rendererReady = false;
     mainWindow = null;
   });

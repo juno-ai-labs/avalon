@@ -31,16 +31,28 @@ interface AppShellProps extends PropsWithChildren {
 export const RUNNING_HARNESS_STATUSES: ReadonlySet<WorkstreamSummary['harnessStatus']> = new Set([
   'scheduled', 'running', 'needs_input',
 ]);
+export const PROACTIVE_RECENT_WORKSTREAM_COUNT = 5;
 
 export function backgroundRealtimeWorkstreamIds(
   activeWorkstreamId: string | null,
   workstreams: WorkstreamSummary[] | undefined,
 ): string[] {
-  return (workstreams ?? []).flatMap((workstream) =>
-    workstream.id !== activeWorkstreamId
-      && workstream.harnessStatus === 'running'
+  const candidates = (workstreams ?? []).filter((workstream) => workstream.id !== activeWorkstreamId);
+  const recentUnpinned = new Set(candidates
+    .filter((workstream) => workstream.pinPosition === null)
+    .sort((left, right) => {
+      const activityOrder = Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt);
+      return activityOrder || left.id.localeCompare(right.id);
+    })
+    .slice(0, PROACTIVE_RECENT_WORKSTREAM_COUNT)
+    .map((workstream) => workstream.id));
+  return candidates.flatMap((workstream) => (
+    workstream.harnessStatus === 'running'
+      || workstream.pinPosition !== null
+      || recentUnpinned.has(workstream.id)
       ? [workstream.id]
-      : []);
+      : []
+  ));
 }
 
 /**

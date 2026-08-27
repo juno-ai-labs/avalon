@@ -4,6 +4,7 @@ import {
   HttpsUrlSchema,
   HttpOrDesktopDeepLinkUrlSchema,
   HttpUrlSchema,
+  WebSocketUrlSchema,
   httpUrlSchema,
 } from "./url-schemas";
 
@@ -21,6 +22,12 @@ describe("explicit URL contracts", () => {
     expect(DesktopDeepLinkUrlSchema.safeParse("rallywithai://workstreams/123").success).toBe(true);
     expect(HttpOrDesktopDeepLinkUrlSchema.safeParse("rallywithai://auth/complete").success).toBe(true);
     expect(DesktopDeepLinkUrlSchema.safeParse("mailto:someone@rallywith.ai").success).toBe(false);
+  });
+
+  it("accepts only WebSocket schemes for socket URLs", () => {
+    expect(WebSocketUrlSchema.safeParse("ws://127.0.0.1:8787/socket").success).toBe(true);
+    expect(WebSocketUrlSchema.safeParse("wss://api.rallywith.ai/socket").success).toBe(true);
+    expect(WebSocketUrlSchema.safeParse("https://api.rallywith.ai/socket").success).toBe(false);
   });
 
   it("still accepts the deep-link scheme shipped desktop builds registered", () => {
