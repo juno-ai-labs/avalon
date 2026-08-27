@@ -372,6 +372,23 @@ resident.
 
 ## Changelog
 
+### 2026-08-27 — Project state stays with its regional WorkspaceDO
+
+**What changed:** Project identity, participants, ordering, and revisions are
+stored in the WorkspaceDO selected by the workspace's immutable placement; the
+regional Worker checks same-region D1 membership before calling it.
+
+**Why:** Projects are workspace product state and must inherit the workspace's
+residency boundary without adding a Global registry copy.
+
+**Considered and rejected:** A Global project directory, which would export EU
+product metadata and create a second project authority.
+
+**Consequences:** Project routes, Queues, and future recovery stay regional and
+carry IDs rather than project content across execution boundaries.
+
+Design: `docs/PRDs/2026-08-26_projects/prd.md`.
+
 ### 2026-08-24 — The analytics-events lakehouse is Global-only
 
 **What changed:** Global accepted backend/client telemetry now projects into a

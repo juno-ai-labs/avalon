@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronRight, Plus } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
 import { newWorkstreamDraftKey } from '../lib/draft-keys';
 import {
@@ -280,7 +280,9 @@ function ParticipantPicker({
   );
 }
 
-export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): React.JSX.Element {
+export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Workspace; projectId?: string }): React.JSX.Element {
+  const routeProjectId = useParams<{ projectId: string }>().projectId;
+  const owningProjectId = projectId === 'route' ? routeProjectId : projectId;
   const { api } = useAppSession();
   const featureFlags = useClientFeatureFlags(api);
   const suggestedWorkEnabled = featureFlags.data?.suggestedWorkEnabled === true;
@@ -293,7 +295,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
   // The instant the suggested-work surface started counting from, carried to
   // `onSuccess` so the seeded run continues it rather than restarting.
   const opportunityStartedAt = useRef<string | null>(null);
-  const draftKey = newWorkstreamDraftKey(workspace.id);
+  const draftKey = owningProjectId ? `${newWorkstreamDraftKey(workspace.id)}:project:${owningProjectId}` : newWorkstreamDraftKey(workspace.id);
   const {
     text: message,
     setText: setMessage,
@@ -709,10 +711,10 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
             <div className="new-workstream-home">
               <header className="new-workstream-welcome">
                 <RallyMark className="new-workstream-welcome-mark" />
-                <h1>Welcome back, {workspace.currentUser.name.split(/\s+/u)[0]}</h1>
+                <h1>{owningProjectId ? 'New project work stream' : `Welcome back, ${workspace.currentUser.name.split(/\s+/u)[0]}`}</h1>
               </header>
 
-              {attentionWorkstreams.length > 0 && (
+              {!owningProjectId && attentionWorkstreams.length > 0 && (
                 <section className="waiting-workstreams" aria-labelledby="attention-workstreams-heading">
                   <h2 id="attention-workstreams-heading">Needs attention</h2>
                   <div className="waiting-workstream-list">
@@ -721,7 +723,7 @@ export function NewWorkstreamScreen({ workspace }: { workspace: Workspace }): Re
                 </section>
               )}
 
-              {suggestedWorkEnabled && (
+              {!owningProjectId && suggestedWorkEnabled && (
                 <WorkSuggestedPrompts
                   error={opportunities.error?.message ?? startOpportunity.error?.message ?? dismissOpportunity.error?.message}
                   items={opportunities.data ?? []}

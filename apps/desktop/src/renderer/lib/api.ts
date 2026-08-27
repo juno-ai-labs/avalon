@@ -55,6 +55,12 @@ import {
   type WorkstreamBatchUpdate,
   type WorkstreamDetail as WireWorkstreamDetail,
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
+  ProjectDirectorySchema as WireProjectDirectorySchema,
+  ProjectSummarySchema as WireProjectSummarySchema,
+  type CreateProjectRequest,
+  type ProjectDirectory,
+  type ProjectSummary,
+  type UpdateProjectPresentationRequest,
 } from '@rally/contracts';
 import { socketTicketProtocols, socketUrlWithoutTicket } from '@rally/contracts/socket-tickets';
 import { HttpUrlSchema } from '@rally/contracts/url-schemas';
@@ -1152,6 +1158,34 @@ export class RallyApi {
   async getNotes(signal?: AbortSignal): Promise<NoteSummary[]> {
     const page = await this.request('/notes?limit=250', { schema: wireNotePageSchema, signal });
     return page.items;
+  }
+
+  getProjects(signal?: AbortSignal): Promise<ProjectDirectory> {
+    return this.request('/projects', { schema: WireProjectDirectorySchema, signal });
+  }
+
+  createProject(input: CreateProjectRequest): Promise<ProjectSummary> {
+    return this.request('/projects', {
+      method: 'POST',
+      body: input,
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  updateProject(id: string, input: UpdateProjectPresentationRequest): Promise<ProjectSummary> {
+    return this.request(`/projects/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: input,
+      schema: WireProjectSummarySchema,
+    });
+  }
+
+  reorderProjects(projectIds: string[]): Promise<ProjectDirectory> {
+    return this.request('/projects/order', {
+      method: 'PUT',
+      body: { projectIds },
+      schema: WireProjectDirectorySchema,
+    });
   }
 
   createNote(id: string, title: string): Promise<NoteDetail> {
