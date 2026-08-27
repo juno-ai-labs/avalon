@@ -16,6 +16,7 @@ import type { MessageExportResult } from '../common/message-export';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import type { ThemeChoice } from '../common/themes';
+import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
@@ -24,6 +25,43 @@ let queuedSettingsSection: DesktopSettingsSection | null = null;
 const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
 let meetingCloseQueued: MeetingCloseReason | null = null;
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
+const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function parseRealtimeSocketEvent(rawEvent: unknown): DesktopRealtimeSocketEvent | null {
+  if (!rawEvent || typeof rawEvent !== 'object') return null;
+  const event = rawEvent as Record<string, unknown>;
+  if (typeof event['socketId'] !== 'string' || !UUID_PATTERN.test(event['socketId'])) return null;
+  if (event['type'] === 'open'
+    && typeof event['protocol'] === 'string'
+    && typeof event['extensions'] === 'string') {
+    return {
+      type: 'open', socketId: event['socketId'],
+      protocol: event['protocol'], extensions: event['extensions'],
+    };
+  }
+  if (event['type'] === 'message' && typeof event['data'] === 'string') {
+    return { type: 'message', socketId: event['socketId'], data: event['data'] };
+  }
+  if (event['type'] === 'error') return { type: 'error', socketId: event['socketId'] };
+  if (event['type'] === 'close'
+    && typeof event['code'] === 'number'
+    && Number.isInteger(event['code'])
+    && typeof event['reason'] === 'string'
+    && typeof event['wasClean'] === 'boolean') {
+    return {
+      type: 'close', socketId: event['socketId'], code: event['code'],
+      reason: event['reason'], wasClean: event['wasClean'],
+    };
+  }
+  return null;
+}
+
+ipcRenderer.on('realtime-socket:event', (_event, rawEvent: unknown) => {
+  const parsed = parseRealtimeSocketEvent(rawEvent);
+  if (!parsed) return;
+  for (const listener of realtimeSocketListeners) listener(parsed);
+});
 
 ipcRenderer.on('application:foreground-changed', (_event, rawForegrounded: unknown) => {
   if (typeof rawForegrounded !== 'boolean') return;
@@ -195,6 +233,13 @@ const bridge: RallyDesktopBridge = {
     const handler = (_event: Electron.IpcRendererEvent, session: DesktopSession | null): void => listener(session);
     ipcRenderer.on('session:changed', handler);
     return () => ipcRenderer.removeListener('session:changed', handler);
+  },
+  openRealtimeSocket: (input) => ipcRenderer.invoke('realtime-socket:open', input) as Promise<void>,
+  sendRealtimeSocket: (input) => ipcRenderer.invoke('realtime-socket:send', input) as Promise<void>,
+  closeRealtimeSocket: (input) => ipcRenderer.invoke('realtime-socket:close', input) as Promise<void>,
+  onRealtimeSocketEvent: (listener) => {
+    realtimeSocketListeners.add(listener);
+    return () => realtimeSocketListeners.delete(listener);
   },
   observeClientFeatureFlags: (flags) => ipcRenderer.invoke('feature-flags:observe', flags) as Promise<void>,
 };
