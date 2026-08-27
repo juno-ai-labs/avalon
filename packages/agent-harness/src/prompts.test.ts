@@ -116,7 +116,7 @@ describe("prompt renderers", () => {
           objective: "Find the cause and create a concise incident note.",
           documentPublishing: true,
         }),
-        hash: "e91e97f5d78434cd6206b2f7b084ebc6d5c2b36468f1d127935756973a2afa41",
+        hash: "d86576530e16ea6d4c5f4ac052ce5a54c40e802ed3ba396569c0833417807be4",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -242,6 +242,7 @@ describe("prompt renderers", () => {
     expect(withDocuments).toContain("publish it as a work-stream resource");
     expect(withDocuments).toContain("Never restate, summarize section by section, or quote the body of a document you just published");
     expect(withDocuments).toContain("publishing the same path again");
+    expect(withDocuments).toContain("under the title it already has");
     expect(withDocuments).toContain("import the published resource back into it first");
     expect(withDocuments).toContain('"just answer in chat"');
     expect(withDocuments).toContain('"make that a document"');

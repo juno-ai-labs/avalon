@@ -83,6 +83,14 @@ between its `SELECT ... FROM workspaces` and `ON CONFLICT`. SQLite otherwise
 parses the `ON` as a possible join clause and rejects the fresh post-retirement
 seed before product fixtures reach the Durable Objects.
 
+**Known broken as of 2026-08-27.** The product-seed step fails with
+`workstream_runtime_sql_not_committed` / `no such table: _runtime_messages`:
+`routes/dev.ts` seeds transcript rows through a compatibility view that
+transcript retirement removed. The authority walk itself still succeeds, so the
+local stack is on the Durable-Object path, and the work streams and their
+descriptions do seed — it is the transcript rows that do not, so a seeded work
+stream opens empty. Create one through the API if you need a populated one.
+
 This walks the **Global** authority to `durable_object_open`, so the local
 stack serves the same post-cutover Durable-Object model production runs, and
 seeds the product fixtures from `packages/db/seed-product.json` into their

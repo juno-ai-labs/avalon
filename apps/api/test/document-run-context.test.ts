@@ -183,6 +183,49 @@ describe("which runs are told to write documents", () => {
     expect(context.systemPrompt).not.toContain("# Documents");
   });
 
+  it("says nothing to a HyperSight block run, which is read-only and has no chat", async () => {
+    const context = await loadRunPromptContext(
+      envFor(seededDatabase()),
+      { ...workflowInput, reason: "block_dashboard_block" },
+      lease,
+      workstream,
+    );
+
+    // Every step of the section is a write tool the block loop refuses, and the
+    // block itself is structured and sectioned — so the trigger fires on the
+    // very thing the run exists to produce, and a model that obeys submits a
+    // block saying it published a document somewhere.
+    expect(context.systemPrompt).not.toContain("# Documents");
+  });
+
+  it("says nothing while an operator has Terminal emergency-disabled", async () => {
+    const database = seededDatabase();
+    const env = withWorkstreamRuntimeDatabase(
+      createTestEnv({
+        DB: sqliteD1(database),
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+        AVALON_REGION: "global",
+        APP_ENV: "production",
+        PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
+        TERMINAL_REGION_CAPABILITY: "supported",
+        DAYTONA_API_KEY: "daytona-key",
+        DAYTONA_API_URL: "https://app.daytona.io/api",
+        DAYTONA_TARGET: "us",
+        DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
+        TERMINAL_EMERGENCY_DISABLED: "true",
+      }),
+      WORKSPACE,
+      WORKSTREAM,
+    );
+
+    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+
+    // The switch exists to stop Terminal traffic. Rendering through an incident
+    // costs a guaranteed-failing sandbox call on every document-shaped request
+    // across the region.
+    expect(context.systemPrompt).not.toContain("# Documents");
+  });
+
   it("says nothing to a Slack-origin run, whose answer is read in the thread", async () => {
     const context = await loadRunPromptContext(
       envFor(seededDatabase()),

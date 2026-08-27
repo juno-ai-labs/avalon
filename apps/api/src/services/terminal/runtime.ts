@@ -79,7 +79,14 @@ export interface TerminalResourceBridge {
   ): Promise<TerminalImportResourceOutput>;
   publishResource(
     context: HarnessToolContext,
-    input: PublishInput,
+    /**
+     * `providerResourceId` is Rally's own, never the model's. A capture Rally
+     * writes on the model's behalf — a command log — shares the sandbox path
+     * space with files the model chooses, so deriving its identity from that
+     * path would let a run republish over its own audit record. An internal
+     * producer names its namespace instead, as the diff and backup captures do.
+     */
+    input: PublishInput & { providerResourceId?: string },
     bytes: Uint8Array,
   ): Promise<TerminalPublishedResourceOutput>;
 }
@@ -713,6 +720,7 @@ export function createDaytonaTerminalRuntime(
           : completeLog;
         try {
           const published = await resources.publishResource(context, {
+            providerResourceId: `terminal-command-log:${effectIntentId}`,
             filePath: `.rally/logs/${effectIntentId}.log`,
             displayName: `Terminal command log ${effectIntentId}`,
             description: outputLimitExceeded
