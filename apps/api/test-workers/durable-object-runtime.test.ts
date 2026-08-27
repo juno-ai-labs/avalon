@@ -3017,6 +3017,103 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("includes every live-state work stream beyond both the recent page and 1,250 rows", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.transactionSync(() => {
+        state.storage.sql.exec(
+          `WITH digits(d) AS (VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)),
+           sequence(n) AS (
+             SELECT ones.d + tens.d * 10 + hundreds.d * 100 + thousands.d * 1000 + 1
+             FROM digits ones CROSS JOIN digits tens CROSS JOIN digits hundreds
+             CROSS JOIN digits thousands
+             WHERE ones.d + tens.d * 10 + hundreds.d * 100 + thousands.d * 1000 < 1252
+           )
+           INSERT INTO workspace_workstream_directory
+             (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+              title, description, preview, scope, exact_state, system_kind, last_activity_at,
+              completed_at, archived_at, email_address, origin_type, origin_label,
+              created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+              title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+              source_created_at, source_updated_at, projected_at)
+           SELECT printf('00000000-0000-7000-8002-%012d', n), 1, n,
+             printf('00000000-0000-7000-8003-%012d', n), 'test',
+             printf('Old live state %d', n), '', '', 'workspace',
+             CASE n % 4
+               WHEN 1 THEN 'running'
+               WHEN 2 THEN 'interrupting'
+               WHEN 3 THEN 'preparing_context'
+               ELSE 'waiting_capacity'
+             END,
+             NULL, n, NULL, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+             'settled', 0, 0, NULL, NULL, NULL, n, n, n
+           FROM sequence`,
+          USER_ID,
+        );
+        state.storage.sql.exec(
+          `WITH RECURSIVE sequence(n) AS (
+             SELECT 1 UNION ALL SELECT n + 1 FROM sequence WHERE n < 251
+           )
+           INSERT INTO workspace_workstream_directory
+             (workstream_id, authority_generation, waterline, source_event_id, payload_hash,
+              title, description, preview, scope, exact_state, system_kind, last_activity_at,
+              completed_at, archived_at, email_address, origin_type, origin_label,
+              created_by_user_id, automation_subscription_id, automation_run_id, planned_for,
+              title_status, latest_attention_ordinal, unread_tracking_start_ordinal,
+              next_wakeup_due_at, next_wakeup_prompt, next_terminal_action_at,
+              source_created_at, source_updated_at, projected_at)
+           SELECT printf('00000000-0000-7000-8004-%012d', n), 1, 1252 + n,
+             printf('00000000-0000-7000-8005-%012d', n), 'test',
+             printf('Recent completed %d', n), '', '', 'workspace', 'completed', NULL,
+             10000 + n, 10000 + n, NULL, NULL, 'ad_hoc', NULL, ?, NULL, NULL, NULL,
+             'settled', 0, 0, NULL, NULL, NULL, 10000 + n, 10000 + n, 10000 + n
+           FROM sequence`,
+          USER_ID,
+        );
+        state.storage.sql.exec(
+          `UPDATE workspace_directory_state SET waterline = 1503, updated_at = 10251 WHERE id = 1`,
+        );
+      });
+    });
+
+    const response = await stub.fetch("https://workspace.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-placement-affinity": "wnam",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000709",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      const answer = nextMessage(socket);
+      socket.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
+      const event = JSON.parse(String((await answer).data)) as {
+        sidebar: { workstreams: { items: Array<{ id: string }>; nextCursor: string | null } };
+      };
+      const page = event.sidebar.workstreams;
+      expect(page.nextCursor).not.toBeNull();
+      expect(page.items).toHaveLength(1_502);
+      for (let sequence = 1; sequence <= 4; sequence += 1) {
+        expect(page.items.some((item) =>
+          item.id === `00000000-0000-7000-8002-${String(sequence).padStart(12, "0")}`)).toBe(true);
+      }
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  });
+
   it("pushes the automation list when a write lands, including the scheduler's", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -4982,27 +5079,32 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     await evictDurableObject(stub);
 
-    const delivered = nextMessages(socket, 2);
-    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 1 }));
-    const frames = (await delivered).map((event) => JSON.parse(String(event.data)) as {
+    const delivered = nextMessage(socket);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 1, publishPresence: false }));
+    const frame = JSON.parse(String((await delivered).data)) as {
       type: string;
       sequence: number;
-      messageFeed?: { items: { sequenceNumber: number }[] };
-      resumeFeed?: { items: { sequenceNumber: number }[] } | null;
-    });
+      workstream: { viewers: unknown[] };
+      messageFeed: { items: { sequenceNumber: number }[] };
+      resumeFeed: { items: { sequenceNumber: number }[] } | null;
+    };
 
-    expect(frames[0]).toMatchObject({ type: "snapshot", sequence: 2 });
-    expect(frames[0]!.messageFeed?.items.at(-1)?.sequenceNumber).toBe(60);
+    expect(frame).toMatchObject({ type: "snapshot", sequence: 2 });
+    expect(frame.workstream.viewers).toEqual([]);
+    expect(frame.messageFeed.items.at(-1)?.sequenceNumber).toBe(60);
     // A repair always installs the newest canonical page. Sending the reader's
     // older first-unread window here would make a pre-fix desktop treat the
     // first frame seen by a fresh hook as an arrival and visibly roll back.
-    expect(frames[0]!.resumeFeed).toBeNull();
-    expect(frames[1]).toMatchObject({ type: "presence_changed", sequence: 3 });
+    expect(frame.resumeFeed).toBeNull();
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
         afterSequence: 2,
+        publishPresence: false,
         subscribed: true,
       });
+      expect(state.storage.sql.exec<{ event_sequence: number }>(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one().event_sequence).toBe(2);
     });
     socket.close(1000, "test complete");
   });

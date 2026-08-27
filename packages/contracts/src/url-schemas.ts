@@ -20,6 +20,7 @@ function urlSchema(
 
 const HTTP_PROTOCOLS = new Set(["http:", "https:"]);
 const HTTPS_PROTOCOL = new Set(["https:"]);
+const WEB_SOCKET_PROTOCOLS = new Set(["ws:", "wss:"]);
 
 const DESKTOP_PROTOCOLS = new Set(DESKTOP_DEEP_LINK_PROTOCOLS);
 const HTTP_OR_DESKTOP_PROTOCOLS = new Set([...HTTP_PROTOCOLS, ...DESKTOP_PROTOCOLS]);
@@ -29,6 +30,12 @@ export const HttpUrlSchema = urlSchema(HTTP_PROTOCOLS, "Expected an absolute HTT
 
 /** Absolute provider URL whose transport must be encrypted. */
 export const HttpsUrlSchema = urlSchema(HTTPS_PROTOCOL, "Expected an absolute HTTPS URL");
+
+/** Absolute WebSocket URL. WS remains valid for loopback/local development. */
+export const WebSocketUrlSchema = urlSchema(
+  WEB_SOCKET_PROTOCOLS,
+  "Expected an absolute WS(S) URL",
+);
 
 /** Desktop deep link, in the current scheme or the one it replaced. */
 export const DesktopDeepLinkUrlSchema = urlSchema(

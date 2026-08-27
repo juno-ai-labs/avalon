@@ -109,7 +109,6 @@ function RetainedWorkstreamSocket({
   api,
   background,
   controlWarm,
-  onAdmit,
   onConnection,
   onRelease,
   socketLeaseId,
@@ -120,15 +119,11 @@ function RetainedWorkstreamSocket({
   api: WorkstreamSocketApi | null;
   background: boolean;
   controlWarm: boolean;
-  onAdmit: (workstreamId: string) => void;
   onConnection: (workstreamId: string, connection: WorkstreamSocketConnection) => void;
   onRelease: (workstreamId: string) => void;
   socketLeaseId: string;
   workstreamId: string;
 }): null {
-  useLayoutEffect(() => {
-    if (background) onAdmit(workstreamId);
-  }, [background, onAdmit, workstreamId]);
   const feedEnabled = active || background || admitted;
   const initialReason = controlWarm && !feedEnabled
     ? 'hover_warmup'
@@ -136,8 +131,8 @@ function RetainedWorkstreamSocket({
   useWorkstreamControlSocket(api, workstreamId, controlWarm || feedEnabled, initialReason, socketLeaseId);
   const connection = useWorkstreamSocket(api, workstreamId, feedEnabled, true, initialReason, socketLeaseId);
   useLayoutEffect(() => {
-    onConnection(workstreamId, connection);
-  }, [connection, onConnection, workstreamId]);
+    if (active || admitted) onConnection(workstreamId, connection);
+  }, [active, admitted, connection, onConnection, workstreamId]);
   useLayoutEffect(() => () => {
     onRelease(workstreamId);
   }, [onRelease, workstreamId]);
@@ -150,7 +145,6 @@ function RetainedWorkstreamSocketOwners({
   api,
   backgroundWorkstreamIds,
   controlWarmWorkstreamId,
-  onAdmit,
   onConnection,
   onRelease,
   socketLeaseIds,
@@ -159,9 +153,8 @@ function RetainedWorkstreamSocketOwners({
   activeWorkstreamId: string | null;
   admittedWorkstreamIds: ReadonlySet<string>;
   api: WorkstreamSocketApi | null;
-  backgroundWorkstreamIds: readonly string[];
+  backgroundWorkstreamIds: ReadonlySet<string>;
   controlWarmWorkstreamId: string | null;
-  onAdmit: (workstreamId: string) => void;
   onConnection: (workstreamId: string, connection: WorkstreamSocketConnection) => void;
   onRelease: (workstreamId: string) => void;
   socketLeaseIds: ReadonlyMap<string, string>;
@@ -174,10 +167,9 @@ function RetainedWorkstreamSocketOwners({
           active={activeWorkstreamId === workstreamId}
           admitted={admittedWorkstreamIds.has(workstreamId)}
           api={api}
-          background={backgroundWorkstreamIds.includes(workstreamId)}
+          background={backgroundWorkstreamIds.has(workstreamId)}
           controlWarm={controlWarmWorkstreamId === workstreamId}
           key={workstreamId}
-          onAdmit={onAdmit}
           onConnection={onConnection}
           onRelease={onRelease}
           socketLeaseId={socketLeaseIds.get(workstreamId)!}
@@ -222,6 +214,12 @@ export function WorkstreamSocketPool({
   const controlWarmRef = useRef(controlWarm);
   controlWarmRef.current = controlWarm;
   const socketLeaseIdsRef = useRef<ReadonlyMap<string, string>>(new Map());
+  const backgroundWorkstreamIdSet = useMemo(
+    () => new Set(backgroundWorkstreamIds),
+    [backgroundWorkstreamIds],
+  );
+  const backgroundWorkstreamIdsRef = useRef<ReadonlySet<string>>(backgroundWorkstreamIdSet);
+  backgroundWorkstreamIdsRef.current = backgroundWorkstreamIdSet;
   const admit = useCallback((workstreamId: string) => {
     setAdmittedWorkstreamIds((current) => {
       if (current.has(workstreamId)) return current;
@@ -236,6 +234,7 @@ export function WorkstreamSocketPool({
   }, []);
   const openContext = useCallback((workstreamId: string): WorkstreamSocketOpenContext => {
     const state = admittedWorkstreamIdsRef.current.has(workstreamId)
+      || backgroundWorkstreamIdsRef.current.has(workstreamId)
       ? 'retained_pair' as const
       : controlWarmRef.current?.workstreamId === workstreamId ? 'control_warmup' as const : 'cold' as const;
     const socketLeaseId = socketLeaseIdsRef.current.get(workstreamId);
@@ -311,9 +310,8 @@ export function WorkstreamSocketPool({
           activeWorkstreamId={activeWorkstreamId}
           admittedWorkstreamIds={admittedWorkstreamIds}
           api={api}
-          backgroundWorkstreamIds={backgroundWorkstreamIds}
+          backgroundWorkstreamIds={backgroundWorkstreamIdSet}
           controlWarmWorkstreamId={controlWarm?.workstreamId ?? null}
-          onAdmit={admit}
           onConnection={publishConnection}
           onRelease={release}
           socketLeaseIds={socketLeaseIds}

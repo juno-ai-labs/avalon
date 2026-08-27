@@ -19,7 +19,9 @@ socket owner, ticket audience, event types, query keys, and URL path use
 The promise it makes is narrow and worth stating plainly: a socket is opened
 only by someone who just proved, over an authenticated HTTP request, that they
 may open that exact socket — and proving it leaves no credential anywhere a URL
-is recorded.
+is recorded. [`websocket-architecture.md`](websocket-architecture.md) owns the
+client/server topology, Electron process split, proactive work-stream swarm, and
+connection lifecycle around that admission protocol.
 
 ## Where the code lives
 
@@ -40,9 +42,12 @@ is recorded.
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.ts` | Applies complete waterlined WorkstreamDO metadata snapshots to detail and sidebar caches. |
 | `apps/desktop/src/renderer/lib/workstream-state-store.ts` | Shared common/viewer and WorkspaceDO-directory waterline ledgers used by both parent sockets; independently rejects stale state fields and older pin/page fields. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.ts` | Opens block sockets only while HyperSight is visible, applies full stream checkpoints, rejects stale revisions, and reconnects without duplicate text. |
-| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps the selected/running SubstreamAgent feed and invokes the separate WorkstreamDO control lifecycle. |
+| `apps/desktop/src/renderer/lib/use-workstream-socket.ts` | Keeps a pooled SubstreamAgent feed, explicitly disables legacy feed-derived presence, and invokes the separate WorkstreamDO control lifecycle. |
 | `packages/contracts/src/workstream-transcript.ts` | Ordered turn/block, snapshot-fenced range, gap coverage, and nested UTC activity contracts used by the SubstreamAgent feed. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.tsx` | Owns the work-stream sockets above the route, gives each mounted owner one opaque lease ID shared by its control/feed starts, warms one presence-free WorkstreamDO control socket after a one-second sidebar hover, and retains recently viewed work-stream pairs without remounting their connection hooks. |
+| `apps/desktop/src/renderer/lib/realtime-socket.ts` | Preserves the browser `WebSocket` event/readiness contract for the work-stream hooks while routing Electron transport through one socket-ID-multiplexed privileged-bridge listener; browser development keeps the native constructor. |
+| `apps/desktop/src/common/realtime-socket-validation.ts`, `apps/desktop/src/main/realtime-socket-ipc.ts` | Share strict dependency-free event/channel validation and register the main-window-only IPC capability. |
+| `apps/desktop/src/main/realtime-socket-broker.ts` | Owns Electron's WorkstreamDO and SubstreamAgent TCP/TLS handshakes in Node, fixes the application Origin, follows the complete ordered PAC route, enforces the shared frame ceiling, and closes every owned connection when its renderer goes away. |
 | `apps/desktop/src/renderer/lib/api.ts` | Parses every ticket response, strips the deprecated query ticket, and attaches the handshake subprotocols. |
 
 ## How it works
@@ -66,10 +71,13 @@ admission is split in two.
    route, the edge, and the room all hold. See
    [`performance-tracing.md`](performance-tracing.md).
 2. **Present.** The client opens the socket with the ticket as the second
-   `WebSocket` constructor argument: `[rally.ticket.v1, <ticket>]`. The browser
-   sends those as `Sec-WebSocket-Protocol`, the one request header it will carry
-   on a handshake. A ticket is a compact JWS — base64url joined by dots — which
-   is a legal subprotocol token, so it needs no encoding.
+   protocol: `[rally.ticket.v1, <ticket>]`. Native browser sockets send those
+   from the `WebSocket` constructor; Electron's work-stream broker passes the
+   same pair from Node's `ws` client and supplies the fixed application Origin.
+   Both become `Sec-WebSocket-Protocol`, the handshake header available for
+   browser-compatible ticket presentation. A ticket is a compact JWS —
+   base64url joined by dots — which is a legal subprotocol token, so it needs no
+   encoding.
 3. **Verify.** The Worker checks the `Upgrade` header and the exact `Origin`,
    reads the ticket off the offer, verifies the signature and the claims, and
    rejects a region or work-stream mismatch.
@@ -139,22 +147,40 @@ server pattern](https://developers.cloudflare.com/durable-objects/examples/webso
 
 ### Electron connection topology
 
-Each authenticated Electron renderer window maintains exactly one WorkspaceDO
-socket for the active workspace. It is not recreated when the user changes work
-streams. Main, standalone Settings, and Meeting windows therefore converge
-independently without routing product data through main-process IPC. For
-each selected or still-running work stream, the desktop also maintains one
-WorkstreamDO metadata socket and one SubstreamAgent feed socket. While the
-HyperSight panel is visible it additionally maintains one direct socket per
+The main authenticated Electron renderer maintains exactly one native Chromium
+WorkspaceDO socket for the active workspace. It is not recreated when the user
+changes work streams. For each active work stream, every pinned work stream,
+the five most recently active unpinned work streams, and any other running work
+stream, the desktop also maintains one WorkstreamDO metadata socket and one
+SubstreamAgent feed socket. The renderer still owns both protocol state
+machines, caches, subscriptions, replay, heartbeat, reconnect jitter, and
+telemetry. Only their raw Electron transport crosses the typed preload bridge
+to a main-process Node broker. That broker starts every initial handshake as
+soon as its ticket arrives, so Chromium's same-endpoint CONNECTING lock cannot
+serialize a swarm; the control and feed ticket requests and handshakes do not
+await one another. Main-to-renderer events use one bridge listener and an O(1)
+socket-ID lookup rather than broadcasting every frame to every warmed adapter.
+Browser development continues to use native WebSockets.
+The Node broker resolves every new destination through Electron's system/PAC
+proxy configuration and trusts both Node's bundled roots and the operating
+system CA store. Moving handshakes out of Chromium therefore does not opt the
+work-stream swarm out of managed-network routing or locally installed trust.
+Semicolon-delimited directives retain their order: a failed pre-open attempt
+advances to the next resolved proxy, and `DIRECT` is available only when policy
+returned it. Node and the two object endpoints use one shared 1 MB maximum
+application-frame size instead of `ws`'s 100 MB default.
+While the HyperSight panel is visible it additionally maintains one direct socket per
 configured block. Switching away keeps the exact metadata/feed socket pair
 mounted for at least five minutes, so returning to a recently viewed work stream
 does not spend another ticket request, handshake, subscribe, or snapshot. The
 five-minute clock restarts each time the work stream leaves the foreground;
-background-running conversation streams remain connected beyond it. Holding a
+background-running, pinned, and five-most-recent conversation streams remain
+connected beyond it while they retain that role. Holding a
 pointer over any sidebar work-stream row for one second warms only its
-WorkstreamDO control socket before navigation. The SubstreamAgent feed remains
-closed until the work stream is actually selected, because subscribing that
-feed publishes the user as a current viewer. Selection immediately admits the
+WorkstreamDO control socket before navigation. For a row that is neither
+active, pinned, recent, running, nor retained, the SubstreamAgent feed remains
+closed until the work stream is actually selected; hover by itself never adds a
+feed. Selection immediately admits the
 feed and starts its snapshot while the independently owned control socket
 connects alongside it; neither waits for detail REST or the other's metadata.
 Leaving, cancelling the pointer, unmounting the row, or opening it before the
@@ -344,6 +370,11 @@ Those retained metadata/feed sockets are deliberately not presence. Electron
 main reports whether the Rally application has any focused window; each
 renderer combines that with its own document/window focus and active route,
 then reports the result over the persistent WorkspaceDO socket after subscribe.
+Current SubstreamAgent subscriptions send `publishPresence: false`, so an
+inactive pin or recent row never enters the legacy feed viewer set. Omitted
+fields still default to `true` for older clients during compatibility, but the
+current renderer ignores `presence_changed` and resolves the inspector viewer
+list exclusively from WorkspaceDO's foreground user IDs.
 WorkspaceDO answers with a viewer-scoped snapshot for that one foreground work
 stream and excludes the viewer. This separates transport warmth from attention
 without adding another connection, heartbeat, or hibernation wake-up.
@@ -530,6 +561,7 @@ client message IDs make reconnect resend idempotent.
 | `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
+| `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial-read admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent feed reconnect/resync, streaming, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
@@ -563,6 +595,87 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-26 — Proactive feeds stop publishing legacy presence
+
+**What changed:** Electron's pooled SubstreamAgent subscriptions now send
+`publishPresence: false`; the renderer ignores legacy `presence_changed` frames
+and resolves non-participant viewers from WorkspaceDO foreground presence. The
+Node broker tries Electron's entire supported PAC route in order and uses the
+same 1 MB frame ceiling enforced by WorkstreamDO and SubstreamAgent.
+
+**Why:** Feed liveness became a warming signal once pins and recent rows stayed
+connected, so it could no longer mean “Viewing now.” Dropping PAC fallback hops
+and retaining `ws`'s 100 MB default also made the new transport behave
+differently from Chromium and the application protocol.
+
+**Considered and rejected:** Rendering WorkspaceDO presence while continuing to
+publish feed presence would leave durable event churn and other consumers
+wrong. An implicit direct fallback would violate managed-network policy.
+
+**Consequences:** Older clients preserve their legacy default, current Rally has
+one foreground-presence authority, PAC route order is part of the broker
+contract, and application frame bounds are transport-independent.
+
+Shipped in #341.
+
+### 2026-08-26 — Node socket transport retains Electron network policy
+
+**What changed:** The work-stream socket broker now resolves proxies through
+Electron and includes operating-system CA roots, tears down owners when a
+renderer process exits, validates browser-compatible close codes and UTF-8
+reason length, and fails closed if the native close call throws.
+
+**Why:** Independent handshakes remove Chromium's endpoint queue, but raw Node
+defaults do not automatically inherit Electron's proxy selection or platform
+trust. Lifecycle and close-frame edges also need to preserve the invariant that
+no socket remains addressable after its owner or close operation fails.
+
+**Considered and rejected:** Separate Chromium sessions preserve browser
+networking but duplicate session state and reintroduce the complexity the raw
+transport broker was chosen to avoid. Silently falling back to a direct
+connection after an unsupported proxy directive would bypass network policy.
+
+**Consequences:** A proxy-resolution failure is a connection failure rather
+than a direct-network fallback. Browser and broker close validation now agree,
+and renderer crashes release their socket swarm immediately.
+
+Shipped in #341.
+
+### 2026-08-26 — Electron opens work-stream socket swarms outside Chromium's endpoint lock
+
+**What changed:** Electron's WorkstreamDO control and SubstreamAgent feed
+connections now use a main-process Node broker behind a WebSocket-compatible
+renderer adapter. The pool proactively owns both sockets for the active work
+stream, every pin, the five most recently active unpinned work streams, and any
+additional running work stream. Initial ticket requests and broker dials start
+independently; reconnects retain their existing jitter. The singleton
+WorkspaceDO, HyperSight block, dictation, and browser-development sockets keep
+their existing transport.
+
+**Why:** Chromium serializes simultaneous WebSocket handshakes that resolve to
+the same endpoint. A cold group therefore queued behind earlier handshakes even
+though every target was a different Durable Object, defeating proactive
+warming and making a later sidebar selection pay the queue. Node connections
+do not share that Chromium gate.
+
+**Considered and rejected:** Separate Chromium sessions would also create
+independent endpoint locks, but each session carries its own browser storage,
+cache, proxy, certificate, and lifecycle surface. Moving protocol and cache
+ownership into main would duplicate the mature renderer state machines. The
+broker therefore owns only raw transport and exposes the same event contract
+back to those state machines.
+
+**Consequences:** Main accepts this capability only from the primary Rally
+window, validates a configured regional `ws`/`wss` origin, exact declared route
+shape, clean URL, and ticket sentinel, and supplies `app://rallywithai` itself.
+Ticket values never enter logs. Reloading or destroying the renderer terminates
+all of its broker sockets. A new per-work-stream socket kind must update the
+typed IPC schemas and the route-kind validator rather than accepting an
+arbitrary URL. The renderer must retain one multiplexed bridge subscription;
+adding one preload listener per socket makes every frame scale with the swarm.
+
+Shipped in #341.
 
 ### 2026-08-26 — Workspace presence describes foreground attention, not socket warmth
 

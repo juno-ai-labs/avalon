@@ -127,6 +127,11 @@ import {
   type MessageExportWindow,
 } from './message-export';
 import { MenuBarOpenObserver } from './menu-bar-open-observer';
+import {
+  RealtimeSocketBroker,
+  createNodeRealtimeSocketFactory,
+} from './realtime-socket-broker';
+import { registerRealtimeSocketIpc } from './realtime-socket-ipc';
 import { invalidateActiveNativeCrashGeneration, prepareNativeCrashGeneration } from './native-crash-generation';
 import { NativeCrashUploader } from './native-crash-uploader';
 import { ProductAnalyticsSettingsController } from './product-analytics-settings';
@@ -432,6 +437,9 @@ let updateStatus: UpdateStatus = { kind: 'idle' };
 let autoUpdateController: AutoUpdateController | null = null;
 let updateInstallationPending = false;
 let developmentDockIconUsesAppearancePreview = false;
+const realtimeSocketBroker = new RealtimeSocketBroker(createNodeRealtimeSocketFactory(
+  (url) => electronSession.defaultSession.resolveProxy(url),
+));
 let telemetryIdentity: TelemetryIdentity | null = null;
 let telemetryRoute: ResolvedTelemetryRoute = {
   route: 'global',
@@ -2373,6 +2381,13 @@ function assertMeetingIpcSender(event: IpcMainInvokeEvent): void {
   }
 }
 
+function assertMainWindowIpcSender(event: IpcMainInvokeEvent): void {
+  assertTrustedIpcSender(event);
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('Only the main Rally window can open realtime sockets');
+  }
+}
+
 function meetingAudioPermissionDependencies() {
   return {
     askForMicrophoneAccess: () => systemPreferences.askForMediaAccess('microphone'),
@@ -2381,6 +2396,12 @@ function meetingAudioPermissionDependencies() {
 }
 
 function registerIpc(): void {
+  registerRealtimeSocketIpc({
+    apiBaseUrls: Object.values(runtimeConfig().api),
+    assertSender: assertMainWindowIpcSender,
+    broker: realtimeSocketBroker,
+    ipc: ipcMain,
+  });
   ipcMain.handle('runtime:get-config', (event) => {
     assertTrustedIpcSender(event);
     return runtimeConfig();
@@ -3300,16 +3321,24 @@ async function createMainWindow(): Promise<void> {
       allowRunningInsecureContent: false,
     },
   });
+  const mainWindowWebContentsId = mainWindow.webContents.id;
 
   installWindowDiagnostics(mainWindow, 'main');
+  mainWindow.webContents.on('render-process-gone', () => {
+    realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+  });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
     // Hash-router transitions are same-document navigations. Treating them as
     // a renderer restart strands later OAuth/invitation callbacks in the main
     // process queue because React never remounts to consume that queue.
-    if (isMainFrame && !isInPlace) rendererReady = false;
+    if (isMainFrame && !isInPlace) {
+      realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
+      rendererReady = false;
+    }
   });
   mainWindow.on('closed', () => {
+    realtimeSocketBroker.closeOwner(mainWindowWebContentsId);
     rendererReady = false;
     mainWindow = null;
   });

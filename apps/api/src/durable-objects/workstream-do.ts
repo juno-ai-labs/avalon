@@ -3,6 +3,7 @@ import {
   BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
   UserIdSchema,
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
@@ -75,6 +76,16 @@ const ForwardedEffectsSchema = z.object({
   envelopes: z.array(WorkstreamRegionalEffectEnvelopeSchema).min(1).max(25),
 }).strict();
 export type ForwardedEffects = z.infer<typeof ForwardedEffectsSchema>;
+
+const realtimeTextEncoder = new TextEncoder();
+
+function workstreamControlPayload(event: WorkstreamControlSocketEvent): string {
+  const payload = JSON.stringify(WorkstreamControlSocketEventSchema.parse(event));
+  if (realtimeTextEncoder.encode(payload).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+    throw new Error("Work-stream control event exceeds the bounded frame size");
+  }
+  return payload;
+}
 
 interface ProjectionKeyRow extends Record<string, SqlStorageValue> {
   next_version: number;
@@ -916,11 +927,11 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       return;
     }
     socket.serializeAttachment({ ...attachment, subscribed: true });
-    socket.send(JSON.stringify(WorkstreamControlSocketEventSchema.parse({
+    socket.send(workstreamControlPayload({
       type: "workstream_metadata",
       occurredAt: new Date().toISOString(),
       metadata,
-    })));
+    }));
   }
 
   override webSocketClose(): void {
@@ -1489,7 +1500,7 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       }
     }
     if (activeUsers.size === 0) return;
-    const payload = JSON.stringify(WorkstreamControlSocketEventSchema.parse(event));
+    const payload = workstreamControlPayload(event);
     for (const socket of sockets) {
       const attachment = readSocketAttachment(socket);
       if (!attachment?.subscribed || !activeUsers.has(attachment.userId)) continue;
@@ -2214,11 +2225,11 @@ export class WorkstreamDO extends ScheduledDurableObject<Env> {
       }
       const metadata = this.metadataForUser(attachment.userId);
       if (!metadata) continue;
-      socket.send(JSON.stringify(WorkstreamControlSocketEventSchema.parse({
+      socket.send(workstreamControlPayload({
         type: "workstream_metadata",
         occurredAt,
         metadata,
-      })));
+      }));
     }
   }
 

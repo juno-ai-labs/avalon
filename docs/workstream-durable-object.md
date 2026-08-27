@@ -247,10 +247,10 @@ one persistent workspace connection
   <- versioned workspace query-topic invalidations
   -> create_message naming the target work stream/substream
 
-one connection per selected or background-running work stream
+one connection per active, pinned, recent-five, live-state, or retained work stream
   <- WorkstreamDO complete independently waterlined common + viewer metadata
 
-one connection per selected or background-running substream
+one substream `0` connection for the same proactive and retained work-stream set
   <- SubstreamAgent snapshot / stream frames / product events
   <- direct download and reconnect feed for exactly one substream
 
@@ -289,6 +289,10 @@ feed sockets: those remain open in the background precisely to make switching
 instantaneous. There is no presence SQL table, alarm, timeout, or expiry guess;
 healthy attachments survive hibernation and socket close/error removes their
 contribution.
+Current Electron feed subscriptions explicitly set `publishPresence: false`,
+and the work-stream UI ignores the legacy `presence_changed` event. Older
+clients that omit the field keep its compatibility default, but WorkspaceDO is
+the sole presence authority for the current client.
 No presence state or recovery travels over REST. The existing HTTP ticket
 exchange may establish the WebSocket, but every presence update and snapshot
 after that handshake is a non-replayed socket frame.
@@ -943,6 +947,8 @@ constructor migrations, per-object SQL isolation across eviction, keep-alive
 alarms, `WorkstreamDO` aggregation and metadata snapshots, hibernating workspace
 and work-stream control sockets, foreground presence across WorkspaceDO eviction
 plus inaccessible-work-stream rejection, typed native-RPC success/conflict envelopes,
+complete initial directory delivery across all four live execution states even
+past 1,250 combined rows, presence-free proactive feed subscriptions,
 bidirectional message pages without room-cursor movement, page revocation,
 compaction recovery, HyperSight checkpoint recovery/revocation, socket
 revocation across all four roles, obsolete queued
@@ -1051,9 +1057,14 @@ revalidates D1 membership, and each command invokes the selected child through
 the Worker-side client. Cross-object relationships carry stable IDs, versions,
 and hashes; no SQL join crosses a Durable Object boundary.
 
-Visibility enumeration is cursor-paged by work-stream ID with a hard 250-row
-page limit. Callers follow `nextCursor`; no RPC materializes every visible work
-stream for a large workspace in one object invocation.
+Generic visibility enumeration for mass operations is cursor-paged by
+work-stream ID with a hard 250-row page limit, and callers follow `nextCursor`.
+The desktop directory is a different recency cursor: its first response returns
+up to 250 recent unpinned rows plus every visible pin and every visible
+`running`, `interrupting`, `preparing_context`, or `waiting_capacity` row. That
+combined synchronization response has no separate row cap because those live
+rows are authoritative proactive-connection targets; subsequent recency pages
+remain bounded and exclude the supplemented rows.
 
 ### `WorkstreamDO`
 
@@ -1275,6 +1286,33 @@ faithful `started` state it owns. An already committed replay is read-only and
 does not require disconnection.
 It may never claim exact historical Bind state unless a byte-faithful source for
 that loop boundary exists.
+
+### 2026-08-26 — Proactive feed warmth no longer changes viewer presence
+
+**What changed:** SubstreamAgent subscription attachments now carry a
+backward-compatible `publishPresence` flag. Current Electron feeds set it to
+false, legacy viewer broadcasts and close updates exclude those sockets, and
+the UI resolves current viewers from WorkspaceDO. The first directory response
+also accepts every live-state row beyond both the 250-row recent page and 1,250
+combined entries.
+
+**Why:** A proactive feed can stay connected for an inactive pin or recent work
+stream, so subscriber count is no longer foreground attention. The complete
+live-state set can legitimately exceed the former arithmetic parser maximum and
+must not make workspace subscription fail.
+
+**Considered and rejected:** Closing background feeds would forfeit the warm
+open. Filtering only at render time would retain false presence broadcasts and
+durable event churn. Truncating live rows would leave precisely the oldest
+active runs cold.
+
+**Consequences, and what a future change has to respect:** WorkspaceDO remains
+the current client's sole presence authority. Legacy clients continue working
+without the new field, while all new proactive feed clients must opt out. The
+recent directory remains paged, but pins and live states are complete on the
+first response.
+
+Shipped in #341.
 
 ### 2026-08-26 — Foreground presence is explicit on the workspace socket
 
