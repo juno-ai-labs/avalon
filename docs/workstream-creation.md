@@ -242,6 +242,13 @@ than whichever rejection landed first.
   awaited drain below: it rides the ordinary outbox and alarm, so it lands after
   the response. See
   [`workstream-durable-object.md`](workstream-durable-object.md#2026-08-25--being-named-at-creation-tells-the-person-when-the-caller-says-to).
+- **`ComposerInput` drops a keydown belonging to an IME composition before any
+  host sees it.** The guard is the first statement of its `onKeyDown`, so
+  mention navigation, popover dismissal, and slash commands are all written as
+  though compositions did not exist. A host that adds key handling inherits
+  that; a change that moves the guard below `onKeyDown?.(event)` hands every
+  host the keys the IME still owns, and each of them would have to learn the
+  rule again.
 - **Both launchers seed both queries, through `launchedWorkstreamDetail`.** The
   work-stream screen loads on either query being absent, so seeding one of the
   two still lands on the full-screen orb; and two hand-built details would drift
@@ -330,6 +337,13 @@ see
   `apps/desktop/src/renderer/lib/transcript.test.ts` cover the destination side:
   a scheduled run cannot paint `Ready to begin`, and an unmatched routed opening
   turn remains until the ordered projection supplies its logical replacement.
+- `apps/desktop/src/renderer/components/composer-input.test.tsx` —
+  `pnpm --filter @rally/desktop exec vitest run src/renderer/components/composer-input.test.tsx`.
+  Covers the shared composer's keyboard contract: Enter submits, `shouldSubmitOnEnter`
+  can refuse it, and nothing an IME composition owns reaches either this
+  composer's submit or the host's own `onKeyDown` — including that the blocked
+  keystroke is left uncancelled, so the IME still receives it. `lib/ime.test.ts`
+  covers the predicate underneath.
 - `apps/api/test/workstream-create-latency.test.ts` —
   `pnpm --filter @rally/api exec vitest run test/workstream-create-latency.test.ts`.
   Covers what the create finishes before it answers: the run started, the route
@@ -376,6 +390,32 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-27 — The composer owns IME composition, so no host has to
+
+**What changed:** `ComposerInput` drops any keydown belonging to an in-flight
+IME composition as the first statement of its `onKeyDown`, before the host's
+handler and before its own Enter. The predicate both it and
+`use-mention-navigation.ts` read is `renderer/lib/ime.ts`, which is where the
+reasoning now lives; the work-stream composer's own copy of the guard is gone.
+
+**Why:** the guard first landed as a copy in each of three separate keydown
+handlers, and in this one it sat *below* `onKeyDown?.(event)` — so a host still
+received the Enter and the Tab that commit a composition, and the work-stream
+composer's slash-command hijack could still run a command (`/stop` among them)
+on a keystroke that was only finishing a Japanese word. Pushing it
+into the primitive was chosen over fixing the three copies because every host's
+key handling is mention navigation, popover dismissal, and slash commands, and
+none of those wants a composing key: there was no host to keep the escape hatch
+for. On macOS the IME's candidate window covers those popovers anyway, so a
+dismissal the host performed would be a state change nobody could see.
+
+**Consequences:** a host may assume its `onKeyDown` never fires mid-composition,
+and the prop says so. Anything that needs those keys — a composer that wants to
+watch a composition as it happens — has to take them from the composition events
+rather than from `onKeyDown`, or move the guard, which is the invariant above.
+A field that is *not* a `ComposerInput` still keeps its own copy: the onboarding
+organization-name input and the header's inline rename editor both do.
 
 ### 2026-08-26 — The scheduled hand-off cannot regress to “Ready to begin”
 

@@ -363,11 +363,12 @@ export function WorkstreamComposer({
         onAttach={onAttach}
         onKeyDown={(event) => {
           if (mentionNavigation.handleKeyDown(event)) return;
-          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
           if (event.key === 'Escape' && (mentionQuery !== null || visibleCommands.length > 0)) {
-            // Prevented like the other two composers do, and only when there is
-            // something here to dismiss: an Escape this composer ignores should
-            // keep travelling to whatever else is listening for it.
+            // ComposerInput never hands a host a keydown belonging to an
+            // in-flight IME composition, so this Escape is always a dismissal
+            // rather than a candidate being abandoned. Prevented only when
+            // there is something here to dismiss: an Escape this composer
+            // ignores should keep travelling to whatever else is listening.
             event.preventDefault();
             if (mentionQuery !== null) setMentionQuery(null);
             if (visibleCommands.length > 0) setSlashDismissed(true);
