@@ -111,6 +111,24 @@ describe('identity-first onboarding screens', () => {
     ));
   });
 
+  it('does not create the organization when Enter only commits an IME composition', async () => {
+    render(<RegionOnboarding />);
+    const nameField = screen.getByRole('textbox', { name: 'Organization name' });
+    fireEvent.change(nameField, { target: { value: 'Acme Research' } });
+
+    fireEvent.keyDown(nameField, { key: 'Enter', isComposing: true });
+    expect(sessionState.finishWorkspaceSetup).not.toHaveBeenCalled();
+
+    // Safari reports the composition only as the legacy keycode.
+    fireEvent.keyDown(nameField, { key: 'Enter', keyCode: 229 });
+    expect(sessionState.finishWorkspaceSetup).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(nameField, { key: 'Enter' });
+    await waitFor(() => expect(sessionState.finishWorkspaceSetup).toHaveBeenCalledWith(
+      'Acme Research', 'global', telemetry.operationId,
+    ));
+  });
+
   it('shows Terminal as unavailable only while the European Union region is selected', () => {
     render(<RegionOnboarding />);
 

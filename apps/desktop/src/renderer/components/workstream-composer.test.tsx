@@ -266,6 +266,28 @@ describe('WorkstreamComposer mention confirmation', () => {
     expect(screen.queryByRole('listbox', { name: 'Composer commands' })).not.toBeInTheDocument();
   });
 
+  it('does not let a composition-committing Enter run the slash command it is displaying', async () => {
+    renderComposer();
+
+    const composer = screen.getByLabelText('Message the work stream');
+    fireEvent.change(composer, { target: { value: '/part' } });
+
+    const commands = screen.getByRole('listbox', { name: 'Composer commands' });
+    expect(commands).toBeVisible();
+
+    fireEvent.keyDown(composer, { key: 'Enter', isComposing: true });
+    expect(composer).toHaveValue('/part');
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+
+    // Safari reports the composition only as the legacy keycode.
+    fireEvent.keyDown(composer, { key: 'Enter', keyCode: 229 });
+    expect(composer).toHaveValue('/part');
+    expect(screen.queryByRole('listbox', { name: 'Mentions' })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(composer, { key: 'Enter' });
+    await waitFor(() => expect(composer).toHaveValue('@'));
+  });
+
   it('confirms every mentioned nonparticipant together and sends their IDs without a preliminary add', async () => {
     const onSend = vi.fn(async () => undefined);
     renderComposer(onSend, false, undefined, { ...workstream, scope: 'personal' });

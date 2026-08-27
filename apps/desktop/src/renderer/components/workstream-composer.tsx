@@ -363,6 +363,7 @@ export function WorkstreamComposer({
         onAttach={onAttach}
         onKeyDown={(event) => {
           if (mentionNavigation.handleKeyDown(event)) return;
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
           if (event.key === 'Escape' && (mentionQuery !== null || visibleCommands.length > 0)) {
             // Prevented like the other two composers do, and only when there is
             // something here to dismiss: an Escape this composer ignores should
