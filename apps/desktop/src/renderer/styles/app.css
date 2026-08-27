@@ -305,28 +305,51 @@ pre {
 .avatar-stack .avatar {
   border: 2px solid var(--av-sys-color-surface-default);
   position: relative;
+  transition: border-color 180ms ease;
   z-index: 1;
 }
 
 .avatar-presence-ping {
-  animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;
+  animation: avatar-presence-ping 10s cubic-bezier(0, 0, .2, 1) infinite;
+  animation-delay: 420ms;
   background: color-mix(in srgb, var(--av-sys-color-success-base) 35%, transparent);
   border-radius: var(--av-sys-size-radius-pill);
   inset: 0;
+  opacity: 0;
   pointer-events: none;
   position: absolute;
+  transform: scale(1);
   z-index: 1;
 }
 
+.avatar-stack-item.is-present > .avatar {
+  animation: avatar-presence-entry 420ms cubic-bezier(.2, .75, .24, 1);
+  border-color: var(--av-sys-color-brand-base);
+}
+
 @keyframes avatar-presence-ping {
-  75%, 100% { opacity: 0; transform: scale(2); }
+  0% { opacity: 1; transform: scale(1); }
+  20%, 100% { opacity: 0; transform: scale(2); }
+}
+
+@keyframes avatar-presence-entry {
+  0%, 100% { transform: translateY(0); }
+  42% { transform: translateY(-3px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .avatar-stack .avatar {
+    transition: none;
+  }
+
   .avatar-presence-ping {
     animation: none;
     opacity: .3;
     transform: scale(1.35);
+  }
+
+  .avatar-stack-item.is-present > .avatar {
+    animation: none;
   }
 }
 
