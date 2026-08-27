@@ -990,7 +990,6 @@ export function createDaytonaTerminalProvider(
           `git -C /workspace/repository.git merge-base --is-ancestor ${shellQuote(input.baseSha)} ${shellQuote(input.headSha)}`,
           "publish_stage=remote_verify",
           `git -C /workspace/repository.git remote add origin ${shellQuote(repositoryUrl)}`,
-          `git -C /workspace/repository.git config ${shellQuote(`http.${repositoryUrl}.extraheader`)} "Authorization: Basic $GITHUB_WRITE_BASIC"`,
           `remote_sha=$(git -C /workspace/repository.git ls-remote origin ${shellQuote(`refs/heads/${input.headRef}`)} | cut -f1)`,
           `test "$remote_sha" = ${shellQuote(expectedOld)}`,
           "publish_stage=remote_push",
@@ -1004,7 +1003,11 @@ export function createDaytonaTerminalProvider(
         const result = await measureRequest("process.execute_utility", () => publisher!.process!.executeCommand!(
           `bash -lc ${shellQuote(command)}`,
           "/workspace",
-          { GITHUB_WRITE_BASIC: input.githubBasicCredential },
+          {
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: `http.${repositoryUrl}.extraheader`,
+            GIT_CONFIG_VALUE_0: `Authorization: Basic ${input.githubBasicCredential}`,
+          },
           180,
         ));
         if ((result.exitCode ?? 1) !== 0) {
