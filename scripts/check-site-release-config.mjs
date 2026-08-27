@@ -3,13 +3,16 @@
 // actually live.
 //
 // apps/site/release.config.json is the site's source of truth for the version
-// it shows. A desktop release rewrites that file on the runner and deploys the
-// site in the same run, so a release always ships accurate information — but
-// the rewritten file is only committed afterwards. Between those two points a
-// standalone site deploy would rebuild from the older committed copy and
-// advertise a superseded version. The download link is the canonical
-// Avalon.dmg either way, so this is a wrong version string rather than a broken
-// download, which is exactly the kind of thing to catch in CI.
+// it shows. A desktop release rewrites that file on its own runner when it
+// promotes the channel, commits it back to main, and only then deploys the
+// site from a worktree of main's tip — so both that deploy and every later
+// standalone one build from a committed copy. Between the promotion and the
+// record commit, a standalone site deploy would still rebuild from the older
+// committed copy and advertise a superseded version; both deploy workflows
+// run this check immediately before publishing to catch exactly that. The
+// download link is the canonical Avalon.dmg either way, so this is a wrong
+// version string rather than a broken download, which is exactly the kind of
+// thing to catch in CI.
 //
 // A network failure is not a mismatch: the check reports and passes, because
 // blocking a copy fix on a CDN blip is worse than shipping a version string
@@ -22,7 +25,11 @@ import { fileURLToPath } from "node:url";
 import { isEntryPoint } from "./entry-point.mjs";
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const configPath = resolve(repositoryDirectory, "apps/site/release.config.json");
+// Resolved from this script's own location, never the working directory: the
+// desktop release invokes this file by absolute path inside a worktree of
+// main's tip while the shell stays in the release checkout, and it must read
+// the worktree's committed config — the one about to be deployed.
+export const configPath = resolve(repositoryDirectory, "apps/site/release.config.json");
 
 export function channelVersionFrom(manifestText) {
   const version = /^version:\s*["']?([^"'\s]+)["']?\s*$/mu.exec(manifestText)?.[1];
