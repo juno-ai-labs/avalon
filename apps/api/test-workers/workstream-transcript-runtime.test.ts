@@ -122,6 +122,163 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
+  it("explicitly abandons only a lease-less pre-cutover run before backfill", async () => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, origin, created_at, updated_at)
+        VALUES ('pre-cutover-lease-less-run', '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'slack_workspace_opening_message', 1, 1)`);
+    });
+
+    const cleanup = await stub.abandonPreCutoverRunsForTranscriptBackfill({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000716",
+      cutoverVersion: 27,
+    });
+    expect(cleanup).toEqual({
+      abandonedRunCount: 1,
+      cleanupOperatorRunId: "00000000-0000-7000-8000-000000000716",
+    });
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(`INSERT INTO transcript_activities
+        (activity_id, parent_activity_id, scope, subject_id, call_index, label,
+         lifecycle_state, revision, created_at, updated_at)
+        VALUES ('backfill-blocker', NULL, 'response', 'backfill-blocker', NULL,
+                'Working', 'active', 1, 1, 1)`);
+      await expect(instance.backfillLegacyTranscript({
+        objectId: id.toString(),
+        operatorRunId: "00000000-0000-7000-8000-000000000716",
+        cutoverVersion: 27,
+      })).rejects.toThrow("legacy_transcript_backfill_not_quiescent");
+      state.storage.sql.exec(`UPDATE transcript_activities
+        SET lifecycle_state = 'completed', revision = 2, updated_at = 2
+        WHERE activity_id = 'backfill-blocker'`);
+    });
+    expect(await stub.abandonPreCutoverRunsForTranscriptBackfill({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000717",
+      cutoverVersion: 27,
+    })).toEqual({
+      abandonedRunCount: 1,
+      cleanupOperatorRunId: "00000000-0000-7000-8000-000000000716",
+    });
+    const outcome = await stub.backfillLegacyTranscript({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000717",
+      cutoverVersion: 27,
+    });
+    expect(outcome).toMatchObject({ applied: true, verified: true });
+    expect(await stub.abandonPreCutoverRunsForTranscriptBackfill({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000717",
+      cutoverVersion: 27,
+    })).toEqual({
+      abandonedRunCount: 1,
+      cleanupOperatorRunId: "00000000-0000-7000-8000-000000000716",
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.storage.sql.exec<{
+        status: string;
+        terminal_reason: string | null;
+        error_code: string | null;
+      }>(`SELECT status, terminal_reason, json_extract(error_json, '$.code') AS error_code
+            FROM runs WHERE run_id = 'pre-cutover-lease-less-run'`).one()).toEqual({
+        status: "failed",
+        terminal_reason: "migration_cutover_abandoned",
+        error_code: "migration_cutover_abandoned",
+      });
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count
+        FROM legacy_transcript_backfills`).one().count).toBe(1);
+      expect(state.storage.sql.exec<{
+        exact_state: string;
+        state_reason_code: string;
+      }>(`SELECT exact_state, state_reason_code FROM workstream WHERE id = 1`).one()).toEqual({
+        exact_state: "failed",
+        state_reason_code: "runtime_failed",
+      });
+      expect(state.storage.sql.exec<{
+        operator_run_id: string;
+        abandoned_run_count: number;
+      }>(`SELECT operator_run_id, abandoned_run_count
+            FROM legacy_transcript_cleanup_receipts`).one()).toEqual({
+        operator_run_id: "00000000-0000-7000-8000-000000000716",
+        abandoned_run_count: 1,
+      });
+    });
+  });
+
+  it.each([
+    { name: "attempt id", attemptId: "live-attempt", leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: false, openReceipt: false },
+    { name: "lease owner", attemptId: null, leaseOwner: "live-owner",
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: false, openReceipt: false },
+    { name: "lease deadline", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: 4_102_444_800_000, heartbeatAt: null, afterCutover: false, openReceipt: false },
+    { name: "heartbeat", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: 1, afterCutover: false, openReceipt: false },
+    { name: "post-cutover start", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: true, openReceipt: false },
+    { name: "open tool receipt", attemptId: null, leaseOwner: null,
+      leaseExpiresAt: null, heartbeatAt: null, afterCutover: false, openReceipt: true },
+  ])("refuses to abandon a run with a $name", async ({
+    attemptId,
+    leaseOwner,
+    leaseExpiresAt,
+    heartbeatAt,
+    afterCutover,
+    openReceipt,
+  }) => {
+    const id = env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    );
+    const stub = env.SUBSTREAM_AGENTS.get(id);
+    await runInDurableObject(stub, async (instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const cutover = Number(state.storage.sql.exec<{ applied_at: number }>(
+        `SELECT applied_at FROM _sql_schema_migrations WHERE version = 27`,
+      ).one().applied_at);
+      state.storage.sql.exec(`INSERT INTO runs
+        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+         next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+         idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+         input_tokens, output_tokens, cost_micros, output_bytes, legacy_attempt_id,
+         lease_owner, lease_expires_at, heartbeat_at, created_at, updated_at)
+        VALUES ('guarded-pre-cutover-run', '0', 'running', '{}', 0, 0, '', 0, 0, ?1,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?2, ?3, ?4, ?5, 1, 1)`,
+      afterCutover ? cutover + 1 : cutover - 1,
+      attemptId,
+      leaseOwner,
+      leaseExpiresAt,
+      heartbeatAt);
+      if (openReceipt) {
+        state.storage.sql.exec(`INSERT INTO tool_effects
+          (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+           tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json)
+          VALUES ('guarded-open-tool', 'guarded-pre-cutover-run', 0, 0,
+                  'guarded-open-tool', 'search', 'read', 'request', 'authority',
+                  'admitted', 'guarded-open-provider-call', '{}')`);
+      }
+      await expect(instance.abandonPreCutoverRunsForTranscriptBackfill({
+        objectId: id.toString(),
+        operatorRunId: "00000000-0000-7000-8000-000000000718",
+        cutoverVersion: 27,
+      })).rejects.toThrow(openReceipt
+        ? "legacy_transcript_pre_cutover_run_has_open_receipt"
+        : "legacy_transcript_pre_cutover_run_not_abandonable");
+      expect(state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM runs WHERE run_id = 'guarded-pre-cutover-run'`,
+      ).one().status).toBe("running");
+    });
+  });
+
   it("refuses to renumber while a client holds an immutable transcript snapshot", async () => {
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),

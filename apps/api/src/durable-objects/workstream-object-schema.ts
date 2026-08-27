@@ -16,7 +16,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 28;
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 29;
 
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
@@ -1582,6 +1582,20 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         bind_history_status TEXT NOT NULL CHECK (
           bind_history_status = 'not_reconstructable_from_legacy_aggregate_rows'
         ),
+        completed_at INTEGER NOT NULL
+      ) STRICT`,
+    ],
+  },
+  {
+    version: 29,
+    description: "record pre-cutover run cleanup before transcript backfill",
+    statements: [
+      `CREATE TABLE legacy_transcript_cleanup_receipts (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        operator_run_id TEXT NOT NULL,
+        cutover_version INTEGER NOT NULL CHECK (cutover_version = 27),
+        cutover_applied_at INTEGER NOT NULL,
+        abandoned_run_count INTEGER NOT NULL CHECK (abandoned_run_count >= 0),
         completed_at INTEGER NOT NULL
       ) STRICT`,
     ],

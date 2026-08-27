@@ -1126,6 +1126,35 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
+  async abandonPreCutoverRunsForTranscriptBackfill(input: {
+    objectId: string;
+    operatorRunId: string;
+    cutoverVersion: number;
+  }): Promise<{ abandonedRunCount: number; cleanupOperatorRunId: string | null }> {
+    await this.initialized;
+    if (this.externalSubstreamId() !== "0") {
+      throw new Error("legacy_transcript_backfill_requires_main_substream");
+    }
+    if (input.objectId !== this.state.id.toString()) {
+      throw new Error(`legacy_transcript_backfill_object_mismatch:${input.objectId}`);
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(input.operatorRunId)) {
+      throw new Error("legacy_transcript_backfill_run_id_invalid");
+    }
+    if (input.cutoverVersion !== 27) throw new Error("legacy_transcript_backfill_cutover_invalid");
+    const cleanupReceipt = this.harnessRuns.preCutoverLeaseLessCleanupReceipt();
+    if (cleanupReceipt) return cleanupReceipt;
+    if (this.transcript.hasLegacyBackfillReceipt()) {
+      return { abandonedRunCount: 0, cleanupOperatorRunId: null };
+    }
+    return this.harnessRuns.abandonPreCutoverLeaseLessRuns({
+      operatorRunId: input.operatorRunId,
+      cutoverVersion: input.cutoverVersion,
+      now: Date.now(),
+    });
+  }
+
   async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRunDispatch(this.rpcRequest(input)));
