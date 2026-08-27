@@ -103,6 +103,49 @@ describe('member picker controls', () => {
   });
 });
 
+/**
+ * Chromium's `::-webkit-scrollbar` styling (below, 9px) opts these scrollers
+ * into classic space-consuming scrollbars, so the moment their content
+ * crosses one viewport the scrollbar pops in and shifts whatever is centered
+ * inside them — the transcript column, the sidebar's row width, the settings
+ * pane. Each of these is tall enough, on an ordinary screen, to reach that
+ * point in normal use, so each reserves its gutter up front rather than
+ * having it appear mid-session.
+ */
+describe('scrollbar gutter reservation on the always-tall scrollers', () => {
+  it.each([
+    ['.transcript-scroll'],
+    ['.sidebar-scroll'],
+    ['.rail-scroll'],
+    ['.settings-content-scroll'],
+    ['.new-workstream-home'],
+    ['.automation-overview-scroll'],
+  ])('reserves a stable gutter on %s', (selector) => {
+    expect(rule(selector)).toContain('scrollbar-gutter: stable;');
+  });
+});
+
+/**
+ * `.rail-scroll` backs both the inspector rail and the HyperSight
+ * (block-dashboard) rail (`inspector-rail.tsx` and `block-dashboard-panel.tsx`
+ * both render a `.rail-scroll` div) — containment used to be declared only
+ * for the HyperSight variant via `.block-dashboard-rail .rail-scroll`, so a
+ * reader scrolling past the inspector rail's own edge scrolled the transcript
+ * underneath it instead of stopping. It now lives on the shared rule, and the
+ * sidebar gets the same containment so scrolling past its edge cannot scroll
+ * the workspace behind it either.
+ */
+describe('overscroll containment on the shared rail and sidebar scrollers', () => {
+  it('contains overscroll on the shared rail rule, not a HyperSight-only override', () => {
+    expect(rule('.rail-scroll')).toContain('overscroll-behavior: contain;');
+    expect(stylesheet).not.toContain('.block-dashboard-rail .rail-scroll');
+  });
+
+  it('contains overscroll on the sidebar scroller', () => {
+    expect(rule('.sidebar-scroll')).toContain('overscroll-behavior: contain;');
+  });
+});
+
 describe('raised popover interaction states', () => {
   it('highlights ordinary menu rows and preserves the danger override', () => {
     expect(rule('.menu-content')).toContain(
