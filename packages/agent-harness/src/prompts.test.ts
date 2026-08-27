@@ -116,7 +116,7 @@ describe("prompt renderers", () => {
           objective: "Find the cause and create a concise incident note.",
           documentPublishing: true,
         }),
-        hash: "0000000000000000000000000000000000000000000000000000000000000000",
+        hash: "e91e97f5d78434cd6206b2f7b084ebc6d5c2b36468f1d127935756973a2afa41",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
