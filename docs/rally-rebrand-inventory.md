@@ -248,8 +248,12 @@ design, not by oversight.
 - The canonical mask and generated mark are `assets/brand/rally-mark-source.png`
   and `assets/brand/rally-mark.png`. The generator writes the same real mark to
   the desktop, native icon, menu bar, site, favicon, and social-card surfaces.
-- The public site exposes only `/brand/rally-mark.png`; provider manifests use
-  that URL. The obsolete public Avalon mark and oversized `og.png` were removed.
+- The public site's pages render the redesigned vector mark
+  (`/brand/rally-mark.svg`, with `/brand/rally-mark-small.svg` below 24 px);
+  `/brand/rally-mark.png` is still served because provider manifests hotlink
+  that URL, and it carries the previous woven mark until the generator's source
+  mask is redrawn from the new vector. The obsolete public Avalon mark and
+  oversized `og.png` were removed.
 - `apps/api/test/avalon-tool-prose.test.ts` — filename.
 - `docs/PRDs/2026-08-05_avalon-implementation-brief/` — folder name, and the
   standing product contract [`docs/README.md`](README.md) points at. PRDs
