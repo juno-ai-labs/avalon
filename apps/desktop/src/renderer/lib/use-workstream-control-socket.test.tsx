@@ -186,10 +186,11 @@ describe('useWorkstreamControlSocket', () => {
     act(() => socket.open());
     expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe' }));
 
-    act(() => socket.message(metadata(4)));
+    act(() => socket.message(metadata(4, { preview: '' })));
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
       title: 'Authoritative title',
       objective: 'Authoritative description',
+      preview: 'Authoritative description',
       harnessStatus: 'running',
       hasUnread: true,
       youAreMentioned: true,

@@ -221,7 +221,6 @@ describe("canonical ordered work-stream transcript", () => {
       turnId: "post-cutover",
       actor: "human",
       authorUserId: "user-2",
-      text: "Later",
       createdAtUtc: new Date(NOW).toISOString(),
       attentionOrdinal: 3,
     });
@@ -375,7 +374,6 @@ describe("canonical ordered work-stream transcript", () => {
       turnId: "partial",
       actor: "human",
       authorUserId: "user-1",
-      text: "Legacy",
       createdAtUtc: new Date(NOW).toISOString(),
       attentionOrdinal: null,
     });
@@ -728,7 +726,6 @@ describe("canonical ordered work-stream transcript", () => {
         turnId: `message-${index}`,
         actor: "human",
         authorUserId: "user-1",
-        text: `Message ${index}`,
         createdAtUtc: new Date(NOW + index).toISOString(),
         attentionOrdinal: index,
       });
@@ -756,7 +753,6 @@ describe("canonical ordered work-stream transcript", () => {
       turnId: "message-after-fence",
       actor: "human",
       authorUserId: "user-1",
-      text: "Not in old snapshot",
       createdAtUtc: new Date(NOW + 101).toISOString(),
       attentionOrdinal: 31,
     });
@@ -1017,7 +1013,6 @@ describe("canonical ordered work-stream transcript", () => {
       turnId: "message-1",
       actor: "human",
       authorUserId: "user-1",
-      text: "Indexed",
       createdAtUtc: new Date(NOW).toISOString(),
       attentionOrdinal: 1,
     });

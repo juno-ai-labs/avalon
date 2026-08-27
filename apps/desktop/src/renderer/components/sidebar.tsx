@@ -477,6 +477,10 @@ function WorkstreamRow({
   const nextWakeupTime = workstream.nextPendingWakeup
     ? formatDateTime(workstream.nextPendingWakeup.dueAt)
     : null;
+  // Both socket paths carry the standing description as `objective`. Keep the
+  // direct value first for compatibility with resident cache rows, but never
+  // let an empty legacy preview hide an otherwise valid description.
+  const description = workstream.preview || workstream.objective || workstream.automationName;
   // Two kinds of row take their audience from something other than this
   // column, so offering the toggle on them would describe a change that does
   // not happen: a subsystem's own work stream is machinery, and one an
@@ -582,10 +586,10 @@ function WorkstreamRow({
                 {workstream.systemKind && <Cog aria-label="System work stream" size={11} />}
                 {naming ? <TitleSkeleton /> : workstream.title}
               </span>
-              {(workstream.preview || workstream.automationName) && (
+              {description && (
                 <span className="sidebar-row-hint">
                   <span className="sidebar-row-hint-text">
-                    {workstream.preview ?? workstream.automationName}
+                    {description}
                   </span>
                 </span>
               )}

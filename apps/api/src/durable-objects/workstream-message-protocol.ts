@@ -1,3 +1,6 @@
+import { MESSAGE_MAX_CHARACTERS } from "@rally/contracts";
+import { z } from "zod";
+
 import {
   type Exhaustive,
   objectPortRequestSchema,
@@ -5,7 +8,19 @@ import {
   type ObjectPortOf,
 } from "./object-port-protocol";
 import type { WorkstreamMessageStorage } from "./workstream-message-storage";
-import type { z } from "zod";
+
+export const AppendMessageInputSchema = z.object({
+  messageId: z.string().min(1),
+  clientMessageId: z.string().min(1),
+  authorType: z.enum(["human", "agent", "external", "system"]),
+  authorUserId: z.string().min(1).nullable(),
+  externalActorJson: z.string().nullable(),
+  messageType: z.enum(["text", "system", "elicitation"]),
+  text: z.string().max(MESSAGE_MAX_CHARACTERS),
+  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS).nullable(),
+  producedByRunId: z.string().min(1).nullable(),
+  now: z.number().finite(),
+}).strict();
 
 /**
  * The wire contract for one work stream's transcript.
