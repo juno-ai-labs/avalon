@@ -212,7 +212,12 @@ None yet.
    citation references), reads as a broken image in any non-Rally
    renderer, and burns the syntax the product will want later for true
    inline embeds; bespoke citation blocks are out-of-distribution and
-   fail the familiarity principle the research settled on.
+   fail the familiarity principle the research settled on. One deliberate
+   divergence from the mention precedent: where `person:` validates a
+   strict UUID, the `resource:` pattern accepts an opaque token — bounded
+   length, safe alphabet — because the identifier's shape belongs to the
+   resource system, not the renderer. A future token-friendly resource
+   slug or alias (open question 4) then needs no renderer change.
 3. **GFM footnotes for the grounding mode.** `[^1]` with a
    link-carrying definition is deeply in training data, parses under the
    renderer's existing GFM support, renders acceptably as plain
@@ -345,3 +350,18 @@ tests extend to cover citation syntax passing through unmangled.
    current? V1 opens current; the question returns with that PRD's
    version list, and the syntax reserves nothing either way (a future
    `resource:<uuid>@v3` remains available).
+4. **A token-friendly resource identifier.** Citations make the model
+   emit resource identifiers routinely, and a UUID is the worst shape
+   for that: ~36 characters tokenizing to roughly four times a short
+   slug's cost, in both directions — and, more importantly, a
+   high-entropy string the model must copy exactly, which is precisely
+   what small models mangle and what this PRD's degradation path exists
+   to absorb. The suggestion on the table (Adam's): a resource ID alias
+   or an outright switch to the slug generator, with collision odds he
+   puts at roughly one in a billion — and with the authority allocating
+   under a unique index, a collision costs a retry, not correctness.
+   The decision belongs to the resource system, not this PRD: identity
+   cross-cuts contracts, links, cursors, and storage keys. This PRD
+   stays compatible either way via the opaque-token pattern (key design
+   decision 2); if the alias lands first, the prompt guidance and tool
+   outputs simply carry slugs and citation fidelity improves for free.
