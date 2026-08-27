@@ -130,9 +130,24 @@ async function invokeBackfill(probeUrl, region, objectIds, operatorRunId, fetche
       throw new Error(`${region}_backfill_probe_invalid`);
     }
     seen.add(row.objectId);
-    if (row.error !== undefined) return { objectId: row.objectId, error: String(row.error) };
-    const outcome = row.outcome;
     const validCount = (count) => Number.isSafeInteger(count) && count >= 0;
+    if (row.error !== undefined) {
+      const cleanup = row.cleanup;
+      const validCleanup = cleanup === undefined || (
+        validCount(cleanup.abandonedRunCount)
+        && typeof cleanup.cleanupOperatorRunId === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+          .test(cleanup.cleanupOperatorRunId)
+      );
+      return validCleanup
+        ? { objectId: row.objectId, ...(cleanup ? { cleanup } : {}), error: String(row.error) }
+        : { objectId: row.objectId, error: 'invalid_cleanup_outcome' };
+    }
+    const outcome = row.outcome;
+    const validCleanupOperator = outcome?.preCutoverCleanupOperatorRunId === null
+      || (typeof outcome?.preCutoverCleanupOperatorRunId === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+          .test(outcome.preCutoverCleanupOperatorRunId));
     if (outcome?.verified !== true
       || typeof outcome.applied !== 'boolean'
       || typeof outcome.preBackfillBookmark !== 'string'
@@ -140,6 +155,9 @@ async function invokeBackfill(probeUrl, region, objectIds, operatorRunId, fetche
       || typeof outcome.sourceSha256 !== 'string'
       || !/^[a-f0-9]{64}$/u.test(outcome.sourceSha256)
       || !validCount(outcome.abandonedPreCutoverRunCount)
+      || !validCleanupOperator
+      || (outcome.abandonedPreCutoverRunCount > 0
+        && outcome.preCutoverCleanupOperatorRunId === null)
       || !validCount(outcome.sourcePartCount)
       || !validCount(outcome.participantTurnCount)
       || outcome.sourcePartCount !== outcome.participantTurnCount

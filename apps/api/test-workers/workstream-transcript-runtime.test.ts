@@ -143,10 +143,36 @@ describe("work-stream transcript on workerd SQLite", () => {
       operatorRunId: "00000000-0000-7000-8000-000000000716",
       cutoverVersion: 27,
     });
-    expect(cleanup).toEqual({ abandonedRunCount: 1 });
+    expect(cleanup).toEqual({
+      abandonedRunCount: 1,
+      cleanupOperatorRunId: "00000000-0000-7000-8000-000000000716",
+    });
+    await runInDurableObject(stub, async (instance, state) => {
+      state.storage.sql.exec(`INSERT INTO transcript_activities
+        (activity_id, parent_activity_id, scope, subject_id, call_index, label,
+         lifecycle_state, revision, created_at, updated_at)
+        VALUES ('backfill-blocker', NULL, 'response', 'backfill-blocker', NULL,
+                'Working', 'active', 1, 1, 1)`);
+      await expect(instance.backfillLegacyTranscript({
+        objectId: id.toString(),
+        operatorRunId: "00000000-0000-7000-8000-000000000716",
+        cutoverVersion: 27,
+      })).rejects.toThrow("legacy_transcript_backfill_not_quiescent");
+      state.storage.sql.exec(`UPDATE transcript_activities
+        SET lifecycle_state = 'completed', revision = 2, updated_at = 2
+        WHERE activity_id = 'backfill-blocker'`);
+    });
+    expect(await stub.abandonPreCutoverRunsForTranscriptBackfill({
+      objectId: id.toString(),
+      operatorRunId: "00000000-0000-7000-8000-000000000717",
+      cutoverVersion: 27,
+    })).toEqual({
+      abandonedRunCount: 1,
+      cleanupOperatorRunId: "00000000-0000-7000-8000-000000000716",
+    });
     const outcome = await stub.backfillLegacyTranscript({
       objectId: id.toString(),
-      operatorRunId: "00000000-0000-7000-8000-000000000716",
+      operatorRunId: "00000000-0000-7000-8000-000000000717",
       cutoverVersion: 27,
     });
     expect(outcome).toMatchObject({ applied: true, verified: true });
@@ -154,7 +180,10 @@ describe("work-stream transcript on workerd SQLite", () => {
       objectId: id.toString(),
       operatorRunId: "00000000-0000-7000-8000-000000000717",
       cutoverVersion: 27,
-    })).toEqual({ abandonedRunCount: 0 });
+    })).toEqual({
+      abandonedRunCount: 1,
+      cleanupOperatorRunId: "00000000-0000-7000-8000-000000000716",
+    });
     await runInDurableObject(stub, async (_instance, state) => {
       expect(state.storage.sql.exec<{
         status: string;
@@ -168,6 +197,14 @@ describe("work-stream transcript on workerd SQLite", () => {
       });
       expect(state.storage.sql.exec(`SELECT COUNT(*) AS count
         FROM legacy_transcript_backfills`).one().count).toBe(1);
+      expect(state.storage.sql.exec<{
+        operator_run_id: string;
+        abandoned_run_count: number;
+      }>(`SELECT operator_run_id, abandoned_run_count
+            FROM legacy_transcript_cleanup_receipts`).one()).toEqual({
+        operator_run_id: "00000000-0000-7000-8000-000000000716",
+        abandoned_run_count: 1,
+      });
     });
   });
 
