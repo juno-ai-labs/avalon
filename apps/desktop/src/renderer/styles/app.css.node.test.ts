@@ -108,7 +108,7 @@ describe('work-stream launch surface geometry', () => {
 describe('member picker controls', () => {
   it('keeps custom controls out of the flexible member-copy rule', () => {
     const copy = rule(
-      '.member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),\n.member-action-list button > span:not(.avatar)',
+      '.member-picker-row > span:not(.avatar):not(.member-checkbox):not(.resource-picker-icon),\n.member-action-row > span:not(.avatar)',
     );
     const checkbox = rule('.member-checkbox');
 
