@@ -21,13 +21,14 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useProjectDirectories } from '../lib/use-project-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
 import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, MessageMention, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
-import { Avatar, AvatarStack, RallyMark, Badge, Button, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
+import { Avatar, AvatarStack, RallyMark, Badge, Button, EmptyState, LoadingState, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { MessageBlock } from '../components/workstream-blocks';
 import { ProjectIconPile } from '../components/project-sidebar-section';
@@ -337,12 +338,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
   // The same list the sidebar shows, from the same cache entry, so a realtime
   // update lands on both at once.
   const workstreams = useWorkstreamsQuery();
-  const projects = useQuery({
-    queryKey: ['projects'],
-    queryFn: ({ signal }) => api!.getProjects(signal),
-    enabled: Boolean(api),
-    staleTime: 30_000,
-  });
+  const { active: projects } = useProjectDirectories();
   const opportunities = useQuery({
     queryKey: ['work-opportunities'],
     queryFn: ({ signal }) => api!.getWorkOpportunities(signal),
@@ -350,6 +346,21 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     staleTime: Number.POSITIVE_INFINITY,
   });
   const selectedIds = useMemo(() => new Set(selectedMembers.map((member) => member.id)), [selectedMembers]);
+  const owningProject = projects.data?.items.find((project) => project.id === owningProjectId);
+  const personalProjectParticipantIds = useMemo(() => new Set(
+    owningProject?.scope === 'personal'
+      ? owningProject.participants
+        .filter((participant) => participant.state === 'active')
+        .map((participant) => participant.userId)
+      : [],
+  ), [owningProject]);
+  useEffect(() => {
+    if (owningProject?.scope !== 'personal') return;
+    setSelectedMembers((members.data ?? []).filter((member) => (
+      member.id !== workspace.currentUser.id && personalProjectParticipantIds.has(member.id)
+    )));
+    setPickerOpen(false);
+  }, [members.data, owningProject?.scope, personalProjectParticipantIds, workspace.currentUser.id]);
   // Everything somebody put in front of this person: a run stopped for an
   // answer, a mention, and a work stream somebody added them to that they have
   // not opened. All three have a person behind them, which is what the section
@@ -691,6 +702,13 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
     }
     : null;
 
+  if (owningProjectId && projects.data === undefined) {
+    return <LoadingState label="Opening project…" />;
+  }
+  if (owningProjectId && !owningProject) {
+    return <EmptyState title="Project not found" description="It may have been archived or you may no longer have access." />;
+  }
+
   return (
     /* Both states are one element tree, and the launching one carries
        `workstream-screen` so it inherits that screen's own geometry rather than
@@ -778,6 +796,12 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         <h2 className="sr-only" id="new-workstream-heading">Start a new work stream</h2>
         <div className="launch-modifiers">
           <div className="new-workstream-modifiers" aria-label="Work-stream participants">
+            {owningProject?.scope === 'personal' ? (
+              <span className="participant-modifier" title="Participants are managed by the project">
+                <span aria-hidden="true"><AvatarStack limit={4} members={participants} /></span>
+                <span>{participantSummary}</span>
+              </span>
+            ) : <>
             <button
               aria-haspopup="dialog"
               aria-label={`Manage participants: ${participants.map((participant) => participant.name).join(', ')}`}
@@ -791,6 +815,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
             <button aria-label="Add people" className="participant-modifier-add" onClick={() => setPickerOpen(true)} type="button">
               <Plus aria-hidden="true" size={15} />
             </button>
+            </>}
           </div>
         </div>
 
@@ -869,7 +894,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         {members.error && !launching && <p className="muted-notice">People could not be loaded. You can still create this work stream with yourself.</p>}
       </section>
 
-      <ParticipantPicker
+      {owningProject?.scope !== 'personal' && <ParticipantPicker
         currentUser={workspace.currentUser}
         members={activeMembers}
         onOpenChange={setPickerOpen}
@@ -882,7 +907,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         }}
         open={pickerOpen}
         selected={selectedIds}
-      />
+      />}
       <AttachmentLightbox preview={attachmentPreview} onClose={() => setAttachmentPreview(null)} />
     </div>
   );

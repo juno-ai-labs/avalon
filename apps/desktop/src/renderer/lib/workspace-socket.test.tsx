@@ -1206,6 +1206,67 @@ describe('WorkspaceSocketProvider', () => {
       .toEqual([expect.objectContaining({ name: 'Newer still' })]);
   });
 
+  it('applies active and archived project state from the socket and drops an older snapshot', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const getWorkspaceSocketTicket = vi.fn(async () => ({
+      url: 'wss://api.rally.test/socket/workspaces/workspace-1',
+      ticket: 'workspace-ticket',
+      protocols: socketTicketProtocols('workspace-ticket'),
+    }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WorkspaceSocketProvider
+          api={{ getWorkspaceSocketTicket }}
+          workspaceId="00000000-0000-7000-8000-000000000001"
+        >
+          <div />
+        </WorkspaceSocketProvider>
+      </QueryClientProvider>,
+    );
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+
+    const project = {
+      id: '00000000-0000-7000-8000-0000000000f2',
+      name: 'Hiring',
+      iconKey: 'briefcase',
+      colorKey: 'blue',
+      scope: 'personal',
+      status: 'active',
+      presentationRevision: 1,
+      audienceGeneration: 1,
+      lifecycleGeneration: 1,
+      participants: [],
+      workstreamIds: [],
+      defaultResourceIds: [],
+      createdAt: '2026-08-27T00:00:00.000Z',
+      updatedAt: '2026-08-27T00:00:00.000Z',
+    };
+    act(() => socket.message({
+      type: 'workspace_project_snapshot',
+      occurredAt: '2026-08-27T00:01:00.000Z',
+      projects: {
+        active: { waterline: 4, items: [project] },
+        inactive: { waterline: 4, items: [] },
+      },
+    }));
+    expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 4, items: [project] });
+    expect(queryClient.getQueryData(['projects-inactive'])).toEqual({ waterline: 4, items: [] });
+
+    act(() => socket.message({
+      type: 'workspace_project_snapshot',
+      occurredAt: '2026-08-27T00:02:00.000Z',
+      projects: {
+        active: { waterline: 3, items: [] },
+        inactive: { waterline: 3, items: [{ ...project, status: 'archived' }] },
+      },
+    }));
+    expect(queryClient.getQueryData(['projects'])).toEqual({ waterline: 4, items: [project] });
+    expect(queryClient.getQueryData(['projects-inactive'])).toEqual({ waterline: 4, items: [] });
+  });
+
   it('fails an in-flight directory page immediately when the desktop goes offline', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     let online = true;

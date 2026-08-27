@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, asProjectId, type ProjectDirectory } from '@rally/contracts';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -14,7 +14,6 @@ const api = vi.hoisted(() => ({
   deleteDraftResource: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkOpportunities: vi.fn(),
-  getProjects: vi.fn(),
   recordWorkOpportunityImpressions: vi.fn(),
   dismissWorkOpportunity: vi.fn(),
   startWorkOpportunity: vi.fn(),
@@ -110,10 +109,11 @@ function workstream(
   };
 }
 
-function renderScreen(): QueryClient {
+function renderScreen(projects: ProjectDirectory = { waterline: 0, items: [] }): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+  queryClient.setQueryData(['projects'], projects);
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -128,10 +128,14 @@ function renderScreen(): QueryClient {
   return queryClient;
 }
 
-function renderProjectScreen(projectId: string): QueryClient {
+function renderProjectScreen(
+  projectId: string,
+  projects: ProjectDirectory = { waterline: 0, items: [] },
+): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+  queryClient.setQueryData(['projects'], projects);
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
@@ -170,7 +174,6 @@ describe('New work-stream home', () => {
     };
     workspaceSocket.listWorkstreams.mockResolvedValue(directoryPage);
     api.getWorkOpportunities.mockResolvedValue([]);
-    api.getProjects.mockResolvedValue({ waterline: 0, items: [] });
     api.recordWorkOpportunityImpressions.mockResolvedValue(undefined);
     api.dismissWorkOpportunity.mockResolvedValue(undefined);
     api.startWorkOpportunity.mockResolvedValue(createdWorkstream);
@@ -216,10 +219,10 @@ describe('New work-stream home', () => {
   });
 
   it('given a project work stream needing attention, when the row renders, then its project icon sits in the row', async () => {
-    api.getProjects.mockResolvedValue({
+    const projects: ProjectDirectory = {
       waterline: 1,
       items: [{
-        id: '00000000-0000-7000-8000-0000000000f2',
+        id: asProjectId('00000000-0000-7000-8000-0000000000f2'),
         name: 'Hiring',
         iconKey: 'briefcase',
         colorKey: 'blue',
@@ -234,25 +237,49 @@ describe('New work-stream home', () => {
         createdAt: '2026-08-27T00:00:00.000Z',
         updatedAt: '2026-08-27T00:00:00.000Z',
       }],
-    });
-    renderScreen();
+    };
+    renderScreen(projects);
 
     const attention = await screen.findByRole('region', { name: 'Needs attention' });
     expect(await within(attention).findByRole('img', { name: 'Projects: Hiring' })).toBeVisible();
   });
 
   it('given a project launcher, when the first message is submitted, then it omits home sections and sends the project gate', async () => {
-    const projectId = '00000000-0000-7000-8000-0000000000f2';
-    renderProjectScreen(projectId);
+    const projectId = asProjectId('00000000-0000-7000-8000-0000000000f2');
+    const projects: ProjectDirectory = {
+      waterline: 1,
+      items: [{
+        id: projectId,
+        name: 'Hiring',
+        iconKey: 'briefcase',
+        colorKey: 'blue',
+        scope: 'personal',
+        status: 'active',
+        presentationRevision: 1,
+        audienceGeneration: 1,
+        lifecycleGeneration: 1,
+        participants: [currentUser, teammate].map((member) => ({ userId: member.id, state: 'active', generation: 1 })),
+        workstreamIds: [],
+        defaultResourceIds: [],
+        createdAt: '2026-08-27T00:00:00.000Z',
+        updatedAt: '2026-08-27T00:00:00.000Z',
+      }],
+    };
+    renderProjectScreen(projectId, projects);
 
     expect(await screen.findByRole('heading', { name: 'New project work stream' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Suggested work' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Add people' })).not.toBeInTheDocument());
+    expect(screen.getByTitle('Participants are managed by the project')).toBeVisible();
     const composer = screen.getByRole('textbox', { name: 'Opening work-stream message' });
     fireEvent.change(composer, { target: { value: 'Prepare the hiring plan' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
 
-    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({ projectId })));
+    await waitFor(() => expect(api.createWorkstream).toHaveBeenCalledWith(expect.objectContaining({
+      projectId,
+      participantIds: [teammate.id],
+    })));
   });
 
   it('lists a work stream this person has never opened, newest activity first', async () => {

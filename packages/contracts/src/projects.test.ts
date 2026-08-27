@@ -4,6 +4,7 @@ import {
   PROJECT_COLOR_KEYS,
   PROJECT_ICON_KEYS,
   CreateProjectRequestSchema,
+  ProjectSnapshotSchema,
   ProjectSummarySchema,
 } from "./projects";
 
@@ -81,5 +82,16 @@ describe("project contracts", () => {
       updatedAt: "2026-08-27T00:00:00.000Z",
       unexpected: "drift",
     }).success).toBe(false);
+  });
+
+  it("given one project authority snapshot, when active and inactive waterlines differ, then it is rejected", () => {
+    expect(ProjectSnapshotSchema.safeParse({
+      active: { waterline: 2, items: [] },
+      inactive: { waterline: 1, items: [] },
+    }).success).toBe(false);
+    expect(ProjectSnapshotSchema.safeParse({
+      active: { waterline: 2, items: [] },
+      inactive: { waterline: 2, items: [] },
+    }).success).toBe(true);
   });
 });
