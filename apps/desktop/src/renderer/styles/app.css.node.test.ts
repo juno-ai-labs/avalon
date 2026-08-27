@@ -129,12 +129,17 @@ describe('raised popover interaction states', () => {
 });
 
 describe('work-stream participant presence', () => {
-  it('draws a tokenized sonar ring and preserves a static reduced-motion state', () => {
+  it('draws a tokenized Tailwind-style ping and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
-    expect(ping).toContain('animation: avatar-presence-ping 2.2s ease-out infinite;');
+    expect(ping).toContain('animation: avatar-presence-ping 1s cubic-bezier(0, 0, .2, 1) infinite;');
+    expect(ping).toContain('background: color-mix(');
     expect(ping).toContain('var(--av-sys-color-success-base)');
+    expect(ping).toContain('inset: 0;');
+    expect(ping).toContain('z-index: 1;');
+    expect(stylesheet).toContain('75%, 100% { opacity: 0; transform: scale(2); }');
     expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce)');
     expect(stylesheet).toContain('animation: none;');
+    expect(stylesheet).toContain('transform: scale(1.35);');
   });
 });
 
