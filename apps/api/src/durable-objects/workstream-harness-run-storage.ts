@@ -1574,7 +1574,7 @@ export class WorkstreamHarnessRunStorage {
                        AND heartbeat_at IS NULL
                      THEN 1 ELSE 0 END AS abandonable
            FROM runs
-          WHERE status IN ('admitted', 'running', 'waiting', 'steering')
+          WHERE status IN ${OPEN_RUN_STATUSES}
             AND terminalized_at IS NULL`,
         Number(cutover.applied_at),
       ).toArray();
@@ -1585,14 +1585,14 @@ export class WorkstreamHarnessRunStorage {
         `SELECT COUNT(*) AS count
            FROM tool_effects effect
            JOIN runs run ON run.run_id = effect.run_id
-          WHERE run.status IN ('admitted', 'running', 'waiting', 'steering')
+          WHERE run.status IN ${OPEN_RUN_STATUSES}
             AND run.terminalized_at IS NULL
             AND effect.status IN ('admitted', 'executing')`,
       ))?.count ?? 0;
       if (active.length > 0 && Number(openReceipt) > 0) {
         throw new Error("legacy_transcript_pre_cutover_run_has_open_receipt");
       }
-      const updatesMainState = active.some((run) =>
+      const mainRun = active.find((run) =>
         run.origin !== "block_dashboard_block" && run.parent_tool_call_id === null);
       this.sql.exec(
         `UPDATE runs
@@ -1602,7 +1602,7 @@ export class WorkstreamHarnessRunStorage {
                 completed_at = ?2,
                 terminalized_at = ?2,
                 updated_at = ?2
-          WHERE status IN ('admitted', 'running', 'waiting', 'steering')
+          WHERE status IN ${OPEN_RUN_STATUSES}
             AND terminalized_at IS NULL
             AND started_at <= ?1
             AND legacy_attempt_id IS NULL
@@ -1612,18 +1612,7 @@ export class WorkstreamHarnessRunStorage {
         Number(cutover.applied_at),
         input.now,
       );
-      if (updatesMainState) {
-        this.sql.exec(
-          `UPDATE workstream
-              SET exact_state = 'failed',
-                  state_reason_code = 'runtime_failed',
-                  state_changed_at = ?1,
-                  last_people_activity_at = ?1,
-                  updated_at = ?1
-            WHERE id = 1`,
-          input.now,
-        );
-      }
+      if (mainRun) this.settleWorkstreamState(mainRun.run_id, "failed", input.now);
       this.sql.exec(
         `INSERT INTO legacy_transcript_cleanup_receipts
           (id, operator_run_id, cutover_version, cutover_applied_at,
