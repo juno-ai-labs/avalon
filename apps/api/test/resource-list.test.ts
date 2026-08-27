@@ -120,6 +120,75 @@ describe("resource listing", () => {
     expect(prepared).toBe(false);
   });
 
+  it("lists every authorized resource version newest first", async () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec(`
+      CREATE TABLE connector_connections (id TEXT PRIMARY KEY, scope TEXT, owner_user_id TEXT);
+      CREATE TABLE resources (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connection_id TEXT,
+        resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
+        title TEXT NOT NULL, mime_type TEXT, content_ref TEXT, canonical_url TEXT,
+        metadata_json TEXT NOT NULL, last_hydrated_at TEXT, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL,
+        model_content_ref TEXT, current_version INTEGER NOT NULL
+      );
+      CREATE TABLE resource_watches (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, enabled INTEGER NOT NULL
+      );
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL,
+        scope TEXT NOT NULL, owner_user_id TEXT NOT NULL, archived_at TEXT
+      );
+      CREATE TABLE resource_versions (
+        resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, version INTEGER NOT NULL,
+        resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
+        title TEXT NOT NULL, mime_type TEXT, content_ref TEXT, canonical_url TEXT,
+        metadata_json TEXT NOT NULL, last_hydrated_at TEXT, model_content_ref TEXT,
+        captured_at TEXT NOT NULL
+      );
+      INSERT INTO resources
+        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+         metadata_json, created_at, updated_at, attachment_status, model_content_ref, current_version)
+      VALUES ('${firstResourceId}', '${workspaceId}', 'document', 'fixture', 'Current',
+              'text/plain', 'original-2', '{"size":6}', '2026-08-27T01:00:00.000Z',
+              '2026-08-27T02:00:00.000Z', 'attached', 'model-2', 2);
+      INSERT INTO resource_versions
+        (resource_id, workspace_id, version, resource_type, provider, title, mime_type,
+         content_ref, metadata_json, model_content_ref, captured_at)
+      VALUES ('${firstResourceId}', '${workspaceId}', 1, 'document', 'fixture', 'First',
+              'text/plain', 'original-1', '{"size":5}', 'model-1', '2026-08-27T01:00:00.000Z'),
+             ('${firstResourceId}', '${workspaceId}', 2, 'document', 'fixture', 'Current',
+              'text/plain', 'original-2', '{"size":6}', 'model-2', '2026-08-27T02:00:00.000Z');
+    `);
+    const service = new ResourceService(createTestEnv({
+      DB: sqliteD1(database),
+      PAYLOADS: {
+        async get(key: string) {
+          return {
+            body: new Response(key).body,
+            httpEtag: '"fixture"',
+            writeHttpMetadata(headers: Headers) { headers.set("content-type", "text/plain"); },
+          } as R2ObjectBody;
+        },
+      },
+    }), auth);
+
+    await expect(service.versions(firstResourceId)).resolves.toMatchObject([
+      { version: 2, title: "Current", contentAvailable: true, modelContentAvailable: true, sizeBytes: 6 },
+      { version: 1, title: "First", contentAvailable: true, modelContentAvailable: true, sizeBytes: 5 },
+    ]);
+    await expect(service.version(firstResourceId, 1)).resolves.toMatchObject({ version: 1, title: "First" });
+    await expect(service.version(firstResourceId, 3)).rejects.toMatchObject({
+      status: 404,
+      code: "resource_version_not_found",
+    });
+    await expect((await service.versionContent(firstResourceId, 1, "original")).text())
+      .resolves.toBe("original-1");
+    await expect((await service.versionContent(firstResourceId, 2, "model")).text())
+      .resolves.toBe("model-2");
+    database.close();
+  });
+
   it("keeps inbound-email resources scoped to visible attached work streams", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`

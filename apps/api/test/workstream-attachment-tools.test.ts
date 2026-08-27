@@ -281,7 +281,7 @@ describe("work-stream attachment tools", () => {
               '{}', 'pending', '2026-08-12', '2026-08-12')
     `).run(resourceId, WORKSPACE_ID, sourceRef);
     attachResourceLink(database, objectStore, resourceId, {
-      relationshipType: "explicit",
+      relationshipType: "attachment",
       attachedAt: "2026-08-12T00:00:00.000Z",
     });
     const read = __integrationTesting.createAvalonTools(env, input())

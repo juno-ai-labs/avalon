@@ -1049,6 +1049,9 @@ describe('AddResourceDialog', () => {
       canonicalUrl: 'https://github.com/juno-ai-labs/rally/pull/42',
       watchEnabled: false,
       watchStatus: 'paused',
+      currentVersion: 1,
+      relationshipType: 'attachment',
+      direction: 'source',
     };
     const onAttach = vi.fn();
     const onSearchChange = vi.fn();

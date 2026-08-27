@@ -333,6 +333,9 @@ function originResourceEvent(row: Record<string, unknown>) {
     lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+    currentVersion: Math.max(1, Number(row.current_version ?? 1)),
+    relationshipType: "origin" as const,
+    direction: "source" as const,
   };
 }
 

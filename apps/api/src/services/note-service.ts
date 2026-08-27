@@ -123,10 +123,10 @@ export class NoteService {
     }
     const resourceId = newId();
     const at = nowIso();
-    const refs = this.resourceRefs(resourceId);
     const plain = plainNoteMarkdown(input.title, "", "", []);
     const model = modelNoteMarkdown(input.title, "", "", []);
     const [contentSha256, modelSha256] = await Promise.all([sha256Hex(plain), sha256Hex(model)]);
+    const refs = this.resourceRefs(resourceId, contentSha256, modelSha256);
     try {
       await this.putResourceObjects(refs, plain, model);
       await this.env.DB.batch([
@@ -472,12 +472,12 @@ export class NoteService {
   private async materialize(id: string): Promise<void> {
     const note = await this.requireNote(id, false);
     const segments = await this.loadSegments(id);
-    const refs = this.resourceRefs(note.resource_id);
     const plain = plainNoteMarkdown(note.title, note.manual_notes_markdown, note.live_notes_markdown, segments);
     const model = modelNoteMarkdown(note.title, note.manual_notes_markdown, note.live_notes_markdown, segments);
+    const [contentSha256, modelSha256] = await Promise.all([sha256Hex(plain), sha256Hex(model)]);
+    const refs = this.resourceRefs(note.resource_id, contentSha256, modelSha256);
     await this.putResourceObjects(refs, plain, model);
     const at = nowIso();
-    const [contentSha256, modelSha256] = await Promise.all([sha256Hex(plain), sha256Hex(model)]);
     await this.env.DB.prepare(
       `UPDATE resources
        SET title = ?, content_ref = ?, content_sha256 = ?, model_content_ref = ?, model_mime_type = ?,
@@ -511,9 +511,16 @@ export class NoteService {
     ).run();
   }
 
-  private resourceRefs(resourceId: string): { content: string; model: string } {
+  private resourceRefs(
+    resourceId: string,
+    contentSha256: string,
+    modelSha256: string,
+  ): { content: string; model: string } {
     const base = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${resourceId}`;
-    return { content: `${base}/note.md`, model: `${base}/note-model.md` };
+    return {
+      content: `${base}/versions/${contentSha256}/note.md`,
+      model: `${base}/versions/${modelSha256}/note-model.md`,
+    };
   }
 
   private async putResourceObjects(

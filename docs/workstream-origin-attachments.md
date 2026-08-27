@@ -3,7 +3,7 @@
 A work stream that exists because of a place in a connected tool — the Slack
 thread `@Rally` was mentioned in, the Linear issue an automation fired on, the
 GitHub pull request a suggestion was built out of — carries that place as a
-resource attached to it, from the moment it is created. The **Resources** section
+resource attached to it, from the moment it is created. The **Sources** section
 of the inspector rail shows it, and the agent's `workstream_list_resources` tool lists it
 with the relationship `origin`.
 
@@ -75,7 +75,7 @@ against a connection it was never given.
 `attachWorkstreamOriginResource` then resolves the descriptor to a `resources` row —
 reusing the existing row when this workspace has seen the object before, keyed on
 `(workspace, connection, provider, providerResourceId)` — inserts a
-`workstream_resources` row with `relationship_type = 'origin'` and watching off,
+`workstream_resource_links` row with `relationship_type = 'origin'` and watching off,
 and publishes `resource_attached` so a work stream already open on a screen shows
 it without refetching.
 
@@ -356,6 +356,19 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-27 — Origin relationships render as sources
+
+**What changed:** `origin` is one of the constrained work-stream resource
+relationships and derives `direction: source`; the inspector rail lists it under
+Sources rather than a combined Resources section.
+
+**Why:** An origin is material brought into the work stream, not something the
+work stream generated, even when the shared canonical resource was first created
+while the work stream was starting.
+
+**Considered and rejected:** Persisting direction on the workspace resource
+would prevent that same resource from taking a different role in another work stream.
 
 ### 2026-08-13 — Connector provenance also attributes creation analytics
 
