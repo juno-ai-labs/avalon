@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { RESOURCE_RELATIONSHIP_TYPES } from "@rally/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
@@ -55,6 +56,18 @@ function attach(
 }
 
 describe("what a work stream has attached", () => {
+  it("accepts every relationship parsed by the shared contract", () => {
+    const { sql } = open();
+
+    for (const [index, relationshipType] of RESOURCE_RELATIONSHIP_TYPES.entries()) {
+      attach(sql, `r-${index}`, { relationshipType });
+    }
+
+    expect(sql.exec<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM workstream_resource_links",
+    ).one().count).toBe(RESOURCE_RELATIONSHIP_TYPES.length);
+  });
+
   it("rejects relationship types outside the stored enum", () => {
     const { sql } = open();
 

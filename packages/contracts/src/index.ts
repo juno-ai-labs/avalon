@@ -10,8 +10,10 @@ export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
+import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 
 export * from "./attachment-contracts";
+export * from "./resource-relationships";
 
 export { ConnectorOAuthProviders } from "./connector-oauth-providers";
 export {
@@ -630,24 +632,6 @@ export const ResourceSchema = z.object({
   sizeBytes: z.number().int().nonnegative().default(0),
   currentVersion: z.number().int().positive().default(1),
 });
-
-export const ResourceRelationshipTypeSchema = z.enum([
-  "attachment",
-  "message_attachment",
-  "origin",
-  "generated",
-  "suggested_activity",
-  "inbound_email",
-  "context",
-]);
-
-export const ResourceDirectionSchema = z.enum(["source", "artifact"]);
-
-export function resourceDirectionForRelationship(
-  relationshipType: z.infer<typeof ResourceRelationshipTypeSchema>,
-): z.infer<typeof ResourceDirectionSchema> {
-  return relationshipType === "generated" ? "artifact" : "source";
-}
 
 export const WorkstreamResourceSchema = ResourceSchema.extend({
   relationshipType: ResourceRelationshipTypeSchema,
@@ -3148,8 +3132,6 @@ export type Message = z.infer<typeof MessageSchema>;
 export type ExternalActor = z.infer<typeof ExternalActorSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
 export type WorkstreamResource = z.infer<typeof WorkstreamResourceSchema>;
-export type ResourceRelationshipType = z.infer<typeof ResourceRelationshipTypeSchema>;
-export type ResourceDirection = z.infer<typeof ResourceDirectionSchema>;
 export type ResourceRevision = z.infer<typeof ResourceRevisionSchema>;
 export type NoteRecordingStatus = z.infer<typeof NoteRecordingStatusSchema>;
 export type NoteTranscriptSegment = z.infer<typeof NoteTranscriptSegmentSchema>;
