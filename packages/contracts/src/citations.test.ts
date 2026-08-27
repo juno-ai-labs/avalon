@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   citationFootnotes,
+  citationScheme,
   parseCitationHref,
   rewriteCitationsAsPlainText,
 } from "./citations";
@@ -187,5 +188,39 @@ describe("rewriteCitationsAsPlainText", () => {
   it("leaves an inline code span showing the syntax alone", () => {
     expect(rewriteCitationsAsPlainText("Write `[Title](resource://id)` to cite."))
       .toBe("Write `[Title](resource://id)` to cite.");
+  });
+});
+
+describe("citationScheme", () => {
+  it("routes a malformed resource target to the cell that knows how to degrade it", () => {
+    // The parser says unknown; the cell must still be the resource one, or the
+    // default renderer carries a raw `resource://` target into the DOM.
+    expect(parseCitationHref("resource://has space").scheme).toBe("unknown");
+    expect(citationScheme("resource://has space")).toBe("resource");
+  });
+
+  it("leaves every target the default transform already handles in the unknown cell", () => {
+    expect(citationScheme("mailto:a@b.c")).toBe("unknown");
+    expect(citationScheme("tel:+15551234")).toBe("unknown");
+    expect(citationScheme(undefined)).toBe("unknown");
+  });
+
+  it("agrees with the parser on every well-formed target", () => {
+    for (const href of [
+      "resource://ok",
+      "https://example.com",
+      "person:0192f3ac-1b2c-7000-8000-abcdefabcdef",
+      "connector:token:slack",
+    ]) {
+      expect(citationScheme(href)).toBe(parseCitationHref(href).scheme);
+    }
+  });
+
+  it("keeps an unresolvable identity in its own cell, which never navigates", () => {
+    // A `person:` href that is not an id is text a model wrote. It has to reach
+    // the identity cell so it renders as the mention fallback rather than as an
+    // anchor with a model-chosen destination.
+    expect(parseCitationHref("person:someone").scheme).toBe("unknown");
+    expect(citationScheme("person:someone")).toBe("person");
   });
 });
