@@ -38,6 +38,12 @@ import {
 } from "../../telemetry/product-usage";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
+import {
+  createTerminalToolTrace,
+  currentTerminalToolTrace,
+  recordTerminalProviderRequest,
+  withTerminalToolTrace,
+} from "./tracing";
 
 export async function createAvalonTerminalPlugin(
   env: Env,
@@ -64,6 +70,31 @@ export async function createAvalonTerminalPlugin(
 
   const provider = createDaytonaTerminalProvider(configuration, undefined, {
     observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
+    observeRequest: (measurement) => {
+      recordTerminalProviderRequest(measurement);
+      const trace = currentTerminalToolTrace();
+      logStructuredEvent(
+        env,
+        measurement.outcome === "completed" ? "info" : "warn",
+        "terminal_provider_request_finished",
+        {
+          workspace_id: input.workspaceId,
+          workstream_id: input.workstreamId,
+          harness_run_id: input.harnessRunId,
+          tool_invocation_id: trace?.toolInvocationId ?? null,
+          tool_call_id: trace?.toolCallId ?? null,
+          tool_name: trace?.toolName ?? null,
+          operation: measurement.operation,
+          operation_detail: measurement.detail,
+          provider_operation_index: trace?.providerOperationCount ?? null,
+          state: measurement.outcome,
+          duration_ms: measurement.durationMs,
+          provider_request_count: measurement.requestCount,
+          provider_poll_count: measurement.pollCount,
+          bytes: measurement.bytes,
+        },
+      );
+    },
   });
   const coordinator = new TerminalSandboxCoordinator(
     env.DB,
@@ -126,8 +157,14 @@ export async function createAvalonTerminalPlugin(
     name,
     async (toolInput: unknown, context: Parameters<TerminalToolExecutors[typeof name]>[1]) => {
       const startedAt = Date.now();
+      const trace = createTerminalToolTrace({
+        toolName: name,
+        toolCallId: context.toolCallId,
+        toolInvocationId: context.effectIntentId ?? null,
+      });
       try {
-        const result = await executors[name](toolInput, context);
+        const result = await withTerminalToolTrace(trace, () => executors[name](toolInput, context));
+        const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "info", "terminal_tool_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
@@ -139,7 +176,15 @@ export async function createAvalonTerminalPlugin(
           tool_call_id: context.toolCallId,
           tool_name: name,
           state: "completed",
-          duration_ms: Date.now() - startedAt,
+          duration_ms: durationMs,
+          acquisition_duration_ms: trace.acquisitionDurationMs,
+          acquisition_cache_hit: trace.acquisitionCacheHit,
+          provider_duration_ms: trace.providerDurationMs,
+          provider_request_count: trace.providerRequestCount,
+          provider_poll_count: trace.providerPollCount,
+          provider_operation_count: trace.providerOperationCount,
+          provider_bytes: trace.providerBytes,
+          rally_duration_ms: Math.max(0, durationMs - trace.providerDurationMs),
         });
         return result;
       } catch (error) {
@@ -148,6 +193,7 @@ export async function createAvalonTerminalPlugin(
           : error instanceof TerminalObjectPortError
             ? error.code
             : "terminal_tool_failed";
+        const durationMs = Date.now() - startedAt;
         logStructuredEvent(env, "warn", "terminal_tool_finished", {
           workspace_id: context.workspaceId,
           workstream_id: context.workstreamId,
@@ -160,7 +206,15 @@ export async function createAvalonTerminalPlugin(
           tool_name: name,
           state: "failed",
           code,
-          duration_ms: Date.now() - startedAt,
+          duration_ms: durationMs,
+          acquisition_duration_ms: trace.acquisitionDurationMs,
+          acquisition_cache_hit: trace.acquisitionCacheHit,
+          provider_duration_ms: trace.providerDurationMs,
+          provider_request_count: trace.providerRequestCount,
+          provider_poll_count: trace.providerPollCount,
+          provider_operation_count: trace.providerOperationCount,
+          provider_bytes: trace.providerBytes,
+          rally_duration_ms: Math.max(0, durationMs - trace.providerDurationMs),
         });
         throw error;
       }

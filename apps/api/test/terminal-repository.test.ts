@@ -134,6 +134,7 @@ function fixture(message = "Please publish these changes and open a pull request
     createSandbox: vi.fn(), getSandbox: vi.fn(), startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
     configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),
     readFile: vi.fn(async () => new Uint8Array([1, 2, 3])), writeFile: vi.fn(),
+    runUtilityCommand: vi.fn(),
     runCommand: vi.fn(async (_id, input) => {
       if (input.command.includes("status --porcelain")) return { exitCode: 0, stdout: "", stderr: "" };
       if (input.command.includes("branch --show-current")) return { exitCode: 0, stdout: `${HEAD_REF}\n`, stderr: "" };
@@ -144,6 +145,11 @@ function fixture(message = "Please publish these changes and open a pull request
     }),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
+  const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
+  provider.runUtilityCommand = vi.fn((id, input) => utilityImplementation(id, {
+    ...input,
+    taskName: "terminal-utility",
+  }));
   const context: HarnessToolContext = {
     workspaceId: W, workstreamId: S, harnessRunId: R, toolCallId: "publish-call",
     // The publication's durable identity: the bundle path, the grant it
@@ -166,7 +172,7 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       readGateway,
     )).resolves.toMatchObject({ repositoryFullName: "owner/repo", baseSha: BASE, headRef: HEAD_REF, outcome: "cloned" });
@@ -179,28 +185,28 @@ describe("Terminal repository publication", () => {
       "full_access",
       context.signal,
     );
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringMatching(/rm -rf -- \/workspace\/repository\.tmp\n.*clone --no-checkout 'https:\/\/github\.com\/owner\/repo\.git'/su),
     }));
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining("grep -qxF '.rally/' .git/info/exclude || printf '.rally/\\n' >> .git/info/exclude"),
     }));
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.not.stringContaining("git push --set-upstream"),
     }));
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining(`export AVALON_GIT_BRANCH=${HEAD_REF}`),
     }));
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining("export AVALON_GIT_BASE_BRANCH=main"),
     }));
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
     }));
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox", expect.objectContaining({
       command: expect.stringContaining("printf 'export GIT_SSL_CAINFO=%q\\n' \"$GIT_SSL_CAINFO\" >> '/workspace/.rally/session.env'"),
     }));
-    const bootstrapCommand = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
+    const bootstrapCommand = vi.mocked(provider.runUtilityCommand).mock.calls.at(-1)?.[1].command ?? "";
     expect(bootstrapCommand).toContain("git config user.name 'Rally Agent'");
     expect(bootstrapCommand).toContain("git config user.email 'rally-agent@users.noreply.github.com'");
     expect(bootstrapCommand.indexOf('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'))
@@ -224,12 +230,12 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       gateway,
     )).rejects.toMatchObject({ code: "repository_access_revoked" });
     expect(gateway.mintRepositoryToken).not.toHaveBeenCalled();
-    expect(provider.runCommand).not.toHaveBeenCalled();
+    expect(provider.runUtilityCommand).not.toHaveBeenCalled();
   });
 
   it("keeps an already-bootstrapped workspace repairable when branch restoration cannot switch", async () => {
@@ -250,11 +256,11 @@ describe("Terminal repository publication", () => {
     await expect(bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       gateway,
     )).resolves.toMatchObject({ outcome: "refreshed" });
-    const command = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
+    const command = vi.mocked(provider.runUtilityCommand).mock.calls.at(-1)?.[1].command ?? "";
     expect(command).toContain(`if ! git checkout '${HEAD_REF}'; then`);
     expect(command).not.toContain('test "$(git branch --show-current)"');
     expect(gateway.mintRepositoryToken).not.toHaveBeenCalled();
@@ -280,7 +286,7 @@ describe("Terminal repository publication", () => {
     await bootstrapTerminalRepository(
       env,
       context,
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       provider,
       gateway,
     );
@@ -290,7 +296,7 @@ describe("Terminal repository publication", () => {
       "read_only",
       context.signal,
     );
-    const command = vi.mocked(provider.runCommand).mock.calls.at(-1)?.[1].command ?? "";
+    const command = vi.mocked(provider.runUtilityCommand).mock.calls.at(-1)?.[1].command ?? "";
     expect(command).toContain(`git checkout -b '${HEAD_REF}' --track 'origin/${HEAD_REF}'`);
     expect(command).not.toContain("git push --set-upstream");
     expect(command).toContain("export AVALON_REMOTE_ACCESS=read_only");
@@ -325,7 +331,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).resolves.toEqual({
       repository: "owner/repo", baseRef: "main", headRef: HEAD_REF, commitSha: HEAD,
       publishedSha: HEAD, outcome: "created",
@@ -354,7 +360,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(context, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).resolves.toMatchObject({ outcome: "unchanged", publishedSha: HEAD });
     expect(provider.publishGitBundle).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(
@@ -376,7 +382,7 @@ describe("Terminal repository publication", () => {
 
     await expect(publisher.publishBranchAndPr(unreceipted, { title: "Ship it", body: "Automated change" }, {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running",
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     }, provider)).rejects.toMatchObject({ code: "tool_receipt_missing" });
     // The receipt is what makes a publication replayable. Without it nothing
     // may reach GitHub, or a retry opens a second pull request.
@@ -393,7 +399,7 @@ describe("Terminal repository publication", () => {
     const publisher = createTerminalRepositoryPublisher(env, gateway);
     const sandbox = {
       providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running" as const,
-      authorityFingerprint: "authority", networkRevision: 1,
+      authorityFingerprint: "authority", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER,
     };
 
     await publisher.publishBranchAndPr(context, { title: "Ship it", body: "First commit" }, sandbox, provider);
@@ -404,7 +410,7 @@ describe("Terminal repository publication", () => {
       toolName: 'terminal_publish_branch_and_pr', mode: 'write',
       requestHash: 'hash-2', position: 1,
     });
-    const runCommand = vi.mocked(provider.runCommand);
+    const runCommand = vi.mocked(provider.runUtilityCommand);
     const firstImplementation = runCommand.getMockImplementation()!;
     runCommand.mockImplementation(async (sandboxId, input) => input.command.includes("rev-parse HEAD")
       ? { exitCode: 0, stdout: `${SECOND_HEAD}\n`, stderr: "" }
@@ -455,10 +461,10 @@ describe("Terminal repository publication", () => {
       workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
       executionPrincipal: { type: "user", userId: U },
     }, new Date(Date.now() - 1_000));
-    vi.mocked(dirty.provider.runCommand).mockResolvedValueOnce({ exitCode: 0, stdout: " M src/app.ts\n", stderr: "" });
+    vi.mocked(dirty.provider.runUtilityCommand).mockResolvedValueOnce({ exitCode: 0, stdout: " M src/app.ts\n", stderr: "" });
     await expect(createTerminalRepositoryPublisher(dirty.env, dirty.gateway).publishBranchAndPr(
       dirty.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       dirty.provider,
     )).rejects.toMatchObject({ code: "working_tree_dirty", message: expect.stringContaining("commit") });
   });
@@ -483,7 +489,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(readOnly.env, readOnly.gateway).publishBranchAndPr(
       readOnly.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       readOnly.provider,
     )).rejects.toMatchObject({
       code: "repository_remote_read_only",
@@ -498,7 +504,7 @@ describe("Terminal repository publication", () => {
       workspaceId: W, workstreamId: S, harnessRunId: R, triggerMessageId: MESSAGE,
       executionPrincipal: { type: "user", userId: U },
     }, new Date(Date.now() - 1_000));
-    const runCommand = vi.mocked(workflow.provider.runCommand);
+    const runCommand = vi.mocked(workflow.provider.runUtilityCommand);
     const defaultImplementation = runCommand.getMockImplementation()!;
     runCommand.mockImplementation(async (sandboxId, input) => input.command.includes("diff --name-only")
       ? { exitCode: 0, stdout: ".github/workflows/release.yml\n", stderr: "" }
@@ -506,7 +512,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(workflow.env, workflow.gateway).publishBranchAndPr(
       workflow.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       workflow.provider,
     )).rejects.toMatchObject({
       code: "publication_policy_denied",
@@ -529,7 +535,7 @@ describe("Terminal repository publication", () => {
 
     await expect(createTerminalRepositoryPublisher(removed.env, removed.gateway).publishBranchAndPr(
       removed.context, { title: "Ship", body: "" },
-      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1 },
+      { providerSandboxId: "sandbox", stableName: "sandbox", generation: 1, state: "running", authorityFingerprint: "a", networkRevision: 1, operationLeaseExpiresAt: Number.MAX_SAFE_INTEGER },
       removed.provider,
     )).rejects.toMatchObject({ code: "publication_not_authorized", message: expect.stringContaining("no longer belongs") });
     expect(removed.gateway.mintWriteToken).not.toHaveBeenCalled();
