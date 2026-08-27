@@ -315,6 +315,43 @@ describe("Terminal Bind integration", () => {
     )).toEqual({ bootstrapped_sandbox_generation: null });
   });
 
+  it("revalidates revoked repository access before an ordinary tool can reuse the sandbox", async () => {
+    const { database, objectStore, env, input } = fixture("supported");
+    selectRepository(database, objectStore);
+    database.exec(`UPDATE connector_connections SET status = 'disabled' WHERE id = '${CONNECTION}'`);
+    const sandboxProvider = provider();
+    const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
+      provider: sandboxProvider,
+      readGateway: readGateway(),
+    });
+
+    await expect(plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    })).resolves.toBeUndefined();
+    expect(plugin?.tools.map((tool) => tool.definition.name)).toContain("checkout_repository");
+
+    await expect(plugin!.tools.find((tool) => tool.definition.name === "read_file")!.execute!(
+      { filePath: "README.md", offset: 1, limit: 200 },
+      {
+        workspaceId: W,
+        workstreamId: S,
+        harnessRunId: R,
+        toolCallId: "read-after-revocation",
+        executionPrincipal: { type: "user", userId: U },
+        signal: new AbortController().signal,
+      },
+    )).rejects.toMatchObject({ code: "repository_access_revoked" });
+    expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
+    expect(sandboxProvider.runUtilityCommand).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ operation: "file.inspect" }),
+    );
+  });
+
   it("threads the resident object's Terminal boundaries through plugin setup", async () => {
     const { objectStore, env, input } = fixture("supported");
     const messageId = "30000000-0000-4000-8000-000000000005";

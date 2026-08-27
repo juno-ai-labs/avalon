@@ -105,6 +105,8 @@ export interface DaytonaTerminalRuntime extends TerminalRuntime {
     context: HarnessToolContext,
     preparation?: TerminalSandboxPreparation,
   ): Promise<AcquiredTerminalSandbox>;
+  /** Require the next ordinary tool to reacquire and rerun repository preparation. */
+  discardPreparation(context: Pick<HarnessToolContext, "harnessRunId">): void;
 }
 
 /**
@@ -369,6 +371,9 @@ export function createDaytonaTerminalRuntime(
 
   return {
     prepare: acquire,
+    discardPreparation(context) {
+      acquiredByRun.delete(context.harnessRunId);
+    },
     async checkoutRepository(context, input) {
       if (!selector) {
         throw new TerminalToolError("repository_checkout_unavailable", "Repository checkout is unavailable in this Terminal runtime.");
