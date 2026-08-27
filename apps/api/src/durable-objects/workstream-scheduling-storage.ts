@@ -356,7 +356,7 @@ export class WorkstreamSchedulingStorage {
    * what every stored elicitation part has, and giving them their run is a
    * change that belongs to whoever needs it.
    */
-  openElicitation(input: {
+  async openElicitation(input: {
     elicitationId: string;
     runId: string;
     prompt: string;
@@ -368,7 +368,19 @@ export class WorkstreamSchedulingStorage {
     messageId: string;
     structuredContentJson: string;
     now: number;
-  }): { outcome: "opened" | "exists"; sequenceNumber: number | null } {
+  }): Promise<{ outcome: "opened" | "exists"; sequenceNumber: number | null }> {
+    const prepared = await this.messages.prepareMessage({
+      messageId: input.messageId,
+      clientMessageId: `elicitation:${input.elicitationId}`,
+      authorType: "agent",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "elicitation",
+      text: "",
+      structuredContentJson: input.structuredContentJson,
+      producedByRunId: null,
+      now: input.now,
+    });
     return this.storage.transactionSync(() => {
       if (this.elicitationExistsForRun({
         elicitationId: input.elicitationId,
@@ -392,18 +404,7 @@ export class WorkstreamSchedulingStorage {
         input.targetUserId,
         input.now,
       );
-      const appended = this.messages.appendMessage({
-        messageId: input.messageId,
-        clientMessageId: `elicitation:${input.elicitationId}`,
-        authorType: "agent",
-        authorUserId: null,
-        externalActorJson: null,
-        messageType: "elicitation",
-        text: "",
-        structuredContentJson: input.structuredContentJson,
-        producedByRunId: null,
-        now: input.now,
-      });
+      const appended = this.messages.appendPreparedMessage(prepared);
       this.sql.exec(
         `UPDATE workstream
             SET exact_state = 'needs_input',
@@ -438,7 +439,7 @@ export class WorkstreamSchedulingStorage {
    * to whether any question is still open rather than to this one having been
    * answered.
    */
-  answerElicitationExternally(input: {
+  async answerElicitationExternally(input: {
     elicitationId: string;
     answerJson: string;
     externalActorJson: string;
@@ -446,7 +447,19 @@ export class WorkstreamSchedulingStorage {
     clientMessageId: string;
     structuredContentJson: string;
     now: number;
-  }): { outcome: "answered" | "already_answered"; sequenceNumber: number | null } {
+  }): Promise<{ outcome: "answered" | "already_answered"; sequenceNumber: number | null }> {
+    const prepared = await this.messages.prepareMessage({
+      messageId: input.messageId,
+      clientMessageId: input.clientMessageId,
+      authorType: "external",
+      authorUserId: null,
+      externalActorJson: input.externalActorJson,
+      messageType: "elicitation",
+      text: "",
+      structuredContentJson: input.structuredContentJson,
+      producedByRunId: null,
+      now: input.now,
+    });
     return this.storage.transactionSync(() => {
       const pending = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
         `SELECT 1 AS ok FROM elicitation_requests
@@ -464,18 +477,7 @@ export class WorkstreamSchedulingStorage {
         input.now,
         input.elicitationId,
       );
-      const appended = this.messages.appendMessage({
-        messageId: input.messageId,
-        clientMessageId: input.clientMessageId,
-        authorType: "external",
-        authorUserId: null,
-        externalActorJson: input.externalActorJson,
-        messageType: "elicitation",
-        text: "",
-        structuredContentJson: input.structuredContentJson,
-        producedByRunId: null,
-        now: input.now,
-      });
+      const appended = this.messages.appendPreparedMessage(prepared);
       return { outcome: "answered" as const, sequenceNumber: appended.sequenceNumber };
     });
   }

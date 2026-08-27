@@ -1311,6 +1311,30 @@ coverage verifies consecutive replacement, cancellation during handoff, and
 that constructor recovery touches only leases whose executor died with this
 SubstreamAgent instance.
 
+### 2026-08-27 — Transcript payload ownership transfer is explicit fleet work
+
+**What changed:** Schema v30 stages canonical message records and relations,
+dual-populates live message writes, and exposes a main-substream-only operator
+RPC that transfers retained message/checkpoint payload ownership under one
+object-local transaction. The operation captures a real PITR bookmark, hashes
+and re-reads the complete source, refuses active writers or immutable client
+snapshots, and records a replay-verifiable receipt.
+
+**Why:** The earlier range/index backfill was deliberately projection-only.
+Deleting the old tables after it would delete the only copy of historical text,
+structured tool cards, attachments, mentions, and exact checkpoint arrays.
+
+**Considered and rejected:** Unbounded constructor work and an implicit
+best-effort copy during ordinary requests. Neither gives the operator a complete
+fleet witness or an atomic failure boundary.
+
+**Consequences, and what a future change has to respect:** Deploy and run this
+transfer before the stacked retirement release. Post-cutover compaction facts
+retain their existing identities, historical checkpoint arrays remain exact,
+and participant compaction status/activity edges are not synthesized or
+rewritten. The cleanup migration must abort rather than drop data when the
+verified receipt or canonical references are incomplete.
+
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 
 **What changed:** The face-pile presence signal now follows Tailwind's

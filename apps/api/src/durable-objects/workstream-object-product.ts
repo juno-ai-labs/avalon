@@ -576,6 +576,15 @@ export class WorkstreamObjectProductService {
       turnId: messageId,
       actor: "human",
       authorUserId: input.creatorUserId,
+      clientMessageId: input.clientMessageId,
+      messageType: "text",
+      text: prepared.text,
+      structuredContentJson: input.openingStructuredContent === null
+        ? null
+        : JSON.stringify(input.openingStructuredContent),
+      externalActorJson: null,
+      producedByRunId: null,
+      messageSequenceNumber: 1,
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: 1,
     });
@@ -2696,6 +2705,13 @@ export class WorkstreamObjectProductService {
       turnId: messageId,
       actor: "human",
       authorUserId: auth.userId,
+      clientMessageId: input.clientMessageId,
+      messageType: "text",
+      text: prepared.text,
+      structuredContentJson: null,
+      externalActorJson: null,
+      producedByRunId: null,
+      messageSequenceNumber: root.next_sequence_number,
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: root.next_attention_ordinal,
     });
@@ -2772,6 +2788,7 @@ export class WorkstreamObjectProductService {
           messageId, sequence, attention, auth.userId, prepared.text, input.clientMessageId, now, now,
         );
         transcriptMessage.input.attentionOrdinal = attention;
+        transcriptMessage.input.messageSequenceNumber = sequence;
         this.transcript.appendPreparedParticipantMessage(transcriptMessage);
         input.attachmentIds.forEach((resourceId, position) => {
           const row = attachmentRows.find((candidate) => String(candidate.id) === resourceId)!;
@@ -3028,10 +3045,33 @@ export class WorkstreamObjectProductService {
     const responsePartId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
     const model = await this.model(root);
+    const persisted: Elicitation = {
+      id: elicitationId,
+      workstreamId: root.workstream_key,
+      harnessRunId: row.run_id,
+      prompt: row.prompt,
+      responseType: row.response_type as Elicitation["responseType"],
+      options: parseJson(row.options_json, []),
+      minimumSelections: row.minimum_selections,
+      maximumSelections: row.maximum_selections,
+      targetUserId: row.target_user_id,
+      status: "answered",
+      answer,
+      answeredByUserId: auth.userId,
+      createdAt: iso(row.created_at)!,
+      answeredAt: iso(now),
+    };
+    const structuredResponse = JSON.stringify({ kind: "elicitation_response", elicitation: persisted });
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
       turnId: responsePartId,
       actor: "human",
       authorUserId: auth.userId,
+      clientMessageId: `elicitation-response:${elicitationId}`,
+      messageType: "elicitation",
+      text: "",
+      structuredContentJson: structuredResponse,
+      externalActorJson: null,
+      producedByRunId: null,
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: null,
     });
@@ -3050,22 +3090,6 @@ export class WorkstreamObjectProductService {
         if (changed.toArray().length !== 1) {
           throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
         }
-        const persisted: Elicitation = {
-          id: elicitationId,
-          workstreamId: root.workstream_key,
-          harnessRunId: row.run_id,
-          prompt: row.prompt,
-          responseType: row.response_type as Elicitation["responseType"],
-          options: parseJson(row.options_json, []),
-          minimumSelections: row.minimum_selections,
-          maximumSelections: row.maximum_selections,
-          targetUserId: row.target_user_id,
-          status: "answered",
-          answer,
-          answeredByUserId: auth.userId,
-          createdAt: iso(row.created_at)!,
-          answeredAt: iso(now),
-        };
         const sequence = current.next_sequence_number;
         const attention = current.next_attention_ordinal;
         sql.exec(
@@ -3077,12 +3101,16 @@ export class WorkstreamObjectProductService {
                    'elicitation', ?, ?, ?)`,
           responsePartId, sequence, attention, auth.userId,
           `elicitation-response:${elicitationId}`,
-          JSON.stringify({ kind: "elicitation_response", elicitation: persisted }),
+          structuredResponse,
           now, now,
         );
         this.transcript.appendPreparedParticipantMessage({
           ...transcriptMessage,
-          input: { ...transcriptMessage.input, attentionOrdinal: attention },
+          input: {
+            ...transcriptMessage.input,
+            messageSequenceNumber: sequence,
+            attentionOrdinal: attention,
+          },
         });
         sql.exec(
           `INSERT INTO participants

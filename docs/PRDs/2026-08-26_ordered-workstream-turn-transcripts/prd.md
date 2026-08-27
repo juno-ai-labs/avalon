@@ -1105,11 +1105,16 @@ messages project in the call order Bind uses.
 
 Neither deployment nor replay queries the Global raw-inference lakehouse to
 construct participant turns or Bind state. Pre-cutover participant-visible rows
-are projected from their owning object-local `parts` records, in
+are first projected from their owning object-local `parts` records, in
 `parts.sequence_number` order, without copying their payloads. Exact legacy
-compaction arrays remain owned by `compaction_checkpoints` and are reached by a
-canonical reference. No pre-cutover aggregate row becomes a Bind message or
-loop generation.
+compaction arrays are initially reached through a canonical reference to
+`compaction_checkpoints`. A separate explicit ownership transfer then moves
+every retained message, attachment, mention, and exact checkpoint payload under
+canonical facts, reusing an already-canonical post-cutover checkpoint fact
+rather than copying it. Only after every object reconciles that transfer may the
+legacy owners be dropped. Neither operation turns a pre-cutover aggregate row
+into a Bind message or loop generation, and neither invents or changes a
+compaction status/activity edge.
 
 ### Participant transcript projection
 
@@ -1720,7 +1725,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `H31 projects_nested_activity_with_parallel_tool_children` | SQL + workerd + desktop reducer | Run one response with two assistant turns. Under the first turn, stream thinking plus two ordered plugin blocks whose tool children start and settle in parallel/out of order; place compaction under the second turn. Assert live, reconnect, range, and cold projections produce response → assistant turn → plugin → tool ancestry with thinking/compaction at their causal turn, stable sibling order, independent child labels, parent wall-clock unions, no double counting, and uninterrupted response-text token streaming. Run the same fixture through a flat-row adapter and a nested in-memory fixture and assert identical product projection without requiring identical persistence. |
 | `H32 benchmarks_complete_workstream_open_distribution` | real Electron + local E2E performance lane | From an already-running authenticated desktop, exercise declared warm/cold cache and object, unread/latest, overlapping/disjoint, large-history, and mid-stream cohorts through the production click/navigation path. Stop each client-monotonic sample only when the target range is visibly committed, both islands and active fence are resident, and the composer is usable. Preserve raw samples and environment metadata; assert the combined distribution is p50 ≤ 1,000 ms and p90 ≤ 2,000 ms and report every cohort separately. |
 | `H33 backfills_legacy_tool_cards_by_reference` | SQL + workerd | Seed completed, failed, ambiguous, and in-progress legacy tool rows with participant-safe structured summaries. Assert stable tool identities, plugin/tool names, statuses, inputs/results/errors, and old display order hydrate from the owning `parts` rows while new payload rows contain only stable references and no copied summary/result. |
-| `H34 backfills_exact_legacy_compaction_references` | SQL + workerd | Seed two distinct legacy compaction events and exact message arrays. Assert two new checkpoint projections reference the old owning rows, each array/summary resumes byte-for-byte through the canonical reader, no payload copy exists, and no participant status or Bind generation is fabricated. |
+| `H34 transfers_two_exact_legacy_compactions_without_changing_edges` | SQL + workerd | Seed two distinct legacy compaction events and exact message arrays. First assert projection backfill references the old owning rows without a payload copy. Then run the ownership transfer and assert both arrays/summaries resume exactly from canonical model-only facts, an already-canonical mirrored checkpoint retains its original fact/event identity, attachments/mentions and message metadata reconcile row-for-row, and participant status/activity rows and Bind generations are unchanged. Replay the transfer and assert the original receipt plus `applied=false`; abort a raced source edit with no partial fact/projection/receipt. |
 | `H35 records_empty_and_populated_backfill_receipts` | SQL + workerd | Backfill an empty object and a populated object. Assert each commits exactly one v28 receipt containing v27 cutover time, exact source counts/digest, operator run, non-empty real PITR bookmark, completion time, and explicit unavailable-Bind-history status. |
 | `H36 replays_backfill_idempotently_and_reconciles_every_fact` | SQL + workerd | Invoke the same object through two operator runs. Assert the second call writes nothing, returns the first receipt with `applied=false`, recomputes source integrity, and verifies exact participant prefix/checkpoint counts and order. |
 | `H37 targets_exact_regional_fleet_without_crossing_jurisdictions` | script + remote-preview contract | Inventory the production-shaped 389 Global plus 3 EU addressable IDs and legacy unrestricted IDs. Assert runtime classification sends every eligible ID once through its matching regional binding, skips every wrong/unrestricted ID, bounds batches, rejects count drift before writes, and persists every per-object outcome/bookmark in a mode-0600 local receipt. |
@@ -1779,7 +1784,7 @@ WebSockets, transactions, or RPC runs in the real workerd suite.
 | `E47 aborts_backfill_when_source_moves_during_preparation` | SQL + workerd | Pause PITR-bookmark/hash preparation, edit or append a legacy source row, then resume. Assert the transaction's full source re-read detects the change and commits no fact, projection, counter shift, or receipt. |
 | `E48 abandons_only_provably_orphaned_pre_cutover_runs_then_repairs_terminal_receipts` | SQL + workerd | Seed an active pre-v27 run with no attempt ID, lease owner/deadline, heartbeat, or open receipt. Invoke the explicit operator cleanup and assert it alone becomes terminal `failed` with `migration_cutover_abandoned` and atomically commits a singleton cleanup receipt containing the original operator and count. Force the following backfill to fail, retry under a different operator, and assert both the object RPC and protected fleet receipt still report the original cleanup evidence before backfill succeeds. Separately add each disqualifier and a post-v27 start, assert cleanup aborts atomically and leaves the run active, and mutation-test every fence. Seed a terminal run whose pending legacy tool card is backed by an admitted/executing receipt and assert the first-time backfill invokes only the established terminal residual-receipt phase, projects the repaired terminal lifecycle, and records one receipt; delete the repair call and prove this test fails with `legacy_transcript_backfill_not_quiescent`. Seed an expired nonterminal root and a reapable child and assert backfill itself neither terminalizes nor otherwise mutates them and still rejects as non-quiescent; replace the narrow call with the general stale-run reaper and prove the test fails. Separately seed each write-capable run/activity state, a receipt that remains open after repair, an orphaned historical pending card with no open receipt, and a connected socket retaining an immutable transcript snapshot; also race a new write or snapshot open with backfill preparation. Assert the operation fails before renumbering or receipt creation while a source can still settle or an existing snapshot fence could change meaning, but preserves the immutable orphan as `started`; after settlement and snapshot disconnect, the same source backfills once. Replay an already-receipted object and assert neither cleanup nor repair has a side effect. |
 | `E49 rejects_partial_or_conflicting_legacy_projection` | SQL | Preinsert one legacy turn projection, a mismatched fact identity, and a conflicting compaction uniqueness key in separate cases. Assert each aborts the complete object transaction instead of skipping the conflict or producing a mixed projection. |
-| `E50 detects_tampered_legacy_owner_after_backfill` | SQL + workerd | Change referenced legacy text, structured tool data, or checkpoint bytes after a successful backfill. Assert replay reconciliation fails against the recorded source digest rather than blessing changed history. |
+| `E50 detects_tampered_legacy_owner_before_retirement` | SQL + workerd | Change referenced legacy text, structured tool data, relation rows, or checkpoint bytes after projection backfill and after ownership transfer in separate cases. Assert replay reconciliation fails against the recorded source digest/row comparison rather than blessing changed history, and the retirement migration refuses to drop any source table when a canonical owner or verified receipt is missing. |
 | `E51 handles_cutover_timestamp_boundary_without_loss_or_duplication` | SQL | Create an unprojected legacy row at the v27 `applied_at` millisecond and a post-v27 row already carrying a canonical projection at that same millisecond. Assert the first is included exactly once, the second remains only in the suffix, and all other source predicates are strict and deterministic. |
 | `E52 preserves_receipts_when_a_fleet_batch_partially_fails` | script | Return success and error outcomes in one regional batch. Assert the mode-0600 local receipt durably contains every completed per-object bookmark/error before the command exits nonzero; rerunning safely reconciles prior successes and applies only missing object receipts. |
 | `E53 rejects_inventory_or_jurisdiction_drift_before_mutation` | script + remote-preview contract | Change the eligible count, duplicate/omit a classifier result, return a wrong jurisdiction, or expose an ambiguous namespace. Assert apply fails before the first object RPC and never treats an expected Cloudflare parser failure as an eligible target. |
@@ -1877,11 +1882,29 @@ coordinated cutover and no compatibility phases:
    return `applied=false` and `verified=true`, with source/projection totals
    matching the first run. Inspect representative raw SQLite rows and the fleet
    receipt before declaring the migration complete.
+7. Deploy the schema that stages canonical message records and the explicit
+   payload-ownership RPC. Run its separate fleet mode against the same reviewed
+   regional IDs. The operation must refuse active writers, admitted/executing
+   tool receipts, connected immutable transcript snapshots, and source movement;
+   it hashes outside the transaction, re-reads inside it, moves every exact
+   payload/relation, reuses already-canonical compaction facts, and commits one
+   object-local receipt plus PITR bookmark. Replay the whole fleet and require
+   `applied=false`, `verified=true`, and exact source/projection counts.
+8. Only after step 7 is complete, deploy the stacked cleanup release. Its schema
+   migration must prove the transfer receipt and row-for-row canonical ownership
+   before it switches all readers/foreign keys and drops `parts`,
+   `part_attachments`, `part_mentions`, `compaction_checkpoints`, and the
+   one-time migration surfaces. Missing evidence aborts the object migration;
+   it never treats an empty or partially copied canonical table as permission to
+   delete the old owner.
 
-There is no inference-archive backfill, legacy protocol reader, dual write, dual
-read, capability negotiation, compatibility window, staged client floor, or
-cross-region step. The one-time object-local data projection is required and is
-recoverable from each receipt's PITR bookmark. A backend rollback is not required to understand new
+The completed release has no inference-archive backfill, legacy protocol reader,
+dual write, dual read, capability negotiation, compatibility window, staged
+client floor, or cross-region step. The temporary dual population between steps
+7 and 8 exists only to keep source and destination current during the explicit
+fleet transfer; it is not a client protocol or reader fallback. The one-time
+object-local operations are required and recoverable from each receipt's PITR
+bookmark. A backend rollback is not required to understand new
 canonical rows; use a forward fix rather than preserving the removed protocol
 solely for rollback.
 
