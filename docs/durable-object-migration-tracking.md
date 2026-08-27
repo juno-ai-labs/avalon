@@ -828,8 +828,10 @@ part of the source subsequently hashed and projected; any repair failure aborts
 that object, and receipt replay remains read-only. The probe first invokes a
 separate operator cleanup that may terminalize only active rows predating v27
 whose attempt, lease, heartbeat, and open-receipt fields prove no executor can
-still own them. Each receipt records the cleanup count; any other active shape
-remains a hard failure.
+still own them. Schema v29 stores the original operator and cleanup count in the
+same object-local transaction as abandonment. The protected fleet receipt keeps
+that evidence even if the following backfill fails, and retry returns the same
+count; any other active shape remains a hard failure.
 
 **Why:** waking the fleet installed schema v27 but did not project existing
 participant/checkpoint facts into the new canonical indexes. This is content
@@ -860,7 +862,9 @@ therefore retained as `started`, not treated as live execution.
 The only nonterminal cleanup is the separate pre-v27 abandonment RPC, fenced by
 the schema timestamp and absence of every durable attempt/lease/heartbeat and
 open receipt. It records an explicit failure reason and may never select a
-current or leased run.
+current or leased run. Cleanup terminalization and its singleton receipt are one
+transaction; probe and fleet receipts must preserve that cleanup outcome when a
+later backfill RPC fails.
 
 ### 2026-08-26 — A manual SubstreamAgent fleet wake respects jurisdictions
 

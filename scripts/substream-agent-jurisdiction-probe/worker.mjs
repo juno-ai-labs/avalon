@@ -57,9 +57,10 @@ export default {
       return new Response('invalid_operation', { status: 400 });
     }
     const objects = await Promise.all(input.objectIds.map(async (objectId) => {
+      let cleanup;
       try {
         const id = namespace.idFromString(objectId);
-        const cleanup = await namespace.get(id).abandonPreCutoverRunsForTranscriptBackfill({
+        cleanup = await namespace.get(id).abandonPreCutoverRunsForTranscriptBackfill({
           objectId,
           operatorRunId: input.operatorRunId,
           cutoverVersion: input.cutoverVersion,
@@ -74,10 +75,15 @@ export default {
           outcome: {
             ...outcome,
             abandonedPreCutoverRunCount: cleanup.abandonedRunCount,
+            preCutoverCleanupOperatorRunId: cleanup.cleanupOperatorRunId,
           },
         };
       } catch (error) {
-        return { objectId, error: error instanceof Error ? error.message : 'unknown' };
+        return {
+          objectId,
+          ...(cleanup ? { cleanup } : {}),
+          error: error instanceof Error ? error.message : 'unknown',
+        };
       }
     }));
     return Response.json({ objects });
