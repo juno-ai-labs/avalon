@@ -184,9 +184,8 @@ const RESOLVED_OBJECTS = `
       ns.retired_at AS namespace_retired_at,
       CASE
         WHEN o.absent_since IS NOT NULL THEN 'absent'
-        -- Report-only rows use the column's default until the first sweep, and
-        -- old deployments did not flip it on reports, so `0` means empty only
-        -- when inventory observed it and no newer report supersedes it.
+        -- Report-only rows default to 0. A false sweep wins unless a strictly
+        -- newer report proves storage; toTrackedObject mirrors this projection.
         WHEN o.last_swept_at IS NOT NULL
           AND o.has_stored_data = 0
           AND o.last_swept_at >= COALESCE(o.last_reported_at, 0) THEN 'empty'
@@ -289,10 +288,10 @@ export class MigrationRegistry extends DurableObject<Env> {
     sql.exec(
       `INSERT INTO durable_objects (
          object_id, object_name, class_name, component, region, app_env,
-         worker_version_id, has_stored_data, report_status, schema_version, failure_message,
+         worker_version_id, report_status, schema_version, failure_message,
          failure_version, first_seen_at, last_reported_at, last_failed_at,
          absent_since
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, NULL)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
        ON CONFLICT(object_id) DO UPDATE SET
          object_name = COALESCE(excluded.object_name, durable_objects.object_name),
          class_name = excluded.class_name,
@@ -300,14 +299,6 @@ export class MigrationRegistry extends DurableObject<Env> {
          region = excluded.region,
          app_env = excluded.app_env,
          worker_version_id = excluded.worker_version_id,
-         -- A report newer than the latest inventory observation proves the
-         -- object woke and applied its schema. An older Queue delivery cannot
-         -- resurrect storage a later sweep observed as cleared.
-         has_stored_data = CASE
-           WHEN excluded.last_reported_at > COALESCE(durable_objects.last_swept_at, 0)
-             THEN excluded.has_stored_data
-           ELSE durable_objects.has_stored_data
-         END,
          report_status = excluded.report_status,
          schema_version = excluded.schema_version,
          failure_message = excluded.failure_message,
@@ -413,8 +404,8 @@ export class MigrationRegistry extends DurableObject<Env> {
         sql.exec(
           `INSERT INTO durable_object_namespaces
              (namespace_id, script_name, class_name, uses_sqlite, object_count,
-              first_seen_at, last_swept_at, last_sweep_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?9)
+              first_seen_at, last_swept_at, last_sweep_id, last_listed_sweep_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?9, CASE WHEN ?8 THEN ?9 ELSE NULL END)
            ON CONFLICT(namespace_id) DO UPDATE SET
              script_name = excluded.script_name,
              class_name = excluded.class_name,
@@ -427,6 +418,13 @@ export class MigrationRegistry extends DurableObject<Env> {
              -- that the *namespace* was returned, which is what retirement
              -- asks about.
              last_sweep_id = ?9,
+             -- Unlike the namespace-presence stamp above, this advances only
+             -- when the object listing succeeded. The Stored and IDs columns
+             -- both describe the listing carrying this receipt.
+             last_listed_sweep_id = CASE
+               WHEN ?8 THEN ?9
+               ELSE durable_object_namespaces.last_listed_sweep_id
+             END,
              -- Listed again, so it is not retired, whatever a previous sweep
              -- concluded. A class can come back: a rollback restores the
              -- binding a deploy removed.
@@ -465,7 +463,7 @@ export class MigrationRegistry extends DurableObject<Env> {
             namespace.className,
             object.hasStoredData ? 1 : 0,
             now,
-            now,
+            object.observedAt ?? sweep.finishedAt,
             sweepId,
           );
         }
@@ -537,7 +535,8 @@ export class MigrationRegistry extends DurableObject<Env> {
            WHEN 'current' THEN 3
            WHEN 'not_reporting' THEN 4
            WHEN 'empty' THEN 5
-           ELSE 6
+           WHEN 'absent' THEN 6
+           ELSE 7
          END,
          COALESCE(last_reported_at, last_swept_at, first_seen_at) DESC,
          object_id
@@ -666,7 +665,7 @@ export class MigrationRegistry extends DurableObject<Env> {
       `SELECT n.namespace_id, n.script_name, n.class_name, n.uses_sqlite, n.object_count,
               COALESCE((SELECT COUNT(*) FROM durable_objects o
                          WHERE o.namespace_id = n.namespace_id
-                           AND o.last_sweep_id = n.last_sweep_id
+                           AND o.last_sweep_id = n.last_listed_sweep_id
                            AND o.has_stored_data = 1), 0) AS stored_object_count,
               n.last_swept_at, n.retired_at
          FROM durable_object_namespaces n
@@ -1069,10 +1068,9 @@ function toTrackedObject(row: ObjectRow): TrackedObject {
     region: row.region,
     appEnv: row.app_env,
     workerVersionId: row.worker_version_id,
-    // Older deployments left the inventory flag unchanged when a report
-    // arrived. A report strictly newer than the latest sweep is stronger proof
-    // of current storage than that stale flag; the next sweep makes it raw fact
-    // again.
+    // has_stored_data remains the immutable latest inventory fact. A report
+    // strictly newer than that observation is stronger proof of current
+    // storage, including for report-only rows that have never been swept.
     hasStoredData: row.has_stored_data === 1 || (
       row.last_reported_at !== null
       && (row.last_swept_at === null || row.last_reported_at > row.last_swept_at)

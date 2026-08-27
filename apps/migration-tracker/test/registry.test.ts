@@ -274,7 +274,7 @@ describe("recordSweep", () => {
     expect(result.emptyPage.objects.map((object) => object.objectId)).toEqual([objectId("d")]);
   });
 
-  it("lets a later report revive an identity the previous sweep found empty", async () => {
+  it("uses the object's observation time when a later report revives an empty identity", async () => {
     const detail = await withRegistry((registry) => {
       registry.recordSweep(sweep({
         namespaces: [{
@@ -282,26 +282,27 @@ describe("recordSweep", () => {
           scriptName: "avalon-api-global",
           className: "SubstreamAgent",
           usesSqlite: true,
-          objects: [{ objectId: objectId("a"), hasStoredData: false }],
+          objects: [{
+            objectId: objectId("a"),
+            hasStoredData: false,
+            observedAt: 1_700_000_000_500,
+          }],
         }],
       }));
-      const lastSweptAt = registry.objectDetail(objectId("a"))?.object.lastSweptAt;
-      expect(lastSweptAt).not.toBeNull();
-      record(registry, report({ occurredAt: (lastSweptAt ?? 0) + 1 }));
+      // This report happened after the object's page was observed but before
+      // the whole account sweep finished at 1_700_000_001_000.
+      record(registry, report({ occurredAt: 1_700_000_000_750 }));
       return registry.objectDetail(objectId("a"));
     });
 
     expect(detail?.object.status).toBe("current");
     expect(detail?.object.hasStoredData).toBe(true);
+    expect(detail?.object.lastSweptAt).toBe(1_700_000_000_500);
   });
 
-  /**
-   * Before this fix, reports did not update `has_stored_data`. The projection
-   * must repair that deployed row shape immediately instead of waiting for the
-   * next hourly inventory sweep.
-   */
-  it("treats a legacy false storage flag as stale when a newer report exists", async () => {
-    const result = await withRegistry((registry, state) => {
+  /** The report changes effective liveness, not the inventory fact it follows. */
+  it("keeps the swept storage fact immutable while a newer report makes the object live", async () => {
+    const result = await withRegistry((registry) => {
       registry.recordSweep(sweep({
         namespaces: [{
           namespaceId: "ns-global",
@@ -313,12 +314,9 @@ describe("recordSweep", () => {
       }));
       const lastSweptAt = registry.objectDetail(objectId("a"))?.object.lastSweptAt ?? 0;
       record(registry, report({ occurredAt: lastSweptAt + 1 }));
-      state.storage.sql.exec(
-        `UPDATE durable_objects SET has_stored_data = 0 WHERE object_id = ?`,
-        objectId("a"),
-      );
       return {
         detail: registry.objectDetail(objectId("a")),
+        namespace: registry.overview().namespaces[0],
         components: registry.forceableComponents(),
         selection: registry.migrationTargets({ className: "SubstreamAgent" }),
       };
@@ -326,11 +324,14 @@ describe("recordSweep", () => {
 
     expect(result.detail?.object.status).toBe("current");
     expect(result.detail?.object.hasStoredData).toBe(true);
+    // The object read is current, while the namespace count still truthfully
+    // reports that the preceding Cloudflare listing saw no stored data.
+    expect(result.namespace?.storedObjectCount).toBe(0);
     expect(result.components[0]?.objects).toBe(1);
     expect(result.selection.targets.map((target) => target.objectId)).toEqual([objectId("a")]);
   });
 
-  it("does not let an older report revive storage a later sweep found empty", async () => {
+  it("does not let a stale-occurredAt report revive storage after a sweep found it empty", async () => {
     const result = await withRegistry((registry) => {
       record(registry, report());
       registry.recordSweep(sweep({
@@ -354,6 +355,55 @@ describe("recordSweep", () => {
     expect(result.overview.components[0]?.empty).toBe(1);
     expect(result.overview.components[0]?.total).toBe(0);
     expect(result.detail?.events).toHaveLength(2);
+  });
+
+  it("lets an empty inventory observation win a report timestamp tie", async () => {
+    const detail = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{
+            objectId: objectId("a"),
+            hasStoredData: false,
+            observedAt: 1_700_000_000_500,
+          }],
+        }],
+      }));
+      record(registry, report({ occurredAt: 1_700_000_000_500 }));
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("empty");
+    expect(detail?.object.hasStoredData).toBe(false);
+  });
+
+  it("retires a historical migration failure after its storage is cleared", async () => {
+    const result = await withRegistry((registry) => {
+      record(registry, report({
+        status: "failed",
+        appliedVersions: [],
+        failure: { message: "substream_agent_do_schema_hash_mismatch:4", version: 4 },
+      }));
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: false }],
+        }],
+      }));
+      return {
+        detail: registry.objectDetail(objectId("a")),
+        recentFailures: registry.overview().recentFailures,
+      };
+    });
+
+    expect(result.detail?.object.status).toBe("empty");
+    expect(result.recentFailures).toEqual([]);
   });
 
   it("joins a swept object to the report that arrives later", async () => {
@@ -450,7 +500,10 @@ describe("recordSweep", () => {
             scriptName: "avalon-migration-tracker",
             className: "MigrationRegistry",
             usesSqlite: true,
-            objects: [{ objectId: objectId("e"), hasStoredData: true }],
+            objects: [
+              { objectId: objectId("e"), hasStoredData: true },
+              { objectId: objectId("h"), hasStoredData: false },
+            ],
           },
           {
             namespaceId: "ns-container",
@@ -473,6 +526,9 @@ describe("recordSweep", () => {
 
     const byId = new Map(page.objects.map((object) => [object.objectId, object.status]));
     expect(byId.get(objectId("e"))).toBe("not_reporting");
+    // Physical storage state is more specific than reporter participation: an
+    // infrastructure identity without storage is historical, not actionable.
+    expect(byId.get(objectId("h"))).toBe("empty");
     expect(byId.get(objectId("f"))).toBe("not_reporting");
     // Only the class that actually reports counts as one nobody has heard from.
     expect(byId.get(objectId("c"))).toBe("unreported");
@@ -555,9 +611,11 @@ describe("recordSweep", () => {
     });
 
     expect(enumerated?.objectCount).toBe(2);
+    expect(enumerated?.storedObjectCount).toBe(2);
     // Both columns still describe the last sweep that actually listed the
     // namespace, rather than claiming it was just seen to be empty.
     expect(afterFailure?.objectCount).toBe(2);
+    expect(afterFailure?.storedObjectCount).toBe(2);
     expect(afterFailure?.lastSweptAt).toBe(enumerated?.lastSweptAt);
   });
 });
@@ -653,6 +711,21 @@ describe("the registry schema", () => {
       return registry.listMigrationRuns();
     });
     expect(runs).toHaveLength(1);
+  });
+
+  it("adds a separate stamp for the last successful namespace object listing", async () => {
+    const applied = await withRegistry((_registry, state) => {
+      state.storage.sql.exec(
+        `ALTER TABLE durable_object_namespaces DROP COLUMN last_listed_sweep_id`,
+      );
+      state.storage.sql.exec(`DELETE FROM _sql_schema_migrations WHERE version = 5`);
+      expect(() => state.storage.sql.exec(
+        `SELECT last_listed_sweep_id FROM durable_object_namespaces`,
+      )).toThrow();
+      return applyRegistrySchema(state.storage);
+    });
+
+    expect(applied).toEqual([5]);
   });
 
   /**
