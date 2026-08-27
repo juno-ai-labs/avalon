@@ -120,6 +120,37 @@ For a notarized release candidate, repeat the selected-icon test from an install
 
 ## Changelog
 
+### 2026-08-27 — The mark artwork is the redesigned loop and brand primary is #CCFF00
+
+**What changed:** `assets/brand/rally-mark-source.png` now holds the redesigned
+Rally mark — a single continuous looping line — rendered at 1024 px from the
+canonical SVG (`apps/site/public/brand/rally-mark.svg`), and the generator's
+`PRIMARY` moved from `#CEDC00` to `#CCFF00` to match the logo. Every generated
+asset was regenerated: the Icon Composer mark, the legacy DMG ICNS, the
+generated light/dark selectable icons and their previews, the menu bar
+templates, the favicon, the touch icon, and the social card. The social card's
+volt motif is now the mark itself, composited from the mask, replacing a
+parametric lemniscate that had been drawn in code and no longer resembled the
+logo.
+
+**Why:** The public site had already switched to the new mark and the new lime
+(shipped with the Convergence hero), leaving the desktop icons, favicon, and
+social card carrying the previous woven ring — a visible mismatch between the
+browser tab, the Dock, and the page. The site's mark PNGs had been replaced out
+of band of the generator, so rerunning it would have regressed them; this
+change makes the generator the source of truth again.
+
+**Considered and rejected:** Keeping the woven mark in the source mask and
+hand-editing only the web assets. That leaves every future generator run a
+regression, which is precisely the failure mode this pipeline exists to
+prevent.
+
+**Consequences:** The six custom selectable PNGs are committed artwork and
+still carry their own designs untouched. `icon.icon` should be opened in Icon
+Composer to inspect Default, Dark, and Mono, and the next signed package build
+should be checked in the Dock in both appearances, per this document's
+verification section.
+
 ### 2026-08-13 — Icon choice has one product and telemetry taxonomy
 
 **What changed:** The selectable icon identifiers now come from the closed
