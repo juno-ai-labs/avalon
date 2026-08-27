@@ -294,6 +294,30 @@ describe('work-stream participant presence', () => {
 });
 
 /**
+ * `animation-duration` and `transition-duration` are zeroed here, but a delay is
+ * a separate property: it holds the "from" state of a `both`-filled animation
+ * for its own length regardless of how short the animation that follows is. A
+ * `.launch-arrival` row staggers in on a 60ms base plus a 70ms-per-index delay
+ * from `opacity: 0`, so leaving delays alone kept every row invisible for its
+ * whole stagger under this preference — the block looked like it turned motion
+ * off and instead only made it instant once it started.
+ */
+describe('global reduced-motion kill switch', () => {
+  it('zeroes animation and transition delays alongside their durations', () => {
+    const declarations =
+      stylesheet.match(
+        /@media \(prefers-reduced-motion: reduce\) \{\s*\*,\s*\*::before,\s*\*::after \{([^}]*)\}/u,
+      )?.[1] ?? null;
+
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain('animation-duration: 0.001ms !important;');
+    expect(declarations).toContain('animation-delay: 0.001ms !important;');
+    expect(declarations).toContain('transition-duration: 0.001ms !important;');
+    expect(declarations).toContain('transition-delay: 0.001ms !important;');
+  });
+});
+
+/**
  * The five-line cap on a system row exists only here. `SystemMessageBlock`
  * renders the whole string and sets one attribute; the clamp, and therefore the
  * feature, is the stylesheet. A component test cannot see it — jsdom lays

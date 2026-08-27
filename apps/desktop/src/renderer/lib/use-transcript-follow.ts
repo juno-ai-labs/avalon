@@ -215,7 +215,14 @@ export function useTranscriptFollow(
       followWhenSettledRef.current = true;
       followingRef.current = false;
       setAtEnd(true);
-      element.scrollTo({ behavior: 'smooth', top: end });
+      // An explicit `behavior` here wins over the stylesheet's global
+      // `scroll-behavior: auto !important` kill switch per spec, so the
+      // reduced-motion preference has to be read here too rather than left to
+      // CSS — the same gate `sidebar.tsx` applies to its own `scrollTo` call.
+      element.scrollTo({
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        top: end,
+      });
       return;
     }
     followWhenSettledRef.current = false;
