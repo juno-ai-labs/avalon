@@ -67,6 +67,45 @@ function ResourceIcon({ type }: { type: string }): React.JSX.Element {
   return <File size={15} />;
 }
 
+function ResourceCards({
+  resources,
+  onToggleWatch,
+}: {
+  resources: WorkstreamResource[];
+  onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
+}): React.JSX.Element {
+  const inspect = useUiStore((state) => state.inspect);
+  return (
+    <ul className="rail-card-list">
+      {resources.map((resource) => {
+        const watch = watchLabel(resource);
+        return (
+          <li className="rail-card resource-row" key={resource.id}>
+            <button className="rail-card-main" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
+              <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
+              <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
+            </button>
+            {resource.direction === 'source' && (
+              <label className="watch-toggle" title={watch.name}>
+                <input
+                  aria-label={watch.name}
+                  checked={resource.watchEnabled}
+                  disabled={resource.watchStatus === 'unsupported'}
+                  onChange={(event) => onToggleWatch?.(resource, event.target.checked)}
+                  type="checkbox"
+                />
+                <small>{watch.text}</small>
+                <span aria-hidden="true" />
+              </label>
+            )}
+            <ChevronRight aria-hidden="true" className="resource-row-chevron" size={14} />
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 // The row is narrow enough that the status text competes with the resource
 // title for width, so the visible label is kept short and the fuller phrasing
 // is left to the accessible name.
@@ -88,7 +127,6 @@ function ContextContent({
   | 'onAddResource'
   | 'onToggleWatch'
 >): React.JSX.Element {
-  const inspect = useUiStore((state) => state.inspect);
   const debugEnabled = useDebugEnabled();
   const [emailCopyState, setEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
@@ -103,6 +141,8 @@ function ContextContent({
   }, [emailCopyState]);
 
   if (!workstream) return <EmptyState title="No work stream selected" description="Open a work stream to inspect its context." />;
+  const sources = workstream.resources.filter((resource) => resource.direction === 'source');
+  const artifacts = workstream.resources.filter((resource) => resource.direction === 'artifact');
 
   const copyEmailAddress = async (): Promise<void> => {
     if (!workstream.emailAddress) return;
@@ -154,36 +194,20 @@ function ContextContent({
 
       <Section
         action={<IconButton label="Add resource" onClick={onAddResource}><Plus size={14} /></IconButton>}
-        title="Resources"
+        title="Sources"
       >
-        {workstream.resources.length === 0 ? (
-          <p className="rail-empty-line">No resources attached</p>
+        {sources.length === 0 ? (
+          <p className="rail-empty-line">No sources attached</p>
         ) : (
-          <ul className="rail-card-list">
-            {workstream.resources.map((resource) => {
-              const watch = watchLabel(resource);
-              return (
-                <li className="rail-card resource-row" key={resource.id}>
-                  <button className="rail-card-main" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
-                    <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
-                    <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
-                  </button>
-                  <label className="watch-toggle" title={watch.name}>
-                    <input
-                      aria-label={watch.name}
-                      checked={resource.watchEnabled}
-                      disabled={resource.watchStatus === 'unsupported'}
-                      onChange={(event) => onToggleWatch?.(resource, event.target.checked)}
-                      type="checkbox"
-                    />
-                    <small>{watch.text}</small>
-                    <span aria-hidden="true" />
-                  </label>
-                  <ChevronRight aria-hidden="true" className="resource-row-chevron" size={14} />
-                </li>
-              );
-            })}
-          </ul>
+          <ResourceCards onToggleWatch={onToggleWatch} resources={sources} />
+        )}
+      </Section>
+
+      <Section title="Artifacts">
+        {artifacts.length === 0 ? (
+          <p className="rail-empty-line">No artifacts generated</p>
+        ) : (
+          <ResourceCards resources={artifacts} />
         )}
       </Section>
 
@@ -329,7 +353,9 @@ function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailPro
         <p>{resource.provider ?? resource.resourceType}</p>
         <dl className="detail-list">
           <div><dt>Type</dt><dd>{resource.resourceType}</dd></div>
-          <div><dt>Watch status</dt><dd>{resource.watchStatus === 'unsupported' ? 'Not supported' : resource.watchStatus === 'error' ? 'Needs attention' : resource.watchEnabled ? 'Watching for changes' : 'Not watched'}</dd></div>
+          <div><dt>Direction</dt><dd>{resource.direction === 'artifact' ? 'Artifact' : 'Source'}</dd></div>
+          <div><dt>Version</dt><dd>{resource.currentVersion}</dd></div>
+          {resource.direction === 'source' && <div><dt>Watch status</dt><dd>{resource.watchStatus === 'unsupported' ? 'Not supported' : resource.watchStatus === 'error' ? 'Needs attention' : resource.watchEnabled ? 'Watching for changes' : 'Not watched'}</dd></div>}
           {resource.updatedAt && <div><dt>Last updated</dt><dd>{formatDateTime(resource.updatedAt)}</dd></div>}
         </dl>
         <div className="inspector-detail-actions">

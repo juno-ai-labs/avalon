@@ -315,11 +315,18 @@ hash-checked RPCs rather than cross-object SQL joins.
   attachments may also carry a signature-validated model derivative and bounded
   metadata; animated GIF metadata records dimensions, frame count, duration,
   approximate frame rate, loop behavior, and storyboard timestamps.
+  `current_version` identifies the latest semantic state and `resource_versions`
+  retains every state from version 1 onward, including its original and
+  model-readable R2 refs. Inserts create version 1. Writes to identity, display,
+  content, hash, or hydration fields increment it; derivative claim/processing
+  writes enrich that same version. A successful external refresh increments the
+  version through `last_hydrated_at`, even when the provider returns the same bytes.
   Each new original or derivative generation is pre-registered in
   `resource_object_deletion_outbox`. Successful pointer publication cancels the
-  new row and queues the former pointer; resource deletion queues its current
-  original and derivative, while detaching one relationship leaves shared
-  resource objects intact.
+  new row and queues the former pointer. Cleanup rechecks current and historical
+  version refs before deleting R2, and deleting the resource queues every retained
+  original and derivative; detaching one relationship leaves shared resource
+  objects intact.
   Object-local `attachment_tool_receipts` relates a versioned read, search, view, or summary
   receipt to every derivative it used. Replacing that version or deleting the
   resource invalidates the whole invocation and queues its JSON replay object;
@@ -335,8 +342,13 @@ hash-checked RPCs rather than cross-object SQL joins.
   fence, not an attachment catalog.
   Each SubstreamAgent's `workstream_resource_links` owns its attachment
   relationship and resource-inventory fence; WorkspaceDO owns resource metadata,
-  workspace watches, and the inverted workspace index. `relationship_type` distinguishes an ordinary
-  `attachment` from the `origin` a work stream was created from — see
+  workspace watches, and the inverted workspace index. `relationship_type` is
+  constrained to `attachment`, `message_attachment`, `origin`, `generated`,
+  `suggested_activity`, `inbound_email`, or `context`. The work-stream-facing
+  `direction` is derived from that relationship: `generated` is an `artifact`;
+  every other relationship is a `source`. Direction is not stored on the shared
+  resource because the same resource may be an artifact here and a source elsewhere.
+  The `origin` relationship records what a work stream was created from — see
   [work-stream origin attachments](workstream-origin-attachments.md).
 - `elicitation_requests` is operational human-input state tied to a run.
   `suggested_actions` is an audience-scoped operational overlay and is never
@@ -812,6 +824,25 @@ scale with retained transcript size.
 object transaction before its receipt commits. The next stacked release may
 drop legacy owners only after the fleet receipt is complete and must switch all
 foreign keys/readers to canonical records first.
+
+### 2026-08-27 — Resource relationships derive direction and semantic writes retain versions
+
+**What changed:** SubstreamAgent constrains resource relationships to seven
+stored values and contracts derive `source` or `artifact` per work-stream link.
+WorkspaceDO now owns `resources.current_version` and stable-numbered
+`resource_versions` snapshots with original and model R2 refs.
+
+**Why:** Source versus artifact describes how a shared resource participates in
+one work stream, while edits and external refreshes must not erase the resource
+state a previous run used.
+
+**Considered and rejected:** Storing direction on `resources` would make a
+generated artifact stay an artifact after another work stream imports it.
+Overwriting one canonical R2 pointer would expose only the latest bytes.
+
+**Consequences:** Semantic resource writes and successful hydration observations
+increment version; processing-only derivative state enriches the current version.
+R2 cleanup must treat every retained version as live until the resource is deleted.
 
 ### 2026-08-26 — Legacy transcript projections preserve single payload ownership
 

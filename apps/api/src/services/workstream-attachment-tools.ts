@@ -12,6 +12,8 @@ import {
   WorkstreamSummarizeResourceOutputSchema,
   WorkstreamViewResourceOutputSchema,
   classifyAttachmentKind,
+  ResourceRelationshipTypeSchema,
+  resourceDirectionForRelationship,
   type AttachmentKind,
   type ContentMode,
   type SuggestedAttachmentToolCall,
@@ -771,6 +773,7 @@ function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): Author
 
 function resourceListItem(row: VisibleWorkstreamResourceRow) {
   const attachmentKind = rowKind(row);
+  const relationshipType = ResourceRelationshipTypeSchema.parse(row.relationship_type);
   return {
     resourceId: row.id,
     title: row.title,
@@ -778,7 +781,8 @@ function resourceListItem(row: VisibleWorkstreamResourceRow) {
     provider: row.provider,
     mimeType: row.mime_type,
     sizeBytes: metadataSize(row.metadata_json),
-    relationshipType: row.relationship_type,
+    relationshipType,
+    direction: resourceDirectionForRelationship(relationshipType),
     attachedAt: row.attached_at,
     messageAttachment: row.message_attachment === 1,
     attachmentKind,

@@ -6,7 +6,9 @@ import {
   MentionSchema,
   MessageSchema,
   ParticipantSchema,
-  ResourceSchema,
+  ResourceRelationshipTypeSchema,
+  WorkstreamResourceSchema,
+  resourceDirectionForRelationship,
   ScopeSchema,
   UpdateWorkstreamRequestSchema,
   WorkstreamBatchUpdateSchema,
@@ -16,7 +18,8 @@ import {
   type Elicitation,
   type ActivitySuggestion,
   type Message,
-  type Resource,
+  type ResourceRelationshipType,
+  type WorkstreamResource,
   type Workstream,
   type WorkstreamBatchUpdate,
   type WorkstreamDetail,
@@ -1657,9 +1660,10 @@ export class WorkstreamObjectProductService {
     const links = this.storage.sql.exec<{
       resource_id: string;
       watch_enabled: number;
+      relationship_type: string;
       resource_json: string;
     }>(
-      `SELECT resource_id, watch_enabled, resource_json
+      `SELECT resource_id, watch_enabled, relationship_type, resource_json
          FROM workstream_resource_links ORDER BY attached_at DESC`,
     ).toArray();
     if (links.length === 0) return [];
@@ -1685,6 +1689,7 @@ export class WorkstreamObjectProductService {
     return links.flatMap((link) => {
       const row = byId.get(link.resource_id);
       if (!row) return [];
+      const relationshipType = ResourceRelationshipTypeSchema.parse(link.relationship_type);
       const metadata = parseJson<Record<string, unknown>>(String(row.metadata_json ?? "{}"), {});
       return [{
         id: String(row.id),
@@ -1704,6 +1709,9 @@ export class WorkstreamObjectProductService {
         updatedAt: String(row.updated_at),
         contentAvailable: row.content_ref != null,
         sizeBytes: Math.max(0, Number(metadata.size ?? 0)),
+        currentVersion: Math.max(1, Number(row.current_version ?? 1)),
+        relationshipType,
+        direction: resourceDirectionForRelationship(relationshipType),
       }];
     });
   }
@@ -1963,7 +1971,7 @@ export class WorkstreamObjectProductService {
     );
   }
 
-  async attachResource(auth: AuthContext, resourceId: string): Promise<Resource> {
+  async attachResource(auth: AuthContext, resourceId: string): Promise<WorkstreamResource> {
     await this.authorize(auth);
     const resource = await this.workspaceDatabase(auth.workspaceId).prepare(
       `SELECT resource.*, connection.scope AS connection_scope,
@@ -2012,7 +2020,7 @@ export class WorkstreamObjectProductService {
     if (!attached) {
       throw new ApiError(409, "resource_reload_failed", "The resource was attached but could not be read back");
     }
-    return ResourceSchema.parse(attached);
+    return WorkstreamResourceSchema.parse(attached);
   }
 
   /** Attach a resource already durably created by this run in WorkspaceDO. */
@@ -2020,7 +2028,7 @@ export class WorkstreamObjectProductService {
     workspaceId: string,
     resourceId: string,
     attachedByUserId: string | null,
-    relationshipType = "generated",
+    relationshipType: ResourceRelationshipType = "generated",
   ): Promise<void> {
     const root = this.root();
     if (root.parent_workspace_key !== workspaceId) {
@@ -2492,7 +2500,7 @@ export class WorkstreamObjectProductService {
     const resourceLinks = this.storage.sql.exec<{
       resource_id: string;
       watch_enabled: number;
-      relationship_type: string;
+      relationship_type: ResourceRelationshipType;
     }>(
       `SELECT resource_id, watch_enabled, relationship_type
          FROM workstream_resource_links

@@ -48,13 +48,20 @@ function attach(
      VALUES (?, NULL, ?, ?, '{}', ?, ?)`,
     resourceId,
     overrides.watchEnabled ?? 0,
-    overrides.relationshipType ?? "explicit",
+    overrides.relationshipType ?? "attachment",
     overrides.attachedAt ?? NOW,
     overrides.attachedAt ?? NOW,
   );
 }
 
 describe("what a work stream has attached", () => {
+  it("rejects relationship types outside the stored enum", () => {
+    const { sql } = open();
+
+    expect(() => attach(sql, "r-a", { relationshipType: "made_up" }))
+      .toThrow(/CHECK constraint failed/u);
+  });
+
   it("answers newest first, and by id when two arrived together", () => {
     const { storage, sql } = open();
     attach(sql, "r-b", { attachedAt: NOW });

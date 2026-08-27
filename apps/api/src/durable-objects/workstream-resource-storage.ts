@@ -17,11 +17,12 @@
  */
 
 import { boundParameterChunks } from "./bound-parameters";
+import type { ResourceRelationshipType } from "@rally/contracts";
 
 /** One attachment, as a reader of the work stream's rail sees it. */
 export interface ResourceLinkRow extends Record<string, SqlStorageValue> {
   resource_id: string;
-  relationship_type: string;
+  relationship_type: ResourceRelationshipType;
   attached_at: number;
   watch_enabled: number;
 }

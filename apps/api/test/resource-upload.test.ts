@@ -257,6 +257,9 @@ function attachmentDatabase(): DatabaseSync {
       uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL DEFAULT 'attached',
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );
+    CREATE TABLE resource_versions (
+      resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+    );
     CREATE TABLE automation_subscriptions (id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT);
     CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, automation_subscription_id TEXT);
     CREATE TABLE workstream_participants (workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, removed_at TEXT);

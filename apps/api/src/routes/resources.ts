@@ -1,7 +1,7 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import { Hono } from "hono";
 import { zValidator } from "../middleware/validation";
-import { IdSchema, ResourceSchema } from "@rally/contracts";
+import { IdSchema, ResourceRevisionSchema, ResourceSchema } from "@rally/contracts";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import { z } from "zod";
 import type { HonoAppEnv } from "../env";
@@ -10,6 +10,7 @@ import { getAuth } from "../middleware/auth";
 import { ResourceService } from "../services/resource-service";
 
 const idParam = z.object({ id: IdSchema });
+const versionParam = idParam.extend({ version: z.coerce.number().int().positive() });
 const resolveBody = z.object({
   connectionId: IdSchema,
   provider: z.string().min(1).max(80),
@@ -30,6 +31,7 @@ const ResourcePageSchema = z.object({
   items: z.array(ResourceSchema),
   nextCursor: z.string().nullable(),
 });
+const ResourceRevisionListSchema = z.array(ResourceRevisionSchema);
 const WatchStateSchema = z.object({ watchEnabled: z.boolean() });
 
 export const resourceRoutes = new Hono<HonoAppEnv>();
@@ -62,6 +64,25 @@ resourceRoutes.get("/:id", zValidator("param", idParam), async (c) =>
 resourceRoutes.get("/:id/content", zValidator("param", idParam), async (c) =>
   new ResourceService(c.env, getAuth(c)).content(c.req.valid("param").id),
 );
+resourceRoutes.get("/:id/versions", zValidator("param", idParam), async (c) =>
+  c.json(ResourceRevisionListSchema.parse(
+    await new ResourceService(c.env, getAuth(c)).versions(c.req.valid("param").id),
+  )),
+);
+resourceRoutes.get("/:id/versions/:version", zValidator("param", versionParam), async (c) => {
+  const param = c.req.valid("param");
+  return c.json(ResourceRevisionSchema.parse(
+    await new ResourceService(c.env, getAuth(c)).version(param.id, param.version),
+  ));
+});
+resourceRoutes.get("/:id/versions/:version/content", zValidator("param", versionParam), async (c) => {
+  const param = c.req.valid("param");
+  return new ResourceService(c.env, getAuth(c)).versionContent(param.id, param.version, "original");
+});
+resourceRoutes.get("/:id/versions/:version/model-content", zValidator("param", versionParam), async (c) => {
+  const param = c.req.valid("param");
+  return new ResourceService(c.env, getAuth(c)).versionContent(param.id, param.version, "model");
+});
 resourceRoutes.get("/:id/preview", zValidator("param", idParam), async (c) =>
   new ResourceService(c.env, getAuth(c)).preview(c.req.valid("param").id, c.req.raw.signal),
 );

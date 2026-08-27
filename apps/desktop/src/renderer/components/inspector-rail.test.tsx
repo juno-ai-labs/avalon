@@ -214,6 +214,9 @@ describe('InspectorRail details', () => {
     provider: 'linear',
     watchEnabled: false,
     watchStatus: 'paused',
+    currentVersion: 3,
+    relationshipType: 'attachment',
+    direction: 'source',
   };
 
   function renderResources(resources: WorkstreamResource[], onToggleWatch = vi.fn()): { onToggleWatch: ReturnType<typeof vi.fn> } {
@@ -232,6 +235,24 @@ describe('InspectorRail details', () => {
 
     expect(onToggleWatch).toHaveBeenCalledWith(expect.objectContaining({ id: 'resource-1' }), true);
     expect(useUiStore.getState().inspector).toBeNull();
+  });
+
+  it('separates incoming sources from generated artifacts', () => {
+    renderResources([
+      watched,
+      {
+        ...watched,
+        id: 'resource-2',
+        title: 'Generated release brief',
+        provider: 'rally_generated',
+        relationshipType: 'generated',
+        direction: 'artifact',
+      },
+    ]);
+
+    expect(within(screen.getByRole('heading', { name: 'Sources' }).closest('section')!).getByText(watched.title)).toBeVisible();
+    expect(within(screen.getByRole('heading', { name: 'Artifacts' }).closest('section')!).getByText('Generated release brief')).toBeVisible();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1);
   });
 
   it('opens the resource from the row without touching the watch', () => {
