@@ -263,43 +263,48 @@ export function AddParticipantDialog({
       <div className="member-action-list">
         {listed.map((member) => {
           const isParticipant = currentById.has(member.id);
+          if (!isParticipant) {
+            return (
+              <button
+                aria-label={`Add ${member.name} to work stream`}
+                className="member-action-row"
+                disabled={pending}
+                key={member.id}
+                onClick={() => onAdd(member)}
+                type="button"
+              >
+                <Avatar member={member} size="medium" />
+                <span><strong>{member.name}</strong><small>{member.email}</small></span>
+                {pending ? <LoaderCircle className="spin" size={15} /> : <Plus aria-hidden="true" size={15} />}
+              </button>
+            );
+          }
           return (
             <div className="member-action-row" key={member.id}>
               <Avatar member={member} size="medium" />
               <span><strong>{member.name}</strong><small>{member.email}</small></span>
-              {isParticipant ? (
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger asChild>
-                    <IconButton
-                      disabled={pending}
-                      label={`${member.name} participant actions`}
-                      showTooltip={false}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton
+                    disabled={pending}
+                    label={`${member.name} participant actions`}
+                    showTooltip={false}
+                  >
+                    {pending ? <LoaderCircle className="spin" size={15} /> : <Ellipsis size={16} />}
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content align="end" className="menu-content" sideOffset={6}>
+                    <DropdownMenu.Item
+                      className="menu-item menu-item-danger"
+                      disabled={current.length <= 1 || pending}
+                      onSelect={() => onRemove(member)}
                     >
-                      {pending ? <LoaderCircle className="spin" size={15} /> : <Ellipsis size={16} />}
-                    </IconButton>
-                  </DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content align="end" className="menu-content" sideOffset={6}>
-                      <DropdownMenu.Item
-                        className="menu-item menu-item-danger"
-                        disabled={current.length <= 1 || pending}
-                        onSelect={() => onRemove(member)}
-                      >
-                        Remove from work stream
-                      </DropdownMenu.Item>
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              ) : (
-                <IconButton
-                  disabled={pending}
-                  label={`Add ${member.name} to work stream`}
-                  onClick={() => onAdd(member)}
-                  showTooltip={false}
-                >
-                  {pending ? <LoaderCircle className="spin" size={15} /> : <Plus size={15} />}
-                </IconButton>
-              )}
+                      Remove from work stream
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
           );
         })}
