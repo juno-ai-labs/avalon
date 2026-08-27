@@ -371,10 +371,13 @@ see
   child directory snapshot, explicitly drains both parent hops, and proves the
   WorkspaceDO row exists while both SQL outboxes are empty. This guards the
   verified-to-active creation fence in the real Workers runtime.
-- `apps/desktop/src/renderer/styles/app.css.node.test.ts` — guards the one thing
-  a component test cannot see: that the launching state states no geometry of its
-  own. It reads the stylesheet from disk, so it is typed by `tsconfig.node.json`
-  and named `.node.test.ts` to keep `node:fs` out of the renderer program.
+- `apps/desktop/src/renderer/styles/app.css.node.test.ts` — guards what a
+  component test cannot see: that the launching state states no geometry of its
+  own, and that `.new-workstream-home` reserves its scrollbar gutter so the home
+  content does not shift sideways when the suggestions below it grow past a
+  viewport. It reads the stylesheet from disk, so it is typed by
+  `tsconfig.node.json` and named `.node.test.ts` to keep `node:fs` out of the
+  renderer program.
 - These are component, stylesheet, and service tests, so none of them sees the
   transition. **A change to the animation or to either state's geometry still has
   to be looked at in a real window** — see [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it).
