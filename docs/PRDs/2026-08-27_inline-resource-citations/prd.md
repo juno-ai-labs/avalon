@@ -101,9 +101,10 @@ data.
    external ones.
 4. Degradation is graceful everywhere: an unknown or malformed target
    renders as the citation's plain label text; a footnote whose
-   definition is missing renders as ordinary text; surfaces that render
-   markdown outside the desktop (the email digest renderer) degrade
-   citations to readable text rather than leaking raw syntax.
+   definition is missing renders as ordinary text; and the two
+   Rally-owned surfaces that render markdown outside the desktop —
+   outbound email and Slack delivery — actively rewrite citations to
+   readable text before sending, never leaking raw syntax.
 5. Emission guidance is standing-prompt policy — which things to cite,
    where numbers go, never fabricating identifiers — tunable by API
    deploy with nothing for the desktop to know.
@@ -159,8 +160,7 @@ surface reached from the rail's own list. (Mechanically, a small exposed
 action over the existing rail state: open the context rail, then select
 the resource inspector — that selection is today reachable only from
 inside the rail, and the rail-opening actions deliberately clear it, so
-the ordering is part of the contract. A cited resource missing from the
-loaded set lands on the rail's existing unavailable state.)
+the ordering is part of the contract.)
 
 **The detail view gains a content preview — named as new scope.** The
 rail's resource detail today shows metadata only (type, direction,
@@ -186,6 +186,15 @@ endpoint is genuinely open (open question 4);
 [`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md)
 governs the call.
 
+That lookup dresses the chip; it does not widen the rail. The rail's
+detail resolves from the loaded work stream's resource set and shows
+nothing without one, so V1 scopes navigation accordingly: clicking a
+citation whose resource is outside the loaded set — or on a surface
+with no loaded work stream — lands on the rail's existing unavailable
+state, carrying whatever title the metadata lookup returned. Full
+fetch-by-id detail for an arbitrary cited resource is follow-up work
+this PRD names but does not include.
+
 During streaming, either form renders as plain text until its syntax
 closes, then becomes the chip or card — the same progressive settling
 every markdown construct already has.
@@ -198,12 +207,23 @@ reference and presents the reference as an inline floating pill: a
 small numbered marker after the punctuation whose hover/focus popover
 carries the source (title, and per open question 1 possibly an excerpt)
 with an **Open** action. Adjacent references cluster as adjacent pills.
-The message therefore spends no vertical space on a source footer —
-the vertical cost of long answers being the original frustration this
-whole family of PRDs exists to fix — while the *stored* markdown stays
-completely standard: any renderer outside Rally (the digest email,
-GitHub, an export) shows the same message as classic numbered footnotes
-with the list at the bottom, which is exactly the right degraded form.
+
+What counts as a citation definition is pinned, not guessed: a
+definition qualifies when its content is a single paragraph containing
+exactly one link — `[^1]: [Q3 board deck](resource://…)`, plain text
+around the link permitted and carried into the popover. A definition
+with no link, more than one, or additional block content is not a
+citation: its reference stays a plain superscript and the definition
+renders in a classic trailing footnote list, so a free-form or
+malformed footnote degrades to standard GFM rendering rather than a
+broken pill. For qualifying citations the message spends no vertical
+space on a source footer — the vertical cost of long answers being the
+original frustration this whole family of PRDs exists to fix — while
+the *stored* markdown stays completely standard: any true markdown
+renderer outside Rally (GitHub, a pasted gist) shows the same message
+as classic numbered footnotes with the list at the bottom, exactly the
+right degraded form, and Rally's own non-renderer surfaces (email,
+Slack) get the rewrite rules below.
 
 Clicking a pill or its popover's action opens the source — right rail
 for `resource://` targets, the system browser for external URLs, routed
@@ -220,19 +240,50 @@ plain label text — never a broken chip, and never information the
 message text did not already carry (the label is model-written text; the
 chip adds affordance, not disclosure). If the rail cannot open the
 resource (revoked since citation), the rail's existing unavailable state
-shows. A footnote reference without a definition renders as text. In the
-email digest's markdown renderer, `resource://` citations degrade to their
-label text (optionally suffixed with the work-stream link, that
-renderer's owner to decide) and external links remain links. Offline,
+shows. A footnote reference without a definition renders as text.
+Outbound email and Slack get their own rewrite rules, next. Offline,
 chips render (labels and titles are local); opening follows the rail's
 and browser's ordinary offline behavior.
+
+**Beyond the desktop: email and Slack rewrite, never leak.** Two
+Rally-owned delivery paths render agent markdown with no shared
+renderer, and each gets an explicit rewrite rather than a hope.
+
+- *Outbound email.* The email markdown module today has no rule for any
+  of this: its HTML path links only `http(s)` targets, so a
+  `resource://` link would pass through as literal bracket syntax; its
+  text path appends raw link targets whatever their scheme; and footnote
+  syntax has no handling at all, in either part. The implementing change
+  adds one rewrite ahead of both parts: link and image forms reduce to
+  their label text, and footnote references and definitions reduce to a
+  plain trailing source list — titles for internal sources, real links
+  for external ones. The rule covers every email this module renders,
+  not only digests.
+- *Slack.* Agent replies delivered to Slack go out as ordinary markdown
+  through Slack's `markdown` blocks, and Slack renders neither the
+  `resource://` scheme nor footnote syntax — unrewritten citations
+  would land verbatim in a channel. The Slack delivery path applies the
+  same rewrite as email, before the text is chunked for posting: label
+  text in place of chips and embeds, a plain trailing source list in
+  place of footnotes, external URLs kept as links. The transcript copy
+  of the same answer keeps its citations; only the Slack copy is
+  rewritten.
+
+No deep link into the desktop exists today for either rewrite to
+target; if one arrives, both upgrade from title text to a real link
+with no change to the protocol or the renderer.
 
 **Where it applies.** Everywhere the shared renderer runs: the
 transcript, the automation chat surface, and resource previews — so a
 published document that cites its own sources has working citations when
-opened. Surfaces that deliberately restate markdown (message export
-cards) inherit whatever the renderer does, which is the point of having
-exactly one.
+opened. One surface shares the markup but not the stylesheet: the
+message export card renders in a hidden window that loads none of the
+application CSS, with element rules of its own written for a light
+document ([message export](../../message-export.md)) — so chips, embed
+cards, and footnote pills each need static rules there in the same
+change (a chip as a labeled span, a pill as a plain superscript), or
+the documented failure mode arrives: an unstyled element in the first
+saved card someone looks at.
 
 ## Impact on the product contract
 
@@ -273,15 +324,17 @@ None yet.
    token-friendly slug or alias (key design decision 8) needs no renderer
    change. The known cost, accepted: the image form degrades worse than
    the link form outside Rally (a broken-image placeholder rather than
-   label text), which makes the email renderer's degradation rule
+   label text), which makes the email and Slack rewrite rules
    load-bearing rather than nice-to-have.
 3. **GFM footnote syntax; Rally renders floaters, not a footer.**
    Revised in review to be explicit about presentation: `[^1]` with a
    link-carrying definition is deeply in training data and parses under
    the renderer's existing GFM support — so the *stored* markdown stays
    standard and degrades to classic footnotes everywhere outside Rally —
-   while Rally's renderer lifts each definition into its reference's
-   popover and suppresses the trailing footnote section entirely.
+   while Rally's renderer lifts each qualifying definition (the pinned
+   grammar in Product behavior) into its reference's popover and renders
+   no trailing entry for it; a definition that does not qualify keeps
+   classic footnote rendering.
    Citations therefore cost no vertical space, which was the original
    frustration behind this work. The rejected alternatives: inline
    bracketed URLs after every claim (what long grounded answers look
@@ -296,9 +349,9 @@ None yet.
    message content can reach any other protocol handler.
 5. **Degradation-first syntax.** Every choice above biases toward "if
    nothing special happens, the text still reads correctly": labels are
-   real text, footnotes are real footnotes, and the one non-desktop
-   markdown surface Rally owns (digest email) gets an explicit
-   degradation rule rather than a hope.
+   real text, footnotes are real footnotes, and the non-desktop
+   markdown surfaces Rally owns (outbound email, Slack delivery) get
+   explicit rewrite rules rather than a hope.
 6. **Renderer and prompt land together.** Revised in review from the
    draft's two-phase sequencing: with no production users, the skew
    window the phasing protected against costs nothing, and an older
@@ -366,10 +419,10 @@ None yet.
 ## Data model
 
 None. No tables, no columns, no wire changes, no migrations. The feature
-is a prompt module (server) and desktop work in four pieces — the
+is server work in three pieces — the prompt module and the two delivery
+rewrites (outbound email, Slack) — and desktop work in four: the
 renderer branch (chip, embed card, footnote hooks), click routing, the
-rail detail's content preview, and one small degradation rule in the
-email markdown renderer.
+rail detail's content preview, and the export card's stylesheet rules.
 
 ## Security and trust model
 
@@ -403,9 +456,13 @@ human title as the label; for grounded and research answers, cite with
 GFM footnotes placed after punctuation; never fabricate an identifier —
 cite by plain name when no identifier is in context; cite the
 load-bearing sources, not everything touched. The guidance renders for
-ordinary participant-triggered work-stream runs; inbound-email runs are
-excluded so email-delivered answers do not carry syntax their renderer
-only degrades.
+every participant-triggered work-stream run, with no per-origin
+carve-outs: the delivery rewrites own surface safety, so an answer that
+goes out by email or Slack still carries citations in its transcript
+copy and arrives readable in the delivery. The rejected alternative —
+excluding email- or Slack-origin runs from the guidance — would need a
+run-origin field the prompt context does not carry today, and would
+strip citations from the transcript copy, which renders them fully.
 
 Verification: formal prompt evaluations are deferred until Rally has an
 evaluation suite; until then the Acceptance flows are walked manually in
@@ -418,10 +475,10 @@ passing through unmangled.
 
 1. One coordinated push (key design decision 6): the desktop branch —
    scheme dispatch, chip and embed card, footnote presentation, click
-   routing, the rail detail's content preview, the digest-renderer
-   degradation — and the prompt module land together. With no production
-   users, any skew between the two is acceptable and degrades to label
-   text.
+   routing, the rail detail's content preview, the export card's rules —
+   and the server side — the prompt module, the email and Slack
+   rewrites — land together. With no production users, any skew between
+   the two is acceptable and degrades to label text.
 2. Rollback is reverting the prompt module; everything already sent
    keeps rendering.
 
@@ -433,19 +490,28 @@ passing through unmangled.
   and an image-form citation as a broken image. Acceptable with no
   production users; the reason the coordinated push should still be
   genuinely coordinated.
-- The digest email renderer must ship its degradation rule with the
-  push, or emails show raw `resource://` URLs and broken images — the
-  image form makes this rule load-bearing, not cosmetic.
+- The email and Slack rewrites must ship with the push, or those
+  deliveries show raw `resource://` syntax, literal `[^1]` markers, and
+  broken images — the image form makes these rules load-bearing, not
+  cosmetic.
 - The model-text normalization pass sits between the model and the
   renderer; a test proves it passes citation syntax through unchanged.
-- Footnote parsing already works: the pinned GFM plugin (4.0.1) renders
+- Footnote parsing already works: the GFM plugin — requested as
+  `latest` in the manifest, resolving to 4.0.1 today; the implementing
+  change pins it, since parse behavior now load-bears — renders
   footnotes today as an unstyled superscript link plus a trailing list
   whose heading is visually hidden, and whose fragment anchors are dead
   under the desktop's navigation denial. This change is a renderer hook,
   not a parser: the reference anchors (they carry a stable data
-  attribute) become the floating pills, each definition's content is
-  lifted into its reference's popover, and the trailing footnote section
-  is not rendered at all.
+  attribute) become the floating pills, each qualifying definition's
+  content is lifted into its reference's popover, and the trailing
+  footnote section renders only what the grammar did not lift — nothing,
+  in the common all-citations case.
+- Footnote DOM ids collide today: every message is its own renderer
+  mount and GFM writes identical ids into each (`user-content-fn-1`, …)
+  — nothing sets a per-mount prefix. The hook namespaces ids per
+  message (the renderer's clobber-prefix option) so anchors and ARIA
+  references cannot cross-wire between messages or streaming segments.
 
 ## Acceptance
 
@@ -457,18 +523,23 @@ passing through unmangled.
 2. A grounded answer renders inline numbered pills after punctuation
    with popovers carrying the source, and no footnote list renders at
    the message's end; internal sources open in the rail, external
-   sources in the system browser; the same message in a digest email
-   shows classic numbered footnotes with the list at the bottom.
-3. Malformed and unauthorized targets render as plain label text; a
-   digest email containing citations shows readable text and no raw
-   scheme URLs.
-4. Citations inside a previewed document render and navigate.
+   sources in the system browser; a definition that does not qualify as
+   a citation renders as a classic footnote.
+3. Malformed and unauthorized targets render as plain label text; the
+   same cited answer delivered by email and by Slack shows readable
+   text and a plain source list — no raw scheme URLs, no literal
+   footnote markers, no broken images, in any outbound email, not only
+   digests.
+4. Citations inside a previewed document render, and navigate when a
+   work stream is loaded; without one, the click lands on the rail's
+   unavailable state rather than doing nothing silently.
 5. Streaming shows plain text settling into chips with no flicker
    regressions in the streaming-cost tests.
 6. `pnpm lint` (zero warnings), `pnpm typecheck`, and `pnpm test` pass;
    chips, cards, footnotes, and popovers captured from a real window in
-   both themes; every new test shown to fail when its protected behavior
-   is broken.
+   both themes, and a saved export card containing each citation form
+   captured and read; every new test shown to fail when its protected
+   behavior is broken.
 
 ## Open questions
 
