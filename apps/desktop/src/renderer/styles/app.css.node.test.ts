@@ -294,6 +294,50 @@ describe('work-stream participant presence', () => {
 });
 
 /**
+ * `animation-duration` and `transition-duration` are zeroed here, but a delay is
+ * a separate property: it holds the "from" state of a `both`-filled animation
+ * for its own length regardless of how short the animation that follows is. The
+ * two `.launch-arrival` rows stagger in on a 60ms base plus a 70ms-per-index
+ * delay from `opacity: 0`, so leaving delays alone kept them invisible for
+ * their whole 60ms and 130ms holds under this preference — the block looked
+ * like it turned motion off and instead only made it instant once it started.
+ *
+ * The regex anchors on the `*, *::before, *::after` selector rather than
+ * reusing the block extractor above, which resolves to the *first* of this
+ * stylesheet's four `prefers-reduced-motion` blocks by position — not this one.
+ */
+describe('global reduced-motion kill switch', () => {
+  it('zeroes animation and transition delays alongside their durations', () => {
+    const declarations =
+      stylesheet.match(
+        /@media \(prefers-reduced-motion: reduce\) \{\s*\*,\s*\*::before,\s*\*::after \{([^}]*)\}/u,
+      )?.[1] ?? null;
+
+    expect(declarations).not.toBeNull();
+    expect(declarations).toContain('animation-duration: 0.001ms !important;');
+    expect(declarations).toContain('animation-delay: 0.001ms !important;');
+    expect(declarations).toContain('transition-duration: 0.001ms !important;');
+    expect(declarations).toContain('transition-delay: 0.001ms !important;');
+    expect(declarations).toContain('scroll-behavior: auto !important;');
+  });
+
+  // The declarations above only prove the spelling. What actually reopens the
+  // stagger bug is a delay *winning the cascade*: any class-level
+  // `animation-delay: … !important` (specificity 0,1,0) beats the universal
+  // selector (0,0,0), so the kill switch holds only while it owns the sole
+  // `!important` delays in the sheet. A future rule that trips this must state
+  // its own reduced-motion story inside the kill-switch block instead.
+  it('owns the only !important delay declarations in the stylesheet', () => {
+    const importantDelays = stylesheet.match(/[a-z-]*delay:[^;{}]*!important/gu) ?? [];
+
+    expect(importantDelays).toEqual([
+      'animation-delay: 0.001ms !important',
+      'transition-delay: 0.001ms !important',
+    ]);
+  });
+});
+
+/**
  * The five-line cap on a system row exists only here. `SystemMessageBlock`
  * renders the whole string and sets one attribute; the clamp, and therefore the
  * feature, is the stylesheet. A component test cannot see it — jsdom lays
