@@ -2516,8 +2516,9 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
     name: "load_plugin",
     description: "Load one available plugin from the catalog for this run.",
     capability: "rally.plugins.load",
-    // Activation changes only Avalon's durable run surface. It does not write
-    // to an external provider and is safe to resume from the same receipt.
+    // Activation may prepare convergent host-owned runtime infrastructure, but
+    // never performs an outward-facing provider/data write. Hooks must be safe
+    // to resume from the same receipt after an ambiguous interruption.
     mode: "read",
     idempotency: "safe",
     inputSchema: {
@@ -2532,6 +2533,8 @@ export const AVALON_DISCOVERY_TOOL_DEFINITIONS = [
 export interface HarnessTool {
   definition: ToolDefinition;
   execute(input: unknown, context: HarnessToolContext): Promise<HarnessToolResult>;
+  /** Resolve a host-only execution deadline after validated input is known. */
+  resolveTimeoutMs?: (input: unknown) => number | undefined;
   /**
    * Re-run code-authored input refinements when a Zod failure escapes the
    * executor. JSON Schema cannot represent every refinement, so this keeps a
@@ -2548,6 +2551,31 @@ export interface HarnessTool {
   validateInput?: (input: unknown) => z.ZodError | null;
   /** Execute in model-declared order before concurrent tools in the same batch. */
   serial?: boolean;
+}
+
+/** Frozen run identity passed to a deferred plugin while it becomes active. */
+export interface HarnessPluginActivationContext {
+  workspaceId: string;
+  workstreamId: string;
+  harnessRunId: string;
+  executionPrincipal: ExecutionPrincipal;
+  signal: AbortSignal;
+}
+
+/** A host-authored, model-safe explanation for a rejected plugin activation. */
+export class HarnessPluginActivationError extends Error {
+  readonly retryable: boolean;
+  readonly retryAfterMs: number | undefined;
+
+  constructor(
+    message: string,
+    options: { retryable: boolean; retryAfterMs?: number; cause?: unknown },
+  ) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "HarnessPluginActivationError";
+    this.retryable = options.retryable;
+    this.retryAfterMs = options.retryAfterMs;
+  }
 }
 
 /** A Bind plugin whose trusted identity, prose, and tool policy are authored by the host. */
@@ -2570,6 +2598,22 @@ export interface HarnessPlugin {
    * definitions are replaced. Results are cached for the lifetime of one run.
    */
   loadTools?: () => Promise<HarnessTool[]>;
+  /**
+   * Prepare plugin-owned runtime state before this deferred plugin becomes
+   * model-visible after an explicit `load_plugin`. A rejection leaves the plugin
+   * inactive. Successful preparation is cached for the run; a failed hook may
+   * be retried by a later explicit load. Restored durable activations do not run
+   * the hook and retain their ordinary first-tool preparation path.
+   *
+   * `load_plugin` is read-safe: this hook may prepare convergent host-owned
+   * runtime infrastructure, but must be safe to repeat after response loss and
+   * must not perform an outward-facing provider or user-data write. Throw
+   * `HarnessPluginActivationError` only with host-authored model-safe guidance;
+   * other rejection details are hidden from the model.
+   */
+  onActivate?: (context: HarnessPluginActivationContext) => Promise<void>;
+  /** Extend `load_plugin`'s deadline for a blocking activation hook. */
+  activationTimeoutMs?: number;
   /** For deferred plugins, requests persistence before an activation hint; ignored for core plugins. */
   preload: boolean;
   explicit?: boolean;

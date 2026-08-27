@@ -1,4 +1,9 @@
-import type { HarnessPlugin } from "@rally/agent-harness";
+import {
+  HarnessPluginActivationError,
+  type HarnessPlugin,
+  type HarnessPluginActivationContext,
+  type HarnessToolContext,
+} from "@rally/agent-harness";
 import { asWorkspaceId, type WorkstreamWorkflowInput } from "@rally/contracts";
 import { newId } from "@rally/db";
 
@@ -8,19 +13,24 @@ import { recordTerminalPlatformObservation } from "../../observability/terminal-
 import {
   createTerminalPlugin,
   parseTerminalRegionConfiguration,
+  TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
   TERMINAL_PLUGIN_SYSTEM_MESSAGE,
   TERMINAL_TOOL_NAMES,
   type TerminalToolExecutors,
 } from "./contract";
 import { TerminalSandboxCoordinator } from "./coordinator";
 import { createResourcePortFactory } from "../../runtime/resource-port";
-import { createDaytonaTerminalProvider } from "./daytona-provider";
+import {
+  createDaytonaTerminalProvider,
+  type TerminalSandboxProvider,
+} from "./daytona-provider";
 import {
   admitTerminalPublicationGrant,
   bootstrapTerminalRepository,
   createGitHubRestPublicationGateway,
   createGitHubRestReadGateway,
   createTerminalRepositoryPublisher as createRepositoryPublisher,
+  type TerminalGitHubReadGateway,
 } from "./repository";
 import {
   createTerminalPortFactory,
@@ -49,6 +59,10 @@ export async function createAvalonTerminalPlugin(
   env: Env,
   input: WorkstreamWorkflowInput,
   inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
+  options: {
+    provider?: TerminalSandboxProvider;
+    readGateway?: TerminalGitHubReadGateway;
+  } = {},
 ): Promise<HarnessPlugin | null> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const configuration = parseTerminalRegionConfiguration(env);
@@ -68,7 +82,7 @@ export async function createAvalonTerminalPlugin(
     executionPrincipal: input.executionPrincipal,
   }, new Date(), terminalPort);
 
-  const provider = createDaytonaTerminalProvider(configuration, undefined, {
+  const provider = options.provider ?? createDaytonaTerminalProvider(configuration, undefined, {
     observe: (measurement) => recordTerminalPlatformObservation(env, measurement),
     observeRequest: (measurement) => {
       recordTerminalProviderRequest(measurement);
@@ -121,7 +135,59 @@ export async function createAvalonTerminalPlugin(
       eventId: newId(),
     }),
   );
-  const readGateway = createGitHubRestReadGateway(env);
+  const readGateway = options.readGateway ?? createGitHubRestReadGateway(env);
+  const prepareRepository = async (
+    context: HarnessToolContext,
+    sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
+    sandboxProvider: TerminalSandboxProvider,
+  ): Promise<void> => {
+    try {
+      await bootstrapTerminalRepository(
+        env,
+        context,
+        sandbox,
+        sandboxProvider,
+        readGateway,
+        terminalPort,
+      );
+    } catch (error) {
+      if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
+      throw error;
+    }
+  };
+  const repositoryPreparationDeferredCodes = new Set([
+    "connection_revoked",
+    "github_unavailable",
+    "repository_access_revoked",
+    "repository_base_changed",
+    "repository_bootstrap_failed",
+    "repository_not_authorized",
+    "repository_not_configured",
+  ]);
+  const prepareRepositoryForActivation = async (
+    context: HarnessToolContext,
+    sandbox: Parameters<typeof bootstrapTerminalRepository>[2],
+  ): Promise<string | null> => {
+    try {
+      await bootstrapTerminalRepository(
+        env,
+        context,
+        sandbox,
+        provider,
+        readGateway,
+        terminalPort,
+      );
+      return null;
+    } catch (error) {
+      // Repository selection and bootstrap failures are repaired through the
+      // Terminal tool surface itself. The sandbox is already usable, so hiding
+      // checkout_repository here would remove the only in-product repair path.
+      if (error instanceof TerminalToolError && repositoryPreparationDeferredCodes.has(error.code)) {
+        return error.code;
+      }
+      throw error;
+    }
+  };
   const runtime = createDaytonaTerminalRuntime(
     terminalPort,
     coordinator,
@@ -136,21 +202,7 @@ export async function createAvalonTerminalPlugin(
       terminalPort,
       inObjectResourceAttacher,
     ),
-    async (context, sandbox, sandboxProvider) => {
-      try {
-        await bootstrapTerminalRepository(
-          env,
-          context,
-          sandbox,
-          sandboxProvider,
-          readGateway,
-          terminalPort,
-        );
-      } catch (error) {
-        if (error instanceof TerminalToolError && error.code === "repository_not_configured") return;
-        throw error;
-      }
-    },
+    prepareRepository,
   );
   const executors = createTerminalToolExecutors(runtime);
   const observedExecutors = Object.fromEntries(TERMINAL_TOOL_NAMES.map((name) => [
@@ -226,5 +278,78 @@ export async function createAvalonTerminalPlugin(
   const egressGuidance = policy?.mode === "full_internet"
     ? " Current workspace egress is Full internet."
     : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
-  return createTerminalPlugin(observedExecutors, `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`);
+  const plugin = createTerminalPlugin(
+    observedExecutors,
+    `${TERMINAL_PLUGIN_SYSTEM_MESSAGE}${egressGuidance}`,
+  );
+  return {
+    ...plugin,
+    activationTimeoutMs: TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
+    onActivate: async (context: HarnessPluginActivationContext) => {
+      const startedAt = Date.now();
+      const toolCallId = `${context.harnessRunId}:plugin:terminal:activation`;
+      const trace = createTerminalToolTrace({
+        toolName: "terminal_plugin_activation",
+        toolCallId,
+        toolInvocationId: null,
+      });
+      const terminalContext: HarnessToolContext = { ...context, toolCallId };
+      try {
+        const repositoryPreparationCode = await withTerminalToolTrace(trace, async () => {
+          const sandbox = await coordinator.acquire(terminalContext);
+          return prepareRepositoryForActivation(terminalContext, sandbox);
+        });
+        const durationMs = Date.now() - startedAt;
+        logStructuredEvent(env, "info", "terminal_plugin_activation_finished", {
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          harness_run_id: context.harnessRunId,
+          tool_call_id: toolCallId,
+          state: "completed",
+          repository_state: repositoryPreparationCode ? "deferred" : "prepared",
+          ...(repositoryPreparationCode ? { repository_code: repositoryPreparationCode } : {}),
+          duration_ms: durationMs,
+          acquisition_duration_ms: trace.acquisitionDurationMs,
+          acquisition_cache_hit: trace.acquisitionCacheHit,
+          provider_duration_ms: trace.providerDurationMs,
+          provider_request_count: trace.providerRequestCount,
+          provider_poll_count: trace.providerPollCount,
+          provider_operation_count: trace.providerOperationCount,
+          provider_bytes: trace.providerBytes,
+          rally_duration_ms: Math.max(0, durationMs - trace.providerDurationMs),
+        });
+      } catch (error) {
+        const durationMs = Date.now() - startedAt;
+        logStructuredEvent(env, "warn", "terminal_plugin_activation_finished", {
+          workspace_id: context.workspaceId,
+          workstream_id: context.workstreamId,
+          harness_run_id: context.harnessRunId,
+          tool_call_id: toolCallId,
+          state: "failed",
+          code: error instanceof TerminalToolError ? error.code : "terminal_activation_failed",
+          duration_ms: durationMs,
+          acquisition_duration_ms: trace.acquisitionDurationMs,
+          acquisition_cache_hit: trace.acquisitionCacheHit,
+          provider_duration_ms: trace.providerDurationMs,
+          provider_request_count: trace.providerRequestCount,
+          provider_poll_count: trace.providerPollCount,
+          provider_operation_count: trace.providerOperationCount,
+          provider_bytes: trace.providerBytes,
+          rally_duration_ms: Math.max(0, durationMs - trace.providerDurationMs),
+        });
+        if (!(error instanceof TerminalToolError)) throw error;
+        const retryAfterMs = typeof error.details?.retryAfterMs === "number"
+          ? error.details.retryAfterMs
+          : undefined;
+        const retryable = error.code === "sandbox_busy"
+          || (error.code === "sandbox_unavailable" && !configuration.emergencyDisabled);
+        const reason = typeof error.details?.reason === "string" ? error.details.reason : error.message;
+        throw new HarnessPluginActivationError(reason, {
+          retryable,
+          ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+          cause: error,
+        });
+      }
+    },
+  };
 }
