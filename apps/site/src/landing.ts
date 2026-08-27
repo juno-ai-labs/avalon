@@ -1,6 +1,5 @@
 import { reportSiteAction } from './telemetry';
 
-const header = document.querySelector<HTMLElement>('.rally-header');
 const revealItems = document.querySelectorAll<HTMLElement>('.reveal');
 
 if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -15,12 +14,6 @@ if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
   }, { rootMargin: '0px 0px -7%', threshold: 0.1 });
   revealItems.forEach((item) => revealObserver.observe(item));
 }
-
-const updateHeader = (): void => {
-  header?.classList.toggle('is-scrolled', window.scrollY > 16);
-};
-updateHeader();
-window.addEventListener('scroll', updateHeader, { passive: true });
 
 function actionPlacement(element: Element): 'header' | 'hero' | 'body' | 'footer' | 'unknown' {
   if (element.closest('.rally-header')) return 'header';
