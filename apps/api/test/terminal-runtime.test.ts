@@ -45,6 +45,7 @@ afterEach(() => { for (const database of openDatabases.splice(0)) database.close
 function fixture(
   clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") },
   acquisitionObserved?: ConstructorParameters<typeof TerminalSandboxCoordinator>[7],
+  prepareSandbox?: NonNullable<Parameters<typeof createDaytonaTerminalRuntime>[6]>,
 ) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
@@ -92,14 +93,49 @@ function fixture(
     configureGitHubReadAccess: vi.fn(async () => undefined), clearGitHubReadAccess: vi.fn(async () => undefined),
     readFile: vi.fn(async (_id, path) => files.get(path) ?? new Uint8Array()),
     writeFile: vi.fn(async (_id, path, bytes) => { files.set(path, bytes); }),
+    runUtilityCommand: vi.fn(),
     runCommand: vi.fn(async (_id, input) => {
+      if (input.taskName === "terminal-read-page") {
+        const argumentsMatch = / (\d+) (\d+) \d+ \d+$/u.exec(input.command);
+        const path = input.command.includes("/workspace/src/file.txt") ? "/workspace/src/file.txt" : "";
+        const offset = Number(argumentsMatch?.[1] ?? 1);
+        const limit = Number(argumentsMatch?.[2] ?? 200);
+        const bytes = files.get(path);
+        if (!bytes) return { exitCode: 44, stdout: "", stderr: "" };
+        const lines = new TextDecoder().decode(bytes).split("\n");
+        if (lines.at(-1) === "") lines.pop();
+        const selected = lines.slice(offset - 1, offset - 1 + limit);
+        const endLine = selected.length ? offset + selected.length - 1 : Math.min(offset - 1, lines.length);
+        const truncated = endLine < lines.length;
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            content: selected.join("\n"), startLine: offset, endLine, totalLines: lines.length, truncated,
+            ...(truncated ? { nextOffset: endLine + 1 } : {}),
+          }),
+          stderr: "",
+        };
+      }
       if (input.command.startsWith("realpath -m")) return { exitCode: 0, stdout: input.command.includes("escape") ? "/tmp/escape\n" : "/workspace/src/file.txt\n", stderr: "" };
       if (input.taskName.startsWith("avalon-read-stat")) {
         const target = /^target='([^']+)'/u.exec(input.command)?.[1] ?? "";
+        if (target.includes("escape")) return { exitCode: 43, stdout: "", stderr: "" };
         const bytes = files.get(target);
         return bytes
           ? { exitCode: 0, stdout: `${bytes.byteLength}\n`, stderr: "" }
           : { exitCode: 44, stdout: "", stderr: "" };
+      }
+      if (input.taskName.startsWith("avalon-write")) {
+        const target = /^target='([^']+)'/u.exec(input.command)?.[1] ?? "";
+        const temporary = /^temporary='([^']+)'/mu.exec(input.command)?.[1] ?? "";
+        const previous = files.get(target);
+        const previousText = previous ? new TextDecoder().decode(previous) : "";
+        const previousLines = previousText
+          ? previousText.split("\n").length - Number(previousText.endsWith("\n"))
+          : 0;
+        files.set(target, files.get(temporary) ?? new Uint8Array());
+        files.delete(temporary);
+        return { exitCode: 0, stdout: `${previous ? 0 : 1} ${previousLines}\n`, stderr: "" };
       }
       if (input.command.startsWith("target=") && input.command.includes("sha256sum")) {
         const target = /^target='([^']+)'/u.exec(input.command)?.[1] ?? "";
@@ -114,6 +150,11 @@ function fixture(
     cleanupCommand: vi.fn(async () => undefined),
     publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
+  const runCommandImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
+  provider.runUtilityCommand = vi.fn((id, input) => runCommandImplementation(id, {
+    ...input,
+    taskName: input.taskName ?? "terminal-utility",
+  }));
   const resources: TerminalResourceBridge = {
     importResource: vi.fn(async (_context, input, destination): Promise<TerminalImportResourceOutput> => ({
       resourceId: input.resourceId, filePath: destination, outcome: "created",
@@ -144,8 +185,8 @@ function fixture(
     false,
     acquisitionObserved,
   );
-  return { database, objectStore, files, provider, resources, publisher, runtime: createDaytonaTerminalRuntime(
-    testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher) };
+  return { database, objectStore, files, provider, resources, publisher, coordinator, runtime: createDaytonaTerminalRuntime(
+    testTerminalPortFactory(objectStore), coordinator, provider, resources, publisher, null, prepareSandbox) };
 }
 
 const context: HarnessToolContext = {
@@ -177,6 +218,29 @@ describe("Daytona Terminal runtime", () => {
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/src/file.txt");
   });
 
+  it("reads a bounded text page inside the sandbox without downloading the file", async () => {
+    const { provider, runtime } = fixture();
+
+    await expect(runtime.readFilePage(context, "src/file.txt", 1, 200)).resolves.toEqual({
+      content: "hello", startLine: 1, endLine: 1, totalLines: 1, truncated: false,
+    });
+    expect(provider.runUtilityCommand).toHaveBeenCalledOnce();
+    expect(provider.runCommand).not.toHaveBeenCalled();
+    expect(provider.readFile).not.toHaveBeenCalled();
+  });
+
+  it("acquires and prepares one sandbox once for all tools in the same run", async () => {
+    const prepareSandbox = vi.fn(async () => undefined);
+    const { coordinator, runtime } = fixture(undefined, undefined, prepareSandbox);
+    const acquire = vi.spyOn(coordinator, "acquire");
+
+    await runtime.readFile(context, "src/file.txt");
+    await runtime.readFile({ ...context, toolCallId: "call-runtime-2" }, "src/file.txt");
+
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(prepareSandbox).toHaveBeenCalledOnce();
+  });
+
   it("rejects a provider-resolved symlink escape before reading bytes", async () => {
     const { provider, runtime } = fixture();
     await expect(runtime.readFile(context, "escape/file.txt")).rejects.toBeInstanceOf(TerminalToolError);
@@ -186,7 +250,7 @@ describe("Daytona Terminal runtime", () => {
   it("refuses stale command admission after a stopped run hands off the lease", async () => {
     const { objectStore, provider, runtime } = fixture();
     let finishPath!: () => void;
-    vi.mocked(provider.runCommand).mockImplementationOnce(async () => {
+    vi.mocked(provider.runUtilityCommand).mockImplementationOnce(async () => {
       await new Promise<void>((resolve) => { finishPath = resolve; });
       return { exitCode: 0, stdout: "/workspace/src\n", stderr: "" };
     });
@@ -195,7 +259,7 @@ describe("Daytona Terminal runtime", () => {
       cwd: "src",
       timeoutMs: 3_000,
     });
-    await vi.waitFor(() => expect(provider.runCommand).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(provider.runUtilityCommand).toHaveBeenCalledOnce());
     workstreamObjectRun(
       objectStore,
       `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,
@@ -331,9 +395,26 @@ describe("Daytona Terminal runtime", () => {
   it("quotes parent-directory creation for deliberate writes whose paths contain spaces", async () => {
     const { provider, runtime } = fixture();
     await runtime.writeFile(context, "reports/august result.txt", new TextEncoder().encode("result"));
-    expect(provider.runCommand).toHaveBeenLastCalledWith("sandbox-runtime", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledOnce();
+    expect(provider.runUtilityCommand).toHaveBeenLastCalledWith("sandbox-runtime", expect.objectContaining({
       command: expect.stringContaining('dirname -- "$target"'),
     }));
+  });
+
+  it("does not repeat containment after an exact edit read the same path", async () => {
+    const { provider, runtime } = fixture();
+    const bytes = await runtime.readFile(context, "src/file.txt");
+    vi.mocked(provider.runUtilityCommand).mockClear();
+
+    await runtime.writeFile(
+      context,
+      "src/file.txt",
+      new TextEncoder().encode("updated\n"),
+      { previousText: new TextDecoder().decode(bytes!) },
+    );
+
+    expect(provider.runUtilityCommand).toHaveBeenCalledOnce();
+    expect(vi.mocked(provider.runUtilityCommand).mock.calls[0]![1].command).not.toContain("realpath -m");
   });
 
   it("preserves paths with spaces in unified patch headers", async () => {
@@ -347,7 +428,7 @@ describe("Daytona Terminal runtime", () => {
     ].join("\n"))).resolves.toMatchObject({
       files: [{ path: "docs/new name.txt", previousPath: "docs/old name.txt", operation: "renamed" }],
     });
-    expect(provider.runCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
+    expect(provider.runUtilityCommand).toHaveBeenCalledWith("sandbox-runtime", expect.objectContaining({
       command: expect.stringContaining("git apply --check"),
     }));
   });
@@ -788,7 +869,7 @@ describe("Daytona Terminal runtime", () => {
   it("resumes a nonterminal durable command task without replacing its original timing", async () => {
     const { objectStore, provider, runtime } = fixture();
     await runtime.readFile(context, "src/file.txt");
-    vi.mocked(provider.runCommand).mockClear();
+    vi.mocked(provider.runUtilityCommand).mockClear();
     vi.mocked(provider.runCommand).mockResolvedValueOnce({ exitCode: 0, stdout: "recovered\n", stderr: "" });
     const commandHash = await sha256Hex(JSON.stringify({
       command: "printf recovered",
@@ -826,7 +907,7 @@ describe("Daytona Terminal runtime", () => {
   it("fails closed when a terminal task lacks complete replay timestamps", async () => {
     const { objectStore, provider, runtime } = fixture();
     await runtime.readFile(context, "src/file.txt");
-    vi.mocked(provider.runCommand).mockClear();
+    vi.mocked(provider.runUtilityCommand).mockClear();
     workstreamObjectRun(
       objectStore,
       `INSERT INTO terminal_tasks
@@ -854,7 +935,9 @@ describe("Daytona Terminal runtime", () => {
       filePath: ".rally/resources/00000000-0000-4000-8000-000000000099/resource",
     });
     files.set("/workspace/.rally-output/report.txt", new TextEncoder().encode("report"));
+    vi.mocked(provider.runUtilityCommand).mockClear();
     await expect(runtime.publishResource(context, { filePath: "report.txt" })).resolves.toMatchObject({ resourceId: "published", sizeBytes: 6 });
+    expect(provider.runUtilityCommand).toHaveBeenCalledTimes(2);
     expect(provider.readFile).toHaveBeenCalledWith("sandbox-runtime", "/workspace/.rally-output/report.txt");
     expect(resources.importResource).toHaveBeenCalledWith(context, expect.anything(), ".rally/resources/00000000-0000-4000-8000-000000000099/resource", 1, "sandbox-runtime", expect.anything());
   });

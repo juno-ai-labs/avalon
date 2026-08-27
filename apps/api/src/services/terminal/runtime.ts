@@ -15,11 +15,14 @@ import type {
   TerminalPublishedBranchAndPrOutput,
   TerminalPublishedResourceOutput,
   TerminalRuntime,
+  TerminalWriteFileOutput,
+  TerminalWriteFileOptions,
 } from "./tools";
 import { requireTerminalEffectIntent, sanitizeTerminalOutput, TerminalToolError } from "./tools";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalTaskRecord } from "../../durable-objects/workstream-terminal-storage";
 import type { TerminalRepositorySelector } from "./repository-selection";
+import { recordTerminalAcquisition } from "./tracing";
 
 const ROOT = "/workspace";
 const RESOURCE_ROOT = ".rally/resources";
@@ -27,6 +30,38 @@ const OUTPUT_ROOT = ".rally-output";
 const MAX_PROVIDER_CAPTURE_BYTES = 128 * 1_024;
 const MAX_COMMAND_LOG_BYTES = 5_000_000;
 const OUTPUT_LIMIT_MARKER_RESERVE_BYTES = 256;
+const PATH_OUTSIDE_ROOT_EXIT_CODE = 43;
+const FILE_NOT_FOUND_EXIT_CODE = 44;
+const FILE_NOT_REGULAR_EXIT_CODE = 45;
+const FILE_NOT_UTF8_EXIT_CODE = 49;
+const FILE_TOO_LARGE_EXIT_CODE = 50;
+const COUNT_UTF8_LINES_PYTHON = "import pathlib, sys; text = pathlib.Path(sys.argv[1]).read_bytes().decode('utf-8'); print(0 if not text else len(text.split('\\n')) - int(text.endswith('\\n')))";
+const READ_TEXT_PAGE_PYTHON = [
+  "import json, os, pathlib, sys",
+  "path, offset, limit, max_page, max_file = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])",
+  "root = os.path.realpath('/workspace')",
+  "resolved = os.path.realpath(path)",
+  "if os.path.commonpath([root, resolved]) != root: sys.exit(43)",
+  "target = pathlib.Path(path)",
+  "if not target.exists(): sys.exit(44)",
+  "if target.is_symlink() or not target.is_file(): sys.exit(45)",
+  "size = target.stat().st_size",
+  "if size > max_file: print(size); sys.exit(50)",
+  "try: text = target.read_bytes().decode('utf-8')",
+  "except UnicodeDecodeError: sys.exit(49)",
+  "lines = text.split('\\n') if text else []",
+  "if lines and lines[-1] == '': lines.pop()",
+  "selected, selected_bytes = [], 0",
+  "for line in lines[offset - 1:offset - 1 + limit]:",
+  "    encoded = (('\\n' if selected else '') + line).encode('utf-8')",
+  "    if selected_bytes + len(encoded) > max_page: break",
+  "    selected.append(line); selected_bytes += len(encoded)",
+  "end = offset + len(selected) - 1 if selected else min(offset - 1, len(lines))",
+  "truncated = end < len(lines)",
+  "result = {'content': '\\n'.join(selected), 'startLine': offset, 'endLine': end, 'totalLines': len(lines), 'truncated': truncated}",
+  "if truncated: result['nextOffset'] = end + 1",
+  "print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))",
+].join("\n");
 
 type ImportInput = Parameters<TerminalRuntime["importResource"]>[1];
 type PublishInput = Parameters<TerminalRuntime["publishResource"]>[1];
@@ -71,6 +106,26 @@ function shellQuote(value: string): string {
 
 function absolutePath(relativePath: string): string {
   return `${ROOT}/${relativePath}`;
+}
+
+function lineCount(value: string): number {
+  if (!value) return 0;
+  return value.split("\n").length - Number(value.endsWith("\n"));
+}
+
+function containmentCommands(): string[] {
+  return [
+    `resolved=$(realpath -m -- "$target") || exit ${PATH_OUTSIDE_ROOT_EXIT_CODE}`,
+    `case "$resolved" in ${shellQuote(ROOT)}|${shellQuote(`${ROOT}/`)}*) ;; *) exit ${PATH_OUTSIDE_ROOT_EXIT_CODE} ;; esac`,
+  ];
+}
+
+function pathOutsideRootError(): TerminalToolError {
+  return new TerminalToolError(
+    "path_outside_root",
+    "The requested path resolves outside the Terminal workspace, possibly through a symlink. Choose a path under the workspace root.",
+    { field: "filePath", reason: "Use a path that does not traverse an escaping symlink." },
+  );
 }
 
 function bounded(value: string): { head: string; tail: string; bytes: number } {
@@ -183,10 +238,38 @@ export function createDaytonaTerminalRuntime(
     provider: TerminalSandboxProvider,
   ) => Promise<void>,
 ): TerminalRuntime {
+  const acquiredByRun = new Map<string, Promise<AcquiredTerminalSandbox>>();
+
   async function acquire(context: HarnessToolContext): Promise<AcquiredTerminalSandbox> {
-    const sandbox = await coordinator.acquire(context);
-    await prepareSandbox?.(context, sandbox, provider);
-    return sandbox;
+    if (context.signal.aborted) {
+      throw new TerminalToolError("cancelled", "The Terminal operation was cancelled before sandbox startup.");
+    }
+    const cached = acquiredByRun.get(context.harnessRunId);
+    if (cached) {
+      const startedAt = Date.now();
+      try {
+        return await cached;
+      } finally {
+        recordTerminalAcquisition({ durationMs: Date.now() - startedAt, cacheHit: true });
+      }
+    }
+    const startedAt = Date.now();
+    const pending = (async () => {
+      const sandbox = await coordinator.acquire(context);
+      await prepareSandbox?.(context, sandbox, provider);
+      return sandbox;
+    })();
+    acquiredByRun.set(context.harnessRunId, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      if (acquiredByRun.get(context.harnessRunId) === pending) {
+        acquiredByRun.delete(context.harnessRunId);
+      }
+      throw error;
+    } finally {
+      recordTerminalAcquisition({ durationMs: Date.now() - startedAt, cacheHit: false });
+    }
   }
 
   async function resolveInsideRoot(
@@ -195,8 +278,9 @@ export function createDaytonaTerminalRuntime(
     relativePath: string,
   ): Promise<string> {
     const intended = absolutePath(relativePath);
-    const result = await provider.runCommand(sandbox.providerSandboxId, {
+    const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
       taskName: `avalon-path-${context.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 80)}`,
+      operation: "path.resolve",
       command: `realpath -m -- ${shellQuote(intended)}`,
       cwd: ROOT,
       timeoutMs: 10_000,
@@ -204,11 +288,7 @@ export function createDaytonaTerminalRuntime(
     });
     const resolved = result.stdout.trim();
     if (result.exitCode !== 0 || (resolved !== ROOT && !resolved.startsWith(`${ROOT}/`))) {
-      throw new TerminalToolError(
-        "path_outside_root",
-        "The requested path resolves outside the Terminal workspace, possibly through a symlink. Choose a path under the workspace root.",
-        { field: "filePath", reason: "Use a path that does not traverse an escaping symlink." },
-      );
+      throw pathOutsideRootError();
     }
     return intended;
   }
@@ -219,10 +299,12 @@ export function createDaytonaTerminalRuntime(
     path: string,
     phase: "before" | "after",
   ): Promise<{ size: number; sha256: string }> {
-    const result = await provider.runCommand(sandbox.providerSandboxId, {
+    const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
       taskName: `avalon-publish-${phase}-${context.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 64)}`,
+      operation: `resource.publish.inspect_${phase}`,
       command: [
         `target=${shellQuote(path)}`,
+        ...(phase === "before" ? containmentCommands() : []),
         'if [ ! -e "$target" ]; then exit 44; fi',
         'if [ -L "$target" ]; then exit 45; fi',
         'if [ ! -f "$target" ]; then exit 46; fi',
@@ -234,6 +316,7 @@ export function createDaytonaTerminalRuntime(
       timeoutMs: 30_000,
       signal: context.signal,
     });
+    if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
     if (result.exitCode === 44) {
       throw new TerminalToolError(
         "not_found",
@@ -264,15 +347,20 @@ export function createDaytonaTerminalRuntime(
       if (!selector) {
         throw new TerminalToolError("repository_checkout_unavailable", "Repository checkout is unavailable in this Terminal runtime.");
       }
-      return selector.checkout(context, input);
+      acquiredByRun.delete(context.harnessRunId);
+      const selected = await selector.checkout(context, input);
+      acquiredByRun.delete(context.harnessRunId);
+      return selected;
     },
     async readFile(context, filePath) {
       const sandbox = await acquire(context);
-      const path = await resolveInsideRoot(context, sandbox, filePath);
-      const metadata = await provider.runCommand(sandbox.providerSandboxId, {
+      const path = absolutePath(filePath);
+      const metadata = await provider.runUtilityCommand(sandbox.providerSandboxId, {
         taskName: `avalon-read-stat-${context.toolCallId.replace(/[^a-zA-Z0-9_-]/gu, "").slice(0, 64)}`,
+        operation: "file.inspect",
         command: [
           `target=${shellQuote(path)}`,
+          ...containmentCommands(),
           'if [ ! -e "$target" ]; then exit 44; fi',
           'if [ -L "$target" ] || [ ! -f "$target" ]; then exit 45; fi',
           'stat -c %s -- "$target"',
@@ -281,8 +369,9 @@ export function createDaytonaTerminalRuntime(
         timeoutMs: 10_000,
         signal: context.signal,
       });
-      if (metadata.exitCode === 44) return null;
-      if (metadata.exitCode === 45) {
+      if (metadata.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+      if (metadata.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
+      if (metadata.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
         throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use terminal_run_command with `ls -l` or `file` to inspect it.", { filePath });
       }
       const size = Number(metadata.stdout.trim());
@@ -304,21 +393,95 @@ export function createDaytonaTerminalRuntime(
       }
     },
 
-    async writeFile(context, filePath, bytes) {
+    async readFilePage(context, filePath, offset, limit) {
       const sandbox = await acquire(context);
-      const target = await resolveInsideRoot(context, sandbox, filePath);
-      const temporary = `${ROOT}/.rally/tmp/${newId()}`;
-      await provider.writeFile(sandbox.providerSandboxId, temporary, bytes, context.signal);
-      const result = await provider.runCommand(sandbox.providerSandboxId, {
-        taskName: `avalon-write-${newId()}`,
-        command: `target=${shellQuote(target)}; mkdir -p -- "$(dirname -- "$target")" && mv -- ${shellQuote(temporary)} "$target"`,
+      const path = absolutePath(filePath);
+      const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
+        taskName: "terminal-read-page",
+        operation: "file.read_page",
+        command: `python3 -c ${shellQuote(READ_TEXT_PAGE_PYTHON)} ${shellQuote(path)} ${offset} ${limit} ${256 * 1_024} ${10 * 1_048_576}`,
         cwd: ROOT,
         timeoutMs: 30_000,
         signal: context.signal,
       });
+      if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+      if (result.exitCode === FILE_NOT_FOUND_EXIT_CODE) return null;
+      if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
+        throw new TerminalToolError("file_read_failed", "The path is not a regular file. Use terminal_run_command with `ls -l` or `file` to inspect it.", { filePath });
+      }
+      if (result.exitCode === FILE_NOT_UTF8_EXIT_CODE) {
+        throw new TerminalToolError("not_text_file", "The file is not valid UTF-8 text. Use terminal_run_command with `file` or a format-specific tool to inspect it.", { filePath });
+      }
+      if (result.exitCode === FILE_TOO_LARGE_EXIT_CODE) {
+        const size = Number(result.stdout.trim());
+        throw new TerminalToolError("limit_exceeded", `The file is ${size} bytes; terminal_read_file supports at most 10485760 bytes. Use a command to extract a smaller range.`, { field: "filePath", expected: "file bytes at most 10485760" });
+      }
       if (result.exitCode !== 0) {
+        throw new TerminalToolError("file_read_failed", "The file could not be read. Inspect it with terminal_run_command and retry.", { reason: "Inspect the path with ls -l or file, then retry the read." });
+      }
+      try {
+        return JSON.parse(result.stdout) as Awaited<ReturnType<TerminalRuntime["readFilePage"]>>;
+      } catch {
+        throw new TerminalToolError("file_read_failed", "The sandbox returned an invalid file page. Retry the read.");
+      }
+    },
+
+    async writeFile(
+      context,
+      filePath,
+      bytes,
+      options?: TerminalWriteFileOptions,
+    ): Promise<TerminalWriteFileOutput> {
+      const sandbox = await acquire(context);
+      const target = absolutePath(filePath);
+      const temporary = `${ROOT}/.rally/tmp/${newId()}`;
+      await provider.writeFile(sandbox.providerSandboxId, temporary, bytes, context.signal);
+      const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
+        taskName: `avalon-write-${newId()}`,
+        operation: "file.replace",
+        command: [
+          `target=${shellQuote(target)}`,
+          `temporary=${shellQuote(temporary)}`,
+          'trap \'rm -f -- "$temporary"\' EXIT',
+          ...(options ? [
+            "created=0",
+            `previous_lines=${lineCount(options.previousText)}`,
+          ] : [
+            ...containmentCommands(),
+            "created=1",
+            "previous_lines=0",
+            'if [ -e "$target" ]; then',
+            `  if [ -L "$target" ] || [ ! -f "$target" ]; then exit ${FILE_NOT_REGULAR_EXIT_CODE}; fi`,
+            '  size=$(stat -c %s -- "$target") || exit 47',
+            `  if [ "$size" -gt ${10 * 1_048_576} ]; then printf '%s\\n' "$size"; exit ${FILE_TOO_LARGE_EXIT_CODE}; fi`,
+            `  previous_lines=$(python3 -c ${shellQuote(COUNT_UTF8_LINES_PYTHON)} "$target") || exit ${FILE_NOT_UTF8_EXIT_CODE}`,
+            "  created=0",
+            "fi",
+          ]),
+          'mkdir -p -- "$(dirname -- "$target")" && mv -- "$temporary" "$target" || exit 47',
+          "trap - EXIT",
+          'printf "%s %s\\n" "$created" "$previous_lines"',
+        ].join("\n"),
+        cwd: ROOT,
+        timeoutMs: 30_000,
+        signal: context.signal,
+      });
+      if (result.exitCode === PATH_OUTSIDE_ROOT_EXIT_CODE) throw pathOutsideRootError();
+      if (result.exitCode === FILE_NOT_REGULAR_EXIT_CODE) {
+        throw new TerminalToolError("file_write_failed", "The path is not a regular file. Inspect it with terminal_run_command before replacing it.", { filePath });
+      }
+      if (result.exitCode === FILE_NOT_UTF8_EXIT_CODE) {
+        throw new TerminalToolError("not_text_file", "The existing file is not UTF-8 text. Inspect it with terminal_run_command before replacing it.", { filePath });
+      }
+      if (result.exitCode === FILE_TOO_LARGE_EXIT_CODE) {
+        const size = Number(result.stdout.trim());
+        throw new TerminalToolError("limit_exceeded", `The existing file is ${size} bytes; terminal_write_file replaces files up to 10485760 bytes.`, { field: "filePath", expected: "file bytes at most 10485760" });
+      }
+      const summary = /^([01]) (\d+)\s*$/u.exec(result.stdout);
+      if (result.exitCode !== 0 || !summary) {
         throw new TerminalToolError("file_write_failed", "The atomic file replacement failed. Inspect the parent directory and retry.", { reason: "Inspect the parent directory and available space, then retry." });
       }
+      return { created: summary[1] === "1", previousLines: Number(summary[2]) };
     },
 
     async applyPatch(context, patch) {
@@ -326,8 +489,9 @@ export function createDaytonaTerminalRuntime(
       const sandbox = await acquire(context);
       const temporary = `${ROOT}/.rally/tmp/${newId()}.patch`;
       await provider.writeFile(sandbox.providerSandboxId, temporary, new TextEncoder().encode(patch), context.signal);
-      const result = await provider.runCommand(sandbox.providerSandboxId, {
+      const result = await provider.runUtilityCommand(sandbox.providerSandboxId, {
         taskName: `avalon-patch-${newId()}`,
+        operation: "file.apply_patch",
         command: `git apply --check -- ${shellQuote(temporary)} && git apply -- ${shellQuote(temporary)}; status=$?; rm -f -- ${shellQuote(temporary)}; exit $status`,
         cwd: ROOT,
         timeoutMs: 60_000,
@@ -570,7 +734,7 @@ export function createDaytonaTerminalRuntime(
       // the four provider commands below from running for a doomed call.
       requireTerminalEffectIntent(context, "publication");
       const sandbox = await acquire(context);
-      const path = await resolveInsideRoot(context, sandbox, `${OUTPUT_ROOT}/${input.filePath}`);
+      const path = absolutePath(`${OUTPUT_ROOT}/${input.filePath}`);
       const before = await inspectGeneratedFile(context, sandbox, path, "before");
       if (before.size === 0) {
         throw new TerminalToolError(

@@ -10,8 +10,52 @@ import {
   terminalGitCaSetupCommands,
   type TerminalProviderOperationMeasurement,
 } from "../src/services/terminal/daytona-provider";
+import type { TerminalProviderRequestMeasurement } from "../src/services/terminal/tracing";
 
 describe("Daytona Terminal provider", () => {
+  it("executes Rally utility commands directly and traces each Daytona request", async () => {
+    const measurements: TerminalProviderRequestMeasurement[] = [];
+    const times = [0, 25, 25, 75, 75, 95];
+    const executeCommand = vi.fn(async () => ({ exitCode: 0, result: "ready\n" }));
+    const sandbox = {
+      id: "sandbox-utility", name: "sandbox-utility", state: "started",
+      process: {
+        executeCommand,
+        createSession: vi.fn(), executeSessionCommand: vi.fn(), deleteSession: vi.fn(),
+      },
+    };
+    const get = vi.fn(async () => sandbox);
+    const provider = createDaytonaTerminalProvider({
+      capability: "supported", apiKey: "secret", apiUrl: "https://app.daytona.io/api",
+      target: "us", snapshot: "snapshot", emergencyDisabled: false,
+    }, () => ({ create: vi.fn(), get }), {
+      now: vi.fn(() => times.shift()!),
+      observeRequest: (measurement) => measurements.push(measurement),
+    });
+
+    await expect(provider.runUtilityCommand("sandbox-utility", {
+      taskName: "test-utility", operation: "file.inspect", command: "printf ready", cwd: "/workspace", timeoutMs: 5_000,
+    })).resolves.toEqual({ exitCode: 0, stdout: "ready\n", stderr: "" });
+    await expect(provider.runUtilityCommand("sandbox-utility", {
+      taskName: "test-utility", operation: "file.inspect", command: "printf ready", cwd: "/workspace", timeoutMs: 5_000,
+    })).resolves.toEqual({ exitCode: 0, stdout: "ready\n", stderr: "" });
+
+    expect(executeCommand).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledOnce();
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(/cd -- '\/workspace'.*timeout .* 5s bash -lc 'printf ready'/u),
+      undefined,
+      undefined,
+      15,
+    );
+    expect(measurements).toEqual([
+      { operation: "sandbox.get", detail: null, outcome: "completed", durationMs: 25, requestCount: 1, pollCount: 0, bytes: 0 },
+      { operation: "process.execute_utility", detail: "file.inspect", outcome: "completed", durationMs: 50, requestCount: 1, pollCount: 0, bytes: 6 },
+      { operation: "process.execute_utility", detail: "file.inspect", outcome: "completed", durationMs: 20, requestCount: 1, pollCount: 0, bytes: 6 },
+    ]);
+  });
+
   it("round-trips Daytona's Git CA path through a fresh Bash session", () => {
     const directory = mkdtempSync(join(tmpdir(), "avalon-terminal-ca-"));
     try {
@@ -658,21 +702,18 @@ describe("Daytona Terminal provider", () => {
 
   it("publishes a verified bundle from a fresh ephemeral sandbox with a host-scoped secret", async () => {
     const uploadFile = vi.fn(async () => undefined);
-    const createSession = vi.fn(async () => undefined);
-    const executeSessionCommand = vi.fn(async () => ({
-      cmdId: "publisher-cmd",
+    const executeCommand = vi.fn(async () => ({
       exitCode: 0,
-      stdout: "published\n",
+      result: "published\n",
     }));
-    const getSession = vi.fn(async () => { throw new Error("not found"); });
-    const getSessionCommand = vi.fn(async () => ({ id: "publisher-cmd", command: "envelope", exitCode: 0 }));
-    const getSessionCommandLogs = vi.fn(async (_sessionId, _commandId, onStdout?: (chunk: string) => void) => { onStdout?.("published\n"); });
-    const deleteSession = vi.fn(async () => undefined);
     const removePublisher = vi.fn(async () => undefined);
     const publisherSandbox = {
       id: "publisher-1", name: "rally-publisher", state: "started",
       fs: { uploadFile, downloadFile: vi.fn() },
-      process: { createSession, getSession, getSessionCommand, getSessionCommandLogs, executeSessionCommand, deleteSession },
+      process: {
+        executeCommand,
+        createSession: vi.fn(), executeSessionCommand: vi.fn(), deleteSession: vi.fn(),
+      },
       delete: removePublisher,
     };
     const createSecret = vi.fn(async (input: { name: string; hosts?: string[] }) => ({
@@ -718,12 +759,18 @@ describe("Daytona Terminal provider", () => {
       secrets: { GITHUB_WRITE_BASIC: expect.any(String) },
     }), { timeout: 60 });
     expect(uploadFile).toHaveBeenCalledWith(expect.any(Uint8Array), "/workspace/publication.bundle", 120);
-    expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      command: expect.stringContaining("git fsck --strict"),
-    }), 180);
-    expect(executeSessionCommand).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      command: expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
-    }), 180);
+    expect(executeCommand).toHaveBeenCalledWith(
+      expect.stringContaining("git fsck --strict"),
+      "/workspace",
+      undefined,
+      180,
+    );
+    expect(executeCommand).toHaveBeenCalledWith(
+      expect.stringContaining('export GIT_SSL_CAINFO="$CURL_CA_BUNDLE"'),
+      "/workspace",
+      undefined,
+      180,
+    );
     expect(removePublisher).toHaveBeenCalledWith(60, true);
     expect(deleteSecret).toHaveBeenCalledWith("secret-1");
   });
