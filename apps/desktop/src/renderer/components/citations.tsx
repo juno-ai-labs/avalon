@@ -7,7 +7,7 @@ import {
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { File, FileText, Link2 } from 'lucide-react';
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect } from 'react';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
 
@@ -68,7 +68,12 @@ export type CitationResolution =
   | { status: 'resolved'; resource: CitationResource }
   | { status: 'unavailable' };
 
-export type CitationResolver = (resourceId: string) => CitationResolution;
+export interface CitationResolver {
+  /** What is known about this resource right now. Pure; called during render. */
+  resolve: (resourceId: string) => CitationResolution;
+  /** Ask for a resource that has not been resolved yet. Called from an effect. */
+  request: (resourceId: string) => void;
+}
 
 /**
  * Where a chip's icon and kind come from.
@@ -76,11 +81,33 @@ export type CitationResolver = (resourceId: string) => CitationResolution;
  * A cited resource is not guaranteed to be in the loaded work stream's resource
  * set — it may be cited from another work stream, or simply not loaded yet — so
  * resolution is the host's to supply rather than the renderer's to assume. The
- * default answers `pending` for everything, which is what a surface with no
- * host installed (the export card's detached root, a component test) gets: a
- * chip drawn from the label alone.
+ * default answers `pending` for everything and asks for nothing, which is what
+ * a surface with no host installed gets: the export card's detached root, a
+ * component test, a chip drawn from the label alone.
+ *
+ * Reading and asking are split so that neither one lies about the other's
+ * timing. `resolve` runs during render and must stay pure; `request` runs from
+ * an effect, which is the only place a fetch may be started from.
  */
-export const CitationResolutionContext = createContext<CitationResolver>(() => ({ status: 'pending' }));
+export const CitationResolutionContext = createContext<CitationResolver>({
+  resolve: () => ({ status: 'pending' }),
+  request: () => undefined,
+});
+
+/**
+ * What is known about a cited resource, asking for it if nothing is.
+ *
+ * A pending lookup still renders the chip: its label is the model's own text,
+ * so there is nothing to wait for, and an affordance that appeared after a
+ * round trip would land under a reader already past it.
+ */
+function useCitationResource(resourceId: string): CitationResolution {
+  const { request, resolve } = useContext(CitationResolutionContext);
+  useEffect(() => {
+    if (resourceId !== '') request(resourceId);
+  }, [request, resourceId]);
+  return resolve(resourceId);
+}
 
 /** The footnote citations of the message being rendered, keyed by identifier. */
 export interface MessageCitations {
@@ -142,7 +169,7 @@ function openCitationTarget(target: CitationTarget): void {
 
 function ResourceChip({ label, labelText, target }: CitationInput): React.JSX.Element {
   const resourceId = target.kind === 'resource' ? target.resourceId : '';
-  const resolution = useContext(CitationResolutionContext)(resourceId);
+  const resolution = useCitationResource(resourceId);
   if (resolution.status === 'unavailable') return asText({ label, labelText, target });
   const resource = resolution.status === 'resolved' ? resolution.resource : undefined;
   return (
@@ -160,7 +187,7 @@ function ResourceChip({ label, labelText, target }: CitationInput): React.JSX.El
 
 function ResourceCard({ label, labelText, target }: CitationInput): React.JSX.Element {
   const resourceId = target.kind === 'resource' ? target.resourceId : '';
-  const resolution = useContext(CitationResolutionContext)(resourceId);
+  const resolution = useCitationResource(resourceId);
   if (resolution.status === 'unavailable') return asText({ label, labelText, target });
   const resource = resolution.status === 'resolved' ? resolution.resource : undefined;
   return (

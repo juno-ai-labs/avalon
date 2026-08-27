@@ -14,7 +14,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -25,6 +25,7 @@ import type {
 } from '../lib/types';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { DocumentPreviewContent, useDocumentPreview } from './document-preview';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
 import { RailSurface } from './rail-surface';
 
@@ -35,6 +36,13 @@ interface InspectorRailProps {
   onAddParticipant?: () => void;
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void;
+  /**
+   * Reads a resource's own bytes for the detail view's preview.
+   *
+   * A prop rather than a call to the API client from inside the rail, because
+   * the two screens that mount this already hold one and the rail holds none.
+   */
+  loadResourceContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
   onOpenRun?: (run: AutomationRunSummary) => void;
   /** True while the inspector is fading out under HyperSight taking the slot. */
@@ -340,7 +348,38 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
   );
 }
 
-function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailProps, 'workstream' | 'onDetachResource'>): React.JSX.Element | null {
+/**
+ * The resource's own content, beneath its metadata.
+ *
+ * This half is what makes a citation worth clicking. The detail view showed
+ * type, direction, version and a Remove button and nothing a person could
+ * read — so a chip opened a card about a document rather than the document.
+ * The bytes come through the authorized preview route, and the same component
+ * the attachment lightbox uses renders them.
+ */
+function ResourceContentPreview({ loadContent, resource }: {
+  loadContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
+  resource: WorkstreamResource;
+}): React.JSX.Element | null {
+  const source = useMemo(() => (
+    resource.contentAvailable && loadContent
+      ? {
+        name: resource.title,
+        ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+        loadContent: (signal?: AbortSignal) => loadContent(resource.id, signal),
+      }
+      : null
+  ), [loadContent, resource.contentAvailable, resource.id, resource.mimeType, resource.title]);
+  const state = useDocumentPreview(source);
+  if (!state) return null;
+  return (
+    <div className={`inspector-detail-preview is-${state.mode}`}>
+      <DocumentPreviewContent name={resource.title} state={state} />
+    </div>
+  );
+}
+
+function InspectorDetail({ workstream, onDetachResource, loadResourceContent }: Pick<InspectorRailProps, 'workstream' | 'onDetachResource' | 'loadResourceContent'>): React.JSX.Element | null {
   const inspector = useUiStore((state) => state.inspector);
   if (!inspector || !workstream) return null;
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
@@ -362,9 +401,14 @@ function InspectorDetail({ workstream, onDetachResource }: Pick<InspectorRailPro
           {resource.canonicalUrl && <Button onClick={() => void window.rally?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
           {onDetachResource && <Button onClick={() => onDetachResource(resource)}><Trash2 size={14} /> Remove</Button>}
         </div>
+        <ResourceContentPreview loadContent={loadResourceContent} resource={resource} />
       </div>
     );
   }
+  // Where a citation for a resource outside the loaded work stream lands. The
+  // rail resolves from the work stream's own resource set, so this is the
+  // honest answer rather than a silent no-op; fetch-by-id detail for an
+  // arbitrary cited resource is named follow-up work.
   return <EmptyState title="Item unavailable" description="It may have been removed or changed in another session." />;
 }
 
@@ -411,7 +455,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
       <div className="rail-scroll">
         {props.error && <div className="rail-inline-error"><InlineError>{props.error}</InlineError></div>}
         {inspector ? (
-          <InspectorDetail onDetachResource={props.onDetachResource} workstream={props.workstream} />
+          <InspectorDetail
+            loadResourceContent={props.loadResourceContent}
+            onDetachResource={props.onDetachResource}
+            workstream={props.workstream}
+          />
         ) : railVariant === 'context' ? (
           <ContextContent {...props} />
         ) : (

@@ -1749,6 +1749,23 @@ export class RallyApi {
     await this.requestVoid(`/resources/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
+  /**
+   * One resource by id, under the viewer's own authorization.
+   *
+   * A citation names a resource that may not be in the loaded work stream's
+   * set — cited from another work stream, or simply not loaded — and this is
+   * what dresses its chip. A `GET` rather than a socket push because the id is
+   * arbitrary and viewer-triggered: nothing can push what it cannot enumerate,
+   * and the alternative is sending every resource in the workspace to every
+   * window on connect. See `docs/choosing-sockets-or-rest.md`.
+   */
+  async getResource(id: string, signal?: AbortSignal): Promise<WorkstreamResource> {
+    return mapResource(await this.request(`/resources/${encodeURIComponent(id)}`, {
+      schema: WireResourceSchema,
+      ...(signal ? { signal } : {}),
+    }));
+  }
+
   async getResourceContent(id: string, signal?: AbortSignal): Promise<Blob> {
     const response = await this.execute(`/resources/${encodeURIComponent(id)}/content`, {
       method: 'GET',

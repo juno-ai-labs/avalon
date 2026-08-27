@@ -2179,6 +2179,10 @@ export function WorkstreamScreen(): React.JSX.Element {
           ?? detachResource.error?.message
           ?? attachResource.error?.message}
         leaving={railLeaving === 'inspector'}
+        // The same authorized preview route the attachment lightbox reads
+        // through: a message attachment and a work-stream resource are the same
+        // record, so the rail's detail has no second loader of its own.
+        loadResourceContent={loadAttachmentContent}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
         onDetachResource={(resource) => detachResource.mutate(resource)}
