@@ -51,6 +51,7 @@ const EXPECTED_TABLES = [
   "elicitation_requests",
   "inference_attempts",
   "legacy_transcript_backfills",
+  "legacy_transcript_cleanup_receipts",
   "member_attention",
   "object_versions",
   "part_attachments",
