@@ -10,6 +10,8 @@ import type {
   TerminalNetworkPolicyPreview as ContractTerminalNetworkPolicyPreview,
   TerminalWorkstreamState as ContractTerminalWorkstreamState,
   WorkstreamTranscriptSnapshot,
+  ResourceDirection,
+  ResourceRelationshipType,
 } from '@rally/contracts';
 
 /** The OpenRouter model ids a composer may pin work to. Re-exported so the
@@ -174,8 +176,8 @@ export interface WorkstreamResource {
   contentAvailable?: boolean;
   sizeBytes?: number;
   currentVersion: number;
-  relationshipType: 'attachment' | 'message_attachment' | 'origin' | 'generated' | 'suggested_activity' | 'inbound_email' | 'context';
-  direction: 'source' | 'artifact';
+  relationshipType: ResourceRelationshipType;
+  direction: ResourceDirection;
 }
 
 export interface MessageAttachment {

@@ -7,6 +7,7 @@
  * workspace authorization; WorkspaceDO owns cross-work-stream serving state.
  */
 
+import { RESOURCE_RELATIONSHIP_TYPES } from "@rally/contracts";
 import { SCHEDULED_ALARM_SCHEMA_STATEMENTS } from "./scheduled-alarms";
 import { WORKSTREAM_RUNTIME_COMPAT_SCHEMA } from "./workstream-runtime-compat-schema";
 import {
@@ -20,6 +21,10 @@ export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 31;
 
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
+
+const RESOURCE_RELATIONSHIP_CHECK_VALUES = RESOURCE_RELATIONSHIP_TYPES
+  .map((relationshipType) => `'${relationshipType}'`)
+  .join(", ");
 
 const WORKSTREAM_SCHEMA_V1 = [
   `PRAGMA foreign_keys = ON`,
@@ -1741,10 +1746,9 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         resource_id TEXT PRIMARY KEY,
         attached_by_user_id TEXT,
         watch_enabled INTEGER NOT NULL CHECK (watch_enabled IN (0, 1)),
-        relationship_type TEXT NOT NULL CHECK (relationship_type IN (
-          'attachment', 'message_attachment', 'origin', 'generated',
-          'suggested_activity', 'inbound_email', 'context'
-        )),
+        relationship_type TEXT NOT NULL CHECK (
+          relationship_type IN (${RESOURCE_RELATIONSHIP_CHECK_VALUES})
+        ),
         resource_json TEXT NOT NULL CHECK (json_valid(resource_json)),
         attached_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
