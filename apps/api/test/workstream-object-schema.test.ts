@@ -52,6 +52,7 @@ const EXPECTED_TABLES = [
   "inference_attempts",
   "legacy_transcript_backfills",
   "legacy_transcript_cleanup_receipts",
+  "legacy_transcript_payload_transfers",
   "member_attention",
   "object_versions",
   "part_attachments",
@@ -88,6 +89,9 @@ const EXPECTED_TABLES = [
   "transcript_facts",
   "transcript_payloads",
   "workstream",
+  "workstream_message_attachments",
+  "workstream_message_mentions",
+  "workstream_message_records",
   "workstream_resource_links",
   "workstream_wakeups",
 ] as const;

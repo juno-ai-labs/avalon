@@ -789,6 +789,30 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-27 — Legacy message payloads gain a canonical owner
+
+**What changed:** SubstreamAgent schema v30 adds `workstream_message_records`,
+canonical attachment/mention relations, and a one-row ownership-transfer
+receipt. Message records contain ordering, provenance, visibility, and lifecycle
+metadata while their text and structured content live once in the referenced
+content-addressed transcript fact. New writes populate both the transitional
+legacy row and this canonical shape until the stacked retirement release.
+
+**Why:** The v28 projection correctly avoided copying legacy payloads, but that
+left `parts`, `part_attachments`, `part_mentions`, and
+`compaction_checkpoints` as indispensable owners. Removing them without a
+separate content-sized operation would corrupt retained work streams.
+
+**Considered and rejected:** Treating participant and Bind projections as new
+payload stores, and performing a fleet-sized copy in constructor migration SQL.
+Both violate the one-owner model; the latter also makes ordinary object startup
+scale with retained transcript size.
+
+**Consequences:** Every legacy scalar/payload/relation is reconciled inside the
+object transaction before its receipt commits. The next stacked release may
+drop legacy owners only after the fleet receipt is complete and must switch all
+foreign keys/readers to canonical records first.
+
 ### 2026-08-26 — Legacy transcript projections preserve single payload ownership
 
 **What changed:** pre-v27 participant and compaction rows can be projected into
