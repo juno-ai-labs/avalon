@@ -42,9 +42,19 @@ function fetcher(options = {}) {
     return Response.json({
       objects: body.objectIds.map((objectId) => ({
         objectId,
-        ...(objectId === options.failedObjectId ? { error: 'object_not_quiescent' } : { outcome: {
+        ...(objectId === options.failedObjectId ? {
+          ...(options.cleanupOnFailure ? { cleanup: {
+            abandonedRunCount: 1,
+            cleanupOperatorRunId: body.operatorRunId,
+          } } : {}),
+          error: 'object_not_quiescent',
+        } : { outcome: {
           applied: true,
           verified: true,
+          abandonedPreCutoverRunCount: objectId === options.abandonedObjectId ? 1 : 0,
+          preCutoverCleanupOperatorRunId: objectId === options.abandonedObjectId
+            ? body.operatorRunId
+            : null,
           operatorRunId: body.operatorRunId,
           preBackfillBookmark: `bookmark:${objectId}`,
           sourceSha256: 'a'.repeat(64),
@@ -72,7 +82,10 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
         `--receipt=${receiptPath}`,
       ],
       environment: { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'token' },
-      fetcher: fetcher({ onBackfill: (body) => batches.push(body) }),
+      fetcher: fetcher({
+        abandonedObjectId: globalIds[0],
+        onBackfill: (body) => batches.push(body),
+      }),
       logger: { log() {} },
     });
     assert.deepEqual(result.regions, {
@@ -84,6 +97,7 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
         participantTurns: 3,
         sourceCheckpoints: 0,
         checkpointProjections: 0,
+        abandonedPreCutoverRuns: 0,
       },
       global: {
         objects: 389,
@@ -93,6 +107,7 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
         participantTurns: 389,
         sourceCheckpoints: 0,
         checkpointProjections: 0,
+        abandonedPreCutoverRuns: 1,
       },
     });
     assert.equal(batches.length, 5);
@@ -192,13 +207,17 @@ test('persists every completed object outcome before a partial fleet failure exi
         `--receipt=${receiptPath}`,
       ],
       environment: { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'token' },
-      fetcher: fetcher({ failedObjectId: globalIds[20] }),
+      fetcher: fetcher({ cleanupOnFailure: true, failedObjectId: globalIds[20] }),
       logger: { log() {} },
     }), /legacy_transcript_backfill_failures_1/);
     const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
     assert.equal(receipt.regions.global.length, 389);
     assert.equal(receipt.regions.eu.length, 3);
     assert.equal(receipt.regions.global.filter((row) => row.error).length, 1);
+    assert.deepEqual(receipt.regions.global.find((row) => row.error).cleanup, {
+      abandonedRunCount: 1,
+      cleanupOperatorRunId: receipt.operatorRunId,
+    });
     assert.ok(receipt.completedAt);
   } finally {
     await unlink(receiptPath).catch(() => undefined);
