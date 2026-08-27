@@ -47,12 +47,12 @@ describe('public Rally site', () => {
     expect(page).toContain('<script type="module" src="/src/landing.ts"></script>');
   });
 
-  it('ships one deliberate Bauhaus/Braun direction with the Rally palette and tennis-seam motif', () => {
+  it('ships the convergence hero with the multiplayer thesis on the Rally palette', () => {
     const page = readProjectFile('index.html');
     const styles = readProjectFile('src/styles.css');
-    expect(page).toContain('AI is<br /><em>multiplayer</em><br />now.');
-    expect(page).toContain('See Rally in play');
-    expect(page).toContain('class="rally-seam"');
+    expect(page).toContain('Docs went multiplayer.<br />Design went multiplayer.<br /><em>AI is next.</em>');
+    expect(page).toContain('Why multiplayer');
+    expect(page).toContain('class="rally-merge reveal"');
     expect(styles).toContain('--paper:#f0efe8');
     expect(styles).toContain('--blue:#47c7fc');
     expect(styles).toContain('--volt:#cedc00');
@@ -108,15 +108,15 @@ describe('public Rally site', () => {
     }
     expect(styles).toContain('@media(max-width:1050px)');
     expect(styles).toContain('@media(max-width:720px)');
-    expect(styles).toContain('.rally-hero h1{font-size:clamp(3.9rem,18vw,5.5rem)}');
+    expect(styles).toContain('.rally-hero h1{font-size:clamp(2.5rem,10.5vw,3.4rem)}');
     expect(styles).toContain('.legal-nav a{align-items:center;display:flex;min-height:40px}');
   });
 
   it('keeps Rally inherent instead of presenting it as a removable participant', () => {
     const page = readProjectFile('index.html');
 
-    expect(page).toContain('2 people · Rally included');
-    expect(page).not.toContain('3 people · Rally included');
+    expect(page).toContain('4 people + Rally');
+    expect(page).not.toContain('5 people');
     expect(page).not.toContain('rally-chip');
   });
 
