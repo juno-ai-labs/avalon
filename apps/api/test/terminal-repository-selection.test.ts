@@ -174,7 +174,6 @@ async function fixture(input?: {
         : input?.backupResult ?? `READY ${backupBytes.byteLength} ${backupSha}\n`,
       stderr: "",
     })),
-    publishGitBundle: vi.fn(),
   };
   const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, command) => utilityImplementation(id, {

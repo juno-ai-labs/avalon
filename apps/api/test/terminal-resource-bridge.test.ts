@@ -140,7 +140,6 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
       if (input.taskName.startsWith("avalon-import-verify")) return { exitCode: 0, stdout: "14 8a6c44a03adda8a5af9627533116a8ab735dac8085f998c6f41cc13aef707169\n", stderr: "" };
       return { exitCode: input.command.startsWith("mkdir") ? 0 : 1, stdout: "", stderr: "" };
     }),
-    publishGitBundle: vi.fn(async (input) => ({ publishedSha: input.headSha })),
   };
   const utilityImplementation = vi.mocked(provider.runCommand).getMockImplementation()!;
   provider.runUtilityCommand = vi.fn((id, input) => utilityImplementation(id, {
