@@ -12,6 +12,7 @@ import {
   projectBindLoopMessages,
   type BindCompactionCommit,
   type BindLoopMessage,
+  type BindLoopMessageOrigin,
   type BindLoopProjectionState,
   type BindLoopTransition,
   type BindProviderBoundary,
@@ -23,6 +24,12 @@ interface FactMaterial {
   factKind: string;
   audience: "shared" | "participant" | "model";
   payload: unknown;
+  origin: BindLoopMessageOrigin | {
+    originKind: "system_projection";
+    sourceKind: string;
+    sourceId: string;
+    sourceRevision: number;
+  };
   runId: string | null;
   turnId: string | null;
   toolCallId: string | null;
@@ -199,6 +206,7 @@ export class WorkstreamTranscriptStorage {
       factKind: "compaction_checkpoint",
       audience: "model",
       payload: commit.checkpoint,
+      origin: canonicalOrigin(),
       runId: transition.loopId,
       turnId: null,
       toolCallId: null,
@@ -208,6 +216,7 @@ export class WorkstreamTranscriptStorage {
       factKind: "compaction_status",
       audience: "participant",
       payload: { compactionEventId: transition.compactionEventId, trigger: commit.checkpoint.trigger },
+      origin: canonicalOrigin(),
       runId: transition.loopId,
       turnId: transition.compactionEventId,
       toolCallId: null,
@@ -304,6 +313,7 @@ export class WorkstreamTranscriptStorage {
       factKind: "compaction_status",
       audience: "participant",
       payload: { compactionEventId: input.compactionEventId, trigger: input.trigger },
+      origin: canonicalOrigin(),
       runId: input.runId,
       turnId: input.compactionEventId,
       toolCallId: null,
@@ -396,6 +406,7 @@ export class WorkstreamTranscriptStorage {
       // Human text remains owned by the canonical participant part written in
       // the same transaction. The transcript fact names it; it does not copy it.
       payload: { role: input.actor, partId: input.turnId },
+      origin: canonicalOrigin(),
       runId: null,
       turnId: input.turnId,
       toolCallId: null,
@@ -477,6 +488,7 @@ export class WorkstreamTranscriptStorage {
       factKind: "participant_tool_lifecycle",
       audience: "participant",
       payload,
+      origin: canonicalOrigin(),
       runId: null,
       turnId: null,
       toolCallId: input.toolCallId,
@@ -1055,6 +1067,7 @@ export class WorkstreamTranscriptStorage {
         factKind: position === 0 ? "system_projection" : "model_message",
         audience: position === 0 ? "model" : participantShareable(message) ? "shared" : "model",
         payload: message,
+        origin: this.messageOrigin(transition, position, next.systemProjection),
         runId: transition.loopId,
         turnId: "turnId" in transition ? transition.turnId : null,
         toolCallId: "toolCallId" in transition ? transition.toolCallId : null,
@@ -1292,17 +1305,64 @@ export class WorkstreamTranscriptStorage {
     );
     this.sql.exec(
       `INSERT INTO transcript_facts
-         (fact_id, fact_kind, payload_id, run_id, turn_id, tool_call_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+         (fact_id, fact_kind, payload_id, origin_kind, source_kind, source_id,
+          source_revision, run_id, turn_id, tool_call_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(fact_id) DO NOTHING`,
       fact.factId,
       fact.factKind,
       fact.payloadId,
+      fact.origin.originKind,
+      fact.origin.sourceKind,
+      fact.origin.sourceId,
+      fact.origin.sourceRevision,
       fact.runId,
       fact.turnId,
       fact.toolCallId,
       now,
     );
+  }
+
+  private messageOrigin(
+    transition: BindLoopTransition,
+    position: number,
+    systemProjection: BindLoopProjectionState["systemProjection"],
+  ): FactMaterial["origin"] {
+    if (position === 0) {
+      return {
+        originKind: "system_projection",
+        sourceKind: "system_prompt_inputs",
+        sourceId: systemProjection.inputHash,
+        sourceRevision: systemProjection.revision,
+      };
+    }
+    if (transition.kind === "state_initialized") {
+      const origin = transition.nonSystemMessageOrigins[position - 1];
+      if (!origin) throw new Error("bind_loop_message_origin_missing");
+      return origin;
+    }
+    if (transition.kind === "assistant_accepted") return canonicalOrigin();
+    if (transition.kind === "tool_result_accepted") {
+      return derivedOrigin(
+        "tool_receipt",
+        `${transition.turnId}:tool:${transition.callIndex}`,
+        transition.callIndex,
+      );
+    }
+    if (transition.kind === "protocol_user_appended") {
+      if (transition.origin === "protocol") return protocolOrigin();
+      if (!transition.sourceId) throw new Error("bind_loop_derived_source_missing");
+      return derivedOrigin("protocol_source", transition.sourceId, null);
+    }
+    if (transition.kind === "state_replaced") return protocolOrigin();
+    if (transition.kind === "state_reconciled") {
+      return derivedOrigin(
+        "bind_loop_state",
+        `${transition.loopId}:state:${transition.stateRevision - 1}`,
+        transition.stateRevision - 1,
+      );
+    }
+    throw new Error("bind_loop_message_origin_unavailable");
   }
 
   private allocateTranscriptSequence(now: number): number {
@@ -1379,6 +1439,32 @@ function participantShareable(message: BindLoopMessage): boolean {
   // New provider/protocol roles remain model-only until their participant
   // visibility has been reviewed explicitly.
   return message.role === "assistant";
+}
+
+function canonicalOrigin(): BindLoopMessageOrigin {
+  return {
+    originKind: "canonical",
+    sourceKind: null,
+    sourceId: null,
+    sourceRevision: null,
+  };
+}
+
+function protocolOrigin(): BindLoopMessageOrigin {
+  return {
+    originKind: "protocol",
+    sourceKind: null,
+    sourceId: null,
+    sourceRevision: null,
+  };
+}
+
+function derivedOrigin(
+  sourceKind: string,
+  sourceId: string,
+  sourceRevision: number | null,
+): BindLoopMessageOrigin {
+  return { originKind: "derived", sourceKind, sourceId, sourceRevision };
 }
 
 function terminalToolStatus(status: string): boolean {

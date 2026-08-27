@@ -43,6 +43,16 @@ before the model-facing state can advance. This makes `input.messages` an exact
 provider-boundary value even though Bind's internal `state.messages` remains
 private and may be replaced by compaction.
 
+Host context messages carry non-provider `provenance` metadata until Bind heals
+the initial array. The initialization transition records an origin beside each
+surviving exact message: participant and trigger wrappers point to their durable
+turn/event, tool wrappers point to receipts, memory wrappers point to the frozen
+memory hash, and compaction continuations point to their checkpoint. The adapter
+strips that metadata while constructing OpenAI-compatible messages, so it never
+changes provider bytes. Runtime-created continuation nudges are protocol-only;
+accepted assistant messages are canonical; accepted tool results retain their
+receipt identity.
+
 Assistant streaming remains independent: token deltas continue over the room
 while durable lifecycle edges are recorded at accepted turn/tool boundaries.
 Each Bind model turn has its own stable participant turn ID, so text before a
@@ -798,7 +808,9 @@ silently return every test to the shared key while each still passes alone.
 initialization, validation reconciliation, assistant messages, exact tool
 results, protocol-only messages, and compaction replacement. The work-stream
 host durably commits those transitions and records an equality hash before each
-provider request.
+provider request. Initialization also carries typed provenance for every healed
+non-system message; that metadata is stored with facts and is never sent to the
+provider.
 
 **Why:** Bind's private message array is the real continuation state. Aggregate
 assistant text plus tool lifecycle rows omitted protocol messages, exact tool

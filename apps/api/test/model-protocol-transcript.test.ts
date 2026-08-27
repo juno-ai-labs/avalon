@@ -256,7 +256,7 @@ describe("durable UI-to-model transcript projection", () => {
       ],
     );
 
-    expect(projection.messages.find((entry) => entry.role === "tool")).toEqual({
+    expect(projection.messages.find((entry) => entry.role === "tool")).toMatchObject({
       role: "tool",
       tool_call_id: call,
       content: JSON.stringify({
@@ -428,10 +428,15 @@ describe("durable UI-to-model transcript projection", () => {
       })],
     );
 
-    expect(projection.messages).toEqual([{
+    expect(projection.messages).toEqual([expect.objectContaining({
       role: "user",
       content: expect.stringContaining("USER-SELECTED RALLY SUGGESTED-WORK BRIEF"),
-    }]);
+      provenance: expect.objectContaining({
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: messageId,
+      }),
+    })]);
     expect(projection.messages[0]?.content).toContain("untrusted evidence");
     expect(projection.messages[0]?.content).toContain("Trace the failed release");
   });
@@ -751,7 +756,7 @@ describe("durable UI-to-model transcript projection", () => {
         await vi.advanceTimersByTimeAsync(2_000);
         const projection = await projectionPromise;
 
-        expect(projection.messages).toContainEqual({
+        expect(projection.messages).toContainEqual(expect.objectContaining({
           role: "tool",
           tool_call_id: call,
           content: JSON.stringify({
@@ -761,7 +766,7 @@ describe("durable UI-to-model transcript projection", () => {
               resultAvailability: "summary_only",
             },
           }),
-        });
+        }));
         expect(warn).toHaveBeenCalledWith(expect.objectContaining({
           event: "tool_replay_payload_timeout",
           output_ref: "results/stalled.json",
@@ -854,12 +859,12 @@ describe("durable UI-to-model transcript projection", () => {
         { id: callTwo, function: { name: "connection_b_search", arguments: '{"query":"second"}' } },
       ],
     });
-    expect(projection.messages[2]).toEqual({
+    expect(projection.messages[2]).toMatchObject({
       role: "tool",
       tool_call_id: callOne,
       content: JSON.stringify({ success: true, data: { records: [{ id: "one" }] } }),
     });
-    expect(projection.messages[3]).toEqual({
+    expect(projection.messages[3]).toMatchObject({
       role: "tool",
       tool_call_id: callTwo,
       content: JSON.stringify({ success: true, data: { records: [{ id: "two" }] } }),

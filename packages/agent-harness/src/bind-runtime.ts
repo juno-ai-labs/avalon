@@ -83,6 +83,7 @@ import {
   projectBindLoopMessages,
   verifyBindProviderBoundary,
   type BindLoopMessage,
+  type BindLoopMessageOrigin,
   type BindLoopProjectionState,
   type BindLoopTransition,
   type BindSystemProjection,
@@ -597,9 +598,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       : new Map<string, number>();
     const runtime = await createPluginRuntime(input);
     const initialSystemPrompt = runtime.renderSystemPrompt();
+    const inputProviderMessages = toOpenAiMessages(input.messages);
     const healed = validateAndHealMessages([
       { role: "system", content: initialSystemPrompt.content },
-      ...toOpenAiMessages(input.messages),
+      ...inputProviderMessages,
     ]);
     state.messages.push(...healed.messages);
     await input.onTranscriptIssues?.(healed.issues.map((issue) => ({
@@ -618,6 +620,11 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       stateRevision: 1,
       systemProjection: await systemProjection(initialSystemMessage, 1),
       nonSystemMessages: healed.messages.slice(1).map(toBindLoopMessage),
+      nonSystemMessageOrigins: healedMessageOrigins(
+        input.messages,
+        inputProviderMessages,
+        healed.messages.slice(1),
+      ),
     });
 
     const selectedContextWindowTokens = (): number => {
@@ -2378,6 +2385,70 @@ function toOpenAiMessages(messages: RunHarnessInput["messages"]): OpenAI.ChatCom
       content: toOpenAiUserContent(message.content),
     } as OpenAI.ChatCompletionMessageParam;
   });
+}
+
+function healedMessageOrigins(
+  inputMessages: RunHarnessInput["messages"],
+  providerMessages: OpenAI.ChatCompletionMessageParam[],
+  healedMessages: OpenAI.ChatCompletionMessageParam[],
+): BindLoopMessageOrigin[] {
+  const candidates = providerMessages.map((message, index) => ({
+    message,
+    origin: normalizeMessageOrigin(inputMessages[index]?.provenance),
+    used: false,
+  }));
+  return healedMessages.map((healed) => {
+    const identical = candidates.find((candidate) => !candidate.used && candidate.message === healed);
+    const exact = candidates.find((candidate) =>
+      !candidate.used && JSON.stringify(candidate.message) === JSON.stringify(healed));
+    const rewrittenAssistant = healed.role === "assistant"
+      ? candidates.find((entry) => !entry.used && assistantHealingSource(entry.message, healed))
+      : undefined;
+    const candidate = identical ?? exact ?? rewrittenAssistant;
+    if (!candidate) {
+      return {
+        originKind: "protocol",
+        sourceKind: null,
+        sourceId: null,
+        sourceRevision: null,
+      };
+    }
+    candidate.used = true;
+    return candidate.origin;
+  });
+}
+
+function assistantHealingSource(
+  source: OpenAI.ChatCompletionMessageParam,
+  healed: OpenAI.ChatCompletionAssistantMessageParam,
+): boolean {
+  if (source.role !== "assistant") return false;
+  const sourceWithoutCalls = { ...source, tool_calls: undefined };
+  const healedWithoutCalls = { ...healed, tool_calls: undefined };
+  if (JSON.stringify(sourceWithoutCalls) !== JSON.stringify(healedWithoutCalls)) return false;
+  const sourceCallIds = new Set(source.tool_calls?.map((call) => call.id) ?? []);
+  return (healed.tool_calls ?? []).every((call) => sourceCallIds.has(call.id));
+}
+
+function normalizeMessageOrigin(
+  provenance: RunHarnessInput["messages"][number]["provenance"],
+): BindLoopMessageOrigin {
+  if (!provenance) {
+    return {
+      originKind: "protocol",
+      sourceKind: null,
+      sourceId: null,
+      sourceRevision: null,
+    };
+  }
+  if (provenance.originKind === "derived" && (!provenance.sourceKind || !provenance.sourceId)) {
+    throw new Error("model_message_derived_source_missing");
+  }
+  if (provenance.originKind !== "derived"
+    && (provenance.sourceKind || provenance.sourceId || provenance.sourceRevision !== null)) {
+    throw new Error("model_message_nonderived_source_present");
+  }
+  return { ...provenance };
 }
 
 function toModelToolDefinitions(tools: OpenAI.ChatCompletionTool[]): ModelToolDefinition[] {
