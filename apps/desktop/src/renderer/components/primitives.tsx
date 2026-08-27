@@ -175,7 +175,7 @@ export function AvatarStack({
         present.has(member.id) && member.id !== currentUserId
           ? `${member.name} is viewing this workstream.`
           : member.name
-      )).join(', ')}
+      )).join('; ')}
       className="avatar-stack"
     >
       {visible.map((member) => {
