@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { backfillSubstreamAgentTranscripts } from './backfill-substream-agent-transcripts.mjs';
@@ -103,6 +103,78 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
     assert.ok(receipt.completedAt);
     assert.ok(Object.values(receipt.regions).flat().every((row) =>
       row.outcome.verified === true && row.outcome.preBackfillBookmark.startsWith('bookmark:')));
+  } finally {
+    await unlink(receiptPath).catch(() => undefined);
+  }
+});
+
+test('targets an authoritative allowlist when the namespace contains an extra regional object', async () => {
+  const receiptPath = `/tmp/rally-backfill-script-${crypto.randomUUID()}.json`;
+  const targetPath = `/tmp/rally-backfill-targets-${crypto.randomUUID()}.json`;
+  const extraId = 'f'.repeat(64);
+  const batches = [];
+  try {
+    await writeFile(targetPath, JSON.stringify(globalIds), { mode: 0o600 });
+    const baseFetcher = fetcher({ onBackfill: (body) => batches.push(body) });
+    const withExtraObject = async (url, request = {}) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.includes('/namespaces/global-namespace/objects')) {
+        return response([...globalIds, extraId].map((id) => ({ id, hasStoredData: true })));
+      }
+      return baseFetcher(url, request);
+    };
+    const result = await backfillSubstreamAgentTranscripts({
+      argv: [
+        '--apply',
+        '--jurisdiction-probe-url=https://probe.test',
+        '--expected-global=389',
+        '--expected-eu=3',
+        `--global-target-ids=${targetPath}`,
+        `--receipt=${receiptPath}`,
+      ],
+      environment: { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'token' },
+      fetcher: withExtraObject,
+      logger: { log() {} },
+    });
+    assert.equal(result.regions.global.objects, 389);
+    assert.ok(batches.flatMap((batch) => batch.objectIds).every((id) => id !== extraId));
+  } finally {
+    await unlink(receiptPath).catch(() => undefined);
+    await unlink(targetPath).catch(() => undefined);
+  }
+});
+
+test('maps an unreadable target file to the operator-facing validation error', async () => {
+  await assert.rejects(backfillSubstreamAgentTranscripts({
+    argv: [
+      '--jurisdiction-probe-url=https://probe.test',
+      '--expected-global=389',
+      '--expected-eu=3',
+      '--global-target-ids=/tmp/does-not-exist-rally-targets.json',
+    ],
+    environment: { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'token' },
+    fetcher: fetcher(),
+    logger: { log() {} },
+  }), /global_target_ids_invalid/);
+});
+
+test('single-region apply requires only that region expected-count witness', async () => {
+  const receiptPath = `/tmp/rally-backfill-script-${crypto.randomUUID()}.json`;
+  try {
+    const result = await backfillSubstreamAgentTranscripts({
+      argv: [
+        '--apply',
+        '--region=eu',
+        '--jurisdiction-probe-url=https://probe.test',
+        '--expected-eu=3',
+        `--receipt=${receiptPath}`,
+      ],
+      environment: { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'token' },
+      fetcher: fetcher(),
+      logger: { log() {} },
+    });
+    assert.deepEqual(Object.keys(result.regions), ['eu']);
+    assert.equal(result.regions.eu.objects, 3);
   } finally {
     await unlink(receiptPath).catch(() => undefined);
   }

@@ -160,6 +160,19 @@ describe("canonical ordered work-stream transcript", () => {
       VALUES ('pending-tool', '0', 1, 'assistant', 'tool_call', 'agent', '',
               'tool:pending-tool', 'pending-tool', 'search', 'read', 'pending',
               'people', 0, 'tool', '{"invocation":{"status":"pending"}}', 0, 0)`);
+    sql.exec(`INSERT INTO runs
+      (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+       next_action_cursor, input_fence_seq, revision, started_at, active_elapsed_ms,
+       idle_elapsed_ms, step_count, subrequest_count, retry_count, tool_count,
+       input_tokens, output_tokens, cost_micros, output_bytes, terminalized_at,
+       created_at, updated_at)
+      VALUES ('settling-run', '0', 'completed', '{}', 0, 0, '', 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0)`);
+    sql.exec(`INSERT INTO tool_effects
+      (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+       tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json)
+      VALUES ('pending-tool', 'settling-run', 0, 0, 'pending-tool', 'search',
+              'read', 'request', 'authority', 'admitted', 'provider-call', '{}')`);
 
     await expect(transcript.backfillLegacyTranscript({
       operatorRunId: "00000000-0000-7000-8000-00000000000b",
@@ -167,6 +180,27 @@ describe("canonical ordered work-stream transcript", () => {
     })).rejects.toThrow("legacy_transcript_backfill_not_quiescent");
     expect(sql.exec(`SELECT COUNT(*) AS count FROM legacy_transcript_backfills`).one().count).toBe(0);
     expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
+  });
+
+  it("backfills an immutable orphaned pending legacy tool card", async () => {
+    const { transcript, sql } = open();
+    sql.exec(`INSERT INTO substreams
+      (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
+      VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 0)`);
+    sql.exec(`INSERT INTO parts
+      (id, substream_id, sequence_number, role, kind, author_type, content,
+       client_message_id, effect_intent_id, tool_name, tool_mode, tool_status,
+       visibility, pinned, message_type, structured_content_json, created_at, updated_at)
+      VALUES ('orphaned-tool', '0', 1, 'assistant', 'tool_call', 'agent', '',
+              'tool:orphaned-tool', 'orphaned-tool', 'search', 'read', 'pending',
+              'people', 0, 'tool', '{"invocation":{"status":"pending"}}', 0, 0)`);
+
+    await expect(transcript.backfillLegacyTranscript({
+      operatorRunId: "00000000-0000-7000-8000-00000000000c",
+      cutoverVersion: 27,
+    })).resolves.toMatchObject({ applied: true, verified: true, participantTurnCount: 1 });
+    expect(transcript.createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null, now: NOW })
+      .ranges[0]!.turns[0]!.blocks[0]).toMatchObject({ type: "tool", status: "started" });
   });
 
   it("backfills legacy participant order before post-cutover turns and replays idempotently", async () => {

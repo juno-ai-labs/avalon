@@ -15,7 +15,28 @@ export default {
       : input.region === 'eu'
         ? environment.EU_SUBSTREAM_AGENTS
         : null;
-    if (!namespace || !Array.isArray(input.objectIds)) {
+    if (!namespace) {
+      return new Response('invalid_request', { status: 400 });
+    }
+    if (input.operation === 'resolve') {
+      if (!Array.isArray(input.objectNames)) {
+        return new Response('invalid_request', { status: 400 });
+      }
+      const regionalNamespace = namespace.jurisdiction(input.region === 'global' ? 'us' : 'eu');
+      return Response.json({
+        objects: input.objectNames.map((objectName) => {
+          try {
+            if (typeof objectName !== 'string' || objectName.length === 0) {
+              throw new Error('invalid_object_name');
+            }
+            return { objectName, objectId: regionalNamespace.idFromName(objectName).toString() };
+          } catch (error) {
+            return { objectName, error: error instanceof Error ? error.message : 'unknown' };
+          }
+        }),
+      });
+    }
+    if (!Array.isArray(input.objectIds)) {
       return new Response('invalid_request', { status: 400 });
     }
     if ((input.operation ?? 'classify') === 'classify') {
