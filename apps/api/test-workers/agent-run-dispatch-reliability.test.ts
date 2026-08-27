@@ -27,9 +27,17 @@ import {
 } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { asBlockId, asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import {
+  asBlockId,
+  asHarnessRunId,
+  asSubstreamId,
+  asWorkspaceId,
+  asWorkstreamId,
+} from "@rally/contracts";
 
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
+import type { HarnessRunObjectPort } from "../src/durable-objects/workstream-harness-run-protocol";
+import { claimHarnessAttempt } from "../src/runtime/harness-run-runtime";
 import { seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
 
 beforeAll(async () => {
@@ -161,7 +169,7 @@ function dispatchRow(state: DurableObjectState, runId: string): DispatchRow | un
   ).toArray()[0];
 }
 
-const RUN_ID = "00000000-0000-7000-8000-0000000002b1";
+const RUN_ID = asHarnessRunId("00000000-0000-7000-8000-0000000002b1");
 
 /** The whole point: a non-terminal row implies a scheduled wake-up. */
 function assertInvariant(row: DispatchRow, alarm: number | null): boolean {
@@ -243,8 +251,9 @@ describe("a dispatched agent run is never orphaned", () => {
     const stub = substreamStub();
     await boot(stub, "https://object.test/health");
     const oldLeaseExpiresAt = Date.now() + 10 * 60_000;
+    let previousOwner = "";
 
-    await runInDurableObject(stub, async (_instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => {
       seedSubstreamDispatch(state, RUN_ID, {
         state: "running",
         startedAt: 1,
@@ -252,12 +261,16 @@ describe("a dispatched agent run is never orphaned", () => {
         leaseToken: "dispatch-owner-that-died",
         leaseExpiresAt: oldLeaseExpiresAt,
       });
+      previousOwner = (instance as unknown as {
+        harnessAttemptOwner(input: { substreamId: string; harnessRunId: string }, attemptId: string): string;
+      }).harnessAttemptOwner({ substreamId: "0", harnessRunId: RUN_ID }, "attempt-that-survived");
       state.storage.sql.exec(
         `UPDATE runs
             SET status = 'running', legacy_attempt_id = 'attempt-that-survived',
-                attempt_epoch = 1, lease_owner = 'instance-that-died',
+                attempt_epoch = 1, lease_owner = ?,
                 lease_expires_at = ?, heartbeat_at = ?, updated_at = ?
           WHERE run_id = ?`,
+        previousOwner,
         oldLeaseExpiresAt,
         Date.now(),
         Date.now(),
@@ -269,22 +282,45 @@ describe("a dispatched agent run is never orphaned", () => {
     await evictDurableObject(stub);
     await boot(stub, "https://object.test/health");
 
-    await runInDurableObject(stub, (instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => {
       const run = state.storage.sql.exec<{
         lease_owner: string | null;
         lease_expires_at: number | null;
+        attempt_epoch: number;
       }>(
-        `SELECT lease_owner, lease_expires_at FROM runs WHERE run_id = ?`,
+        `SELECT lease_owner, lease_expires_at, attempt_epoch FROM runs WHERE run_id = ?`,
         RUN_ID,
       ).one();
-      expect(run.lease_owner).toBe("instance-that-died");
+      expect(run.lease_owner).toBe(previousOwner);
       expect(run.lease_expires_at).not.toBeNull();
       expect(run.lease_expires_at!).toBeLessThanOrEqual(Date.now());
       expect(run.lease_expires_at).not.toBe(oldLeaseExpiresAt);
-      const recoverable = (instance as unknown as {
+      const resident = instance as unknown as {
         recoverableHarnessAttempts: Map<string, string>;
-      }).recoverableHarnessAttempts;
+        harnessRuns: HarnessRunObjectPort;
+        harnessAttemptOwner(input: { substreamId: string; harnessRunId: string }, attemptId: string): string;
+      };
+      const recoverable = resident.recoverableHarnessAttempts;
       expect(recoverable.get(RUN_ID)).toBe("attempt-that-survived");
+      const replacementOwner = resident.harnessAttemptOwner(
+        { substreamId: "0", harnessRunId: RUN_ID },
+        "attempt-that-survived",
+      );
+      expect(replacementOwner).not.toBe(previousOwner);
+
+      const claim = await claimHarnessAttempt(
+        resident.harnessRuns,
+        { harnessRunId: RUN_ID },
+        { attemptId: "attempt-that-survived", owner: replacementOwner, leaseSeconds: 300 },
+      );
+      expect(claim).toMatchObject({
+        state: "claimed",
+        lease: { owner: replacementOwner, attemptNumber: 2 },
+      });
+      expect(state.storage.sql.exec(
+        `SELECT lease_owner, attempt_epoch FROM runs WHERE run_id = ?`,
+        RUN_ID,
+      ).one()).toEqual({ lease_owner: replacementOwner, attempt_epoch: 2 });
     });
   });
 

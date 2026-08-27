@@ -1297,9 +1297,10 @@ or invalidate the frozen scope and receipts keyed to the original attempt.
 
 **Consequences:** An object restart can resume a local run immediately without
 weakening ordinary live-owner exclusion. The old owner is fenced by the new
-lease owner and epoch; normal expiration still follows the stale-run policy;
-and real-workerd eviction coverage verifies that constructor recovery expires
-only leases whose executor died with this SubstreamAgent instance.
+instance-nonce lease owner and epoch; normal expiration still follows the
+stale-run policy; and real-workerd eviction coverage verifies that constructor
+recovery expires only leases whose executor died with this SubstreamAgent
+instance.
 
 ### 2026-08-26 — Foreground presence is visible as soon as the tooltip opens
 

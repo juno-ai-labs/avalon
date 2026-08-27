@@ -36,7 +36,10 @@ const BASE = "a".repeat(40);
 const HEAD_REF = "rally/workstream-30000000";
 
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
-afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  for (const database of openDatabases.splice(0)) database.close();
+});
 
 function fixture(capability: "supported" | "unsupported", emergencyDisabled = false) {
   const database = preRetirementProductSqliteDatabase();
@@ -171,6 +174,7 @@ describe("Terminal Bind integration", () => {
   it("starts the sandbox when Terminal activates, before any Terminal tool executes", async () => {
     const { objectStore, env, input } = fixture("supported");
     const sandboxProvider = provider();
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const plugin = await createAvalonTerminalPlugin(env, input, undefined, {
       provider: sandboxProvider,
     });
@@ -187,12 +191,33 @@ describe("Terminal Bind integration", () => {
       executionPrincipal: { type: "user", userId: U },
       signal: new AbortController().signal,
     });
+    await plugin!.onActivate!({
+      workspaceId: W,
+      workstreamId: S,
+      harnessRunId: R,
+      executionPrincipal: { type: "user", userId: U },
+      signal: new AbortController().signal,
+    });
 
     expect(sandboxProvider.createSandbox).toHaveBeenCalledOnce();
     expect(workstreamObjectGet(
       objectStore,
       "SELECT lifecycle_state, sandbox_id FROM terminal_workspace",
     )).toEqual({ lifecycle_state: "running", sandbox_id: "sandbox-1" });
+    const activationEvents = info.mock.calls
+      .map(([entry]) => entry as Record<string, unknown>)
+      .filter((entry) => entry.event === "terminal_plugin_activation_finished");
+    expect(activationEvents).toMatchObject([
+      {
+        activation_attempt: 1,
+        tool_call_id: `${R}:plugin:terminal:activation:1`,
+      },
+      {
+        activation_attempt: 2,
+        tool_call_id: `${R}:plugin:terminal:activation:2`,
+      },
+    ]);
+    info.mockRestore();
   });
 
   it("prepares a selected repository during activation", async () => {

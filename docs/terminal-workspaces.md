@@ -519,8 +519,10 @@ Terminal tool and provider operation caused it.
 
 `terminal_plugin_activation_finished` uses the same acquisition and provider
 timing fields under the fixed `terminal_plugin_activation` tool identity. It
-also records `repository_state` as `prepared` or `deferred` and a bounded
-`repository_code` when the repair belongs to the visible Terminal tool surface.
+also records a one-based `activation_attempt`, gives every retry a distinct
+synthetic tool-call ID, and records `repository_state` as `prepared` or
+`deferred` and a bounded `repository_code` when the repair belongs to the
+visible Terminal tool surface.
 This separates cold sandbox/repository preparation from the subsequent tool and
 makes first-tool improvement measurable without logging repository identity or
 content.
@@ -550,9 +552,9 @@ work-stream sandbox and prepares a selected repository before exposing the nine
 tools. Repairable repository failures are deferred so checkout remains visible.
 Restored activation hints skip preparation and retain first-tool acquisition.
 Activation emits correlated acquisition, provider-operation, repository-state,
-and residual Rally timing. Eight repeated explicit loads single-flight one
-activation, and a 64-operation utility burst proves one acquisition and one
-repository preparation.
+residual Rally timing, and a distinct attempt identity for each retry. Eight
+repeated explicit loads single-flight one activation, and a 64-operation utility
+burst proves one acquisition and one repository preparation.
 
 **Why:** Production use shows that loading Terminal is nearly always immediately
 followed by a Terminal tool. Cold setup therefore belonged in the load latency,
