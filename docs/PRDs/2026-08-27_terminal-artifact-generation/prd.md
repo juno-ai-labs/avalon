@@ -265,25 +265,54 @@ path; publish with a human title; keep all chat narration short and free
 of the document's content; on revision, edit the existing file
 (re-importing from the published resource if the sandbox no longer has
 it) and publish the same path; obey explicit participant overrides in
-both directions. Naming `terminal_publish_resource` and
-`terminal_import_resource` in policy is legitimate under the existing
-rule that policy may name a tool it is guaranteed to have in scope — the
-availability condition above is exactly that guarantee.
+both directions. The policy names no wire tool names — house prompt
+practice, and unnecessary here anyway: it steers generically ("use the
+terminal workspace to write the document as a file and publish it as a
+work-stream resource"), the way the standing prompt already says "use
+the terminal tool" for code-shaped work, and the Terminal plugin's own
+activation message — which the model has whenever these tools are in
+scope — already carries the exact tool-by-name procedure for writing
+beneath the resource directory and publishing. Standing policy owns the
+trigger and the manners; the plugin message owns the mechanics.
 
-**The publish-path refinement** (key design decision 2): same work
-stream + same sandbox path resolves to the same generated resource,
-updated in place; single-call replay behavior is unchanged. This is a
-server-side change to the publish service's identity derivation, not a
-change to the tool's model-facing contract, inputs, or outputs.
+**The publish-path refinement** (key design decision 2), exactly. Today
+the publish service derives the resource's provider identity from the
+call's own effect intent — `terminal:<effect-intent-id>` — and looks it
+up workspace-scoped by `(provider, provider_resource_id)`. Because that
+identity is unique per call, the lookup can only ever deduplicate a
+replay of the *same* call; a second publish of the same file
+legitimately mints a sibling resource. The change is one derivation and
+one branch:
 
-**Model-usability acceptance.** Prompt evaluations on a small
-fallback-stage model from the work-stream route plan must show: a
-document request producing file-write → publish with brief narration and
-no inline document; a conversational question producing no file activity;
-a revision editing and republishing the same path; recovery after a
-simulated sandbox recycle via import → edit → republish; and obedience to
-both participant overrides. Golden-hash updates to the prompt suite are
-made deliberately.
+- Derive the provider identity from the document's stable coordinates
+  instead: the work stream and the normalized published path (shape:
+  `terminal:<workstream-id>:<normalized-path>`). The existing lookup
+  then finds the document's row across calls, and two work streams
+  publishing the same filename stay distinct.
+- On a lookup hit with an equal content hash, return the existing
+  resource unchanged — this one branch covers both a crash-replay of a
+  settled call and a no-change republish.
+- On a hit with a different hash, update in place: write the new content
+  object, compare-and-swap the row's content pointer and hash, reset the
+  derivative to pending, apply a new title if one was given, and keep
+  the resource id and its work-stream link. This is the same swap shape
+  the connector re-fetch path already performs — and, until the
+  versioning sibling lands, it fires the existing superseded-content
+  cleanup, which is the latest-only behavior decision 3 accepts.
+
+The tool's model-facing contract — name, inputs, outputs, receipt
+behavior — does not change; resources published before the change keep
+their per-call identities, and only new publishes adopt path-scoped
+identity.
+
+**Verification.** Formal prompt evaluations are deliberately deferred:
+Rally has no evaluation suite yet, and this PRD does not build one.
+Until one exists, verification is the Acceptance section's manual
+flows, walked in dogfooding on the models the route plan actually
+serves — brief narration, no inline document, same-path revision,
+recycle recovery, and override obedience are exactly those flows, so
+nothing is lost except automation. Golden-hash updates to the prompt
+module itself are still made deliberately, as for any prompt change.
 
 ## Rollout
 
