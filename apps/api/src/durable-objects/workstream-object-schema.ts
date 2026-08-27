@@ -1576,7 +1576,7 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
         pre_backfill_bookmark TEXT NOT NULL,
         source_part_count INTEGER NOT NULL CHECK (source_part_count >= 0),
         source_checkpoint_count INTEGER NOT NULL CHECK (source_checkpoint_count >= 0),
-        source_sha256 TEXT NOT NULL,
+        source_sha256 TEXT NOT NULL CHECK (length(source_sha256) = 64),
         participant_turn_count INTEGER NOT NULL CHECK (participant_turn_count >= 0),
         checkpoint_projection_count INTEGER NOT NULL CHECK (checkpoint_projection_count >= 0),
         bind_history_status TEXT NOT NULL CHECK (
