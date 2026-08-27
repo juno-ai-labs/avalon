@@ -359,6 +359,10 @@ describe('useTranscriptFollow', () => {
 
     follow.scrollToEnd({ smooth: true });
     expect(stub.smoothTargets).toEqual([3_500]);
+    // jsdom defines no `matchMedia` at all, so this test also pins the
+    // preference-cannot-be-read path: the optional call short-circuits to
+    // undefined and the jump stays smooth.
+    expect(stub.behaviors).toEqual(['smooth']);
     // The animation has not started moving yet, and must not be snapped past.
     expect(stub.geometry.scrollTop).toBe(400);
     stub.geometry.scrollHeight += 200;
@@ -381,10 +385,12 @@ describe('useTranscriptFollow', () => {
   // The stylesheet's global reduced-motion kill switch
   // (`scroll-behavior: auto !important`) cannot override an explicit `smooth`
   // passed to `scrollTo` — the option wins over the page's CSS per spec — so
-  // the preference has to be read here in script, the same way `sidebar.tsx`
-  // reads it for its own jump.
+  // the preference has to be read in script, the same way `sidebar.tsx` reads
+  // it for its own jump. Under the preference the hook takes its instant path:
+  // no `scrollTo` call at all, a recorded `scrollTop` write, and the follow
+  // re-armed synchronously rather than on the animation's arrival.
   it('jumps instantly instead of smoothly when the reader prefers reduced motion', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('prefers-reduced-motion') }));
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(prefers-reduced-motion: reduce)' }));
     stub = stubScrollGeometry({ scrollHeight: 4_000, clientHeight: 500, scrollTop: 3_500 });
     const { rerender } = render(<Transcript revision={0} />);
     follow.release();
@@ -393,12 +399,17 @@ describe('useTranscriptFollow', () => {
 
     follow.scrollToEnd({ smooth: true });
 
-    expect(stub.smoothTargets).toEqual([3_500]);
-    expect(stub.behaviors).toEqual(['auto']);
+    expect(stub.smoothTargets).toEqual([]);
+    expect(stub.behaviors).toEqual([]);
+    expect(stub.geometry.scrollTop).toBe(3_500);
+    // The instant jump re-arms the follow without waiting for a scroll event.
+    stub.geometry.scrollHeight += 200;
+    rerender(<Transcript revision={2} />);
+    expect(stub.geometry.scrollTop).toBe(3_700);
   });
 
   it('keeps the jump smooth when the reader has not asked for less motion', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query !== '(prefers-reduced-motion: reduce)' }));
     stub = stubScrollGeometry({ scrollHeight: 4_000, clientHeight: 500, scrollTop: 3_500 });
     const { rerender } = render(<Transcript revision={0} />);
     follow.release();
@@ -409,6 +420,8 @@ describe('useTranscriptFollow', () => {
 
     expect(stub.smoothTargets).toEqual([3_500]);
     expect(stub.behaviors).toEqual(['smooth']);
+    // The animation has not arrived, so the viewport has not been snapped.
+    expect(stub.geometry.scrollTop).toBe(400);
   });
 
   it('does not touch the viewport before the screen says it may follow', () => {

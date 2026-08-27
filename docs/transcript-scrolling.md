@@ -92,10 +92,18 @@ turn finishes.
   transcript at all — a work stream created moments ago, whose first reply is
   what the person is waiting for — and when the reader sends a message, which is
   the strongest statement anyone can make that they mean to be at the end.
-- `scrollToEnd({ smooth: true })` for **Jump to latest**. Following is armed when
-  the animation *arrives* rather than when it starts, because each frame of it
-  reports a position further from the end than the last, which is exactly what a
-  reader pulling away looks like.
+- `scrollToEnd({ smooth: true })` for **Jump to latest**. The animation is
+  smooth only while the reader has not asked for reduced motion: the hook reads
+  `matchMedia('(prefers-reduced-motion: reduce)')` at the call, because an
+  explicit `behavior` option beats the stylesheet's
+  `scroll-behavior: auto !important` kill switch per spec, so CSS alone cannot
+  reach this call. Under the preference the request takes the instant path — a
+  recorded `scrollTop` write that re-arms the follow synchronously — rather
+  than an unanimated pass through the smooth branch, whose settle-on-arrival
+  machinery exists only for an animation's in-flight frames: each frame of a
+  smooth jump reports a position further from the end than the last, which is
+  exactly what a reader pulling away looks like, so following is armed only
+  when the animation *arrives*.
 - `release()` when it opens at the reader's first unread message, so a run
   already streaming into that work stream cannot pull them off it.
 - `scrollTo(top)` to restore the reading position after an older page is
@@ -231,6 +239,13 @@ deleting its own: the three geometry properties live on `Element.prototype`
 today, so deleting the shadow happens to work, but a jsdom that moved them would
 leave the suite with no accessor and a failure nowhere near this file.
 
+jsdom also ships no `matchMedia` at all, so by default every test in the file
+takes the optional-call path and the jump stays smooth — that default is itself
+pinned by an assertion in the smooth-jump test. The two reduced-motion tests
+stub `matchMedia` globally with `vi.stubGlobal`, matching the exact query
+string, and the `afterEach` keeps calling `vi.unstubAllGlobals()` so the stub
+cannot leak into a file that lacks the suite-wide `unstubGlobals` config.
+
 The trap that hid a real defect here: a browser dispatches a scroll event for a
 programmatic write **only when the viewport actually moved**. A helper that fires
 one on every simulated token models a browser that does not exist, and it hides
@@ -244,6 +259,44 @@ There is no test that renders `WorkstreamScreen`, so the wiring in
 client. That seam is where the original defect lived.
 
 ## Changelog
+
+### 2026-08-27 — The smooth jump reads reduced motion in script, because CSS cannot
+
+**What changed:** `scrollToEnd({ smooth: true })` — the **Jump to latest**
+path — now reads `matchMedia('(prefers-reduced-motion: reduce)')` at the call
+and, when it matches, falls through to the hook's existing instant path
+instead of entering the smooth branch. `sidebar.tsx` makes the same read for
+its own jump.
+
+**Why:** The stylesheet's global reduced-motion kill switch sets
+`scroll-behavior: auto !important`, but per the CSSOM View specification an
+explicit `behavior` option passed to `scrollTo` wins over the element's
+computed `scroll-behavior` — so this was the one animation in the module the
+kill switch provably could not reach, and the preference had to be read in
+script.
+
+**Considered and rejected:** Keeping the smooth branch and swapping its
+`behavior` for `'auto'` (or `'instant'`). It works — the instant jump's single
+scroll event reports the end, which is what the settle path waits for — but it
+runs an unanimated scroll through machinery that exists only for an
+animation's in-flight frames, leaves the one write in the hook that records no
+ownership, and keeps the follow disarmed until that event is delivered, which
+is a frame of un-followed streaming for nothing. `'auto'` specifically was
+also only instant by a coupling to the stylesheet (`.transcript-scroll`
+declares `scroll-behavior: auto`, and the kill switch forces it besides),
+where the instant path depends on nothing. The fall-through reuses a path the
+module already trusts.
+
+**Consequences:** Under the preference the jump is a recorded write: the
+follow re-arms synchronously and the resulting scroll event is recognized as
+the hook's own, per the invariant that every write records the position it
+left behind. The smooth branch no longer contains a reduced-motion case at
+all, so its settle-on-arrival rationale holds unconditionally again. Anything
+else that drives motion from script — an explicit `behavior` option, a
+`setTimeout` hold — must make this same choice itself; the CSS kill switch
+will not save it.
+
+Shipped in [#376](https://github.com/juno-ai-labs/avalon/pull/376).
 
 ### 2026-08-26 — Opening carries unread context and an immediately usable tail
 
