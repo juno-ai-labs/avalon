@@ -23,6 +23,9 @@ import { z } from "zod";
  *   the account, including this Worker's own registry object and the API's
  *   container class; without this they would sit in `unreported` forever and
  *   make that count useless for spotting a genuinely stranded object.
+ * - `empty` — Cloudflare still enumerates the object ID, but the latest sweep
+ *   says it has no stored data. It is historical inventory, not a live object
+ *   a migration run may wake.
  * - `absent` — it was in a previous sweep and is not in the latest one, either
  *   because the object itself was deleted or because its whole class was.
  */
@@ -32,6 +35,7 @@ export const ObjectStatusSchema = z.enum([
   "unreported",
   "current",
   "not_reporting",
+  "empty",
   "absent",
 ]);
 export type ObjectStatus = z.infer<typeof ObjectStatusSchema>;
@@ -115,8 +119,9 @@ export interface ComponentSummary {
   behind: number;
   failed: number;
   unreported: number;
+  empty: number;
   absent: number;
-  /** Live objects only; `absent` is reported beside it rather than inside it. */
+  /** Live objects only; `empty` and `absent` are reported beside it. */
   total: number;
   /**
    * The namespaces this component's objects live in are all retired — the class
@@ -145,7 +150,10 @@ export interface NamespaceSummary {
   scriptName: string;
   className: string;
   usesSqlite: boolean;
+  /** Every ID in the latest successful listing, including identities with no stored data. */
   objectCount: number;
+  /** IDs in that same listing whose `hasStoredData` flag is true. */
+  storedObjectCount: number;
   lastSweptAt: number;
   /** When a completed sweep first failed to find this namespace, or null. */
   retiredAt: number | null;

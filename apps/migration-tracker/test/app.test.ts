@@ -146,6 +146,38 @@ describe("the operator site", () => {
     expect(body).toContain("Current");
   });
 
+  it("shows enumerated empty identities separately from stored objects", async () => {
+    await withRegistry((registry) => {
+      registry.recordSweep({
+        startedAt: 1_700_000_000_000,
+        finishedAt: 1_700_000_001_000,
+        status: "complete",
+        namespaces: [{
+          namespaceId: "ns-global",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [
+            { objectId: OBJECT_ID, hasStoredData: true },
+            { objectId: "b".repeat(64), hasStoredData: false },
+          ],
+        }],
+        truncatedNamespaces: [],
+        errorMessage: null,
+      });
+    });
+
+    const overview = await (await get("/")).text();
+    const emptyObject = await (await get(`/objects/${"b".repeat(64)}`)).text();
+
+    expect(overview).toMatch(/<div class="n">1<\/div>\s*<div class="k">Empty<\/div>/u);
+    expect(tableHeaders(overview)).toContainEqual(
+      ["Script", "Class", "Storage", "Stored", "IDs", "Swept"],
+    );
+    expect(emptyObject).toContain("latest inventory sweep found no stored data");
+    expect(emptyObject).toContain("not a forced-migration target");
+  });
+
   it("renders an object's report history", async () => {
     await deliver(report(), report({
       status: "failed",

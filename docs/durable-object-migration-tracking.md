@@ -110,8 +110,10 @@ means no observable clock advance rather than proof that no SQL ran.
 Reports only ever describe objects that woke up. An hourly cron trigger closes
 that gap by enumerating the account through Cloudflare's API — one call for the
 Durable Object namespaces, then a paged call per namespace for the object IDs it
-holds. Every ID it finds becomes a row; an ID with no report is `unreported`,
-which is a first-class state rather than an absence.
+holds. Cloudflare returns `hasStoredData` with every ID. An ID with stored data
+and no report is `unreported`; an ID Cloudflare still enumerates without stored
+data is `empty`. Both remain queryable, but only the first is a live migration
+target.
 
 The sweep deliberately does **not** ask each object for its version. A binding
 can address another script's class, so it could — and it would wake every
@@ -119,8 +121,16 @@ hibernating object in the account every hour, making the monitor the largest
 single source of Durable Object duration in the account.
 
 An object that a *complete* namespace listing no longer contains is marked
-`absent`. A listing that was truncated at the page cap, or that failed, marks
-nothing: it says nothing about the objects it did not reach.
+`absent`. That is distinct from `empty`: an empty identity was returned by the
+API, while an absent identity was not. A listing that was truncated at the page
+cap, or that failed, marks nothing: it says nothing about the objects it did not
+reach.
+
+The inventory observation and reports have an explicit time fence. A report
+newer than the latest sweep proves that the identity woke and owns storage
+again, so it clears `empty`. A delayed report older than that sweep is retained
+in the event history but cannot contradict the later `hasStoredData=false`
+observation.
 
 A whole namespace can leave too, when a class is deleted from the Worker. That
 is a second pass rather than the same one, because the first iterates the
@@ -164,12 +174,12 @@ recorded it as dispatched — filling the queue this system uses as its monitori
 signal with messages that were never going to work.
 
 An operator picks a class on `/migrations`, optionally narrowed to one region.
-The tracker asks the registry for every **live** object of that class — `absent`
-ones are excluded, because their IDs no longer have objects behind them and
-addressing one creates an empty object rather than migrating anything — and
-writes one message per object onto that region's command queue, in `sendBatch`
-groups of a hundred. The region's own API Worker consumes it, resolves the
-object by ID, and calls `forceMigration` on it.
+The tracker asks the registry for every **live** object of that class — `empty`
+and `absent` identities are excluded, because addressing either would create
+the storage the migration is supposed to update — and writes one message per
+object onto that region's command queue, in `sendBatch` groups of a hundred.
+The region's own API Worker consumes it, resolves the object by ID, and calls
+`forceMigration` on it.
 
 Three deliberate choices, in the order they matter:
 
@@ -291,12 +301,13 @@ produce. Each object then resolves to one status, computed in SQL so that the
 filter, the count, and the page can never disagree:
 
 ```text
-absent_since set                          -> absent
-last report was a failure                 -> failed
-class does not run the reporter           -> not_reporting
-no report at all                          -> unreported
-version < the component's observed head   -> behind
-otherwise                                 -> current
+absent_since set                                                -> absent
+latest sweep found no stored data, with no newer object report  -> empty
+last report was a failure                                       -> failed
+class does not run the reporter                                 -> not_reporting
+no report at all                                                -> unreported
+version < the component's observed head                         -> behind
+otherwise                                                       -> current
 ```
 
 `not_reporting` exists because the sweep enumerates the whole account, which is
@@ -414,9 +425,9 @@ full report history. Every page has a JSON twin under `/api/`.
   least-recently-heard-from first, so the objects a run reached sort to the back
   of the next. A deterministic order that does not advance would leave the tail
   of an oversized class unreachable while the page invited a retry.
-- **An `absent` object is never a target.** Its ID no longer has an object
-  behind it, so addressing one creates an empty object instead of migrating
-  anything.
+- **An `empty` or `absent` object is never a target.** Addressing either would
+  create storage instead of migrating anything: the former is still enumerated
+  without data, while the latter is no longer enumerated at all.
 - **A run records what the queue accepted, not what was intended**, and says so
   when it was capped. A cap nobody can see reads as "this covered the class".
 
@@ -457,6 +468,7 @@ report is out of scope by design.
 | Report delivered twice | The second is ignored — `report_id` carries a unique index. |
 | Reports delivered out of order | The older one updates nothing on the object row; both stay in the history. |
 | Cloudflare API unavailable | The sweep records a `failed` receipt with the reason rather than throwing. Nothing is marked absent. |
+| Cloudflare keeps listing an ID after its storage is cleared | The latest `hasStoredData=false` observation makes it `empty`. It stays in history but leaves live totals and forced-migration targets. |
 | One namespace's listing fails | That namespace's objects stay `null`; the sweep is `partial` and names the namespace in `migration_inventory_sweep_completed`. |
 | Namespace larger than the page cap | Listing stops at 20 pages of 1,000, the namespace is recorded as truncated, and the site shows the sweep as `partial`. |
 | Access unconfigured | Every request is refused with `access_not_configured`. |
@@ -495,7 +507,7 @@ banner carrying the error.
 
 | Suite | Covers |
 | --- | --- |
-| `pnpm --filter @rally/migration-tracker test` | The registry's SQL and derived statuses, the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. `dispatch.test.ts` covers the fan-out against the real registry and queue doubles: routing by script name, per-region grouping, an unbound region, a send that fails partway, the 100-message batch, and the run cap. |
+| `pnpm --filter @rally/migration-tracker test` | The registry's SQL and derived statuses, including stored/unreported versus enumerated/empty identities, status filtering, a newer report reviving storage, an older delayed report not reviving it, immediate compatibility with a pre-deploy false storage flag followed by a newer report, empty identities being excluded from both forceable-component counts and migration targets, and the UI's separate Stored/IDs counts and empty-object explanation. It also covers the queue consumer's acknowledgement, dedupe, and out-of-order behavior, the sweep against a `fetch` double, Access verification against a locally generated key, and the site's routes and escaping. `dispatch.test.ts` covers the fan-out against the real registry and queue doubles: routing by script name, per-region grouping, an unbound region, a send that fails partway, the 100-message batch, and the run cap. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/migration-reporting.test.ts`) | The reporter, in workerd against real Durable Object storage: first report, silence on an unchanged wake, a new report after a build change, applied versions, the failure path, retry after refusal, and the two "cannot break the object" cases. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
 | `pnpm --filter @rally/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
@@ -553,6 +565,20 @@ messages from one that matched nothing. `matched` and `dispatched` are separate
 columns because they come apart in two ways that both need to be visible: an
 object with no resolvable region is matched and never dispatched, and a run over
 a class larger than the cap stops early.
+
+`durable_objects.has_stored_data` is the latest authoritative inventory fact,
+not a second source of migration state. A swept `false` resolves to `empty`.
+A later object report changes it back to `true`, because waking and reporting
+proves storage exists; a Queue-delayed report whose `occurredAt` precedes the
+latest sweep does not. Report-only rows are treated as stored until their first
+inventory observation, because producing a migration report itself required the
+object to wake and apply its SQLite ledger.
+
+The namespace table shows both counts Cloudflare exposes operationally: `IDs`
+is every identity in the latest successful listing, while `Stored` is the
+subset from that same listing whose `hasStoredData` flag was true. The latter is
+the useful live-storage count; the former explains why cleared identities can
+remain visible in Cloudflare inventory.
 
 Absence is decided by comparing an object's `last_sweep_id` against the current
 sweep's row id, not by timestamp: two sweeps inside one millisecond would make a
@@ -770,6 +796,31 @@ it does not shape the cost of any run somebody means to make.
 
 ## Changelog
 
+### 2026-08-27 — Cleared object identities stop looking live
+
+**What changed:** `hasStoredData=false` is now a first-class `empty` object
+status. Empty identities remain inspectable but are excluded from live
+component totals and forced-migration targets. The namespace inventory shows
+stored objects and enumerated IDs separately, and a report may revive an empty
+identity only when it is newer than the inventory observation.
+
+**Why:** The development cleanup cleared 264 obsolete `SubstreamAgent` SQLite
+databases, but Cloudflare continued enumerating their IDs with
+`hasStoredData=false`. Treating every enumerated ID as live left those objects
+`unreported` and eligible for a forced migration that would recreate storage.
+
+**Considered and rejected:** Mapping cleared IDs to `absent`, because the API
+still returns them; deleting their registry rows, because that loses useful
+inventory history; and waiting for Cloudflare to stop enumerating them, because
+the next complete hourly sweep retained them and the listing already supplies
+the authoritative storage flag.
+
+**Consequences:** Operators can distinguish historical identities from stored
+objects without losing audit history. Empty and absent identities cannot be
+woken by a migration run. No registry schema migration is required because
+`has_stored_data` has been stored since v1; this change corrects how that
+canonical fact is projected.
+
 ### 2026-08-27 — Completed transcript operators retired after ownership transfer
 
 **What changed:** Schema v32 consumes the verified per-object transfer state and
@@ -968,9 +1019,9 @@ the list, and the list is the hard part.
   version deliberately says nothing, and the objects that were already current
   are exactly the ones whose silence tells an operator nothing. The forced report
   is the receipt that the object was reached.
-- **An `absent` object is never a target.** Its ID has no object behind it, so
-  `get()` would create an empty one — a migration pass that manufactures objects
-  is worse than one that skips them.
+- **An `empty` or `absent` object is never a target.** `get()` would create
+  storage for either — a migration pass that manufactures objects is worse than
+  one that skips them.
 - **The region a command is sent to comes from the script name when no report
   has ever named one.** This is the detail the feature turns on and it is easy
   to miss: the object an operator most wants to force is one the sweep found and

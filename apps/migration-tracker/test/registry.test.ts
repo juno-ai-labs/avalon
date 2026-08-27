@@ -149,6 +149,7 @@ describe("recordReport", () => {
     expect(object?.schemaVersion).toBe(3);
     expect(object?.componentLatestVersion).toBe(3);
     expect(object?.objectName).toBe(`global:${WORKSPACE_ID}:${WORKSTREAM_ID}`);
+    expect(object?.hasStoredData).toBe(true);
   });
 
   it("marks an object behind once another object reports a higher head", async () => {
@@ -240,8 +241,8 @@ describe("recordReport", () => {
 });
 
 describe("recordSweep", () => {
-  it("adds objects the sweep discovered as unreported", async () => {
-    const page = await withRegistry((registry) => {
+  it("separates stored objects awaiting a report from empty identities", async () => {
+    const result = await withRegistry((registry) => {
       registry.recordSweep(sweep({
         namespaces: [{
           namespaceId: "ns-1",
@@ -254,12 +255,105 @@ describe("recordSweep", () => {
           ],
         }],
       }));
-      return registry.listObjects(ObjectQuerySchema.parse({}));
+      return {
+        page: registry.listObjects(ObjectQuerySchema.parse({})),
+        emptyPage: registry.listObjects(ObjectQuerySchema.parse({ status: "empty" })),
+      };
     });
 
-    expect(page.total).toBe(2);
-    expect(page.objects.every((object) => object.status === "unreported")).toBe(true);
-    expect(page.objects.every((object) => object.scriptName === "avalon-api-global")).toBe(true);
+    expect(result.page.total).toBe(2);
+    expect(new Map(
+      result.page.objects.map((object) => [object.objectId, object.status]),
+    )).toEqual(new Map([
+      [objectId("c"), "unreported"],
+      [objectId("d"), "empty"],
+    ]));
+    expect(result.page.objects.every(
+      (object) => object.scriptName === "avalon-api-global",
+    )).toBe(true);
+    expect(result.emptyPage.objects.map((object) => object.objectId)).toEqual([objectId("d")]);
+  });
+
+  it("lets a later report revive an identity the previous sweep found empty", async () => {
+    const detail = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: false }],
+        }],
+      }));
+      const lastSweptAt = registry.objectDetail(objectId("a"))?.object.lastSweptAt;
+      expect(lastSweptAt).not.toBeNull();
+      record(registry, report({ occurredAt: (lastSweptAt ?? 0) + 1 }));
+      return registry.objectDetail(objectId("a"));
+    });
+
+    expect(detail?.object.status).toBe("current");
+    expect(detail?.object.hasStoredData).toBe(true);
+  });
+
+  /**
+   * Before this fix, reports did not update `has_stored_data`. The projection
+   * must repair that deployed row shape immediately instead of waiting for the
+   * next hourly inventory sweep.
+   */
+  it("treats a legacy false storage flag as stale when a newer report exists", async () => {
+    const result = await withRegistry((registry, state) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-global",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: false }],
+        }],
+      }));
+      const lastSweptAt = registry.objectDetail(objectId("a"))?.object.lastSweptAt ?? 0;
+      record(registry, report({ occurredAt: lastSweptAt + 1 }));
+      state.storage.sql.exec(
+        `UPDATE durable_objects SET has_stored_data = 0 WHERE object_id = ?`,
+        objectId("a"),
+      );
+      return {
+        detail: registry.objectDetail(objectId("a")),
+        components: registry.forceableComponents(),
+        selection: registry.migrationTargets({ className: "SubstreamAgent" }),
+      };
+    });
+
+    expect(result.detail?.object.status).toBe("current");
+    expect(result.detail?.object.hasStoredData).toBe(true);
+    expect(result.components[0]?.objects).toBe(1);
+    expect(result.selection.targets.map((target) => target.objectId)).toEqual([objectId("a")]);
+  });
+
+  it("does not let an older report revive storage a later sweep found empty", async () => {
+    const result = await withRegistry((registry) => {
+      record(registry, report());
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-1",
+          scriptName: "avalon-api-global",
+          className: "SubstreamAgent",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: false }],
+        }],
+      }));
+      record(registry, report({ occurredAt: 1_700_000_000_001 }));
+      return {
+        overview: registry.overview(),
+        detail: registry.objectDetail(objectId("a")),
+      };
+    });
+
+    expect(result.overview.totals.empty).toBe(1);
+    expect(result.overview.totals.current).toBe(0);
+    expect(result.overview.components[0]?.empty).toBe(1);
+    expect(result.overview.components[0]?.total).toBe(0);
+    expect(result.detail?.events).toHaveLength(2);
   });
 
   it("joins a swept object to the report that arrives later", async () => {
@@ -407,7 +501,10 @@ describe("recordSweep", () => {
           scriptName: "avalon-api-eu",
           className: "WorkspaceDO",
           usesSqlite: true,
-          objects: [{ objectId: objectId("e"), hasStoredData: true }],
+          objects: [
+            { objectId: objectId("e"), hasStoredData: true },
+            { objectId: objectId("f"), hasStoredData: false },
+          ],
         }],
         truncatedNamespaces: ["ns-1"],
         errorMessage: "ns-2: cloudflare_api_status_429",
@@ -419,6 +516,8 @@ describe("recordSweep", () => {
     expect(overview.latestSweep?.truncatedNamespaces).toEqual(["ns-1"]);
     expect(overview.latestSweep?.errorMessage).toBe("ns-2: cloudflare_api_status_429");
     expect(overview.namespaces[0]?.scriptName).toBe("avalon-api-eu");
+    expect(overview.namespaces[0]?.objectCount).toBe(2);
+    expect(overview.namespaces[0]?.storedObjectCount).toBe(1);
   });
 
   /**
@@ -1240,6 +1339,32 @@ describe("forced migration targets", () => {
 
     expect(selection.matched).toBe(0);
     expect(selection.targets).toEqual([]);
+  });
+
+  /**
+   * Cloudflare keeps enumerating an ID after its storage is cleared. Waking it
+   * would create the data the cleanup deliberately removed.
+   */
+  it("does not target an identity the latest sweep found empty", async () => {
+    const result = await withRegistry((registry) => {
+      registry.recordSweep(sweep({
+        namespaces: [{
+          namespaceId: "ns-global",
+          scriptName: "avalon-api-global",
+          className: "WorkspaceDO",
+          usesSqlite: true,
+          objects: [{ objectId: objectId("a"), hasStoredData: false }],
+        }],
+      }));
+      return {
+        components: registry.forceableComponents(),
+        selection: registry.migrationTargets({ className: "WorkspaceDO" }),
+      };
+    });
+
+    expect(result.components).toEqual([]);
+    expect(result.selection.matched).toBe(0);
+    expect(result.selection.targets).toEqual([]);
   });
 });
 
