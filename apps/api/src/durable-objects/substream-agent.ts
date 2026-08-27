@@ -20,6 +20,7 @@ import {
   ServerSocketEventSchema,
   SubstreamDirectSocketEventSchema,
   UpdateWorkstreamRequestSchema,
+  WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamWorkflowInputSchema,
   type PersonalSocketEvent,
@@ -229,6 +230,9 @@ const SocketAttachmentSchema = z.object({
   connectedAt: z.string().datetime({ offset: true }),
   afterSequence: z.number().int().nonnegative(),
   subscribed: z.boolean().default(false),
+  // Missing means a legacy client whose feed subscription still represented
+  // viewing. Current proactive clients opt out and use WorkspaceDO presence.
+  publishPresence: z.boolean().default(true),
   /** A `request_snapshot` from this socket is assembling; broadcasts skip it. */
   snapshotInFlight: z.boolean().default(false),
   transcriptSnapshot: z.object({
@@ -3030,6 +3034,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       // actually waits on, and it arrives on its own invocation — hence its own
       // trace, joined to the upgrade's by `rally.socket.connection_id`.
       const afterSequence = parsed.data.afterSequence;
+      const publishPresence = parsed.data.publishPresence;
+      socket.serializeAttachment({
+        ...attachment,
+        publishPresence,
+      } satisfies SocketAttachment);
       await inFlowSpan(this.env, "workstream.room.socket.subscribe", {
         flow: "workstream_open",
         component: "substream_do",
@@ -3051,7 +3060,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           afterSequence,
           span,
         );
-        if (subscribed) {
+        if (subscribed && publishPresence) {
           await span.step("workstream.room.socket.broadcast_presence", () =>
             this.broadcastPresence(attachment.workspaceId, attachment.workstreamId));
         }
@@ -3725,7 +3734,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     void reason;
     void wasClean;
     const attachment = this.readAttachment(socket);
-    if (attachment?.subscribed) {
+    if (attachment?.subscribed && attachment.publishPresence) {
       await this.broadcastPresence(attachment.workspaceId, attachment.workstreamId, socket);
     }
   }
@@ -3737,7 +3746,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     } catch {
       // The peer may already be gone; presence cleanup still needs to run.
     }
-    if (attachment?.subscribed) {
+    if (attachment?.subscribed && attachment.publishPresence) {
       await this.broadcastPresence(attachment.workspaceId, attachment.workstreamId, socket);
     }
   }
@@ -3875,6 +3884,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       connectedAt: new Date().toISOString(),
       afterSequence: identity.data.afterSequence,
       subscribed: false,
+      publishPresence: true,
       snapshotInFlight: false,
       transcriptSnapshot: null,
     };
@@ -4413,6 +4423,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         Boolean(
           attachment
           && attachment.subscribed
+          && attachment.publishPresence
           && attachment.workspaceId === workspaceId
           && attachment.workstreamId === workstreamId
         )
@@ -4460,7 +4471,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     audienceUserId?: string,
   ): void {
     const payload = JSON.stringify(event);
-    if (textEncoder.encode(payload).byteLength > 1_000_000) {
+    if (textEncoder.encode(payload).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
       throw new Error("Realtime event exceeds the bounded frame size");
     }
 

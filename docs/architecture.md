@@ -34,7 +34,7 @@ docs/                      Product, architecture, security, setup, runbooks
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, and the main-owned telemetry/crash boundary. |
+| `apps/desktop/src/main` | Window and Settings lifecycle, custom-protocol login completion, encrypted session storage, file selection, the macOS status item, main-owned telemetry/crash handling, and raw Node transport for work-stream socket swarms. |
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
@@ -263,12 +263,15 @@ records; it has no rebuildable workspace/work-stream serving projections. The no
 `WorkspaceDO` and `WorkstreamDO` form the low-volume control plane for workspace
 sync/command admission, metadata, authoritative directory queries, HyperSight
 fan-out, and regional effects.
-Each authenticated Electron renderer maintains one WorkspaceDO socket for the active workspace and one
-WorkstreamDO metadata socket for each selected or background-running work
-stream. Feed sockets,
-transcript reads, streaming checkpoints, and loop execution route directly to
-the selected `SubstreamAgent` data plane. Parents therefore never become the
-throughput ceiling for their children.
+Each authenticated Electron renderer maintains one native Chromium WorkspaceDO
+socket for the active workspace. It also owns a main-process Node socket pair —
+one WorkstreamDO metadata connection and one substream `0` feed — for the active
+work stream, every pin, the five most recently active unpinned rows, every
+visible live-state row, and recently viewed retained rows. Those feed
+subscriptions opt out of legacy socket-derived presence; WorkspaceDO's explicit
+foreground signal is authoritative. Transcript reads, streaming checkpoints,
+and loop execution route directly to the selected `SubstreamAgent` data plane.
+Parents therefore never become the throughput ceiling for their children.
 
 HyperSight follows the same control/data split without pretending a derived
 block is a conversation. Main `SubstreamAgent("0")` sends one debounced trigger
@@ -785,6 +788,27 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-26 — Proactive transport is separate from foreground presence
+
+**What changed:** The desktop's per-work-stream control/feed pairs are now
+described as a Node-owned proactive set rather than selected/running Chromium
+sockets. Current feed subscriptions suppress legacy presence, and the visible
+viewer set comes only from WorkspaceDO's explicit foreground state.
+
+**Why:** Retained pins and recent rows are intentionally warm while not being
+viewed. Treating a feed subscriber as a viewer makes the performance mechanism
+change product presence semantics.
+
+**Considered and rejected:** Closing every background feed would preserve the
+legacy inference but discard the cold-open improvement. Maintaining both
+presence systems would leave consumers with conflicting answers.
+
+**Consequences:** WorkstreamDO and SubstreamAgent remain direct child data
+planes, while WorkspaceDO owns foreground attention. New proactive socket roles
+must not imply presence merely by subscribing.
+
+Shipped in #341.
 
 ### 2026-08-26 — Foreground presence crosses the desktop and WorkspaceDO boundary
 

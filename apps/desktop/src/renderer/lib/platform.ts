@@ -445,6 +445,18 @@ const browserBridge: RallyDesktopBridge = {
     browserSessionListeners.add(listener);
     return () => browserSessionListeners.delete(listener);
   },
+  async openRealtimeSocket() {
+    throw new Error('The realtime socket broker is available only in the Rally desktop app.');
+  },
+  async sendRealtimeSocket() {
+    throw new Error('The realtime socket broker is available only in the Rally desktop app.');
+  },
+  async closeRealtimeSocket() {
+    throw new Error('The realtime socket broker is available only in the Rally desktop app.');
+  },
+  onRealtimeSocketEvent() {
+    return () => undefined;
+  },
 };
 
 export function desktopBridge(): RallyDesktopBridge {

@@ -13,6 +13,12 @@ import type { WorkstreamSummary } from './types';
 import { applyVersionedWorkstreamState } from './workstream-state-store';
 import { realtimeSocketTelemetry, reportWorkstreamSocketStarted } from './socket-telemetry';
 import {
+  createRealtimeSocket,
+  REALTIME_SOCKET_CONNECTING,
+  REALTIME_SOCKET_OPEN,
+  type RealtimeSocket,
+} from './realtime-socket';
+import {
   type WorkstreamSocketStartReason,
   uuidV7,
   workstreamFeedOpenAttemptId,
@@ -123,7 +129,7 @@ export function useWorkstreamControlSocket(
     if (!api || !enabled) return;
     let stopped = false;
     let accessRevoked = false;
-    let socket: WebSocket | null = null;
+    let socket: RealtimeSocket | null = null;
     let reconnectTimer: number | null = null;
     let heartbeatTimer: number | null = null;
     let pongTimer: number | null = null;
@@ -144,15 +150,15 @@ export function useWorkstreamControlSocket(
       heartbeatTimer = null;
       pongTimer = null;
     };
-    const scheduleHeartbeat = (target: WebSocket): void => {
+    const scheduleHeartbeat = (target: RealtimeSocket): void => {
       clearHeartbeat();
       heartbeatTimer = window.setTimeout(() => {
         heartbeatTimer = null;
-        if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
+        if (stopped || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
         target.send('ping');
         pongTimer = window.setTimeout(() => {
           pongTimer = null;
-          if (stopped || socket !== target || target.readyState !== WebSocket.OPEN) return;
+          if (stopped || socket !== target || target.readyState !== REALTIME_SOCKET_OPEN) return;
           socketTelemetry.willClose('heartbeat_timeout');
           target.close();
         }, PONG_TIMEOUT_MS);
@@ -196,7 +202,7 @@ export function useWorkstreamControlSocket(
     };
     const connect = async (): Promise<void> => {
       if (stopped || accessRevoked || connecting) return;
-      if (socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
+      if (socket?.readyState === REALTIME_SOCKET_CONNECTING || socket?.readyState === REALTIME_SOCKET_OPEN) return;
       if (navigator.onLine === false) return;
       connecting = true;
       clearReconnect();
@@ -221,7 +227,7 @@ export function useWorkstreamControlSocket(
           socketTelemetry.disconnected({ attempts: attempt, retrying: false, cause: 'offline' });
           return;
         }
-        const next = new WebSocket(ticket.url, ticket.protocols);
+        const next = createRealtimeSocket('workstream_control', ticket.url, ticket.protocols);
         socket = next;
         next.addEventListener('open', () => {
           if (stopped || socket !== next) return;

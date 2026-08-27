@@ -623,7 +623,7 @@ describe('useWorkstreamSocket', () => {
     act(() => result.current.requestSnapshot());
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
   });
@@ -1680,7 +1680,7 @@ describe('useWorkstreamSocket', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(750); });
     const second = FakeWebSocket.instances[1]!;
     act(() => second.open());
-    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2 }));
+    expect(second.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2, publishPresence: false }));
 
     act(() => second.message({
       type: 'stream_delta',
@@ -1795,7 +1795,7 @@ describe('useWorkstreamSocket', () => {
     // The cursor is the reconciliation: the reconnect subscribes, and the room
     // answers a cursor it cannot replay from with the canonical snapshot. No
     // REST call is made for it — `socketApiWith` throws on any it did not stub.
-    expect(sentFrames(second)).toEqual([{ type: 'subscribe', afterSequence: 0 }]);
+    expect(sentFrames(second)).toEqual([{ type: 'subscribe', afterSequence: 0, publishPresence: false }]);
     act(() => second.message(snapshotFrame({
       sequence: 6,
       workstream: { id: workstreamId, harnessStatus: 'completed' },
@@ -2059,7 +2059,7 @@ describe('useWorkstreamSocket', () => {
     // client asks the room for canonical state over the socket it already
     // holds rather than spending two REST reads on it.
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
     queryClient.setQueryData(['workstream-context', workstreamId, null], { resources: [] });
@@ -2191,7 +2191,7 @@ describe('useWorkstreamSocket', () => {
       status: 'completed',
     }));
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
 
@@ -2222,7 +2222,7 @@ describe('useWorkstreamSocket', () => {
       status: 'idle',
     }));
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
       { type: 'request_snapshot' },
     ]);
@@ -2308,7 +2308,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
     act(() => socket.message(snapshotFrame({
@@ -2441,7 +2441,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
 
@@ -2461,7 +2461,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
       { type: 'request_snapshot' },
     ]);
@@ -2510,7 +2510,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
 
     expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0 },
+      { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
       { type: 'request_snapshot' },
     ]);
@@ -2564,7 +2564,7 @@ describe('useWorkstreamSocket', () => {
 
     await flushPromises();
     act(() => FakeWebSocket.instances[0]?.open());
-    expect(FakeWebSocket.instances[0]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+    expect(FakeWebSocket.instances[0]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0, publishPresence: false }));
 
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'harness_status_changed',
@@ -2576,7 +2576,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     act(() => FakeWebSocket.instances[1]?.open());
 
-    expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+    expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0, publishPresence: false }));
   });
 
   it('hands a running stream between foreground and background subscribers without gaps or duplicate text', async () => {
@@ -2630,7 +2630,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const firstSocket = latestSocketFor(firstWorkstreamId);
     act(() => firstSocket.open());
-    expect(firstSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0 }));
+    expect(firstSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 0, publishPresence: false }));
     act(() => firstSocket.message({
       type: 'stream_started',
       sequence: 1,
@@ -2658,7 +2658,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const backgroundSocket = latestSocketFor(firstWorkstreamId);
     act(() => backgroundSocket.open());
-    expect(backgroundSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2 }));
+    expect(backgroundSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 2, publishPresence: false }));
     // A retried Bind frame can occupy a new room sequence. The stream cursor
     // crossing the component handoff must reject it before the next real chunk.
     act(() => backgroundSocket.message({
@@ -2691,7 +2691,7 @@ describe('useWorkstreamSocket', () => {
     await flushPromises();
     const returnedSocket = latestSocketFor(firstWorkstreamId);
     act(() => returnedSocket.open());
-    expect(returnedSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 4 }));
+    expect(returnedSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'subscribe', afterSequence: 4, publishPresence: false }));
     act(() => returnedSocket.message({
       type: 'stream_delta',
       sequence: 5,
@@ -3038,7 +3038,7 @@ describe('useWorkstreamSocket', () => {
     expect(FakeWebSocket.instances).toHaveLength(2);
     act(() => FakeWebSocket.instances[1]?.open());
     expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: 'subscribe', afterSequence: 14 }),
+      JSON.stringify({ type: 'subscribe', afterSequence: 14, publishPresence: false }),
     );
     expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
     expect(queryClient.getQueryData(['workstreams'])).toEqual([

@@ -16,6 +16,11 @@ import type { MessageExportResult } from '../common/message-export';
 import { parseDesktopSettingsSection } from '../common/settings';
 import type { DesktopSettingsSection } from '../common/settings';
 import type { ThemeChoice } from '../common/themes';
+import type { DesktopRealtimeSocketEvent } from '../common/realtime-socket';
+import {
+  REALTIME_SOCKET_IPC_CHANNELS,
+  parseRealtimeSocketEvent,
+} from '../common/realtime-socket-validation';
 
 const deepLinkListeners = new Set<(navigation: DesktopDeepLinkNavigation) => void>();
 const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
@@ -24,6 +29,13 @@ let queuedSettingsSection: DesktopSettingsSection | null = null;
 const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
 let meetingCloseQueued: MeetingCloseReason | null = null;
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
+const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
+
+ipcRenderer.on(REALTIME_SOCKET_IPC_CHANNELS.event, (_event, rawEvent: unknown) => {
+  const parsed = parseRealtimeSocketEvent(rawEvent);
+  if (!parsed) return;
+  for (const listener of realtimeSocketListeners) listener(parsed);
+});
 
 ipcRenderer.on('application:foreground-changed', (_event, rawForegrounded: unknown) => {
   if (typeof rawForegrounded !== 'boolean') return;
@@ -195,6 +207,13 @@ const bridge: RallyDesktopBridge = {
     const handler = (_event: Electron.IpcRendererEvent, session: DesktopSession | null): void => listener(session);
     ipcRenderer.on('session:changed', handler);
     return () => ipcRenderer.removeListener('session:changed', handler);
+  },
+  openRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.open, input) as Promise<void>,
+  sendRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.send, input) as Promise<void>,
+  closeRealtimeSocket: (input) => ipcRenderer.invoke(REALTIME_SOCKET_IPC_CHANNELS.close, input) as Promise<void>,
+  onRealtimeSocketEvent: (listener) => {
+    realtimeSocketListeners.add(listener);
+    return () => realtimeSocketListeners.delete(listener);
   },
   observeClientFeatureFlags: (flags) => ipcRenderer.invoke('feature-flags:observe', flags) as Promise<void>,
 };

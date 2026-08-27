@@ -22,10 +22,13 @@ export const WorkspaceDirectoryListRequestSchema = z.object({
 }).strict();
 
 export const WorkspaceDirectoryPageSchema = z.object({
-  // Pins are returned in addition to the requested recent-work page so they
-  // remain stable above infinite scroll without consuming its cursor budget.
-  items: z.array(WorkstreamSchema).max(1_250),
-  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
+  // Pins and running connection targets are returned in addition to the
+  // requested recent-work page. They remain available without consuming its
+  // infinite-scroll cursor budget. Pins have their own product limit, while
+  // running rows are intentionally complete rather than hidden behind an
+  // invented transport cap, so the combined response has no independent max.
+  items: z.array(WorkstreamSchema),
+  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
   directoryWaterline: z.number().int().nonnegative(),
 }).strict().superRefine((page, context) => {

@@ -1760,8 +1760,19 @@ const MessageFeedCursorSchema = z.string().regex(/^\d+$/u).max(16).refine((value
 const PositiveMessageFeedCursorSchema = MessageFeedCursorSchema.refine((value) =>
   Number(value) > 0, "Cursor must be positive");
 
+export const WORKSTREAM_REALTIME_MAX_FRAME_BYTES = 1_000_000;
+
 export const ClientSocketEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("subscribe"), afterSequence: z.number().int().nonnegative() }),
+  z.object({
+    type: z.literal("subscribe"),
+    afterSequence: z.number().int().nonnegative(),
+    /**
+     * Old desktop builds derived viewer presence from feed subscriptions. The
+     * current desktop reports foreground presence through WorkspaceDO instead,
+     * so its proactive feeds opt out while omitted remains legacy-compatible.
+     */
+    publishPresence: z.boolean().default(true),
+  }).strict(),
   // Re-send the canonical `snapshot` frame on a socket that is already
   // subscribed. It carries no cursor on purpose: a viewer asking for canonical
   // state is saying its own state may be wrong, so a cursor it supplied is the
@@ -1901,8 +1912,8 @@ export const WorkspaceWorkstreamStateVersionSchema = WorkstreamStateVersionSchem
  */
 const workspaceWorkstreamPageFields = {
   directoryWaterline: z.number().int().nonnegative(),
-  items: z.array(WorkstreamSchema).max(1_250),
-  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema).max(1_250),
+  items: z.array(WorkstreamSchema),
+  stateVersions: z.array(WorkspaceWorkstreamStateVersionSchema),
   nextCursor: WorkspaceWorkstreamCursorSchema.nullable(),
 } as const;
 
