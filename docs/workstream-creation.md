@@ -394,6 +394,36 @@ with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
 
+### 2026-08-27 — The reduced-motion cut now zeroes delay, not only duration
+
+**What changed:** The global `@media (prefers-reduced-motion: reduce)` block at
+the end of `app.css` now sets `animation-delay: 0.001ms !important;` and
+`transition-delay: 0.001ms !important;` alongside the duration zeroing it
+already did.
+
+**Why:** `.launch-arrival` — the opening turn and work timer rising into place —
+staggers in from `opacity: 0` with `animation-delay: calc(var(--arrival-index,
+0) * 70ms + 60ms)` and a `both` fill, so it is the *delay*, not the animation,
+that holds each row invisible before it starts. Zeroing only the duration left
+every row of the assembling transcript blank for its full stagger under reduced
+motion — up to several hundred milliseconds on a long list — which is exactly
+the motion "What moves" above already claimed was cut. The kill switch predates
+this document and had never been checked against a delay-based animation.
+
+**Considered and rejected:** A `.launch-arrival`-specific override, since this
+stagger was the animation found to be affected. Rejected because the global
+block exists precisely so a new staggered or delayed animation added later is
+covered automatically; a local override only this class carries would need to be
+copied by whatever adds the next one, which is the failure this fix removes
+rather than repeats.
+
+**Consequences:** "flattens all of it" in *What moves* is now actually
+enforced rather than aspirational. Any future animation that leans on
+`animation-delay` or `transition-delay` for sequencing is covered by the same
+global rule and does not need its own reduced-motion carve-out;
+`app.css.node.test.ts` pins both declarations so a change to the block cannot
+drop them silently.
+
 ### 2026-08-27 — The composer owns IME composition, so no host has to
 
 **What changed:** `ComposerInput` drops any keydown belonging to an in-flight
