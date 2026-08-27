@@ -49,3 +49,25 @@ describe('markdown renderer', () => {
     expect(importers).toEqual(['renderer/components/workstream-blocks.tsx']);
   });
 });
+
+/**
+ * The two packages that decide what footnote DOM exists to hook.
+ *
+ * `remark-gfm` parses `[^1]` into footnote nodes and `react-markdown`'s
+ * `remark-rehype` stage turns them into the `data-footnote-ref` anchors and the
+ * trailing `.footnotes` section that the citation renderer lifts into pills. Both
+ * were requested as `latest`, which was fine while footnotes rendered as an
+ * unstyled superscript nobody depended on. Now their output is a contract this
+ * renderer reads by attribute and class name, and a floating range would let a
+ * minor release rename either one — with the failure showing up as citations
+ * silently falling back to plain superscripts, not as a build error.
+ */
+describe('markdown parser pins', () => {
+  const manifest = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8')) as {
+    dependencies: Record<string, string>;
+  };
+
+  it.each(['react-markdown', 'remark-gfm'])('pins %s to an exact version', (name) => {
+    expect(manifest.dependencies[name]).toMatch(/^\d+\.\d+\.\d+$/u);
+  });
+});
