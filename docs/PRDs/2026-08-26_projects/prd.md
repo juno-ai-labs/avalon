@@ -739,9 +739,15 @@ does not restore project access.
 
 Every direct participant or scope mutation for a project member work stream is
 submitted through `WorkspaceDO` as a durable member-audience mutation. In one
-transaction, `WorkspaceDO` validates every current project membership, records
-the intended mutation and expected membership generations, and reserves that
-work stream against add, move, restore, and project-audience commands. The
+transaction, `WorkspaceDO` validates only memberships that currently constrain
+the work-stream audience: an active membership in an active project, a
+destination `joining` membership, or a retained membership reserved by a
+`restoring` or `cancelling_restore` operation. A merely retained membership in
+an archiving or archived project is excluded, so it cannot prevent the former
+member work stream from changing audience while the project is inactive. Restore
+preflight detects any resulting incompatibility. The transaction records the
+intended mutation and expected membership generations, and reserves that work
+stream against add, move, restore, and project-audience commands. The
 owning `WorkstreamDO` then applies the typed effect only when its local audience
 generation matches, and stores an idempotent receipt under the mutation ID in
 the same local transaction. `WorkspaceDO` releases the reservation only after
@@ -997,10 +1003,13 @@ meaningless local `workspace_id` column.
 - `project_queue_publications` owns every physical publication attempt for a
   resource application or audience target. It stores a stable publication ID;
   target kind, ID, generation, and delivery attempt; publisher lease and expiry;
-  `delivery_terminal_at` derived from publisher-lease expiry plus the configured
-  primary Queue retention; and `publishing`, `accepted`, `exhausted`, or
-  `superseded` state. A target fails only after all of its current publication
-  rows prove terminal and no effect claim is live.
+  send start, a conservative `latest_acceptance_at`, optional confirmed
+  `accepted_at`, and `delivery_terminal_at`; and `publishing`, `accepted`,
+  `exhausted`, or `superseded` state. Confirmed acceptance sets terminal time to
+  `accepted_at` plus the configured primary Queue retention. An ambiguous send
+  uses `latest_acceptance_at` plus retention. Publisher-lease expiry alone never
+  proves delivery terminal. A target fails only after all of its current
+  publication rows prove terminal and no effect claim is live.
 - `project_restore_operations` owns resumable restore work. It records the
   project lifecycle and audience generations, requester, `running`, `failed`,
   `cancelling`, `applied`, or `cancelled` state, and each member work stream's
@@ -1026,11 +1035,17 @@ Applying a default uses an idempotent typed effect and receipt rather than a
 cross-object SQL write. A `WorkspaceDO` alarm drains pending application IDs to
 the regional `PROJECT_RESOURCE_QUEUE` binding. Before leaving the object, it
 atomically claims the target under a publisher lease, creates a durable
-publication row and ID, and moves the target to queued. The publication's
-`delivery_terminal_at` is the publisher-lease expiry plus that regional primary
-Queue's configured retention, so any send allowed by the lease is terminal by
-that point. The Queue message includes both publication and target IDs. After
-Cloudflare accepts the send, the alarm marks that publication accepted.
+publication row and ID, and moves the target to queued. Before invoking the
+Queue binding, it records the send start and a conservative
+`latest_acceptance_at` derived from the platform-enforced latest time that this
+invocation's in-flight send can still be accepted. That bound is deliberately
+separate from the authority publisher lease and is chosen from Cloudflare's
+published execution limit rather than guessed here. The Queue message includes
+both publication and target IDs. After Cloudflare accepts the send, the alarm
+records `accepted_at` and sets `delivery_terminal_at` to that timestamp plus the
+regional primary Queue's configured retention. If the outcome remains
+ambiguous, terminal time is the conservative latest-acceptance bound plus the
+same retention.
 
 A crash before or after the send leaves the publication row authoritative.
 After its publisher lease expires, the alarm may create a new publication ID
@@ -1232,9 +1247,12 @@ the consumer asks `WorkstreamDO` to apply the named audience effect.
 7. Personal/workspace authorization and audience containment hold for project
    spaces, sidebar rows, work-stream membership, and resources. Every direct
    participant or scope mutation for a member work stream passes through the
-   authoritative `WorkspaceDO` membership guard and holds a durable reservation
-   until `WorkstreamDO` stores and returns its idempotent effect receipt. A
-   project membership command cannot commit in the cross-object gap. Any
+   authoritative `WorkspaceDO` membership guard for active, joining, restoring,
+   or restore-cancelling memberships and holds a durable reservation until
+   `WorkstreamDO` stores and returns its idempotent effect receipt. A retained
+   archiving or archived membership does not constrain direct audience changes;
+   restore preflight catches any new mismatch. A project membership command
+   cannot commit in the cross-object gap. Any
    project participant may remove themself; only a workspace owner or admin may
    remove somebody else from a project and its work streams.
 8. A work stream can remain pinned while it is in a project. Neither action
