@@ -760,7 +760,7 @@ export function testSubstreamAgentsBinding(
      * carrying the named outcome, because every one of them is an ordinary
      * answer this authority is designed to give rather than a fault.
      */
-    executeHarnessRunOperation: vi.fn((input: {
+    executeHarnessRunOperation: vi.fn(async (input: {
       workspaceId: string;
       workstreamId: string;
       operation: string;
@@ -776,7 +776,7 @@ export function testSubstreamAgentsBinding(
         }),
       ) as unknown as Record<string, (...args: unknown[]) => unknown>;
       try {
-        const value = storage[input.operation]!.apply(storage, input.args);
+        const value = await storage[input.operation]!.apply(storage, input.args);
         return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
       } catch (error) {
         return {
@@ -794,7 +794,7 @@ export function testSubstreamAgentsBinding(
      * a 200 carrying `replayed`, because a redelivery is the ordinary case for
      * every transcript write in this product rather than a fault.
      */
-    executeMessageOperation: vi.fn((input: {
+    executeMessageOperation: vi.fn(async (input: {
       workspaceId: string;
       workstreamId: string;
       operation: string;
@@ -810,7 +810,7 @@ export function testSubstreamAgentsBinding(
         }),
       ) as unknown as Record<string, (...args: unknown[]) => unknown>;
       try {
-        const value = storage[input.operation]!.apply(storage, input.args);
+        const value = await storage[input.operation]!.apply(storage, input.args);
         return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
       } catch (error) {
         return {
@@ -861,7 +861,7 @@ export function testSubstreamAgentsBinding(
      * a 200 carrying its own outcome, because a wake-up someone else took is an
      * ordinary answer rather than a fault.
      */
-    executeSchedulingOperation: vi.fn((input: {
+    executeSchedulingOperation: vi.fn(async (input: {
       workspaceId: string;
       workstreamId: string;
       operation: string;
@@ -877,7 +877,7 @@ export function testSubstreamAgentsBinding(
         }),
       ) as unknown as Record<string, (...args: unknown[]) => unknown>;
       try {
-        const value = storage[input.operation]!.apply(storage, input.args);
+        const value = await storage[input.operation]!.apply(storage, input.args);
         return { status: 200, bodyJson: JSON.stringify({ ok: true, value: value ?? null }) };
       } catch (error) {
         return {

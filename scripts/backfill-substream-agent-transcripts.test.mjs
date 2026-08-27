@@ -48,7 +48,19 @@ function fetcher(options = {}) {
             cleanupOperatorRunId: body.operatorRunId,
           } } : {}),
           error: 'object_not_quiescent',
-        } : { outcome: {
+        } : { outcome: body.operation === 'transfer-payload-ownership' ? {
+          applied: true,
+          verified: true,
+          operatorRunId: body.operatorRunId,
+          preTransferBookmark: `bookmark:${objectId}`,
+          sourceSha256: 'b'.repeat(64),
+          sourcePartCount: 1,
+          sourceAttachmentCount: 2,
+          sourceMentionCount: 3,
+          sourceCheckpointCount: 2,
+          messageRecordCount: 1,
+          checkpointProjectionCount: 2,
+        } : {
           applied: true,
           verified: true,
           abandonedPreCutoverRunCount: objectId === options.abandonedObjectId ? 1 : 0,
@@ -118,6 +130,55 @@ test('backfills exactly 389 Global and 3 EU objects and persists every recovery 
     assert.ok(receipt.completedAt);
     assert.ok(Object.values(receipt.regions).flat().every((row) =>
       row.outcome.verified === true && row.outcome.preBackfillBookmark.startsWith('bookmark:')));
+  } finally {
+    await unlink(receiptPath).catch(() => undefined);
+  }
+});
+
+test('transfers payload ownership for exactly 389 Global and 3 EU objects', async () => {
+  const receiptPath = `/tmp/rally-payload-transfer-script-${crypto.randomUUID()}.json`;
+  const batches = [];
+  try {
+    const result = await backfillSubstreamAgentTranscripts({
+      argv: [
+        '--apply',
+        '--payload-transfer',
+        '--jurisdiction-probe-url=https://probe.test',
+        '--expected-global=389',
+        '--expected-eu=3',
+        `--receipt=${receiptPath}`,
+      ],
+      environment: { CLOUDFLARE_ACCOUNT_ID: 'account', CLOUDFLARE_API_TOKEN: 'token' },
+      fetcher: fetcher({ onBackfill: (body) => batches.push(body) }),
+      logger: { log() {} },
+    });
+    assert.deepEqual(result.regions.global, {
+      objects: 389,
+      appliedObjects: 389,
+      replayedObjects: 0,
+      sourceParts: 389,
+      messageRecords: 389,
+      sourceAttachments: 778,
+      sourceMentions: 1167,
+      sourceCheckpoints: 778,
+      checkpointProjections: 778,
+    });
+    assert.deepEqual(result.regions.eu, {
+      objects: 3,
+      appliedObjects: 3,
+      replayedObjects: 0,
+      sourceParts: 3,
+      messageRecords: 3,
+      sourceAttachments: 6,
+      sourceMentions: 9,
+      sourceCheckpoints: 6,
+      checkpointProjections: 6,
+    });
+    assert.equal(batches.length, 5);
+    assert.ok(batches.every((batch) => batch.operation === 'transfer-payload-ownership'));
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
+    assert.ok(Object.values(receipt.regions).flat().every((row) =>
+      row.outcome.verified === true && row.outcome.preTransferBookmark.startsWith('bookmark:')));
   } finally {
     await unlink(receiptPath).catch(() => undefined);
   }

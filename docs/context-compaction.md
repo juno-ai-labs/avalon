@@ -138,12 +138,17 @@ participant history remains in `participant_transcript_turns` plus the activity
 interval. Two compactions produce two identities and two timings.
 
 For checkpoints created before the canonical transcript cutover, the v28
-backfill inserts an indexed `legacy_compaction_checkpoint_reference` fact rather
-than copying `messages_json` or `summary`. The canonical checkpoint reader joins
-that reference to the exact old owner. This preserves historical continuation
-bytes and the one-owner invariant, but it does not create a historical Bind
-generation or a participant compaction status that the old runtime never
-stored.
+backfill first inserts an indexed `legacy_compaction_checkpoint_reference` fact
+without copying `messages_json` or `summary`. Schema v30 then enables the
+explicit, content-sized ownership transfer: it hashes the complete legacy
+source, moves each exact message array and summary into a canonical model-only
+fact, switches the checkpoint projection, and commits one PITR bookmark plus a
+reconciliation receipt atomically. A post-cutover checkpoint already has an
+exact canonical fact, so transfer reuses that fact instead of manufacturing a
+second owner or changing the compaction event's identity. Neither phase creates
+a historical Bind generation or participant compaction status that the old
+runtime never stored, and neither phase changes existing compaction activity
+edges.
 
 ## Invariants
 
@@ -279,6 +284,27 @@ results.
   every routed model.
 
 ## Changelog
+
+### 2026-08-27 — Exact checkpoint ownership can leave the legacy table
+
+**What changed:** Schema v30 adds an explicit, receipted transfer of historical
+checkpoint arrays and summaries into canonical model-only facts. It preserves
+two distinct historical compactions independently and reuses the existing fact
+for a post-cutover compaction that was mirrored into the old table.
+
+**Why:** The projection backfill intentionally left legacy rows as payload
+owners. Those tables cannot be retired until exact continuation data moves
+without duplicating a canonical compaction or changing its lifecycle identity.
+
+**Considered and rejected:** Running content hashing in the object constructor,
+and copying every mirrored post-cutover checkpoint into a new legacy fact. The
+first makes object startup transcript-sized; the second creates two semantic
+owners and can disconnect the checkpoint projection from its compaction event.
+
+**Consequences:** Retirement may proceed only after every target object returns
+a verified transfer receipt. Transfer must remain neutral to participant status
+rows and activity intervals, and double-compaction/resume tests must remain
+green before and after legacy tables are dropped.
 
 ### 2026-08-26 — Pre-cutover checkpoints are projected by exact reference
 

@@ -29,7 +29,8 @@ export const AppendMessageInputSchema = z.object({
  * the product service runs in the Worker. This endpoint is how they reach them,
  * in place of D1-shaped SQL rewritten onto `_runtime_messages`.
  */
-export type MessageOperation = keyof WorkstreamMessageStorage;
+type LocalOnlyMessageOperation = "prepareMessage" | "appendPreparedMessage";
+export type MessageOperation = Exclude<keyof WorkstreamMessageStorage, LocalOnlyMessageOperation>;
 
 export type MessageObjectPort = ObjectPortOf<WorkstreamMessageStorage>;
 

@@ -1167,6 +1167,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
+  /** Operator-only transfer of legacy payload ownership into canonical facts. */
+  async transferLegacyTranscriptPayloadOwnership(input: {
+    objectId: string;
+    operatorRunId: string;
+  }) {
+    await this.initialized;
+    if (this.externalSubstreamId() !== "0") {
+      throw new Error("legacy_transcript_payload_transfer_requires_main_substream");
+    }
+    if (input.objectId !== this.state.id.toString()) {
+      throw new Error(`legacy_transcript_payload_transfer_object_mismatch:${input.objectId}`);
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+      .test(input.operatorRunId)) {
+      throw new Error("legacy_transcript_payload_transfer_run_id_invalid");
+    }
+    return this.transcript.transferLegacyTranscriptPayloadOwnership({
+      operatorRunId: input.operatorRunId,
+    });
+  }
+
   async abandonPreCutoverRunsForTranscriptBackfill(input: {
     objectId: string;
     operatorRunId: string;
@@ -1444,6 +1465,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         turnId: parsedElicitationInput.messageId,
         actor: parsed.data.operation === "openElicitation" ? "assistant" : "external",
         authorUserId: null,
+        clientMessageId: "clientMessageId" in parsedElicitationInput
+          ? parsedElicitationInput.clientMessageId
+          : `elicitation:${parsedElicitationInput.elicitationId}`,
+        messageType: "elicitation",
+        text: "",
+        structuredContentJson: parsedElicitationInput.structuredContentJson,
+        externalActorJson: "externalActorJson" in parsedElicitationInput
+          ? parsedElicitationInput.externalActorJson
+          : null,
+        producedByRunId: "runId" in parsedElicitationInput
+          ? parsedElicitationInput.runId
+          : null,
         createdAtUtc: new Date(parsedElicitationInput.now).toISOString(),
         attentionOrdinal: null,
       })
@@ -1459,6 +1492,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               ...preparedTranscript,
               input: {
                 ...preparedTranscript.input,
+                messageSequenceNumber: row.sequence_number,
                 attentionOrdinal: row.attention_ordinal,
               },
             });
@@ -1467,7 +1501,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         },
         true,
       )
-      : method.apply(this.scheduling, parsed.data.args);
+      : await method.apply(this.scheduling, parsed.data.args);
     if (preparedTranscript && isPersistedElicitationOutcome(value)) {
       const turn = this.transcript.participantTurn(preparedTranscript.input.turnId);
       if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
@@ -1539,36 +1573,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
     }
     const parsedAppendInput = appendInput?.data ?? null;
-    const preparedTranscript = parsedAppendInput
-      ? await this.transcript.prepareParticipantMessage({
-        turnId: parsedAppendInput.messageId,
-        actor: parsedAppendInput.authorType === "agent" ? "assistant" : parsedAppendInput.authorType,
-        authorUserId: parsedAppendInput.authorUserId,
-        createdAtUtc: new Date(parsedAppendInput.now).toISOString(),
-        attentionOrdinal: null,
-      })
+    const preparedMessage = parsedAppendInput
+      ? await this.messages.prepareMessage(parsedAppendInput)
       : null;
     const value = mutates
       ? await this.product.commitRuntimeMutation(
         () => {
-          const result = method.apply(this.messages, parsed.data.args);
-          if (preparedTranscript && isAppendedMessageOutcome(result)) {
-            const row = this.messages.message({ messageId: result.messageId });
-            if (!row) throw new Error("participant_transcript_part_missing");
-            this.transcript.appendPreparedParticipantMessage({
-              ...preparedTranscript,
-              input: {
-                ...preparedTranscript.input,
-                attentionOrdinal: row.attention_ordinal,
-              },
-            });
-          }
-          return result;
+          return preparedMessage
+            ? this.messages.appendPreparedMessage(preparedMessage)
+            : method.apply(this.messages, parsed.data.args);
         },
         true,
       )
       : method.apply(this.messages, parsed.data.args);
-    if (preparedTranscript && isAppendedMessageOutcome(value)) {
+    if (preparedMessage && isAppendedMessageOutcome(value)) {
       const turn = this.transcript.participantTurn(value.messageId);
       if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
     }

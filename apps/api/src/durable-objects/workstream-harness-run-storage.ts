@@ -1387,7 +1387,7 @@ export class WorkstreamHarnessRunStorage {
    * compares it against the published terminal set. The `terminal` event
    * records the run's own state, which is the object's vocabulary.
    */
-  publishFinalMessage(input: AttemptFence & {
+  async publishFinalMessage(input: AttemptFence & {
     messageId: string;
     text: string;
     hostOutcomeStatus: string;
@@ -1395,8 +1395,20 @@ export class WorkstreamHarnessRunStorage {
     lifecycleEventId: string;
     /** A stopped run may still publish: the member asked it to stop, not to vanish. */
     allowCancellationRequested: boolean;
-  }): { outcome: "published" | "replayed"; sequenceNumber: number }
-    | { outcome: "ownership_lost" } {
+  }): Promise<{ outcome: "published" | "replayed"; sequenceNumber: number }
+    | { outcome: "ownership_lost" }> {
+    const prepared = await this.messages.prepareMessage({
+      messageId: input.messageId,
+      clientMessageId: `harness:${input.runId}`,
+      authorType: "agent",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "text",
+      text: input.text,
+      structuredContentJson: null,
+      producedByRunId: input.runId,
+      now: input.now,
+    });
     return this.storage.transactionSync(() => {
       const run = this.run({ runId: input.runId });
       if (!run
@@ -1410,20 +1422,7 @@ export class WorkstreamHarnessRunStorage {
         || run.lease_expires_at <= input.now) {
         return { outcome: "ownership_lost" as const };
       }
-      const appended = this.messages.appendMessage({
-        messageId: input.messageId,
-        // One final message per run, named after the run. That is what makes a
-        // retry of this whole operation a replay rather than a second message.
-        clientMessageId: `harness:${input.runId}`,
-        authorType: "agent",
-        authorUserId: null,
-        externalActorJson: null,
-        messageType: "text",
-        text: input.text,
-        structuredContentJson: null,
-        producedByRunId: input.runId,
-        now: input.now,
-      });
+      const appended = this.messages.appendPreparedMessage(prepared);
       this.recordLifecycleEvent({
         eventId: input.lifecycleEventId,
         runId: input.runId,

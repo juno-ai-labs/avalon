@@ -45,7 +45,7 @@ happen.
 | `apps/api/wrangler.global.jsonc`, `wrangler.eu.jsonc` | The `MIGRATION_REPORT_QUEUE` producer binding and the `avalon-<region>-migration-commands` consumer in each region. |
 | `scripts/ensure-cloudflare-queues.mjs` | The deployment preflight that reads every Wrangler file and creates each queue it declares that the account does not hold, so the configuration stays the single source of truth and no queue is made by hand. |
 | `scripts/force-substream-agent-migrations.mjs` | The explicit one-off fleet wake for `SubstreamAgent`: inventories stored IDs, classifies their encoded jurisdiction, sends only region-addressable IDs through the existing command queues, and verifies queue drain without a new dead letter. |
-| `scripts/backfill-substream-agent-transcripts.mjs` | The separate content-projection operator: inventories and classifies the same fleet, requires exact eligible-count witnesses, invokes each object's deployed backfill RPC, and persists every PITR bookmark/outcome in a mode-0600 local receipt. |
+| `scripts/backfill-substream-agent-transcripts.mjs` | The separate content operator: its default mode projects legacy participant/checkpoint order; `--payload-transfer` moves exact payload ownership into canonical facts. Both inventory and classify the reviewed fleet, require exact eligible-count witnesses, invoke each object's deployed RPC, and persist every PITR bookmark/outcome in a mode-0600 local receipt. |
 | `scripts/substream-agent-jurisdiction-probe/` | A remote-development-only Worker that parses enumerated IDs through unrestricted external bindings and returns their encoded jurisdiction without opening an object. |
 
 ## How it works
@@ -501,7 +501,7 @@ banner carrying the error.
 | `pnpm --filter @rally/api test:workers` (`test-workers/forced-migration.test.ts`) | `forceMigration` through a real Durable Object stub, its two identity guards, the unconditional report, and the consumer's ack/retry contract. |
 | `pnpm --filter @rally/contracts test` | The report contract, the command contract, the opaque-name guard, and the queue-name predicates. |
 | `node --test scripts/force-substream-agent-migrations.test.mjs` | Dry-run safety, stored-object filtering, jurisdiction filtering, 100-message queue batches, queue drain, DLQ growth, and ambiguous resource discovery. |
-| `node --test scripts/backfill-substream-agent-transcripts.test.mjs` | Exact 389 Global/3 EU targeting, bounded regional RPC batches, count-drift refusal, per-object recovery receipts, partial-failure persistence, and replay totals. |
+| `node --test scripts/backfill-substream-agent-transcripts.test.mjs` | Exact 389 Global/3 EU targeting for projection and payload-transfer modes, bounded regional RPC batches, count-drift refusal, per-object recovery receipts, partial-failure persistence, and replay totals. |
 | `pnpm --filter @rally/api test:workers` (`test-workers/workstream-transcript-runtime.test.ts`) | The production object RPC against real workerd SQLite, including a real PITR bookmark, atomic projection receipt, and idempotent reconciliation. |
 
 Traps:
@@ -813,6 +813,27 @@ radius of a misclick. It sits an order of magnitude above the largest class, so
 it does not shape the cost of any run somebody means to make.
 
 ## Changelog
+
+### 2026-08-27 — Payload ownership transfer is a second receipted fleet pass
+
+**What changed:** The transcript fleet operator has an explicit
+`--payload-transfer` mode and package command. It invokes the v30 ownership RPC,
+validates message/checkpoint source counts against canonical projections, and
+persists per-object bookmarks, digests, relation counts, outcomes, and errors.
+
+**Why:** Projection backfill made old work streams readable but intentionally
+did not move their owning bytes. Legacy tables cannot be retired on the strength
+of a projection-only receipt.
+
+**Considered and rejected:** Extending constructor migration SQL to hash the
+complete transcript, and accepting only aggregate fleet success. Content-sized
+work must be explicit, resumable per object, and auditable after partial failure.
+
+**What a future change has to respect:** Deploy v30, run and replay the exact
+regional fleet transfer, inspect representative SQLite rows, then deploy the
+stacked table-retirement release. A missing/unverified receipt, active writer,
+open immutable snapshot, or source movement is a hard per-object failure; it is
+never permission to drop legacy owners.
 
 ### 2026-08-26 — Transcript content backfill has per-object recovery evidence
 
