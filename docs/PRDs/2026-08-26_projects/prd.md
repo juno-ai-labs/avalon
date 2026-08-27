@@ -272,10 +272,11 @@ with the creator as a participant. Personal is the default, matching new work
 streams. Project settings in the project space provide the same fields for
 later editing, plus participants.
 
-When the person may read at least one archived or restoring project, the **New
-project** dialog footer also offers **Restore archived project**. It opens a
-keyboard-searchable recovery picker of readable archived and restoring
-projects, ordered by most recent lifecycle activity and labelled by state.
+When the person may read at least one archived, restoring, or
+restore-cancelling project, the **New project** dialog footer also offers
+**Restore archived project**. It opens a keyboard-searchable recovery picker of
+readable inactive projects, ordered by most recent lifecycle activity and
+labelled by state.
 Choosing one opens that project space, where the person can review conflicts,
 retry or cancel an unfinished restoration, or restore an archived project.
 This is the deliberate route back to inactive projects; they remain absent
@@ -308,9 +309,10 @@ Its settings affordance edits those fields and the participant list.
 
 A work stream whose project start gate has not released appears in this table
 as **Preparing work stream…**, using its persisted opening text and start
-operation rather than an active D1 route. A failed setup row offers **Retry** to
-an authorized project reader. This row survives desktop restart and moves into
-ordinary activity order only after creation finalization activates the route.
+operation rather than an active D1 route. A failed setup row offers **Retry**
+and **Cancel creation** to an authorized project reader. This row survives
+desktop restart and moves into ordinary activity order only after creation
+finalization activates the route.
 
 Its menu also provides **Archive project**. Archiving is confirmed because it
 removes the project from active navigation and stops new assignments and
@@ -386,10 +388,16 @@ readiness. Closing the desktop does not abandon restoration.
 
 If a restore target fails, the restoring project remains in the recovery picker
 with **Retry restore** and **Cancel restore**. Retry requeues only failed
-current-generation targets. Cancel is one `WorkspaceDO` transaction that
-returns the project to `archived`, supersedes its unfinished audience and
-resource targets, and releases its work-stream reservations. It does not undo
-audience expansion or resource links already applied before cancellation.
+current-generation targets. Cancel first changes the project to
+`cancelling_restore`, prevents unclaimed targets from being claimed, and
+supersedes those targets. A target with a live WorkspaceDO-issued lease remains
+reserved while **Cancelling restore…** is shown. Its effect either settles under
+that lease or the lease expires and alarm reconciliation settles its receipt;
+only then may cancellation supersede it. The final cancellation transaction
+returns the project to `archived` and releases its work-stream reservations
+only after no target has a live lease. It does not undo audience expansion or
+resource links applied before cancellation completed, but no restore effect can
+commit after completion.
 
 ### Starting a work stream in a project
 
@@ -443,6 +451,22 @@ be started in the project. It does not silently start an unconfigured first
 turn. A project with no audience or default-resource work to fan out reaches
 `ready_to_dispatch` in the creating transaction and follows the existing
 synchronous creation path.
+
+**Cancel creation** is available while the gate is unreleased and no finalizer
+holds a live dispatch claim. It changes the start operation to `cancelling`,
+blocks new setup claims, and supersedes unclaimed application targets. A target
+with a live claim is allowed to settle or expire under the same lease and alarm
+reconciliation contract; cancellation does not release the draft or its fence
+while a late effect could still commit. It then durably asks each authority to
+abandon only this never-activated draft: `SubstreamAgent` marks the gate and
+scheduled run cancelled, `WorkspaceDO` removes the draft membership, and the
+creation finalizer releases the verified D1 route and email reservation without
+ever making them active. Applied resource links disappear with the unactivated
+draft; this is draft cleanup, not removing an active work stream from a project.
+The operation becomes `cancelled` and releases the project configuration fence
+only after no setup lease is live and every cleanup receipt is durable. If final
+dispatch won the claim first, cancellation returns `project_busy`; creation
+finishes and the person can then use the ordinary active-work-stream actions.
 
 ### Adding an existing work stream
 
@@ -797,7 +821,8 @@ singleton already owns the workspace identity, so these tables do not repeat a
 meaningless local `workspace_id` column.
 
 - `projects` owns `project_id`, `name`, `normalized_name`, `icon_key`,
-  `icon_color_key`, `scope`, `status` (`active`, `archived`, or `restoring`),
+  `icon_color_key`, `scope`, `status` (`active`, `archived`, `restoring`, or
+  `cancelling_restore`),
   optional `archived_at` and `archived_by_user_id`, `created_by_user_id`,
   `created_at`, `updated_at`, and a monotonic `revision`. `normalized_name` is
   unique among projects in every lifecycle state so restoring a project cannot
@@ -817,9 +842,10 @@ meaningless local `workspace_id` column.
   stream. It stores the operation, project, participant when applicable, and
   work-stream IDs; expected membership and audience generations; and
   `pending`, `queued`, `applying`, `reconciling`, `applied`, `superseded`, or
-  `failed` state. Queued and applying rows also own the publication-reconcile
-  time or authority-issued claim lease and attempt. A participant addition or
-  pending scope does not become active, and a removal does not become final,
+  `failed` state. A queued row owns its delivery attempt and
+  `delivery_terminal_at`, derived from the configured primary Queue retention;
+  an applying row owns its authority-issued claim lease. A participant addition
+  or pending scope does not become active, and a removal does not become final,
   until every target is applied or superseded by removing that membership.
 - `project_member_audience_mutations` owns the durable reservation for one
   direct work-stream participant or scope command. It stores the mutation,
@@ -836,9 +862,10 @@ meaningless local `workspace_id` column.
 - `project_workstream_starts` owns the resumable gate for a work stream created
   from a project. It stores a stable start-operation ID; project, work-stream,
   substream, run, and target-gate IDs; prerequisite audience and resource
-  generations; `configuring`, `ready_to_dispatch`, `dispatching`, `active`, or
-  `failed` state; and the finalization attempt and receipt. The last prerequisite
-  receipt and transition to `ready_to_dispatch` commit together.
+  generations; `configuring`, `ready_to_dispatch`, `dispatching`, `active`,
+  `failed`, `cancelling`, or `cancelled` state; and the finalization attempt and
+  receipt. The last prerequisite receipt and transition to `ready_to_dispatch`
+  commit together.
 - `workspace_project_order` owns one person's project order. It is keyed by
   `(user_id, project_id)` and stores a dense ascending `position`, following the
   same server-authoritative pattern as `workspace_workstream_pins`. It is a
@@ -853,19 +880,20 @@ meaningless local `workspace_id` column.
   tuple's first application; the three subject IDs; the expected project,
   membership, default-resource, and audience generations; `pending`, `queued`,
   `applying`, `reconciling`, `applied`, `superseded`, or `failed` state; and the
-  publication-reconcile time or authority-issued claim lease and attempt used
-  by that state. A uniqueness rule over the three subject IDs and
-  `application_generation` deduplicates Queue publication and delivery without
-  preventing a later, newer application. Applied receipts are retained when a
-  membership or default is removed because the work-stream resource link
+  delivery attempt and configured delivery-terminal time or authority-issued
+  claim lease used by that state. A uniqueness rule over the three subject IDs
+  and `application_generation` deduplicates Queue publication and delivery
+  without preventing a later, newer application. Applied receipts are retained
+  when a membership or default is removed because the work-stream resource link
   remains. No resource content is stored here.
 - `project_restore_operations` owns resumable restore work. It records the
-  project revision, requester, `running`, `failed`, `applied`, or `cancelled`
-  state, and each member work stream's audience and resource readiness. A
-  restore changes `archived` to `restoring` only after its full safety preflight
-  and changes it to `active` only after all targets acknowledge readiness. A
-  cancelled operation leaves the project archived and its unfinished targets
-  superseded.
+  project revision, requester, `running`, `failed`, `cancelling`, `applied`, or
+  `cancelled` state, and each member work stream's audience and resource
+  readiness. A restore changes `archived` to `restoring` only after its full
+  safety preflight and changes it to `active` only after all targets acknowledge
+  readiness. Cancellation holds `cancelling_restore` and the work-stream
+  reservations until every live claim settles or expires; only then does a
+  cancelled operation leave the project archived.
 
 The actual resource relationship stays in the owning `SubstreamAgent`'s
 `workstream_resource_links`, and the resource metadata stays in `WorkspaceDO`.
@@ -883,8 +911,10 @@ the regional `PROJECT_RESOURCE_QUEUE` binding and marks them queued after
 Cloudflare accepts the send. A crash between those two steps may publish the
 same ID again, which is safe by contract. After publication, Cloudflare Queue
 owns retry and dead-lettering; the alarm does not imitate Queue delivery with a
-parallel RPC retry path. Marking a row queued also records an
-authority-generated `reconcile_after` time.
+parallel RPC retry path. Marking a row queued also records
+`delivery_terminal_at` from that regional primary Queue's configured message
+retention. This is the point after which Cloudflare guarantees that delivery
+attempt can no longer begin, not an independently guessed timeout.
 
 The same alarm drains pending audience-target IDs to
 `PROJECT_AUDIENCE_QUEUE`. It marks a target queued only after Cloudflare accepts
@@ -893,20 +923,27 @@ target can be returned to pending by an authorized retry without changing the
 operation ID or replaying already applied siblings.
 
 The alarm also reconciles authoritative resource applications and audience
-targets whose queued `reconcile_after` time or applying claim lease has expired.
-It atomically changes the still-current generation to `reconciling` before any
-external call. A queued row with no effect claim becomes `failed`. For an
-expired applying claim, the alarm asks the owning `SubstreamAgent` or
-`WorkstreamDO` for the idempotent effect receipt: a receipt settles the row as
-applied, while no receipt settles it as failed. The target authority rejects a
-late effect after its WorkspaceDO-issued lease expires, so it cannot commit
-after reconciliation observed no receipt. This path starts from SQLite state,
-not a Queue message, and therefore still works after terminal-DLQ retention
-expires. It never republishes the same generation automatically; an authorized
-retry returns a failed current generation to pending with a new fenced attempt,
-while superseded intent creates the fresh application generation described
-above. The recovery interval and lease duration are explicit deployment
-decisions left open for the team to set.
+targets after proof that their delivery or effect can no longer be live. For a
+queued row it waits until that attempt's `delivery_terminal_at`; a backlog or
+ordinary retry before then remains queued. For an applying row it waits for the
+authority-issued claim lease to expire. It atomically changes the still-current
+attempt to `reconciling` before any external call. A delivery-terminal queued
+row with no effect claim becomes `failed`. For an expired applying claim, the
+alarm asks the owning `SubstreamAgent` or `WorkstreamDO` for the idempotent
+effect receipt: a receipt settles the row as applied, while no receipt settles
+it as failed. The target authority rejects a late effect after its
+WorkspaceDO-issued lease expires, so it cannot commit after reconciliation
+observed no receipt.
+
+This path starts from SQLite state, not a Queue message, and therefore still
+works after terminal-DLQ retention expires. It never republishes the same
+attempt automatically. An authorized retry atomically supersedes the old
+attempt, records a new Queue-derived terminal time, and publishes a pointer that
+the old attempt cannot claim; superseded intent creates the fresh application
+generation described above. Queue retention and claim-lease duration are
+explicit deployment decisions left open for the team to set, and deployment
+preflight verifies that the value used by WorkspaceDO matches the Queue
+configuration.
 
 The Queue consumer validates the message region, claims and reloads the named
 application from `WorkspaceDO`, then uses the same-region typed RPC to ask the
@@ -1046,12 +1083,13 @@ the named audience effect.
    failure consumer durably changes the matching application to `failed` before
    acknowledging it. If that consumer also exhausts retries, a separate passive
    regional terminal DLQ provides a visible, idempotently replayable signal.
-   Independent `WorkspaceDO` alarm reconciliation discovers expired queued or
-   applying records from authoritative SQLite and settles them from target
-   receipts even after every Queue copy expires. Closing the desktop does not
-   stop the fan-out. Future members and project restoration use the same
-   application path; restoration creates a fresh generation even when an older
-   receipt was applied.
+   Independent `WorkspaceDO` alarm reconciliation waits for the configured
+   primary-delivery terminal time or an applying lease expiry, then discovers
+   the record from authoritative SQLite and settles it from target receipts
+   even after every Queue copy expires. It does not fail ordinary live backlog.
+   Closing the desktop does not stop the fan-out. Future members and project
+   restoration use the same application path; restoration creates a fresh
+   generation even when an older receipt was applied.
 6. Removing a work stream or a default resource leaves every resource already
    attached to a work stream in place. Removing a work stream also leaves its
    participants and scope unchanged.
@@ -1075,10 +1113,11 @@ the named audience effect.
     expand a project, open a nested work stream, reorder projects, and use the
     same add, move, and remove actions available through drag and drop. They can
     also open a project space, start a project work stream from its plus button,
-    archive a project, find a readable archived or restoring project through
-    **Restore archived project** in the **New project** dialog, and restore,
-    retry, or cancel it. Inactive projects do not return to the Projects sidebar
-    section or its menus until restoration completes.
+    archive a project, find a readable archived, restoring, or
+    restore-cancelling project through **Restore archived project** in the **New
+    project** dialog, and restore, retry, or cancel it. Inactive projects do not
+    return to the Projects sidebar section or its menus until restoration
+    completes.
 12. A Needs attention row with projects shows their colored icon pile directly
     left of the work-stream name, exposes the project names once to assistive
     technology, preserves the existing status marker, and reserves no gap when
@@ -1098,8 +1137,10 @@ the named audience effect.
     `restoring` reserves every retained work stream against concurrent add,
     move, or restore commands until activation succeeds or restoration is
     cancelled back to archived. A failed restoration remains discoverable and
-    offers retry and cancel without undoing already-applied audience or
-    resource effects.
+    offers retry and cancel without undoing already-applied audience or resource
+    effects. Cancellation retains reservations and waits for every live target
+    lease to settle or expire before returning to archived, so no restore effect
+    commits after cancellation completes.
 15. Every active sidebar project row renders, in order, a stateful Tabler
     `IconTriangle` accordion control, project icon, project name, flexible empty
     space, and a Tabler `IconPlus` control. The middle link opens the project
@@ -1111,8 +1152,11 @@ the named audience effect.
 17. The project space presents an activity-ordered work-stream table styled
     like **Needs attention**, a default-resource list with an **Add resource**
     control. A persisted start operation that has not activated its route
-    remains discoverable there as **Preparing work stream…** with retry on
-    failure, including after a desktop restart.
+    remains discoverable there as **Preparing work stream…** with retry and
+    cancellation on failure, including after a desktop restart. Cancellation
+    waits for live setup claims, durably abandons the gated run and draft
+    authorities, then releases the project configuration fence without
+    activating the route.
 18. Creating, joining, leaving, archiving, or restoring a project does not
     change a work stream's system prompt, compaction behavior, or available
     memory scopes.
@@ -1137,4 +1181,6 @@ the named audience effect.
     audience change superseded. An exhausted audience failure-consumer message
     is likewise preserved in a passive regional terminal DLQ for visible,
     idempotent operational replay, while authority-owned alarm reconciliation
-    remains able to settle the target after Queue retention expires.
+    remains able to settle the target after the configured primary delivery is
+    provably terminal. Live Queue backlog is not failed by an independent
+    timeout.
