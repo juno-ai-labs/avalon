@@ -108,7 +108,10 @@ const pathProperty = (description: string) => ({
 // Tool deadlines include lazy sandbox allocation and compatibility setup. The
 // command envelope keeps 30 seconds beyond the model-facing 15-minute maximum
 // for durable provider observation; keep that sum within the schema ceiling.
-const TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS = 120_000;
+export const TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS = 120_000;
+export const TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS = 180_000;
+export const TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS =
+  TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + TERMINAL_REPOSITORY_PREPARATION_BUDGET_MS;
 
 const definitions: Record<TerminalToolName, ToolDefinition> = {
   read_file: {
@@ -181,7 +184,7 @@ const definitions: Record<TerminalToolName, ToolDefinition> = {
     capability: "terminal.repository.checkout",
     mode: "write",
     idempotency: "record_before_execute",
-    timeoutMs: TERMINAL_SANDBOX_ACQUISITION_BUDGET_MS + 180_000,
+    timeoutMs: TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
     inputSchema: objectSchema({
       repositoryFullName: { type: "string", pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", description: "Exact GitHub owner/name chosen by the model from authorized repository context." },
       requiredRemoteAccess: { type: "string", enum: ["read_only", "full_access"], default: "read_only", description: "Request full_access when the task needs a push, pull request, or other remote mutation. Both levels permit local edits and local commits." },
