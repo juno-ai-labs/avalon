@@ -73,8 +73,7 @@ describe('attachment presentation', () => {
         preview={{
           name: 'Launch plan',
           mimeType: 'text/markdown',
-          supersededLabel: 'Version 1 · not current',
-          onReturnToCurrent,
+          superseded: { label: 'Version 1 · not current', onReturnToCurrent },
           loadContent: async () => new Blob(['# Draft'], { type: 'text/markdown' }),
         }}
       />,
@@ -83,6 +82,10 @@ describe('attachment presentation', () => {
     // A prior version renders in the same surface as the current one, so
     // nothing but this notice distinguishes what a reader is looking at.
     expect(await screen.findByText('Version 1 · not current')).toBeVisible();
+    // The pill is the only thing separating history from the live document, so
+    // it has to reach a reader who is hearing the dialog rather than seeing it.
+    expect(screen.getByRole('dialog', { name: 'Preview of Launch plan — Version 1 · not current' }))
+      .toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Return to current' }));
     expect(onReturnToCurrent).toHaveBeenCalledOnce();
   });

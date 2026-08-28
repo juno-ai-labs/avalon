@@ -350,12 +350,18 @@ function mapResourceVersion(revision: WireResourceRevision): ResourceVersion {
     author: revision.author,
     cause: revision.cause,
     contentAvailable: revision.contentAvailable,
+    // The version's own title and type, not the resource's. A rename or a
+    // retype is itself what captured the version being opened, so showing the
+    // current name over old bytes would misdescribe the thing on screen.
+    title: revision.title,
+    mimeType: revision.mimeType,
   };
 }
 
 export function mapResource(resource: WireResource | WireWorkstreamResource): WorkstreamResource {
   return {
     id: resource.id,
+    slug: resource.slug,
     title: resource.title,
     resourceType: resource.resourceType,
     provider: resource.provider,
@@ -1875,10 +1881,16 @@ export class RallyApi {
     return versions.map(mapResourceVersion);
   }
 
-  /** One prior version's original bytes, through the authorized preview route. */
+  /**
+   * One prior version's original bytes.
+   *
+   * The stored object, not the preview route's conversion — there is no
+   * per-version preview, which is why the rail only offers to open a version
+   * whose own type the preview surface can render from source bytes.
+   */
   async getResourceVersionContent(resourceId: string, version: number, signal?: AbortSignal): Promise<Blob> {
     const response = await this.execute(
-      `/resources/${encodeURIComponent(resourceId)}/versions/${version}/content`,
+      `/resources/${encodeURIComponent(resourceId)}/versions/${encodeURIComponent(version)}/content`,
       { method: 'GET', ...(signal ? { signal } : {}) },
     );
     if (!response.ok) return this.throwResponseError(response);

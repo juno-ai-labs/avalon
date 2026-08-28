@@ -1701,7 +1701,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   const resourceVersions = useQuery({
     queryKey: ['resource-versions', inspectedResourceId],
     queryFn: ({ signal }) => api!.getResourceVersions(inspectedResourceId!, signal),
-    enabled: Boolean(api && inspectedResourceId),
+    // `closeRail` deliberately keeps the inspector's selection, so without the
+    // rail's own state here the query keeps refetching for a panel nobody can
+    // see.
+    enabled: Boolean(api && inspectedResourceId && railOpen),
   });
 
   const refreshResource = useMutation({
@@ -1719,19 +1722,30 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
-  const openResourceVersion = useCallback((resource: WorkstreamResource, version: ResourceVersion) => {
+  const openResourceVersion = useCallback((
+    resource: WorkstreamResource,
+    version: ResourceVersion,
+    returnFocus: HTMLElement,
+  ) => {
     setAttachmentPreview({
-      name: resource.title,
-      ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+      // The version's own title and type. A rename is itself what captured the
+      // version being opened, so the current name over old bytes would name
+      // the wrong thing in the one surface built to keep them apart.
+      name: version.title,
+      ...(version.mimeType ? { mimeType: version.mimeType } : {}),
       loadContent: (signal?: AbortSignal) => api!.getResourceVersionContent(resource.id, version.version, signal),
-      // Says which version and that it is not the live one, in that order:
-      // "of N" alone leaves a reader to work out that V2 of 3 is history.
-      supersededLabel: `Version ${version.version} · not current`,
-      onReturnToCurrent: () => setAttachmentPreview({
-        name: resource.title,
-        ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
-        loadContent: (signal?: AbortSignal) => loadAttachmentContent(resource.id, signal),
-      }),
+      returnFocus,
+      superseded: {
+        // Says which version and that it is not the live one, in that order:
+        // "of N" alone leaves a reader to work out that V2 of 3 is history.
+        label: `Version ${version.version} · not current`,
+        onReturnToCurrent: () => setAttachmentPreview({
+          name: resource.title,
+          ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+          loadContent: (signal?: AbortSignal) => loadAttachmentContent(resource.id, signal),
+          returnFocus,
+        }),
+      },
     });
   }, [api, loadAttachmentContent]);
 
@@ -2253,6 +2267,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
         resourceVersions={resourceVersions.data ?? []}
+        resourceVersionsError={resourceVersions.error?.message}
         workstream={displayedDetail}
       />
 

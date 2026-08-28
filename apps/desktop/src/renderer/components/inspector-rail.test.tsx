@@ -285,16 +285,24 @@ describe('InspectorRail details', () => {
     expect(screen.getByText('Needs attention')).toBeVisible();
   });
 
+  const historyEntry = { title: 'Linear issue create: AVA-9', mimeType: 'text/markdown', contentAvailable: true };
   const history: ResourceVersion[] = [
-    { version: 3, capturedAt: '2026-07-31T14:14:00.000Z', author: { kind: 'agent', runId: 'run-1' }, cause: 'published', contentAvailable: true },
-    { version: 2, capturedAt: '2026-07-31T13:40:00.000Z', author: { kind: 'connector', connectionId: 'connection-1' }, cause: 'refetched', contentAvailable: true },
-    { version: 1, capturedAt: '2026-07-31T11:02:00.000Z', author: { kind: 'member', userId: 'user-1' }, cause: 'created', contentAvailable: true },
+    { ...historyEntry, version: 3, capturedAt: '2026-07-31T14:14:00.000Z', author: { kind: 'agent', runId: 'run-1' }, cause: 'published' },
+    { ...historyEntry, version: 2, capturedAt: '2026-07-31T13:40:00.000Z', author: { kind: 'connector', connectionId: 'connection-1' }, cause: 'refetched' },
+    { ...historyEntry, version: 1, capturedAt: '2026-07-31T11:02:00.000Z', author: { kind: 'member', userId: 'user-1' }, cause: 'created' },
   ];
 
   it('lists a resource’s versions with who moved it and when', () => {
     render(
       <Tooltip.Provider>
-        <InspectorRail resourceVersions={history} workstream={{ ...workstream, resources: [watched] }} />
+        <InspectorRail
+          resourceVersions={history}
+          workstream={{
+            ...workstream,
+            participants: [{ id: 'user-1', name: 'Alex', email: 'alex@example.test', timezone: 'UTC' }],
+            resources: [watched],
+          }}
+        />
       </Tooltip.Provider>,
     );
     fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
@@ -310,6 +318,67 @@ describe('InspectorRail details', () => {
     expect(within(versions).getByText(/Current/u)).toBeVisible();
     expect(within(versions).getByRole('button', { name: /Open version 1/u })).toBeVisible();
     expect(within(versions).queryByRole('button', { name: /Open version 3/u })).toBeNull();
+    // Who moved it, in words the rail can actually show: Rally for a run, the
+    // participant's own name for a member, the provider for a connector.
+    expect(within(versions).getByText('Rally')).toBeVisible();
+    expect(within(versions).getByText('linear')).toBeVisible();
+    expect(within(versions).getByText('Alex')).toBeVisible();
+  });
+
+  it('marks the newest version current even when the detail has not caught up', () => {
+    // The list and the resource detail are separate caches. Deriving "current"
+    // from the detail's number puts the badge on a superseded row the moment
+    // they disagree — and offers to open the live one as history, which is the
+    // inversion this whole surface exists to prevent.
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={history}
+          workstream={{ ...workstream, resources: [{ ...watched, currentVersion: 2 }] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')!;
+    expect(within(versions).queryByRole('button', { name: /Open version 3/u })).toBeNull();
+    expect(within(versions).getByRole('button', { name: /Open version 2/u })).toBeVisible();
+  });
+
+  it('says a version cannot be opened rather than offering an unreadable one', () => {
+    // The version routes serve stored bytes, with no per-version conversion —
+    // so a PDF's prior version would reach the preview as binary noise.
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={[
+            history[0]!,
+            { ...history[1]!, mimeType: 'application/pdf', title: 'Report.pdf' },
+          ]}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(screen.queryByRole('button', { name: /Open version 2/u })).toBeNull();
+  });
+
+  it('says history is unavailable rather than saying there is none', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersionsError="Rally could not load this history."
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    // Offline, a 500, and "this document never changed" are four different
+    // truths; silence tells the reader the last one.
+    expect(screen.getByRole('heading', { name: 'Versions' })).toBeVisible();
+    expect(screen.getByText('Rally could not load this history.')).toBeVisible();
   });
 
   it('opens a prior version read-only rather than replacing what is current', () => {
@@ -330,6 +399,9 @@ describe('InspectorRail details', () => {
     expect(onOpenResourceVersion).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'resource-1' }),
       expect.objectContaining({ version: 2 }),
+      // The control that opened it, so the preview can hand focus back to the
+      // rail instead of dropping it on the document.
+      expect.any(HTMLElement),
     );
   });
 
@@ -366,26 +438,29 @@ describe('InspectorRail details', () => {
     expect(onRefreshResource).toHaveBeenCalledWith(expect.objectContaining({ id: 'resource-1' }));
   });
 
-  it('offers no re-fetch for a resource with no source to fetch from', () => {
+  // Each half of the gate on its own, because a fixture that falsifies both at
+  // once pins neither: a rail that dropped either condition passed it.
+  it.each([
+    ['Rally wrote it, so there is nowhere to re-fetch from', {
+      title: 'Generated release brief', provider: 'rally_generated',
+      relationshipType: 'generated' as const, direction: 'artifact' as const,
+      watchEnabled: true, watchStatus: 'watching' as const,
+    }],
+    ['nothing external owns it, so a re-fetch has no source', {
+      title: 'Uploaded brief', provider: 'avalon_upload',
+      direction: 'source' as const, watchStatus: 'unsupported' as const,
+    }],
+  ])('offers no re-fetch when %s', (_reason, overrides) => {
     render(
       <Tooltip.Provider>
         <InspectorRail
           onRefreshResource={vi.fn()}
-          workstream={{ ...workstream, resources: [{
-            ...watched,
-            title: 'Generated release brief',
-            provider: 'rally_generated',
-            relationshipType: 'generated',
-            direction: 'artifact',
-            watchStatus: 'unsupported',
-          }] }}
+          workstream={{ ...workstream, resources: [{ ...watched, ...overrides }] }}
         />
       </Tooltip.Provider>,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Generated release brief/ }));
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(overrides.title, 'u') }));
 
-    // Rally wrote this one. There is nowhere to re-fetch it from, and the
-    // button would offer to overwrite a draft with itself.
     expect(screen.queryByRole('button', { name: 'Refresh from source' })).toBeNull();
   });
 
