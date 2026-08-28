@@ -370,6 +370,8 @@ import {
 const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "schedules",
   "resource_watches",
+  "resources",
+  "resource_versions",
   "resource_object_deletion_outbox",
   "note_resource_deletion_outbox",
   "note_privacy_change_outbox",
@@ -1486,6 +1488,55 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   ],
 }, {
   version: 21,
+  description: "fence in-flight resource objects from asynchronous cleanup",
+  statements: [
+    // Publication registers an object before its R2 write so a failed request
+    // cannot orphan bytes. Until the writer either publishes a pointer or
+    // releases that registration, cleanup must not interpret the absence of a
+    // pointer as abandonment: the writer may be between the R2 put and its
+    // WorkspaceDO commit.
+    `ALTER TABLE resource_object_deletion_outbox
+       ADD COLUMN cleanup_eligible INTEGER NOT NULL DEFAULT 1
+       CHECK (cleanup_eligible IN (0, 1))`,
+    // The pre-existing lifecycle triggers enqueue superseded and deleted
+    // pointers with INSERT OR IGNORE. If the same object is still carrying a
+    // staging row, that insert correctly preserves one ownership record but
+    // must also hand it from the publisher to cleanup. Separate promotion
+    // triggers keep the released trigger bodies immutable and are correct in
+    // either SQLite trigger order: they update an existing staged row, while a
+    // missing row is inserted eligible by the original trigger's default.
+    `CREATE TRIGGER resources_promote_replaced_original_after_update
+       AFTER UPDATE OF content_ref ON resources
+       WHEN OLD.content_ref IS NOT NEW.content_ref AND OLD.content_ref IS NOT NULL BEGIN
+         UPDATE resource_object_deletion_outbox
+            SET cleanup_eligible = 1, updated_at = datetime('now')
+          WHERE workspace_id = OLD.workspace_id AND object_ref = OLD.content_ref;
+       END`,
+    `CREATE TRIGGER resources_promote_replaced_model_after_update
+       AFTER UPDATE OF model_content_ref ON resources
+       WHEN OLD.model_content_ref IS NOT NEW.model_content_ref
+        AND OLD.model_content_ref IS NOT NULL BEGIN
+         UPDATE resource_object_deletion_outbox
+            SET cleanup_eligible = 1, updated_at = datetime('now')
+          WHERE workspace_id = OLD.workspace_id AND object_ref = OLD.model_content_ref;
+       END`,
+    `CREATE TRIGGER resources_promote_objects_after_delete
+       AFTER DELETE ON resources BEGIN
+         UPDATE resource_object_deletion_outbox
+            SET cleanup_eligible = 1, updated_at = datetime('now')
+          WHERE workspace_id = OLD.workspace_id
+            AND (object_ref = OLD.content_ref OR object_ref = OLD.model_content_ref);
+       END`,
+    `CREATE TRIGGER resource_versions_promote_objects_after_delete
+       AFTER DELETE ON resource_versions BEGIN
+         UPDATE resource_object_deletion_outbox
+            SET cleanup_eligible = 1, updated_at = datetime('now')
+          WHERE workspace_id = OLD.workspace_id
+            AND (object_ref = OLD.content_ref OR object_ref = OLD.model_content_ref);
+       END`,
+  ],
+}, {
+  version: 22,
   description: "index durable automations and typed external-event destinations",
   statements: [
     `CREATE TABLE automation_creation_claims (

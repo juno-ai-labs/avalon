@@ -4,8 +4,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
+import { reapDeletedResourceObjects } from "../src/services/resource-object-cleanup";
 import type { WorkstreamRuntimeResourceAttacher } from "../src/services/workstream-object-client";
-import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 import {
   executeWorkstreamObjectSql,
   openWorkstreamAuthorityForTest,
@@ -41,7 +47,10 @@ const context: HarnessToolContext = {
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
 afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
 
-function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
+function fixture(
+  inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher,
+  workspaceDatabase: (database: ReturnType<typeof preRetirementProductSqliteDatabase>) => D1Database = sqliteD1,
+) {
   const database = preRetirementProductSqliteDatabase();
   openDatabases.push(database);
   // Publishing attaches resources through the object's RPC surface, which
@@ -92,8 +101,10 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     position: 1,
   });
   const objects = new Map<string, Uint8Array>();
+  let afterPut: (() => Promise<void>) | undefined;
   const put = vi.fn(async (key: string, value: Uint8Array | string) => {
     objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value);
+    await afterPut?.();
   });
   const bucket = createCloudflareTestBinding<R2Bucket>({
     put,
@@ -104,7 +115,7 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
   const baseEnv = createTestEnv({
-    DB: sqliteD1(database), PAYLOADS: bucket, AVALON_REGION: "global", MAX_ATTACHMENT_BYTES: "25000000",
+    DB: workspaceDatabase(database), PAYLOADS: bucket, AVALON_REGION: "global", MAX_ATTACHMENT_BYTES: "25000000",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
       extra: {
         attachRuntimeResource: vi.fn((request: {
@@ -156,6 +167,7 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     objectStore,
     objects,
     put,
+    setAfterPut(callback: () => Promise<void>) { afterPut = callback; },
     env,
     provider,
     bridge: createTerminalResourceBridge(
@@ -316,6 +328,63 @@ describe("Terminal resource bridge", () => {
     expect(objects.has(String((row as { content_ref: string }).content_ref))).toBe(true);
     expect(put).toHaveBeenCalledOnce();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get()).toEqual({ count: 0 });
+  });
+
+  it("keeps uploaded bytes when cleanup runs before the resource pointer commits", async () => {
+    const state = fixture();
+    let cleanupPasses = 0;
+    state.setAfterPut(async () => {
+      cleanupPasses += 1;
+      // R2 has the bytes at this point, while publishResource has not yet
+      // inserted the resource row. This is the production race that left the
+      // press-release citation valid but its preview and download at 404.
+      expect(await reapDeletedResourceObjects(state.env)).toBe(0);
+    });
+
+    const result = await state.bridge.publishResource(
+      context,
+      { filePath: "cleanup-race.md", displayName: "Cleanup race" },
+      new TextEncoder().encode("# Still here\n"),
+    );
+
+    const row = state.database.prepare(
+      "SELECT content_ref FROM resources WHERE id = ? AND workspace_id = ?",
+    ).get(result.resourceId, W) as { content_ref: string };
+    expect(cleanupPasses).toBe(1);
+    expect(state.objects.has(row.content_ref)).toBe(true);
+    expect(state.database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_object_deletion_outbox",
+    ).get()).toEqual({ count: 0 });
+  });
+
+  it("keeps Terminal publication staged when the resource insert commits but its response is lost", async () => {
+    let failed = false;
+    const state = fixture(undefined, (database) => afterCommitFailureD1(
+      sqliteD1(database),
+      (sql) => {
+        if (failed || !sql.includes("INSERT INTO resources")) return false;
+        failed = true;
+        return true;
+      },
+    ));
+
+    await expect(state.bridge.publishResource(
+      context,
+      { filePath: "ambiguous.md", displayName: "Ambiguous" },
+      new TextEncoder().encode("# Retained\n"),
+    )).rejects.toMatchObject({ code: "resource_publish_failed" });
+
+    const resource = state.database.prepare(
+      "SELECT content_ref FROM resources WHERE provider_resource_id = ?",
+    ).get(`terminal:${S}:ambiguous.md`) as { content_ref: string };
+    expect(state.objects.has(resource.content_ref)).toBe(true);
+    expect(state.database.prepare(
+      `SELECT cleanup_eligible FROM resource_object_deletion_outbox
+        WHERE object_ref = ?`,
+    ).get(resource.content_ref)).toEqual({ cleanup_eligible: 0 });
+    expect(state.objectStore.prepare(
+      "SELECT COUNT(*) AS count FROM workstream_resource_links",
+    ).get()).toEqual({ count: 0 });
   });
 
   it("uses the resident resource attacher instead of same-object RPC", async () => {
@@ -661,3 +730,29 @@ describe("Terminal resource bridge", () => {
       .resolves.toMatchObject({ attachmentKind: "other", contentMode: "unsupported", derivativeStatus: "unsupported" });
   });
 });
+
+function afterCommitFailureD1(base: D1Database, shouldFail: (sql: string) => boolean): D1Database {
+  const prepare = (sql: string): D1PreparedStatement => {
+    let bound = base.prepare(sql);
+    const statement = {
+      bind(...values: unknown[]) {
+        bound = bound.bind(...values);
+        return statement;
+      },
+      first<T>(column?: string) {
+        return column === undefined ? bound.first<T>() : bound.first<T>(column);
+      },
+      all<T>() { return bound.all<T>(); },
+      async run<T>() {
+        const result = await bound.run<T>();
+        if (shouldFail(sql)) throw new Error("workspace_response_lost");
+        return result;
+      },
+    };
+    return createTestD1PreparedStatement(statement);
+  };
+  return createTestD1Database({
+    prepare,
+    batch: base.batch.bind(base),
+  });
+}

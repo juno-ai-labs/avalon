@@ -5835,23 +5835,35 @@ describe("Durable Objects in the Workers runtime", () => {
 
     // Simulate the isolate disappearing in the gap before its best-effort
     // post-commit continuation could re-arm delivery. Construction derives the
-    // alarm from the persisted outbox; the real alarm then drains it.
+    // alarm from the persisted outbox and the platform alarm then drains it —
+    // nothing else wakes this object, so synchronize with that delivery
+    // rather than forcing it: a `runDurableObjectAlarm` call is a no-op in
+    // the window where an auto-fired overdue alarm has not yet re-armed, and
+    // a direct `alarm()` invocation would keep this test green even if
+    // construction stopped arming the alarm. A probe may run while the drain
+    // is still in flight, but a read-only probe can neither advance nor
+    // duplicate delivery and succeeds only once the drain has synchronously
+    // acknowledged the row; it fails by timeout if the reconstructed object
+    // never armed or never delivered.
     await evictDurableObject(stub);
     await stub.wake();
-    // An overdue alarm may fire automatically while `wake()` yields. Explicit
-    // delivery is still safe when it remains armed; the durable outbox
-    // assertions below prove either scheduling path completed the same work.
-    await runDurableObjectAlarm(stub);
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(
+    // The empty outbox is the complete witness: the drain acknowledges the
+    // row only after the semantic frame and the dashboard-refresh intent are
+    // both durable, so nothing further is asserted here. `realtime_state` is
+    // written at enqueue time and would pass before the drain ever ran, and
+    // the pending dashboard-refresh row is consumed by the debounced alarm,
+    // so asserting either from a separate invocation proves nothing or races.
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => Number(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM durable_outbox
           WHERE channel = 'semantic_realtime_v1'`,
-      ).one()).toEqual({ count: 0 });
-      expect(state.storage.sql.exec(
-        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
-      ).one()).toEqual({ event_sequence: 1 });
-    });
-  });
+      ).one().count)),
+      { timeout: 4_000, interval: 50 },
+    ).toBe(0);
+    // Above the 5s suite default so the harness deadline cannot preempt the
+    // poll's own `expected 1 to be +0` diagnostic when setup runs long on a
+    // loaded machine; the poll keeps its tighter 4s budget.
+  }, 10_000);
 
   it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {
     await seedOpenAuthority();
