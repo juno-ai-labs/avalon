@@ -622,7 +622,12 @@ future agent tool or plugin, not just this family.
     files the tool's own rejection as somebody else's data problem, and tells
     the model to retry *without changing them*. Item 2 above is where that gap
     is created and this is where it is closed; the failure is invisible in every
-    log, so nothing but this check catches it.
+    log, so nothing but this check catches it. **`validateInput` reports; the
+    executor enforces.** The runtime consults the hook only after an executor has
+    already thrown, so a refinement that lives *only* there never runs and the
+    argument reaches durable storage unchecked — which is exactly what
+    `automation_set_evaluator_rules` did. Run the check as the first statement of
+    the executor and point `validateInput` at the same function.
 13. `capability` is covered by the connector manifest, the descriptor matches it
     in provider type and tool order, the plugin system message is updated, and
     `pnpm lint`, `pnpm typecheck`, and `pnpm test` are green.

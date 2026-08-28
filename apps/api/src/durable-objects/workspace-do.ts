@@ -1,5 +1,6 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
+  AutomationAttentionReasonSchema,
   AutomationDraftCreationClaimRequestSchema,
   AutomationDraftCreationClaimResultSchema,
   ExternalEventEvaluatorV1Schema,
@@ -38,6 +39,7 @@ import {
   WorkstreamIdSchema,
   WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
+  type AutomationAttentionReason,
   type AutomationSummary,
   type AutomationDraftCreationClaimRequest,
   type AutomationDraftCreationClaimResult,
@@ -55,6 +57,7 @@ import { truncateUtf16Safe } from "@rally/contracts/text";
 import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
+import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import { ApiError } from "../lib/api-error";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
@@ -1618,6 +1621,20 @@ function compareProjectionCoordinate(
     : Math.sign(generation - existingGeneration);
 }
 
+/**
+ * The stored attention code as the contract spells it.
+ *
+ * `attention_code` is a free `TEXT` column — the cutover and the agent both
+ * write it — so the value is parsed rather than asserted on the way out. The
+ * write path below admits only the contract's reasons, which is why this can
+ * be strict: a row outside them is a projection that should never have been
+ * accepted, and every caller of this hands its rows to the same schema at the
+ * route or socket boundary a moment later anyway.
+ */
+function automationAttention(code: string | null): AutomationAttentionReason | null {
+  return code === null ? null : AutomationAttentionReasonSchema.parse(code);
+}
+
 function externalEventContext(
   metadata: Record<string, unknown>,
   textSnippet: string | null,
@@ -2806,7 +2823,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * to know. The consumer decides what to do with the list, so nothing about
    * the revocation transport reaches inside the object.
    */
-  async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<{ workstreamIds: string[] }> {
+  async revokeSocketAccess(revocation: SocketAccessRevocation): Promise<{
+    workstreamIds: string[];
+    automationIds: string[];
+  }> {
     await this.initialized;
     const request = SocketAccessRevocationSchema.parse(revocation);
     let closed = 0;
@@ -2844,7 +2864,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         sockets: closed,
       });
     }
-    return { workstreamIds: this.revocableWorkstreamIds(request.userId) };
+    return {
+      workstreamIds: this.revocableWorkstreamIds(request.userId),
+      // Only the author can hold an automation socket, so a revocation reaches
+      // exactly the automations they authored; a membership-wide revocation
+      // carries no user and reaches all of them.
+      automationIds: this.state.storage.sql.exec<{ automation_id: string }>(
+        request.userId
+          ? `SELECT automation_id FROM automation_directory
+              WHERE lifecycle <> 'deleted' AND author_user_id = ? ORDER BY automation_id`
+          : `SELECT automation_id FROM automation_directory
+              WHERE lifecycle <> 'deleted' ORDER BY automation_id`,
+        ...(request.userId ? [request.userId] : []),
+      ).toArray().map((row) => row.automation_id),
+    };
   }
 
   /**
@@ -2962,7 +2995,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       title: z.string(),
       description: z.string(),
       nextRunAt: z.number().int().nonnegative().nullable(),
-      attentionCode: z.string().nullable(),
+      // The contract's reasons rather than free text: the directory row is what
+      // the sidebar reads, and a code nothing on the client can render is a
+      // marker with no sentence behind it.
+      attentionCode: AutomationAttentionReasonSchema.nullable(),
     }).strict().parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = this.state.storage.transactionSync(() => {
@@ -3067,6 +3103,10 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
           : row.lifecycle === "paused"
             ? "paused"
             : row.attention_code ? "error" : "active",
+        // Carried beside the status rather than folded into it. Both codes the
+        // cutover writes arrive on an automation it also paused, so the status
+        // alone says "paused" and nothing says why.
+        attention: automationAttention(row.attention_code),
         nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
         lastRunAt: null,
         updatedAt: new Date(row.projected_at).toISOString(),
@@ -3228,8 +3268,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       event_type: string;
       text_snippet: string | null;
       metadata_json: string;
+      connection_scope: string;
+      connection_owner_user_id: string | null;
+      target_user_ids_json: string;
+      visibility_json: string;
     }>(`SELECT event_id, event_sequence, payload_hash, connection_id, connector_type,
-              event_type, text_snippet, metadata_json
+              event_type, text_snippet, metadata_json, connection_scope,
+              connection_owner_user_id, target_user_ids_json, visibility_json
           FROM workspace_connector_events WHERE event_id = ?`, request.eventId).toArray()[0];
     if (!event) throw new Error("connector_event_not_found");
     const metadata = JSON.parse(event.metadata_json) as Record<string, unknown>;
@@ -3254,8 +3299,28 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
            AND event_type = ? AND effective_after_event_sequence < ?
          ORDER BY registration_id`,
     event.connection_id, event.connector_type, event.event_type, event.event_sequence).toArray();
+    // Who this activity may reach, from the one implementation of that rule.
+    // An automation is a reader like any other: a message in a private Slack
+    // channel arrives on the *workspace* connection and carries its restriction
+    // in `visibility`, so matching on connection and event type alone would let
+    // a personal automation's evaluator probe content its author cannot see.
+    // Refusing here rather than at admission means no delivery row is created,
+    // so nothing downstream has to re-derive the audience.
+    const restrictedUserIds = restrictedActivityUserIds(event);
     const deliveries = this.state.storage.transactionSync(() => registrations.flatMap((registration) => {
       if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
+      if (restrictedUserIds !== null && registration.destination_kind === "automation") {
+        // A workspace automation is readable by every member, so a restricted
+        // activity can never reach one. A personal automation may see it only
+        // when its own author is inside the audience.
+        const audience = registration.automation_id === null ? null : this.state.storage.sql.exec<{
+          scope: string;
+          author_user_id: string;
+        }>(`SELECT scope, author_user_id FROM automation_directory WHERE automation_id = ?`,
+          registration.automation_id).toArray()[0];
+        if (!audience || audience.scope !== "personal") return [];
+        if (!restrictedUserIds.includes(audience.author_user_id)) return [];
+      }
       const evaluator = ExternalEventEvaluatorV1Schema.parse(JSON.parse(registration.evaluator_json));
       if (!evaluateExternalEventPredicate(evaluator.when, context)) return [];
       const destinationId = registration.automation_id ?? registration.workstream_id;
@@ -6244,6 +6309,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         : row.lifecycle === "paused"
           ? "paused"
           : row.attention_code ? "error" : "active",
+      attention: automationAttention(row.attention_code),
       nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
       lastRunAt: null,
       updatedAt: new Date(row.projected_at).toISOString(),

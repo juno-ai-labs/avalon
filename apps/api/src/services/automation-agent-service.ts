@@ -14,6 +14,7 @@ import { automationAgentName, workspaceDOName } from "../durable-objects/names";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { issueAutomationSocketTicket } from "./socket-service";
 import { AutomationService } from "./automation-service";
+import { withAutomationErrors } from "./automation-agent-errors";
 
 export const AutomationDraftTurnRequestSchema = z.object({
   clientCreationKey: IdSchema.optional(),
@@ -41,13 +42,13 @@ export class AutomationAgentService {
       this.auth.workspaceId,
       workspaceDOName(this.env.AVALON_REGION, this.auth.workspaceId),
     );
-    const claim = await workspace.claimAutomationDraft({
+    const claim = await withAutomationErrors(() => workspace.claimAutomationDraft({
       schemaVersion: 1,
       workspaceId: this.auth.workspaceId,
       authorUserId: this.auth.userId,
       region: this.env.AVALON_REGION,
       clientCreationKey: input.clientCreationKey,
-    });
+    }));
     const result = await this.admit(claim.automationId, input);
     const payloadHash = `draft:${claim.automationId}:1:${result.transcriptSequence}`;
     await workspace.applyAutomationProjection({
@@ -56,7 +57,7 @@ export class AutomationAgentService {
       workspaceId: this.auth.workspaceId,
       authorUserId: this.auth.userId,
       authorityGeneration: 1,
-      projectionVersion: result.transcriptSequence,
+      projectionVersion: result.projectionVersion ?? result.transcriptSequence,
       payloadHash,
       lifecycle: "draft",
       scope: "personal",
@@ -79,33 +80,33 @@ export class AutomationAgentService {
   async snapshot(automationId: string): Promise<AutomationAgentSnapshot> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
-    return agent.readSnapshot({
+    return withAutomationErrors(() => agent.readSnapshot({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+    }));
   }
 
   async cancel(automationId: string, runId: string): Promise<void> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
-    await agent.cancelCompilerRun({
+    await withAutomationErrors(() => agent.cancelCompilerRun({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       runId: IdSchema.parse(runId),
-    });
+    }));
   }
 
   async retry(automationId: string, runId: string): Promise<void> {
     const id = asAutomationId(automationId);
     const agent = await this.agent(id);
-    await agent.retryCompilerRun({
+    await withAutomationErrors(() => agent.retryCompilerRun({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
       runId: IdSchema.parse(runId),
-    });
+    }));
   }
 
   async socketTicket(automationId: string): Promise<{ url: string; ticket: string }> {
@@ -124,16 +125,16 @@ export class AutomationAgentService {
     if (!input.draftId) throw new Error("automation_draft_id_required");
     const automationId = asAutomationId(input.draftId);
     const agent = await this.agent(automationId);
-    const snapshot: AutomationAgentSnapshot = await agent.readSnapshot({
+    const snapshot: AutomationAgentSnapshot = await withAutomationErrors(() => agent.readSnapshot({
       automationId,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+    }));
     const canonicalDraft = AutomationDraftSchema.parse(snapshot.definition);
     if (JSON.stringify(canonicalDraft) !== JSON.stringify(input.draft)) {
       throw new Error("automation_definition_revision_stale");
     }
-    return agent.acceptDraft({
+    return withAutomationErrors(() => agent.acceptDraft({
       schemaVersion: 1,
       automationId,
       workspaceId: this.auth.workspaceId,
@@ -144,72 +145,85 @@ export class AutomationAgentService {
       activitySourcePluginIds: input.activitySourcePluginIds,
       deliveryTargets: input.deliveryTargets,
       modelOverride: input.modelOverride ?? null,
-    });
+      actorRole: this.auth.role,
+    }));
   }
 
   async detail(automationId: string): Promise<AutomationDetail> {
     const id = asAutomationId(automationId);
-    return (await this.agent(id)).readDetail({
+    const agent = await this.agent(id);
+    return withAutomationErrors(() => agent.readDetail({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+    }));
   }
 
   async pause(automationId: string): Promise<void> {
     const id = asAutomationId(automationId);
-    await (await this.agent(id)).pause({
+    const agent = await this.agent(id);
+    await withAutomationErrors(() => agent.pause({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+      actorRole: this.auth.role,
+    }));
   }
 
   async resume(automationId: string): Promise<void> {
     const id = asAutomationId(automationId);
-    await (await this.agent(id)).resume({
+    const agent = await this.agent(id);
+    await withAutomationErrors(() => agent.resume({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+      actorRole: this.auth.role,
+    }));
   }
 
   async updateDeliveryTargets(automationId: string, deliveryTargets: unknown): Promise<AutomationDetail> {
     const id = asAutomationId(automationId);
-    return (await this.agent(id)).updateDeliveryTargets({
+    const agent = await this.agent(id);
+    return withAutomationErrors(() => agent.updateDeliveryTargets({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
+      actorRole: this.auth.role,
       deliveryTargets,
-    });
+    }));
   }
 
   async delete(automationId: string): Promise<void> {
     const id = asAutomationId(automationId);
-    await (await this.agent(id)).deleteAutomation({
+    const agent = await this.agent(id);
+    await withAutomationErrors(() => agent.deleteAutomation({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+      actorRole: this.auth.role,
+    }));
   }
 
   async runNow(automationId: string, idempotencyKey: string) {
     const id = asAutomationId(automationId);
-    return (await this.agent(id)).runNow({
+    const agent = await this.agent(id);
+    return withAutomationErrors(() => agent.runNow({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
+      actorRole: this.auth.role,
       idempotencyKey,
-    });
+    }));
   }
 
   async runs(automationId: string): Promise<{ items: unknown[] }> {
     const id = asAutomationId(automationId);
-    return (await this.agent(id)).listRuns({
+    const agent = await this.agent(id);
+    return withAutomationErrors(() => agent.listRuns({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+    }));
   }
 
   async list(): Promise<{ items: unknown[] }> {
@@ -227,11 +241,12 @@ export class AutomationAgentService {
 
   async share(automationId: string): Promise<{ templateId: string }> {
     const id = asAutomationId(automationId);
-    const source = await (await this.agent(id)).exportAcceptedDraft({
+    const agent = await this.agent(id);
+    const source = await withAutomationErrors(() => agent.exportAcceptedDraft({
       automationId: id,
       workspaceId: this.auth.workspaceId,
       userId: this.auth.userId,
-    });
+    }));
     const draft = AutomationDraftSchema.parse(JSON.parse(source.draftJson));
     const created = await new AutomationService(this.env, this.auth).publishTemplate({
       name: draft.name,
@@ -246,7 +261,7 @@ export class AutomationAgentService {
     input: AutomationDraftTurnRequest,
   ): Promise<AutomationDraftTurnAdmissionResult> {
     const agent = await this.agent(automationId);
-    return agent.admitDraftTurn(AutomationDraftTurnAdmissionRequestSchema.parse({
+    return withAutomationErrors(() => agent.admitDraftTurn(AutomationDraftTurnAdmissionRequestSchema.parse({
       schemaVersion: 1,
       automationId,
       workspaceId: this.auth.workspaceId,
@@ -256,15 +271,29 @@ export class AutomationAgentService {
       content: input.content,
       attachmentIds: input.attachmentIds,
       inputMode: input.inputMode,
-    }));
+    })));
   }
 
-  private agent(automationId: ReturnType<typeof asAutomationId>) {
-    return durableObjectStubForWorkspace(
+  /**
+   * The automation's object, unwrapped.
+   *
+   * Every call above puts its own RPC inside `withAutomationErrors`, which is
+   * verbose next to a `Proxy` that could have wrapped the stub once — and the
+   * `Proxy` is what this used to be. It does not survive contact with workerd:
+   * a `get` trap hands the stub's own method the proxy as its receiver, which a
+   * stub that brand-checks `this` rejects with a `TypeError`, and an RPC call
+   * returns a pipelining thenable rather than a native `Promise`, so the
+   * `instanceof Promise` branch that was supposed to attach the mapping never
+   * ran. Both failures are invisible until a request reaches a real object.
+   * Explicit wrapping at each call site is longer and is actually true.
+   */
+  private async agent(automationId: ReturnType<typeof asAutomationId>) {
+    const stub = await durableObjectStubForWorkspace(
       this.env,
       this.env.AUTOMATION_AGENTS,
       this.auth.workspaceId,
       automationAgentName(this.env.AVALON_REGION, this.auth.workspaceId, automationId),
     );
+    return stub;
   }
 }

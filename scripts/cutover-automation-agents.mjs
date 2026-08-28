@@ -16,6 +16,32 @@ const QUEUE_BATCH_SIZE = 100;
 const QUEUE_DRAIN_POLL_MS = 2_000;
 const INVENTORY_PAGE_SIZE = 1_000;
 
+/**
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: wall-clock milliseconds the cutover waits for both regional command
+ *   queues to drain before it gives up and fails the deploy.
+ * Without it: a consumer that cannot make progress — a WorkspaceDO wedged on a
+ *   throwing migration, so every message retries forever without ever reaching
+ *   the dead-letter queue the loop does watch — leaves this poll spinning, and
+ *   the deploy job holds the release open until GitHub's own job timeout kills
+ *   it hours later with no statement of what was stuck. Only our own operators
+ *   can cause it, but the guard is not standing in for a bug: the wait is over a
+ *   fleet-wide fan-out whose slowest member is not knowable from here.
+ * Direction: a deadline; the open value is +Infinity, enforced through the
+ *   finiteness guard below so no deadline is computed at all while it is open.
+ * Trips: the run throws `automation_cutover_drain_timeout`, naming each region
+ *   still holding a backlog. Nothing is rolled back — the cutover is one-shot
+ *   per workspace and idempotent — so a rerun resumes where this one stopped.
+ * Derive from: the fan-out against the queue's own throughput, not a benchmark.
+ *   One message per workspace, each waking one WorkspaceDO that imports its
+ *   automations over RPC; pick the wait from how long the slowest workspace's
+ *   import may take multiplied by the batches ahead of it, plus the margin a
+ *   failing deploy should not eat.
+ */
+export const AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS = Number.POSITIVE_INFINITY;
+
 function required(environment, name) {
   const value = environment[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
@@ -58,15 +84,35 @@ function rows(result) {
   return statements[0].results;
 }
 
+/**
+ * Every workspace in a region, read in keyset pages.
+ *
+ * The D1 query API answers with the whole result set in one JSON body and caps
+ * that body, so an unpaged `SELECT id FROM workspaces` stops being the
+ * inventory at some account size and starts being a prefix of it — silently,
+ * because a short answer and a complete one are the same shape. The workspaces
+ * past the cut would never be sent a cutover command, and the deploy that
+ * replaces both Workers would still report success; each of them would then be
+ * left serving `automation_cutover_in_progress` with no record of having been
+ * skipped. Keyset on the primary key rather than OFFSET: the pages are read
+ * across separate requests, and a workspace created between two of them shifts
+ * every later offset by one, dropping a row that was already there.
+ */
 async function workspaceIds(cloudflare, databaseId, region) {
-  const result = await cloudflare(`/d1/database/${databaseId}/query`, {
-    method: "POST",
-    body: JSON.stringify({
-      sql: "SELECT id FROM workspaces WHERE region = ? ORDER BY id",
-      params: [region],
-    }),
-  });
-  return rows(result).map((row) => row.id);
+  const ids = [];
+  for (let after = ""; ;) {
+    const result = await cloudflare(`/d1/database/${databaseId}/query`, {
+      method: "POST",
+      body: JSON.stringify({
+        sql: "SELECT id FROM workspaces WHERE region = ? AND id > ? ORDER BY id LIMIT ?",
+        params: [region, after, INVENTORY_PAGE_SIZE],
+      }),
+    });
+    const page = rows(result).map((row) => row.id);
+    ids.push(...page);
+    if (page.length < INVENTORY_PAGE_SIZE) return ids;
+    after = page[page.length - 1];
+  }
 }
 
 async function pagedRows(cloudflare, path) {
@@ -96,9 +142,20 @@ async function workspaceObjectIds(cloudflare, region) {
     .map((object) => object.id);
 }
 
+/**
+ * One queue's backlog, or a failure — never a zero this script invented.
+ *
+ * `?? 0` here would be the worst possible default: a metrics response that
+ * changed shape, or an error body that still parsed, would read as "the queue is
+ * empty", which is the exact condition the drain loop treats as proof that every
+ * workspace was cut over. An absent number is an unknown, and an unknown has to
+ * stop the deploy rather than end the wait.
+ */
 async function queueMetrics(cloudflare, queueId) {
   const result = await cloudflare(`/queues/${queueId}/metrics`);
-  return Number(result?.backlog_count ?? 0);
+  const backlog = Number(result?.backlog_count);
+  if (!Number.isFinite(backlog)) throw new Error(`cloudflare_queue_metrics_invalid:${queueId}`);
+  return backlog;
 }
 
 async function sendCommands(cloudflare, queueId, region, targets, runId, requestedAt, mode) {
@@ -129,6 +186,9 @@ export async function cutoverAutomationAgents({
   fetcher = fetch,
   read = readFile,
   wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  // Carrying the one constant through a parameter, which is what lets a test
+  // pass a finite deadline and prove the trip while the shipped value is open.
+  drainTimeoutMs = AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS,
   logger = console,
 } = {}) {
   const options = parseArguments(argv);
@@ -186,7 +246,16 @@ export async function cutoverAutomationAgents({
     );
     dispatched += options.preflight ? inventory.objectIds.length : inventory.workspaceIds.length;
   }
+  // The wait comes first, deliberately. Queue metrics are eventually
+  // consistent, so a backlog read taken the instant the last batch was accepted
+  // can still answer with the pre-dispatch count — zero — and break the loop
+  // having proved nothing at all about the messages just sent. Sleeping one
+  // poll interval before the first read costs a single interval on a deploy
+  // that already waits minutes, and removes the one way this loop can report a
+  // drain that never happened.
+  const deadline = Number.isFinite(drainTimeoutMs) ? Date.now() + drainTimeoutMs : null;
   for (;;) {
+    await wait(QUEUE_DRAIN_POLL_MS);
     const state = await Promise.all(inventories.map(async (inventory) => ({
       region: inventory.region,
       backlog: await queueMetrics(cloudflare, inventory.queueId),
@@ -198,7 +267,11 @@ export async function cutoverAutomationAgents({
       }
     }
     if (state.every((current) => current.backlog === 0)) break;
-    await wait(QUEUE_DRAIN_POLL_MS);
+    if (deadline !== null && Date.now() >= deadline) {
+      const stuck = state.filter((current) => current.backlog > 0)
+        .map((current) => `${current.region}=${current.backlog}`).join(",");
+      throw new Error(`automation_cutover_drain_timeout:${stuck}`);
+    }
   }
   return { mode, runId, dispatched, regions: summary };
 }

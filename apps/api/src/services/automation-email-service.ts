@@ -1,15 +1,11 @@
 import { workstreamCanonicalUrl } from "@rally/contracts";
 
 import type { Env } from "../env";
-import { ApiError } from "../lib/api-error";
 import { automationResultEmailHtml } from "./automation-email-content";
 import { markdownToEmailText } from "./email-markdown";
 import { sendResendEmail, singleLine } from "./resend";
 import { shouldSuppressAutomationResult } from "./slack-agent-service";
-import {
-  withWorkspaceRuntimeDatabase,
-  workspaceRegionalDatabase,
-} from "./workspace-runtime-database";
+import { workspaceRegionalDatabase } from "./workspace-runtime-database";
 
 const MAX_RESULT_LENGTH = 40_000;
 
@@ -64,12 +60,21 @@ export async function deliverFrozenAutomationResultEmail(
 ): Promise<AutomationEmailDelivery> {
   if (shouldSuppressAutomationResult(input.text)) return "skipped";
   const recipient = await workspaceRegionalDatabase(env).prepare(
-    `SELECT user.timezone
+    `SELECT user.timezone, user.email
        FROM users user
        JOIN workspace_members member ON member.user_id = user.id
       WHERE member.workspace_id = ? AND member.user_id = ? AND member.status = 'active'`,
   ).bind(input.workspaceId, input.recipientUserId).first<RecipientRow>();
   if (!recipient) return "skipped";
+  // The address is re-checked, not only the membership. `resolveDeliveryTargets`
+  // freezes the author's own address at acceptance, and an automation outlives
+  // the address it was accepted with: someone who changes their email — or
+  // whose old corporate mailbox is later reassigned to a different person —
+  // would otherwise keep receiving this workspace's results at an address that
+  // is no longer theirs. Refusing rather than re-targeting: the run was
+  // authorized to mail a named address, and quietly sending its contents
+  // somewhere else is not a smaller surprise than not sending it.
+  if ((recipient.email ?? "").toLowerCase() !== input.recipientEmail.toLowerCase()) return "skipped";
   const name = singleLine(input.title) || "Rally automation";
   const ran = runDate(recipient.timezone);
   const subject = `${OUTCOME_PREFIX[input.outcomeStatus] ?? ""}${name} · ${ran}`;
@@ -89,117 +94,9 @@ export async function deliverFrozenAutomationResultEmail(
   return delivery === "skipped" ? "skipped" : "sent";
 }
 
-interface EmailDeliveryTargetRow {
-  id: string;
-  user_id: string;
-  email_address: string;
-  last_delivered_workstream_id: string | null;
-  /** The automation's own inbound address, so a reply reaches the automation. */
-  inbound_address: string | null;
-}
-
 interface RecipientRow {
   timezone: string | null;
-}
-
-/**
- * Sends one automation run's result to the email address frozen on the
- * subscription when it was saved. The Avalon work stream remains the canonical
- * record; this is an additional copy, so a suppressed or empty result is not
- * mailed and a target that has already received this work stream is skipped.
- */
-export async function deliverAutomationResultEmail(
-  env: Env,
-  input: AutomationResultEmail,
-  request: typeof fetch = fetch,
-): Promise<AutomationEmailDelivery> {
-  if (shouldSuppressAutomationResult(input.text)) return "skipped";
-  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  const target = await env.DB.prepare(
-    `SELECT dt.id, dt.user_id, dt.email_address, dt.last_delivered_workstream_id,
-            s.email_address AS inbound_address
-     FROM automation_delivery_targets dt
-     JOIN automation_subscriptions s ON s.id = dt.automation_subscription_id
-       AND s.workspace_id = dt.workspace_id
-     WHERE dt.workspace_id = ? AND dt.automation_subscription_id = ?
-       AND dt.target_type = 'email' AND dt.status = 'active'
-       AND dt.email_address IS NOT NULL`,
-  ).bind(input.workspaceId, input.automationSubscriptionId).first<EmailDeliveryTargetRow>();
-  if (!target) return "skipped";
-  const recipient = await workspaceRegionalDatabase(env).prepare(
-    `SELECT u.timezone FROM workspace_members m
-      JOIN users u ON u.id = m.user_id
-     WHERE m.workspace_id = ? AND m.user_id = ? AND m.status = 'active'`,
-  ).bind(input.workspaceId, target.user_id).first<RecipientRow>();
-  if (!recipient) return "skipped";
-  if (target.last_delivered_workstream_id === input.workstreamId) return "skipped";
-
-  const name = singleLine(input.title) || "Avalon automation";
-  // The date is in the subject because these repeat. A daily automation whose
-  // subject never changes is one Gmail conversation with yesterday's briefing
-  // on top and the rest folded behind "5 more", and an outcome that is not a
-  // result has to say so before it is opened rather than after.
-  const ran = runDate(recipient.timezone);
-  const subject = `${OUTCOME_PREFIX[input.outcomeStatus] ?? ""}${name} · ${ran}`;
-  const body = resultBody(input.text);
-  // `rallywithai://` is not linkified by mail clients and is dead for a reader with
-  // no app installed, which is most phones. The canonical HTTPS link is a real
-  // link everywhere and ends at the same work stream —
-  // `docs/workstream-links.md` owns that rule.
-  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
-  // Replying to a briefing reaches the automation that wrote it, rather than a
-  // notification sender nobody reads.
-  const replyTo = target.inbound_address?.trim() || null;
-
-  let delivery;
-  try {
-    delivery = await sendResendEmail(env, {
-      recipientEmail: target.email_address,
-      subject,
-      html: renderedWithinBudget({ name, heading: name, ran, outcomeStatus: input.outcomeStatus, body, workstreamUrl }),
-      text: [subject, "", markdownToEmailText(body), "", `Open in Avalon: ${workstreamUrl}`].join("\n"),
-      ...(replyTo ? { replyTo } : {}),
-      idempotencyKey: `avalon-automation-result/${target.id}/${input.workstreamId}`,
-      category: "automation_result",
-      region: env.AVALON_REGION,
-      sender: "notification",
-      errors: EMAIL_ERRORS,
-    }, request);
-  } catch (error) {
-    // The address is frozen at save time, so a rejected address never fixes
-    // itself. Marking the target needs_input surfaces it on the automation
-    // rather than repeating the same failure on every run in silence.
-    const permanent = error instanceof ApiError && error.details?.retryable === false;
-    await recordEmailDeliveryFailure(
-      env,
-      target.id,
-      permanent ? "needs_input" : "active",
-      error instanceof Error ? error.message : "Automation email delivery failed",
-    );
-    throw error;
-  }
-  // Non-production runs never send, so nothing is recorded as delivered.
-  if (delivery === "skipped") return "skipped";
-
-  const at = new Date().toISOString();
-  await env.DB.prepare(
-    `UPDATE automation_delivery_targets
-     SET status = 'active', last_delivered_at = ?, last_delivered_workstream_id = ?,
-         last_error_json = NULL, updated_at = ?
-     WHERE id = ?`,
-  ).bind(at, input.workstreamId, at, target.id).run();
-  return "sent";
-}
-
-async function recordEmailDeliveryFailure(
-  env: Env,
-  targetId: string,
-  status: "active" | "needs_input",
-  message: string,
-): Promise<void> {
-  await env.DB.prepare(
-    "UPDATE automation_delivery_targets SET status = ?, last_error_json = ?, updated_at = ? WHERE id = ?",
-  ).bind(status, JSON.stringify({ code: "email_delivery_failed", message }), new Date().toISOString(), targetId).run();
+  email: string | null;
 }
 
 function resultBody(text: string): string {

@@ -1828,7 +1828,28 @@ export async function compileAutomation(input: {
     {
       definition: creatorDefinition("set_evaluator_rules"),
       serial: true,
-      validateInput: (raw) => {
+      validateInput: (raw) => evaluatorRuleIssues(raw),
+      execute: async (raw, context) => {
+        if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
+        // The harness consults `validateInput` only after the executor has
+        // already thrown a ZodError, so a semantic check that lives there
+        // alone never runs — the rule reaches durable storage unchecked. The
+        // executor enforces the same function, and `validateInput` keeps
+        // pointing at it so the two can never drift.
+        const issues = evaluatorRuleIssues(raw);
+        if (issues) throw issues;
+        const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
+        const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
+        return {
+          output: result,
+          summary: rules.evaluators.length === 0
+            ? "Cleared external event evaluator rules"
+            : `Set ${rules.evaluators.length} external event evaluator rule${rules.evaluators.length === 1 ? "" : "s"}`,
+        };
+      },
+    },
+  ];
+  function evaluatorRuleIssues(raw: unknown): z.ZodError | null {
         const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
         if (!parsed.success) return parsed.error;
         const issues: z.core.$ZodIssue[] = [];
@@ -1838,7 +1859,7 @@ export async function compileAutomation(input: {
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "suggestedSourcePluginId"],
-              message: "automation_plugin_not_inspected",
+              message: "This plugin has not been inspected. Call automation_plugin_inspect with this plugin ID, then set the rules again using only the event types and filter fields it declares.",
               input: evaluator.source.suggestedSourcePluginId,
             });
             continue;
@@ -1853,7 +1874,7 @@ export async function compileAutomation(input: {
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "event"],
-              message: "automation_evaluator_invalid",
+              message: "This plugin declares no event of that name or family. Use one of the event types listed by automation_plugin_inspect for this plugin.",
               input: evaluator.source.event,
             });
             continue;
@@ -1872,7 +1893,7 @@ export async function compileAutomation(input: {
             issues.push({
               code: "custom",
               path: ["evaluators", index, "source", "resourceId"],
-              message: "automation_resource_not_found",
+              message: "This resource is not one this plugin can watch. Find it with resources_search and use an ID it returns for this source binding.",
               input: evaluator.source.resourceId,
             });
           }
@@ -1887,7 +1908,7 @@ export async function compileAutomation(input: {
               issues.push({
                 code: "custom",
                 path: ["evaluators", index, "source", "resourceId"],
-                message: "automation_evaluator_resource_relationship_invalid",
+                message: "This event cannot be filtered by that resource type. Use a resource whose type appears in the relationships automation_plugin_inspect lists for this event.",
                 input: evaluator.source.resourceId,
               });
             }
@@ -1903,7 +1924,7 @@ export async function compileAutomation(input: {
                   issues.push({
                     code: "custom",
                     path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex],
-                    message: "automation_evaluator_invalid",
+                    message: "This filter field, operator, or value type is not one the plugin declares. Use a field from automation_plugin_inspect with one of the operators it lists and a value of the type it names.",
                     input: leaf,
                   });
                 }
@@ -1915,7 +1936,7 @@ export async function compileAutomation(input: {
                   issues.push({
                     code: "custom",
                     path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex, "value"],
-                    message: "automation_person_not_found",
+                    message: "This person ID was never resolved. Find the person with people_search and use an ID it returned.",
                     input: leaf.value,
                   });
                 }
@@ -1923,21 +1944,8 @@ export async function compileAutomation(input: {
             }
           }
         }
-        return issues.length > 0 ? new z.ZodError(issues) : null;
-      },
-      execute: async (raw, context) => {
-        if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
-        const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
-        const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
-        return {
-          output: result,
-          summary: rules.evaluators.length === 0
-            ? "Cleared external event evaluator rules"
-            : `Set ${rules.evaluators.length} external event evaluator rule${rules.evaluators.length === 1 ? "" : "s"}`,
-        };
-      },
-    },
-  ];
+    return issues.length > 0 ? new z.ZodError(issues) : null;
+  }
   const timeTool = automationCurrentTimeTool(input.defaultTimezones);
   const requestElicitationTool: HarnessTool = {
     definition: AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,

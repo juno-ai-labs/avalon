@@ -96,7 +96,18 @@ export function telemetryJourneyDuration(milliseconds: number):
   return 'gte_10m';
 }
 
-export function telemetrySurfaceForPath(pathname: string): {
+export function telemetrySurfaceForPath(
+  pathname: string,
+  /**
+   * Whether the automation this path names is still a draft. A draft
+   * and an accepted automation share one durable route — the builder
+   * and the overview are two screens behind it — so the path alone
+   * cannot say which is on screen. Without this, every draft after
+   * its first turn reported as `automation_detail`, and drafting an
+   * automation became indistinguishable from reading one.
+   */
+  context: { automationIsDraft?: boolean } = {},
+): {
   surface: 'workspace_home' | 'workstream' | 'note_detail' | 'meeting_capture' | 'automation_builder'
     | 'automation_detail' | 'settings_application';
   resourceType?: 'workstream' | 'note' | 'automation';
@@ -109,7 +120,11 @@ export function telemetrySurfaceForPath(pathname: string): {
   const match = /^\/(workstreams|notes|automations)\/([0-9a-f-]{36})$/iu.exec(pathname);
   if (!match) return null;
   const resourceType = match[1] === 'workstreams' ? 'workstream' : match[1] === 'notes' ? 'note' : 'automation';
-  const surface = resourceType === 'workstream' ? 'workstream' : resourceType === 'note' ? 'note_detail' : 'automation_detail';
+  const surface = resourceType === 'workstream'
+    ? 'workstream'
+    : resourceType === 'note'
+      ? 'note_detail'
+      : context.automationIsDraft === true ? 'automation_builder' : 'automation_detail';
   return { surface, resourceType, resourceId: match[2] };
 }
 

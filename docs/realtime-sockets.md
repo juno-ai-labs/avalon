@@ -1,7 +1,8 @@
 # Realtime socket admission
 
 Every Rally WebSocket — workspace synchronization/commands, work-stream
-metadata, the direct substream feed, derived HyperSight block output, and the
+metadata, the direct substream feed, derived HyperSight block output, the
+automation draft feed, and the
 dictation bridge to Azure — is
 opened with a short-lived ticket rather than
 the session credential. This document owns how a purpose-specific ticket is
@@ -9,7 +10,9 @@ issued, how it reaches the Worker, and how a handshake is accepted or refused.
 What happens *on* an open socket belongs elsewhere: workspace directory serving,
 invalidation, and command routing are `WorkspaceDO`'s, aggregate metadata is `WorkstreamDO`'s,
 feed fan-out/replay/presence is `SubstreamAgent`'s, derived block streaming is
-`BlockDashboardAgent`'s, and the dictation bridge's audio rules are in
+`BlockDashboardAgent`'s, the automation draft snapshot and compiler stream are
+`AutomationAgent`'s ([`automation-lifecycle.md`](automation-lifecycle.md)), and
+the dictation bridge's audio rules are in
 [`architecture.md`](architecture.md).
 
 The feature is still labelled **HyperSight** in the application. Its internal
@@ -28,13 +31,15 @@ connection lifecycle around that admission protocol.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/socket-tickets.ts` | The transport: the subprotocol sentinel, the deprecated query parameter, and the shared helpers both sides use. The single source of the wire format. |
-| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, and HyperSight-block ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
+| `apps/api/src/services/socket-service.ts` | Issues and verifies the separate workspace, work-stream-control, substream-feed, HyperSight-block, and automation ticket audiences, reads the presented ticket, negotiates the response subprotocol, and admits each upgrade. |
 | `apps/api/src/services/realtime-transcription-service.ts` | The dictation ticket, its WorkspaceDO replay receipt and session lease, and the Azure upgrade. |
-| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
+| `apps/api/src/routes/socket.ts` | Workspace, work-stream-control, substream-feed, HyperSight-block, automation, and dictation upgrade routes. The query ticket is optional here; the service decides what was presented. |
 | `apps/api/src/durable-objects/workspace-do.ts` | Accepts the persistent workspace synchronization/command socket, serves authoritative cursor-paged work-stream rows, persists a bounded replay log, and consumes its purpose-specific ticket in SQL. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Accepts the per-work-stream aggregate metadata socket and returns complete viewer-specific snapshots. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | Accepts one hibernating socket per visible configured block and returns its durable run plus active-output checkpoint. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Accepts the direct read/stream/download feed and consumes its distinct ticket in SQL. It rejects user message commands. |
+| `apps/api/src/durable-objects/automation-agent.ts` | Accepts one hibernating socket per automation draft, consumes its ticket in `automation_socket_ticket_receipts`, re-reads the session and membership from D1, and admits only the automation's author. |
+| `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The automation draft feed: ticket request, snapshot fence against the compiler stream, folded narration, heartbeat, and reconnect backoff. |
 | `apps/desktop/src/renderer/lib/workspace-socket.tsx` | Keeps the workspace socket alive across navigation, correlates/retries directory-page requests, resumes its waterline, applies current work-stream rows, invalidates workspace query surfaces, and resends idempotent message commands after reconnect. |
 | `apps/api/src/services/sidebar-reads.ts` | The automation and note statements plus row mappings the sidebar opens with, shared by WorkspaceDO's batch and the REST services so the two readings of one table cannot drift. |
 | `apps/desktop/src/renderer/lib/sidebar-list-store.ts` | The one receiver for the sidebar's two pushed lists: the opening batch and every push compare against its per-list waterline ledger rather than writing the caches directly. |
@@ -60,7 +65,8 @@ admission is split in two.
    `GET /workspace/socket` for workspace sync/commands,
    `GET /workstreams/:id/control-socket` for aggregate metadata,
    `GET /workstreams/:id/substreams/:substreamId/socket` for the feed, or
-   `GET /workstreams/:id/block-dashboard/blocks/:blockId/socket` for a block agent, or
+   `GET /workstreams/:id/block-dashboard/blocks/:blockId/socket` for a block agent,
+   `GET /automations/:id/agent/socket` for an automation draft, or
    `GET /realtime/transcription/socket`. The Worker checks the caller may open
    that exact purpose and mints a 60-second HS256 JWT binding user, workspace,
    region, one-time `jti`, audience, only the target IDs that purpose requires,
@@ -95,6 +101,13 @@ admission is split in two.
    D1 membership and WorkstreamDO authorizes the block/viewer pair. The block
    consumes its own ticket receipt and persists only the bounded authorization
    timestamp in the hibernation attachment.
+   An automation upgrade reaches the exact `AutomationAgent`, which consumes the
+   ticket id in its own `automation_socket_ticket_receipts`, re-reads the
+   session and active membership from D1 rather than trusting the ticket, and
+   admits only the automation's author — narrower than `GET /automations/:id`,
+   which any member authorized to view a workspace-scoped automation passes. The
+   issuing route already refused a non-author, so the room's own check is the one
+   that survives a session revoked between issue and upgrade.
    Dictation consumes its `jti` and reserves a session lease in the owning
    WorkspaceDO — one serialized transaction, so two simultaneous upgrades
    cannot both pass the per-user/per-workspace concurrency caps — before
@@ -117,7 +130,8 @@ than silently reading a new fence. Active response/plugin/tool/thinking and
 compaction intervals carry their original UTC start plus the snapshot UTC and
 elapsed baseline; the client advances clocks locally.
 
-All four product objects follow Cloudflare's [WebSocket Hibernation
+All five product objects — WorkspaceDO, WorkstreamDO, SubstreamAgent,
+BlockDashboardAgent, and AutomationAgent — follow Cloudflare's [WebSocket Hibernation
 server pattern](https://developers.cloudflare.com/durable-objects/examples/websocket-hibernation-server/):
 
 - The edge Worker validates the method, route, `Upgrade`, origin, ticket, and
@@ -242,7 +256,7 @@ Subscribing is answered with the sidebar itself. The `workspace_sync` event that
 answers `subscribe` carries a `sidebar` field: one `workstream_page` body plus
 the viewer's automations and notes, each bounded at 250 rows and each stamped
 with its own waterline. All three come from this object's own SQLite —
-`workspace_workstream_directory`, `automation_subscriptions` and `notes` — read
+`workspace_workstream_directory`, `automation_directory` and `notes` — read
 with no `await` between them, so the sidebar opens on one consistent snapshot
 and on no request at all. The client's `subscribe` frame names no collection, no
 filter and no page size; it carries a waterline, which is where that client got
@@ -252,8 +266,9 @@ Every subscribe carries it, cold or resuming. A resume where no topic moved
 still gets one, under `reason: "resume"` with an empty topic list — the one
 event shape allowed to name no topics, because it exists to hand over state
 rather than to report news. That matters because a push can be missed while a
-socket is away and produce no topic at all: the workspace alarm advancing an
-automation's next run is exactly that. A resume that missed nothing costs the
+socket is away and produce no topic at all: an AutomationAgent projecting its
+next run time into `automation_directory` is exactly that — it advances the
+automations list and its waterline without naming a `workspace_sync` topic. A resume that missed nothing costs the
 bytes and applies nothing, since every list carries the waterline its pushes
 carry and the client's comparison drops it. Receivers must apply the sidebar
 *before* the topic-waterline guard, or a resume repeating a waterline the client
@@ -289,16 +304,23 @@ also why *every* first page is a batch, not just the cold one: a reconnect or a
 debug toggle reloads the directory, and those two lists have nothing else to
 reload them.
 
-Change detection sits in `runWorkspaceSql`, the one entry point every write to
-these tables passes through — a desktop REST write, a Workflow, and the
-workspace alarm advancing `next_run_at` after a scheduled run. That last one is
-why the push exists rather than another topic: the alarm carries no HTTP
-request, so the mutation middleware that derives topics from a request path
-never saw it, and a sidebar row's next-run time stayed stale until something
-unrelated refetched the list. The alarm reaches its own SQL through
-`localWorkspaceEnv` rather than the RPC method, so both callers go through
-`runWorkspaceSql` — a check on the RPC method alone would miss the writer that
-motivated it.
+The two lists detect a change differently, because they have different writers.
+Notes go through `runWorkspaceSql`, the one entry point every write to that
+table passes through — a desktop REST write, a Workflow, and a workspace alarm —
+and `SIDEBAR_LIST_SOURCE_TABLES` maps the written table to the list it
+invalidates. Automations no longer have a workspace-local table to watch: the
+authority is each automation's own `AutomationAgent`, which delivers a
+projection over its outbox, and `applyAutomationProjection` advances the
+`automations` waterline and republishes the list inside the same transaction
+that accepts the projection. Both paths end in the same
+`workspace_sidebar_list` push.
+
+That push exists rather than another `workspace_sync` topic for a reason that
+predates the automation cutover and still holds: the writers that move a
+sidebar row carry no HTTP request — a workspace alarm then, an object-to-object
+projection now — so the mutation middleware that derives topics from a request
+path never saw them, and a sidebar row's next-run time stayed stale until
+something unrelated refetched the list.
 
 The event carries the whole list and a waterline for that list, monotonic within
 WorkspaceDO and advanced inside the transaction of the write that earned it. Two
@@ -476,11 +498,11 @@ client sends one and no block-ticket bearer is ever issued in a URL.
   deliberate 401, 403, or 409 into an unhandled 500.
 - **No Durable Object receives the signed bearer ticket.** It is verified
   at the edge and stripped from the subrequest. The feed child consumes the JTI
-  in `durable_inbox_receipts`; WorkspaceDO, WorkstreamDO, and
-  BlockDashboardAgent consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
+  in `durable_inbox_receipts`; WorkspaceDO, WorkstreamDO,
+  BlockDashboardAgent, and AutomationAgent consume theirs in their own SQL receipt tables. Workspace membership remains in D1 while
   work-stream participation/revocation is projected locally.
 - **Ticket audiences are not interchangeable.** Workspace, aggregate metadata,
-  feed, and block-agent tickets cannot open one another's sockets. Otherwise a narrow read
+  feed, block-agent, and automation tickets cannot open one another's sockets. Otherwise a narrow read
   credential could become a workspace write credential.
 - **Origin is checked before the ticket is read.** An exact match against
   `ALLOWED_ORIGINS`, so a lookalike host cannot spend a ticket.
@@ -521,7 +543,15 @@ namespace helper.
 - **Bad signature, wrong audience, expired** — 401 `invalid_socket_ticket`. The
   ticket lives 60 seconds; a client that stalls between issue and open must ask
   for another.
-- **Wrong audience, region, workspace, work stream, substream, or block** — 403 `socket_ticket_scope_mismatch`.
+- **Wrong audience, region, workspace, work stream, substream, block, or automation** — 403 `socket_ticket_scope_mismatch`.
+- **An automation upgrade whose session no longer authenticates** — the room
+  answers 403 `forbidden`; a replayed ticket id answers 401
+  `socket_ticket_replayed`; a request with an incomplete identity header set
+  answers 401 `automation_socket_identity_required`. A ticket that reaches the
+  room belonging to a member who is not the author is not a shaped refusal: the
+  room's author assertion throws, which the binding surfaces as a 500. It is
+  meant to be unreachable, because the issuing route refuses a non-author before
+  a ticket exists.
 - **Disallowed origin** — 403 `socket_origin_forbidden`.
 - **Object refusal** — the object's own JSON status reaches the client unchanged:
   426, 400 `invalid_socket_identity`, 403 `forbidden`, 401
@@ -571,6 +601,7 @@ client message IDs make reconnect resend idempotent.
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
 | `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial-read admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent feed reconnect/resync, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, scroll thresholds/anchor preservation, and workspace-command routing. |
+| `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx` | `pnpm --filter @rally/desktop test` | The automation draft feed: closing a socket serving another automation and applying nothing it sent, clearing state the moment the subject changes, the agent's own sequence fencing snapshots against the compiler stream, one read per burst of durable events, ping/pong timeout, reconnect backoff, and timer cleanup on unmount. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -602,6 +633,44 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-28 — A fifth audience admits the automation draft room
+
+**What changed:** `automation_socket` joins the ticket audiences. The desktop
+asks `GET /automations/:id/agent/socket`, presents the ticket through the same
+`rally.ticket.v1` subprotocol, and upgrades at `/socket/automations/:id`.
+`AutomationAgent` accepts through the hibernation API, consumes the ticket id in
+its own `automation_socket_ticket_receipts`, re-reads the session and active
+membership from D1, and admits only the automation's author. The issuer returns
+a clean URL with no `?ticket=` — like the HyperSight issuer and unlike the four
+legacy ones. Electron dials it through the same Node broker as the work-stream
+pair, under a third route kind.
+
+**Why:** Compiling an automation draft streams for tens of seconds and had no
+durable channel: the previous design streamed a response body, so closing the
+window lost the narration and a reconnect could not recover it. A room backed by
+the object's own event log makes the stream resumable, and reuses an admission
+protocol that is already the answer to "a browser cannot set a header on a
+handshake".
+
+**Considered and rejected:** Carrying compiler frames on the singleton workspace
+socket, which would put one author's high-frequency model output on every
+member's connection and give a draft the workspace room's audience. Reusing the
+substream feed audience, which would have made a narrow single-author read
+credential interchangeable with a work-stream feed credential — the exact thing
+the separate-audiences invariant exists to prevent.
+
+**Consequences:** Five product objects now accept hibernating sockets and five
+consume a ticket id in their own SQL; a sixth has to do both, and has to join the
+[access-revocation](access-revocation.md) walk, because the room admits on a
+ticket and never re-authorizes. The automation room is author-only, so it is
+narrower than the automation's own REST readership on purpose. A ticket that
+somehow reaches the room for a non-author is not a shaped refusal — the room's
+assertion throws — which is acceptable only because the issuing route refuses
+that person before a ticket exists.
+
+Shipped in the pull request for this change. Design:
+[the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
 
 ### 2026-08-28 — Feed transport carries only canonical turns and typed overlays
 

@@ -60,6 +60,7 @@ import {
   WorkstreamViewResourceOutputSchema,
   readStructuredFailure,
   asSubstreamId,
+  asAutomationId,
   asWorkspaceId,
   asWorkstreamId,
   type UserId,
@@ -94,7 +95,7 @@ import {
   type ResolvedConnectorAdapter,
 } from "@rally/connectors";
 import { z } from "zod";
-import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
+import { automationAgentName, substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
@@ -1653,24 +1654,28 @@ export async function compileAutomationDraft(
       return { people: rows.results ?? [] };
     },
     searchResources: async (query: string) => {
+      // The connector-scope predicate every other resource read applies: a
+      // participant's personal connection is theirs alone, so its resources —
+      // titles included, which routinely carry customer, deal, and candidate
+      // names — must not reach another member's draft conversation. Joining the
+      // connection here rather than resolving plugins from a second, unscoped
+      // statement keeps the filter and the plugin lookup on one row.
       const resources = await env.DB.prepare(
-        `SELECT id, title, resource_type, connection_id
-           FROM resources
-          WHERE workspace_id = ? AND title LIKE ?
-          ORDER BY title, id`,
-      ).bind(input.workspaceId, `%${query}%`).all<{
+        `SELECT resource.id, resource.title, resource.resource_type,
+                connection.id AS connection_id, connection.model_plugin_id
+           FROM resources resource
+           JOIN connector_connections connection ON connection.id = resource.connection_id
+          WHERE resource.workspace_id = ? AND resource.title LIKE ?
+            AND connection.workspace_id = ? AND connection.status <> 'disabled'
+            AND (connection.scope = 'workspace' OR connection.owner_user_id = ?)
+          ORDER BY resource.title, resource.id`,
+      ).bind(input.workspaceId, `%${query}%`, input.workspaceId, input.userId).all<{
         id: string;
         title: string;
         resource_type: string;
-        connection_id: string | null;
+        connection_id: string;
+        model_plugin_id: string;
       }>();
-      const connections = await env.DB.prepare(
-        `SELECT id, model_plugin_id FROM connector_connections
-          WHERE workspace_id = ? AND status <> 'disabled'`,
-      ).bind(input.workspaceId).all<{ id: string; model_plugin_id: string }>();
-      const pluginsByConnection = new Map(
-        (connections.results ?? []).map((connection) => [connection.id, connection.model_plugin_id]),
-      );
       const bindingKeysByPlugin = new Map<string, string[]>();
       for (const trigger of input.currentDraft?.triggers ?? []) {
         if (
@@ -1684,17 +1689,13 @@ export async function compileAutomationDraft(
         ]);
       }
       return {
-        resources: (resources.results ?? []).flatMap((resource) => {
-          const pluginId = resource.connection_id ? pluginsByConnection.get(resource.connection_id) : undefined;
-          if (!pluginId) return [];
-          return [{
-            id: resource.id,
-            title: resource.title,
-            resourceType: resource.resource_type,
-            pluginId,
-            sourceBindingKeys: [...new Set(bindingKeysByPlugin.get(pluginId) ?? [])],
-          }];
-        }),
+        resources: (resources.results ?? []).map((resource) => ({
+          id: resource.id,
+          title: resource.title,
+          resourceType: resource.resource_type,
+          pluginId: resource.model_plugin_id,
+          sourceBindingKeys: [...new Set(bindingKeysByPlugin.get(resource.model_plugin_id) ?? [])],
+        })),
       };
     },
   };
@@ -6461,6 +6462,27 @@ async function assertRunAuthorityStillValid(
     || frozen.automationId !== input.automationSubscriptionId
     || frozen.runId !== workstream.automation_run_id
   ) throw new ConnectorError("unauthorized", "Automation run context no longer matches this work stream");
+  // The frozen context proves what this run was authorized to do; it cannot
+  // prove the automation still wants it done. Pausing or deleting bumps the
+  // authority generation, and a run that outlived its own generation must stop
+  // issuing provider writes rather than finish on stale consent.
+  const live = await (await durableObjectStubForWorkspace(
+    env,
+    env.AUTOMATION_AGENTS,
+    asWorkspaceId(input.workspaceId),
+    automationAgentName(
+      input.region,
+      asWorkspaceId(input.workspaceId),
+      asAutomationId(frozen.automationId),
+    ),
+  )).readRunAuthority({
+    automationId: frozen.automationId,
+    workspaceId: input.workspaceId,
+    runId: frozen.runId,
+  });
+  if (!live || live.lifecycle !== "active" || live.authorityGeneration !== frozen.authorityGeneration) {
+    throw new ConnectorError("unauthorized", "This automation is no longer running");
+  }
   const snapshot: RunAuthoritySnapshot = {
     automationRunId: frozen.runId,
     automationTemplateVersionId: `${frozen.automationId}:${frozen.definitionRevision}`,

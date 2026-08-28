@@ -282,7 +282,9 @@ describe('Automation template updates', () => {
   it('shows only supported run filters and omits connected capabilities', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('heading', { name: 'Runs' })).toBeVisible();
+    // "Recent runs", not "Runs": the API returns the newest
+    // page rather than every run there has ever been.
+    expect(await screen.findByRole('heading', { name: 'Recent runs' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Connected capabilities' })).not.toBeInTheDocument();
 
     const filters = screen.getByRole('group', { name: 'Filter automation runs' });
@@ -293,6 +295,50 @@ describe('Automation template updates', () => {
     ]);
     expect(within(filters).queryByRole('button', { name: 'Activity' })).not.toBeInTheDocument();
     expect(within(filters).queryByRole('button', { name: 'Webhook' })).not.toBeInTheDocument();
+  });
+
+  it('separates one run from the next by what started it and how it ended', async () => {
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      runs: [
+        {
+          id: 'run-1',
+          workstreamId: 'workstream-1',
+          // Every run of an automation is titled after the
+          // automation, so the title cannot tell two apart.
+          title: 'Weekly brief',
+          status: 'failed',
+          triggerType: 'scheduled',
+          triggerTime: '2026-08-01T09:00:00.000Z',
+        },
+        {
+          id: 'run-2',
+          workstreamId: 'workstream-2',
+          title: 'Weekly brief',
+          status: 'completed',
+          triggerType: 'manual',
+          triggerTime: '2026-07-25T09:00:00.000Z',
+          resultSummary: 'Three merged PRs.',
+        },
+      ],
+    });
+    renderScreen();
+
+    await screen.findByRole('heading', { name: 'Recent runs' });
+    const rows = document.querySelectorAll('.automation-run-row');
+    expect([...rows].map((row) => row.querySelector('strong')?.textContent))
+      .toEqual(['On schedule', 'Run now']);
+    // A failed run said "No result summary", which reads as an
+    // absence rather than as the thing that happened.
+    expect([...rows].map((row) => row.querySelector('small')?.textContent))
+      .toEqual(['Failed', 'Three merged PRs.']);
+    // The compact dot carries no visible label, so without a
+    // tooltip its colour is the only thing saying how a run ended.
+    expect(rows[0]?.querySelector('.status-indicator')).toHaveClass('status-compact');
+    // Tooltip-wrapped, so the colour is explained on hover
+    // rather than being the only thing that carries it.
+    expect(rows[0]?.querySelector('.status-indicator')).toHaveAttribute('data-state');
+    expect(screen.getByText('Last 2')).toBeVisible();
   });
 
   it('explains that workspace automation mail must come from a workspace member', async () => {

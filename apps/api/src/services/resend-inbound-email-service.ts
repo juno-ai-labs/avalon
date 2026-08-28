@@ -690,11 +690,37 @@ export class ResendRegionalEmailService {
   }
 
   private async ingestAutomation(input: AutomationRegionalEmailInput): Promise<ResendRegionalIngestionResult> {
+    const automationId = asAutomationId(input.automationSubscriptionId);
+    const agent = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_AGENTS,
+      asWorkspaceId(input.workspaceId),
+      automationAgentName(input.region, asWorkspaceId(input.workspaceId), automationId),
+    );
+    const screenInput = {
+      schemaVersion: 1 as const,
+      automationId,
+      workspaceId: asWorkspaceId(input.workspaceId),
+      emailAddress: input.emailAddress,
+      resendEmailId: input.resendEmailId,
+    };
+    // Replay, lifecycle, and address are decidable from the webhook alone, so
+    // a message the automation would refuse costs neither a provider fetch nor
+    // a stored object.
+    const preFetch = await agent.screenInboundEmail(screenInput);
+    if (!preFetch.admissible) return this.refusedInboundEmail(preFetch);
+
     const email = normalizeReceivedEmail(await this.retrieveReceivedEmail(input.resendEmailId));
     const senderMailbox = mailboxAddress(email.from);
     const senderUserId = senderMailbox
       ? await this.activeWorkspaceMemberForEmail(input.workspaceId, senderMailbox)
       : null;
+    // The sender exists only inside the fetched message, so this is the
+    // earliest the authorization check can run — and it still precedes every
+    // write we own.
+    const screened = await agent.screenInboundEmail({ ...screenInput, senderUserId });
+    if (!screened.admissible) return this.refusedInboundEmail(screened);
+
     const payloadRef = `workspaces/${input.workspaceId}/inbound-email/${input.resendEmailId}.json`;
     await this.env.PAYLOADS.put(payloadRef, JSON.stringify({
       version: 1,
@@ -712,13 +738,6 @@ export class ResendRegionalEmailService {
     });
     const resourceId = await this.upsertEmailResource(input, email, payloadRef);
     const structuredContent = inboundStructuredContent(input.resendEmailId, email, resourceId);
-    const automationId = asAutomationId(input.automationSubscriptionId);
-    const agent = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.AUTOMATION_AGENTS,
-      asWorkspaceId(input.workspaceId),
-      automationAgentName(input.region, asWorkspaceId(input.workspaceId), automationId),
-    );
     const run = await agent.admitInboundEmail({
       schemaVersion: 1,
       automationId,
@@ -740,6 +759,22 @@ export class ResendRegionalEmailService {
       resourceId,
       ...(run.workstreamId ? { workstreamId: run.workstreamId } : {}),
       ...(run.runId ? { automationRunId: run.runId } : {}),
+    };
+  }
+
+  /** The result shape for a message the automation refused before storage. */
+  private refusedInboundEmail(screened: {
+    duplicate: boolean;
+    runId: string | null;
+    workstreamId: string | null;
+  }): ResendRegionalIngestionResult {
+    return {
+      accepted: true,
+      duplicate: screened.duplicate,
+      messageId: null,
+      resourceId: null,
+      ...(screened.workstreamId ? { workstreamId: screened.workstreamId } : {}),
+      ...(screened.runId ? { automationRunId: screened.runId } : {}),
     };
   }
 
