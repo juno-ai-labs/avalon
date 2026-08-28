@@ -208,6 +208,15 @@ describe("rewriteCitationsAsPlainText", () => {
       .toBe("A claim.[1]\n\n**Sources**\n\n1. Measured by hand, twice.");
   });
 
+  it("drops a definition nothing referenced, rather than leaving its marker behind", () => {
+    // A model that writes a definition and then edits away the sentence that
+    // referenced it lands here. GFM renders an unreferenced definition as
+    // nothing at all, and the delivery has to agree — the alternative is a
+    // stray `[^rev]:` in an inbox.
+    expect(rewriteCitationsAsPlainText("Revenue grew.\n\n[^rev]: [Q3 deck](resource://abc)\n"))
+      .toBe("Revenue grew.\n");
+  });
+
   it("leaves a reference with no definition as the model wrote it", () => {
     expect(rewriteCitationsAsPlainText("A claim.[^gone]")).toBe("A claim.[^gone]");
   });
