@@ -2,6 +2,7 @@ import type { SlackOriginContext } from "@rally/contracts";
 import type { PromptMessage } from "./types";
 import { ATTACHMENT_INSPECTION_POLICY } from "./attachment-policy";
 import { DOCUMENT_GENERATION_POLICY } from "./document-generation";
+import { CITATION_POLICY } from "./citations";
 import { RESPONSE_FORMATTING_POLICY } from "./response-formatting";
 
 export interface WorkstreamAutomationPromptContext {
@@ -79,6 +80,8 @@ const SYSTEM_PROMPT = `You are Rally a helpful assistant in a multi-player colla
 ${ATTACHMENT_INSPECTION_POLICY}
 
 ${RESPONSE_FORMATTING_POLICY}
+
+${CITATION_POLICY}
 
 # Memory and durable storage
 - Treat memory as fallible context. Use provided memories as hints not requirements.

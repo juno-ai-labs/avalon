@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  slackDeliveryMarkdown,
   slackMarkdownMessages,
   slackNotificationText,
   splitSlackMarkdown,
@@ -132,5 +133,81 @@ describe("Slack notification fallback", () => {
     const text = slackNotificationText("word ".repeat(4_000), 100);
     expect(text.length).toBe(100);
     expect(text.endsWith("…")).toBe(true);
+  });
+});
+
+/**
+ * Citations leaving Rally for a channel.
+ *
+ * Slack renders neither the `resource://` scheme nor footnote syntax, so an
+ * unrewritten citation lands verbatim in front of everybody in the channel.
+ * The transcript copy of the same answer keeps its citations — only what goes
+ * out is rewritten.
+ */
+describe("citations in a Slack delivery", () => {
+  it("reduces chips and embeds to the words the model wrote", () => {
+    const [message] = slackMarkdownMessages(
+      "Published:\n\n![Mute windows PRD](resource://prd-mute)\n\nSee [the deck](resource://board-deck).",
+    );
+
+    const text = JSON.stringify(message?.blocks);
+    expect(text).not.toContain("resource:");
+    expect(text).toContain("Mute windows PRD");
+    expect(text).toContain("See the deck.");
+  });
+
+  it("turns footnotes into numbered markers over one plain source list", () => {
+    const [message] = slackMarkdownMessages([
+      "Revenue grew 40%.[^rev] Margin held.[^mar]",
+      "",
+      "[^rev]: [Q3 board deck](resource://board-deck)",
+      "[^mar]: [Margin memo](https://example.com/memo)",
+    ].join("\n"));
+
+    const block = (message?.blocks.at(-1) as { text: string }).text;
+    expect(block).toContain("Revenue grew 40%.[1] Margin held.[2]");
+    expect(block).toContain("**Sources**");
+    expect(block).toContain("1. Q3 board deck");
+    expect(block).toContain("2. [Margin memo](https://example.com/memo)");
+    expect(block).not.toContain("[^");
+  });
+
+  it("keeps the raw syntax out of the notification fallback too", () => {
+    const [message] = slackMarkdownMessages("See [the deck](resource://board-deck).");
+
+    expect(message?.text).toBe("See the deck.");
+  });
+
+  it("is idempotent, so a path that reduces twice is not a path that double-renumbers", () => {
+    // The streaming path reduces its own text and the batched path reduces
+    // inside `slackMarkdownMessages`; a delivery that grew a second call would
+    // otherwise renumber `[1]` into `[1]` of a list it had already emitted.
+    const once = slackDeliveryMarkdown("A.[^a] See [the deck](resource://d).\n\n[^a]: [Deck](resource://d)");
+
+    // Pinned against the literal first: comparing the subject's output to its
+    // own output is satisfied by a no-op, so the identity function would pass
+    // an idempotence check that asserted only the second half of this.
+    expect(once).toBe("A.[1] See the deck.\n\n**Sources**\n\n1. Deck");
+    expect(slackDeliveryMarkdown(once)).toBe(once);
+  });
+
+  it("leaves ordinary markdown, external links included, exactly as it was", () => {
+    const source = "### Outcome\n\nRead [the docs](https://example.com/docs).";
+    const [message] = slackMarkdownMessages(source);
+
+    expect((message?.blocks.at(-1) as { text: string }).text).toBe(source);
+  });
+
+  it("rewrites before chunking, so a source list cannot be severed from its markers", () => {
+    // Rewriting after the split would run the footnote pass over a chunk whose
+    // definitions landed in the next one, and renumber against a body it could
+    // not see.
+    const long = `${"paragraph\n\n".repeat(2_000)}Final claim.[^a]\n\n[^a]: [Deck](resource://d)`;
+    const messages = slackMarkdownMessages(long);
+
+    const all = messages.map((message) => (message.blocks.at(-1) as { text: string }).text).join("\n");
+    expect(all).toContain("Final claim.[1]");
+    expect(all).toContain("1. Deck");
+    expect(all).not.toContain("resource:");
   });
 });
