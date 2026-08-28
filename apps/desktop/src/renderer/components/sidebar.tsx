@@ -53,7 +53,7 @@ import {
   telemetryVisibility,
 } from '../lib/telemetry';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
-import { MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
+import { flushWidthPersistence, KEYBOARD_RESIZE_STEP, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { Avatar, Badge, Button, IconButton, InlineError, Modal, StatusDot, TitleSkeleton } from './primitives';
 import { ProjectIcon, ProjectSidebarSection } from './project-sidebar-section';
@@ -885,6 +885,9 @@ export function Sidebar({
   // difference from the moment of the grab keeps the edge from jumping out to
   // meet a pointer that grabbed the far side of the strip.
   const grabOffset = useRef(0);
+  // Which pointer owns the in-flight resize drag; the drag effect ignores
+  // pointer events carrying any other id. See the effect below.
+  const dragPointerId = useRef<number | null>(null);
   const [pointerNearEdge, setPointerNearEdge] = useState(false);
   const [renameTarget, setRenameTarget] = useState<WorkstreamSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
@@ -1454,23 +1457,62 @@ export function Sidebar({
   useEffect(() => {
     if (!resizing) return undefined;
 
-    const move = (event: PointerEvent): void => setSidebarWidth(event.clientX - grabOffset.current);
-    const stop = (): void => setResizing(false);
+    // Only the pointer that grabbed the handle may drive or end this drag.
+    // `lostpointercapture` and `pointercancel` bubble to `window` from any
+    // element losing its own capture — the rail handle, the composer — and a
+    // second touch or pen pointer must not end, or move, a drag it never
+    // owned. rail-resize-handle.tsx makes the same check against its own
+    // pointerRef.
+    const owns = (event: PointerEvent): boolean => event.pointerId === dragPointerId.current;
+    const stop = (): void => {
+      dragPointerId.current = null;
+      setResizing(false);
+      document.body.classList.remove('is-resizing-rail');
+      // The drag is over, so the width is final: land any pending debounced
+      // write now rather than leaving it to the persistence window, so the
+      // value that survives a quit is the one the pointer released on.
+      flushWidthPersistence();
+    };
+    const move = (event: PointerEvent): void => {
+      if (!owns(event)) return;
+      // Released while the app wasn't looking — a Cmd-Tab, Mission Control,
+      // the screen locking — delivers no pointerup, pointercancel, or
+      // capture-loss event to this document at all with a mouse; the first
+      // move back reports no held buttons, and acting on it before this
+      // check would snap the sidebar to the stale grab offset.
+      if (event.buttons === 0) {
+        stop();
+        return;
+      }
+      setSidebarWidth(event.clientX - grabOffset.current);
+    };
+    const end = (event: PointerEvent): void => {
+      if (owns(event)) stop();
+    };
     window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', stop, { once: true });
-    // An OS-level interruption (an alt-tab, a system drag-and-drop, a palm
+    window.addEventListener('pointerup', end);
+    // An OS-level touch or pen interruption (a system drag-and-drop, a palm
     // rejection) never fires pointerup — only pointercancel or a loss of the
     // capture this drag took on pointerdown. Without these, resizing stays
     // true and the sidebar keeps tracking a pointer that has stopped sending
-    // moves, so the next real pointermove anywhere snaps it to that stale
-    // grab offset. rail-resize-handle.tsx covers the same two cases.
-    window.addEventListener('pointercancel', stop, { once: true });
-    window.addEventListener('lostpointercapture', stop, { once: true });
+    // moves. None of them is `once`: a filtered-out event from another
+    // pointer must not consume a listener the owning pointer still needs, so
+    // removal is the cleanup's job alone. `blur` backstops the mouse cases
+    // that deliver no pointer event at all, the same way this component
+    // already drops held-Cmd state on blur.
+    window.addEventListener('pointercancel', end);
+    window.addEventListener('lostpointercapture', end);
+    window.addEventListener('blur', stop);
     return () => {
       window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', stop);
-      window.removeEventListener('pointercancel', stop);
-      window.removeEventListener('lostpointercapture', stop);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      window.removeEventListener('lostpointercapture', end);
+      window.removeEventListener('blur', stop);
+      // `stop` already clears this when a drag ends; this is for an unmount
+      // mid-drag, which never reaches `stop` and must not strand the
+      // body-wide resize cursor.
+      document.body.classList.remove('is-resizing-rail');
     };
   }, [resizing, setSidebarWidth]);
 
@@ -1845,12 +1887,21 @@ export function Sidebar({
           onKeyDown={(event) => {
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
             event.preventDefault();
-            setSidebarWidth(sidebarWidth + (event.key === 'ArrowLeft' ? -16 : 16));
+            setSidebarWidth(sidebarWidth + (event.key === 'ArrowLeft' ? -KEYBOARD_RESIZE_STEP : KEYBOARD_RESIZE_STEP));
           }}
           onPointerDown={(event) => {
-            event.currentTarget.setPointerCapture(event.pointerId);
+            if (event.button !== 0) return;
+            // The pointer spends the whole drag over the main pane, so without
+            // this the drag also sweeps a text selection across the transcript.
+            event.preventDefault();
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            dragPointerId.current = event.pointerId;
             grabOffset.current = event.clientX - sidebarWidth;
             setResizing(true);
+            // The rail handle's drag class; its cursor and user-select
+            // suppression are what a drag over the main pane needs, and the
+            // two handles share one look by design.
+            document.body.classList.add('is-resizing-rail');
           }}
           role="separator"
           tabIndex={0}

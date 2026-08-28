@@ -1,13 +1,12 @@
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 
-import { MAX_RAIL_WIDTH, MIN_RAIL_WIDTH } from '../lib/ui-store';
+import { flushWidthPersistence, KEYBOARD_RESIZE_STEP, MAX_RAIL_WIDTH, MIN_RAIL_WIDTH } from '../lib/ui-store';
 
 // Both right sidebars are pinned this far from the window's right edge, so the
 // width under the pointer is what is left of the window once that gap and the
 // pointer's own distance from the edge are taken off.
 const RAIL_EDGE_GAP = 8;
-const KEYBOARD_STEP = 16;
 
 function widthUnderPointer(clientX: number): number {
   return window.innerWidth - clientX - RAIL_EDGE_GAP;
@@ -44,6 +43,9 @@ export function RailResizeHandle({
     pointerRef.current = null;
     setResizing(false);
     document.body.classList.remove('is-resizing-rail');
+    // The drag is over, so the width is final: land any pending debounced
+    // write now rather than leaving it to the persistence window.
+    flushWidthPersistence();
   };
 
   useEffect(() => () => {
@@ -62,7 +64,7 @@ export function RailResizeHandle({
       onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
         event.preventDefault();
-        onResize(width + (event.key === 'ArrowLeft' ? KEYBOARD_STEP : -KEYBOARD_STEP));
+        onResize(width + (event.key === 'ArrowLeft' ? KEYBOARD_RESIZE_STEP : -KEYBOARD_RESIZE_STEP));
       }}
       onLostPointerCapture={(event) => finishDrag(event.currentTarget)}
       onPointerCancel={(event) => finishDrag(event.currentTarget)}
