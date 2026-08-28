@@ -260,7 +260,7 @@ describe('uploaded attachment drafts', () => {
     database.close();
   });
 
-  it('deletes a failed connector generation while preserving the previous current state', async () => {
+  it('stages an ambiguous connector generation while preserving the previous current state', async () => {
     const database = attachmentDatabase();
     insertHydratedResource(database, 'old-original', 'old-hash');
     const deleted: string[] = [];
@@ -277,9 +277,12 @@ describe('uploaded attachment drafts', () => {
     await expect(new ResourceService(environment, auth, fakeHydrationRegistry({ revision: 3 }))
       .hydrate('connector-resource')).rejects.toThrow('forced_d1_failure');
 
-    expect(deleted).toHaveLength(1);
-    expect(deleted[0]).toMatch(/\/hydrated\//u);
-    expect(stored).toEqual(new Set(['old-original']));
+    expect(deleted).toEqual([]);
+    expect([...stored]).toHaveLength(2);
+    expect([...stored].find((key) => key !== 'old-original')).toMatch(/\/hydrated\//u);
+    expect(database.prepare(
+      "SELECT cleanup_eligible FROM resource_object_deletion_outbox WHERE object_kind = 'original'",
+    ).get()).toEqual({ cleanup_eligible: 0 });
     expect(database.prepare(
       `SELECT content_ref, content_sha256, model_content_ref
          FROM resources WHERE id = 'connector-resource'`,

@@ -118,10 +118,9 @@ receives R2 credentials or a signed R2 URL.
 `AVALON_RESOURCE_DIR` into regional R2, creates a normal generated `resources`
 row, attaches it to the work stream, and uses the existing cleanup outbox. The
 published bytes do not enter model context. The resource inventory and existing
-attachment tools become the durable participant/model surface — though the
-desktop rail today lists a published resource without rendering its content, so
-the participant half is not yet delivered ([`agent-harness.md`](agent-harness.md),
-Failure modes and limits).
+attachment tools become the durable participant/model surface, and the desktop
+rail renders supported text and Markdown publications through the resource
+preview route.
 
 A published file's identity is the document's own coordinates — the work stream
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
@@ -584,6 +583,29 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-28 — Generated files stay staged until their pointer commits
+
+**What changed:** `publish_resource`, final-diff preservation, and repository
+backup publication register their R2 objects as staged. The cleanup alarm may
+clear that row after the resource pointer exists, but cannot delete the object
+while the publisher is between its R2 write and WorkspaceDO commit. Known
+failures release the object to cleanup; ambiguous commits preserve it for retry.
+
+**Why:** Production reproduced a generated Markdown resource with two retained
+versions and valid citation routing, while the current and historical content
+routes all returned 404. The cleanup alarm could win the gap between upload and
+pointer commit, delete the bytes, and still let the later metadata write
+succeed.
+
+**Considered and rejected:** Client-side fallback, because no client fetch can
+recover bytes the server deleted; and a time-based cleanup grace period, because
+its safety would depend on an arbitrary request-duration ceiling.
+
+**Consequences:** Ambiguous publication favors a bounded storage leak over a
+broken document. A staged inactive object keeps maintenance visibly outstanding
+until a retry or operator reconciliation releases it. Every future Terminal
+publication path must use the same staging fence.
+
 ### 2026-08-27 — A published document is identified by its path, not by the call
 
 **What changed:** `resource-bridge.ts` derives a publication's
@@ -617,8 +639,9 @@ WorkspaceDO version triggers capture the superseded state on the same update;
 the "latest-only until versioning lands" limitation the terminal-artifact
 generation PRD accepted does not ship, since that layer landed first. Two work
 streams publishing `report.md` stay distinct, and two different files in one
-work stream stay distinct. A lost compare-and-swap deletes the bytes this call
-wrote and reports what the document now holds rather than clobbering the winner.
+work stream stay distinct. A lost compare-and-swap releases the bytes this call
+wrote to asynchronous cleanup and reports what the document now holds rather
+than clobbering the winner.
 The model-facing contract — name, inputs, outputs, receipt behavior — does not
 change, and an unreceipted publish is still refused before anything is written.
 `createTerminalWorkspaceBackup` remains keyed to `toolCallId`, unchanged by this.

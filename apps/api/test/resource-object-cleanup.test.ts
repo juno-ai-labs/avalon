@@ -16,6 +16,7 @@ describe("resource object cleanup", () => {
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        cleanup_eligible INTEGER NOT NULL DEFAULT 1,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
@@ -60,6 +61,7 @@ describe("resource object cleanup", () => {
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        cleanup_eligible INTEGER NOT NULL DEFAULT 1,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
@@ -113,6 +115,7 @@ describe("resource object cleanup", () => {
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        cleanup_eligible INTEGER NOT NULL DEFAULT 1,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );
@@ -137,6 +140,48 @@ describe("resource object cleanup", () => {
     database.close();
   });
 
+  it("does not reap a staged publication before its resource pointer commits", async () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec(`
+      CREATE TABLE resources (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+      );
+      CREATE TABLE resource_versions (
+        resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
+      );
+      CREATE TABLE resource_object_deletion_outbox (
+        object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        cleanup_eligible INTEGER NOT NULL DEFAULT 1,
+        attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      INSERT INTO resource_object_deletion_outbox
+        (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+      VALUES ('regional/in-flight', 'workspace-one', 'resource-one', 'original', 0, '2026-08-28', '2026-08-28');
+    `);
+    const deleteObject = vi.fn(async () => undefined);
+    const env = createTestEnv({ DB: sqliteD1(database), PAYLOADS: { delete: deleteObject } });
+
+    // This is the production race: R2 has accepted the put, but the following
+    // WorkspaceDO pointer write has not committed yet.
+    expect(await reapDeletedResourceObjects(env)).toBe(0);
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(database.prepare(
+      "SELECT cleanup_eligible FROM resource_object_deletion_outbox WHERE object_ref = 'regional/in-flight'",
+    ).get()).toEqual({ cleanup_eligible: 0 });
+
+    database.prepare(
+      "INSERT INTO resources (id, workspace_id, content_ref) VALUES (?, ?, ?)",
+    ).run("resource-one", "workspace-one", "regional/in-flight");
+
+    // Once the pointer exists, maintenance retires only the staging record.
+    expect(await reapDeletedResourceObjects(env)).toBe(1);
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get())
+      .toEqual({ count: 0 });
+    database.close();
+  });
+
   it("cancels deletion while an historical version still references the object", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
@@ -148,6 +193,7 @@ describe("resource object cleanup", () => {
       );
       CREATE TABLE resource_object_deletion_outbox (
         object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+        cleanup_eligible INTEGER NOT NULL DEFAULT 1,
         attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL
       );

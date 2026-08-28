@@ -11,6 +11,7 @@ import {
 } from "../workstream-object-client";
 import { createResourceObjectPort } from "../../runtime/resource-port";
 import { allocateResourceSlugBesideCreation } from "../resource-slug";
+import { releaseStagedResourceObject } from "../resource-object-cleanup";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalSandboxProvider } from "./daytona-provider";
@@ -151,13 +152,18 @@ async function swapPublishedContent(input: {
   });
   await workspace.prepare(
     `INSERT OR IGNORE INTO resource_object_deletion_outbox
-     (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-     VALUES (?, ?, ?, 'original', ?, ?)`,
+     (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+     VALUES (?, ?, ?, 'original', 0, ?, ?)`,
   ).bind(objectRef, workspaceId, existing.id, timestamp, timestamp).run();
-  await env.PAYLOADS.put(objectRef, bytes, {
-    httpMetadata: { contentType: input.mimeType },
-    customMetadata: { source: "terminal", sourcePath: input.filePath },
-  });
+  try {
+    await env.PAYLOADS.put(objectRef, bytes, {
+      httpMetadata: { contentType: input.mimeType },
+      customMetadata: { source: "terminal", sourcePath: input.filePath },
+    });
+  } catch (error) {
+    await releaseStagedResourceObject(workspace, workspaceId, objectRef);
+    throw error;
+  }
   let swapped: PublishedRow | null;
   try {
     swapped = await workspace.prepare(
@@ -193,7 +199,9 @@ async function swapPublishedContent(input: {
     // The insert path below converts its failures the same way; a raw D1 error
     // here would reach the model as the generic terminal_tool_failed with no
     // retry guidance, for the same operation.
-    await env.PAYLOADS.delete(objectRef).catch(() => undefined);
+    // A failed WorkspaceDO response is not evidence that its transaction
+    // failed. Keep the staged bytes so a pointer that committed before the
+    // response was lost can never name a deleted object.
     throw new TerminalToolError(
       "resource_publish_failed",
       "The published document could not be updated. Retry publish_resource with the stable final file.",
@@ -206,13 +214,9 @@ async function swapPublishedContent(input: {
   // `docs/durable-object-sqlite.md`, which requires a returned witness here.
   if (swapped?.content_ref !== objectRef) {
     // Another publish of this document advanced the pointer first. Its content
-    // is the current one; drop the bytes this call wrote and report what the
-    // document now holds rather than clobbering the winner.
-    // Best-effort delete, and the outbox row deliberately stays: it is the only
-    // durable record that these bytes need collecting, and the reaper re-checks
-    // both `resources` and `resource_versions` before it acts. Dropping the row
-    // after a failed delete would leak the object permanently.
-    await env.PAYLOADS.delete(objectRef).catch(() => undefined);
+    // is the current one; release this call's bytes to asynchronous cleanup and
+    // report what the document now holds rather than clobbering the winner.
+    await releaseStagedResourceObject(workspace, workspaceId, objectRef);
     const current = await workspace.prepare(
       `SELECT id, title, mime_type, content_ref, content_sha256, metadata_json,
               model_content_status, created_at
@@ -231,7 +235,7 @@ async function swapPublishedContent(input: {
   // caller whose schema predates those triggers.
   await workspace.prepare(
     "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-  ).bind(workspaceId, objectRef).run();
+  ).bind(workspaceId, objectRef).run().catch(() => undefined);
   return swapped;
 }
 
@@ -516,13 +520,18 @@ export function createTerminalResourceBridge(
       const objectRef = `${env.AVALON_REGION}/${context.workspaceId}/resources/${resourceId}/terminal/${digest}/${newId()}`;
       await workspace.prepare(
         `INSERT OR IGNORE INTO resource_object_deletion_outbox
-         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-         VALUES (?, ?, ?, 'original', ?, ?)`,
+         (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+         VALUES (?, ?, ?, 'original', 0, ?, ?)`,
       ).bind(objectRef, context.workspaceId, resourceId, timestamp, timestamp).run();
-      await env.PAYLOADS.put(objectRef, bytes, {
-        httpMetadata: { contentType: mimeType },
-        customMetadata: { source: "terminal", sourcePath: input.filePath },
-      });
+      try {
+        await env.PAYLOADS.put(objectRef, bytes, {
+          httpMetadata: { contentType: mimeType },
+          customMetadata: { source: "terminal", sourcePath: input.filePath },
+        });
+      } catch (error) {
+        await releaseStagedResourceObject(workspace, context.workspaceId, objectRef);
+        throw error;
+      }
       const title = [...(input.displayName?.trim() || sourceName)].slice(0, 300).join("");
       const metadata = JSON.stringify({
         sourcePath: input.filePath,
@@ -564,19 +573,24 @@ export function createTerminalResourceBridge(
             ? context.executionPrincipal.userId
             : null,
         });
-        await workspace.prepare(
-          "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-        ).bind(context.workspaceId, objectRef).run();
       } catch {
         await workspace.prepare(
           "DELETE FROM resources WHERE workspace_id = ? AND id = ?",
         ).bind(context.workspaceId, resourceId).run().catch(() => undefined);
+        await releaseStagedResourceObject(workspace, context.workspaceId, objectRef)
+          .catch(() => undefined);
         throw new TerminalToolError(
           "resource_publish_failed",
           "The generated resource could not be recorded. Retry publish_resource; Rally retained cleanup ownership for the uploaded object.",
           { reason: "Retry the same publish_resource call so Rally can reconcile its stable resource identity." },
         );
       }
+      // Failure to clear a staged row cannot make a published document fail:
+      // maintenance will observe the active pointer and retire the row without
+      // touching R2.
+      await workspace.prepare(
+        "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+      ).bind(context.workspaceId, objectRef).run().catch(() => undefined);
       // Outside the block that unwinds a failed publication: the document is
       // recorded and addressable by UUID now, and its alias is owed rather
       // than required — a reason to keep the row, never to drop it.

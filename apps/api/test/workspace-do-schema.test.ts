@@ -21,6 +21,7 @@ const RESOURCE_VERSIONING_VERSION = 13;
 const VERSION_PROVENANCE_VERSION = 18;
 const RESOURCE_SLUG_VERSION = 19;
 const DRAFT_RESERVATION_VERSION = 20;
+const RESOURCE_PUBLICATION_FENCE_VERSION = 21;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -171,6 +172,38 @@ describe("the WorkspaceDO resource-version migration", () => {
       { object_ref: "r2/original-1" },
       { object_ref: "r2/original-2" },
     ]);
+  });
+});
+
+describe("the WorkspaceDO resource-publication fence migration", () => {
+  it("keeps existing cleanup rows eligible and permits an in-flight staged row", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, RESOURCE_PUBLICATION_FENCE_VERSION - 1);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+       VALUES ('r2/existing', ?, 'resource-old', 'original', '2026-08-28', '2026-08-28')`,
+    ).run(WORKSPACE_ID);
+
+    apply(
+      database,
+      RESOURCE_PUBLICATION_FENCE_VERSION,
+      RESOURCE_PUBLICATION_FENCE_VERSION - 1,
+    );
+    expect(database.prepare(
+      "SELECT cleanup_eligible FROM resource_object_deletion_outbox WHERE object_ref = 'r2/existing'",
+    ).get()).toEqual({ cleanup_eligible: 1 });
+
+    database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES ('r2/staged', ?, 'resource-new', 'original', 0, '2026-08-28', '2026-08-28')`,
+    ).run(WORKSPACE_ID);
+    expect(database.prepare(
+      "SELECT cleanup_eligible FROM resource_object_deletion_outbox WHERE object_ref = 'r2/staged'",
+    ).get()).toEqual({ cleanup_eligible: 0 });
   });
 });
 

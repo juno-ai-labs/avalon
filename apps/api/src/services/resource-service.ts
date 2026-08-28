@@ -30,6 +30,7 @@ import {
   type AuthorizedDerivativeResource,
 } from "./attachment-derivative-service";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
+import { releaseStagedResourceObject } from "./resource-object-cleanup";
 
 function resourceTelemetryConnector(value: unknown):
   'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
@@ -433,12 +434,18 @@ export class ResourceService {
       // pointer check cancel this pending deletion.
       await this.env.DB.prepare(
         `INSERT OR IGNORE INTO resource_object_deletion_outbox
-          (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-         VALUES (?, ?, ?, 'original', ?, ?)`,
+          (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+         VALUES (?, ?, ?, 'original', 0, ?, ?)`,
       ).bind(idKey, this.auth.workspaceId, id, at, at).run();
-      await this.env.PAYLOADS.put(idKey, serialized, { httpMetadata: { contentType: "application/json" } });
       try {
-        const update = await this.env.DB.prepare(
+        await this.env.PAYLOADS.put(idKey, serialized, { httpMetadata: { contentType: "application/json" } });
+      } catch (error) {
+        await releaseStagedResourceObject(this.env.DB, this.auth.workspaceId, idKey);
+        throw error;
+      }
+      // An RPC failure keeps the object staged because WorkspaceDO may have
+      // committed the pointer before its response was lost.
+      const update = await this.env.DB.prepare(
           `UPDATE resources
            SET content_ref = ?, content_sha256 = ?, last_hydrated_at = ?, updated_at = ?,
                model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
@@ -461,13 +468,9 @@ export class ResourceService {
           this.auth.workspaceId,
           resource.content_ref,
           resource.content_sha256,
-        ).run();
-        if ((update.meta.changes ?? 0) === 0) {
-          await this.env.PAYLOADS.delete(idKey).catch(() => undefined);
-        }
-      } catch (error) {
-        await this.env.PAYLOADS.delete(idKey).catch(() => undefined);
-        throw error;
+      ).run();
+      if ((update.meta.changes ?? 0) === 0) {
+        await releaseStagedResourceObject(this.env.DB, this.auth.workspaceId, idKey);
       }
     }
     return this.get(id);
