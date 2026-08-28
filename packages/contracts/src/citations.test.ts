@@ -253,6 +253,27 @@ describe("rewriteCitationsAsPlainText", () => {
       .toBe("Write `[Title](resource://id)` to cite.");
   });
 
+  it("leaves an indented code block alone, the other way a model shows the syntax", () => {
+    // remark-gfm renders this literally, so reducing it deletes the very thing
+    // the message is demonstrating — the same failure the fenced case has, one
+    // syntax over.
+    const source = "Cite like this:\n\n    See [the deck](resource://abc).\n";
+    expect(rewriteCitationsAsPlainText(source)).toBe(source);
+  });
+
+  it("counts no reference inside an indented code block", () => {
+    expect(rewriteCitationsAsPlainText("Example:\n\n    A claim.[^x]\n\n[^x]: [Q3 deck](resource://abc)\n"))
+      .toBe("Example:\n\n    A claim.[^x]\n");
+  });
+
+  it("still reduces an indented line that only continues a paragraph", () => {
+    // An indented chunk cannot interrupt a paragraph, so this is prose to GFM
+    // and a chip in the transcript. Reading it as code would leave the raw
+    // target in an inbox, which is the direction that actually costs something.
+    expect(rewriteCitationsAsPlainText("Revenue grew, and\n    see [the deck](resource://abc)."))
+      .toBe("Revenue grew, and\n    see the deck.");
+  });
+
   it("counts no reference inside a code span, which invented a source list", () => {
     // A message explaining the syntax cites nothing, and the reader of the
     // delivered copy must not be handed sources it never claimed.
@@ -292,6 +313,13 @@ describe("rewriteCitationsAsPlainText", () => {
     // The desktop empties `Resource://` through its URL transform, so it never
     // leaks there — this was the one path that read it as an unknown scheme.
     expect(rewriteCitationsAsPlainText("See [the deck](Resource://abc).")).toBe("See the deck.");
+  });
+
+  it("keeps a source URL whose own parentheses are balanced", () => {
+    // CommonMark allows one level, and the encyclopedia everything cites uses
+    // it. Stopping at the first `)` named a URL that goes nowhere.
+    expect(rewriteCitationsAsPlainText("A claim.[^w]\n\n[^w]: [Functions](https://en.wikipedia.org/wiki/Function_(mathematics))\n"))
+      .toBe("A claim.[1]\n\n**Sources**\n\n1. [Functions](https://en.wikipedia.org/wiki/Function_(mathematics))");
   });
 
   it("reduces an angle-bracketed target and a label carrying brackets", () => {
