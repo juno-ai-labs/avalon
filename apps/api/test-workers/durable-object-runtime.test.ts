@@ -5773,7 +5773,10 @@ describe("Durable Objects in the Workers runtime", () => {
         `SELECT event_sequence FROM realtime_state WHERE id = 1`,
       ).one()).toEqual({ event_sequence: 1 });
     });
-  });
+    // Above the 5s suite default so the harness deadline cannot preempt the
+    // poll's own `expected 1 to be +0` diagnostic when setup runs long on a
+    // loaded machine; the poll keeps its tighter 4s budget.
+  }, 10_000);
 
   it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {
     await seedOpenAuthority();
