@@ -97,8 +97,10 @@ and mirror the native input's keyboard-visible focus.
 
 The mark beside "Welcome back" is not the still masked image every other surface
 uses. It is a curve solved and re-projected every frame, turning about two axes,
-and it is 56px beside a 38px heading because the second axis needs the size to
-read as a turn rather than a wobble. `RallySeam` and the reasoning are in
+and it is 56px beside a 25px heading because the second axis needs the size to
+read as a turn rather than a wobble. It turns once and holds on the still
+master's own angle rather than turning for as long as the screen is up.
+`RallySeam` and the reasoning are in
 [`brand-mark-motion.md`](brand-mark-motion.md); what belongs to this screen is
 that its host rule names the size and the stroke weight together, and that the
 loop stops when the launch unmounts the home layer.
@@ -405,6 +407,25 @@ moment later against extra reads. Anything that wants that hop back has to deal
 with the backfill first. See [`regionalization.md`](regionalization.md).
 
 ## Changelog
+
+### 2026-08-28 — The welcome heading comes back down to its previous size
+
+**What changed:** `.new-workstream-welcome h1`'s `font-size` goes from 38px
+back to 25px, the value it held before the mark-turning change below. Nothing
+else on the row changed: the mark stays 56px, and the row's gap stays 14px.
+
+**Why:** Review caught the heading reading as too large once the mark beside it
+had grown and started turning — the pair had not been looked at together at the
+larger size before it shipped.
+
+**Consequences:** The heading is back to the size it was measured against
+everywhere else "Welcome back" is discussed, including the 56px-mark-beside-a-
+heading relationship the entry below and [`brand-mark-motion.md`](brand-mark-motion.md)
+describe — both now read 25px rather than 38px for this heading. If the heading
+is intentionally enlarged again in the future, do that as its own decision
+rather than as a side effect of a change to the mark next to it.
+
+Shipped in TBD.
 
 ### 2026-08-27 — The welcome mark turns, and grew to a size that can carry it
 

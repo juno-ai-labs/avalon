@@ -17,7 +17,14 @@ import {
 } from 'react';
 import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
-import { SEAM_RESTING_PATH, SEAM_SPIN_RATE, SEAM_START_RADIANS, SEAM_TILT_RATE, seamPath } from '../lib/rally-seam';
+import {
+  SEAM_RESTING_PATH,
+  SEAM_SPIN_DURATION_MS,
+  SEAM_SPIN_RATE,
+  SEAM_START_RADIANS,
+  SEAM_TILT_RATE,
+  seamPath,
+} from '../lib/rally-seam';
 import { onReducedMotionChange, prefersReducedMotion } from '../lib/theme';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
@@ -38,6 +45,12 @@ export function RallyMark({ className }: { className?: string }): React.JSX.Elem
  * and a second drawing of the mark, so it is worth it only where the mark is
  * large enough to read as turning.
  *
+ * The turn plays once, for `SEAM_SPIN_DURATION_MS` — one full rotation about
+ * the vertical — and then holds at `SEAM_RESTING_PATH`, the same angle it
+ * started from and the one the still master is drawn at. It does not keep
+ * turning for as long as the mark is mounted: a first impression is enough,
+ * and a mark that never settles competes with the screen it is introducing.
+ *
  * A host gives it a size. `stroke-width` lives on `.rally-seam` in user units,
  * so it scales with the box and a host only names one to make a deliberate
  * optical adjustment.
@@ -52,9 +65,21 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
     let frame = 0;
     let began: number | null = null;
 
+    // The held frame at the end of the turn, and what reduced motion shows
+    // instead of turning at all — the still master's own angle, so the mark
+    // never settles on some other point of the rotation.
+    const rest = (): void => {
+      cancelAnimationFrame(frame);
+      element.setAttribute('d', SEAM_RESTING_PATH);
+    };
+
     const draw = (now: number): void => {
       began ??= now;
       const elapsed = now - began;
+      if (elapsed >= SEAM_SPIN_DURATION_MS) {
+        rest();
+        return;
+      }
       element.setAttribute('d', seamPath(
         SEAM_START_RADIANS + elapsed * SEAM_SPIN_RATE,
         elapsed * SEAM_TILT_RATE,
@@ -62,13 +87,13 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
       frame = requestAnimationFrame(draw);
     };
 
-    // Reduced motion holds the resting frame rather than stopping the mark
-    // wherever it happened to be: the still master is a specific angle, and any
-    // other one reads as a drawing that came out wrong.
+    // Reduced motion holds the resting frame rather than playing the turn at
+    // all: the still master is a specific angle, and any other one reads as a
+    // drawing that came out wrong.
     const sync = (): void => {
       cancelAnimationFrame(frame);
       if (prefersReducedMotion()) {
-        element.setAttribute('d', SEAM_RESTING_PATH);
+        rest();
         return;
       }
       began = null;

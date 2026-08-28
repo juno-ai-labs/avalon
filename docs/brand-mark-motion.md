@@ -232,6 +232,41 @@ unaffected by a change here.
 
 ## Changelog
 
+### 2026-08-28 — The turn plays once and holds, instead of turning forever
+
+**What changed:** `RallySeam` now stops the frame loop after
+`SEAM_SPIN_DURATION_MS` — one full rotation about the vertical, derived from
+`SEAM_SPIN_RATE` — and holds at `SEAM_RESTING_PATH`: the same 25°-spin,
+no-tilt frame the still master is drawn at, and the same frame the component
+already drew on first paint and held under reduced motion. Previously the loop
+never stopped on its own; it kept re-solving the curve with a growing `spin`
+and `tilt` for as long as the host stayed mounted.
+
+**Why:** A mark that never stops turning competes with the screen it sits on —
+the sign-in card, the welcome heading, and the new-automation intro are all
+places a reader is meant to move past, not places asked to hold their
+attention indefinitely. One turn reads as an introduction; a mark that is
+still turning a minute later reads as a stuck spinner.
+
+**Considered and rejected:** Stopping the loop wherever `cancelAnimationFrame`
+happened to catch it. Rejected for the same reason the reduced-motion branch
+already holds a named frame instead of an arbitrary one: because `spin` and
+`tilt` advance at incommensurate rates, an unplanned stop lands on neither
+axis's start and reads as a drawing that came out wrong. Holding
+`SEAM_RESTING_PATH` explicitly — rather than merely letting the loop run for
+one period and trusting the numbers to land back on it — is what guarantees
+the held frame is exactly the still master's angle rather than a frame close
+to it.
+
+**Consequences:** None of the invariants above move: the turn is still pure
+rotation, reduced motion still holds the same frame it always did, and a host
+still names only a size. The cost section's "cost" bullet is now a ceiling
+rather than a steady state — a mounted seam runs its loop for about 4.8
+seconds and then draws nothing further until unmount, rather than for as long
+as the screen is up.
+
+Shipped in TBD.
+
 ### 2026-08-27 — The mark turns wherever it is the subject rather than a label
 
 **What changed:** The sign-in card, the home screen's welcome heading, and the
