@@ -29,6 +29,7 @@ import {
 import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
+import type { FootnoteCitation } from '@rally/contracts/citations';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -646,6 +647,15 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({
  */
 const NO_MENTIONS: MessageMention[] = [];
 
+/**
+ * The footnote half of a citation context for a message that has none.
+ *
+ * Hoisted for identity, the same reason `NO_MENTIONS` is: a fresh empty map per
+ * commit is a fresh context value per commit, and every consumer under it
+ * re-renders whether or not anything it reads changed.
+ */
+const NO_FOOTNOTES = { footnotes: new Map<string, FootnoteCitation>(), order: [] as string[] };
+
 export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = false, telemetry, verbatim = false }: {
   children: string;
   mentions?: MessageMention[];
@@ -690,11 +700,20 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
   // While a message streams, a reference whose definition has not arrived
   // renders literally — the renderer's existing behaviour for a split
   // footnote — and the commit that ends the stream heals it.
-  const citations = useMemo(() => ({
-    clobberPrefix,
-    footnotes: liftableFootnoteCitations(markdown),
-    order: messageFootnoteOrder(markdown),
-  }), [clobberPrefix, markdown]);
+  const citations = useMemo(() => {
+    // Short-circuited on the source, because the value is a *context* value:
+    // context propagation bypasses `React.memo`, so a new object here
+    // re-renders every `li`, `sup` and `section` in every settled segment on
+    // every streamed commit — and `li` is the override for all list items, not
+    // only footnote definitions. A message with no footnote syntax is nearly
+    // every message, and it now holds one object for the whole stream.
+    if (!markdown.includes('[^')) return { clobberPrefix, ...NO_FOOTNOTES };
+    return {
+      clobberPrefix,
+      footnotes: liftableFootnoteCitations(markdown),
+      order: messageFootnoteOrder(markdown),
+    };
+  }, [clobberPrefix, markdown]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
   // element below reuses the whole rendered body while they hold still.

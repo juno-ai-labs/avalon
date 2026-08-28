@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useState } from 'react';
+import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import {
   CitationResolutionContext,
@@ -53,7 +54,14 @@ export function CitationResolutionProvider({ children }: { children: React.React
         status: 'resolved',
         resource: { resourceType: resource.resourceType },
       }));
-    }).catch(() => {
+    }).catch((error: unknown) => {
+      // Only a denial degrades the chip to text. A 500, a dropped connection or
+      // an offline window is not "you cannot see this" — collapsing an
+      // affordance the reader is looking at, seconds after it appeared, and
+      // never restoring it, is worse than leaving the chip drawn from the label
+      // the message already carried.
+      const denied = error instanceof ApiError && (error.status === 404 || error.status === 403);
+      if (!denied) return;
       setResolutions((current) => new Map(current).set(resourceId, { status: 'unavailable' }));
     });
   }, [api, queryClient]);

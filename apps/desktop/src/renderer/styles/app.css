@@ -2571,7 +2571,7 @@ pre {
 .citation-card,
 .citation-pill { appearance: none; background: none; border: 0; color: inherit; cursor: pointer; font: inherit; margin: 0; text-align: left; }
 .citation-chip:disabled,
-.citation-pill:disabled { cursor: default; }
+.citation-pill[aria-disabled='true'] { cursor: default; }
 .citation-chip { align-items: center; background: color-mix(in srgb, var(--av-sys-color-brand-base) 10%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 24%, transparent); border-radius: var(--av-sys-size-radius-pill); box-sizing: border-box; color: var(--av-sys-color-brand-ink); display: inline-flex; font-size: 0.92em; font-weight: 560; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 8px 1px 6px; vertical-align: middle; white-space: nowrap; }
 .citation-chip:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 18%, transparent); }
 .citation-chip-icon { align-items: center; display: inline-flex; flex: 0 0 auto; opacity: 0.8; }

@@ -206,6 +206,19 @@ describe('grounding footnotes', () => {
     expect(items[0]?.getAttribute('value')).toBe('2');
   });
 
+  it('keeps an identity pill focusable, because its popover is all it has', () => {
+    const container = renderBody('Ada said so.[^1]\n\n[^1]: [@Ada](person:018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d0)');
+    const pill = container.querySelector('.citation-pill') as HTMLButtonElement;
+
+    // A `disabled` button dispatches no pointer events and takes no focus, so
+    // the tooltip around it could never open — on any input method.
+    expect(pill.disabled).toBe(false);
+    expect(pill.getAttribute('aria-disabled')).toBe('true');
+    pill.click();
+    expect(useUiStore.getState().inspector).toBeNull();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
   it('namespaces footnote ids per message, so two mounts cannot cross-wire', () => {
     const { container } = render(
       <CitationResolutionContext.Provider value={resolver}>
