@@ -61,7 +61,7 @@ export function workspaceObjectSqliteDatabase(workspaceId: string): DatabaseSync
  * production no longer has. Reading the ledger means a new resource migration
  * is picked up by the fixtures the day it lands.
  */
-const RESOURCE_TABLE = /\b(?:resources|resource_versions)\b/u;
+const RESOURCE_TABLE = /\b(?:resources|resource_versions|resource_object_deletion_outbox)\b/u;
 
 function resourceSchemaMigrations(): readonly DurableObjectSqliteMigration[] {
   return WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) =>

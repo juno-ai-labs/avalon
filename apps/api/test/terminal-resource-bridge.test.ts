@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
+import { reapDeletedResourceObjects } from "../src/services/resource-object-cleanup";
 import type { WorkstreamRuntimeResourceAttacher } from "../src/services/workstream-object-client";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
@@ -92,8 +93,10 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     position: 1,
   });
   const objects = new Map<string, Uint8Array>();
+  let afterPut: (() => Promise<void>) | undefined;
   const put = vi.fn(async (key: string, value: Uint8Array | string) => {
     objects.set(key, typeof value === "string" ? new TextEncoder().encode(value) : value);
+    await afterPut?.();
   });
   const bucket = createCloudflareTestBinding<R2Bucket>({
     put,
@@ -156,6 +159,7 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     objectStore,
     objects,
     put,
+    setAfterPut(callback: () => Promise<void>) { afterPut = callback; },
     env,
     provider,
     bridge: createTerminalResourceBridge(
@@ -316,6 +320,33 @@ describe("Terminal resource bridge", () => {
     expect(objects.has(String((row as { content_ref: string }).content_ref))).toBe(true);
     expect(put).toHaveBeenCalledOnce();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resource_object_deletion_outbox").get()).toEqual({ count: 0 });
+  });
+
+  it("keeps uploaded bytes when cleanup runs before the resource pointer commits", async () => {
+    const state = fixture();
+    let cleanupPasses = 0;
+    state.setAfterPut(async () => {
+      cleanupPasses += 1;
+      // R2 has the bytes at this point, while publishResource has not yet
+      // inserted the resource row. This is the production race that left the
+      // press-release citation valid but its preview and download at 404.
+      expect(await reapDeletedResourceObjects(state.env)).toBe(0);
+    });
+
+    const result = await state.bridge.publishResource(
+      context,
+      { filePath: "cleanup-race.md", displayName: "Cleanup race" },
+      new TextEncoder().encode("# Still here\n"),
+    );
+
+    const row = state.database.prepare(
+      "SELECT content_ref FROM resources WHERE id = ? AND workspace_id = ?",
+    ).get(result.resourceId, W) as { content_ref: string };
+    expect(cleanupPasses).toBe(1);
+    expect(state.objects.has(row.content_ref)).toBe(true);
+    expect(state.database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_object_deletion_outbox",
+    ).get()).toEqual({ count: 0 });
   });
 
   it("uses the resident resource attacher instead of same-object RPC", async () => {

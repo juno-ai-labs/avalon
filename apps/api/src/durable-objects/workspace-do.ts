@@ -1463,6 +1463,19 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ],
+}, {
+  version: 21,
+  description: "fence in-flight resource objects from asynchronous cleanup",
+  statements: [
+    // Publication registers an object before its R2 write so a failed request
+    // cannot orphan bytes. Until the writer either publishes a pointer or
+    // releases that registration, cleanup must not interpret the absence of a
+    // pointer as abandonment: the writer may be between the R2 put and its
+    // WorkspaceDO commit.
+    `ALTER TABLE resource_object_deletion_outbox
+       ADD COLUMN cleanup_eligible INTEGER NOT NULL DEFAULT 1
+       CHECK (cleanup_eligible IN (0, 1))`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {

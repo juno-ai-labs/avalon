@@ -571,8 +571,13 @@ describe("attachment derivative conversion", () => {
     expect(state.contentRef).toBe(winningRef);
     expect(winningRef).not.toBeNull();
     expect(objects.has(winningRef!)).toBe(true);
-    expect(deleted).toHaveLength(1);
-    expect(deleted).not.toContain(winningRef);
-    expect(deleted.every((key) => outbox.has(key))).toBe(true);
+    // Losing the claim proves no pointer committed, so that generation is
+    // released to the outbox rather than deleted in the request. An ambiguous
+    // WorkspaceDO failure follows the same storage-safe rule without guessing
+    // whether its pointer transaction committed.
+    expect(deleted).toEqual([]);
+    const losingRefs = [...objects.keys()].filter((key) => key !== "original" && key !== winningRef);
+    expect(losingRefs).toHaveLength(1);
+    expect(outbox.has(losingRefs[0]!)).toBe(true);
   });
 });

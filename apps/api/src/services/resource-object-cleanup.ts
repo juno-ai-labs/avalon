@@ -18,6 +18,7 @@ interface PendingResourceObject {
   workspace_id: string;
   resource_id: string;
   object_kind: "original" | "derivative" | "receipt";
+  cleanup_eligible: number;
 }
 
 function boundedCleanupErrorCode(error: unknown): string {
@@ -30,14 +31,46 @@ function boundedCleanupErrorCode(error: unknown): string {
   return "r2_delete_failed";
 }
 
+/**
+ * Hand an object back to the reaper after its publisher knows no pointer was
+ * committed. An ambiguous database failure deliberately does not call this:
+ * preserving an unreferenced object is recoverable, while deleting bytes a
+ * committed pointer may name is not.
+ */
+export async function releaseStagedResourceObject(
+  database: D1Database,
+  workspaceId: string,
+  objectRef: string,
+): Promise<void> {
+  await database.prepare(
+    `UPDATE resource_object_deletion_outbox
+        SET cleanup_eligible = 1, updated_at = ?
+      WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
+  ).bind(new Date().toISOString(), workspaceId, objectRef).run();
+}
+
 /** Returns how many outbox rows the pass retired; the alarm reads it as progress. */
 export async function reapDeletedResourceObjects(env: Env, workspaceId?: string): Promise<number> {
   if (!workspaceId && env.WORKSPACE_DOS) throw new Error("resource_cleanup_workspace_required");
   if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
   const pending = await env.DB.prepare(
-    `SELECT object_ref, workspace_id, resource_id, object_kind
-     FROM resource_object_deletion_outbox
-     ORDER BY created_at ASC, object_ref ASC
+    `SELECT pending.object_ref, pending.workspace_id, pending.resource_id,
+            pending.object_kind, pending.cleanup_eligible
+       FROM resource_object_deletion_outbox pending
+      WHERE pending.cleanup_eligible = 1
+         OR EXISTS (
+           SELECT 1 FROM resources current_resource
+            WHERE current_resource.workspace_id = pending.workspace_id
+              AND (current_resource.content_ref = pending.object_ref
+                OR current_resource.model_content_ref = pending.object_ref)
+         )
+         OR EXISTS (
+           SELECT 1 FROM resource_versions historical_version
+            WHERE historical_version.workspace_id = pending.workspace_id
+              AND (historical_version.content_ref = pending.object_ref
+                OR historical_version.model_content_ref = pending.object_ref)
+         )
+     ORDER BY pending.created_at ASC, pending.object_ref ASC
      LIMIT ?`,
   ).bind(MAXIMUM_CLEANUP_BATCH).all<PendingResourceObject>();
 
@@ -66,6 +99,11 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId?: string)
         retired += 1;
         continue;
       }
+      // A publisher owns this object until it either commits a resource
+      // pointer or explicitly releases the row. The alarm can run between the
+      // R2 put and that commit; treating "not active yet" as "abandoned"
+      // deletes the bytes underneath the pointer the writer is about to save.
+      if (object.cleanup_eligible === 0) continue;
       await env.PAYLOADS.delete(object.object_ref);
       await env.DB.prepare(
         "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
