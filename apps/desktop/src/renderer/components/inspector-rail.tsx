@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useState } from 'react';
+import { ApiError } from '../lib/api';
 import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -364,6 +365,108 @@ function readableAsText(resource: WorkstreamResource): boolean {
 }
 
 /**
+ * The delay the route named for a preview it is still preparing, or `null` for
+ * every other rejection.
+ *
+ * `409 resource_processing` is the one answer from `/resources/:id/preview`
+ * that is not a verdict: a PDF or an Office file's text derivative is being
+ * materialized, and `retryAfterMs` says when to come back. The route knows
+ * whether it is waiting on a claim, a hash write or a conversion and names
+ * 250ms or 1s accordingly, so the wait is read off the response rather than
+ * invented as a schedule here.
+ *
+ * A processing answer carrying no usable delay reads as terminal. That is the
+ * degradation this file already had, and the alternative is a number nobody
+ * chose driving a loop against a route that converts documents.
+ */
+function processingRetryDelayMs(error: unknown): number | null {
+  if (!(error instanceof ApiError) || error.code !== 'resource_processing') return null;
+  const details: unknown = error.details;
+  if (typeof details !== 'object' || details === null || !('retryAfterMs' in details)) return null;
+  const retryAfterMs: unknown = (details as { retryAfterMs: unknown }).retryAfterMs;
+  if (typeof retryAfterMs !== 'number' || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) return null;
+  return retryAfterMs;
+}
+
+/** Resolves after `ms`, or as soon as `signal` aborts — whichever comes first. */
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    let timer = 0;
+    const settle = (): void => {
+      window.clearTimeout(timer);
+      signal.removeEventListener('abort', settle);
+      resolve();
+    };
+    timer = window.setTimeout(settle, ms);
+    signal.addEventListener('abort', settle, { once: true });
+  });
+}
+
+/**
+ * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
+ *
+ * Bounds: times one mounted preview re-asks `/resources/:id/preview` after the
+ *   route answered `409 resource_processing`.
+ * Without it: a document whose conversion cannot finish inside the request it
+ *   runs in aborts, releases its claim, and answers `processing` with
+ *   `retryAfterMs: 250` again — so an open rail asks four times a second for as
+ *   long as somebody leaves the panel on that resource, and every attempt that
+ *   wins the claim re-runs the Workers AI OCR pass it is going to abort again.
+ *   Checked 2026-08-28: nothing else closes that loop. The route's `ready`,
+ *   `failed` and `unsupported` results are terminal and cached, which settles
+ *   every conversion that converges, and this effect's `AbortSignal` ends the
+ *   loop on a resource switch or an unmount — a panel left open on a document
+ *   that never converts is the case neither covers.
+ * Direction: upper bound; the open value is +Infinity.
+ * Trips: the retry stops and the panel shows "This preview is not available.",
+ *   which is what it already shows for every terminal rejection. The metadata
+ *   above it is unaffected.
+ * Derive from: how long a reader is willing to watch a spinner, against the
+ *   delays the route itself names — a live claim is stealable after five
+ *   minutes and a conversion is capped at thirty seconds, so covering one full
+ *   lease takeover and the conversion after it is arithmetic rather than taste.
+ *   The sum is in the pull request.
+ */
+export const MAX_RESOURCE_PREVIEW_RETRIES = Number.POSITIVE_INFINITY;
+
+/**
+ * Reads a resource's preview, waiting out the route's own "still preparing"
+ * answer instead of taking it for a verdict.
+ *
+ * Collapsing every rejection into the failed state — which is what a bare
+ * `.catch` does — meant opening a citation to a freshly attached PDF or Word
+ * file landed on "This preview is not available." and stayed there for the life
+ * of that mount, seconds after the derivative was ready. The reader had to
+ * close the rail and reopen it to discover the preview existed.
+ *
+ * `maxRetries` is a parameter rather than a read of the constant so a test can
+ * prove the trip against a finite bound while the shipped value is still open.
+ */
+export async function readResourcePreviewText(
+  loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>,
+  resourceId: string,
+  signal: AbortSignal,
+  maxRetries: number,
+): Promise<string> {
+  for (let retries = 0; ; retries += 1) {
+    try {
+      const blob = await loadResourceContent(resourceId, signal);
+      return await blob.text();
+    } catch (error) {
+      const retryAfterMs = processingRetryDelayMs(error);
+      if (retryAfterMs === null || signal.aborted || retries >= maxRetries) throw error;
+      await wait(retryAfterMs, signal);
+      if (signal.aborted) throw error;
+    }
+  }
+}
+
+/**
  * What the resource says, under what the record says about it.
  *
  * The rail's detail was metadata only — type, direction, version, remove — and
@@ -385,15 +488,16 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   useEffect(() => {
     const controller = new AbortController();
     setState({});
-    void loadResourceContent(resource.id, controller.signal)
-      .then((blob) => blob.text())
+    void readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_RETRIES)
       .then((text) => {
         if (!controller.signal.aborted) setState({ text });
       })
       .catch(() => {
-        // A resource whose content was never hydrated, or whose object has since
-        // gone, is not an error the reader can act on — the metadata above is
-        // still true, and saying so beats an empty panel.
+        // A resource whose content was never hydrated, whose object has since
+        // gone, or whose format the server will not convert is not an error the
+        // reader can act on — the metadata above is still true, and saying so
+        // beats an empty panel. A preview still being prepared is not one of
+        // these, and no longer arrives here until the retries are spent.
         if (!controller.signal.aborted) setState({ failed: true });
       });
     return () => controller.abort();

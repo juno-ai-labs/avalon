@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
-import { InspectorRail } from './inspector-rail';
+import { ApiError } from '../lib/api';
+import { InspectorRail, MAX_RESOURCE_PREVIEW_RETRIES, readResourcePreviewText } from './inspector-rail';
 
 const copyText = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
@@ -384,6 +385,106 @@ describe('resource detail content preview', () => {
 
     await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
     expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  /** What `/resources/:id/preview` answers while a derivative is materializing. */
+  function stillProcessing(retryAfterMs = 5): ApiError {
+    return new ApiError('The attachment preview is still being prepared', 409, 'resource_processing', { retryAfterMs });
+  }
+
+  it('waits out a preview the server says it is still preparing, and renders it', async () => {
+    // A PDF or an Office file attached moments ago has no text derivative yet,
+    // and the route says so with a 409 and a delay rather than a verdict.
+    // Collapsing that into the failed state left the reader on "not available"
+    // for the life of the mount, seconds after the derivative was ready.
+    const loadResourceContent = vi.fn()
+      .mockRejectedValueOnce(stillProcessing())
+      .mockRejectedValueOnce(stillProcessing())
+      .mockResolvedValueOnce(new Blob(['## Extracted\n\nRevenue grew 40%.']));
+    openDetail({ ...note, mimeType: 'application/pdf', title: 'Contract.pdf' }, loadResourceContent);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Loading preview');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText(/preview is not available/iu)).not.toBeInTheDocument();
+  });
+
+  it('waits the delay the response named, not a schedule of its own', async () => {
+    // The route knows whether it is waiting on a claim, a hash write or a
+    // conversion and answers 250ms or 1s accordingly. Fake timers because the
+    // assertion is the exact number: a schedule invented here would satisfy any
+    // lower bound a real-timer test could safely assert.
+    vi.useFakeTimers();
+    try {
+      const loadResourceContent = vi.fn()
+        .mockRejectedValueOnce(stillProcessing(1_000))
+        .mockResolvedValueOnce(new Blob(['Ready.']));
+      const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_RETRIES);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(loadResourceContent).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(read).resolves.toBe('Ready.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on a processing answer that names no delay, rather than spinning on a number of its own', async () => {
+    const loadResourceContent = vi.fn()
+      .mockRejectedValue(new ApiError('The attachment preview is still being prepared', 409, 'resource_processing'));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops retrying once the panel that asked for it is gone', async () => {
+    let attempts = 0;
+    const loadResourceContent = vi.fn(async (_id: string, signal?: AbortSignal) => {
+      attempts += 1;
+      if (signal?.aborted) throw new Error('aborted');
+      throw stillProcessing(10);
+    });
+    const { unmount } = render(
+      <Tooltip.Provider>
+        <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [note] }} />
+      </Tooltip.Provider>,
+    );
+    act(() => { useUiStore.getState().inspect({ type: 'resource', id: note.id }); });
+    await waitFor(() => expect(attempts).toBeGreaterThan(1));
+
+    unmount();
+    const afterUnmount = attempts;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(attempts).toBe(afterUnmount);
+  });
+
+  describe('the retry ceiling', () => {
+    // Enforcement takes the bound as an argument, so the trip is provable while
+    // the shipped constant is still open. Never assert on its literal value:
+    // that test would fail the day the team sets the number.
+    it('stops after the given number of retries and surfaces the last rejection', async () => {
+      const loadResourceContent = vi.fn().mockRejectedValue(stillProcessing(1));
+
+      await expect(readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, 2))
+        .rejects.toThrow(/still being prepared/iu);
+      expect(loadResourceContent).toHaveBeenCalledTimes(3);
+    });
+
+    it('rejects nothing at the constant\'s current value', async () => {
+      let attempts = 0;
+      const loadResourceContent = vi.fn(async () => {
+        attempts += 1;
+        if (attempts <= 8) throw stillProcessing(0);
+        return new Blob(['Ready at last.']);
+      });
+
+      await expect(readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_RETRIES))
+        .resolves.toBe('Ready at last.');
+    });
   });
 
   it('does not try to render an image as text', () => {
