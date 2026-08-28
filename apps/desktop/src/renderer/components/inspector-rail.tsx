@@ -377,14 +377,18 @@ function readableAsText(resource: WorkstreamResource): boolean {
  *
  * A processing answer carrying no usable delay reads as terminal. That is the
  * degradation this file already had, and the alternative is a number nobody
- * chose driving a loop against a route that converts documents.
+ * chose driving a loop against a route that converts documents. Zero counts as
+ * no delay: `wait(0)` resolves on the next tick, so a route that answered `0`
+ * would be asked again as fast as the network allows — the wall-clock budget
+ * bounds how long that lasts but not how many requests it makes, and clamping
+ * it to a floor instead would mean inventing the floor.
  */
 function processingRetryDelayMs(error: unknown): number | null {
   if (!(error instanceof ApiError) || error.code !== 'resource_processing') return null;
   const details: unknown = error.details;
   if (typeof details !== 'object' || details === null || !('retryAfterMs' in details)) return null;
   const retryAfterMs: unknown = (details as { retryAfterMs: unknown }).retryAfterMs;
-  if (typeof retryAfterMs !== 'number' || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) return null;
+  if (typeof retryAfterMs !== 'number' || !Number.isFinite(retryAfterMs) || retryAfterMs <= 0) return null;
   return retryAfterMs;
 }
 

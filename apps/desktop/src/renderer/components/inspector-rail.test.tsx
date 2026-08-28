@@ -440,6 +440,18 @@ describe('resource detail content preview', () => {
     expect(loadResourceContent).toHaveBeenCalledTimes(1);
   });
 
+  it('treats a zero delay as no delay, rather than asking as fast as the network allows', async () => {
+    // The budget bounds how long the loop runs, not how many requests it makes:
+    // `wait(0)` resolves on the next tick, so a route answering 0 would be asked
+    // again immediately, for the whole budget. Clamping to a floor instead would
+    // mean inventing the floor.
+    const loadResourceContent = vi.fn().mockRejectedValue(stillProcessing(0));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
   it('stops retrying once the panel that asked for it is gone', async () => {
     let attempts = 0;
     const loadResourceContent = vi.fn(async (_id: string, signal?: AbortSignal) => {
