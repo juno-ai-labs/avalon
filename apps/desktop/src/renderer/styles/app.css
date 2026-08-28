@@ -943,6 +943,11 @@ pre {
    needs its own ellipsizing box — without `min-width: 0` a flex item refuses to
    shrink below its content and clips mid-word at the panel edge instead. */
 .sidebar-row-hint-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* An automation nothing can start again, and one Rally stopped, both say so on
+   the row rather than only in the colour of a dot. The warning hue is the same
+   one the automation's own screen uses for the sentence behind it. */
+.sidebar-row-icon.is-attention { color: var(--av-sys-color-warning-base); }
+.sidebar-row-hint.is-attention { color: var(--av-sys-color-warning-base); }
 .scope-badge { flex: 0 0 auto; font-size: 9px; line-height: 16px; max-width: 68px; padding: 0 4px; }
 .workstream-row { min-height: var(--av-cmp-row-height-dense); }
 .note-row { background: transparent; border: 0; min-height: var(--av-cmp-row-height-dense); text-align: left; width: 100%; }
@@ -3253,7 +3258,19 @@ pre {
 .automation-composer textarea { min-height: 54px; }
 .automation-composer .composer-toolbar { min-height: 37px; padding: 1px 8px 7px; }
 .keep-editing-hint { color: var(--av-ref-color-neutral-8); font-size: 9.5px; margin: 5px 5px 0; text-align: center; }
-.automation-conversation { margin: 20px auto auto; padding-bottom: 60px; width: min(920px, 100%); }
+/* The stop and error rows the composer wrap grows upward. They had
+   no rule at all, so a failed compile laid its message and buttons
+   out as bare inline content over the transcript behind them. */
+.automation-error-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; justify-content: center; margin-top: 7px; }
+.automation-error-actions .button { white-space: nowrap; }
+.automation-error-actions .inline-error { flex: 1 1 100%; text-align: center; }
+.automation-socket-state { display: flex; justify-content: flex-end; margin: 0 6px 5px; }
+/* The wrap is `position: fixed` over this column, so the clearance
+   below the last message has to be the wrap's own height rather
+   than a constant: at 60px the composer already covered the
+   message above it, and a stop or error row made it worse. */
+.automation-conversation { margin: 20px auto auto; padding-bottom: 132px; width: min(920px, 100%); }
+.automation-builder:has(.automation-error-actions) .automation-conversation { padding-bottom: 196px; }
 .automation-chat-surface .agent-work-timing { margin-top: 2px; }
 .automation-summary-card { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); margin: 31px 0 10px; overflow: hidden; }
 .automation-summary-card > header { align-items: flex-start; border-bottom: 1px solid var(--av-sys-color-border-default); display: flex; gap: 11px; padding: 16px; }
@@ -3373,6 +3390,30 @@ pre {
 .automation-status-dot.draft { background: var(--av-sys-color-text-muted); }
 .automation-status-dot.error { background: var(--av-sys-color-danger-base); }
 .automation-main-column { min-width: 0; }
+/* The same shape as the transcript's run-failure notice, in the warning hue:
+   this is a standing statement about the automation rather than an error from
+   something the person just did. `.is-blocking` raises it to the danger hue,
+   which is reserved here for the one case that will never run again. */
+.automation-attention-notice {
+  align-items: flex-start;
+  background: color-mix(in srgb, var(--av-sys-color-warning-base) 10%, var(--av-sys-color-surface-subtle));
+  border: 1px solid color-mix(in srgb, var(--av-sys-color-warning-base) 42%, var(--av-sys-color-border-default));
+  border-radius: var(--av-sys-size-radius-lg);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr);
+  margin-bottom: 22px;
+  padding: 12px;
+}
+.automation-attention-notice.is-blocking {
+  background: color-mix(in srgb, var(--av-sys-color-danger-base) 10%, var(--av-sys-color-surface-subtle));
+  border-color: color-mix(in srgb, var(--av-sys-color-danger-base) 42%, var(--av-sys-color-border-default));
+}
+.automation-attention-icon { color: var(--av-sys-color-warning-base); display: grid; padding-top: 1px; place-items: center; }
+.automation-attention-notice.is-blocking .automation-attention-icon { color: var(--av-sys-color-danger-base); }
+.automation-attention-copy { min-width: 0; }
+.automation-attention-copy strong { color: var(--av-sys-color-text-default); display: block; font-size: 12px; margin-bottom: 3px; }
+.automation-attention-copy p { color: var(--av-sys-color-text-subtle); font-size: 11px; line-height: 1.45; margin: 0; }
 .automation-update-banner { align-items: center; background: var(--av-sys-color-brand-wash); border: 1px solid var(--av-sys-color-brand-edge); border-radius: var(--av-sys-size-radius-md); display: grid; gap: 10px; grid-template-columns: 30px minmax(0, 1fr) auto; margin-bottom: 18px; padding: 10px; }
 .automation-update-icon { align-items: center; background: var(--av-sys-color-brand-edge); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-brand-soft); display: flex; height: 30px; justify-content: center; width: 30px; }
 .automation-update-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

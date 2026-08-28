@@ -220,6 +220,9 @@ export function createDatabase(db: D1DatabaseLike) {
         emailAddress: row.email_address == null ? null : String(row.email_address),
         scope: String(row.scope) as Scope,
         status: String(row.status) as AutomationSummary["status"],
+        // These rows predate the attention reason and cannot carry one: the
+        // subscription table has no column for it.
+        attention: null,
         nextRunAt: row.next_run_at == null ? null : String(row.next_run_at),
         lastRunAt: row.last_run_at == null ? null : String(row.last_run_at),
         updatedAt: String(row.updated_at),

@@ -76,7 +76,6 @@ const workspace: Workspace = {
 };
 
 const defaultActions = {
-  onArchiveDraftAutomation: async (): Promise<void> => undefined,
   onArchiveNote: async (): Promise<void> => undefined,
   onArchiveWorkstream: async (): Promise<void> => undefined,
   onApplyWorkstreamBatch: async (): Promise<number> => 0,
@@ -823,6 +822,37 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
+  it('marks an automation that cannot run instead of promising it a next run', async () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[
+              { ...automation, status: 'paused', attention: 'unsupported_trigger' },
+              { ...automation, id: 'automation-9', name: 'Weekly digest' },
+            ]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const stopped = screen.getByRole('link', { name: /Daily product brief/u });
+    // A schedule it will never keep is worse than no hint at all, which is
+    // what the row said before: "Next in a few hours".
+    expect(within(stopped).getByText('Will not run')).toBeVisible();
+    expect(within(stopped).queryByText(/^Next /u)).not.toBeInTheDocument();
+    expect(stopped.querySelector('.sidebar-row-icon.is-attention')).not.toBeNull();
+
+    // Inert for the automations nothing is wrong with.
+    const healthy = screen.getByRole('link', { name: /Weekly digest/u });
+    expect(within(healthy).getByText(/^Next /u)).toBeVisible();
+    expect(healthy.querySelector('.sidebar-row-icon.is-attention')).toBeNull();
+  });
+
   it('shows the requested automation actions on right click and runs the automation', async () => {
     const onRunAutomation = vi.fn(async () => undefined);
     render(
@@ -830,7 +860,6 @@ describe('Sidebar work-stream markers', () => {
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
-            automationWorkspaceTemplatesAvailable
             automations={[automation]}
             onRunAutomation={onRunAutomation}
             onSignOut={vi.fn()}
@@ -844,7 +873,10 @@ describe('Sidebar work-stream markers', () => {
     fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
 
     expect(await screen.findByRole('menuitem', { name: 'Run now' })).toBeVisible();
-    expect(screen.getByRole('menuitem', { name: 'Turn into template' })).toBeVisible();
+    // "Turn into template" had no `onSelect`, so choosing it
+    // closed the menu and did nothing at all. Sharing is
+    // offered on the automation's own overview instead.
+    expect(screen.queryByRole('menuitem', { name: 'Turn into template' })).not.toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Delete automation' })).toHaveClass('menu-item-danger');
     expect(screen.queryByRole('menuitem', { name: 'Archive draft' })).not.toBeInTheDocument();
     expect(screen.queryByText(/^[PTRADU]$/u)).not.toBeInTheDocument();
@@ -856,30 +888,8 @@ describe('Sidebar work-stream markers', () => {
     );
   });
 
-  it('removes the template action while Automation Workspace Templates Enabled is false', async () => {
-    render(
-      <MemoryRouter>
-        <Tooltip.Provider>
-          <Sidebar
-            {...defaultActions}
-            automationWorkspaceTemplatesAvailable={false}
-            automations={[automation]}
-            onSignOut={vi.fn()}
-            workspace={workspace}
-            workstreams={[]}
-          />
-        </Tooltip.Provider>
-      </MemoryRouter>,
-    );
-
-    fireEvent.contextMenu(screen.getByRole('link', { name: /Daily product brief/u }), { clientX: 120, clientY: 90 });
-
-    expect(await screen.findByRole('menuitem', { name: 'Run now' })).toBeVisible();
-    expect(screen.queryByRole('menuitem', { name: 'Turn into template' })).not.toBeInTheDocument();
-  });
-
-  it('sinks drafts under the automations that run, newest draft first, and archives one from its menu', async () => {
-    const onArchiveDraftAutomation = vi.fn(async () => undefined);
+  it('sinks drafts under the automations that run, newest draft first, and deletes one from its menu', async () => {
+    const onDeleteAutomation = vi.fn(async () => undefined);
     const staleDraft: AutomationSummary = {
       id: 'automation-2',
       name: 'Ad hoc competitor scan',
@@ -900,7 +910,7 @@ describe('Sidebar work-stream markers', () => {
           <Sidebar
             {...defaultActions}
             automations={[staleDraft, automation, freshDraft]}
-            onArchiveDraftAutomation={onArchiveDraftAutomation}
+            onDeleteAutomation={onDeleteAutomation}
             onSignOut={vi.fn()}
             workspace={workspace}
             workstreams={[]}
@@ -921,9 +931,9 @@ describe('Sidebar work-stream markers', () => {
     expect(draftRow).toHaveClass('is-draft');
     expect(draftRow.querySelector('.mini-state.draft')).not.toBeNull();
     expect(within(draftRow).getByText('Draft')).toBeVisible();
-    // A draft has no overview worth opening — it has never run. Its row goes
-    // back to the conversation that was left unfinished.
-    expect(draftRow).toHaveAttribute('href', '/automations/new?draft=automation-2');
+    // A draft has no overview worth opening — its stable automation route
+    // restores the conversation that was left unfinished.
+    expect(draftRow).toHaveAttribute('href', '/automations/automation-2');
     expect(screen.getByRole('link', { name: /Daily product brief/u }))
       .toHaveAttribute('href', '/automations/automation-1');
 
@@ -931,8 +941,17 @@ describe('Sidebar work-stream markers', () => {
 
     expect(await screen.findByRole('menuitem', { name: 'Run now' })).toHaveAttribute('data-disabled');
     expect(screen.queryByRole('menuitem', { name: 'Archive' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Archive draft' }));
-    await waitFor(() => expect(onArchiveDraftAutomation).toHaveBeenCalledWith(staleDraft));
+    // Named for the tombstone it writes, and confirmed before it
+    // writes it — an "Archive draft" that deleted for good sat
+    // directly above the delete that did confirm.
+    expect(screen.queryByRole('menuitem', { name: 'Archive draft' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete draft' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete draft' });
+    expect(within(dialog).getByText(/no way to bring a draft back/u)).toBeVisible();
+    expect(onDeleteAutomation).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(onDeleteAutomation).toHaveBeenCalledWith(staleDraft));
     expect(reportTelemetryProductIntent).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'automation_action_completed' }),
     );
@@ -954,7 +973,7 @@ describe('Sidebar work-stream markers', () => {
       updatedAt: '2026-08-02T11:00:00.000Z',
     };
     render(
-      <MemoryRouter initialEntries={['/automations/new?draft=automation-2']}>
+      <MemoryRouter initialEntries={['/automations/automation-2']}>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
@@ -967,14 +986,13 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    // Every draft row shares the builder's path and differs only in the query,
-    // so nothing but the query can tell them apart.
+    // Each durable draft owns the same stable route it keeps after acceptance.
     expect(screen.getByRole('link', { name: /Ad hoc competitor scan/u })).toHaveClass('is-active');
     expect(screen.getByRole('link', { name: /A support escalation digest/u })).not.toHaveClass('is-active');
     expect(screen.getByRole('link', { name: 'New automation' })).not.toHaveClass('is-active');
   });
 
-  it('reports an archive that the server rejected instead of failing silently', async () => {
+  it('reports a draft deletion that the server rejected instead of failing silently', async () => {
     const draft: AutomationSummary = {
       id: 'automation-4',
       name: 'Half-written monitor',
@@ -988,7 +1006,7 @@ describe('Sidebar work-stream markers', () => {
           <Sidebar
             {...defaultActions}
             automations={[draft]}
-            onArchiveDraftAutomation={vi.fn(async () => {
+            onDeleteAutomation={vi.fn(async () => {
               throw new Error('The automation could not be reached.');
             })}
             onSignOut={vi.fn()}
@@ -1000,13 +1018,14 @@ describe('Sidebar work-stream markers', () => {
     );
 
     fireEvent.contextMenu(screen.getByRole('link', { name: /Half-written monitor/u }), { clientX: 120, clientY: 90 });
-    fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive draft' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete draft' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete draft' })).getByRole('button', { name: 'Delete' }));
 
-    const dialog = await screen.findByRole('dialog', { name: 'Draft could not be archived' });
-    expect(within(dialog).getByText('The automation could not be reached.')).toBeVisible();
+    const dialog = await screen.findByRole('dialog', { name: 'Delete draft' });
+    await waitFor(() => expect(within(dialog).getByText('The automation could not be reached.')).toBeVisible());
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Draft could not be archived' })).not.toBeInTheDocument());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete draft' })).not.toBeInTheDocument());
     // The row is still there, which is what the dialog said.
     expect(screen.getByRole('link', { name: /Half-written monitor/u })).toBeVisible();
   });

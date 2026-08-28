@@ -224,9 +224,11 @@ A connector that can hand a finished result to a specific person declares `userD
 
 `requiresPersonalIdentityLink` marks the providers whose installation is workspace-wide. A team-wide bot addresses nobody on its own, so such a connection becomes a destination only for a user who has linked their own provider identity to it. `apps/api/src/services/user-delivery.ts` answers that question: it maps each delivery target type to the table recording "this Rally user is this provider user on this connection" — `slack_user_links` for `slack_agent_dm` — and is the one place a new linked provider is registered. A target type absent from that map needs no link, because its connection already belongs to one person. The connections endpoint resolves `userDelivery` per requesting user, so a disabled connection, an unlinked installation, or a connector Rally does not register in this region is simply not a destination. A connection merely marked `needs_reconnect` stays a destination: the send is what discovers whether the credential still works.
 
-Saving a destination runs the same resolution. `resolveFrozenDeliveryIdentity` asks `resolveUserDelivery` whether this connection is a destination for this user — the identical declaration, health, and identity-link test the create screen was offered on — and only then calls the target type's entry in `FROZEN_IDENTITY_RESOLVERS` for the provider tenant and user to store. Eligibility is therefore stated once: the API cannot reject a destination the screen offered, and no rule about connection scope is written into the save path. Nothing about which providers can deliver lives in the API or the client.
+Saving a **digest** destination runs the same resolution. `resolveFrozenDeliveryIdentity` asks `resolveUserDelivery` whether this connection is a destination for this user — the identical declaration, health, and identity-link test the settings screen was offered on — and only then calls the target type's entry in `FROZEN_IDENTITY_RESOLVERS` for the provider tenant and user to store. Eligibility is therefore stated once: the API cannot reject a destination the screen offered, and no rule about connection scope is written into the save path. Nothing about which providers can deliver lives in the API or the client.
 
-Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in four places, all of them registries: `AutomationDeliveryTargetTypeSchema`, the `automation_delivery_targets` shape check, `PERSONAL_IDENTITY_LINKS` if the surface needs a link, and `FROZEN_IDENTITY_RESOLVERS`. Digest delivery needs one more entry — `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
+**An automation's destinations no longer go through that path.** `AutomationAgent.resolveDeliveryTargets` resolves the whole set itself, at acceptance and again on every `PATCH`, reading the connection's status and scope and then `slack_user_links` in its own SQL. It has to: the resolution now happens inside the Durable Object that owns the automation, and it freezes the result into the acceptance row rather than a workspace table. The rules it applies are the same ones — a disabled connection, a personal connection belonging to somebody else, or a missing identity link each refuse the write — but they are stated a second time, in a second place. A change to eligibility has to be made in both.
+
+Slack declares `slack_agent_dm` with a required identity link. Teams or Discord would declare their own target type the same way and register it in `AutomationDeliveryTargetTypeSchema`, in `PERSONAL_IDENTITY_LINKS` if the surface needs a link, in `FROZEN_IDENTITY_RESOLVERS`, and — because that resolver is not on the automation path — in `AutomationAgent.resolveDeliveryTargets` and in `AutomationRunDeliveryTargetV1Schema`, the discriminated union the frozen run context carries. Digest delivery needs one more entry — `CONNECTOR_DELIVERIES` in `digest-delivery-service.ts` — but no schema change: `digest_delivery_targets.target_type` is checked per family (email versus connector-addressed) rather than enumerated. A target type with no resolver is refused at save rather than half-stored. The two identity columns are still named `slack_team_id` and `slack_user_id`; they hold the provider tenant and user of whichever connector owns the row, and a second connector is the point at which renaming them earns its migration. The saved destinations and how each is delivered are described in [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results).
 
 ### Being found, and being refused
 
@@ -518,15 +520,14 @@ Manifests and facets are cross-validated at registry construction: a connector t
    that remains stable across native Queue retries; it is not derived from or
    formatted as an external platform identifier.
 7. A later Queue delivery claims and loads the event from WorkspaceDO over typed
-   RPC, then evaluates explicit resource watches and deterministic automation
-   triggers. Semantic trigger matching runs only after deterministic prefilters.
-   WorkspaceDO issues a fresh, 15-minute processing lease for each acquisition.
+   RPC. WorkspaceDO issues a fresh, 15-minute processing lease for each acquisition.
    A duplicate returns `busy` with the lease's exact expiry; a delivery after
    expiry can recover interrupted processing, and settlement is fenced by the
    returned lease token so the expired handler cannot overwrite its successor.
-8. Create automation work idempotently; contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables. Admission and ranking are separate fenced Workflows whose durable product results—including provenance and per-user resolutions—commit in the same WorkspaceDO. The Queue consumer then settles the authoritative event as processed or failed. A transient failure calls per-message `retry()` and an exhausted message enters the existing regional activities DLQ.
-9. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
-10. Persist accepted/dismissed feedback that decides what step 8 offers next.
+8. Under that lease the consumer does the product step — contextual routing may offer unclaimed activity to an audience-authorized existing work stream, and activity it declines is enqueued into WorkspaceDO's opportunity batch tables; admission and ranking are separate fenced Workflows whose durable product results, including provenance and per-user resolutions, commit in the same WorkspaceDO — and then calls `matchExternalEventDestinations`. That is the **only** automation and watch fan-out: WorkspaceDO selects active registrations by connection, connector type, event type, and activation boundary, applies the audience rule, evaluates each one's typed DNF predicate with no model inference, and inserts one delivery row per match. There is no semantic prefilter and no semantic matcher; the evaluator grammar is deliberately closed and deterministic, and [`automation-lifecycle.md`](automation-lifecycle.md) owns it. The Queue consumer then settles the authoritative event as processed or failed. A transient failure calls per-message `retry()` and an exhausted message enters the existing regional activities DLQ.
+9. Each match becomes its own identifiers-and-hashes-only message on the same regional Queue. The consumer claims that delivery under its own lease and calls `AutomationAgent.admitExternalEvent` or `SubstreamAgent.appendWatchedResourceEvent`; the destination re-checks its own authority generation and lifecycle, admits at most one occurrence per canonical event, and the consumer settles the delivery back to WorkspaceDO under the lease token.
+10. WorkspaceDO retains/reaps the canonical event according to product retention. Legacy D1 `activities` rows are imported and scrubbed before the route opens; live events never create a D1 body handoff.
+11. Persist accepted/dismissed feedback that decides what step 8 offers next.
 
 **Why the event is present in ingress but absent from processing:** the first
 Queue message must be self-contained because no canonical WorkspaceDO event
@@ -700,7 +701,8 @@ is the only input contract Rally owns.
 This document owns the connector registry and the contract every adapter meets:
 authorization, credential freshness, health semantics, actor identity, discovery,
 refusals, activation acknowledgement, and the deterministic half of activity
-ingestion (steps 1 through 6 plus step 7's watches and automation triggers). The
+ingestion (steps 1 through 7, plus the manifest vocabulary step 8's typed
+evaluators are validated against). The
 adapter owns provider protocol details; Rally
 owns tenancy, execution principals, persistence, retries, schedules, and audit.
 
@@ -720,10 +722,11 @@ It does not own:
 | How a run holds and narrows connector authority | [`agent-harness.md`](agent-harness.md) |
 | Where automation results are delivered | [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) |
 
-Adding a personal delivery surface touches four registries and nothing else:
-`AutomationDeliveryTargetTypeSchema`, the `automation_delivery_targets` shape
-check, `PERSONAL_IDENTITY_LINKS` if the surface needs a link, and
-`FROZEN_IDENTITY_RESOLVERS` — plus `CONNECTOR_DELIVERIES` for digests. Nothing
+Adding a personal delivery surface touches registries and nothing else:
+`AutomationDeliveryTargetTypeSchema`, `AutomationRunDeliveryTargetV1Schema`,
+`PERSONAL_IDENTITY_LINKS` if the surface needs a link, `FROZEN_IDENTITY_RESOLVERS`
+for the digest path, `AutomationAgent.resolveDeliveryTargets` for the automation
+path, and `CONNECTOR_DELIVERIES` for digest delivery. Nothing
 about which providers can deliver is written into the API or the client.
 
 ## Failure modes and limits
@@ -824,6 +827,43 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-08-28 — One event engine serves automations and watched work streams
+
+**What changed:** Connector adapters normalize manifest-declared events once.
+WorkspaceDO accepts the canonical regional event; a later, leased processing
+delivery then calls `matchExternalEventDestinations`, which evaluates typed
+automation rules and exact watched-resource registrations from one candidate
+index, applies the audience rule, writes one delivery row per match, and emits
+identifiers-and-hashes-only Queue messages. Each destination rechecks its own
+authority generation and lifecycle before admitting an occurrence. The D1 scans
+that used to match automations and watches during processing are gone, along
+with the "semantic matching after deterministic prefilters" step — the evaluator
+grammar is closed and deterministic and there is no model in the path.
+Separately, an automation's delivery destinations are now resolved inside
+`AutomationAgent` rather than through `resolveFrozenDeliveryIdentity`.
+
+**Why:** Direct watch scans and a separate automation evaluator were two
+matchers over the same events, each with its own idea of retries, deduplication,
+and privacy — and the older of them read D1 rows whose authority had already
+moved. One index, one delivery ledger, and one receipt state machine is the
+smallest thing both destinations can share while each keeps its own admission.
+
+**Considered and rejected:** Matching inside `ingestConnectorEvent`, at the
+moment the canonical event commits. Ingest is the idempotency boundary for
+provider and Queue replay and has to stay cheap; matching there would run the
+whole registration index inside the transaction that deduplicates a webhook
+retry. Sending the event body to each destination instead of an id, which would
+put normalized provider content in the DLQ when a delivery exhausts.
+
+**Consequences:** A new connector extends its manifest and evaluator fixtures; it
+does not add another routing engine, and a false predicate never invokes
+inference. A restricted activity's audience is decided once, in the matcher, so
+nothing downstream re-derives it. And adding a personal delivery surface now
+means registering it in `AutomationAgent.resolveDeliveryTargets` and
+`AutomationRunDeliveryTargetV1Schema` as well as the shared registries — the
+automation and digest paths state the same eligibility rules twice, in two
+places, and a change to those rules has to be made in both.
+
 ### 2026-08-28 — Resource re-fetch follows the adapter capability
 
 **What changed:** Resource API, work-stream detail, and live origin-attachment
@@ -863,7 +903,6 @@ asked about.
 for the watch-routed arm, where a resource was actually matched. The text
 carries titles because the transcript renders text and no surface reads the
 structured field yet. Nothing in this path performs a re-fetch.
-
 ### 2026-08-26 — Connector-event processing uses native Queue retry
 
 **What changed:** After canonical WorkspaceDO ingress, new connector events send

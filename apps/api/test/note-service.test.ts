@@ -3,7 +3,6 @@ import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GenerateMeetingNotesRequest } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
-import { AutomationService } from "../src/services/automation-service";
 import { processPendingNotePrivacyNotifications } from "../src/services/note-privacy-notification-service";
 import { NoteService } from "../src/services/note-service";
 import { reapDeletedNoteObjects } from "../src/services/note-resource-cleanup";
@@ -145,16 +144,22 @@ function fixture(options: { openAuthority?: boolean } = {}): {
               ).get(input.resourceId);
               if (!linked) return [];
               const workstream = database.prepare(
-                `SELECT created_by_user_id, automation_subscription_id
-                   FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
+                `SELECT workstream.created_by_user_id, workstream.automation_subscription_id,
+                        COALESCE(subscription.scope, 'personal') AS scope
+                   FROM workstreams workstream
+                   LEFT JOIN automation_subscriptions subscription
+                     ON subscription.id = workstream.automation_subscription_id
+                  WHERE workstream.id = ? AND workstream.workspace_id = ?
+                    AND workstream.archived_at IS NULL`,
               ).get(linkedWorkstreamId, input.workspaceId) as {
                 created_by_user_id: string | null;
                 automation_subscription_id: string | null;
+                scope: "personal" | "workspace";
               } | undefined;
               if (!workstream) return [];
               return [{
                 workstreamId: linkedWorkstreamId,
-                scope: "workspace",
+                scope: workstream.scope,
                 createdByUserId: workstream.created_by_user_id,
                 automationSubscriptionId: workstream.automation_subscription_id,
                 isParticipant: false,
@@ -510,30 +515,6 @@ describe("NoteService", () => {
       liveNotes: "## Action items\n\nRetried final summary",
       notesThroughSequence: 1,
     });
-  });
-
-  it("validates note resources against automation scope and current visibility", async () => {
-    const { auth, env } = fixture();
-    const noteService = new NoteService(env, auth);
-    const note = await noteService.create({ id: noteId, title: "Automation context", scope: "personal" });
-    const validate = (service: AutomationService, scope: "personal" | "workspace", resourceIds: string[]) =>
-      (service as unknown as {
-        validateAutomationResources: (targetScope: "personal" | "workspace", ids: string[]) => Promise<string[]>;
-      }).validateAutomationResources(scope, resourceIds);
-    const ownerAutomation = new AutomationService(env, auth);
-
-    await expect(validate(ownerAutomation, "personal", [note.resourceId])).resolves.toEqual([note.resourceId]);
-    await expect(validate(ownerAutomation, "workspace", [note.resourceId]))
-      .rejects.toMatchObject({ status: 422, code: "personal_resource_in_workspace_automation" });
-
-    await noteService.update(noteId, { scope: "workspace" });
-    await expect(validate(ownerAutomation, "workspace", [note.resourceId])).resolves.toEqual([note.resourceId]);
-    const otherAutomation = new AutomationService(env, { ...auth, userId: otherUserId, role: "member" });
-    await expect(validate(otherAutomation, "personal", [note.resourceId])).resolves.toEqual([note.resourceId]);
-
-    await noteService.update(noteId, { scope: "personal" });
-    await expect(validate(otherAutomation, "personal", [note.resourceId]))
-      .rejects.toMatchObject({ status: 422, code: "invalid_automation_resource" });
   });
 
   it("bounds model context without silently cutting off either end", async () => {

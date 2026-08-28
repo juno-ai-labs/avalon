@@ -211,7 +211,7 @@ describe("the workspace template catalog", () => {
         name: "Review watcher",
         author: "Robin",
         description: "Shared with the workspace.",
-        usedBy: 1,
+        usedBy: 0,
         requiredCapabilities: [],
         latestVersion: 1,
         // The binding an installer fills in, not a manifest event type.
@@ -360,7 +360,7 @@ describe("the workspace template catalog", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as { items: Array<{ usedBy: number }> };
     expect(body.items).toHaveLength(1);
-    expect(body.items[0]!.usedBy).toBe(1);
+    expect(body.items[0]!.usedBy).toBe(0);
   });
 
   it("keeps serving a catalog that holds a row it cannot represent", async () => {

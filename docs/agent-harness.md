@@ -7,6 +7,17 @@ subordinate execution receipt for one activation of that loop; it never creates
 or identifies the loop. The loop is not a participant, separate persona,
 terminal, or general code-execution environment.
 
+Automation authoring runs the compiler through this harness from a second host,
+`AutomationAgent`, rather than from a SubstreamAgent. That host owns compiler
+admission, the ordered draft turns, the durable stream events a reconnecting
+client replays, tool receipts, elicitation, stop and retry, and the draft-only
+architect tools; accepted generated runs continue to execute in private
+SubstreamAgents through the ordinary persistent loop. What the two hosts share is
+the ordered transcript schema and the harness itself — **not** the persistent
+loop: an automation's compiler run keeps no Bind projection, and a run picked
+back up after an eviction re-enters the model from the stored conversation. See
+[`automation-lifecycle.md`](automation-lifecycle.md).
+
 The user-facing dashboard is **HyperSight**. Its harness role, plugin wire
 prefix, durable owner, persistence rows, and terminal error codes use the
 internal `block_dashboard` / `BlockDashboardAgent` name.
@@ -222,7 +233,7 @@ Request-scoped attachment tools may be added directly to the preloaded automatio
 
 The compiler narrates while it researches, and the composer streams that narration. `compileAutomation` emits `started` once for the whole compile, a `thinking` frame per inference request, a `tool` row per discovery call, and `delta` frames carrying the architect's own text: the plan it states alongside its first tool calls, and a progress update every three or four calls after that. The `# Narration` section of the compiler policy owns what belongs in that text — settled sentences about the automation, never a question, never internal deliberation, never a tool or field name — and the submission turn is the one turn that carries none of it, because Rally renders the settled result from the saved draft and the elicitation instead. Narration accumulates into one composer bubble across turns, so the compiler tracks what earlier turns settled: a route restart replays only its own turn, and the reset frame restores the earlier updates rather than clearing text the reader has already seen.
 
-The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved against the automation's own owner and scope when its `schedules` row is derived; an explicit trigger timezone wins there. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Because most of what makes a submission *ready* is a cross-field refinement no JSON Schema can state — a binding key, an inspected plugin, one declared prefilter event type — `automation_submit_draft` supplies `normalizeAutomationDraft` and `AutomationDraftSchema` — one shared parse, used by both its executor and its `validateInput` — so a rejected submission comes back to the model as the named field rather than as an external fault. The normalize step is half of that: it is what decodes the JSON-string fields at all. Structured output the compiler cannot parse becomes `502 model_output_invalid` with a request ID; the repair pass belongs to `client.structured`, which this path does not use.
+The compiler may retain an incomplete draft while asking one focused question. An omitted calendar timezone stays null through the draft and into storage, and is resolved at acceptance, inside the automation's own object, against the scope it is being accepted with and the account it will run for; an explicit trigger timezone wins there, and a zone the runtime cannot format refuses acceptance rather than being replaced. Null is the distinction that makes the resolution possible at all — a default filled in at compile time is indistinguishable from a zone the person named, and answers for the scope the compiler guessed rather than the one the automation was created with. Missing resources, event sources, destinations, or unsupported schedules still require input. The compiler never invents credentials, access, resource IDs, event types, or filter fields; ready drafts must use an inspected connector's declared activity vocabulary. Because most of what makes a submission *ready* is a cross-field refinement no JSON Schema can state — a binding key, an inspected plugin, one declared prefilter event type — `automation_submit_draft` supplies `normalizeAutomationDraft` and `AutomationDraftSchema` — one shared parse, used by both its executor and its `validateInput` — so a rejected submission comes back to the model as the named field rather than as an external fault. The normalize step is half of that: it is what decodes the JSON-string fields at all. Structured output the compiler cannot parse becomes `502 model_output_invalid` with a request ID; the repair pass belongs to `client.structured`, which this path does not use.
 
 ### Connection plugins and authority narrowing
 
@@ -999,6 +1010,43 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-28 — A second host runs the compiler, and a semantic refinement has to be in the executor
+
+**What changed:** `AutomationAgent` runs `compileAutomation` from its own
+Durable Object, supplying a draft-mutation port for the three architect tools —
+`automation_set_evaluator_rules`, `automation_submit_draft`, and
+`core_request_elicitation` — which write into that object's SQLite behind
+tool-call-keyed receipts. Connector read executors are installed; no provider
+write executor is. Separately, `automation_set_evaluator_rules` now runs its
+cross-field evaluator check **inside its executor** and points `validateInput` at
+the same function, and each of that check's issue messages was rewritten from a
+bare code into a sentence naming the shortest next call.
+
+**Why:** The authoring loop needed the same durability and recovery guarantees as
+a work stream without inheriting child-run identity, participants, or
+work-stream controls, and the harness is already the thing that provides them.
+The `validateInput` half is a defect this host found: the runtime consults
+`validateInput` only *after* an executor has thrown a `ZodError`, so a semantic
+refinement that lived only in the hook never ran at all — the rule reached
+durable storage unchecked, and the hook's whole purpose, turning an external
+fault into a named field, was silently inverted. `automation_plugin_not_inspected`
+was also not an instruction: a small model reading it has no way to know the
+answer is to call `automation_plugin_inspect` and set the rules again.
+
+**Considered and rejected:** Leaving the check in `validateInput` alone and
+relying on it being consulted, which is what shipped and did not work. Making
+the harness call `validateInput` before every executor, which would move a
+per-tool contract into the runtime for every tool that does not need it and
+change the meaning of a hook other tools already declare.
+
+**Consequences:** Changes to shared loop semantics need conformance coverage in
+both hosts, and `BlockDashboardAgent` remains independent. The rule for any tool
+whose executor parses more strictly than its advertised schema is now sharper
+than the 2026-08-25 entry below states: `validateInput` is the *reporting* path,
+not the enforcement one. **A refinement that must not be bypassed belongs in the
+executor**, with `validateInput` pointing at the same function so the two cannot
+drift.
+
 ### 2026-08-28 — The harness serves one persistent loop per substream
 
 **What changed:** The workflow host executes activations of one persistent
@@ -1340,7 +1388,6 @@ stream turn ID. Host-authored terminal guidance cannot borrow that ID and uses
 a system-notice identity instead. Inline child callers receive the terminal
 assistant response as their tool result; they do not concatenate narration from
 earlier tool-bearing turns into that response.
-
 ### 2026-08-27 — A third standing policy: an answer cites what it rests on
 
 **What changed:** `CITATION_POLICY` joins the work-stream system prompt,

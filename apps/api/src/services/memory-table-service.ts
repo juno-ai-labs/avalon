@@ -17,6 +17,7 @@ import {
   type MemoryScopeKind,
 } from "./memory-service";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
 
 type ColumnType = MemoryTableColumnType;
 
@@ -1512,7 +1513,7 @@ const columnJsonSchema = {
 
 export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  return [
+  const tools: HarnessTool[] = [
     {
       definition: {
         name: "search",
@@ -1647,6 +1648,26 @@ export function createMemoryTableTools(env: Env, input: WorkstreamWorkflowInput)
       execute: (raw, context) => invalidateRows(env, input, raw, context),
     },
   ];
+  if (!input.automationRunContext) return tools;
+  const operations = [
+    "table_search",
+    "table_describe",
+    "table_query",
+    "table_create",
+    "table_insert_rows",
+    "table_update_rows",
+    "table_invalidate_rows",
+  ] as const;
+  return tools.map((tool, index) => ({
+    ...tool,
+    execute: async (raw, context) => executeAutomationMemoryToolForRun(
+      env,
+      input,
+      operations[index]!,
+      raw,
+      context.providerIdempotencyKey,
+    ),
+  }));
 }
 
 export const __memoryTableTesting = {

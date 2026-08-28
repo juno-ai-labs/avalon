@@ -1,11 +1,19 @@
 import { Hono } from "hono";
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import {
+  AutomationDraftSchema,
+  ScopeSchema,
+  asAutomationId,
+  asUserId,
+  asWorkspaceId,
+} from "@rally/contracts";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 
 import type { Env } from "../env";
-import { workspaceDOName } from "../durable-objects/names";
+import { automationAgentName, workspaceDOName } from "../durable-objects/names";
+import { canonicalTranscriptJson } from "../durable-objects/ordered-transcript-sqlite/canonical-payload-store";
 import { ApiError } from "../lib/api-error";
+import { sha256 } from "../lib/crypto";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
@@ -80,12 +88,27 @@ async function insertToolReceipts(
  */
 const WORKSPACE_SEED_TABLES = new Set([
   "connector_connections", "automation_templates", "automation_template_versions",
-  "automation_subscriptions", "schedules", "resources",
+  "resources",
 ]);
+
+const seedAutomation = z.object({
+  id: z.string().uuid(),
+  authorUserId: z.string().uuid(),
+  source: z.object({
+    definition: AutomationDraftSchema,
+    status: z.enum(["active", "paused", "error"]),
+    scope: ScopeSchema,
+    unsupportedTrigger: z.boolean(),
+    schedules: z.array(z.object({
+      nextDueAt: z.number().int().nonnegative().nullable(),
+    }).passthrough()),
+  }).passthrough(),
+}).strict();
 
 const seedBody = z.object({
   workspaceId: z.string().uuid(),
   workspaceTables: z.record(z.string(), z.array(row)),
+  automations: z.array(seedAutomation),
   workstreams: z.array(z.object({
     id: z.string().uuid(),
     title: z.string().min(1),
@@ -104,6 +127,10 @@ const seedBody = z.object({
 const SeedProductResultSchema = z.object({
   seeded: z.boolean(),
   workspaceTables: z.record(z.string(), z.number()),
+  automations: z.array(z.object({
+    automationId: z.string().uuid(),
+    lifecycle: z.enum(["active", "paused"]),
+  }).strict()),
   workstreams: z.array(z.object({
     workstreamId: z.string().uuid(),
     copied: z.record(z.string(), z.number()),
@@ -196,6 +223,48 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
       ).bind(...columns.map((column) => record[column])).run();
     }
     workspaceCounts[table] = rows.length;
+  }
+
+  const automations = [];
+  for (const automation of body.automations) {
+    const automationId = asAutomationId(automation.id);
+    const sourceHash = await sha256(canonicalTranscriptJson(automation.source));
+    const agent = await durableObjectStubForWorkspace(
+      env,
+      env.AUTOMATION_AGENTS,
+      asWorkspaceId(workspaceId),
+      automationAgentName(env.AVALON_REGION, asWorkspaceId(workspaceId), automationId),
+    );
+    const receipt = await agent.importAcceptedAutomation({
+      schemaVersion: 1,
+      automationId,
+      workspaceId,
+      authorUserId: automation.authorUserId,
+      region: env.AVALON_REGION,
+      sourceHash,
+      source: automation.source,
+    });
+    await workspaceObject.applyAutomationProjection({
+      schemaVersion: 1,
+      automationId,
+      workspaceId,
+      authorUserId: automation.authorUserId,
+      authorityGeneration: receipt.authorityGeneration,
+      projectionVersion: 1,
+      payloadHash: sourceHash,
+      lifecycle: receipt.lifecycle,
+      scope: automation.source.scope,
+      title: automation.source.definition.name,
+      description: automation.source.definition.description,
+      nextRunAt: automation.source.schedules.reduce<number | null>((value, schedule) => (
+        schedule.nextDueAt !== null && (value === null || schedule.nextDueAt < value)
+          ? schedule.nextDueAt
+          : value
+      ), null),
+      attentionCode: automation.source.unsupportedTrigger ? "unsupported_trigger"
+        : automation.source.status === "error" ? "legacy_runtime_error" : null,
+    });
+    automations.push({ automationId, lifecycle: receipt.lifecycle });
   }
 
   const results = [];
@@ -332,5 +401,5 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     }
     results.push({ workstreamId: workstream.id, copied });
   }
-  return { seeded: true, workspaceTables: workspaceCounts, workstreams: results };
+  return { seeded: true, workspaceTables: workspaceCounts, automations, workstreams: results };
 }

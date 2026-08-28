@@ -2,6 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
+  AlertTriangle,
   CalendarClock,
   Check,
   ChevronRight,
@@ -9,7 +10,6 @@ import {
   CirclePause,
   Clock3,
   Copy,
-  Edit3,
   Ellipsis,
   LoaderCircle,
   Mail,
@@ -20,7 +20,6 @@ import {
   RefreshCcw,
   Share2,
   ShieldCheck,
-  Sparkles,
   Trash2,
   Users,
   Zap,
@@ -28,6 +27,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
+import { automationAttentionNotice } from '../lib/automation-attention';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import {
@@ -36,7 +36,7 @@ import {
   telemetryCountBucket,
   telemetryVisibility,
 } from '../lib/telemetry';
-import type { AutomationActivitySource, AutomationRunSummary, WorkstreamConnection } from '../lib/types';
+import type { AutomationRunSummary } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
@@ -45,66 +45,46 @@ import { RallyMark, AvatarStack, Badge, Button, EmptyState, IconButton, InlineEr
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
 
-function eligibleActivitySourceConnections(
-  connections: WorkstreamConnection[],
-  connectorType: string,
-  scope: 'You' | 'Workspace',
-): WorkstreamConnection[] {
-  return connections.filter((connection) =>
-    connection.status === 'healthy'
-    && connection.connectorType === connectorType
-    && (scope === 'You' || connection.scope === 'workspace'));
+/**
+ * What separates one run from the next, since the title cannot.
+ *
+ * Every run of an automation is titled after the automation, so a
+ * list of them is the same sentence repeated. What actually differs
+ * is why each one started and when.
+ */
+function runTriggerLabel(triggerType: string): string {
+  if (triggerType === 'manual') return 'Run now';
+  if (triggerType === 'scheduled') return 'On schedule';
+  if (triggerType === 'inbound_email') return 'By email';
+  if (triggerType === 'external_event') return 'By activity';
+  return triggerType.replaceAll('_', ' ');
 }
 
-function ActivitySourceSelectList({
-  sources,
-  connections,
-  selected,
-  scope,
-  onChange,
-}: {
-  sources: AutomationActivitySource[];
-  connections: WorkstreamConnection[];
-  selected: Record<string, string>;
-  scope: 'You' | 'Workspace';
-  onChange: (bindings: Record<string, string>) => void;
-}): React.JSX.Element | null {
-  if (!sources.length) return null;
-  return (
-    <div className="automation-source-fields">
-      {sources.map((source) => {
-        const candidates = eligibleActivitySourceConnections(connections, source.connectorType, scope);
-        return (
-          <label className="form-field" key={source.bindingKey}>
-            <span>{source.bindingKey.replaceAll('_', ' ')}</span>
-            <select
-              aria-label={`Connector for ${source.bindingKey}`}
-              onChange={(event) => onChange({ ...selected, [source.bindingKey]: event.target.value })}
-              value={selected[source.bindingKey] ?? ''}
-            >
-              <option value="">Select a connection…</option>
-              {candidates.map((connection) => (
-                <option key={connection.id} value={connection.modelPluginId}>{connection.displayName}</option>
-              ))}
-            </select>
-          </label>
-        );
-      })}
-    </div>
-  );
+function runResultSummary(run: AutomationRunSummary): string {
+  if (run.resultSummary) return run.resultSummary;
+  if (run.status === 'running') return 'Rally is working…';
+  // "No result summary" is what a failed run said before, which
+  // reads as an absence rather than as the thing that happened.
+  if (run.status === 'failed') return 'Failed';
+  if (run.status === 'stopped') return 'Stopped';
+  return 'No result summary';
 }
 
 function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void }): React.JSX.Element {
   return (
     <button className="automation-run-row" onClick={onOpen} type="button">
-      <StatusDot compact status={run.status} />
+      {/* With a tooltip: a compact dot carries no visible label, so
+          without one its colour is the only thing saying how the
+          run ended — and colour alone is not a reading. */}
+      <StatusDot compact status={run.status} tooltip />
       <span className="automation-run-main">
-        <strong>{run.title}</strong>
-        <small>{run.resultSummary ?? (run.status === 'running' ? 'Rally is working…' : 'No result summary')}</small>
+        <strong>{runTriggerLabel(run.triggerType)}</strong>
+        <small>{runResultSummary(run)}</small>
       </span>
       {run.participants?.length ? <AvatarStack limit={3} members={run.participants} /> : <span />}
       {run.durationMs !== undefined && <span className="run-duration">{formatDuration(run.durationMs)}</span>}
-      <Badge>{run.triggerType.toUpperCase()}</Badge>
+      {/* The trigger badge is gone: the row's own title now names
+          the trigger, and saying it twice per row is noise. */}
       <time dateTime={run.triggerTime}>{formatRelative(run.triggerTime)}</time>
       <ChevronRight aria-hidden="true" size={14} />
     </button>
@@ -122,12 +102,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   const closeRail = useUiStore((state) => state.closeRail);
   const setSidebarOpen = useUiStore((state) => state.setSidebarOpen);
   const [filter, setFilter] = useState<RunFilter>('all');
-  const [editOpen, setEditOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
-  const [updateOpen, setUpdateOpen] = useState(false);
-  const [instructions, setInstructions] = useState('');
-  const [editSourcePluginIds, setEditSourcePluginIds] = useState<Record<string, string>>({});
-  const [adoptSourcePluginIds, setAdoptSourcePluginIds] = useState<Record<string, string>>({});
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [automationEmailCopyState, setAutomationEmailCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
@@ -149,7 +124,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   useEffect(() => {
     if (workspaceTemplatesEnabled) return;
     setShareOpen(false);
-    setUpdateOpen(false);
   }, [workspaceTemplatesEnabled]);
 
   useEffect(() => {
@@ -171,13 +145,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     staleTime: 10_000,
   });
 
-  useEffect(() => {
-    if (automation.data) {
-      setInstructions(automation.data.instructions);
-      setEditSourcePluginIds(automation.data.activitySourcePluginIds);
-    }
-  }, [automation.data]);
-
   const reportedAutomationId = useRef<string | null>(null);
   useEffect(() => {
     const detail = automation.data;
@@ -192,25 +159,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       runCount: telemetryCountBucket(detail.runs.length),
     });
   }, [automation.data]);
-
-  useEffect(() => {
-    const detail = automation.data;
-    if (!detail?.templateUpdate || !connections.data) return;
-    const next: Record<string, string> = {};
-    for (const source of detail.templateUpdate.activitySources) {
-      const candidates = eligibleActivitySourceConnections(
-        connections.data,
-        source.connectorType,
-        detail.executionScope,
-      );
-      const currentPluginId = detail.activitySourcePluginIds[source.bindingKey];
-      const current = candidates.find((connection) => connection.modelPluginId === currentPluginId);
-      const suggested = candidates.find((connection) => connection.modelPluginId === source.suggestedPluginId);
-      const chosen = current ?? suggested ?? (candidates.length === 1 ? candidates[0] : undefined);
-      if (chosen) next[source.bindingKey] = chosen.modelPluginId;
-    }
-    setAdoptSourcePluginIds(next);
-  }, [automation.data, connections.data]);
 
   const statusMutation = useMutation({
     mutationFn: (action: 'pause' | 'resume') => api!.setAutomationStatus(id, action),
@@ -239,16 +187,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       queryClient.setQueryData(['automation', id], updated);
     },
   });
-  const update = useMutation({
-    mutationFn: () => api!.updateAutomation(id, {
-      instructions: instructions.trim(),
-      activitySourcePluginIds: editSourcePluginIds,
-    }),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(['automation', id], updated);
-      setEditOpen(false);
-    },
-  });
   const share = useMutation({
     mutationFn: () => api!.shareAutomation(id),
   });
@@ -257,8 +195,8 @@ export function AutomationOverviewScreen(): React.JSX.Element {
     onSuccess: async () => {
       // Deleting closes any run that was opened ahead of its planned time, so
       // the work-stream list is stale too. The automation list is not
-      // invalidated here: the delete writes `automation_subscriptions`, and
-      // WorkspaceDO pushes the rewritten list off the back of that write.
+      // invalidated here: AutomationAgent deletes its authority and WorkspaceDO
+      // pushes the resulting directory projection to the sidebar.
       await queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       setDeleteOpen(false);
       // Replace rather than push: this screen is showing the automation that
@@ -271,14 +209,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       void navigate('/workstreams/new', { replace: true });
     },
   });
-  const adoptUpdate = useMutation({
-    mutationFn: (versionId: string) => api!.adoptAutomationUpdate(id, versionId, adoptSourcePluginIds),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(['automation', id], updated);
-      setUpdateOpen(false);
-    },
-  });
-
   if (automation.isLoading) return <OpeningState label="Opening automation…" />;
   if (automation.error || !automation.data) {
     return (
@@ -294,6 +224,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   }
 
   const detail = automation.data;
+  const attention = detail.attention ? automationAttentionNotice(detail.attention) : null;
   const automationEmailAddress = detail.emailAddress;
   const deliveryTargets = detail.deliveryTargets ?? [];
   const availableDeliveryConnections = (connections.data ?? []).filter((connection) =>
@@ -387,7 +318,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         </div>
         <div className="automation-overview-actions window-no-drag">
           <IconButton label="Open runs inspector" onClick={() => openRail('runs')}><PanelRight size={15} /></IconButton>
-          <Button onClick={() => setEditOpen(true)}><Edit3 size={14} /> Edit</Button>
           {workspaceTemplatesEnabled && <Button onClick={() => setShareOpen(true)}><Share2 size={14} /> Share</Button>}
           <Button
             disabled={statusMutation.isPending}
@@ -492,14 +422,23 @@ export function AutomationOverviewScreen(): React.JSX.Element {
           </aside>
 
           <div className="automation-main-column">
-            {workspaceTemplatesEnabled && detail.templateUpdate && (
-              <section className="automation-update-banner" aria-label="Template update available">
-                <span className="automation-update-icon"><Sparkles aria-hidden="true" size={15} /></span>
-                <span className="automation-update-copy">
-                  <strong>Version {detail.templateUpdate.versionNumber} is available</strong>
-                  <small>Your automation stays on version {detail.versionNumber} until you choose to update.</small>
-                </span>
-                <Button className="button-quiet" onClick={() => setUpdateOpen(true)}>Review update <ChevronRight size={13} /></Button>
+            {/* Beside the Status fact rather than under it: the facts column is
+                250px, and the sentence that matters most here — an automation
+                that will never start again — is not one to set in a column that
+                becomes a half-width cell on a narrow window. It reads as the
+                first thing on the automation, level with the status it
+                explains. */}
+            {attention && (
+              <section
+                aria-label="Automation needs attention"
+                className={clsx('automation-attention-notice', attention.blocking && 'is-blocking')}
+                role="status"
+              >
+                <span aria-hidden="true" className="automation-attention-icon"><AlertTriangle size={16} /></span>
+                <div className="automation-attention-copy">
+                  <strong>{attention.heading}</strong>
+                  <p>{attention.body}</p>
+                </div>
               </section>
             )}
             <section className="automation-description">
@@ -510,7 +449,10 @@ export function AutomationOverviewScreen(): React.JSX.Element {
               <div className="instructions-card"><pre>{detail.instructions}</pre></div>
             </section>
             <section className="run-history-section">
-              <header><div><h2>Runs</h2><span>{detail.runs.length} total</span></div></header>
+              {/* "Recent", not a total: the API returns the newest
+                  page of runs rather than all of them, so a count
+                  of what arrived is not how many there have been. */}
+              <header><div><h2>Recent runs</h2><span>Last {detail.runs.length}</span></div></header>
               <div className="run-filter" role="group" aria-label="Filter automation runs">
                 {(['all', 'scheduled', 'manual'] as const).map((value) => (
                   <button className={filter === value ? 'is-selected' : ''} key={value} onClick={() => setFilter(value)} type="button">
@@ -529,114 +471,6 @@ export function AutomationOverviewScreen(): React.JSX.Element {
       </div>
 
       <InspectorRail onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)} runs={detail.runs} />
-
-      {workspaceTemplatesEnabled && <Modal
-        description="Review the workspace template changes. Nothing changes for this automation until you adopt the new version."
-        footer={detail.templateUpdate ? (
-          <>
-            <Button onClick={() => setUpdateOpen(false)}>Keep version {detail.versionNumber}</Button>
-            <Button
-              className="button-primary"
-              disabled={adoptUpdate.isPending || detail.templateUpdate.activitySources.some((source) => !adoptSourcePluginIds[source.bindingKey])}
-              onClick={() => adoptUpdate.mutate(detail.templateUpdate!.versionId)}
-            >
-              {adoptUpdate.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}
-              Adopt version {detail.templateUpdate.versionNumber}
-            </Button>
-          </>
-        ) : undefined}
-        onOpenChange={setUpdateOpen}
-        open={updateOpen && Boolean(detail.templateUpdate)}
-        title="Review template update"
-      >
-        {detail.templateUpdate && (
-          <div className="automation-update-review">
-            <div className="automation-update-comparison">
-              <section>
-                <header><span>Current</span><Badge>Version {detail.versionNumber}</Badge></header>
-                <pre>{detail.instructions}</pre>
-              </section>
-              <span className="automation-update-arrow" aria-hidden="true"><ChevronRight size={16} /></span>
-              <section className="is-new">
-                <header><span>Available</span><Badge>Version {detail.templateUpdate.versionNumber}</Badge></header>
-                <pre>{detail.templateUpdate.instructions}</pre>
-              </section>
-            </div>
-            <dl className="automation-update-details">
-              <div>
-                <dt>Trigger</dt>
-                <dd><span>{detail.triggerSummary}</span><ChevronRight aria-hidden="true" size={12} /><strong>{detail.templateUpdate.triggerSummary}</strong></dd>
-              </div>
-              <div>
-                <dt>Required capabilities</dt>
-                <dd className="automation-update-change">
-                  <span className="automation-update-value automation-update-badges">
-                    {detail.capabilities.length
-                      ? detail.capabilities.map((capability) => <Badge key={capability}>{capability}</Badge>)
-                      : <span>None</span>}
-                  </span>
-                  <ChevronRight aria-hidden="true" size={12} />
-                  <span className="automation-update-value is-new automation-update-badges">
-                    {detail.templateUpdate.capabilities.length
-                      ? detail.templateUpdate.capabilities.map((capability) => <Badge key={capability}>{capability}</Badge>)
-                      : <span>None</span>}
-                  </span>
-                </dd>
-              </div>
-              {(detail.expectedOutputs.length > 0 || detail.templateUpdate.expectedOutputs.length > 0) && (
-                <div>
-                  <dt>Expected output</dt>
-                  <dd className="automation-update-change">
-                    <span className="automation-update-value">{detail.expectedOutputs.join(' · ') || 'Not specified'}</span>
-                    <ChevronRight aria-hidden="true" size={12} />
-                    <span className="automation-update-value is-new">{detail.templateUpdate.expectedOutputs.join(' · ') || 'Not specified'}</span>
-                  </dd>
-                </div>
-              )}
-            </dl>
-            <ActivitySourceSelectList
-              connections={connections.data ?? []}
-              onChange={setAdoptSourcePluginIds}
-              selected={adoptSourcePluginIds}
-              scope={detail.executionScope}
-              sources={detail.templateUpdate.activitySources}
-            />
-            {detail.instructions === detail.templateUpdate.instructions && (
-              <p className="automation-update-note">Instructions are unchanged; this version updates the trigger or output settings.</p>
-            )}
-            {adoptUpdate.error && <InlineError>{adoptUpdate.error.message}</InlineError>}
-          </div>
-        )}
-      </Modal>}
-
-      <Modal
-        description="Update the natural-language instructions used to assemble each run’s context."
-        footer={
-          <>
-            <Button onClick={() => setEditOpen(false)}>Cancel</Button>
-            <Button
-              className="button-primary"
-              disabled={!instructions.trim() || update.isPending || detail.activitySources.some((source) => !editSourcePluginIds[source.bindingKey])}
-              onClick={() => update.mutate()}
-            >
-              {update.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Save changes
-            </Button>
-          </>
-        }
-        onOpenChange={setEditOpen}
-        open={editOpen}
-        title={`Edit ${detail.name}`}
-      >
-        <label className="form-field"><span>Instructions</span><textarea onChange={(event) => setInstructions(event.target.value)} rows={12} value={instructions} /></label>
-        <ActivitySourceSelectList
-          connections={connections.data ?? []}
-          onChange={setEditSourcePluginIds}
-          selected={editSourcePluginIds}
-          scope={detail.executionScope}
-          sources={detail.activitySources}
-        />
-        {update.error && <InlineError>{update.error.message}</InlineError>}
-      </Modal>
 
       {workspaceTemplatesEnabled && <Modal
         description="Publishing creates a versioned workspace template. Coworkers bind their own connections when they subscribe."
@@ -670,9 +504,16 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         open={deleteOpen}
         title="Delete automation"
       >
+        {/* What deleting actually does. The reassurance this
+            said before — that the runs and their work streams
+            stay where they are — was the opposite of the
+            truth: the delete enqueues an archive for every work
+            stream the runs created, and the runs leave the
+            product with the automation. */}
         <p className="modal-copy">
-          <strong>{detail.name}</strong> stops running and leaves the sidebar for good. Its past
-          runs and the work streams it created stay where they are.
+          <strong>{detail.name}</strong> stops running and leaves the sidebar for good.
+          Every past run — and the work stream each one created — is archived with it,
+          and Rally has no way to bring them back.
         </p>
         {remove.error && <InlineError>{remove.error.message}</InlineError>}
       </Modal>

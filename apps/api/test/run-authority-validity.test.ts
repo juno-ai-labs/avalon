@@ -1,4 +1,4 @@
-import { asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asAutomationId, asHarnessRunId, asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +22,7 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
 const RUN_ID = "00000000-0000-4000-8000-000000000003";
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000004");
-const SUBSCRIPTION_ID = "00000000-0000-4000-8000-000000000005";
+const SUBSCRIPTION_ID = asAutomationId("00000000-0000-4000-8000-000000000005");
 const ACTIVITY_ID = "00000000-0000-4000-8000-000000000006";
 const CONNECTION_ID = "00000000-0000-4000-8000-000000000008";
 
@@ -39,6 +39,17 @@ type AuthorityState = {
   hasEnabledSchedule: number;
   emailRouteStatus: string;
   activityExists: boolean;
+  /**
+   * What the automation's own durable object says about the run right now.
+   *
+   * Separate from the legacy `subscription*` fields above, and deliberately so:
+   * those are the D1 rows the revalidation must *not* re-read, while this is
+   * the one live fact it does — whether the automation still consents to the
+   * run it admitted.
+   */
+  agentLifecycle: string;
+  agentAuthorityGeneration: number;
+  agentRunPresent: boolean;
 };
 
 /** The connector event the WorkspaceDO answers a trigger lookup with. */
@@ -114,6 +125,18 @@ class AuthorityDatabase {
           connectorEvent: async () => (this.state.activityExists
             ? { connectorType: "github", activity: connectorActivity() }
             : null),
+        }),
+      }),
+      // The automation's own object, which is the only authority on whether it
+      // still wants this run finished.
+      AUTOMATION_AGENTS: createCloudflareTestBinding<Env["AUTOMATION_AGENTS"]>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({
+          readRunAuthority: async () => ({
+            lifecycle: this.state.agentLifecycle,
+            authorityGeneration: this.state.agentAuthorityGeneration,
+            runPresent: this.state.agentRunPresent,
+          }),
         }),
       }),
     });
@@ -194,6 +217,9 @@ function state(overrides: Partial<AuthorityState> = {}): AuthorityState {
     hasEnabledSchedule: 1,
     emailRouteStatus: "active",
     activityExists: true,
+    agentLifecycle: "active",
+    agentAuthorityGeneration: 1,
+    agentRunPresent: true,
     ...overrides,
   };
 }
@@ -210,43 +236,83 @@ function input(activityId: string | null = null): WorkstreamWorkflowInput {
     activityId,
     executionPrincipal: { type: "user", userId: USER_ID },
     reason: "automation",
+    automationRunContext: {
+      schemaVersion: 1,
+      automationId: SUBSCRIPTION_ID,
+      workspaceId: WORKSPACE_ID,
+      runId: RUN_ID,
+      authorityGeneration: 1,
+      definitionRevision: 1,
+      definition: {
+        name: "Issue watcher",
+        description: "Watches issues.",
+        overview: "Report matching issues.",
+        instructions: "Report the issue.",
+        requiredCapabilities: [],
+        expectedOutputs: [],
+        defaultBehavior: {},
+        recommendedPlugins: [],
+        memoryTables: [],
+      },
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      connectorBindings: {},
+      deliveryTargets: [],
+      modelOverride: null,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      trigger: activityId
+        ? {
+            kind: "external_event",
+            workspaceEventId: activityId,
+            eventType: "issue.created",
+            occurredAt: Date.parse("2026-08-18T00:00:00.000Z"),
+            payloadHash: "activity-hash",
+          }
+        : { kind: "manual", requestedByUserId: USER_ID },
+      opening: null,
+      memoryScope: { automationId: SUBSCRIPTION_ID, authorityGeneration: 1 },
+    },
   };
 }
 
 describe("durable run authority revalidation", () => {
-  it("rejects a subscription paused between model turns", async () => {
+  it("keeps an admitted run immutable when its automation is later paused", async () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
     database.state.subscriptionStatus = "paused";
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
-      .rejects.toThrow(/no longer active/i);
+      .resolves.toEqual(snapshot);
   });
 
-  it("rejects a subscription deleted between model turns", async () => {
+  it("keeps an admitted run immutable when its automation is later deleted", async () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
     database.state.subscriptionLifecycleState = "deleted";
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
-      .rejects.toThrow(/no longer active/i);
+      .resolves.toEqual(snapshot);
   });
 
-  it("rejects a trigger disabled after admission", async () => {
+  it("does not revoke an admitted run when a later schedule is disabled", async () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
     database.state.hasEnabledSchedule = 0;
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
-      .rejects.toThrow(/trigger was disabled/i);
+      .resolves.toEqual(snapshot);
   });
 
   it("rejects a template-version change so run authority cannot widen", async () => {
     const database = new AuthorityDatabase(state());
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
-    database.state.templateVersionId = "version-two";
-    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+    const changed = input();
+    changed.automationRunContext = {
+      ...changed.automationRunContext!,
+      definitionRevision: 2,
+    };
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, changed, snapshot))
       .rejects.toThrow(/immutable run authority changed/i);
   });
 
-  it("rejects removed activity trigger evidence", async () => {
+  it("does not re-read mutable connector evidence after admission", async () => {
     const database = new AuthorityDatabase(state({
       triggerType: "issue.created",
       triggerActivityId: ACTIVITY_ID,
@@ -255,10 +321,10 @@ describe("durable run authority revalidation", () => {
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, activityInput);
     database.state.activityExists = false;
     await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, activityInput, snapshot))
-      .rejects.toThrow(/trigger is no longer available/i);
+      .resolves.toEqual(snapshot);
   });
 
-  it("revalidates connector trigger evidence against WorkspaceDO after cutover", async () => {
+  it("does not consult WorkspaceDO for connector evidence frozen into the run", async () => {
     const database = new AuthorityDatabase(state({
       triggerType: "issue.created",
       triggerActivityId: ACTIVITY_ID,
@@ -282,12 +348,32 @@ describe("durable run authority revalidation", () => {
 
     const snapshot = await __integrationTesting.assertRunAuthorityStillValid(env, activityInput);
     expect(database.legacyActivityReads).toBe(0);
-    expect(connectorEvent).toHaveBeenCalledWith({ workspaceId: WORKSPACE_ID, eventId: ACTIVITY_ID });
+    expect(connectorEvent).not.toHaveBeenCalled();
 
     durableActivityExists = false;
     await expect(__integrationTesting.assertRunAuthorityStillValid(env, activityInput, snapshot))
-      .rejects.toThrow(/trigger is no longer available/i);
+      .resolves.toEqual(snapshot);
     expect(database.legacyActivityReads).toBe(0);
+    expect(connectorEvent).not.toHaveBeenCalled();
+  });
+
+  it("stops a run whose automation was paused after it was admitted", async () => {
+    const database = new AuthorityDatabase(state());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
+    database.state.agentLifecycle = "paused";
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+      .rejects.toThrow(/no longer running/i);
+  });
+
+  it("stops a run left behind by a newer authority generation", async () => {
+    const database = new AuthorityDatabase(state());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
+    // What a pause-and-resume, or a re-accepted definition, looks like from
+    // here: the automation is running again, but not the run this tool belongs
+    // to. Lifecycle alone would read as consent.
+    database.state.agentAuthorityGeneration = 2;
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+      .rejects.toThrow(/no longer running/i);
   });
 
   it("rejects an archived work stream before a tool can run", async () => {

@@ -122,6 +122,11 @@ describe("the development seed", () => {
     ) as {
       workspaceId: string;
       workspaceTables: Record<string, Record<string, unknown>[]>;
+      automations: {
+        id: string;
+        authorUserId: string;
+        source: { definition: unknown; status: string; scope: string };
+      }[];
       workstreams: {
         id: string; nextSequenceNumber: number;
         messages: {
@@ -135,6 +140,15 @@ describe("the development seed", () => {
       }[];
     };
     expect(fixtures.workspaceId).toMatch(/^[0-9a-f-]{36}$/u);
+    expect(fixtures.workspaceTables).not.toHaveProperty("automation_subscriptions");
+    expect(fixtures.automations.length).toBeGreaterThan(0);
+    for (const automation of fixtures.automations) {
+      expect(automation.id).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(automation.authorUserId).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(automation.source.definition).toBeTypeOf("object");
+      expect(["active", "paused"]).toContain(automation.source.status);
+      expect(["personal", "workspace"]).toContain(automation.source.scope);
+    }
     expect(fixtures.workstreams.length).toBeGreaterThan(0);
     for (const workstream of fixtures.workstreams) {
       const sequences = workstream.messages.map((message) => message.sequence_number);

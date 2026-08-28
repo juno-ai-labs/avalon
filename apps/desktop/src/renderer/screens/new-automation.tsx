@@ -7,23 +7,28 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  Copy,
   Ellipsis,
   Info,
   LoaderCircle,
   Mail,
   MessageSquare,
+  RefreshCcw,
+  Square,
+  Trash2,
   Users,
   WandSparkles,
   Zap,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
+import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
-import { RallyMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
+import { RallyMark, Badge, Button, EmptyState, IconButton, InlineError, Modal, SocketStatusIndicator } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
@@ -46,6 +51,9 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { useAutomationAgentSocket } from '../lib/use-automation-agent-socket';
+import { useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useWindowFilePaste } from '../lib/use-file-paste';
 import type {
   AgentModelOverride,
@@ -53,6 +61,7 @@ import type {
   AutomationDraftQuestion,
   AutomationDraftResponse,
   AutomationDraftSummary,
+  AutomationSummary,
   AutomationScope,
   Message,
   MessageAttachment,
@@ -62,6 +71,8 @@ import type {
 } from '../lib/types';
 
 const AUTOMATION_CHAT_ID = 'automation-creator';
+/** The blank builder's conversation, before a turn has named a draft. */
+const NEW_AUTOMATION_CONVERSATION = 'new-automation';
 const AUTOMATION_USER_ID = 'automation-current-user';
 const AUTOMATION_USER = {
   id: AUTOMATION_USER_ID,
@@ -136,6 +147,47 @@ export function retainableNarration(narration: string): string {
   return `${(lastBreak > 0 ? head.slice(0, lastBreak) : head).trimEnd()}\n\n…`;
 }
 
+/**
+ * What a failed turn says out loud.
+ *
+ * AutomationAgent stores the thrown `error.message` verbatim, and every
+ * string the agent throws is internal vocabulary — `automation_evaluator_
+ * rules_required`, `memory_table_key_schema_invalid`. Rendering those puts
+ * "evaluator", "compiler", "definition" and "memory table" in front of
+ * somebody who asked Rally to watch a blog, and none of them names
+ * anything they can act on. The raw text stays as the last resort, for a
+ * code no release of the API has taught this map yet.
+ */
+const COMPILER_ERROR_COPY: Record<string, string> = {
+  automation_evaluator_rules_required: 'Rally could not work out how to check this automation’s results. Describe what a good result looks like and send it again.',
+  automation_compiler_busy: 'Rally is still working on the previous message. Wait for it to finish, then send this one.',
+  automation_plugin_unavailable: 'One of the connections this automation needs is unavailable. Reconnect it from Settings, then try again.',
+  memory_table_key_schema_invalid: 'Rally could not settle on what this automation should remember between runs. Describe what it should keep track of and send it again.',
+  automation_definition_not_ready: 'This automation is not finished yet. Keep describing what it should do.',
+  automation_not_draft: 'This automation has already been created, so it cannot be edited as a draft.',
+  automation_workspace_scope_requires_admin: 'Only a workspace owner or admin can create a workspace automation. Choose You under Runs as.',
+  automation_authority_mismatch: 'This draft changed somewhere else while you were writing. Reopen it to pick up the newest version.',
+  automation_not_active: 'This automation is not running, so it cannot do that right now.',
+  automation_acceptance_conflict: 'This draft changed while it was being created. Reopen it and create it again.',
+  automation_personal_connection_access_denied: 'This automation cannot use that connection. Choose one of your own connections, or ask an admin to share it with the workspace.',
+  automation_compiler_run_not_retryable: 'That message can no longer be retried. Send it again to pick the conversation back up.',
+  automation_compiler_run_not_found: 'That message is no longer available to retry. Send it again to pick the conversation back up.',
+};
+
+export function automationErrorCopy(
+  code: string | null | undefined,
+  message?: string | null,
+): string {
+  const known = code ? COMPILER_ERROR_COPY[code] : undefined;
+  if (known) return known;
+  const fallbackCode = message ? COMPILER_ERROR_COPY[message] : undefined;
+  if (fallbackCode) return fallbackCode;
+  // A sentence the API wrote for a person still reads better than a code;
+  // a bare snake_case token reads as neither, so it is not shown at all.
+  if (message && /\s/u.test(message.trim())) return message;
+  return 'Rally could not finish this turn.';
+}
+
 function settleThought(turns: Message[], thoughtId: string): Message[] {
   const settledAt = Date.now();
   return turns.map((message) => {
@@ -151,29 +203,6 @@ function settleThought(turns: Message[], thoughtId: string): Message[] {
       },
     };
   });
-}
-
-function AutomationMessageBlock({
-  loadAttachmentContent,
-  message,
-  onAnswerElicitation,
-  onOpenAttachment,
-}: {
-  loadAttachmentContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
-  message: Message;
-  onAnswerElicitation?: (answer: string | string[] | null) => Promise<void>;
-  onOpenAttachment?: (preview: AttachmentPreview) => void;
-}): React.JSX.Element {
-  return (
-    <MessageBlock
-      currentUserId={AUTOMATION_USER_ID}
-      loadAttachmentContent={loadAttachmentContent}
-      message={message}
-      onAnswerElicitation={(_elicitationId, answer) => onAnswerElicitation?.(answer) ?? Promise.resolve()}
-      onOpenAttachment={onOpenAttachment}
-      onResolveSuggestion={async () => undefined}
-    />
-  );
 }
 
 const examples = [
@@ -376,16 +405,82 @@ function automationQuestionMessage(
  * draft so a choice the person walked away from is still a choice they can
  * make, rather than a sentence describing one. */
 function resumedTurns(
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
-  draft: AutomationDraftResponse,
+  messages: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    turnId?: string;
+    clientMessageId?: string | null;
+    attachmentIds?: string[];
+    createdAt?: number;
+  }>,
+  draft: AutomationDraftResponse | null,
+  current: Message[] = [],
 ): Message[] {
   const lastIndex = messages.length - 1;
-  return messages.map((message, index) => {
-    if (index === lastIndex && message.role === 'assistant' && draft.question) {
-      return automationQuestionMessage(draft.assistantMessage ?? message.content, draft.question);
+  const merged = [...current];
+  messages.forEach((message, index) => {
+    const authorType = message.role === 'user' ? 'human' : 'agent';
+    const elicitationIndex = message.role === 'user' && message.clientMessageId
+      ? merged.findIndex((candidate) =>
+          candidate.messageType === 'elicitation' && candidate.id === message.clientMessageId)
+      : -1;
+    if (elicitationIndex >= 0) {
+      merged[elicitationIndex] = { ...merged[elicitationIndex]!, clientMessageId: message.clientMessageId ?? undefined };
+      return;
     }
-    return automationTextMessage(`resumed-${index}`, message.role === 'user' ? 'human' : 'agent', message.content);
+    const existingIndex = merged.findIndex((candidate) =>
+      (message.turnId !== undefined && candidate.id === message.turnId)
+      || (message.clientMessageId !== undefined && message.clientMessageId !== null
+        && candidate.clientMessageId === message.clientMessageId)
+      || (message.clientMessageId !== undefined && message.clientMessageId !== null
+        && candidate.id === message.clientMessageId)
+      || (candidate.authorType === authorType && candidate.text === message.content));
+    let canonical: Message;
+    if (index === lastIndex && message.role === 'assistant' && draft?.question) {
+      canonical = automationQuestionMessage(draft.assistantMessage ?? message.content, draft.question);
+    } else {
+      canonical = automationTextMessage(
+        message.turnId ?? `resumed-${index}`,
+        authorType,
+        message.content,
+      );
+    }
+    const existing = existingIndex >= 0 ? merged[existingIndex] : undefined;
+    const next: Message = {
+      ...canonical,
+      ...(existing ?? {}),
+      id: message.turnId ?? canonical.id,
+      authorType,
+      text: message.content,
+      ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
+      ...(message.createdAt === undefined ? {} : { createdAt: new Date(message.createdAt).toISOString() }),
+    };
+    if (existingIndex >= 0) merged[existingIndex] = next;
+    else merged.push(next);
   });
+  const elicitationTurnIds = new Set(
+    merged
+      .filter((message) => message.messageType === 'elicitation')
+      .map((message) => message.id),
+  );
+  const elicitationAnswers = new Set(
+    merged
+      .filter((message) => message.messageType === 'elicitation')
+      .flatMap((message) => {
+        const answer = message.elicitation?.answer;
+        return answer == null ? [] : Array.isArray(answer) ? answer : [answer];
+      }),
+  );
+  return merged.filter((message) => !(
+    message.messageType === 'text'
+    && message.authorType === 'human'
+    && (
+      (message.clientMessageId !== undefined
+        && message.clientMessageId !== null
+        && elicitationTurnIds.has(message.clientMessageId))
+      || (message.text !== undefined && elicitationAnswers.has(message.text))
+    )
+  ));
 }
 
 function DeliveryChoice({
@@ -561,8 +656,8 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const featureFlags = useClientFeatureFlags(api);
   const workspaceTemplatesEnabled = featureFlags.data?.automationWorkspaceTemplatesEnabled === true;
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const resumeDraftId = searchParams.get('draft');
+  const { id: routeAutomationId = 'new' } = useParams();
+  const resumeDraftId = routeAutomationId === 'new' ? null : routeAutomationId;
   // This screen also writes the draft into the URL once a turn compiles, and
   // that write must not read back as "go and load this draft" — the
   // conversation on screen is already the one it names, and loading it would
@@ -586,6 +681,21 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   // empties the composer whenever its key changes, so whatever was typed while
   // the turn was compiling is carried over by hand rather than dropped.
   const [composerDraftId, setComposerDraftId] = useState<string | null>(resumeDraftId);
+  const automationId = composerDraftId ?? resumeDraftId;
+  /**
+   * The conversation the reader is looking at, which is deliberately not
+   * the draft id. This screen writes its own id into the address bar the
+   * moment a turn is admitted — mid-compile — and anything keyed on that
+   * transition resets as the turn runs. The transcript follow is the one
+   * that must never: re-keying it re-arms `following` and yanks a reader
+   * who had scrolled up back to the bottom, which is the single thing
+   * `useTranscriptFollow`'s docblock says cannot happen. It moves only
+   * when the *reader* opens a different draft, below.
+   */
+  const [conversationKey, setConversationKey] = useState<string>(
+    resumeDraftId ?? NEW_AUTOMATION_CONVERSATION,
+  );
+  const agentFeed = useAutomationAgentSocket(api, automationId);
   const carriedInput = useRef<string | null>(null);
   const draftKey = newAutomationDraftKey(workspace.id, composerDraftId);
   const { text: input, setText: setInput, releaseDraft } = useDraftText(draftKey);
@@ -602,39 +712,17 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<Message[]>([]);
-  const [streamingText, setStreamingText] = useState('');
+  // Folded by the socket hook rather than here: a turn's deltas number in
+  // the hundreds, and an array of them handed over one at a time costs
+  // this screen a re-read of the whole turn per delta.
+  const streamingText = agentFeed.narration;
   /**
-   * The same narration, readable from a settled-mutation callback. `onError`
-   * runs after the stream is over and has to keep what the architect said;
-   * the state above is the render source and this is the imperative read, both
-   * written only by `applyNarration` below.
+   * The same narration, readable from a settled-mutation callback, which
+   * runs after the render that last changed it.
    */
   const streamingNarrationRef = useRef('');
-  const applyNarration = useCallback((next: (current: string) => string) => {
-    const settled = next(streamingNarrationRef.current);
-    streamingNarrationRef.current = settled;
-    setStreamingText(settled);
-  }, []);
+  streamingNarrationRef.current = streamingText;
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * Narration and tool rows grow the transcript past the viewport, and this
-   * screen has no virtualizer following it the way a work stream does. The
-   * view is pinned to the bottom while a compile streams, and unpinned the
-   * moment the reader scrolls up: yanking someone back who has deliberately
-   * looked at an earlier step is worse than not following at all.
-   */
-  const followStreamRef = useRef(true);
-  /**
-   * The offset Rally's own follow last scrolled to, which is what makes the
-   * threshold below safe to keep tight. A scroll event is dispatched at frame
-   * time, not when the offset is assigned, so by the time the follow's own
-   * event arrives more narration has usually landed and the surface is
-   * hundreds of pixels short of a bottom that moved after the assignment.
-   * Measuring that as the reader scrolling up unpins the follow on its own
-   * scroll — the feature switching itself off a second into a compile. An
-   * event that reports this offset is Rally's; anything else is the reader's.
-   */
-  const autoScrollTopRef = useRef(-1);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
   const [activitySourcePluginIds, setActivitySourcePluginIds] = useState<Record<string, string>>({});
@@ -644,6 +732,19 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
+  /**
+   * The turn the reader stopped, and what they stopped. AutomationAgent
+   * keeps no cancelled run, so nothing in the feed says a turn was ever
+   * stopped — without this the transcript reads as though Rally simply
+   * stopped mid-thought, with the "thinking" row still animating.
+   *
+   * Retry re-sends the message rather than reviving the run:
+   * `retryCompilerRun` accepts a *failed* run only, so a cancelled one
+   * has no server-side resumption to ask for.
+   */
+  const [stoppedTurn, setStoppedTurn] = useState<{ conversationKey: string; text: string } | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const debugEnabled = useDebugEnabled();
 
   useEffect(() => {
     if (workspaceTemplatesEnabled) return;
@@ -671,7 +772,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [resumedDraftId, setResumedDraftId] = useState<string | null>(null);
   const resumedDraft = useQuery({
     queryKey: ['automation-draft', resumeDraftId],
-    queryFn: ({ signal }) => api!.resumeAutomationDraft(resumeDraftId!, signal),
+    queryFn: ({ signal }) => api!.getAutomationAgentDraft(resumeDraftId!, signal),
     enabled: Boolean(api && resumeDraftId)
       && resumeDraftId !== selfNamedDraftId.current
       && resumedDraftId !== resumeDraftId,
@@ -717,6 +818,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     // that very draft later in the same screen.
     if (movedToAnotherDraft && resumeDraftId !== null && resumeDraftId !== selfNamedDraftId.current) {
       selfNamedDraftId.current = null;
+      setConversationKey(resumeDraftId);
     }
     if (resumeDraftId === null) {
       // New automation was chosen while a draft was on screen. The route did
@@ -735,6 +837,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         setComposerDraftId(null);
         setDraft(null);
         setTurns([]);
+        setConversationKey(NEW_AUTOMATION_CONVERSATION);
       }
       return;
     }
@@ -750,13 +853,83 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       setDraft(null);
       setTurns([]);
     }
-    const resumed = resumedDraft.data;
-    if (!resumed || resumedDraftId === resumeDraftId) return;
+    const resumedSnapshot = resumedDraft.data;
+    if (!resumedSnapshot || resumedDraftId === resumeDraftId) return;
+    const resumed = api!.automationDraftFromAgentSnapshot(resumedSnapshot);
     setResumedDraftId(resumeDraftId);
     setComposerDraftId(resumeDraftId);
     setDraft(resumed.draft);
-    setTurns(resumedTurns(resumed.messages, resumed.draft));
-  }, [composerDraftId, draft, locationKey, resumeDraftId, resumedDraft.data, resumedDraftId]);
+    setTurns(resumed.draft ? resumedTurns(resumed.messages, resumed.draft) : resumedTurns(resumed.messages, null));
+  }, [api, composerDraftId, draft, locationKey, resumeDraftId, resumedDraft.data, resumedDraftId]);
+
+  useEffect(() => {
+    const snapshot = agentFeed.snapshot;
+    if (!snapshot || snapshot.automationId !== automationId || !api) return;
+    const normalized = api.automationDraftFromAgentSnapshot(snapshot);
+    setDraft(normalized.draft);
+    setTurns((current) => {
+      const resumed = resumedTurns(normalized.messages, normalized.draft, current);
+      const compilerRun = snapshot.activeCompilerRun;
+      if (compilerRun?.state !== 'failed') return resumed;
+      return settleThought(resumed, `${compilerRun.admittedTurnId}-thought`);
+    });
+  }, [agentFeed.snapshot, api, automationId]);
+
+  const handledStreamSequence = useRef(0);
+  useEffect(() => {
+    handledStreamSequence.current = 0;
+  }, [automationId]);
+  useEffect(() => {
+    for (const entry of agentFeed.streamEvents) {
+      if (entry.sequence <= handledStreamSequence.current) continue;
+      handledStreamSequence.current = entry.sequence;
+      const event = entry.event;
+      const activeTurnId = agentFeed.snapshot?.activeCompilerRun?.admittedTurnId;
+      if (!activeTurnId) continue;
+      if (event.type === 'thinking') {
+      const thoughtId = `${activeTurnId}-thought`;
+      setTurns((current) => {
+        const existing = current.findIndex((message) => message.id === thoughtId);
+        const previous = existing >= 0 ? current[existing] : undefined;
+        const thoughtMessage: Message = {
+          id: thoughtId,
+          workstreamId: AUTOMATION_CHAT_ID,
+          sequenceNumber: previous?.sequenceNumber ?? current.length,
+          authorType: 'agent',
+          messageType: 'thought',
+          createdAt: previous?.createdAt ?? new Date().toISOString(),
+          thoughtEvent: {
+            status: event.status === 'started' ? 'started' : 'completed',
+            durationMs: event.durationMs,
+            ...(event.status === 'started' ? { startedAt: Date.now() } : {}),
+          },
+        };
+        return upsertTranscriptMessage(current, thoughtMessage);
+      });
+        continue;
+      }
+      if (event.type === 'tool') {
+        setTurns((current) => {
+          const existing = current.find((message) => message.id === event.toolCallId);
+          return upsertTranscriptMessage(current, createToolEventMessage({
+            id: event.toolCallId,
+            workstreamId: AUTOMATION_CHAT_ID,
+            sequenceNumber: existing?.sequenceNumber ?? current.length,
+            authorType: 'agent',
+            createdAt: existing?.createdAt ?? new Date().toISOString(),
+            toolEvent: {
+              id: event.toolCallId,
+              name: event.name,
+              summary: event.summary,
+              status: event.status,
+              ...(event.plugin ? { plugin: event.plugin } : {}),
+              ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+            },
+          }));
+        });
+      }
+    }
+  }, [agentFeed.snapshot?.activeCompilerRun?.admittedTurnId, agentFeed.streamEvents]);
   const visibleMentionConnections = mentionQuery === null
     ? []
     : (connections.data ?? [])
@@ -923,100 +1096,25 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     payload.startedOnDraftId === openDraftId.current;
 
   const compile = useMutation({
-    mutationFn: (payload: AutomationCompilePayload) =>
-      api!.compileAutomation({
-        message: payload.message,
-        ...(payload.startedOnDraftId ? { draftId: payload.startedOnDraftId } : {}),
-        ...(payload.templateId ? { templateId: payload.templateId } : {}),
-        ...(payload.attachmentIds.length > 0 ? { attachmentIds: payload.attachmentIds } : {}),
-        inputMode: payload.inputMode,
-        connectorMentionCount: Math.min(100, payload.message.match(/@[A-Za-z0-9]/gu)?.length ?? 0),
-        ...(payload.elicitation ? {
-          resolvedElicitation: {
-            id: payload.elicitation.id,
-            responseType: payload.elicitation.responseType,
-            resolution: payload.elicitation.answer == null ? 'skipped' : 'answered',
-            customResponseUsed: payload.elicitation.allowOther && (
-              Array.isArray(payload.elicitation.answer)
-                ? payload.elicitation.answer.some((answer) =>
-                    !payload.elicitation!.options.some((option) => option.value === answer))
-                : payload.elicitation.answer != null
-                  && !payload.elicitation.options.some((option) => option.value === payload.elicitation!.answer)
-            ),
-            presentedAt: payload.elicitation.presentedAt,
-          },
-        } : {}),
-      }, (event) => {
-        // A turn belongs to the conversation it was sent from. Picking another
-        // draft out of the sidebar leaves this one in flight against a screen
-        // that has moved on, and every write below — the streamed thinking and
-        // tool rows as much as the final answer — would otherwise land in
-        // somebody else's transcript.
-        if (!showsTurn(payload)) return;
-        if (event.type === 'started') {
-          applyNarration(() => '');
-          return;
-        }
-        if (event.type === 'thinking') {
-          const thoughtId = `${payload.turnId}-thought`;
-          setTurns((current) => {
-            const existing = current.findIndex((message) => message.id === thoughtId);
-            const previous = existing >= 0 ? current[existing] : undefined;
-            const thoughtMessage: Message = {
-              id: thoughtId,
-              workstreamId: AUTOMATION_CHAT_ID,
-              sequenceNumber: previous?.sequenceNumber ?? current.length,
-              authorType: 'agent',
-              messageType: 'thought',
-              createdAt: previous?.createdAt ?? new Date().toISOString(),
-              thoughtEvent: {
-                // Provider completions pause the model clock, but the row
-                // remains active until this entire automation turn settles.
-                status: 'started',
-                durationMs: event.durationMs,
-                ...(event.status === 'started' ? { startedAt: Date.now() } : {}),
-              },
-            };
-            if (existing < 0) return [...current, thoughtMessage];
-            if (event.status === 'started') {
-              return [...current.filter((_, index) => index !== existing), thoughtMessage];
-            }
-            return current.map((message, index) => index === existing ? thoughtMessage : message);
-          });
-          return;
-        }
-        if (event.type === 'tool') {
-          setTurns((current) => {
-            const existing = current.findIndex((message) => message.id === event.toolCallId);
-            const previous = existing >= 0 ? current[existing] : undefined;
-            const toolMessage = createToolEventMessage({
-              id: event.toolCallId,
-              workstreamId: AUTOMATION_CHAT_ID,
-              sequenceNumber: previous?.sequenceNumber ?? current.length,
-              authorType: 'agent',
-              createdAt: previous?.createdAt ?? new Date().toISOString(),
-              toolEvent: {
-                id: event.toolCallId,
-                name: event.name,
-                summary: event.summary,
-                status: event.status,
-                ...(event.plugin ? { plugin: event.plugin } : {}),
-                ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
-              },
-            });
-            return upsertTranscriptMessage(current, toolMessage);
-          });
-          return;
-        }
-        applyNarration((current) => event.reset ? event.delta : current + event.delta);
+    mutationFn: (payload: AutomationCompilePayload) => api!.admitAutomationDraftTurn({
+      ...(payload.startedOnDraftId ? { automationId: payload.startedOnDraftId } : {
+        clientCreationKey: payload.turnId,
       }),
+      clientMessageId: payload.turnId,
+      content: payload.message,
+      attachmentIds: payload.attachmentIds,
+      inputMode: payload.inputMode,
+    }),
     onMutate: (payload) => {
-      followStreamRef.current = true;
-      applyNarration(() => '');
+      // The narration is not cleared here. It belongs to the run,
+      // and the agent's own snapshot for the admitted turn carries
+      // an empty checkpoint — so the feed clears it, in the one
+      // place that can also put it back after a reconnect.
       setTurns((current) => {
         const updated = payload.elicitation
           ? resolveElicitationMessages(current, payload.elicitation.id, payload.elicitation.answer)
           : current;
+        if (payload.elicitation) return updated;
         return updated.some((turn) => turn.id === payload.turnId)
           ? updated
           : [...updated, automationTextMessage(payload.turnId, 'human', payload.message, false, payload.attachments)];
@@ -1026,45 +1124,34 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     },
     onSuccess: (response, payload) => {
       attachmentDraft.consume(payload.attachmentLocalIds);
-      // The saved conversation moved on whatever is on screen now, so the
-      // cached copy is stale either way. Dropping it is what makes reopening
-      // this draft later show the turn it is actually at.
-      queryClient.removeQueries({ queryKey: ['automation-draft', response.draftId] });
-      // The screen moved to another draft while this turn was compiling. The
-      // turn still landed on the server — it is in that draft's saved
-      // conversation — but nothing about it belongs on screen, least of all
-      // the URL write below, which would drag the reader back to it.
+      // The draft entry is not evicted here. The socket hook owns
+      // that key now and writes every snapshot into it, so removing
+      // it would throw away state newer than anything a refetch
+      // could return — and cost a second read to get back.
       if (!showsTurn(payload)) return;
-      applyNarration(() => '');
-      setDraft(response);
-      // The turn wrote a draft automation, which the sidebar lists. Naming it
-      // in the URL is what makes that row the active one and what lets this
-      // screen be reopened on the conversation it is showing. The composer's
-      // cache moves with it, carrying anything typed while the turn compiled.
-      if (resumeDraftId !== response.draftId) {
-        selfNamedDraftId.current = response.draftId;
-        setResumedDraftId(response.draftId);
-        setSearchParams({ draft: response.draftId }, { replace: true });
+      // Admission returns the durable identity immediately. The same
+      // conversation subtree adopts it while compilation continues by socket.
+      if (resumeDraftId !== response.automationId) {
+        selfNamedDraftId.current = response.automationId;
+        setResumedDraftId(response.automationId);
+        queryClient.setQueryData<AutomationSummary[]>(['automations'], (current = []) => (
+          current.some((item) => item.id === response.automationId)
+            ? current
+            : [{
+                id: response.automationId,
+                name: 'New automation',
+                scope: 'you',
+                status: 'draft',
+                updatedAt: new Date().toISOString(),
+              }, ...current]
+        ));
+        void navigate(`/automations/${encodeURIComponent(response.automationId)}`, { replace: true });
       }
-      if (composerDraftId !== response.draftId) {
+      if (composerDraftId !== response.automationId) {
         carriedInput.current = input;
-        // The sentence is *moving* to the new draft's key, so it has to leave
-        // the old one. Without this it is carried forward and left behind at
-        // once: the blank launcher this screen shares a key with would rehydrate
-        // a sentence the user had already sent into a draft.
         releaseDraft();
-        setComposerDraftId(response.draftId);
+        setComposerDraftId(response.automationId);
       }
-      const responseMessage = response.question
-        ? automationQuestionMessage(response.assistantMessage, response.question)
-        : response.assistantMessage
-          ? automationTextMessage(crypto.randomUUID(), 'agent', response.assistantMessage)
-          : null;
-      setTurns((current) => {
-        const settled = settleThought(current, `${payload.turnId}-thought`);
-        if (!responseMessage || settled.some((message) => message.id === responseMessage.id)) return settled;
-        return [...settled, responseMessage];
-      });
     },
     onError: (_error, payload) => {
       if (!showsTurn(payload)) return;
@@ -1074,7 +1161,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       // that a column of tool rows does not — and clearing it here would
       // delete the explanation at the one moment it is needed.
       const narration = retainableNarration(streamingNarrationRef.current);
-      applyNarration(() => '');
       setTurns((current) => {
         const settled = settleThought(current, `${payload.turnId}-thought`);
         return narration
@@ -1084,19 +1170,67 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     },
   });
 
-  const compilePending = compile.isPending;
-  useEffect(() => {
-    // Only while a compile streams. Once the draft settles the summary below
-    // the transcript is what the reader wants, and jumping past it to the
-    // create button would hide the thing they are being asked to accept.
-    if (!compilePending || !followStreamRef.current) return;
-    const element = transcriptScrollRef.current;
-    if (!element) return;
-    element.scrollTop = element.scrollHeight;
-    // Read back rather than reusing the assigned value: the browser clamps to
-    // its own fractional maximum, and the scroll event reports that.
-    autoScrollTopRef.current = element.scrollTop;
-  }, [compilePending, streamingText, turns]);
+  const compilerRun = agentFeed.snapshot?.activeCompilerRun;
+  // Connecting counts: the first read is in flight and its answer is
+  // about to arrive, so the composer must not open for a moment first.
+  const socketMayStillDeliver = agentFeed.state === 'connected' || agentFeed.state === 'connecting';
+  const compilePending = compile.isPending
+    // Only while the feed can still contradict it. A dropped socket
+    // leaves the last `running` snapshot standing forever, and latching
+    // the composer shut on it strands the reader with a spinner and
+    // nothing on screen naming the network — so a connection that is
+    // gone relaxes the wait rather than holding it.
+    || (socketMayStillDeliver && (compilerRun?.state === 'admitted' || compilerRun?.state === 'running'));
+  const compilerError = compilerRun?.state === 'failed'
+    ? automationErrorCopy(compilerRun.errorCode, compilerRun.errorMessage)
+    : null;
+  const stopCompiler = useMutation({
+    mutationFn: () => api!.stopAutomationCompiler(automationId!, compilerRun!.id),
+    // Read before the request, applied after it: AutomationAgent drops a
+    // cancelled run — and the checkpoint holding its narration with
+    // it — so by the time this settles the feed has already forgotten
+    // what Rally had said. Nothing is written until the stop is real.
+    onMutate: () => ({
+      turnId: compilerRun?.admittedTurnId ?? null,
+      text: compilerRun
+        ? turns.find((turn) => turn.id === compilerRun.admittedTurnId)?.text ?? ''
+        : '',
+      narration: retainableNarration(streamingNarrationRef.current),
+    }),
+    onSuccess: (_result, _input, context) => {
+      setTurns((current) => {
+        const settled = context.turnId
+          ? settleThought(current, `${context.turnId}-thought`)
+          : current;
+        return context.narration
+          ? [...settled, automationTextMessage(crypto.randomUUID(), 'agent', context.narration)]
+          : settled;
+      });
+      setStoppedTurn({ conversationKey, text: context.text });
+    },
+  });
+  const retryCompiler = useMutation({
+    mutationFn: () => api!.retryAutomationCompiler(automationId!, compilerRun!.id),
+  });
+  const deleteDraft = useMutation({
+    mutationFn: () => api!.deleteAutomation(automationId!),
+    onSuccess: () => {
+      setDeleteOpen(false);
+      // No list write: AutomationAgent projects its tombstone and
+      // WorkspaceDO pushes the rewritten list off the back of it —
+      // the same path the sidebar's own delete takes.
+      queryClient.removeQueries({ queryKey: ['automation-draft', automationId] });
+      queryClient.removeQueries({ queryKey: ['automation', automationId] });
+      // Replaced rather than pushed, so Back cannot return to a
+      // draft the API no longer serves.
+      void navigate('/workstreams/new', { replace: true });
+    },
+  });
+  const transcriptFollow = useTranscriptFollow(
+    transcriptScrollRef,
+    compilePending,
+    conversationKey,
+  );
 
   const deliveryConnection = (connections.data ?? []).find((connection) =>
     connection.id === deliveryConnectionId && connection.userDelivery);
@@ -1113,16 +1247,52 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       },
     }),
     onSuccess: (automation) => {
+      // The route this navigates to is the one it is already on, so
+      // nothing unmounts the wizard: `AutomationScreen` dispatches on
+      // the `['automations']` row, which still says `draft` until a
+      // socket push corrects it. Seeding the accepted row is what
+      // actually hands the screen over — and until it does, the Create
+      // button stays held below, or a second click POSTs a second
+      // create against a draft that has already been accepted.
+      queryClient.setQueryData<AutomationSummary[]>(['automations'], (current = []) => (
+        current.some((item) => item.id === automation.id)
+          ? current.map((item) => item.id === automation.id
+            ? { ...item, name: automation.name, scope: automation.scope, status: automation.status }
+            : item)
+          : [{
+              id: automation.id,
+              name: automation.name,
+              scope: automation.scope,
+              status: automation.status,
+              updatedAt: automation.updatedAt,
+            }, ...current]
+      ));
+      queryClient.setQueryData(['automation', automation.id], automation);
       void navigate(`/automations/${automation.id}`);
     },
   });
 
-  const subscribe = useMutation({
-    mutationFn: () => api!.subscribeTemplate(selectedTemplate!.id, defaultPluginIds, activitySourcePluginIds),
-    onSuccess: (automation) => {
-      void navigate(`/automations/${automation.id}`);
-    },
-  });
+  // A stop belongs to the turn it stopped. A new run — or another
+  // conversation — makes the notice a statement about something the
+  // reader is no longer looking at.
+  useEffect(() => {
+    if (!compilerRun) return;
+    setStoppedTurn(null);
+  }, [compilerRun?.id]);
+  useEffect(() => {
+    setStoppedTurn((current) => current?.conversationKey === conversationKey ? current : null);
+  }, [conversationKey]);
+  // A resumed conversation opens at its newest turn, once. `atEnd`
+  // starts true and only a scroll event moves it, and nothing scrolls
+  // on mount, so a long draft would open at the top with no way of
+  // knowing there was anything below.
+  const openedConversation = useRef<string | null>(null);
+  const scrollToEnd = transcriptFollow.scrollToEnd;
+  useEffect(() => {
+    if (turns.length === 0 || openedConversation.current === conversationKey) return;
+    openedConversation.current = conversationKey;
+    scrollToEnd();
+  }, [conversationKey, scrollToEnd, turns.length]);
 
   const submitAsync = async (
     message = input,
@@ -1132,12 +1302,12 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   ): Promise<void> => {
     const readyAttachments = attachmentDraft.ready;
     const trimmed = message.trim();
-    if ((!trimmed && readyAttachments.length === 0) || attachmentDraft.uploading || compile.isPending) return;
+    if ((!trimmed && readyAttachments.length === 0) || attachmentDraft.uploading || compilePending) return;
     // The address bar names a draft this screen has not got hold of — it is
     // still loading, or the load failed. A turn sent now carries no draft id
     // and would open a *second* draft while the sidebar still highlights the
     // first.
-    if (resumeDraftId !== null && draft === null) return;
+    if (resumeDraftId !== null && draft === null && agentFeed.snapshot === null) return;
     const createdAt = new Date().toISOString();
     await compile.mutateAsync({
       attachmentIds: readyAttachments.map((attachment) => attachment.resource!.id),
@@ -1167,17 +1337,8 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   return (
     <div
       className="new-automation-screen screen-with-titlebar"
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        if (element.scrollTop === autoScrollTopRef.current) return;
-        // Sub-pixel, not the 80px a work stream uses. That threshold covers a
-        // virtualizer whose estimated row heights settle after paint; nothing
-        // here is virtualized, and at 80px a reader who nudged up a few pixels
-        // would still be pinned and get yanked forward by the next fragment.
-        // Only the browser's fractional clamp needs absorbing, and the guard
-        // above is what keeps that true while the transcript is growing.
-        followStreamRef.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
-      }}
+      onScroll={(event) => transcriptFollow.onScroll(event.currentTarget)}
+      onWheel={(event) => transcriptFollow.onWheel(event.currentTarget, event.deltaY)}
       ref={transcriptScrollRef}
     >
       <div className="screen-drag-strip window-drag" />
@@ -1188,24 +1349,64 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+              {/* Behind Debug, as the sidebar's own copy item is. An id
+                  is for a bug report, not for the reader's day. */}
+              {debugEnabled && (
+                <DropdownMenu.Item
+                  className="menu-item"
+                  disabled={!draftId}
+                  onSelect={() => {
+                    if (draftId) void desktopBridge().copyText(draftId)
+                      .then(() => reportTelemetryProductIntent({
+                        kind: 'content_copied', contentType: 'automation_id', resourceType: 'automation',
+                        resourceId: draftId,
+                      }))
+                      .catch(() => undefined);
+                  }}
+                >
+                  <Info size={14} /> Copy draft ID
+                </DropdownMenu.Item>
+              )}
               <DropdownMenu.Item
-                className="menu-item"
-                disabled={!draftId}
+                className="menu-item menu-item-danger"
+                disabled={!automationId}
                 onSelect={() => {
-                  if (draftId) void desktopBridge().copyText(draftId)
-                    .then(() => reportTelemetryProductIntent({
-                      kind: 'content_copied', contentType: 'automation_id', resourceType: 'automation',
-                      resourceId: draftId,
-                    }))
-                    .catch(() => undefined);
+                  deleteDraft.reset();
+                  setDeleteOpen(true);
                 }}
               >
-                <Info size={14} /> Copy draft ID
+                <Trash2 size={14} /> Delete draft
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={deleteDraft.isPending} onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button
+              className="button-danger"
+              disabled={deleteDraft.isPending}
+              onClick={() => deleteDraft.mutate()}
+            >
+              {deleteDraft.isPending ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />} Delete
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (deleteDraft.isPending) return;
+          setDeleteOpen(open);
+        }}
+        open={deleteOpen}
+        title="Delete draft"
+      >
+        <p className="modal-copy">
+          This conversation and the automation it was drafting are deleted for good. Rally has
+          no way to bring a draft back.
+        </p>
+        {deleteDraft.error && <InlineError>{deleteDraft.error.message}</InlineError>}
+      </Modal>
       <div className={clsx('automation-builder', (turns.length > 0 || draft) && 'has-conversation')}>
         {workspaceTemplatesEnabled && templatesOpen ? (
           <TemplateBrowser
@@ -1242,13 +1443,15 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 />
                 <Button
                   className="button-primary"
-                  disabled={subscribe.isPending || selectedTemplate.activitySources.some((source) => !activitySourcePluginIds[source.bindingKey])}
-                  onClick={() => subscribe.mutate()}
+                  onClick={() => {
+                    setInput(`Create an automation from the workspace template "${selectedTemplate.name}". ${selectedTemplate.description}`);
+                    setSelectedTemplate(null);
+                  }}
                 >
-                  {subscribe.isPending ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />} Use template
+                  <Check size={14} /> Start with template
                 </Button>
               </section>
-            ) : resumeDraftId !== null && !draft && resumedDraft.isError ? (
+            ) : resumeDraftId !== null && !draft && turns.length === 0 && !agentFeed.snapshot && resumedDraft.isError ? (
               // The draft named in the address bar is the one the sidebar is
               // highlighting, so the intro's blank slate would be a lie here —
               // and a message sent against it starts a second draft while the
@@ -1257,10 +1460,14 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 <RallyMark />
                 <p className="eyebrow">Draft automation</p>
                 <h1 id="automation-builder-heading">This draft could not be opened</h1>
-                <p>{resumedDraft.error instanceof ApiError ? resumedDraft.error.message : 'Rally could not load this conversation.'}</p>
-                <Button className="button-secondary" onClick={() => void resumedDraft.refetch()}>Try again</Button>
+                <p>{resumedDraft.error instanceof ApiError
+                  ? automationErrorCopy(resumedDraft.error.code, resumedDraft.error.message)
+                  : 'Rally could not load this conversation.'}</p>
+                <Button className="button-secondary" onClick={() => void resumedDraft.refetch()}>
+                  <RefreshCcw aria-hidden="true" size={13} /> Try again
+                </Button>
               </section>
-            ) : resumeDraftId !== null && !draft ? (
+            ) : resumeDraftId !== null && !draft && turns.length === 0 && !agentFeed.snapshot ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
                 <RallyMark />
                 <p className="eyebrow">Draft automation</p>
@@ -1280,12 +1487,13 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
             ) : (
               <div className="automation-chat-surface automation-conversation" aria-live="polite">
                 {turns.map((turn) => (
-                  <AutomationMessageBlock
+                  <MessageBlock
                     key={turn.id}
+                    currentUserId={AUTOMATION_USER_ID}
                     loadAttachmentContent={loadAttachmentContent}
                     message={turn}
                     onAnswerElicitation={turn.messageType === 'elicitation' && turn.elicitation?.status === 'open'
-                      ? (answer) => answerElicitationOptimistically({
+                      ? (_elicitationId, answer) => answerElicitationOptimistically({
                           answer,
                           elicitationId: turn.elicitation!.id,
                           previousMessage: turn,
@@ -1307,17 +1515,23 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                           ),
                           updateMessages: (update) => setTurns(update),
                         })
-                      : undefined}
+                      : async () => undefined}
                     onOpenAttachment={setAttachmentPreview}
+                    onResolveSuggestion={async () => undefined}
                   />
                 ))}
-                {compile.isPending && (
+                {(compilePending || (compilerError !== null && streamingText.trim().length > 0)) && (
                   // Trimmed, not just non-empty: an abandoned first turn
                   // resets to '' and a model that opens a narration turn with
                   // a bare newline sends whitespace before it sends a word.
                   // Either would render as Rally having said something blank.
                   streamingText.trim().length > 0
-                    ? <AutomationMessageBlock message={automationTextMessage('automation-streaming', 'agent', streamingText, true)} />
+                    ? <MessageBlock
+                        currentUserId={AUTOMATION_USER_ID}
+                        message={automationTextMessage('automation-streaming', 'agent', streamingText, true)}
+                        onAnswerElicitation={async () => undefined}
+                        onResolveSuggestion={async () => undefined}
+                      />
                     : turns.some((turn) => turn.messageType === 'thought' && turn.thoughtEvent?.status === 'started')
                       ? null
                       : <AgentWorkTiming
@@ -1329,7 +1543,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 {draft && (
                   <DraftSummary
                     connections={connections.data ?? []}
-                    creating={create.isPending}
+                    // Held past the request, until the screen changes
+                    // hands: the wizard stays mounted on the route it
+                    // navigates to, so a re-enabled button here is a
+                    // second create against an accepted draft.
+                    creating={create.isPending || create.isSuccess}
                     activitySourcePluginIds={activitySourcePluginIds}
                     emailDelivery={emailDelivery}
                     ownerEmail={session?.user.email ?? ''}
@@ -1344,11 +1562,29 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                     onDeliveryConnectionChange={setDeliveryConnectionId}
                   />
                 )}
+                {stoppedTurn && !compilerRun && (
+                  <RunStoppedNotice
+                    onRetry={() => {
+                      const retried = stoppedTurn.text;
+                      setStoppedTurn(null);
+                      if (retried) submit(retried);
+                    }}
+                    retrying={compilePending}
+                  />
+                )}
               </div>
             )}
 
             {!selectedTemplate && (
               <div className="automation-composer-wrap">
+                {!transcriptFollow.atEnd && (
+                  <JumpToLatestButton onJump={() => transcriptFollow.scrollToEnd({ smooth: true })} />
+                )}
+                {automationId && (
+                  <div className="automation-socket-state">
+                    <SocketStatusIndicator state={agentFeed.state} />
+                  </div>
+                )}
                 {visibleMentionConnections.length > 0 && (
                   <div className="mention-popover" id="automation-mention-listbox" role="listbox" aria-label="Connections">
                     {visibleMentionConnections.map((connection, index) => (
@@ -1399,30 +1635,87 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   placeholder={draft?.question?.placeholder ?? draft?.question?.prompt ?? 'Describe what should happen…'}
                   ref={textareaRef}
                   shouldSubmitOnEnter={() => mentionQuery === null}
-                  submitDisabled={attachmentDraft.uploading || (!input.trim() && attachmentDraft.ready.length === 0) || compile.isPending}
+                  submitDisabled={attachmentDraft.uploading || (!input.trim() && attachmentDraft.ready.length === 0) || compilePending}
                   submitLabel="Send"
-                  submitting={compile.isPending}
+                  submitting={compilePending}
                   uploading={attachmentDraft.uploading}
                   value={input}
                 />
-                {(compile.error || create.error || connections.error || attachmentDraft.error) && (
+                {automationId && compilerRun && ['admitted', 'running'].includes(compilerRun.state) && (
+                  <div className="automation-error-actions">
+                    <Button
+                      className="button-secondary"
+                      disabled={stopCompiler.isPending}
+                      onClick={() => stopCompiler.mutate()}
+                    >
+                      <Square aria-hidden="true" size={13} /> Stop
+                    </Button>
+                  </div>
+                )}
+                {(compile.error
+                  || compilerError
+                  || create.error
+                  || connections.error
+                  || attachmentDraft.error
+                  || stopCompiler.error
+                  || retryCompiler.error) && (
                   <div className="automation-error-actions">
                     <InlineError>
-                      {compile.error?.message ?? create.error?.message ?? connections.error?.message ?? attachmentDraft.error}
+                      {compile.error
+                        ? automationErrorCopy(
+                            compile.error instanceof ApiError ? compile.error.code : null,
+                            compile.error.message,
+                          )
+                        : compilerError
+                          ?? (create.error
+                            ? automationErrorCopy(
+                                create.error instanceof ApiError ? create.error.code : null,
+                                create.error.message,
+                              )
+                            : null)
+                          // Both were computed and neither was ever rendered:
+                          // a stop or a retry that failed left the button
+                          // enabled and said nothing at all.
+                          ?? (stopCompiler.error
+                            ? automationErrorCopy(
+                                stopCompiler.error instanceof ApiError ? stopCompiler.error.code : null,
+                                stopCompiler.error.message,
+                              )
+                            : null)
+                          ?? (retryCompiler.error
+                            ? automationErrorCopy(
+                                retryCompiler.error instanceof ApiError ? retryCompiler.error.code : null,
+                                retryCompiler.error.message,
+                              )
+                            : null)
+                          ?? connections.error?.message
+                          ?? attachmentDraft.error}
                       {compile.error instanceof ApiError && compile.error.requestId ? ` · Request ${compile.error.requestId}` : ''}
                     </InlineError>
-                    {compile.error && compile.variables?.message && <Button onClick={() => compile.mutate(compile.variables!)}>Retry</Button>}
+                    {compilerError && automationId && compilerRun && (
+                      <Button
+                        className="button-secondary"
+                        disabled={retryCompiler.isPending}
+                        onClick={() => retryCompiler.mutate()}
+                      >
+                        <RefreshCcw aria-hidden="true" size={13} /> Retry
+                      </Button>
+                    )}
                     {compile.error instanceof ApiError && compile.error.requestId && (() => {
                       const requestId = compile.error.requestId;
-                      return <Button onClick={() => void desktopBridge().copyText(requestId)}>Copy request ID</Button>;
+                      return (
+                        <Button className="button-secondary" onClick={() => void desktopBridge().copyText(requestId)}>
+                          <Copy aria-hidden="true" size={13} /> Copy request ID
+                        </Button>
+                      );
                     })()}
                   </div>
                 )}
                 {draft?.summary && <p className="keep-editing-hint">Keep editing by describing what should change.</p>}
               </div>
             )}
-            {selectedTemplate && (subscribe.error || connections.error) && (
-              <InlineError>{subscribe.error?.message ?? connections.error?.message}</InlineError>
+            {selectedTemplate && connections.error && (
+              <InlineError>{connections.error.message}</InlineError>
             )}
           </>
         )}

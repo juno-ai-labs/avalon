@@ -1,6 +1,7 @@
 # Work-stream and automation email addresses
 
-Every work stream and every automation subscription receives one permanent address
+Every work stream, and every automation from the moment it is accepted, receives
+one permanent address
 on the domain configured when it is issued — `automation.rallywith.ai` today —
 generated from a frozen vocabulary and reserved in a single Global registry that
 both regions share. An address is never recomputed,
@@ -18,6 +19,7 @@ reservation path, or what inbound mail is allowed to do when it arrives.
 | `apps/api/src/services/workstream-email-routing-service.ts` | The Global `workstream_email_routes` ledger: which addresses are taken, and by whom. |
 | `apps/api/src/workstream-email-routing-bridge.ts` | The named RPC binding every non-Global region reserves through. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | Inbound delivery: idempotency, leases, the sender check, the hourly budget. |
+| `apps/api/src/durable-objects/automation-agent.ts` | An accepted automation's half of all of that: `automation_email_route` holds the issued address, `screenInboundEmail` refuses a message before anything is stored, and `admitInboundEmail` re-checks everything inside the transaction that consumes the hourly budget and writes the receipt. |
 | `apps/api/src/inbound-email-regional-bridge.ts` | The one verified Resend event handed to the owning region. |
 | `apps/api/src/routes/resend.ts` | The Global receiving webhook. |
 | `apps/api/src/services/automation-email-service.ts` | Outbound automation results by email. |
@@ -85,17 +87,29 @@ different owner on another platform or future custom domain.
 **The ledger records the exact address that is taken and where it points.** It holds
 no lifecycle: no `reserved`/`active`/`disabled` status, no `disabled_at`. Whether
 mail is actually accepted is decided regionally, at delivery, from the owner's own
-row — a work stream must not be archived, an automation must be `status = 'active'`
-and `lifecycle_state = 'visible'`. Because a claim is never released, there is
+row — a work stream must not be archived, and an automation's own object must be
+`active` with an acceptance row and a matching stored address. Because a claim is
+never released, there is
 nothing for a pause, an archive, or a delete to write here.
 
-`activateWorkstreamRoute` and `activateAutomationRoute` therefore reserve the
-address and then read that regional row, returning the address or refusing with
-`workstream_email_owner_archived` / `automation_not_active`. They are
-a gate, not a transition.
+`activateWorkstreamRoute` therefore reserves the address and then reads that
+regional row, returning the address or refusing with
+`workstream_email_owner_archived`. It is a gate, not a transition. It reads
+through `workstreamExecutionEnvironment` rather than the workspace facade:
+`workstreams` is *not* workspace-local, so the facade would send the read to
+regional D1, where migration 0090 left only the identity anchor and dropped
+`archived_at`.
 
-The regional owner also stores the exact issued address. Detail reconciliation sends
-that full value to Global; it never combines a persisted local part with the
+There is no automation counterpart any more. An automation reserves its address
+exactly once, inside acceptance, through `reserveAutomation`, and stores the
+issued value in its own one-row `automation_email_route` table. Whether mail is
+accepted is decided by the agent when the mail arrives, from its own lifecycle
+and acceptance rows, so no separate gate can disagree with what actually happens
+to the message.
+
+The regional owner also stores the exact issued address. Work-stream detail
+reconciliation sends that full value to Global; it never combines a persisted
+local part with the
 domain configured on the Worker today. Migration `0097` inferred the two domains
 for pre-existing claims at the Rally cutover boundary and tagged those rows as
 `address_source = 'migration'`. The owner may verify or correct such a row once,
@@ -104,19 +118,14 @@ Until that verification, the inferred value is provisional rather than an issued
 tombstone. Correcting it frees only the unissued inference; the owner's actual
 address becomes the permanent tombstone.
 
-Automation sidebar snapshots return that regional address as stored and do not
-verify it against Global one row at a time. Detail reads perform reconciliation;
-keeping the list read regional avoids turning one sidebar snapshot into a batch
-of cross-region registry calls. Detail reconciliation deliberately fails closed
-when Global is unavailable so it cannot return an unverified address.
-
-**Each gate reads through the database that owns its row.** An automation's
-`status` and `lifecycle_state` come from the workspace facade, because
-`automation_subscriptions` is a workspace-local table and the facade routes it
-into WorkspaceDO. A work stream's `archived_at` must come from
-`workstreamExecutionEnvironment` instead: `workstreams` is *not* workspace-local,
-so the facade would send the read to regional D1, where migration 0090 left only
-the identity anchor and dropped that column.
+An automation's address is not reconciled against Global on any read.
+`GET /automations/:id` returns what `automation_email_route` holds, and the
+sidebar's automation rows carry no address at all — `automation_directory` is
+content-free, so `emailAddress` is `null` there. The address and the claim are
+written in the same acceptance that reserved it, and neither is editable
+afterwards, so there is nothing for a per-read verification to catch that the
+reservation did not already settle. Both were once reconciled because the
+regional row and the Global claim had independent writers.
 
 ### Inbound delivery
 
@@ -128,29 +137,44 @@ ad-hoc work stream does not become workspace-readable merely because its email
 resource has no automation subscription.
 
 Mail sent to an active **automation** address creates a new automation run and a
-new work stream with the automation's `personal` or `workspace` scope. The
-automation owner is recorded as creator and participant; for a personal
-automation that participant list is also the reader boundary, while workspace
-membership admits readers to a workspace automation's runs. The received message
+new **personal** work stream whose only participant is the automation's author,
+whatever the automation's own scope — a generated run is a nested execution
+record rather than a room, and
+[`automation-lifecycle.md`](automation-lifecycle.md) owns that rule. The received message
 is its explicit opening input and attached resource, labelled as untrusted
 external data before it reaches the model. A provider retry uses the Resend email
-ID as the idempotency key, so it resolves to the same work stream and run. Receipt rows use reclaimable processing
-leases so an interrupted delivery can continue after the lease expires. The
-work-stream email receipt, the automation receipt, its rate window and the
-resulting product state are all WorkspaceDO rows; the Global address ledger
-remains only the opaque address-to-region/workspace/owner route needed before
-the regional object can be selected.
+ID as the idempotency key, so it resolves to the same work stream and run.
 
-For a personal automation, the normalized From mailbox must match its owner. For a
-workspace automation, it must match an active workspace member. This check is
+**The automation refuses the message before Rally stores any of it.** The
+regional ingress calls `AutomationAgent.screenInboundEmail` twice: once from the
+webhook alone, where a replay, a paused or deleted automation, and a mismatched
+address are all already decidable, and again once the message has been fetched
+and its sender resolved. Only then are the payload written to R2 and the resource
+created. The address is a routing identifier every member can see, so a stranger
+holding one could otherwise make Rally store unbounded attacker-titled objects
+for every message it was going to refuse anyway. `admitInboundEmail` remains the
+authority and re-runs every check inside the transaction that consumes the hourly
+budget and writes the receipt.
+
+The work-stream email receipt stays a WorkspaceDO row and uses a reclaimable
+processing lease, so an interrupted delivery can continue after the lease
+expires. The automation receipt and its rate window are **AutomationAgent** rows
+now, keyed on the Resend email ID, and the run they admit is that object's own.
+The Global address ledger remains only the opaque
+address-to-region/workspace/owner route needed before the regional object can be
+selected.
+
+For a personal automation, the normalized From mailbox must match its author. For
+a workspace automation, it must match an active workspace member. This check is
 defense in depth because email From headers can be spoofed, so inbound-email runs
 also omit every external connector tool declared as a write operation, and omit
 outbound web search and fetch tools so untrusted mail cannot use them as an
 exfiltration channel. Connector reads and Rally's internal work-stream tools
 remain available.
 
-Pausing an automation changes nothing in Global: the claim stands and the
-resolver's `status = 'active'` test refuses the mail. Resuming makes the same
+Pausing an automation changes nothing in Global: the claim stands and the agent's
+own lifecycle check refuses the mail with `automation_not_active`, writing a
+refusal receipt rather than a run. Resuming makes the same
 address deliverable again. An archived or deleted owner keeps its claim forever —
 the row is the tombstone.
 
@@ -173,22 +197,41 @@ request is accepted. Every run always lands in its own Rally work stream — tha
 is the canonical record and is not a destination the creator can turn off. On top
 of it the creator may freeze email to their own account address and one
 connector-provided personal surface, chosen on the create screen, changed afterwards
-from the automation, and stored in `automation_delivery_targets`. Which connectors offer such a surface is the
+from the automation, and stored as the acceptance row's frozen `deliveryTargets`
+inside its `AutomationAgent`. Which connectors offer such a surface is the
 connector's own declaration rather than a list held by the create screen; see
 [connector architecture](connectors.md#delivering-automation-results-to-a-person).
 Slack's Agent DM is the one shipped today.
 
-Email delivery resolves the owner's account address when the destination is added
-and stores that literal address, so a later account change cannot silently redirect
-results. Editing the set does not re-resolve a destination that is already
-delivering; switching one off and on again does, because a retired row is not
-treated as current. Each result is sent through Resend from the notification sender —
+Email delivery resolves the author's account address at the moment the set is
+written and stores that literal address, so a later account change cannot silently
+redirect results. **The send re-checks that address as well as the membership**:
+if the recipient's account email no longer matches the frozen one, the result is
+skipped rather than re-targeted. An automation outlives the address it was
+accepted with, and a corporate mailbox reassigned to a different person is the
+case that matters — the run was authorized to mail a named address, and quietly
+sending its contents somewhere else is not the smaller surprise.
+**Every edit re-resolves the whole set** — `PATCH /automations/:id`
+takes the complete destination list and rewrites it, so a Slack link that has gone
+stale or an account address that has changed is picked up by the next edit, and a
+destination whose connection is disabled or whose identity link is gone refuses
+the edit rather than being half-stored. Each result is sent through Resend from
+the notification sender —
 `RESEND_NOTIFICATION_FROM_EMAIL`, which is set in both Workers' vars; unset, it
 falls back to the transactional sender and a morning briefing arrives from the
-invitations address. Delivery is keyed for idempotency on the delivery target and
-the run's work stream, and the target records the work stream it last received so a
-workflow retry cannot mail the same result twice. Empty results and the "nothing
+invitations address. Delivery is keyed for idempotency on the automation, the
+run, and the channel — `rally-automation-result/<automationId>/<runId>/email` —
+and the automation records one `automation_delivery_receipts` row per
+`(run, target)`, so a retry cannot mail the same result twice and a receipt whose
+payload hash differs from the recorded one is a conflict rather than a second
+send. Empty results and the "nothing
 qualified" phrasings suppressed for Slack are suppressed for email too.
+
+The result email carries no `Reply-To`. Replying used to reach the automation's
+own inbound address; it now reaches the notification sender, which nobody reads.
+That is a regression the frozen-context delivery path did not carry across, not a
+decision — the address is still in the object, one RPC away from the child that
+sends the mail.
 
 **The run itself is told where Rally will send its result.** The active targets
 are loaded into the automation's prompt context as `resultDelivery`, and the
@@ -204,12 +247,22 @@ HTML by `apps/api/src/services/email-markdown.ts` — the same renderer the dige
 uses. A mail client renders no Markdown of its own, so text that is escaped and
 line-broken instead reaches the reader as `## Heading` and `**bold**`.
 
-`automation_delivery_targets`, its per-run last-delivery fence, and email
-receipts live in WorkspaceDO. The regional sender uses a stable provider
-idempotency key and settles the target there. A delivery path needing a
+The frozen destinations, the per-run per-target delivery receipts, and the
+inbound email receipts all live in the automation's own object. The generated run
+sends its own result and reports each destination back through
+`recordDeliveryReceipt`, which refuses a target the run's frozen context does not
+name; the parent never sees the result bytes. The regional sender uses a stable
+provider idempotency key. A delivery path needing a
 multi-destination lease has to model one — the `external_delivery_attempts`
 ledger reserved for it was retired unused — and D1 does not retain an outbound
 payload or delivery-state projection.
+
+A permanently rejected address is no longer marked. The old path set the delivery
+target `needs_input` and surfaced it on the automation so the same failure did not
+repeat silently on every run; the receipt records `failed` with an outcome code
+and nothing reads it back onto the automation. Re-establishing that surface means
+projecting the failed receipt into the attention code the directory already
+carries.
 
 ### The frozen v1 vocabulary
 
@@ -397,7 +450,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | Which connectors offer a personal delivery surface | [`connectors.md`](connectors.md#delivering-automation-results-to-a-person) |
 | The Global/EU bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
-| The `automation_delivery_targets` columns | [`data-model.md`](data-model.md) |
+| The AutomationAgent tables the frozen destinations and receipts live in | [`automation-lifecycle.md`](automation-lifecycle.md), [`data-model.md`](data-model.md) |
 | The resource aliases this generator also mints | [`agent-attachments.md`](agent-attachments.md) |
 | The Resend receiving domain and its secrets | [`runbook.md`](runbook.md) |
 
@@ -409,16 +462,27 @@ registry, and what happens to mail addressed to one. It does not own:
   email-triggered runs per UTC hour** (30 by default). Excess deliveries are
   acknowledged without starting inference, which bounds model spend if an address
   leaks or a sender is spoofed.
-- **An interrupted inbound delivery resumes after its lease expires.** Regional
-  receipt rows carry reclaimable processing leases rather than a terminal failure.
+- **An interrupted inbound delivery resumes after its lease expires.** The
+  WorkspaceDO work-stream receipt rows carry reclaimable processing leases rather
+  than a terminal failure. An automation's receipt has no lease: the two
+  screening calls make a refusal free, and admission is one transaction that
+  either writes the receipt and the run together or writes neither.
+- **A message an automation refuses is receipted, not dropped.** The outcome code
+  — `automation_not_active`, `automation_email_route_mismatch`,
+  `email_sender_not_authorized`, `email_rate_limit_exceeded` — is stored against
+  the Resend email ID, so a provider retry resolves to the same refusal instead
+  of being re-evaluated against a lifecycle that has since moved.
 - **A provider retry converges on the same run.** The Resend email ID is the
   idempotency key.
 - **A v1 local part is at most 64 ASCII bytes**, and the namespace holds 1,048,707,072
   addresses — the expansion block in the HMAC input is what a v2 would use rather
   than widening v1.
-- **An outbound send failure records `last_error_json` on the target and raises a
-  retryable error inside the delivery step.** Because destinations are delivered
-  independently, one failing channel does not hold back the other.
+- **An outbound send failure records a `failed` delivery receipt against that
+  run and target, and raises inside the delivery step.** Because destinations are
+  delivered independently, one failing channel does not hold back the other. A
+  failed receipt is the only place the failure is recorded: nothing marks the
+  destination, so a permanently rejected address repeats the same failure on
+  every run without saying so on the automation.
 - **Non-production environments never send.**
 
 ## Testing
@@ -428,11 +492,10 @@ registry, and what happens to mail addressed to one. It does not own:
 | `apps/api/test/workstream-email-address.test.ts` | The format, the frozen vocabulary indexes, the distinct-adjective rule, collision advance, and the 64-byte bound. |
 | `apps/api/test/workstream-email-routing.test.ts` | Reservation, activation, disable/tombstone, and the regional fail-closed path. |
 | `apps/api/test/resend-inbound-email.test.ts` | Idempotency by Resend email ID, the lease, the sender check, the tool omissions, and the hourly budget. |
-| `apps/api/test/automation-result-email.test.ts` | The frozen destination, per-run idempotency, the suppressed-empty rule, and that the result's Markdown is rendered rather than mailed as markup. |
 | `apps/api/test/email-markdown.test.ts` | The shared renderer: the structure these emails use, escaping, refused link targets, and the plain-text preview line. |
 | `apps/api/test/automation-run-context.test.ts` | That a run is told its frozen destinations — email, Slack by id, a `needs_input` Slack target Rally still delivers to — told nothing when a target cannot deliver, and told them in a fixed order. |
+| `apps/api/test-workers/automation-agent.test.ts` | On real workerd: that acceptance reserves and stores the address, and that a delivery receipt is refused for a target the run's frozen context does not name. |
 | `apps/api/test/health-env-contract.test.ts` | That the probe says when notification mail is falling back to the transactional sender. |
-| `apps/api/test/automation-delivery-target-edit.test.ts` | Turning a destination off, keeping a surviving row's per-run fence, and leaving delivery alone when an edit does not mention it. |
 | `scripts/preview-automation-email.test.mjs` | The preview's flags, and that its sample still carries the constructs this email has rendered wrong. |
 
 Run one with
@@ -461,6 +524,48 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-28 — An automation owns its address, its receipts, and its refusals
+
+**What changed:** An automation reserves its address once, inside acceptance, and
+stores it in its own `automation_email_route`; `ensureAutomationAddress` and
+`activateAutomationRoute` are gone, and so is the per-read Global reconciliation
+of an automation's address. The inbound path now asks the agent twice before
+storing anything — once from the webhook, once after the sender resolves — and
+`admitInboundEmail` writes the receipt and consumes the hourly budget in one of
+the object's own transactions. Frozen delivery destinations moved to the
+acceptance row, delivery receipts to `automation_delivery_receipts` keyed on
+`(run, target)`, and the idempotency key from *(target, work stream)* to
+*(automation, run, channel)*. Every `PATCH` re-resolves the whole destination set.
+
+**Why:** The automation half of this document described tables that the durable
+automation lifecycle removes. Beyond following the authority, two things got
+better on the way. Screening before the fetch closes a hole the old order left
+open: the address is a routing identifier every member can see, so anyone holding
+one could make Rally retrieve and store an R2 payload and a titled resource for a
+message admission was always going to refuse. And keying delivery on the run
+rather than the work stream is the same identity the rest of the run context uses,
+so a receipt cannot be attributed to a work stream the run no longer owns.
+
+**Considered and rejected:** Keeping a separate `activateAutomationRoute` gate.
+It existed to make the answer to "can this automation receive mail" agree with
+what happens when mail arrives, by reading the same row. With one object owning
+both, a second reader can only disagree. On the outbound side, re-targeting a
+result to the author's *current* account address instead of skipping it. A frozen
+destination is a decision somebody made about a named address; following an
+account change is a different decision that nobody made.
+
+**Consequences:** Two behaviors did not survive the move and are recorded above
+rather than quietly lost. The result email no longer carries a `Reply-To` back to
+the automation's own address, so replying reaches the notification sender. And a
+permanently rejected destination is no longer marked `needs_input` on the
+automation — the failure lives only in a receipt nothing reads back — so the same
+send fails silently on every run. Both are regressions the frozen-context
+delivery path did not carry across; restoring the second means projecting a
+failed receipt into the attention code the directory already has.
+
+Shipped in the pull request for this change. Design:
+[the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
 
 ### 2026-08-28 — The address generator gains a second consumer
 
