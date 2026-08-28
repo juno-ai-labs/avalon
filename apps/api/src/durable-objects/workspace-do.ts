@@ -1288,6 +1288,105 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
        JOIN projects project ON project.project_id = target.project_id
       WHERE target.state = 'pending'`,
   ],
+}, {
+  version: 18,
+  description: "attribute every retained resource version to who moved its pointers and why",
+  statements: [
+    // Provenance is staged on the resource row rather than passed to capture,
+    // because capture is a trigger: a swap that sets these columns in the same
+    // UPDATE gives the version row an author without a second statement that a
+    // crash could separate from the swap it describes.
+    `ALTER TABLE resources ADD COLUMN revision_author_kind TEXT
+       CHECK (revision_author_kind IS NULL
+         OR revision_author_kind IN ('agent', 'member', 'connector', 'system'))`,
+    `ALTER TABLE resources ADD COLUMN revision_author_run_id TEXT`,
+    `ALTER TABLE resources ADD COLUMN revision_author_user_id TEXT`,
+    `ALTER TABLE resources ADD COLUMN revision_author_connection_id TEXT`,
+    `ALTER TABLE resources ADD COLUMN revision_cause TEXT
+       CHECK (revision_cause IS NULL
+         OR revision_cause IN ('created', 'published', 'refetched', 'replaced'))`,
+    // NULL is the honest answer for history captured before this version: the
+    // rows record which pointers a state held, and nothing recorded who moved
+    // them. Every capture after this migration carries an author or none
+    // because its producer has not been taught one yet.
+    `ALTER TABLE resource_versions ADD COLUMN author_kind TEXT
+       CHECK (author_kind IS NULL
+         OR author_kind IN ('agent', 'member', 'connector', 'system'))`,
+    `ALTER TABLE resource_versions ADD COLUMN author_run_id TEXT`,
+    `ALTER TABLE resource_versions ADD COLUMN author_user_id TEXT`,
+    `ALTER TABLE resource_versions ADD COLUMN author_connection_id TEXT`,
+    `ALTER TABLE resource_versions ADD COLUMN cause TEXT
+       CHECK (cause IS NULL
+         OR cause IN ('created', 'published', 'refetched', 'replaced'))`,
+    // What kind of thing the refs name. Every row today names an immutable
+    // object in the region's bucket, which is what the backfilled default
+    // says. It carries no CHECK on purpose: a later storage shape — the
+    // collaborative editor's materialized snapshots — is meant to join this
+    // history by writing a new value, not by rebuilding a STRICT table that
+    // SQLite cannot alter a constraint on.
+    `ALTER TABLE resource_versions ADD COLUMN storage_kind TEXT NOT NULL DEFAULT 'object'`,
+    // An identity that its kind cannot have is attribution the rail would
+    // render as fact, so capture refuses it rather than storing it.
+    `CREATE TRIGGER resource_versions_provenance_fence_insert
+       BEFORE INSERT ON resource_versions
+       WHEN (NEW.author_kind IS NULL AND (NEW.author_run_id IS NOT NULL
+              OR NEW.author_user_id IS NOT NULL OR NEW.author_connection_id IS NOT NULL))
+         OR (NEW.author_kind = 'agent' AND (NEW.author_run_id IS NULL
+              OR NEW.author_user_id IS NOT NULL OR NEW.author_connection_id IS NOT NULL))
+         OR (NEW.author_kind = 'member' AND (NEW.author_user_id IS NULL
+              OR NEW.author_run_id IS NOT NULL OR NEW.author_connection_id IS NOT NULL))
+         OR (NEW.author_kind = 'connector' AND (NEW.author_connection_id IS NULL
+              OR NEW.author_run_id IS NOT NULL OR NEW.author_user_id IS NOT NULL))
+         OR (NEW.author_kind = 'system' AND (NEW.author_run_id IS NOT NULL
+              OR NEW.author_user_id IS NOT NULL OR NEW.author_connection_id IS NOT NULL))
+       BEGIN SELECT RAISE(ABORT, 'resource_version_provenance_mismatch'); END`,
+    `DROP TRIGGER resources_create_initial_version`,
+    `CREATE TRIGGER resources_create_initial_version
+       AFTER INSERT ON resources BEGIN
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at,
+            author_kind, author_run_id, author_user_id, author_connection_id, cause)
+         VALUES
+           (NEW.id, NEW.workspace_id, NEW.current_version, NEW.connection_id, NEW.resource_type, NEW.provider,
+            NEW.provider_resource_id, NEW.title, NEW.mime_type, NEW.content_ref, NEW.canonical_url, NEW.metadata_json,
+            NEW.last_hydrated_at, NEW.uploaded_by_user_id, NEW.attachment_status, NEW.model_content_ref,
+            NEW.model_mime_type, NEW.model_content_sha256, NEW.model_metadata_json, NEW.content_sha256,
+            NEW.model_content_status, NEW.model_content_extractor_version, NEW.model_content_character_count,
+            NEW.model_content_extracted_at, NEW.model_content_error_code, NEW.updated_at,
+            NEW.revision_author_kind, NEW.revision_author_run_id, NEW.revision_author_user_id,
+            NEW.revision_author_connection_id, NEW.revision_cause);
+       END`,
+    `DROP TRIGGER resources_create_semantic_version`,
+    `CREATE TRIGGER resources_create_semantic_version
+       AFTER UPDATE OF connection_id, resource_type, provider, provider_resource_id, title,
+         mime_type, content_ref, canonical_url, metadata_json, last_hydrated_at,
+         uploaded_by_user_id, attachment_status, content_sha256 ON resources
+       WHEN NEW.current_version = OLD.current_version BEGIN
+         UPDATE resources SET current_version = OLD.current_version + 1 WHERE id = NEW.id;
+         INSERT INTO resource_versions
+           (resource_id, workspace_id, version, connection_id, resource_type, provider,
+            provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+            last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+            model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+            model_content_status, model_content_extractor_version, model_content_character_count,
+            model_content_extracted_at, model_content_error_code, captured_at,
+            author_kind, author_run_id, author_user_id, author_connection_id, cause)
+         SELECT id, workspace_id, current_version, connection_id, resource_type, provider,
+                provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
+                last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
+                model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
+                model_content_status, model_content_extractor_version, model_content_character_count,
+                model_content_extracted_at, model_content_error_code, updated_at,
+                revision_author_kind, revision_author_run_id, revision_author_user_id,
+                revision_author_connection_id, revision_cause
+           FROM resources WHERE id = NEW.id;
+       END`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {
