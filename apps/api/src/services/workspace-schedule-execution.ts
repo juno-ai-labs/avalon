@@ -303,7 +303,22 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
   {
     scoped: true,
     sql: `SELECT 'maintenance' AS target_kind, 'resource_objects' AS id, MIN(created_at) AS due_at
-            FROM resource_object_deletion_outbox WHERE workspace_id = ?1 HAVING COUNT(*) > 0`,
+            FROM resource_object_deletion_outbox pending
+           WHERE pending.workspace_id = ?1
+             AND (pending.cleanup_eligible = 1
+               OR EXISTS (
+                 SELECT 1 FROM resources current_resource
+                  WHERE current_resource.workspace_id = pending.workspace_id
+                    AND (current_resource.content_ref = pending.object_ref
+                      OR current_resource.model_content_ref = pending.object_ref)
+               )
+               OR EXISTS (
+                 SELECT 1 FROM resource_versions historical_version
+                  WHERE historical_version.workspace_id = pending.workspace_id
+                    AND (historical_version.content_ref = pending.object_ref
+                      OR historical_version.model_content_ref = pending.object_ref)
+               ))
+          HAVING COUNT(*) > 0`,
   },
   {
     scoped: true,

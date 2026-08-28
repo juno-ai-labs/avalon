@@ -49,6 +49,56 @@ export async function releaseStagedResourceObject(
   ).bind(new Date().toISOString(), workspaceId, objectRef).run();
 }
 
+/**
+ * Register cleanup ownership before an R2 put without duplicating the only
+ * safe failure transition in every resource writer.
+ *
+ * Pointer publication remains caller-owned because its compare-and-swap and
+ * ambiguity semantics differ by resource type. A failed put is unambiguous:
+ * no later pointer can name bytes this call did not store, so cleanup may take
+ * the staged row. Failure to release must not replace the storage error; the
+ * durable staging row is the recoverable residue.
+ */
+export async function putStagedResourceObject(input: {
+  database: D1Database;
+  payloads: R2Bucket;
+  objectRef: string;
+  workspaceId: string;
+  resourceId: string;
+  objectKind: PendingResourceObject["object_kind"];
+  value: ArrayBuffer | Uint8Array | string;
+  options?: R2PutOptions;
+  at: string;
+}): Promise<void> {
+  try {
+    await input.database.prepare(
+      `INSERT OR IGNORE INTO resource_object_deletion_outbox
+        (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, ?)`,
+    ).bind(
+      input.objectRef,
+      input.workspaceId,
+      input.resourceId,
+      input.objectKind,
+      input.at,
+      input.at,
+    ).run();
+  } catch (error) {
+    // No put was attempted, so even a staging insert that committed before its
+    // response was lost can be released without risking referenced bytes.
+    await releaseStagedResourceObject(input.database, input.workspaceId, input.objectRef)
+      .catch(() => undefined);
+    throw error;
+  }
+  try {
+    await input.payloads.put(input.objectRef, input.value, input.options);
+  } catch (error) {
+    await releaseStagedResourceObject(input.database, input.workspaceId, input.objectRef)
+      .catch(() => undefined);
+    throw error;
+  }
+}
+
 /** Returns how many outbox rows the pass retired; the alarm reads it as progress. */
 export async function reapDeletedResourceObjects(env: Env, workspaceId?: string): Promise<number> {
   if (!workspaceId && env.WORKSPACE_DOS) throw new Error("resource_cleanup_workspace_required");
@@ -93,10 +143,33 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId?: string)
         object.object_ref,
       ).first();
       if (active) {
-        await env.DB.prepare(
-          "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-        ).bind(object.workspace_id, object.object_ref).run();
-        retired += 1;
+        // Recheck the reference inside the same WorkspaceDO statement that
+        // retires staging. A resource deletion can otherwise promote the row
+        // after the read above and before an unconditional delete here.
+        const result = await env.DB.prepare(
+          `DELETE FROM resource_object_deletion_outbox
+            WHERE workspace_id = ? AND object_ref = ?
+              AND (
+                EXISTS (
+                  SELECT 1 FROM resources
+                   WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
+                )
+                OR EXISTS (
+                  SELECT 1 FROM resource_versions
+                   WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
+                )
+              )`,
+        ).bind(
+          object.workspace_id,
+          object.object_ref,
+          object.workspace_id,
+          object.object_ref,
+          object.object_ref,
+          object.workspace_id,
+          object.object_ref,
+          object.object_ref,
+        ).run();
+        if ((result.meta.changes ?? 0) > 0) retired += 1;
         continue;
       }
       // A publisher owns this object until it either commits a resource

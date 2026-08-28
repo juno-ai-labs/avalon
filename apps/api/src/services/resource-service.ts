@@ -30,7 +30,7 @@ import {
   type AuthorizedDerivativeResource,
 } from "./attachment-derivative-service";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
-import { releaseStagedResourceObject } from "./resource-object-cleanup";
+import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
 
 function resourceTelemetryConnector(value: unknown):
   'google' | 'generic_webhook' | 'github' | 'granola' | 'linear' | 'notion' | 'slack' | 'x' | 'avalon' {
@@ -190,43 +190,55 @@ export class ResourceService {
     // generation-specific so an older image/conversion claim cannot publish
     // against a newly uploaded resource with the same UUID.
     const key = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/${contentSha256}/${crypto.randomUUID()}`;
-    await this.env.PAYLOADS.put(key, bytes, {
-      httpMetadata: { contentType: verifiedMimeType, contentDisposition: contentDisposition("attachment", file.name) },
-      customMetadata: { originalName: file.name, uploadedBy: this.auth.userId },
-    });
     const at = nowIso();
-    try {
-      await this.env.DB.prepare(
-        `INSERT INTO resources
-         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
-          content_sha256, model_content_status, metadata_json, last_hydrated_at,
-          uploaded_by_user_id, attachment_status, created_at, updated_at,
-          revision_author_kind, revision_author_user_id, revision_cause)
-         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?,
-                 'member', ?, 'created')`,
-      ).bind(
-        id,
-        this.auth.workspaceId,
-        // Bounded at the write as well as the read. `title` arrives from a
-        // multipart field and the declared MIME from a client-supplied header;
-        // neither column constrains length — an unbounded value here becomes a
-        // row that fails `ResourceSchema` and `MessageAttachmentSchema` on every
-        // later read.
-        truncateUtf16Safe(title ?? file.name, 300),
-        verifiedMimeType,
-        key,
-        contentSha256,
-        JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType }),
-        at,
-        this.auth.userId,
-        at,
-        at,
-        this.auth.userId,
-      ).run();
-    } catch (error) {
-      await this.env.PAYLOADS.delete(key).catch(() => undefined);
-      throw error;
-    }
+    await putStagedResourceObject({
+      database: this.env.DB,
+      payloads: this.env.PAYLOADS,
+      objectRef: key,
+      workspaceId: this.auth.workspaceId,
+      resourceId: id,
+      objectKind: "original",
+      value: bytes,
+      options: {
+        httpMetadata: { contentType: verifiedMimeType, contentDisposition: contentDisposition("attachment", file.name) },
+        customMetadata: { originalName: file.name, uploadedBy: this.auth.userId },
+      },
+      at,
+    });
+    // A failed WorkspaceDO response is ambiguous: the resource row may have
+    // committed. Keep the object staged in that case so cleanup can observe a
+    // committed pointer instead of deleting bytes it names.
+    await this.env.DB.prepare(
+      `INSERT INTO resources
+       (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+        content_sha256, model_content_status, metadata_json, last_hydrated_at,
+        uploaded_by_user_id, attachment_status, created_at, updated_at,
+        revision_author_kind, revision_author_user_id, revision_cause)
+       VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?,
+               'member', ?, 'created')`,
+    ).bind(
+      id,
+      this.auth.workspaceId,
+      // Bounded at the write as well as the read. `title` arrives from a
+      // multipart field and the declared MIME from a client-supplied header;
+      // neither column constrains length — an unbounded value here becomes a
+      // row that fails `ResourceSchema` and `MessageAttachmentSchema` on every
+      // later read.
+      truncateUtf16Safe(title ?? file.name, 300),
+      verifiedMimeType,
+      key,
+      contentSha256,
+      JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType }),
+      at,
+      this.auth.userId,
+      at,
+      at,
+      this.auth.userId,
+    ).run();
+    await this.env.DB.prepare(
+      `DELETE FROM resource_object_deletion_outbox
+        WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
+    ).bind(this.auth.workspaceId, key).run().catch(() => undefined);
     await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, id);
     return this.get(id);
   }
@@ -432,17 +444,17 @@ export class ResourceService {
       // compare-and-swap, or best-effort deletion fails, the regional reaper
       // still owns a durable cleanup record. A winning CAS makes the active
       // pointer check cancel this pending deletion.
-      await this.env.DB.prepare(
-        `INSERT OR IGNORE INTO resource_object_deletion_outbox
-          (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
-         VALUES (?, ?, ?, 'original', 0, ?, ?)`,
-      ).bind(idKey, this.auth.workspaceId, id, at, at).run();
-      try {
-        await this.env.PAYLOADS.put(idKey, serialized, { httpMetadata: { contentType: "application/json" } });
-      } catch (error) {
-        await releaseStagedResourceObject(this.env.DB, this.auth.workspaceId, idKey);
-        throw error;
-      }
+      await putStagedResourceObject({
+        database: this.env.DB,
+        payloads: this.env.PAYLOADS,
+        objectRef: idKey,
+        workspaceId: this.auth.workspaceId,
+        resourceId: id,
+        objectKind: "original",
+        value: serialized,
+        options: { httpMetadata: { contentType: "application/json" } },
+        at,
+      });
       // An RPC failure keeps the object staged because WorkspaceDO may have
       // committed the pointer before its response was lost.
       const update = await this.env.DB.prepare(
@@ -470,7 +482,8 @@ export class ResourceService {
           resource.content_sha256,
       ).run();
       if ((update.meta.changes ?? 0) === 0) {
-        await releaseStagedResourceObject(this.env.DB, this.auth.workspaceId, idKey);
+        await releaseStagedResourceObject(this.env.DB, this.auth.workspaceId, idKey)
+          .catch(() => undefined);
       }
     }
     return this.get(id);
