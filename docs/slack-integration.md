@@ -333,6 +333,23 @@ text. Long output splits at Slack's 12,000-character limit, preferring a
 paragraph seam, then a line, and closing and reopening a fenced code block rather
 than severing one.
 
+**Citations are reduced before the split, on both paths.** An agent's answer may
+carry `resource://` link and image targets and GFM footnotes
+([`markdown-rendering.md`](markdown-rendering.md)); Slack renders neither, so an
+unrewritten citation lands verbatim in front of a channel — a raw internal URL,
+a broken image where an announcement belonged, and literal `[^1]` markers.
+`slackDeliveryMarkdown` reduces them to label text and one trailing source list.
+
+It is a named step rather than something folded into the chunker because Slack
+has **two** delivery paths and only one of them builds message payloads:
+`slackMarkdownMessages` calls it for the batched path, and the streaming path in
+`slack-agent-service.ts` appends chunks straight to an open stream and calls it
+itself. Both call it *before* splitting — running the footnote pass over a chunk
+whose definitions landed in the next one would renumber against a body it could
+not see. It is idempotent, so a path that reduces twice does not double-number.
+The transcript copy of the same answer keeps its citations; only what leaves
+Rally is reduced.
+
 An automation's Agent-DM destination is one of the delivery targets described in
 [work-stream and automation email addresses](workstream-email-addresses.md#outbound-automation-results);
 Slack and email are delivered independently, so a failure in one is retried without holding back the other.
@@ -520,6 +537,12 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   link pasted by a member produces no event and can never be previewed.
 - **Modal submissions are validated server-side**, and modals never request Rally
   or provider passwords.
+
+- **Every Slack delivery path reduces citations before splitting.** There are two
+  — the batched payload builder and the streaming appender — and a third would
+  have to call `slackDeliveryMarkdown` too. Folding it into the chunker instead
+  looks tidier and is wrong: the footnote pass would renumber a chunk against
+  definitions it could not see.
 
 ## Boundary
 
@@ -761,6 +784,28 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-08-27 — Agent output reduces its citations before it reaches a channel
+
+**What changed:** `slackDeliveryMarkdown` reduces `resource://` chips and
+embeds to their label text and GFM footnotes to numbered markers over one
+trailing source list. `slackMarkdownMessages` calls it for the batched path; the
+streaming path calls it itself. Both call it before splitting.
+
+**Why:** Model answers began carrying citations, and Slack renders neither the
+scheme nor footnote syntax — so without this, a grounded answer arrives in a
+channel as raw internal URLs and literal `[^1]` markers, and an announcement
+arrives as a broken image. The rejected shape was folding the reduction into
+`splitSlackMarkdown`, which is where a reader would look for it: the footnote
+pass has to see the whole body to number it, and a chunk whose definitions
+landed in the next one would renumber against nothing.
+
+**Consequences:** A third delivery path owes the same call — the streaming one
+already proved that, since it bypasses the payload builder entirely and would
+otherwise have leaked what the batched path did not. The function is idempotent
+so a path that reduces twice is safe. Shipped in
+[#381](https://github.com/juno-ai-labs/avalon/pull/381). Design:
+[`docs/PRDs/2026-08-27_inline-resource-citations/prd.md`](PRDs/2026-08-27_inline-resource-citations/prd.md).
 
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them

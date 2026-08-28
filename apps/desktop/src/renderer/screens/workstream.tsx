@@ -1168,18 +1168,20 @@ export function WorkstreamScreen(): React.JSX.Element {
     readSocketOpenContext,
     workstreamId: id,
   });
-  // Citations resolve against the loaded work stream first and the workspace
-  // second, so the transcript needs this before the screen has decided it has a
-  // work stream to draw at all — hence `routedDetail?`, and hence the hoisted
-  // empty array, which keeps the identity stable while there is nothing loaded.
-  const citations = useCitations({ api, resources: routedDetail?.resources ?? NO_RESOURCES });
-  // The rail's detail reads a resource's stored bytes through the same
-  // authorized route the lightbox uses; the identity is stable so the preview's
-  // effect does not refire on every commit of the screen around it.
+  // Citations resolve against the loaded work stream's resources, and the
+  // transcript needs this before the screen has decided it has a work stream to
+  // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
+  // which keeps the identity stable while there is nothing loaded.
+  const citations = useCitations({ resources: routedDetail?.resources ?? NO_RESOURCES });
+  // The rail's detail reads through the *preview* route, exactly as the
+  // attachment lightbox does: it materializes readable text for a file that is
+  // not already text, which is what makes a cited Word file or PDF worth
+  // opening. The identity is stable so the preview's effect does not refire on
+  // every commit of the screen around it.
   const loadResourceContent = useCallback(
     (resourceId: string, signal?: AbortSignal) => {
       if (!api) return Promise.reject(new Error('No API session'));
-      return api.getResourceContent(resourceId, signal);
+      return api.getResourcePreviewContent(resourceId, signal);
     },
     [api],
   );

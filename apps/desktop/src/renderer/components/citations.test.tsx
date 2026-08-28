@@ -56,6 +56,17 @@ describe('resource citations', () => {
     expect(screen.queryByRole('img')).toBeNull();
   });
 
+  it('reads a resource kind as words rather than as its system identifier', () => {
+    render(
+      <MarkdownBody citations={context({ resolve: () => ({ ...DECK, resourceType: 'github_pull_request' }) })}>
+        {'![The fix](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    // `capitalize` on the raw value prints `Github_pull_request` at a person.
+    expect(screen.getByText('Github pull request')).toBeInTheDocument();
+  });
+
   it('opens the cited resource in the rail when either form is clicked', () => {
     const citations = context();
     render(
@@ -162,7 +173,7 @@ describe('footnote citations', () => {
   const grounded = [
     'Revenue grew 40%.[^rev] Margin held.[^mar]',
     '',
-    '[^rev]: [Q3 board deck](resource://board-deck)',
+    '[^rev]: [Q3 board deck](resource://board-deck), slide 4',
     '[^mar]: [Margin memo](https://example.com/memo)',
   ].join('\n');
 
@@ -176,13 +187,25 @@ describe('footnote citations', () => {
     expect(document.body).not.toHaveTextContent('Footnotes');
   });
 
-  it('names the source in a popover attached to the pill', () => {
+  it('names the source in a popover, and says where opening it goes', async () => {
     render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
 
-    const pill = screen.getByRole('button', { name: /Q3 board deck/u });
-    const popover = document.getElementById(pill.getAttribute('aria-describedby') ?? '');
-    expect(popover).not.toBeNull();
+    // The popover is portalled out of the transcript deliberately: an
+    // absolutely-positioned box inside a scroll container is clipped by it, and
+    // a pill on the top line lost its popover entirely.
+    fireEvent.focus(screen.getByRole('button', { name: /Q3 board deck/u }));
+    const popover = await screen.findByRole('tooltip');
     expect(popover).toHaveTextContent('Q3 board deck');
+    expect(popover).toHaveTextContent('slide 4');
+    expect(popover).toHaveTextContent('Opens in Details');
+    expect(popover.closest('.transcript-scroll')).toBeNull();
+  });
+
+  it('says an external source opens in the browser rather than in the app', async () => {
+    render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
+
+    fireEvent.focus(screen.getByRole('button', { name: /Margin memo/u }));
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Opens in your browser');
   });
 
   it('sends an internal source to the rail and an external one to the browser', () => {
@@ -229,15 +252,22 @@ describe('footnote citations', () => {
     expect(document.body).toHaveTextContent('A claim.[^gone]');
   });
 
-  it('renders a pill with no open action when the cited resource cannot be resolved', () => {
+  it('keeps the marker and the source name when the cited resource cannot be resolved', async () => {
+    const citations = context();
     render(
-      <MarkdownBody citations={context()}>
+      <MarkdownBody citations={citations}>
         {'A claim.[^x]\n\n[^x]: [Some deck](resource://not-here)\n'}
       </MarkdownBody>,
     );
 
-    expect(screen.queryByRole('button')).toBeNull();
-    expect(document.querySelector('.citation-pill')).not.toBeNull();
-    expect(document.body).toHaveTextContent('Some deck');
+    // The reader loses the click, not the source's name — showing the marker at
+    // all is what tells them the claim was sourced.
+    const pill = screen.getByRole('button', { name: /Some deck/u });
+    fireEvent.focus(pill);
+    const popover = await screen.findByRole('tooltip');
+    expect(popover).toHaveTextContent('Some deck');
+    expect(popover).not.toHaveTextContent('Opens in');
+    fireEvent.click(pill);
+    expect(citations.open).not.toHaveBeenCalled();
   });
 });

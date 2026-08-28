@@ -1,3 +1,4 @@
+import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { ConnectorError, connectorRetryAfterMs, slackApi } from "@rally/connectors";
 import { workstreamCanonicalUrl } from "@rally/contracts";
 import { nowIso } from "@rally/db";
@@ -509,8 +510,17 @@ async function workspaceBotToken(
 }
 
 
+/**
+ * An agent's words, made safe for a notification.
+ *
+ * Two internal syntaxes would otherwise reach a channel verbatim: a mention's
+ * `person:` target, which prints a raw UUID at somebody, and a citation, which
+ * prints a `resource://` URL or a bare `[^1]` marker. This is a third
+ * outbound surface beside the digest email and the agent's own delivery, and it
+ * quotes the same message text they render — so it owes the same reduction.
+ */
 function humanReadableMessage(value: string): string {
-  return value.replace(
+  return rewriteCitationsAsPlainText(value).replace(
     /\[@((?:\\.|[^\]])+)\]\(person:[0-9a-f-]{36}\)/giu,
     (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
   );
