@@ -2,524 +2,201 @@
 
 > Created 2026-08-24.
 >
-> One query field, opened from the sidebar titlebar or `⌘K` anywhere, that
-> crosses work streams, messages, meeting notes, documents, automations, people,
-> and actions, and always ends by opening one of them. Index mechanics and the
-> projection design: [`design.md`](design.md). Standing contract:
+> One query field, opened from the sidebar titlebar or `⌘K` anywhere in the
+> main window, that searches everything a person can already open and always
+> ends by opening one thing or starting a work stream. Index and delivery
+> design: [`design.md`](design.md). Standing contract:
 > [the Avalon implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
 
 ## Summary
 
-A magnifying glass sits in the sidebar titlebar, left of where the sidebar list
-begins and clear of the traffic lights. Clicking it — or pressing `⌘K` from any
-surface — opens a single query field over whatever is on screen. One query
-searches everything the person can already read: work-stream titles and
-descriptions, the messages inside them, meeting notes and their transcripts,
-documents by name *and by content*, automations, the people in the workspace,
-and the handful of things Avalon can start. Results arrive grouped by kind with
-one top hit selected; `⏎` opens it, `⌘⏎` starts a work stream from the query
-text, `Esc` closes. Nothing is added to the app's navigation: the palette is a
-transient overlay that always terminates in something that already exists — a
-work stream, a note, a document, an automation, a person — or in starting a new
-work stream.
+Avalon gains a transient, workspace-wide search palette. It searches work-stream
+titles and descriptions, visible messages, meeting notes and transcripts,
+document names and extracted contents, automations, people, and the small set of
+actions already available from the sidebar. Results are grouped by kind and
+open the existing destination; search does not become a route, feed, inbox, or
+new place to read.
 
-What becomes possible that was not before is retrieval of *content*. Today a
-person can reach a work stream only by recognising its title in the sidebar's
-activity-ordered list. The words inside it — a decision in a message, a passage
-in a meeting transcript, a paragraph in an uploaded contract — are extracted,
-stored, and made available to the agent, and are reachable by no one else. After
-this change, a half-remembered phrase is enough.
+The searchable corpus is projected into one Turbopuffer namespace per workspace.
+Turbopuffer provides BM25 full-text search, type-ahead prefix matching,
+structured filters, result diversification, and a later path to hybrid search.
+Cloudflare remains the product and trust boundary: Workers authenticate the
+request, WorkspaceDO makes the final authorization decision, Queues deliver
+index updates, and a Workflow performs backfills and rebuilds. Turbopuffer is a
+disposable retrieval projection, never an authority.
 
 ## Motivation
 
-**Avalon deliberately removed every other way of finding things.** There are no
-channels, no direct messages, no global inbox, and no global activity feed. The
-sidebar is the entire index: **Pinned**, then work streams and notes in
-last-activity order, with `⌘1`–`⌘9` bound to the first nine of that run
-(`apps/desktop/src/renderer/components/sidebar.tsx`). That is a complete answer
-for someone holding a handful of work streams, and it degrades in a specific,
-predictable way as the count grows: the list is cursor-paged and loads more as
-it is scrolled, so a work stream that has been quiet for three weeks is reached
-by scrolling past everything that has been busy since.
+Avalon deliberately has no channels, global inbox, or global activity feed. The
+sidebar is therefore the only index of a workspace: pinned items followed by
+recent work. That works for a small number of work streams and degrades
+predictably as old work falls below the cursor-paged directory.
 
-**The content is unreachable by construction, not by omission.** Avalon already
-extracts and stores the text this change would search, for the agent's benefit:
+The sharper problem is content retrieval. Avalon already stores message text,
+meeting transcripts, and extracted document contents for the agent, but a person
+cannot search any of it. Someone who remembers that a pricing decision was made
+can scroll or spend a model run asking the agent to perform a keyword lookup.
+Search makes that remembered phrase sufficient.
 
-| Text | Where it already is |
-| --- | --- |
-| Work-stream titles, descriptions, and previews | `workspace_workstream_directory` in WorkspaceDO |
-| Messages | `parts.content` in each `SubstreamAgent` |
-| Meeting notes and their transcripts | `notes`, `note_transcript_segments` in WorkspaceDO |
-| Document contents | `resources.model_content_ref` → R2, with a character count and an extractor version |
-| Automations | `automation_templates`, `automation_subscriptions` in WorkspaceDO |
-
-Every row of that table is loadable by the agent as context and by nobody as a
-person. The asymmetry is the problem: a member who remembers that *someone
-worked out the pricing tiers* can ask the agent to go and find it — spending a
-model run, and a wait, on a keyword lookup — or can scroll.
-
-**One narrow search does exist, and this PRD has to reckon with it.**
-`GET /resources?q=` substring-matches four columns with `LIKE` — `title`,
-`provider`, `resource_type`, and `provider_resource_id` — and backs the debounced
-filter box in the work-stream resource picker. It is scoped to one dialog, it
-searches titles rather than contents, and its match semantics are substring
-where this change's are tokenized — which is precisely why it cannot be left
-beside a second search over the same `resources` table returning different
-answers for the same string. Reconciling the two is in scope; see non-goal 15.
-The agent's `search_resource` tool searches extracted document contents on the
-same corpus, and is the model's path rather than a person's.
-
-**The evidence here is structural rather than measured, and this document does
-not pretend otherwise.** Avalon has no usage history, no metrics stack, and no
-support corpus to cite ([`AGENTS.md`](../../../AGENTS.md#where-we-are)); the
-first workspaces are small enough that the sidebar still works. The argument is
-about the shape of the product rather than about a measurement: an organizing
-principle that replaces the inbox is only affordable if finding is cheap, and
-finding is currently the one thing Avalon asks a person to do by hand. Waiting
-for the measurement means waiting until every early workspace has already learnt
-to route around it.
+The evidence is structural rather than measured. Avalon has no usage history or
+search-quality dataset yet, so this PRD does not invent either. It chooses the
+smallest architecture that removes the known product constraint, can be judged
+with real use, and can be rebuilt from canonical data if the provider or schema
+changes.
 
 ## Goals
 
-1. Search opens in one keystroke from every surface, and closes in one, without
-   navigating away from what the person was doing.
-2. Names match as the person types, with no perceptible wait, for everything the
-   client already holds: work streams, automations, meeting notes, people, and
-   the actions Avalon can start. Document names match too, on the same round
-   trip as body text — the client caches no document list, so they are the one
-   name-match that is not instant and not available offline.
-3. Body text is searchable — messages inside work streams, meeting notes and
-   their transcripts, and the extracted contents of documents — so that a
-   remembered phrase finds the work it was written in.
-4. Results are grouped by kind, ordered within each group by relevance and
-   recency, with exactly one row selected so that `⏎` is always meaningful.
-5. A query that matches nothing still ends in an action: starting a work stream
-   with that text, without retyping it.
-6. Search never surfaces anything the person could not already open, and its
-   bounded remainder/`50+ results` states leak nothing about filtered-out work.
-7. Search remains a way *into* a work stream and never becomes a place to read
-   from: no results route, no persistent view, no second home screen.
-8. A person who wants more of one kind can expand from the five-row preview to
-   the best 50 matching results in one keystroke without leaving the palette,
-   and can get back to the mixed list in one more. (`→` in, `←` out; the
-   interaction is [Scoping to one group](#scoping-to-one-group).) When more may
-   exist, search says **50+ results** and asks for a narrower query rather than
-   computing an exact total.
+1. Search opens from every main-window surface in one keystroke and closes
+   without losing the person's place.
+2. Names already cached by the client match immediately; server results add
+   names outside the cached page and matches from body text.
+3. A remembered phrase can find a visible message, meeting transcript, or
+   extracted document and open the destination at the matching evidence.
+4. Results are grouped by destination kind and contain at most one row per thing
+   that can be opened, regardless of how many fragments matched.
+5. A failed lookup can become a new work stream without retyping the query.
+6. Search never reveals a destination the caller cannot currently open, through
+   either a row, a snippet, ranking displacement exposed to the client, or a
+   result count.
+7. Canonical writes never wait for Turbopuffer and never fail because indexing
+   is delayed or unavailable.
+8. Global and EU workspaces keep their search corpus in their own approved
+   region, with no cross-region query or replication.
 
 ## Non-goals
 
-1. **No standalone search-results route or persistent results view.** Rejected
-   outright, not deferred. A durable, addressable list of everything recently
-   matching a query is the global activity feed the product contract forbids,
-   reached through a text box. Results live in a transient overlay that closes
-   when something is opened.
-
-   **Scoping to one group is not that**, and the line between them is worth
-   drawing precisely, because "show me all the documents" is the request that
-   most naturally grows into a results page. What the contract forbids is a
-   *place*: a URL you can bookmark, a view you can return to, a list that
-   outlives the question. A scope has none of those — it has no route, it dies
-   with the overlay, it cannot be linked or restored, and it still terminates in
-   opening one thing. It is the same transient question asked more narrowly.
-   A scope that gained a URL, or survived `Esc`, would have crossed the line.
-2. **No saved searches, pinned searches, or server-stored search history.**
-   Deferred. Each carries the same risk as non-goal 1 in miniature — a saved
-   search is a channel you subscribed to by keyword.
-3. **No cross-workspace search.** Out of scope: V1 has no workspace switcher
-   ([`data-model.md`](../../data-model.md)), so there is no second workspace to
-   search from.
-4. **No cross-region search.** Rejected permanently. A workspace's region is
-   immutable and its content stays in it
-   ([`regionalization.md`](../../regionalization.md)); a query that spanned
-   Global and the EU would be a data-residency breach wearing a search box.
-5. **No search of a connector's own corpus.** Rejected as a product boundary.
-   Typing `launch` does not search all of Slack, Gmail, or Notion. Only
-   resources Avalon has actually ingested as `resources` rows are searchable;
-   reaching further into a provider is what the agent's connector tools are for,
-   and it is a different act with different authorization.
-6. **No semantic or vector search.** Deferred. `MEMORY_INDEX` and the Workers AI
-   binding exist and could embed this corpus, but that is a second index, a
-   second write path, and a per-query inference cost, in service of a recall
-   improvement nobody here can currently measure. Keyword search is the cheaper
-   thing to reverse. See key design decision 2.
-7. **No agent memory items in results.** Rejected. `memory_items` is the agent's
-   working state about a workspace, already FTS-indexed for the agent's own
-   retrieval; exposing it in a person's search surface makes an internal
-   representation into a product one.
-8. **No tool calls, tool results, terminal output, reasoning, or system parts in
-   work-stream message evidence.** Rejected for this change. The line is the existing
-   `parts.visibility` column: `people` and `both` are searchable, `model` and
-   `system` are not. A person searching for their own words should not have to
-   scroll past a tool's JSON.
-9. **No first-party activity events (`workspace_activity_events`) in results.**
-   Rejected. Ranking recent activity by keyword *is* the global activity feed,
-   and it would arrive without anyone deciding to build one.
-10. **No find-in-page within an open work stream's transcript.** Deferred, and
-    genuinely wanted — but it is a different surface with a different
-    interaction (in-place highlight, next/previous, scroll-to-match) that would
-    distort this one if bolted on.
-11. **Not a general command palette.** Actions are limited to what the sidebar
-    already offers — **New work stream**, **New automation**, **New
-    meeting/notes**, **Settings** — plus starting work from the query text.
-    Deferred: exposing arbitrary app commands here is a separate argument about
-    discoverability, and every command added is a row competing with a real
-    result.
-
-    The distinction is a **closed set versus a registry**, and it is worth
-    stating because "we have five actions, so it *is* a command palette" is a
-    fair reading of the list alone. The five are the sidebar's existing primary
-    actions, mirrored — nothing here is reachable *only* from search, so the
-    palette adds no surface a person has to learn separately, and the set changes
-    only when the sidebar's does. A command palette in the usual sense is an
-    open registry that commands opt into, which is what makes it grow without
-    anyone deciding it should. If that registry ever exists, this non-goal is
-    what has to be revisited first.
-12. **No search operators or filter syntax.** Deferred, and unaffected by group
-    scoping. `from:`, `in:`, `is:` and friends are the natural second version;
-    shipping them in the first makes the query field a language to learn before
-    it is a box to type in. Scoping is deliberately the other shape: a key
-    pressed on a group that is already on screen, discoverable because the
-    footer names it and the group is already there to point at. It narrows by
-    *kind* only — the one axis the results are already grouped along — and adds
-    no vocabulary. `is:unread`, `from:alex`, and date ranges remain the deferred
-    conversation, and a typed `doc:` prefix is part of that one rather than a
-    shorthand for this.
-13. **Not available signed out or on the public site.** Out of scope: search
-    runs against one workspace under an authenticated session.
-14. **Archived work streams and archived notes do not appear.** Deferred, and
-    called out because it is the first thing someone will ask for: archiving is
-    currently how a person says "stop showing me this", and search re-showing it
-    would undo that. Revisit behind an explicit filter, which is non-goal 12.
-15. **Changing the resource picker's own match behaviour is out of scope; making
-    the two searches agree on *authorization* is not.** The picker is the
-    **Attach resource** dialog on the work-stream screen — `resourceDialogOpen`
-    in `workstream.tsx`, whose `.resource-picker-list` is fed by a 250 ms
-    debounce on its search field into `GET /resources?q=`. It matches four
-    columns by substring, including `resource_type` and `provider_resource_id`,
-    which an FTS index over title and body does not carry — so re-pointing it at
-    the shared index would silently narrow it, and "one shared match rule" is not
-    available. What *is* available, and is in scope, is one shared set of
-    **visibility** fragments: both reads run in WorkspaceDO over the same tables,
-    and today they already disagree — the picker's inlined draft-upload predicate
-    omits the `uploaded_by_user_id` arm that the single-resource read applies, so
-    a person cannot see their own unattached draft in the picker. Search takes the
-    read-one form. Whether the picker should be corrected to match is a separate,
-    smaller decision this PRD surfaces rather than makes.
+1. **No search-results route, persistent results view, saved search, or keyword
+   feed.** A search exists only while the palette is open. A persistent search
+   surface would recreate the global inbox/activity feed the product rejects.
+2. **No cross-workspace or cross-region search.** A query is bound to the active
+   workspace and its immutable region.
+3. **No live search of Slack, Gmail, Notion, or another connector.** Only content
+   Avalon has ingested is indexed. Searching a provider directly remains an
+   agent-tool action with separate authorization.
+4. **No semantic retrieval in V1.** Turbopuffer can add vectors and hybrid
+   ranking later, but V1 is BM25 and prefix search. Semantic recall adds an
+   embedding model, a second relevance variable, and cost before Avalon has a
+   query set with which to judge it.
+5. **No agent memory, reasoning, tool arguments, tool results, terminal output,
+   or system-only parts.** Only text already visible to people may be projected.
+6. **No find-in-page within the open transcript.** That is a separate surface
+   with next/previous and in-place highlighting behavior.
+7. **Not a general command palette.** The actions group mirrors the sidebar's
+   existing primary actions; it is not an open command registry.
+8. **No search operators or typed filter language.** Group scoping is the only
+   V1 filter. `from:`, `in:`, dates, and status filters are deferred.
+9. **Archived work streams and notes stay hidden.** Reintroducing archived work
+   requires an explicit product decision and filter.
+10. **No second local full-text index or provider abstraction.** Avalon builds
+    directly against Turbopuffer. The exit strategy is a deterministic rebuild
+    from canonical sources, not two implementations maintained in parallel.
+11. **Cloudflare AI Search is not the V1 index.** It now offers keyword and
+    hybrid retrieval through a Workers binding, but its current metadata model
+    permits only five custom fields and cannot filter stored arrays. Avalon's
+    result kinds, destination identities, versions, scopes, and participant ACLs
+    need a richer structured document. Revisit it when those constraints change;
+    do not wrap both providers now.
 
 ## Product behavior
 
-### Opening it
+### Opening and closing
 
-**The glyph.** A magnifying-glass `IconButton` sits in `.sidebar-titlebar` — the
-48px strip above the sidebar list that today holds nothing on desktop and exists
-only as a window-drag region. **Why there:** it is the only chrome above the
-sidebar, it is directly over the list search is a faster path into, and the strip
-is otherwise dead space, so the glyph costs no existing affordance its place. It
-is also where the originating mock put it. The alternative worth naming is the
-composer end of the work-stream screen, which was not taken because search is not
-scoped to the open work stream and should not appear to be. The glyph is placed at the strip's leading edge,
-inset clear of the macOS traffic lights at `x: 18, y: 17`, and carries
-`window-no-drag` so that it is clickable rather than draggable. Its accessible
-label is `Search`, and its tooltip names the `⌘K` shortcut. That tooltip is new:
-the sidebar's existing shortcut hints are not a hover affordance to match — they
-are `aria-hidden` ⌘-digit pills that appear only while the Command key is
-physically held, and disappear on `keyup` or window blur.
+A magnifying-glass button sits in the sidebar titlebar. Clicking it or pressing
+`⌘K` (`Ctrl+K` off macOS) opens a centered palette over the current main-window
+surface with focus in its query field. `Esc`, clicking the scrim, or opening a
+result closes it and restores focus appropriately.
 
-**The shortcut.** `⌘K` (`Ctrl+K` off macOS) opens search from every surface in
-the main window — home, a work stream, a note, an automation. It is captured at
-the window, so it works while the composer has focus; it is the one shortcut
-that takes precedence over a focused text field, because a person reaching for
-search mid-sentence means search.
+Settings and meeting notes use standalone Electron windows without the app shell
+or a route to work-stream destinations. Search is absent there until Avalon has
+a deliberate main-window navigation bridge.
 
-**Not from the standalone windows.** Settings and meeting notes open as separate
-Electron `BrowserWindow`s whose renderer branches before `AppShell` into a
-single-route router — no sidebar, no shell, and no route to a work stream, so a
-result opened there would have nowhere to go (`App.tsx` returns early on
-`surface=settings` and `surface=meeting`; `app-shell.tsx` says so in its own
-comment). Reaching search from those windows means either a main-window
-navigation bridge over IPC — which does not exist today, the preload surface
-exposes only `openSettings`, `openMeetingNotes`, and
-`openMeetingAudioSettings` — or mounting a second palette that can only ever
-match within that window. Both are out of scope here; `⌘K` is a main-window
-affordance, and the acceptance criteria say so.
+### Empty, typing, and populated states
 
-**Closing.** `Esc` closes and returns focus to whatever had it. Clicking the
-scrim closes. Opening a result closes.
+With an empty query the palette shows the same pinned-then-recent run used by
+the sidebar's `⌘1`–`⌘9` shortcuts, followed by actions. Nothing is fetched.
 
-**Interaction with `⌘1`–`⌘9`.** The palette is a `role="dialog"`, and the
-sidebar's numbered-shortcut handler already refuses to navigate while a dialog is
-open. That is the correct behavior and this change relies on it rather than
-working around it: while search is open, digits are query text.
+As the person types, locally cached names match immediately. After the query
+settles and contains at least two characters, the regional API queries the
+workspace's Turbopuffer namespace. Remote results replace or enrich local rows
+by stable destination identity; they never append a duplicate.
 
-### The overlay
+Groups appear in this order when non-empty:
 
-A centered panel over a scrim, above all surfaces, drawn entirely in theme
-tokens — `--av-sys-color-scrim-default` behind it and a surface token for the
-panel, exactly as `.dialog-overlay` and `.dialog-content` already do. **Not a
-dark palette:** two of Avalon's four themes are light (`air`, `terra-light`),
-there is no `dark` token family in the registry, and
-[`theming.md`](../../theming.md) is explicit that nothing in the interface knows
-which theme is running and no component reads a colour — a test fails if
-`app.css` names one. It holds a single unlabelled query field with the magnifying glass at
-its leading edge and an `Esc` affordance trailing. Results fill the panel below
-the field. A footer row states the keys that do something: `↑↓ NAVIGATE`,
-`→ IN GROUP`, `⏎ OPEN`, `⌘⏎ START`, and on the right, the count of matching
-bounded candidates that are not shown or `50+ results` when the sentinel exists.
-Inside a group the second hint becomes `← ALL`.
-
-The panel does not resize as results arrive — it holds a stable height so that
-the row under the cursor does not move while the person is still reading it.
-
-### States
-
-**Empty query.** Recents, under a **Recent** heading: the same pinned-then-recent
-run `⌘1`–`⌘9` is bound to, so the two affordances agree about what "recent"
-means. Beneath it, the actions group. Nothing is fetched; this is the cached
-sidebar directory.
-
-Two things follow from it being the *same run*, and both are easy to get wrong.
-**The order matches the sidebar's, position for position** — the third row here
-is the work stream the sidebar hints as `⌘3` — because both read the same cached
-directory in the same order. That is the point of reusing the run rather than
-computing a second notion of "recent". **But the numbers are not shown here and
-`⌘`-digit does not fire while the palette is open**: digits are query text, and
-the sidebar's handler defers to any open dialog. So the alignment is about which
-rows, not about a live shortcut, and rendering the badges here would advertise a
-chord that does nothing. (Making `⌘`-digit live *inside* the palette is a
-coherent alternative — it would let a person open the palette and jump in one
-chord — but it is a different decision and this PRD does not take it.)
-
-**Pinned rows keep their pin.** A pinned work stream is marked as pinned here the
-way it is in the sidebar, because the run is pinned-then-recent and a reader who
-cannot see where the pins end cannot tell why the order is what it is. It is a
-marker only: the palette does not offer pinning, reordering, or any of the
-sidebar's right-click actions. Search opens things; it does not manage them.
-
-**Typing.** Local name matches paint on the first keystroke, from the directory
-the sidebar already holds — work streams, notes, automations, people, actions.
-No request has been made yet, so this is instant and works offline. Remote
-matches — message bodies, note transcripts, document contents, and names beyond
-the locally cached page — are requested as the query settles and merge into their
-groups when they arrive.
-
-The selected row is tracked by its identity, not its index, so a group arriving
-underneath the cursor never changes what `⏎` would open. **Arriving results may
-still move the selection, but only before the person has touched it**: until the
-first `↑`/`↓`, the selection follows the current top hit and re-resolves when
-remote results land; after it, the selection is the person's and nothing but a
-new keystroke moves it. Without that first clause a remote message match could
-never become the top hit, which is most of what phase 2's ranking is for; without
-the second, pressing `⏎` as a response lands opens whatever arrived.
-
-**Populated.** Groups appear in this order, and a group with no matches is
-omitted entirely rather than shown empty:
-
-| Group | A row is | Right-hand metadata |
+| Group | Searchable evidence | Destination |
 | --- | --- | --- |
-| **Work streams** | a work stream whose title, description, preview, or visible message text matches | exact state and relative last activity — `Needs input · 4m` |
-| **Automations** | template or subscription name match | `Active · You`, `Draft`, `Active · Workspace` |
-| **Meeting notes** | note title, briefing, or transcript match | `Recorded · Jul 28` |
-| **Documents** | resource title or extracted-content match | provider and relative time — `Google Docs · 4m ago` |
-| **People** | a workspace member | their role |
-| **Actions** | something Avalon can start | the key that runs it |
+| **Work streams** | title, description, preview, visible messages | the work stream, anchored to the best message when applicable |
+| **Automations** | template/subscription name and description | the automation |
+| **Meeting notes** | title, briefing, visible transcript segments | the note, anchored to the evidence when applicable |
+| **Documents** | title and extracted content | the document/resource |
+| **People** | cached member name | the workspace-member surface |
+| **Actions** | the fixed sidebar action set | the existing action |
 
-Each row shows an icon for its kind, its title with the matched span
-highlighted, and the metadata above. A row that matched on *body* rather than
-name additionally shows one line of surrounding text with the term highlighted,
-so that the reason it matched is visible without opening it.
+Each remote row shows the destination title, kind-specific metadata, and at most
+one bounded plain-text snippet when body evidence produced the match. Snippets
+are rendered as text with client-applied highlights, never as Markdown or HTML.
 
-**The result unit is the thing that opens, not a matching text fragment.** One
-work stream is one result whether the query matches its title, one message, or
-five messages. One meeting note is one result whether its title and twenty
-transcript segments match. A result carries up to three of its best highlighted
-snippets; V1 does not compute or display an exact per-result occurrence count.
-Thus five mentions of “alphabet” in one work stream produce one work-stream row,
-not five message rows. The indexed fragments remain separate internally so an
-update does not require rebuilding one giant body, but they collapse by
-destination identity before ranking, capping, remainder-state calculation, or
-rendering.
+The result unit is the destination, not the fragment. Five matching messages in
+one work stream produce one work-stream row. Turbopuffer keeps fragments
+separate for incremental writes and evidence ranking, then `limit.per` restricts
+the ranked response to one fragment for each `(result_type, result_id)` pair.
 
-When the best evidence for a work-stream result is a message, **opening the
-result lands on that message**, with the transcript anchored to it and the
-matched phrase in view — not at the bottom of the work stream, where a busy
-thread may have put hundreds of parts between the reader and the thing they
-searched for. The match holds the viewport until the reader scrolls, so a turn
-streaming in below does not take it away. See key design decision 10. **People**
-and **Actions** are not indexed rows and carry no relevance score; they are
-matched entirely on the client, sort within their own groups, and never compete
-for the top hit. And `⏎` on a person opens the workspace-member surface, not a
-work stream — the one result kind whose destination is not one of the four the
-overlay otherwise terminates in.
+Each group previews five rows. `→`, the group heading, or its **more** affordance
+scopes the palette to that group without creating a route or changing the query.
+The scoped view exposes at most the best 50 authorized destinations and asks the
+person to refine the query if more may exist. `←` returns to all groups; `Esc`
+still closes the palette.
 
-**Top hit.** The single highest-ranked row across all groups is selected when
-results settle, so `⏎` is meaningful without the person pressing `↓` first.
-Ranking is relevance first — a title match outranks a body match, a whole-word
-match outranks a prefix — and recency second, which breaks ties the way the
-sidebar already orders itself.
+One row is always selected. Before the person moves the selection it follows
+the best result as remote evidence arrives; after the first `↑` or `↓`, arrival
+of a response cannot move it. `⏎` opens the selection.
 
-**Truncation.** Each group shows at most **five** rows — per group, which a
-single overall cap cannot deliver: one prolific kind would take every slot and
-leave groups that genuinely matched rendering as though they had not. Search
-never computes an exact corpus-wide or group-wide total. It considers at most
-the best **50 authorized destination entities per group**, plus one sentinel
-needed to establish that more exist. A truncated group says `50+ results` when
-that sentinel exists; otherwise it says only how many of the bounded candidates
-are currently hidden. Authorization and destination-level de-duplication happen
-before this state is produced, so neither the label nor ranking displacement can
-leak inaccessible or duplicate fragments.
+The final row for a non-empty query is always **Start a work stream:
+“<query>”**. It becomes selected when nothing else matches, and `⌘⏎` invokes it
+from anywhere in the palette.
 
-**No matches.** Search never shows an empty panel. The action row **Start a work
-stream: "<query>"** is always present and always last, and becomes the selected
-row when nothing else matched. `⏎` on it opens the new-work-stream surface with
-the query already in the composer — the same optimistic hand-off
-[`workstream-creation.md`](../../workstream-creation.md) describes. `⌘⏎` runs it
-from anywhere in the list, without arrowing down to it.
+### Loading, failure, offline, and freshness
 
-This is the behavior that makes search Avalon-shaped rather than generic: a
-failed lookup in a product organized around work streams should produce a work
-stream.
+There is no blocking spinner. Local matches remain visible while a quiet progress
+line indicates that remote search is running.
 
-**Loading.** There is no spinner over the results. Local matches are already
-painted; remote groups are absent until they arrive, and a quiet indeterminate
-line sits under the query field while a request is outstanding.
+If Turbopuffer, the regional API, or the network is unavailable, local results
+stay usable and the palette says `Couldn't search message and document text.`
+No fallback full-text engine runs and no error dialog interrupts the user.
 
-**Error.** If the request fails, local name matches stay on screen and a single
-quiet line reads `Couldn't search message and document text.` The palette
-remains fully usable for opening things by name. Search never presents a
-blocking error dialog — it is an accelerator, and an accelerator that interrupts
-is worse than one that degrades.
+The search index is eventually updated even though each Turbopuffer query uses
+strong consistency. “Strong” means the query observes every write already
+accepted by Turbopuffer; it cannot remove the delay before Cloudflare's indexer
+delivers a canonical change. When the durable projection backlog is non-empty,
+the response may say `Search is catching up on recent changes.`
 
-**Offline.** Identical to the error state, reached without a request — the same
-quiet line naming which half of search is unavailable. It cannot lean on an
-existing offline indicator, because there isn't one on most of these surfaces:
-`SocketStatusIndicator` reports *live-update* state ("Reconnecting live
-updates", "Live updates unavailable") rather than offline-ness, and its only
-mount is the work-stream header. The one surface-wide notice is
-`app-shell.tsx`'s connection banner, which renders only after a navigation query
-has already errored. So the palette's own line is the whole signal a person gets
-on home, notes, and automations, and it has to stand alone.
+Authorization is never eventual. Turbopuffer ACL attributes reduce the candidate
+set, but WorkspaceDO rechecks every destination and the current visibility and
+version of its matching source fragment before a title, snippet, count state, or
+anchor reaches the client. A stale index may omit newly granted or newly written
+content, but it cannot preserve access that has been revoked or quote text that
+is no longer person-visible.
 
-### Scoping to one group
-
-Five rows is a preview, and a preview a person cannot open past is a taunt:
-showing only five documents is worse than useless if the rest are unreachable.
-So a group can be entered. `→` on any row scopes the palette to that row's
-group; so does clicking the group's heading, or its own `more` affordance.
-Nothing navigates and nothing opens — the panel stays exactly where it is, the
-query text is untouched, and the group's heading becomes a scope chip beside
-the field reading **Documents**. The other groups drop away, and the surviving
-one exposes the bounded candidate set: it fills the panel and pages to the
-fiftieth result. If a sentinel established that more exist, the end reads
-`50+ results — refine your search` rather than walking the entire corpus to
-determine or display an exact total.
-
-`←` clears the scope and restores the mixed list. So does `Backspace` when the
-caret is at the start of an empty query, which is the gesture the mention
-composer already trains. `Esc` still closes the whole palette rather than
-stepping back one level, because a person reaching for `Esc` wants out, not up.
-
-Scoping re-runs the query rather than filtering what is already on screen —
-otherwise **Documents** could only ever show the five it had. The scoped request
-uses the same authorized, destination-deduplicated candidate scan with the group
-bound and returns pages from the same 50-result product window.
-
-One consequence worth stating: the client-side matcher holds work streams,
-notes, automations, people, and actions, and never document bodies or message
-bodies. A work stream matched locally by title and remotely by message text is
-still one row because both halves use the work-stream id as the result identity;
-the remote evidence enriches the existing row rather than appending another.
-Documents remain server-only in both modes. The same identity rule applies in a
-scope, so entering **Work streams** cannot reintroduce duplicate rows.
-
-While a scope is applied and the request has failed or the app is offline, the
-scoped list is not merely empty — it says so, in the same quiet line, because an
-empty **Documents** scope and an unreachable one look identical otherwise.
-
-**Freshness.** Canonical workspace state is authoritative; the search index is a
-derived, eventually consistent view. A successful message, note, document,
-automation, or work-stream write does not wait for indexing and is never rolled
-back because indexing is unavailable. Locally cached name changes can appear at
-once, while body-text matches may briefly reflect the previous canonical
-version. A response that knows its indexing backlog is non-empty shows the quiet
-line `Search is catching up on recent changes.` It does not block opening
-results, imply an exact delay, or turn search into a write-status surface.
-
-Authorization is never eventually consistent: every query joins the current
-canonical visibility state. A stale fragment may therefore fail to find newly
-written text, but it cannot keep a deleted, archived, or newly inaccessible
-destination visible. Opening a stale match always loads the canonical entity;
-if the phrase moved or was deleted, the entity opens normally without inventing
-historical content.
-
-### Results are a read, not a subscription
-
-Search is a point-in-time `GET`. Results do not live-update while the panel is
-open, and a work stream whose activity changes mid-query does not reorder under
-the cursor. This is the deliberate answer to
-[`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md): it is a thing
-one person explicitly went looking for, it is not a surface anyone else's screen
-depends on, and pushing search results to every open window would be a second
-data plane serving a panel that is open for four seconds at a time.
+Search is a point-in-time `GET`; results do not live-update while the palette is
+open.
 
 ## Impact on the product contract
 
-**This change moves the contract, and it moves the first sentence of it.** [The
-implementation brief](../2026-08-05_avalon-implementation-brief/prd.md) opens:
+This changes the implementation brief's opening sentence, which currently says
+Avalon is organized around work streams “rather than channels, direct messages,
+search, or a global inbox.” The prohibition is preserved at the product level
+but narrowed from all search to search as an organizing surface.
+
+When the first implementation ships, the sentence becomes:
 
 > Avalon is an AI-native workplace communication and execution environment
 > organized around concrete work streams rather than channels, direct messages,
-> search, or a global inbox.
+> or a global inbox. Search exists as a transient way into something a person
+> can already open; it is never a results route, keyword feed, or second place
+> to read.
 
-Search is named there alongside channels and the inbox, and the reason it is
-named is worth stating before proposing to change it. In the products Avalon is
-reacting to, search is *the compensation for having no organizing principle*:
-everything lands in one undifferentiated stream, nothing has a home, and the
-search box is how you survive that. Avalon rejected the stream, so it rejected
-the box that the stream requires.
-
-That argument is about search as an **organizing** surface. It does not reach
-search as a **retrieval** affordance that always terminates in a work stream —
-and the distinction is exactly what non-goals 1, 2, 9, and 11 exist to enforce.
-A palette with no route, no history, no feed, and no activity rows cannot become
-the thing the clause was written against. What it does instead is make the
-organizing principle affordable at a hundred work streams rather than at ten.
-
-**The brief's opening sentence, as proposed in full** — not a substring
-substitution, because the edit both removes a word from the list and appends a
-sentence:
-
-> Avalon is an AI-native workplace communication and execution environment
-> organized around concrete work streams rather than channels, direct messages,
-> or a global inbox. Search exists as a way *into* a work stream — a transient
-> query over what a person can already read — and never as a place to read from:
-> there is no results route and no keyword feed.
-
-The contract sentence names only the two prohibitions this PRD rejects
-*outright* — non-goal 1 (no results route) and non-goal 9 (no keyword feed).
-Saved searches are non-goal 2, which is **deferred**, and writing a deferred
-"not yet" into the standing contract would mean re-opening the product contract
-to undo it later. A contract clause and a deferred non-goal are different
-commitments and this document does not conflate them.
-
-**A second statement of the same prohibition moves with it.**
-[`implementation-plan.md`](../../implementation-plan.md)'s release gate reads
-"The implementation is not considered complete if it … introduces channels,
-global search, a terminal, separate named agents, or a global inbox." That is
-phrased as a completion blocker, so leaving it while editing the brief would
-have the repository simultaneously describe search as shipped and fail the
-change for shipping it. It is edited in the same change, to name what is still
-prohibited — a results route and a keyword feed — rather than search as such.
-
-Two other clauses were checked and do **not** move:
-
-- *"Avalon has no global activity feed."* Untouched, and actively defended by
-  non-goals 1 and 9.
-- *"Viewing does not create participation."* Untouched. Opening a search result
-  is viewing; it seats nobody.
-
-Editing the brief is part of this change and lands with the first implementing
-pull request, not with this document — the brief is the standing contract and it
-should not describe a surface that does not exist yet.
+The corresponding release gate in [`implementation-plan.md`](../../implementation-plan.md)
+must change in the same implementation pull request. “Avalon has no global
+activity feed” and “Viewing does not create participation” do not move.
 
 ## Decision log
 
@@ -527,557 +204,192 @@ None yet.
 
 ## Key design decisions
 
-1. **One workspace-wide index inside WorkspaceDO, not a fan-out to every
-   `SubstreamAgent`.** WorkspaceDO is already the authority for cross-work-stream
-   queries and already runs FTS5 (`memory_items_fts`,
-   `memory_table_rows_fts`), and `workspace_workstream_directory` already holds a
-   projection of every work stream with a per-viewer visibility row beside it. A
-   search index belongs in the same object, answered by one query.
-   **Rejected:** querying each `WorkstreamDO`/`SubstreamAgent` per keystroke.
-   The object count grows with the workspace's age rather than with the query,
-   every keystroke would wake objects that have been asleep for weeks, and the
-   latency of the slowest cold object becomes the latency of search. It also
-   costs the most in exactly the workspaces where search matters most.
+1. **Turbopuffer is the V1 search engine.** It supplies BM25, trailing-token
+   prefix matching, array filters for ACL hints, per-destination diversification,
+   strong reads, and an incremental upgrade path to hybrid retrieval. Public
+   production use on large multi-tenant workspace corpora makes it a better fit
+   than adopting a less-proven engine for minor query conveniences.
+2. **One namespace per workspace.** A workspace is the natural isolation and
+   deletion boundary. It prevents one customer's corpus affecting another's
+   candidate scan and follows Turbopuffer's recommendation to use namespaces for
+   isolated document spaces.
+3. **Cloudflare owns correctness.** Turbopuffer returns candidates, not
+   authorization decisions. The regional Worker authenticates; WorkspaceDO
+   performs the final current-state check and produces the response.
+4. **One physical document per searchable fragment; one result per
+   destination.** Deterministic fragment IDs make upsert/delete idempotent, and
+   `limit.per` over destination identity stops verbose work from crowding out
+   other results.
+5. **Cloudflare Queues carry live indexing; a Workflow carries history.** Live
+   writes record an outbox intent after canonical commit and enqueue only a
+   wake-up identity. The queue consumer batches current source snapshots into
+   Turbopuffer. A resumable Workflow enumerates history for initial backfill or
+   an operator-requested rebuild.
+6. **The projection is disposable.** Turbopuffer contains no fact that cannot be
+   regenerated from WorkspaceDO, WorkstreamDO/SubstreamAgent, or R2. An
+   incompatible schema creates a new namespace generation, backfills it, and
+   flips one WorkspaceDO pointer after validation.
+7. **Lexical first, hybrid later.** V1 combines title and body BM25 with a small
+   recency tie-break. Exact weights are chosen against a reviewed query set, not
+   guessed in the PRD. Embeddings are added only when failed-query evidence says
+   lexical recall is the problem.
 
-2. **FTS5 keyword search, not embeddings.** The corpus is workplace text where
-   people search for words they remember writing — names, identifiers, phrases —
-   which is what a lexical index is good at. **Rejected:** embedding the corpus
-   into `MEMORY_INDEX`. It is a second write path, a second thing to backfill, an
-   inference call in the latency budget of a keystroke, and a recall improvement
-   nobody here can currently measure
-   ([`choosing-queues-or-rpc.md`](../../choosing-queues-or-rpc.md#deciding-without-measurement)).
-   Keyword-first is also the cheaper decision to reverse: adding a semantic pass
-   later re-ranks results the lexical index already produced.
+## Data and regional impact
 
-3. **Visibility is a join evaluated at query time, never baked into the index.**
-   One index row per document; who may see it is decided by joining
-   `workspace_workstream_viewers`, `notes.scope`, and the existing resource
-   access check at read. **Rejected:** materialising per-user index rows. That
-   multiplies the index by the member count, and — the deciding objection — it
-   makes access *removal* an indexing job. With a query-time join, a person who
-   loses access stops matching on their next keystroke with nothing to sweep.
+Search adds an external subprocessor for message, note, automation, and document
+text. Production enablement therefore requires Turbopuffer's DPA, current SOC 2
+Type II report, penetration-test material, subprocessor list, deletion terms,
+and region commitment to pass Avalon's security review.
 
-4. **Name matching happens on the client, before any request.** The client
-   already holds the directory page (in the sidebar) and the member list (at the
-   app root — a different cache, which the People group reads), which is what
-   makes the common case — "get me back to the thing I was in yesterday" —
-   instant and offline-capable, and what lets a failed request degrade to a
-   still-useful palette rather than to nothing. **The matcher is largely new
-   work.** The composer's `@` mention picker is a case-insensitive `includes()`
-   over a label list and `mention-highlight.ts` is an exact case-folded slice;
-   neither is a fuzzy or prefix matcher. The nearest reusable thing is
-   `searchAvailablePlugins` in `packages/agent-harness`, which is the whole
-   shape — NFKC normalise, token extract, dedupe, exact/phrase/overlap scoring,
-   deterministic tiebreak, cap, and a total — and `workspace-settings.tsx`
-   already does grouped client filtering with empty groups dropped. No fuzzy
-   library exists in the repo and none should be added. Its semantics still have
-   to be reconciled with the server's, which tokenizes and prefixes only the
-   trailing term: the same query otherwise returns different sets from the two
-   halves of one list, a work stream matched by both has to deduplicate to one
-   row with one identity, and a client row carries no `bm25` score, so it cannot
-   compete for the top hit on rank — client matches sort within their groups and
-   the top hit is chosen among scored rows, falling back to the first client row
-   only when no scored row exists.
+Each Avalon deployment uses credentials scoped to its own Turbopuffer
+organization and an approved nearby region. Global and EU Workers never share a
+key or namespace. Turbopuffer states that customer data remains exclusively in
+the selected region; Avalon must make that contractual before enabling EU
+workspaces. Namespace copy/export across regions is not used.
 
-5. **Phased by where the text already lives, not by which source sounds most
-   important.** Phase 1 covers every source whose text WorkspaceDO already
-   stores; phase 2 covers the two whose text is somewhere else. See
-   [Rollout](#rollout). This is what lets the surface ship and be judged before
-   the expensive projection is built.
+The API key is a server secret and never enters renderer configuration, logs,
+Queue messages, or index documents. Queue messages contain opaque source
+identities and versions; the consumer reads current text from its canonical
+regional authority.
 
-6. **Canonical state is authoritative; every index write is asynchronous and
-   disposable.** The canonical write commits first. Only then is a durable
-   indexing event recorded for later work. The request returns success even if
-   recording or applying that event fails; repair compares the index with the
-   canonical source and closes any gap. Consumers re-read or carry a versioned
-   snapshot of the latest canonical value, apply updates and tombstones
-   idempotently, and may rebuild the entire derived index without changing the
-   source. **Rejected:** writing any search row or FTS trigger in the canonical
-   transaction. That makes an accelerator capable of rejecting a message,
-   rename, note edit, upload, or automation write.
-
-7. **One result per destination entity, not one per matching fragment.** A work
-   stream is the destination for its metadata and all visible messages; a note
-   is the destination for its briefing and transcript segments. Physical index
-   fragments remain separate for incremental writes and useful snippets, then
-   collapse by `(result_type, result_id)` before ranking and the 50-result cap.
-   **Rejected:** one row per message or transcript segment in the palette. It
-   lets a verbose entity crowd out every other destination and makes five
-   occurrences of one word look like five things to open.
-
-8. **Live indexing and historical backfill share one coalesced, batched path.**
-   Pending work is keyed by canonical source entity — a work stream, message,
-   note, transcript segment, document, or automation subscription. Repeated
-   autosaves replace that entity's pending target version and move its
-   eligibility time rather than append an indexing operation; after the debounce
-   window, a drain reads only the latest canonical version. Drains batch many
-   entity projections into each queue delivery and each WorkspaceDO apply call.
-   The initial migration seeds historical identities into that path, with a
-   resumable checkpoint, while
-   writes created after deployment enter the live path immediately. **Rejected:**
-   one queue message or RPC per part, and a backfill gate that delays indexing
-   new data until history catches up.
-
-9. **The escape hatch is a first-class result, not an empty state.** "Start a
-   work stream: `<query>`" is present in every result set, not only when nothing
-   matched, and has its own key (`⌘⏎`). A search that fails should cost one
-   keystroke to turn into work.
-
-10. **A work-stream result whose best evidence is a message opens *at that
-    message*, not at the bottom.** Landing at the tail and leaving the person to
-    find the line they searched for is the whole feature failing at the last
-    step: the phrase they typed is the one thing they cannot see. **Rejected:**
-    shipping bottom-anchored in phase 2 and improving it later — the improvement
-    is the feature, and a transcript that jumps to the newest message actively
-    hides the match, since a busy work stream may have hundreds of parts after
-    it.
-
-    It costs more than a `scrollTo`, and the cost is worth stating because it is
-    the reason this was nearly deferred. The transcript is **not virtualized**,
-    so a part that has not been paged in is not in the DOM to scroll to — a match
-    from three months ago is not in the loaded window at all. So the work is an
-    *anchored open*: read the page around the matched `sequence_number` instead
-    of the tail, and put the viewport there. Two pieces already exist and one
-    does not. `messageRows` already takes `before`/`after` cursors, so a centred
-    read is two existing reads rather than a new query shape; and
-    [`transcript-scrolling.md`](../../transcript-scrolling.md) already has the
-    concept of the screen asking the hook to move the viewport — on open, after
-    an older page is prepended, on **Jump to latest**, and on send. This adds a
-    fifth reason, which is exactly the shape that document is built for. What is
-    new is the anchored read itself, and the rule that the match keeps the
-    viewport until the reader scrolls, so a streaming turn below does not yank
-    it away.
-
-11. **Search does not invent a title limit.** The derived schema accepts every
-    title the canonical product model accepts. If indexing needs a byte bound,
-    the indexer normalizes or truncates only its derived copy on a code-point
-    boundary; the canonical write and title are untouched. **Rejected:** the
-    search table's arbitrary 500-byte `CHECK`, which would make a projection
-    narrower than its authority. A future work-stream-title limit is a separate,
-    system-wide product decision: it must be a justified user-facing character
-    limit enforced at the canonical domain/API boundary across every write path,
-    reflected in database validation, and accompanied by a policy for existing
-    longer titles.
-
-## Data model
-
-Sketch only; [`design.md`](design.md) carries the DDL, the projection protocol,
-and the backfill, and [`data-model.md`](../../data-model.md) becomes
-authoritative when it ships.
-
-The derived store in WorkspaceDO has five responsibilities, split so none is
-mistaken for canonical product state:
-
-- **`workspace_search_documents`** — one physical row per searchable fragment,
-  keyed by `(source_type, source_id)`. It also carries the destination identity
-  `(result_type, result_id)`: work-stream metadata and messages point at one work
-  stream; note metadata and transcript segments point at one note; a document
-  and automation subscription point at themselves. The query collapses on that
-  identity before returning results. Each row carries its authorization
-  `scope_id`, derived `title` and `body`, recency, source version, and payload
-  hash. The title has no search-specific length `CHECK`; any index-only bound is
-  applied by normalizing the derived copy, never by rejecting the authority.
-- **`workspace_search_fts`** — an external-content FTS5 table over `title` and
-  `body`, and deliberately **without** a `prefix` index. Every request
-  prefix-matches its trailing token, so one looks obviously right, but FTS5
-  consults a prefix index only at exactly the configured lengths — it would buy
-  the first two keystrokes of a query's life and be paid for on every fragment
-  ever indexed. [`design.md`](design.md#schema) carries the measurement and the
-  conditions under which to revisit it.
-- **`workspace_search_versions`** — source- and destination-level version fences
-  that survive deletion after searchable text is removed. They make an old
-  source replay a no-op and prevent a late message/segment delivery from
-  resurrecting a deleted parent result.
-- **A coalescing indexing outbox at each canonical authority** — keyed by
-  `(source_type, source_id)`, and carrying its destination identity plus only the
-  newest requested source and destination versions, operation (`upsert` or
-  `delete`), eligibility time, and delivery state. It is recorded only after the
-  canonical transaction commits. Repeated writes update the existing row; they
-  do not append one row per autosave.
-- **`workspace_search_index_state`** — the current index generation, backlog
-  state, and resumable checkpoints for repair and historical backfill. It is
-  operational state for a disposable projection, not a second source of truth.
-
-Both land as a **new version** of `WORKSPACE_DO_SCHEMA_MIGRATIONS`. They cannot
-be appended to `WORKSPACE_DOMAIN_SCHEMA_STATEMENTS`, which is hashed into
-version 1 — editing it throws `workspace_do_schema_hash_mismatch:1` in the
-constructor of every already-deployed workspace.
-
-The indexing worker drains eligible source identities in batches, reads the
-latest canonical version, and replaces their derived fragments in one index
-transaction. Queue redelivery and replay are safe: an equal version and hash is
-a no-op, an older version is ignored, and a newer version replaces the old
-fragment. A delete is a versioned tombstone; deleting a parent destination also
-removes all child fragments through the result identity. Rows for document
-contents are derived only after extraction reaches `ready`; an extraction or
-index failure does not roll back the resource.
-
-Nothing is backfilled synchronously. The historical migration writes resumable
-checkpoints and feeds the same batched indexing path as live work, while new
-writes enter that path immediately rather than waiting behind history. An
-unindexed work stream is still findable by name from the directory, which is
-what makes incomplete search during backfill or repair acceptable.
-
-## Regional impact
-
-None crosses the boundary. The index lives in the workspace's own WorkspaceDO,
-which is already pinned to that workspace's immutable region and placement, so
-indexed content comes to rest exactly where the content it was derived from
-already rests. There is no cross-region query, no Global aggregation, and no
-change to the single identity endpoint. Non-goal 4 makes this permanent rather
-than incidental.
+Deleting a source schedules deletion of its deterministic fragment IDs.
+Deleting a workspace schedules deletion of its entire namespace after the
+canonical workspace deletion is committed. Provider deletion is retryable and
+observable; it never becomes the canonical deletion transaction.
 
 ## Security and trust model
 
-**Search is the highest-leverage place in Avalon to get authorization wrong**,
-because a leak here is silent, is presented as a feature, and is discovered by
-typing a word. The rules below are the change's real acceptance criteria.
-
-1. **Every result passes the same check as opening the thing it points at, and
-   every source kind has a predicate.** Work streams and the messages inside
-   them use the rule the sidebar list actually applies —
-   `scope = 'workspace' OR is_participant = 1`, against a viewer row pinned to
-   the directory row's `authority_generation`. Notes are filtered by `scope` and
-   `owner_user_id`. Documents use **all four** rules `resource-service.ts`
-   applies — connector scope, the draft-upload rule, the note-backed rule, and
-   the **inbound-email rule**, which is the one most easily lost because it is
-   applied per row rather than as SQL, so a reading that counts only the SQL
-   fragments finds three. Dropping it lets every one of the other three pass an
-   email row vacuously, making an email sent to a member's *personal* automation
-   address searchable by the whole workspace. The exact predicates are in
-   [`design.md`](design.md#the-visibility-join); this section names four so that
-   a reader building from it cannot arrive at three. Automations follow their
-   subscription's `You`/`Workspace` scope, plus its template's archive state.
-   Search adds no new authorization rule and is permitted to relax none.
-
-   Two traps, both of which the first draft of this PRD fell into and which the
-   implementation must not: **`workspace_workstream_viewers.listable` is not the
-   sidebar's flag** — no list query reads it, and it is computed through
-   `participantVisible`, which also admits `created_by_user_id`, so it is
-   *broader* than the rule the socket enforces. And **a source kind with no
-   predicate is not a safe default**: a guard shaped `scope_id IS NULL OR (…)`
-   returns every row of any kind it forgot, which is how documents and
-   automations were briefly returned to every member of the workspace. The
-   filter is written as an exhaustive `CASE` so that an unhandled kind is
-   excluded rather than admitted; [`design.md`](design.md#the-visibility-join)
-   carries the statement.
-2. **The filter is applied inside the query, before destination de-duplication,
-   ranking, and candidate-cap state.** A `WHERE` that runs after candidates are
-   chosen leaks the existence of private work through a `50+ results` state and
-   through ranking displacement, which are both readable without ever seeing a
-   title.
-3. **Access loss takes effect on the next keystroke**, because the visibility
-   join is evaluated at read time (key design decision 3). No sweep, no
-   invalidation, no window during which a revoked member's search still matches.
-   This is deliberate alignment with
-   [`access-revocation.md`](../../access-revocation.md).
-4. **`model`- and `system`-visibility parts never enter the index at all**, and
-   neither do reasoning, tool arguments, or tool results (non-goal 8). The filter
-   is applied at projection, not at query, so text a person may not read is never
-   written into a table a person's query touches.
-5. **The query string is untrusted input and is never concatenated into a MATCH
-   expression.** It goes through the same sanitizer `memory-service.ts` and
-   `memory-table-service.ts` already use to turn a person's words into a bound
-   FTS5 parameter; a caller must not be able to write their own FTS5 syntax,
-   whose operators can otherwise be used to probe for content the ranking would
-   not have shown.
-6. **Snippets render as text, never as markup.** A snippet is user- or
-   model-authored content and does not go through `MarkdownBody`
-   ([`markdown-rendering.md`](../../markdown-rendering.md)) or any HTML path; the
-   match highlight is applied by the renderer over character offsets the server
-   returns, not by the server emitting tags.
-7. **Telemetry never carries the query, a title, a snippet, or a document
-   name.** [`telemetry.md`](../../telemetry.md) already forbids titles and bodies
-   in events, and a search query is more sensitive than either — it is what
-   someone was looking for. The events below carry shape, not content.
+1. Only `people`- and `both`-visible message parts are eligible for projection.
+   Model/system parts and tool payloads never enter Turbopuffer.
+2. Candidate queries include an ACL optimization: workspace-scoped documents or
+   personal documents whose `viewer_ids` contains the caller. Missing or stale
+   ACL attributes fail toward omission, not admission.
+3. WorkspaceDO re-authorizes every returned destination using the same rule as
+   opening it, then validates that the matching source still exists at that
+   version and remains person-visible. A source kind without an explicit
+   predicate is excluded. Provider text is never returned solely because its
+   destination still exists.
+4. If stale ACL data returns an unauthorized candidate, it is discarded and the
+   server continues a bounded candidate scan. The client receives neither the
+   discarded row nor Turbopuffer's raw match count. `hasMore` is true only after
+   the server has found an additional canonically authorized destination.
+5. Access revocation takes effect on the next query even while its index update
+   is pending. Access grants may take the normal projection delay to appear.
+6. Search text is untrusted input and is passed as data in Turbopuffer's JSON
+   query expression, never interpolated into a filter or URL path.
+7. Queries, titles, snippets, document names, and index payloads are prohibited
+   from application logs and telemetry.
 
 ## Rollout
 
-Behind a Flagship client feature flag, `global-search`, resolved through
-`client-feature-flags.ts` and therefore **failing closed**: an unbound binding,
-an unreachable Flagship, or an unresolved flag all mean the glyph is absent and
-`⌘K` does nothing ([`feature-flags.md`](../../feature-flags.md)).
+The `global-search` Flagship client feature flag fails closed.
 
-**Phase 1 — everything WorkspaceDO already holds the text of.** Work streams,
-automations, meeting notes and their transcripts, document *titles*, people, and
-actions. These sources still enter the asynchronous coalescing outbox after the
-canonical transaction; locality removes a transport hop, not the failure
-boundary. One FTS5 table, one `GET`, and the whole client surface ship together.
-This lets the interaction be judged before the expensive half is built.
+**Phase 1 — surface and names.** Ship the palette, recents, client-side name
+matching, people, actions, and Turbopuffer indexing for work-stream, automation,
+note, and document metadata already owned by WorkspaceDO. This validates the
+interaction and the end-to-end vendor path without moving message bodies.
 
-**Phase 2 — the text that lives somewhere else.** Message bodies and extracted
-document contents enter the same index contract through batched, versioned
-projection payloads. Repeated edits to one message are coalesced by message id,
-then many message projections are batched by workspace before transport;
-document contents become eligible after extraction reaches
-`ready`. Both enrich the phase-1 result entities and panel; neither creates a
-new visible result kind or requires client rework.
+**Phase 2 — body evidence.** Add visible messages, transcript segments, and
+extracted document chunks through the same projection contract. Anchored opening
+ships with message/segment search; a body match that opens at the destination's
+tail does not meet acceptance.
 
-For both phases, the migration seeds **historical data only**. Writes made after
-the indexing contract deploy enter the live outbox immediately, even while the
-historical cursor is still on its first page. Live drains are selected ahead of
-backfill drains so an old workspace cannot make newly written text wait behind
-its entire history.
+**Phase 3 — relevance only if earned.** Build a small reviewed evaluation set
+from non-sensitive synthetic examples plus team-authored expected results. Tune
+field weights and recency against it. Add semantic/hybrid retrieval only if real
+failed queries show a lexical recall gap; do not add it merely because the
+provider supports vectors.
 
-Turning the flag off hides the surface immediately and leaves the index in place,
-inert. Rolling back further means dropping only derived index, outbox, and
-checkpoint state; canonical rows and the directory the surface joins against are
-untouched throughout. That is the property that makes this cheap to reverse.
+Before production enablement, run the acceptance corpus against both configured
+regions, verify deletion, inspect a forced Queue failure in the DLQ, and complete
+the vendor-security gate. Turning the flag off hides the surface immediately;
+canonical writes and local navigation remain unchanged.
 
 ## Limits
 
-Split per
-[`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md).
-
-**Product limits — set here, and cited to this PRD:**
+Product limits fixed by this PRD:
 
 | Limit | Value |
 | --- | --- |
-| Rows shown per group before truncation | 5 |
-| Rows in a scoped group's first page | 25 |
-| Rows added by the scoped group's second and final page | up to 25 |
-| Authorized, destination-deduplicated candidates considered per group and query | 50, plus one sentinel used only to return the `50+ results` state; no exact total is computed |
-| Group order | as tabled under [Product behavior](#states) |
-| Minimum query length before a remote request | 2 characters (local matching starts at 1) |
-| Maximum accepted query length | 200 characters, matching the existing `GET /resources?q=` product boundary |
-| Rows in the empty-query **Recent** group | 9, matching the `⌘1`–`⌘9` run |
+| Rows shown per group | 5 |
+| Destinations exposed in a scoped group | at most 50 |
+| Minimum query length for remote search | 2 characters |
+| Maximum accepted query length | 200 characters, matching `GET /resources?q=` |
+| Empty-query recents | 9, matching `⌘1`–`⌘9` |
 
-**The debounce shape is decided; its duration is not.** Pending indexing work is
-keyed by canonical source identity and its eligibility moves forward on each
-update, so an autosave burst yields one read of the latest canonical version.
-The exact pause is a user-visible freshness/efficiency tradeoff and remains for
-product/engineering to choose before implementation; this PRD does not guess a
-number. Query requests use the same one-request-per-settled-query shape, with a
-separately chosen UI pause and stale responses abandoned rather than rendered.
+The implementation must set, with platform arithmetic recorded in the
+implementing change, the maximum indexed bytes per fragment, chunks per source,
+Queue batch entities and bytes, candidates scanned during canonical
+authorization refill, Turbopuffer request timeout, and Workflow page size. These
+new paths may not ship unbounded, and this PRD does not guess the values.
 
-**Defensive limits — and these may not ship open.**
-[`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)
-gates the open value on one test: *does this change introduce the unbounded
-path?* Here the answer is yes for the index body, batches, and drain. They are
-new paths this change authors, so an open value would be a regression rather
-than behavior that already ships. These are **asked for, not guessed**, and the
-implementing change does not start until they are set:
-
-| Limit | Why it cannot ship open | Starting point for the team |
-| --- | --- | --- |
-| Maximum indexed **bytes** per message/document fragment | A canonical part can be much larger than a useful search snippet, and duplicating it into SQLite and queue payloads otherwise consumes memory and object storage in proportion to user content | Derive from the queue's published 128 KB message ceiling, the number of fragments carried together, and the amount of text needed to produce the promised snippets. On trip, truncate only the derived copy on a code-point boundary; never reject the canonical write |
-| Maximum entities and bytes per live queue delivery/RPC apply | A batch with no bound can exceed the queue's 128 KB message ceiling or the Worker's 128 MB memory ceiling | Derive both dimensions from the published platform ceilings and the chosen fragment bound; one entity count without a byte bound is insufficient |
-| Per-wake live and backfill drain sizes | An alarm that drains an entire historical workspace can monopolize the single-threaded WorkspaceDO | Derive from the same batch dimensions; live work is selected first, and backfill remains checkpointed for the next wake |
-
-The indexed-fragment unit is **bytes, not characters**, because the platform and
-transport ceilings are byte-counted. Truncation stays on a code-point boundary.
-Titles are deliberately absent from this table: search accepts the canonical
-title and imposes no second product constraint. If a derived-copy bound is later
-proved necessary, it follows key design decision 11 rather than becoming a
-schema rejection.
-
-One number moves to the product column. The **retention horizon for indexed
-message text** is filed here as defensive in name only: this PRD's own open
-question 1 says a horizon makes search a recency tool and no horizon makes it an
-archive, and *that changes what the product promises*. Per the same document, a
-number that both shapes and defends is a product limit — the team sets it as
-scope, not as a cap, and it is [open question 1](#open-questions) rather than a
-row above.
-
-The as-you-type request cadence is a product limit doing double duty: it decides
-whether search feels instant *and* bounds how often a keystroke reaches
-WorkspaceDO. The shape is set above; its duration remains a named product and
-engineering decision rather than an implementer's guess.
+No independent “search retention horizon” is introduced. Search follows the
+canonical product lifecycle: retained content is searchable; deleted content is
+removed. If cost later forces a recency horizon, that is a visible product-scope
+change and requires a new decision rather than a defensive constant.
 
 ## Acceptance
 
-1. `⌘K` from the home screen, a work stream, a note, and an automation each open
-   the panel with focus in the field; `Esc` returns focus where it was. In the
-   standalone Settings and meeting-notes windows it does nothing, deliberately.
-2. The glyph is visible in the sidebar titlebar, is not covered by the traffic
-   lights at any window width, and is clickable rather than draggable. Verified
-   in a real window per
-   [`dev-environment.md`](../../dev-environment.md#driving-and-screenshotting-it),
-   not by a component test.
-3. Typing three characters of a work stream's title selects it as the top hit and
-   `⏎` opens it.
-4. **A phrase that appears only in the body of one message finds its work stream,
-   shows a snippet with the phrase highlighted, and opens the work stream
-   scrolled to that message with the phrase in view** — including when the match
-   is old enough that the transcript's tail page does not contain it, which is
-   the case that distinguishes an anchored read from a `scrollTo`. A turn
-   streaming in below must not move the viewport off it.
-5. A phrase that appears only in a meeting transcript finds its note; a phrase
-   that appears only inside an uploaded document finds that document.
-6. Five occurrences of `alphabet` across messages in one work stream produce
-   one work-stream result with highlighted evidence, not five rows. The same
-   query across a note title and multiple transcript segments produces one note
-   result.
-7. **A second member, signed in separately, searches a phrase that appears only
-   inside a `personal` work stream they are not a participant of, and gets no
-   row and no change to the group's bounded remainder/`50+ results` state.**
-   Repeated for a `personal` note and for a document they cannot access.
-8. A member removed from a work stream stops matching its content on their next
-   query, with no intervening deploy or sweep.
-9. **A phrase that appears only inside another member's `personal` meeting note
-   returns nothing — including through the Documents group.** Every note is
-   backed by a `resources` row that is born `model_content_status = 'ready'`, so
-   this is the test that catches the note's text reappearing under the document
-   authorization rule rather than the note one.
-10. **A phrase from an email sent to another member's *personal* automation
-   address returns nothing, and does not change the bounded remainder state.**
-   This is the inbound-email arm of the document rule, which is applied per row
-   rather than as SQL and was argued away once already; the three remaining
-   fragments all pass such a row vacuously, so nothing else in this list catches
-   its loss.
-11. **A member with no viewer row for a `workspace`-scoped work stream still
-    finds its messages.** Viewer rows are written only for authors, mentions, and
-    participants, so a rule that keys solely on the viewer row makes every shared
-    work stream unsearchable to everyone who has not yet spoken in it.
-12. **A query whose Documents group is truncated: `→` scopes to Documents, the
-    other groups disappear, a **Documents** chip appears beside the field, and
-    the sixth-ranked document — invisible before — is on screen. `←` restores
-    the mixed list with the same query and the same five-row preview.** Repeated
-    with the group heading clicked instead of `→`.
-13. Fifty-one authorized matching documents return only the best 50 candidate
-    identities plus `hasMore: true`; the palette renders `50+ results` and never
-    executes or displays an exact total count. At 50 matches, `hasMore` is false.
-14. Scrolling a scoped group reaches at most the bounded 50-result window. When
-    `hasMore` is true, its end asks for a narrower query instead of continuing an
-    unbounded traversal.
-15. A scope applied while the API is unreachable shows the quiet line rather than
-    an empty list.
-16. A query matching nothing shows the start-a-work-stream row selected; `⏎`
-    opens the new-work-stream surface with the query in the composer.
-17. With the API unreachable, the panel still opens and still matches names, and
-    shows the single quiet line about message and document text.
-18. With `global-search` off, the glyph is absent and `⌘K` does nothing.
-19. A canonical write succeeds when the index outbox or index consumer is
-    unavailable. Search may report that it is catching up; the write response is
-    not changed or retried by the client.
-20. Ten autosaves to one note within the debounce window leave one pending
-    source identity and index only the latest canonical version after the
-    window. The same coalescing holds for repeated edits to one message.
-21. Applying a batch twice is a no-op the second time; an older version cannot
-    overwrite a newer one; a same-version/different-hash divergence is surfaced
-    for repair rather than silently accepted.
-22. Updating an indexed entity replaces its old fragments and deleting it
-    removes them through a versioned tombstone. Neither path can resurrect stale
-    fragments when events arrive out of order.
-23. A historical backfill checkpoints after each bounded batch, resumes from
-    that checkpoint after interruption, and does not duplicate results. A write
-    created during the backfill is indexed through the live path before the
-    historical scan completes.
-24. An operator repair can re-enqueue one source entity or destination, and a
-    full rebuild can discard and regenerate the derived index from canonical
-    sources while recording an incomplete/catching-up state.
+1. `⌘K` opens the palette from home, a work stream, a note, and an automation;
+   `Esc` restores focus. The sidebar glyph is usable in a real desktop window.
+2. With no network request, an empty query shows the same nine-item
+   pinned-then-recent run as the sidebar and typing a cached title finds it.
+3. A phrase present only in an authorized message finds one work-stream row,
+   shows plain-text evidence, and opens around that message even when it is not
+   in the transcript's tail page.
+4. Multiple matching messages in one work stream and multiple matching segments
+   in one note still produce one result per destination.
+5. A phrase present only in an authorized meeting transcript or extracted
+   document opens the corresponding note or document.
+6. Entering a group exposes its sixth result, returns at most 50 authorized
+   destinations, and never displays an exact corpus total.
+7. Personal work-stream, note, inbound-email, and document fixtures invisible to
+   a second member produce no row, snippet, displacement state, or `hasMore`
+   signal. A revoked member stops seeing a result on the next query while the
+   ACL projection is deliberately held stale.
+8. A once-visible message part that becomes `model`-visible or is deleted cannot
+   return its old snippet while its stale index fragment is deliberately retained.
+9. A workspace-scoped work stream remains searchable by a member with no viewer
+   row, proving the authorization check follows workspace scope rather than
+   participation alone.
+10. If Turbopuffer is unreachable, local results and start-a-work-stream remain
+   usable and canonical writes continue to succeed.
+11. Queue redelivery cannot overwrite a newer fragment, resurrect a deletion,
+    or create duplicate results. A forced permanent failure reaches the DLQ and
+    leaves a repairable outbox intent.
+12. Backfill resumes after interruption, indexes live writes while history is
+    still running, and can rebuild into a fresh namespace generation before an
+    atomic pointer switch.
+13. Global test content never appears in the EU organization/region and EU test
+    content never appears in Global. Workspace deletion removes its namespace.
+14. With `global-search` disabled, the glyph is absent and `⌘K` does nothing.
 
-Where these become durable checks, they land in [`e2e.md`](../../e2e.md).
+Durable manual checks are added to [`e2e.md`](../../e2e.md); runtime-dependent
+Queue, Durable Object, and authorization cases belong in the Workers suite.
 
 ## Telemetry
 
-Three events, registered in `packages/contracts/src/telemetry.ts` per
-[`adding-new-instrumented-event.md`](../../adding-new-instrumented-event.md),
-carrying shape only:
+Three content-free events:
 
-- `search_opened` — how it was opened (`glyph` or `shortcut`) and the surface it
-  was opened from.
-- `search_results_shown` — query length as a bucket, never the query; the number
-  of rendered results per group and each group's `hasMore` boolean, never an
-  exact match total; whether remote results arrived, failed, or were skipped.
-- `search_result_opened` — the result's `sourceKind`, its group, and its position
-  within the group; or `start_workstream` when the escape hatch was taken.
+- `search_opened` — glyph or shortcut, and originating surface.
+- `search_results_shown` — query-length bucket, rendered count per group,
+  remote outcome (`arrived`, `failed`, `offline`, `catching_up`), and scoped kind.
+- `search_result_opened` — kind and position, or `start_workstream`.
 
-Together these answer the one question that decides whether this surface earns
-its place: **does search convert into opening something, and which kinds of
-result do people actually take?** If phase 1 shows people opening work streams by
-name and nothing else, phase 2's cost is not yet justified.
+No event contains the query, title, snippet, document name, provider score, or
+exact match total. The initial question is whether opening search converts into
+opening work and whether body results are used enough to justify their indexing
+cost.
 
 ## Open questions
 
-1. **What is the retention horizon for indexed message text?** Blocking for
-   phase 2a, and **not for phase 1 at all** — phase 1 indexes no message text, so
-   everything below is separable from shipping the surface and judging it.
-
-   **The structural point, which matters more than the multiplier.** Message
-   bodies today are spread across *N* `SubstreamAgent` objects, each with its own
-   10 GB. Phase 2a puts a second copy of all of them into **one** WorkspaceDO
-   with **one** 10 GB budget. So the index does not merely consume space — it
-   re-bounds the workspace's whole message capacity against a single object's
-   ceiling, and it is the first thing in the product to do that. Everything else
-   WorkspaceDO holds (the directory, notes and transcripts, memory, activity,
-   opportunities) shares that budget.
-
-   **The arithmetic, so the horizon can be argued rather than guessed.**
-   External-content FTS5 keeps one copy of the text — it avoids the `%_content`
-   shadow table — but not the inverted index, and `detail=full` is required for
-   phrase queries and carries a position per term occurrence. Measured on 50,000
-   rows of ~40 words: 18.7 MB of table against 9.9 MB of FTS index, so **about
-   570 bytes per indexed part, or roughly 2.3× the raw message text** once row
-   overhead, the primary key, and the scope index are counted. That gives:
-
-   | Indexed parts | Index size | Share of a 10 GB object |
-   | --- | --- | --- |
-   | 1 million | ~570 MB | ~6% |
-   | 5 million | ~2.8 GB | ~28% |
-   | 10 million | ~5.7 GB | ~57% |
-
-   So the index is comfortable to roughly ten million parts and becomes the
-   object's dominant consumer somewhere past that. **The failure at the end is
-   not degradation:** a full object stops accepting writes — deletes still work,
-   which is exactly what makes it an outage rather than a policy
-   ([`data-model.md`](../../data-model.md)).
-
-   **The levers, cheapest to reverse first**, because the horizon is only one of
-   them: a retention window (index the last *N* months); a bounded prefix of each
-   message rather than its whole body; `detail=column` or `detail=none` on the
-   FTS table, which cuts the inverted index materially but gives up phrase
-   queries; a contentless index (`content=''`), which drops the body copy
-   entirely and roughly halves the cost, at the price of fetching every snippet
-   from the owning object; and not indexing messages at all, which is simply
-   phase 1.
-
-   A horizon makes search a recency tool; no horizon makes it an archive with an
-   eviction event in its future. That is a promise to users either way, so it is
-   the team's call and not the implementer's — but it should now be made against
-   these numbers rather than against the bare word "unbounded".
-2. **Does a work stream a person created but then left appear in their
-   results?** Blocking, and not a question this PRD may answer by itself.
-   [`data-model.md`](../../data-model.md) records that `personal` visibility
-   means two different things in two places, and states that closing the gap is
-   "a product decision nobody has made", and that neither half should be copied
-   into a new caller until somebody does. **Search is a new caller.**
-
-   That document is also wrong about which half is which, in a way that inverts
-   the risk and that this change should correct in the same breath as answering
-   the question. Its sentence — "`WorkstreamDO.canRead` and the `listable` flag
-   it projects test participation alone" — is right about `canRead`, which does
-   test participation alone, and wrong about `listable`:
-   `listable` is computed through `participantVisible`, which is
-   `scope === 'workspace' || participant || created_by_user_id === userId`. So
-   `listable` is the **creator-inclusive** half. Choosing it would not hide a
-   creator's work stream — it would surface the full message text of a
-   `personal` work stream to someone the sidebar and `WorkstreamDO`'s socket
-   both refuse. This PRD therefore specifies the sidebar's own rule
-   (`scope = 'workspace' OR is_participant = 1`) as the interim predicate,
-   written in one fragment.
-
-   **But the gap is already open elsewhere, and that makes the question more
-   urgent rather than less.** There are two `canRead`s.
-   `WorkstreamDO.canRead` is participation-only, as above. But
-   `WorkstreamObjectProduct.canRead` delegates straight to `participantVisible`
-   and is therefore creator-inclusive — and it is what admits a person to
-   `SubstreamAgent`'s room socket, which serves the transcript search would
-   index. So a creator who left a `personal` work stream is *already* admitted
-   to the messages in question; search would not be opening something nothing
-   else opens. That is not a reason to copy the broader rule, but it does mean
-   the decision is overdue rather than merely pending, and it is why "worth
-   making for every caller at once" is the operative sentence here.
-   `removeParticipant` permits self-removal with no creator exemption, so the
-   gap is reachable rather than theoretical.
-3. **Do automation *runs* deserve their own group?** Every run owns a work
-   stream, so runs are already reachable through the **Work streams** group — but
-   a person looking for "the competitor digest from last Tuesday" is thinking
-   about the automation, not the work stream it produced. Deferred until phase 1
-   telemetry says whether automations are being searched for at all.
-4. **What is the indexing debounce duration?** Blocking implementation, not the
-   PRD architecture. The mechanism is fixed: repeated writes to one source
-   entity coalesce, eligibility moves forward, and only the latest canonical
-   version is indexed. Product/engineering chooses the pause by balancing how quickly a
-   just-written phrase should become searchable against autosave churn. The
-   implementer does not infer a duration from an unrelated debounce elsewhere.
+1. **Does the creator of a personal work stream retain access after leaving it?**
+   This is a pre-existing disagreement between the creator-inclusive and
+   participation-only read paths documented in [`data-model.md`](../../data-model.md).
+   Search must not create a third answer. Resolve the product rule before Phase
+   1 and apply it to opening, listing, sockets, and search together.
+2. **Which Turbopuffer regions and contractual controls pass Avalon's vendor
+   review?** Global and EU production rollout remain blocked until the DPA,
+   security evidence, deletion terms, region commitment, and separate
+   credentials are accepted. A technical proof may use isolated test
+   organizations with synthetic content before that review.
