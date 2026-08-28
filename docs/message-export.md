@@ -250,6 +250,33 @@ Two traps:
 
 ## Changelog
 
+### 2026-08-28 — The card styles the three citation forms
+
+**What changed:** `.citation-chip`, `.citation-card`, `.citation-pill` and
+`.citation-text-fallback` gained rules in the card's stylesheet, written for a
+light document: the chip as a labelled pill, the embed card as a bordered block,
+the pill as a superscript badge, and the fallback as ordinary text. The button
+chrome all three carry in the application is reset away.
+
+**Why:** The card shares `MarkdownBody`'s markup and none of the application's
+CSS, so a class introduced there has no rule here until somebody writes one — and
+this document already records what the miss looks like: an unstyled element in
+the first saved card anyone looks at. Citations added three classes at once, one
+of them a block-level card, so the miss would have been conspicuous.
+
+**Considered and rejected:** Nothing structural. The alternative to writing the
+rules is deriving them from `app.css`, which this document rejects for reasons
+that have not changed: the card is a light document rendered in a window that
+loads none of that stylesheet.
+
+**Consequences:** They are *pictures* of citations here rather than controls, and
+the rules say so — no pointer cursor, no hover state, and the popover a pill
+carries in the application is absent by construction, because the tooltip renders
+into a portal outside the exported subtree. A future citation form needs its rule
+here in the same change, as every other class does.
+
+Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+
 ### 2026-08-25 — The export scheme is rallywithai-export://
 
 **What changed:** `MESSAGE_EXPORT_SCHEME` is `rallywithai-export`. No legacy scheme is

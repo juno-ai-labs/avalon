@@ -22,6 +22,7 @@ widening what counts as math, and before moving where either function is called.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/model-markdown.ts` | `normalizeModelMarkdown` and `normalizeModelText`, the command table, and the rules deciding what is math. Exported as `@rally/contracts/model-markdown`. |
+| `packages/contracts/src/markdown-code.ts` | Which parts of a Markdown string are code. Shared with the citation rewrite, so the two rewriters cannot disagree about what they must not touch. |
 | `packages/contracts/src/model-markdown.test.ts` | The behavioural suite, including the cases that must *not* be rewritten. |
 | `packages/agent-harness/src/prompts/response-formatting.ts` | `RESPONSE_FORMATTING_POLICY`, the prompt section that asks for none of this to be necessary. |
 
@@ -30,8 +31,8 @@ The call sites, each on the path from stored text to a reader:
 | Surface | Call site | Entry point |
 | --- | --- | --- |
 | Markdown surfaces in the desktop client | `renderer/components/workstream-blocks.tsx` (`MarkdownBody`) | `normalizeModelMarkdown` |
-| Every Rally email's HTML body — the digest, an automation's result | `services/email-markdown.ts` (`markdownToEmailHtml`) | `normalizeModelMarkdown` |
-| Every Rally email's plain-text alternative and preheader | `services/email-markdown.ts` (`markdownToEmailText`, `markdownToEmailPreheader`) | `normalizeModelText` |
+| Every Rally email's HTML body — the digest, an automation's result | `services/email-markdown.ts` (`markdownToEmailHtml`) | `normalizeModelMarkdown`, after the citation rewrite |
+| Every Rally email's plain-text alternative and preheader | `services/email-markdown.ts` (`markdownToEmailText`, `markdownToEmailPreheader`) | `normalizeModelText`, after the citation rewrite |
 | An elicitation's question, option labels and descriptions, and answered label | `renderer/components/workstream-blocks.tsx` (`ElicitationPanel`, `elicitationAnswerLabel`) | `normalizeModelText` |
 | A tool card's summary line | `renderer/components/workstream-blocks.tsx` | `normalizeModelText` |
 | A generated work-stream title | `services/workstream-naming-service.ts` (`normalizeGeneratedTitle`) | `normalizeModelText` |
@@ -247,6 +248,34 @@ Both entry points are asserted against the same input where they differ, so the
 escaping rule is visible as a difference rather than stated only in prose.
 
 ## Changelog
+
+### 2026-08-28 — The email path repairs citations before it repairs TeX
+
+**What changed:** `markdownToEmailHtml`, `markdownToEmailText` and
+`markdownToEmailPreheader` now rewrite citations to readable text *before*
+calling into this module. Nothing in the repair itself changed, and the
+code-splitting regex it uses moved to a shared `markdown-code.ts` that the
+citation rewrite reads too.
+
+**Why:** Ordering, and it is load-bearing in one direction only.
+`normalizeModelMarkdown` escapes the Markdown-active characters in whatever it
+unwraps, brackets included, so a citation that went through the repair first
+could come out with an escaped bracket and stop being a link the rewrite can
+read. The reverse order is safe: the rewrite produces plain text and real links,
+neither of which the repair has an opinion about.
+
+**Considered and rejected:** Giving the citation rewrite its own copy of the
+code-splitting rule. Both rewriters have to make the same call about what is
+code — one must not repair TeX inside a fence, the other must not reduce a
+citation a model is *showing* someone — and two regexes for one question is how
+the three markdown renderers this product used to have drifted apart.
+
+**Consequences:** A surface that calls both has to call the citation rewrite
+first, and the call sites say so. `mapMarkdownProse` is now shared API rather
+than a private detail: changing what counts as code changes both rewriters at
+once, which is the point, and means its tests protect two callers.
+
+Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
 
 ### 2026-08-23 — Created, because TeX was reaching readers
 

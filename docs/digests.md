@@ -667,6 +667,33 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-28 — Every email this module renders rewrites citations first
+
+**What changed:** The shared converter reduces citation syntax to readable text
+ahead of all three parts: link and image forms become their label, and footnote
+references become plain bracketed numbers with a trailing source list.
+
+**Why:** Each part leaked them differently. The HTML path links only `http(s)`
+targets, so a `resource://` link passed through as literal bracket syntax; the
+text path appends a raw link target whatever its scheme; footnote syntax had no
+handling anywhere. The embed form is what made this load-bearing rather than
+cosmetic — an `<img>` at a scheme no client resolves is a broken image in
+somebody's inbox.
+
+**Considered and rejected:** Handling it in the digest content builder, which is
+where the first cited answers would have appeared. The rule covers every email
+this module renders, not only digests, because every one of them can carry a
+model's answer.
+
+**Consequences:** The rewrite runs before the TeX repair, and the order is
+load-bearing —
+[`model-text-normalization.md`](model-text-normalization.md#changelog) records
+why. If a deep link into the desktop ever exists, this is where an internal
+source stops being title text and becomes a real link; nothing about the protocol
+or the renderer changes with it.
+
+Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+
 ### 2026-08-25 — The Digest settings section hides when digests-enabled is off
 
 **What changed:** `ClientFeatureFlagsSchema` gained `digestsEnabled`, resolved

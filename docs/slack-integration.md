@@ -762,6 +762,31 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
+### 2026-08-28 — Agent markdown posted to Slack has its citations rewritten first
+
+**What changed:** `splitSlackMarkdown` rewrites citations to readable text before
+it measures or cuts anything: chips and embed cards become their label text, and
+footnote references become plain bracketed numbers with a trailing source list —
+titles for internal sources, real links for external ones.
+
+**Why:** Slack renders neither the `resource://` scheme nor GFM footnote syntax,
+so an unrewritten citation lands in a channel as a raw scheme URL, a literal
+`[^1]`, or — for the embed form — a broken image. The transcript copy of the same
+answer renders them fully; only the copy leaving Rally is rewritten.
+
+**Considered and rejected:** Applying it at each call site, and excluding
+Slack-origin runs from the emission guidance instead. The first is one place to
+forget; the second needs a run-origin field the prompt context does not carry and
+would strip citations from the transcript copy, which renders them.
+
+**Consequences:** The rewrite lives in the splitter because both delivery paths —
+the streaming one and the chunked one — already funnel through it, so a third
+path gets it for free. It runs before chunking because it changes the length of
+what is being split, and a trailing source list has to land whole in the last
+chunk rather than be assembled across two.
+
+Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them
 was not recorded and is not reconstructed here.
