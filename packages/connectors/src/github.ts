@@ -1005,6 +1005,16 @@ export function createGitHubConnector(config: GitHubConnectorConfig): ConnectorA
             { key: "merged", label: "Merged", description: "Whether GitHub reports the pull request as merged.", valueType: "boolean" },
             { key: "mergedAt", label: "Merged at", description: "ISO timestamp at which the pull request merged.", valueType: "string" },
           ],
+          resourceRelationships: [{ relationship: "repository", resourceType: "github_repository" }],
+        },
+        "github.pull_request.opened": {
+          resourceRelationships: [{ relationship: "repository", resourceType: "github_repository" }],
+        },
+        "github.release.published": {
+          resourceRelationships: [
+            { relationship: "repository", resourceType: "github_repository" },
+            { relationship: "application", resourceType: "github_repository" },
+          ],
         },
       }, [
         { key: "repository", label: "Repository", description: "Repository in owner/name form.", valueType: "string" },

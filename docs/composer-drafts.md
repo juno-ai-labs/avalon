@@ -252,6 +252,19 @@ sits inside.
 
 ## Changelog
 
+### 2026-08-28 — New automation hands its local draft to a durable route
+
+**What changed:** `/automations/new` uses the shared composer draft and file
+attachment hooks without creating an AutomationAgent. On first admission it
+rekeys text and staged files to the server-minted automation ID before clearing
+the launcher key, then replaces the route with `/automations/:id`.
+
+**Why:** Navigating or typing is not durable product intent, but a sent turn
+must survive the asynchronous identity transition without losing local input.
+
+**Consequences:** Tests must cover typing before hydration, key transfer,
+navigation during compilation, and reopening the durable draft.
+
 ### 2026-08-12 — A draft that moves to another key stops being left behind in the old one
 
 **What changed:** `useDraftText` gained `releaseDraft()`, which drops the pending

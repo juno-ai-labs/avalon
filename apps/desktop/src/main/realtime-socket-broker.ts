@@ -276,7 +276,13 @@ function validSocketPath(input: DesktopRealtimeSocketOpenInput, url: URL): boole
   } catch {
     return false;
   }
-  if (segments[0] !== 'socket' || segments[1] !== 'workstreams') return false;
+  if (segments[0] !== 'socket') return false;
+  if (input.kind === 'automation_agent') {
+    return segments.length === 3
+      && segments[1] === 'automations'
+      && IdSchema.safeParse(segments[2]).success;
+  }
+  if (segments[1] !== 'workstreams') return false;
   if (!IdSchema.safeParse(segments[2]).success) return false;
   if (input.kind === 'workstream_control') return segments.length === 3;
   return segments.length === 5

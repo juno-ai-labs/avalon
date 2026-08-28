@@ -42,8 +42,7 @@ vi.mock('./screens/new-workstream', () => ({ NewWorkstreamScreen: () => <div>mai
 vi.mock('./screens/meeting-notes', () => ({ MeetingNotesScreen: () => <div>meeting notes</div> }));
 vi.mock('./screens/note-detail', () => ({ NoteDetailScreen: () => <div>note detail</div> }));
 vi.mock('./screens/workstream', () => ({ WorkstreamScreen: () => <div>workstream</div> }));
-vi.mock('./screens/new-automation', () => ({ NewAutomationScreen: () => <div>new automation</div> }));
-vi.mock('./screens/automation-overview', () => ({ AutomationOverviewScreen: () => <div>automation</div> }));
+vi.mock('./screens/automation', () => ({ AutomationScreen: () => <div>automation</div> }));
 vi.mock('./screens/workspace-settings', () => ({ WorkspaceSettingsScreen: () => <div>settings</div> }));
 
 const identitySession: DesktopSession = {

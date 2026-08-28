@@ -364,6 +364,7 @@ describe("carrying one revocation to the objects", () => {
 
   function fanOut(options: {
     workstreamIds?: string[];
+    automationIds?: string[];
     substreamIds?: string[];
     blockIds?: string[];
     failAt?: boolean;
@@ -371,7 +372,7 @@ describe("carrying one revocation to the objects", () => {
     const visits: Visit[] = [];
     const sent: Published[] = [];
     /**
-     * One double serves all four namespaces: the consumer only ever calls
+     * One double serves all five namespaces: the consumer only ever calls
      * `revokeSocketAccess`, and what each object answers with is the whole
      * difference between the hops.
      */
@@ -393,13 +394,17 @@ describe("carrying one revocation to the objects", () => {
     const env = createTestEnv({
       DB: sqliteD1(database),
       AVALON_REGION: "global",
-      WORKSPACE_DOS: namespace(() => ({ workstreamIds: options.workstreamIds ?? [] })),
+      WORKSPACE_DOS: namespace(() => ({
+        workstreamIds: options.workstreamIds ?? [],
+        automationIds: options.automationIds ?? [],
+      })),
       WORKSTREAM_DOS: namespace(() => ({
         substreamIds: options.substreamIds ?? [],
         blockIds: options.blockIds ?? [],
       })),
       SUBSTREAM_AGENTS: namespace(() => undefined),
       BLOCK_DASHBOARD_AGENTS: namespace(() => undefined),
+      AUTOMATION_AGENTS: namespace(() => undefined),
       ACCESS_REVOCATION_QUEUE: {
         send: async (body: unknown) => { sent.push({ body }); },
         sendBatch: async (messages: Array<{ body: unknown }>) => { sent.push(...messages); },
@@ -441,6 +446,28 @@ describe("carrying one revocation to the objects", () => {
       sessionId: null,
     });
     expect(targetsOf(sent)).toEqual([{ scope: "workstream", workstreamId: WORKSTREAM }]);
+  });
+
+  it("publishes a message for every automation the workspace names", async () => {
+    const AUTOMATION = "00000000-0000-7000-8000-0000000000d1";
+    const { env, sent } = fanOut({ workstreamIds: [WORKSTREAM], automationIds: [AUTOMATION] });
+    await applyAccessRevocation(env, message({ scope: "workspace" }));
+
+    // An automation holds its own socket room, so a member who lost workspace
+    // access keeps reading a draft transcript until this hop reaches it.
+    expect(targetsOf(sent)).toEqual([
+      { scope: "workstream", workstreamId: WORKSTREAM },
+      { scope: "automation", automationId: AUTOMATION },
+    ]);
+  });
+
+  it("stops at an automation", async () => {
+    const AUTOMATION = "00000000-0000-7000-8000-0000000000d1";
+    const { env, visits, sent } = fanOut();
+    await applyAccessRevocation(env, message({ scope: "automation", automationId: AUTOMATION }));
+
+    expect(visits).toHaveLength(1);
+    expect(sent).toEqual([]);
   });
 
   it("publishes a message for every substream and block a work stream names", async () => {

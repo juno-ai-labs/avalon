@@ -602,7 +602,10 @@ describe("Slack workspace workstream assignment", () => {
       // App Home reads the member's recent work streams from the WorkspaceDO
       // directory after cutover; an empty page keeps the link flow moving.
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: { recentWorkstreamDirectory: vi.fn(async () => ({ items: [] })) },
+        extra: {
+          recentWorkstreamDirectory: vi.fn(async () => ({ items: [] })),
+          listAutomationDirectory: vi.fn(async () => ({ items: [] })),
+        },
       }),
       AVALON_REGION: "global",
       CONNECTOR_CREDENTIALS_KEY: credentialsKey,
@@ -693,7 +696,10 @@ describe("Slack connector principal delivery", () => {
         extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
+        extra: {
+          hasWorkstreamDirectory: vi.fn(async () => true),
+          hasActiveExternalEventRegistration: vi.fn(async () => false),
+        },
       }),
     });
   }
@@ -927,6 +933,12 @@ describe("Slack public channel membership", () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
+    database.exec(`
+      INSERT INTO slack_installation_routes
+        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+      VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01')
+    `);
     seedSlackActivitySubscription(database, "slack.channel.created");
     database.prepare(
       `INSERT INTO slack_ingress_jobs
@@ -954,39 +966,51 @@ describe("Slack public channel membership", () => {
     vi.stubGlobal("fetch", fetcher);
 
     const activityQueueSend = vi.fn(async () => undefined);
+    const hasActiveExternalEventRegistration = vi.fn(async () => ({ active: true }));
     await new SlackAgentService(slackMembershipEnvironment(
       database,
       credentialsKey,
       activityQueueSend,
-    )).processQueuedIngress("event:EvChannelCreated");
+      undefined,
+      {
+        WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>(testSubstreamAgentsBinding(database, {
+          extra: { hasActiveExternalEventRegistration },
+        })),
+      },
+    )).processQueuedIngress(
+      "22222222-2222-4222-8222-222222222222",
+      "event:EvChannelCreated",
+    );
 
     expect(fetcher).toHaveBeenCalledOnce();
-    expect(database.prepare(
-      `SELECT event_type, resource_type, provider_resource_id, title, metadata_json,
-              visibility_json, raw_content_hash
-       FROM activities WHERE provider_event_id = 'EvChannelCreated'`,
-    ).get()).toMatchObject({
-      event_type: "slack.channel.created",
-      resource_type: "slack_channel",
-      provider_resource_id: "CNEW",
-      title: "Slack channel created in #new-channel",
-      raw_content_hash: "hash",
-    });
-    expect(JSON.parse(String(database.prepare(
-      "SELECT metadata_json FROM activities WHERE provider_event_id = 'EvChannelCreated'",
-    ).get()!.metadata_json))).toMatchObject({
-      teamId: "T123",
-      channelId: "CNEW",
-      channelName: "new-channel",
-      channelType: "public",
-    });
-    expect(JSON.parse(String(database.prepare(
-      "SELECT visibility_json FROM activities WHERE provider_event_id = 'EvChannelCreated'",
-    ).get()!.visibility_json))).toMatchObject({
-      workspaceAutomationAllowed: true,
-      channelType: "public",
-    });
+    expect(hasActiveExternalEventRegistration).toHaveBeenCalledOnce();
     expect(activityQueueSend).toHaveBeenCalledOnce();
+    expect(activityQueueSend).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "workspace_connector_event",
+      request: expect.objectContaining({
+        workspaceId: "22222222-2222-4222-8222-222222222222",
+        event: expect.objectContaining({
+          connectorType: "slack",
+          activity: expect.objectContaining({
+            eventType: "slack.channel.created",
+            resourceType: "slack_channel",
+            providerResourceId: "CNEW",
+            title: "Slack channel created in #new-channel",
+            rawContentHash: "hash",
+            metadata: expect.objectContaining({
+              teamId: "T123",
+              channelId: "CNEW",
+              channelName: "new-channel",
+              channelType: "public",
+            }),
+            visibility: expect.objectContaining({
+              workspaceAutomationAllowed: true,
+              channelType: "public",
+            }),
+          }),
+        }),
+      }),
+    }));
     expect(database.prepare(
       "SELECT status, payload_json, completed_at FROM slack_ingress_jobs WHERE id = 'event:EvChannelCreated'",
     ).get()).toMatchObject({ status: "completed", payload_json: null });
@@ -1230,7 +1254,10 @@ describe("Slack public channel membership", () => {
         extra: { flushWorkspaceDirectoryEffects: vi.fn(async () => ({ status: 200, bodyJson: "{}" })) },
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: { hasWorkstreamDirectory: vi.fn(async () => true) },
+        extra: {
+          hasWorkstreamDirectory: vi.fn(async () => true),
+          hasActiveExternalEventRegistration: vi.fn(async () => false),
+        },
       }),
     });
 

@@ -11,6 +11,7 @@ export const RALLY_RENDERER_ORIGIN = 'app://rallywithai';
 export const DesktopRealtimeSocketKindSchema = z.enum([
   'workstream_control',
   'substream_feed',
+  'automation_agent',
 ]);
 export type DesktopRealtimeSocketKind = z.infer<typeof DesktopRealtimeSocketKindSchema>;
 

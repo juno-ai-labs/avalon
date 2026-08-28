@@ -75,15 +75,13 @@ export function backgroundRealtimeWorkstreamIds(
  * Whether the screen at this route is showing the named automation, and would
  * therefore be stranded once it stops being served.
  *
- * There are two such screens, not one. An automation that runs is read on its
- * overview; a draft is read in the builder, which the sidebar reaches through a
- * query rather than a path. Missing the second leaves the builder on a
+ * There are two lifecycle views behind this route: an accepted automation is
+ * read on its overview and a draft in the builder. Missing the second leaves the builder on a
  * conversation the API will not serve again — and with a Create button that
  * would insert a second automation instead of promoting this one.
  */
-export function showsAutomation(pathname: string, search: string, automationId: string): boolean {
-  if (pathname === `/automations/${automationId}`) return true;
-  return pathname === '/automations/new' && new URLSearchParams(search).get('draft') === automationId;
+export function showsAutomation(pathname: string, automationId: string): boolean {
+  return pathname === `/automations/${automationId}`;
 }
 
 export function openWorkstreamId(pathname: string): string | null {
@@ -182,7 +180,7 @@ export function applyPinnedWorkstreamsIfCurrent(
  * latency hedge against one visible reorder, and the push behind it is what
  * makes the row correct.
  */
-function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
+export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryResult<T[]> {
   return useQuery<T[]>({
     queryKey,
     queryFn: () => {
@@ -208,7 +206,7 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
   // is no longer served — true of an archived draft as much as a deleted
   // automation.
   const leaveAutomationScreen = (automationId: string): void => {
-    if (showsAutomation(location.pathname, location.search, automationId)) {
+    if (showsAutomation(location.pathname, automationId)) {
       void navigate('/workstreams/new', { replace: true });
     }
   };
@@ -301,14 +299,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         projects={projects.data?.items ?? []}
         inactiveProjects={inactiveProjects.data?.items ?? []}
         meetingRecordingAvailable={featureFlags.data?.meetingRecordingEnabled === true}
-        automationWorkspaceTemplatesAvailable={featureFlags.data?.automationWorkspaceTemplatesEnabled === true}
-        onArchiveDraftAutomation={async (automation) => {
-          if (!api) return;
-          await api.archiveDraftAutomation(automation.id);
-          // No list invalidation: archiving writes `automation_subscriptions`,
-          // and WorkspaceDO pushes the rewritten list off the back of that write.
-          leaveAutomationScreen(automation.id);
-        }}
         onArchiveNote={async (note) => {
           if (!api) return;
           await api.archiveNote(note.id);

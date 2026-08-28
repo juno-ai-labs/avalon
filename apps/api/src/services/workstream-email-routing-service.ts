@@ -7,7 +7,6 @@ import {
 } from "../lib/workstream-email-address";
 import { ApiError } from "../lib/api-error";
 import { RPC_BATCH_LIMIT } from "../lib/rpc-contracts";
-import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 const MAX_ADDRESS_RESERVATION_ATTEMPTS = 1_024;
@@ -96,9 +95,6 @@ interface LegacyRouteRow {
   automation_subscription_id: string | null;
 }
 
-interface LocalAutomationEmailRow {
-  email_address: string | null;
-}
 
 export class WorkstreamEmailRoutingService {
   constructor(private readonly env: Env) {}
@@ -202,52 +198,6 @@ export class WorkstreamEmailRoutingService {
       throw new ApiError(503, "workstream_email_router_unavailable", "The Global email address registry is unavailable");
     }
     return this.claimAutomationInGlobalRegistry(input);
-  }
-
-  async ensureAutomationAddress(input: AutomationEmailRouteInput): Promise<AutomationEmailRoute> {
-    this.assertAutomationRegionalOwner(input);
-    const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
-    const current = await this.loadLocalAutomationEmailRow(input);
-    // The regional owner stores the exact issued address. When it already has
-    // one, verify that full address in Global rather than deriving a domain
-    // from the current deployment configuration.
-    const route = current.email_address
-      ? await this.claimAutomation({ ...input, emailAddress: current.email_address })
-      : await this.reserveAutomation(input);
-    if (current.email_address && current.email_address.toLowerCase() !== route.emailAddress.toLowerCase()) {
-      throw new ApiError(409, "automation_email_address_conflict", "The automation already has a different email address");
-    }
-    if (!current.email_address) {
-      await workspaceDatabase.prepare(
-        `UPDATE automation_subscriptions
-         SET email_address = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND email_address IS NULL`,
-      ).bind(route.emailAddress, nowIso(), input.automationSubscriptionId, input.workspaceId).run();
-    }
-    const stored = await this.loadLocalAutomationEmailRow(input);
-    if (!stored.email_address || stored.email_address.toLowerCase() !== route.emailAddress.toLowerCase()) {
-      throw new ApiError(409, "automation_email_address_conflict", "The automation already has a different email address");
-    }
-    return route;
-  }
-
-  /**
-   * The address, refused if the automation cannot receive mail.
-   *
-   * The test is the automation's own row — the same one the inbound resolver
-   * applies when a message arrives — so this answer cannot disagree with what
-   * actually happens to the mail.
-   */
-  async activateAutomationRoute(input: AutomationEmailRouteInput): Promise<AutomationEmailRoute> {
-    const route = await this.ensureAutomationAddress(input);
-    const owner = await this.workspaceDatabase(input.workspaceId).prepare(
-      `SELECT status, lifecycle_state FROM automation_subscriptions WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.automationSubscriptionId, input.workspaceId)
-      .first<{ status: string; lifecycle_state: string }>();
-    if (owner?.status !== "active" || owner.lifecycle_state !== "visible") {
-      throw new ApiError(409, "automation_not_active", "A paused automation cannot receive email");
-    }
-    return route;
   }
 
   async ensureWorkstreamAddress(input: WorkstreamEmailRouteInput): Promise<WorkstreamEmailRoute> {
@@ -700,19 +650,6 @@ export class WorkstreamEmailRoutingService {
        WHERE region = ? AND workspace_id = ? AND workstream_id IS NULL
          AND automation_subscription_id = ?`,
     ).bind(input.region, input.workspaceId, input.automationSubscriptionId).first<RouteRow>();
-  }
-
-  private async loadLocalAutomationEmailRow(input: AutomationEmailRouteInput): Promise<LocalAutomationEmailRow> {
-    const row = await this.workspaceDatabase(input.workspaceId).prepare(
-      `SELECT email_address
-       FROM automation_subscriptions WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.automationSubscriptionId, input.workspaceId).first<LocalAutomationEmailRow>();
-    if (!row) throw new ApiError(404, "automation_not_found", "Automation not found");
-    return row;
-  }
-
-  private workspaceDatabase(workspaceId: string): D1Database {
-    return withWorkspaceRuntimeDatabase(this.env, workspaceId).DB;
   }
 
   private mapRoute(row: RouteRow): WorkstreamEmailRoute {

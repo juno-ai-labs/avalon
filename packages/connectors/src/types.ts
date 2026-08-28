@@ -1,10 +1,12 @@
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
+  ConnectorActivityTriggerDescriptorSchema,
   ConnectorOriginResourceSchema,
 } from "@rally/contracts";
 import type {
   ConnectorActivityFilterField,
   ConnectorActivityTriggerDescriptor,
+  ConnectorActivityTriggerDescriptorInput,
   ConnectorManifest,
   ConnectorManifestInput,
   ConnectorOriginResource,
@@ -84,7 +86,7 @@ export interface ConnectorActivityTypePartition {
 export function defineConnectorActivityTriggers(
   connectorName: string,
   eventTypes: ConnectorActivityTypePartition,
-  overrides: Readonly<Record<string, Partial<Omit<ConnectorActivityTriggerDescriptor, "eventType">>>> = {},
+  overrides: Readonly<Record<string, Partial<Omit<ConnectorActivityTriggerDescriptorInput, "eventType">>>> = {},
   commonFilterFields: readonly ConnectorActivityFilterField[] = [],
 ): ConnectorActivityTriggerDescriptor[] {
   const digestible = new Set(eventTypes.digestible);
@@ -103,13 +105,15 @@ export function defineConnectorActivityTriggers(
     const override = overrides[eventType] ?? {};
     const filterFields = new Map(commonFilterFields.map((field) => [field.key, field]));
     for (const field of override.filterFields ?? []) filterFields.set(field.key, field);
-    return {
+    return ConnectorActivityTriggerDescriptorSchema.parse({
       eventType,
       label: override.label ?? humanizeActivityEventType(eventType),
       description: override.description ?? `${connectorName} activity normalized as ${eventType}.`,
-      filterFields: [...filterFields.values()] as ConnectorActivityFilterField[],
+      eventFamilies: override.eventFamilies ?? [],
+      filterFields: [...filterFields.values()],
+      resourceRelationships: override.resourceRelationships ?? [],
       digestible: digestible.has(eventType),
-    };
+    });
   });
 }
 

@@ -266,7 +266,7 @@ describe("WorkstreamEmailRoutingService", () => {
       WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
     }));
 
-    await expect(service.ensureAutomationAddress(input)).resolves.toEqual({
+    await expect(service.claimAutomation({ ...input, emailAddress: legacyAddress })).resolves.toEqual({
       ...input,
       localPart: "crisp-calibrated-arctic-kuiper",
       emailAddress: legacyAddress,
@@ -309,7 +309,7 @@ describe("WorkstreamEmailRoutingService", () => {
       WORKSTREAM_EMAIL_DOMAIN: CURRENT_DOMAIN,
     }));
 
-    await expect(service.ensureAutomationAddress(input)).resolves.toMatchObject({
+    await expect(service.claimAutomation({ ...input, emailAddress: legacyAddress })).resolves.toMatchObject({
       emailAddress: legacyAddress,
     });
   });
@@ -578,48 +578,6 @@ describe("WorkstreamEmailRoutingService", () => {
       workstream_id: null,
       automation_subscription_id: input.automationSubscriptionId,
     });
-  });
-
-  it("keeps one address across pause and resume, and records no status for it", async () => {
-    const database = new FakeDatabase();
-    const service = new WorkstreamEmailRoutingService(environment(database));
-    const input = {
-      region: "global" as const,
-      workspaceId: "workspace-1",
-      automationSubscriptionId: "automation-lifecycle",
-    };
-    const reservation = await service.reserveAutomation(input);
-    const automation: LocalAutomationRow = {
-      id: input.automationSubscriptionId,
-      workspace_id: input.workspaceId,
-      email_address: reservation.emailAddress,
-      status: "active",
-      lifecycle_state: "visible",
-      updated_at: "2026-08-02T00:00:00.000Z",
-    };
-    database.automations.push(automation);
-
-    await expect(service.activateAutomationRoute(input)).resolves.toMatchObject({
-      emailAddress: reservation.emailAddress,
-    });
-
-    // Pausing is refused at the gate and writes nothing to Global. The address
-    // is unchanged, because pausing does not release a claim.
-    automation.status = "paused";
-    await expect(service.activateAutomationRoute(input)).rejects.toMatchObject({
-      status: 409,
-      code: "automation_not_active",
-    } satisfies Partial<ApiError>);
-    expect(database.routes[0]).toMatchObject({ email_address: reservation.emailAddress });
-
-    automation.status = "active";
-    await expect(service.activateAutomationRoute(input)).resolves.toMatchObject({
-      emailAddress: reservation.emailAddress,
-    });
-    // One row, written once, through the whole cycle. There is no transition
-    // for an interrupted call to leave half-applied.
-    expect(database.routes).toHaveLength(1);
-    expect(database.routeInsertAttempts).toBe(1);
   });
 
   it("keeps a claimed address after its owner stops using it", async () => {

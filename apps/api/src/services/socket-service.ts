@@ -2,11 +2,13 @@ import { RALLY_HEADERS } from "@rally/contracts/http-headers";
 import { jwtVerify, SignJWT } from "jose";
 import {
   asBlockId,
+  asAutomationId,
   asSubstreamId,
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
   type BlockId,
+  type AutomationId,
   type SubstreamId,
   type UserId,
   type WorkspaceId,
@@ -22,6 +24,7 @@ import { ApiError } from "../lib/api-error";
 import { inFlowSpan } from "../observability/tracing";
 import {
   blockDashboardAgentName,
+  automationAgentName,
   substreamAgentName,
   workspaceDOName,
   workstreamDOName,
@@ -52,6 +55,10 @@ interface WorkspaceSocketClaims {
   region: "global" | "eu";
   ticketId: string;
   expiresAt: number;
+}
+
+interface AutomationSocketClaims extends WorkspaceSocketClaims {
+  automationId: AutomationId;
 }
 
 interface WorkstreamControlSocketClaims extends WorkspaceSocketClaims {
@@ -151,6 +158,58 @@ export async function issueWorkspaceSocketTicket(
     .setIssuedAt(now)
     .setExpirationTime(now + 60)
     .sign(signingKey(env));
+}
+
+export async function issueAutomationSocketTicket(
+  env: Env,
+  auth: AuthContext,
+  automationId: string,
+): Promise<string> {
+  assertSessionPrincipal(auth);
+  const now = Math.floor(Date.now() / 1_000);
+  return new SignJWT({
+    purpose: "automation_socket",
+    sid: auth.sessionId,
+    wid: auth.workspaceId,
+    aid: automationId,
+    region: auth.region,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setSubject(auth.userId)
+    .setJti(uuidV7())
+    .setIssuer("avalon-api")
+    .setAudience("avalon-automation-socket")
+    .setIssuedAt(now)
+    .setExpirationTime(now + 60)
+    .sign(signingKey(env));
+}
+
+export async function verifyAutomationSocketTicket(
+  env: Env,
+  ticket: string,
+): Promise<AutomationSocketClaims> {
+  try {
+    const { payload } = await jwtVerify(ticket, signingKey(env), {
+      algorithms: ["HS256"], issuer: "avalon-api", audience: "avalon-automation-socket",
+    });
+    if (
+      payload.purpose !== "automation_socket" || typeof payload.sub !== "string"
+      || typeof payload.sid !== "string" || typeof payload.wid !== "string"
+      || typeof payload.aid !== "string" || typeof payload.jti !== "string"
+      || typeof payload.exp !== "number" || (payload.region !== "global" && payload.region !== "eu")
+    ) throw new Error("Incomplete automation socket claims");
+    return {
+      sessionId: payload.sid,
+      userId: asUserId(payload.sub),
+      workspaceId: asWorkspaceId(payload.wid),
+      automationId: asAutomationId(payload.aid),
+      region: payload.region,
+      ticketId: payload.jti,
+      expiresAt: payload.exp,
+    };
+  } catch {
+    throw new ApiError(401, "invalid_socket_ticket", "The realtime ticket is invalid or expired");
+  }
 }
 
 export async function verifySocketTicket(env: Env, ticket: string): Promise<SocketClaims> {
@@ -526,6 +585,50 @@ export class WorkspaceSocketService {
     const response = await stub.fetch(
       new Request("https://workspace.internal/socket", { method: "GET", headers }),
     );
+    return withNegotiatedSubprotocol(request, response);
+  }
+}
+
+/** Edge authentication and regional routing for one AutomationAgent feed. */
+export class AutomationSocketService {
+  constructor(private readonly env: Env) {}
+
+  async upgrade(
+    automationId: string,
+    queryTicket: string | undefined,
+    request: Request,
+  ): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      throw new ApiError(426, "websocket_upgrade_required", "A WebSocket upgrade is required");
+    }
+    if (!isAllowedSocketOrigin(this.env, request.headers.get("origin"))) {
+      throw new ApiError(403, "socket_origin_forbidden", "The realtime origin is not allowed");
+    }
+    const claims = await verifyAutomationSocketTicket(
+      this.env,
+      socketTicketFromRequest(request, queryTicket),
+    );
+    if (claims.region !== this.env.AVALON_REGION || claims.automationId !== automationId) {
+      throw new ApiError(403, "socket_ticket_scope_mismatch", "The ticket does not authorize this automation");
+    }
+    const stub = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_AGENTS,
+      claims.workspaceId,
+      automationAgentName(claims.region, claims.workspaceId, claims.automationId),
+    );
+    const headers = new Headers(request.headers);
+    headers.delete("sec-websocket-protocol");
+    headers.set("x-rally-workspace-id", claims.workspaceId);
+    headers.set("x-rally-user-id", claims.userId);
+    headers.set("x-rally-automation-id", claims.automationId);
+    headers.set(RALLY_HEADERS.SESSION_ID, claims.sessionId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_ID, claims.ticketId);
+    headers.set(RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT, String(claims.expiresAt));
+    const response = await stub.fetch(new Request(
+      "https://automation-agent.internal/socket",
+      { method: "GET", headers },
+    ));
     return withNegotiatedSubprotocol(request, response);
   }
 }

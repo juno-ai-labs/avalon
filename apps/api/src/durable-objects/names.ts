@@ -1,8 +1,17 @@
-import type { BlockId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@rally/contracts";
+import type { AutomationId, BlockId, Region, SubstreamId, WorkspaceId, WorkstreamId } from "@rally/contracts";
 
 /** One regional workspace control object. */
 export function workspaceDOName(region: Region, workspaceId: WorkspaceId): string {
   return `${region}:${workspaceId}`;
+}
+
+/** One canonical lifecycle authority for an automation, from first prompt. */
+export function automationAgentName(
+  region: Region,
+  workspaceId: WorkspaceId,
+  automationId: AutomationId,
+): string {
+  return `${region}:${workspaceId}:automation:${automationId}`;
 }
 
 /** One non-agent control object for each work stream. */

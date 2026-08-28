@@ -5,7 +5,6 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import {
   AlertTriangle,
-  ArrowDown,
   ArrowUp,
   CalendarClock,
   Check,
@@ -82,6 +81,7 @@ import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import { type SocketState, type WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
@@ -791,14 +791,6 @@ export function WorkstreamErrorState({
   );
 }
 
-export function JumpToLatestButton({ onJump }: { onJump: () => void }): React.JSX.Element {
-  return (
-    <IconButton className="jump-bottom" label="Jump to latest" onClick={onJump} tooltipSide="top">
-      <ArrowDown aria-hidden="true" size={15} />
-    </IconButton>
-  );
-}
-
 export function initialTranscriptAnchorIndex(
   transcript: Message[],
   firstUnreadSequenceNumber: number | null,
@@ -877,28 +869,6 @@ export function RunFailureNotice({
           Retry
         </Button>
       </div>
-    </section>
-  );
-}
-
-export function RunStoppedNotice({
-  retrying,
-  onRetry,
-}: {
-  retrying: boolean;
-  onRetry: () => void;
-}): React.JSX.Element {
-  return (
-    <section aria-label="Run stopped" className="run-stopped-notice" role="status">
-      <span aria-hidden="true" className="run-stopped-icon"><X size={16} /></span>
-      <div className="run-stopped-copy">
-        <strong>Run stopped</strong>
-        <p>This run was stopped by request. Its partial tool activity is no longer running.</p>
-      </div>
-      <Button className="button-primary" disabled={retrying} onClick={onRetry}>
-        {retrying ? <LoaderCircle aria-hidden="true" className="spin" size={13} /> : <RefreshCcw aria-hidden="true" size={13} />}
-        Retry
-      </Button>
     </section>
   );
 }

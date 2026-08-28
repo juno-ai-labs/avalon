@@ -18,7 +18,7 @@ export function contractCompleteEnv(overrides: Partial<Env> = {}): Env {
     DB: binding(), PAYLOADS: binding(), TELEMETRY_PAYLOADS: binding(),
     IMAGES: binding(), AI: binding(), MEMORY_INDEX: binding(),
     RUN_ANALYTICS: binding(), TERMINAL_ANALYTICS: binding(), CRASH_SYMBOLICATOR: binding(),
-    SUBSTREAM_AGENTS: binding(), BLOCK_DASHBOARD_AGENTS: binding(),
+    SUBSTREAM_AGENTS: binding(), AUTOMATION_AGENTS: binding(), BLOCK_DASHBOARD_AGENTS: binding(),
     WORKSTREAM_DOS: binding(), WORKSPACE_DOS: binding(),
     SLACK_REACTION_TICKERS: binding(),
     ACTIVITY_QUEUE: binding(),

@@ -292,7 +292,10 @@ describe("Slack account linking", () => {
     ).run(workspaceId, connectionId);
     const service = new SlackAgentService(environment(database, {
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: { recentWorkstreamDirectory: async () => ({ items: [] }) },
+        extra: {
+          recentWorkstreamDirectory: async () => ({ items: [] }),
+          listAutomationDirectory: async () => ({ items: [] }),
+        },
       }),
     }));
 
@@ -410,7 +413,6 @@ function environment(
   overrides: { WORKSPACE_DOS?: DurableObjectNamespace } = {},
 ): Env {
   return createTestEnv({
-    ...overrides,
     DB: sqliteD1(database),
     ACTIVITY_QUEUE: { send: async () => {} },
     AVALON_REGION: "global",
@@ -423,5 +425,6 @@ function environment(
     SLACK_CLIENT_SECRET: "secret",
     SLACK_SIGNING_SECRET: "signing",
     LOG_LEVEL: "error",
+    ...overrides,
   });
 }

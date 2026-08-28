@@ -372,6 +372,21 @@ resident.
 
 ## Changelog
 
+### 2026-08-28 — Automation state and event delivery remain regional
+
+**What changed:** AutomationAgent names, SQLite, compiler turns, memory, timers,
+and generated children live in the workspace's immutable region. WorkspaceDO
+evaluates regional connector events and Queue messages expose only opaque IDs,
+generations, versions, and hashes. The cutover enumerates and verifies EU and
+Global independently while preserving EU-first deployment order.
+
+**Why:** Moving automation authority must not turn the Global control plane or
+cross-region service bindings into a product-state fallback.
+
+**Consequences:** EU event contents, transcript, memory, and run payloads never
+cross into Global telemetry or queues; only existing control-plane identities
+retain their documented global path.
+
 ### 2026-08-27 — Project state stays with its regional WorkspaceDO
 
 **What changed:** Project identity, participants, ordering, and revisions are

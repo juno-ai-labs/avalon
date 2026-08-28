@@ -68,3 +68,31 @@ test('applies destructive D1 retirements only after compatible Workers deploy', 
   assert.match(workflow, /steps\.pending_eu\.outputs\.worker_first == 'true'/u);
   assert.match(workflow, /steps\.pending_global\.outputs\.worker_first == 'true'/u);
 });
+
+test('runs the one-shot automation cutover between regional health checks', async () => {
+  const workflow = await readFile(
+    join(repositoryDirectory, '.github/workflows/deploy-api.yml'),
+    'utf8',
+  );
+  const firstHealth = workflow.indexOf('- name: Verify regional health');
+  const cutover = workflow.indexOf('- name: Cut over workspace automations to AutomationAgent');
+  const finalHealth = workflow.indexOf('- name: Verify regional health after automation cutover');
+  assert.ok(firstHealth >= 0 && firstHealth < cutover, 'the new Workers must be healthy before cutover');
+  assert.ok(cutover < finalHealth, 'the deployment must verify both regions after cutover');
+  assert.match(workflow, /cutover-automation-agents\.mjs --apply/u);
+});
+
+test('wakes WorkspaceDO ledgers on the old build before deploying either region', async () => {
+  const workflow = await readFile(
+    join(repositoryDirectory, '.github/workflows/deploy-api.yml'),
+    'utf8',
+  );
+  const preflight = workflow.indexOf(
+    '- name: Establish historical WorkspaceDO migration ledgers on the old build',
+  );
+  const deployEu = workflow.indexOf('- name: Deploy the EU Worker');
+  const deployGlobal = workflow.indexOf('- name: Deploy the Global Worker');
+  assert.ok(preflight >= 0 && preflight < deployEu, 'the old EU Worker must receive the ledger wake');
+  assert.ok(preflight < deployGlobal, 'the old Global Worker must receive the ledger wake');
+  assert.match(workflow, /cutover-automation-agents\.mjs --preflight/u);
+});

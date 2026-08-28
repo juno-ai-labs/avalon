@@ -1,4 +1,4 @@
-import { asWorkspaceId, type Region } from "@rally/contracts";
+import { asAutomationId, asWorkspaceId, type Region } from "@rally/contracts";
 import { newId } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
@@ -9,18 +9,18 @@ import {
   ACCEPTED_WORKSTREAM_EMAIL_DOMAINS,
   WORKSTREAM_EMAIL_DOMAIN,
 } from "../lib/workstream-email-address";
-import { runAutomationFromInboundEmail } from "./automation-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { automationAgentName } from "../durable-objects/names";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = WORKSTREAM_EMAIL_DOMAIN;
 const DEFAULT_MAX_WEBHOOK_BYTES = 2_000_000;
 const DEFAULT_MAX_RECEIVED_EMAIL_BYTES = 2_000_000;
 const DEFAULT_PROCESSING_LEASE_SECONDS = 300;
-const DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR = 30;
 const MAX_ROUTED_RECIPIENTS = 16;
 const MAX_MESSAGE_TEXT_CHARACTERS = 100_000;
 const MAX_SUBJECT_CHARACTERS = 300;
@@ -122,11 +122,6 @@ interface RegionalReceiptRow {
   payload_ref: string | null;
   lease_token: string | null;
   lease_expires_at: string | null;
-}
-
-interface AutomationReceiptRow extends RegionalReceiptRow {
-  workstream_id: string | null;
-  automation_run_id: string | null;
 }
 
 interface LocalWorkstreamRow {
@@ -695,156 +690,92 @@ export class ResendRegionalEmailService {
   }
 
   private async ingestAutomation(input: AutomationRegionalEmailInput): Promise<ResendRegionalIngestionResult> {
-    const automation = await this.env.DB.prepare(
-      `SELECT s.id, s.scope, s.owner_user_id
-       FROM automation_subscriptions s
-       JOIN automation_templates t ON t.id = s.template_id
-       WHERE s.id = ? AND s.workspace_id = ? AND s.status = 'active' AND s.lifecycle_state = 'visible'
-         AND s.email_address = ? COLLATE NOCASE AND t.archived_at IS NULL
-       LIMIT 1`,
-    ).bind(input.automationSubscriptionId, input.workspaceId, input.emailAddress).first<{
-      id: string;
-      scope: "personal" | "workspace";
-      owner_user_id: string | null;
-    }>();
-    if (!automation) {
-      throw new ApiError(404, "email_automation_not_found", "The email address is not attached to an active automation");
-    }
+    const automationId = asAutomationId(input.automationSubscriptionId);
+    const agent = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_AGENTS,
+      asWorkspaceId(input.workspaceId),
+      automationAgentName(input.region, asWorkspaceId(input.workspaceId), automationId),
+    );
+    const screenInput = {
+      schemaVersion: 1 as const,
+      automationId,
+      workspaceId: asWorkspaceId(input.workspaceId),
+      emailAddress: input.emailAddress,
+      resendEmailId: input.resendEmailId,
+    };
+    // Replay, lifecycle, and address are decidable from the webhook alone, so
+    // a message the automation would refuse costs neither a provider fetch nor
+    // a stored object.
+    const preFetch = await agent.screenInboundEmail(screenInput);
+    if (!preFetch.admissible) return this.refusedInboundEmail(preFetch);
 
-    const leaseToken = newId();
-    const leaseExpiresAt = this.leaseExpiration();
-    const claimed = await this.env.DB.prepare(
-      `INSERT OR IGNORE INTO automation_email_receipts
-       (resend_email_id, automation_subscription_id, workspace_id, svix_id, payload_ref,
-        workstream_id, automation_run_id, received_at, processed_at, error_json,
-        lease_token, lease_expires_at)
-       VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?)`,
-    ).bind(
-      input.resendEmailId,
-      input.automationSubscriptionId,
-      input.workspaceId,
-      input.svixId,
-      input.receivedAt,
-      leaseToken,
-      leaseExpiresAt,
-    ).run();
-    if (changes(claimed) === 0) {
-      const existing = await this.env.DB.prepare(
-        `SELECT processed_at, error_json, payload_ref, lease_token, lease_expires_at,
-                workstream_id, automation_run_id
-         FROM automation_email_receipts
-         WHERE resend_email_id = ? AND automation_subscription_id = ?`,
-      ).bind(input.resendEmailId, input.automationSubscriptionId).first<AutomationReceiptRow>();
-      if (existing?.processed_at) {
-        return {
-          accepted: true,
-          duplicate: true,
-          messageId: null,
-          resourceId: null,
-          ...(existing.workstream_id ? { workstreamId: existing.workstream_id } : {}),
-          ...(existing.automation_run_id ? { automationRunId: existing.automation_run_id } : {}),
-        };
-      }
-      if (!existing) throw new ApiError(503, "email_processing_unavailable", "The inbound email receipt could not be claimed");
-      const reclaimed = await this.env.DB.prepare(
-        `UPDATE automation_email_receipts
-         SET lease_token = ?, lease_expires_at = ?, error_json = NULL
-         WHERE resend_email_id = ? AND automation_subscription_id = ? AND processed_at IS NULL
-           AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)`,
-      ).bind(
-        leaseToken,
-        leaseExpiresAt,
-        input.resendEmailId,
-        input.automationSubscriptionId,
-        new Date(this.now()).toISOString(),
-      ).run();
-      if (changes(reclaimed) === 0) {
-        throw new ApiError(503, "email_processing_in_progress", "The inbound email is already being processed");
-      }
-    }
+    const email = normalizeReceivedEmail(await this.retrieveReceivedEmail(input.resendEmailId));
+    const senderMailbox = mailboxAddress(email.from);
+    const senderUserId = senderMailbox
+      ? await this.activeWorkspaceMemberForEmail(input.workspaceId, senderMailbox)
+      : null;
+    // The sender exists only inside the fetched message, so this is the
+    // earliest the authorization check can run — and it still precedes every
+    // write we own.
+    const screened = await agent.screenInboundEmail({ ...screenInput, senderUserId });
+    if (!screened.admissible) return this.refusedInboundEmail(screened);
 
-    try {
-      const email = normalizeReceivedEmail(await this.retrieveReceivedEmail(input.resendEmailId));
-      const senderMailbox = mailboxAddress(email.from);
-      const senderAuthorized = senderMailbox
-        ? await this.isAuthorizedAutomationSender(input.workspaceId, automation, senderMailbox)
-        : false;
-      if (!senderAuthorized) {
-        await this.markAutomationTerminal(input, leaseToken, "email_sender_not_authorized");
-        return {
-          accepted: true,
-          duplicate: false,
-          messageId: null,
-          resourceId: null,
-        };
-      }
-      if (!await this.claimAutomationEmailBudget(input)) {
-        await this.markAutomationTerminal(input, leaseToken, "email_rate_limit_exceeded");
-        return {
-          accepted: true,
-          duplicate: false,
-          messageId: null,
-          resourceId: null,
-        };
-      }
-      const payloadRef = `workspaces/${input.workspaceId}/inbound-email/${input.resendEmailId}.json`;
-      await this.env.PAYLOADS.put(payloadRef, JSON.stringify({
-        version: 1,
-        provider: "resend",
-        untrusted: true,
-        emailId: input.resendEmailId,
-        ...email,
-      }), {
-        httpMetadata: { contentType: "application/json; charset=utf-8" },
-        customMetadata: {
-          workspaceId: input.workspaceId,
-          automationSubscriptionId: input.automationSubscriptionId,
-          classification: "untrusted-inbound-email",
-        },
-      });
-      const resourceId = await this.upsertEmailResource(input, email, payloadRef);
-      await this.renewAutomationLease(input, leaseToken);
-      const structuredContent = inboundStructuredContent(input.resendEmailId, email, resourceId);
-      const run = await runAutomationFromInboundEmail(this.env, {
-        workspaceId: asWorkspaceId(input.workspaceId),
+    const payloadRef = `workspaces/${input.workspaceId}/inbound-email/${input.resendEmailId}.json`;
+    await this.env.PAYLOADS.put(payloadRef, JSON.stringify({
+      version: 1,
+      provider: "resend",
+      untrusted: true,
+      emailId: input.resendEmailId,
+      ...email,
+    }), {
+      httpMetadata: { contentType: "application/json; charset=utf-8" },
+      customMetadata: {
+        workspaceId: input.workspaceId,
         automationSubscriptionId: input.automationSubscriptionId,
-        opening: {
-          resendEmailId: input.resendEmailId,
-          textContent: inboundMessageText(email),
-          structuredContent,
-          resourceId,
-        },
-      });
-      const processedAt = new Date(this.now()).toISOString();
-      const processed = await this.env.DB.prepare(
-        `UPDATE automation_email_receipts
-         SET payload_ref = ?, workstream_id = ?, automation_run_id = ?, processed_at = ?,
-             error_json = NULL, lease_token = NULL, lease_expires_at = NULL
-         WHERE resend_email_id = ? AND automation_subscription_id = ? AND lease_token = ?`,
-      ).bind(
-        payloadRef,
-        run.workstreamId,
-        run.runId,
-        processedAt,
-        input.resendEmailId,
-        input.automationSubscriptionId,
-        leaseToken,
-      ).run();
-      if (changes(processed) === 0) {
-        throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
-      }
-      return {
-        accepted: true,
-        duplicate: run.reused,
-        messageId: null,
-        resourceId,
-        workstreamId: run.workstreamId,
-        automationRunId: run.runId,
-      };
-    } catch (error) {
-      await this.recordAutomationFailure(input, leaseToken, stableErrorCode(error));
-      throw error;
-    }
+        classification: "untrusted-inbound-email",
+      },
+    });
+    const resourceId = await this.upsertEmailResource(input, email, payloadRef);
+    const structuredContent = inboundStructuredContent(input.resendEmailId, email, resourceId);
+    const run = await agent.admitInboundEmail({
+      schemaVersion: 1,
+      automationId,
+      workspaceId: asWorkspaceId(input.workspaceId),
+      emailAddress: input.emailAddress,
+      resendEmailId: input.resendEmailId,
+      svixId: input.svixId,
+      senderUserId,
+      receivedAt: Date.parse(input.receivedAt),
+      payloadRef,
+      resourceId,
+      textContent: inboundMessageText(email),
+      structuredContent,
+    });
+    return {
+      accepted: true,
+      duplicate: run.duplicate,
+      messageId: null,
+      resourceId,
+      ...(run.workstreamId ? { workstreamId: run.workstreamId } : {}),
+      ...(run.runId ? { automationRunId: run.runId } : {}),
+    };
+  }
+
+  /** The result shape for a message the automation refused before storage. */
+  private refusedInboundEmail(screened: {
+    duplicate: boolean;
+    runId: string | null;
+    workstreamId: string | null;
+  }): ResendRegionalIngestionResult {
+    return {
+      accepted: true,
+      duplicate: screened.duplicate,
+      messageId: null,
+      resourceId: null,
+      ...(screened.workstreamId ? { workstreamId: screened.workstreamId } : {}),
+      ...(screened.runId ? { automationRunId: screened.runId } : {}),
+    };
   }
 
   private async retrieveReceivedEmail(emailId: string) {
@@ -981,97 +912,22 @@ export class ResendRegionalEmailService {
     }
   }
 
-  private async renewAutomationLease(
-    input: AutomationRegionalEmailInput,
-    leaseToken: string,
-  ): Promise<void> {
-    const renewed = await this.env.DB.prepare(
-      `UPDATE automation_email_receipts SET lease_expires_at = ?
-       WHERE resend_email_id = ? AND automation_subscription_id = ?
-         AND processed_at IS NULL AND lease_token = ?`,
-    ).bind(
-      this.leaseExpiration(),
-      input.resendEmailId,
-      input.automationSubscriptionId,
-      leaseToken,
-    ).run();
-    if (changes(renewed) === 0) {
-      throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
-    }
-  }
-
-  private async isAuthorizedAutomationSender(
+  private async activeWorkspaceMemberForEmail(
     workspaceId: string,
-    automation: { scope: "personal" | "workspace"; owner_user_id: string | null },
     senderMailbox: string,
-  ): Promise<boolean> {
-    if (automation.scope === "personal" && !automation.owner_user_id) return false;
+  ): Promise<string | null> {
     const member = await this.env.DB.prepare(
       `SELECT u.id
        FROM workspace_members wm
        JOIN users u ON u.id = wm.user_id
        WHERE wm.workspace_id = ? AND wm.status = 'active'
          AND u.email = ? COLLATE NOCASE
-         AND (? = 'workspace' OR u.id = ?)
        LIMIT 1`,
     ).bind(
       workspaceId,
       senderMailbox,
-      automation.scope,
-      automation.owner_user_id,
     ).first<{ id: string }>();
-    return member != null;
-  }
-
-  private async claimAutomationEmailBudget(input: AutomationRegionalEmailInput): Promise<boolean> {
-    const limit = Math.min(
-      numericEnv(
-        this.env,
-        "AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR",
-        DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR,
-      ),
-      10_000,
-    );
-    const windowStartedAt = new Date(
-      Math.floor(this.now() / 3_600_000) * 3_600_000,
-    ).toISOString();
-    const claimed = await this.env.DB.prepare(
-      `INSERT INTO automation_email_rate_windows
-       (automation_subscription_id, workspace_id, window_started_at, accepted_count)
-       VALUES (?, ?, ?, 1)
-       ON CONFLICT(automation_subscription_id, window_started_at) DO UPDATE SET
-         accepted_count = accepted_count + 1
-       WHERE automation_email_rate_windows.accepted_count < ?
-       RETURNING accepted_count`,
-    ).bind(
-      input.automationSubscriptionId,
-      input.workspaceId,
-      windowStartedAt,
-      limit,
-    ).first<{ accepted_count: number }>();
-    return claimed != null;
-  }
-
-  private async markAutomationTerminal(
-    input: AutomationRegionalEmailInput,
-    leaseToken: string,
-    code: string,
-  ): Promise<void> {
-    const processed = await this.env.DB.prepare(
-      `UPDATE automation_email_receipts
-       SET processed_at = ?, error_json = ?, lease_token = NULL, lease_expires_at = NULL
-       WHERE resend_email_id = ? AND automation_subscription_id = ?
-         AND processed_at IS NULL AND lease_token = ?`,
-    ).bind(
-      new Date(this.now()).toISOString(),
-      JSON.stringify({ terminal: true, code }),
-      input.resendEmailId,
-      input.automationSubscriptionId,
-      leaseToken,
-    ).run();
-    if (changes(processed) === 0) {
-      throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
-    }
+    return member?.id ?? null;
   }
 
   private leaseExpiration(): string {
@@ -1098,28 +954,6 @@ export class ResendRegionalEmailService {
         JSON.stringify({ code }),
         input.resendEmailId,
         input.workstreamId,
-        leaseToken,
-      ).run();
-    } catch {
-      // Keep the original provider or persistence failure authoritative.
-    }
-  }
-
-  private async recordAutomationFailure(
-    input: AutomationRegionalEmailInput,
-    leaseToken: string,
-    code: string,
-  ): Promise<void> {
-    try {
-      await this.env.DB.prepare(
-        `UPDATE automation_email_receipts
-         SET error_json = ?, lease_token = NULL, lease_expires_at = NULL
-         WHERE resend_email_id = ? AND automation_subscription_id = ?
-           AND processed_at IS NULL AND lease_token = ?`,
-      ).bind(
-        JSON.stringify({ code }),
-        input.resendEmailId,
-        input.automationSubscriptionId,
         leaseToken,
       ).run();
     } catch {

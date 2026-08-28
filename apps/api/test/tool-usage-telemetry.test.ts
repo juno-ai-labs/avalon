@@ -244,14 +244,14 @@ describe('agent tool usage telemetry', () => {
         pluginId: 'linear',
         capability: 'linear.issue.create',
         mode: 'write',
-        runKind: 'workstream',
+        runKind: 'automation',
         executionScope: 'user',
         result: 'provider_error',
         duration: '5s_30s',
         replayed: false,
       },
     });
-    expect(JSON.parse(row.envelope_json).properties).not.toHaveProperty('automationId');
+    expect(JSON.parse(row.envelope_json).properties).toHaveProperty('automationId');
     expect(row.envelope_json).not.toContain('secret');
     expect(database.prepare(
       `SELECT COUNT(*) AS count FROM telemetry_accepted_events

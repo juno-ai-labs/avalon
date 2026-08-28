@@ -7,7 +7,7 @@ import { apiOperationTelemetry } from "./middleware/api-operation-telemetry";
 import { workspaceRealtimeInvalidation } from "./middleware/workspace-realtime";
 import { authRoutes } from "./routes/auth";
 import { devRoutes } from "./routes/dev";
-import { automationRoutes, subscriptionRoutes, templateRoutes } from "./routes/automations";
+import { automationRoutes, templateRoutes } from "./routes/automations";
 import { connectionCallbackRoutes, connectionRoutes, webhookIngestionRoutes } from "./routes/connections";
 import { digestRoutes } from "./routes/digest";
 import { featureFlagRoutes } from "./routes/feature-flags";
@@ -142,7 +142,6 @@ export function createApp(): Hono<HonoAppEnv> {
   protectedApi.route("/digest", digestRoutes);
   protectedApi.route("/automations", automationRoutes);
   protectedApi.route("/automation-templates", templateRoutes);
-  protectedApi.route("/automation-subscriptions", subscriptionRoutes);
   protectedApi.route("/connections", connectionRoutes);
   protectedApi.route("/resources", resourceRoutes);
   protectedApi.route("/realtime", realtimeRoutes);

@@ -7,6 +7,7 @@ import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { executeAutomationMemoryToolForRun } from "./automation-memory-client";
 
 export const MEMORY_EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b" as const;
 
@@ -658,7 +659,6 @@ export async function freezeRunMemoryContext(
   lease: MemoryRunLease,
   rawQuery: string,
 ): Promise<FrozenMemoryContext> {
-  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
   const query = rawQuery.trim() || "Current work-stream objective and trigger";
   const runs = createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId);
   const fence = {
@@ -670,15 +670,26 @@ export async function freezeRunMemoryContext(
   const existing = await runs.memoryContext(fence);
   if (existing) return parseFrozenContext(existing);
 
-  const recalled = await hybridMemorySearch(env, input, query);
-  const memoryScopeIds = recalled.scopes.map((scope) => scope.memoryScopeId).sort();
-  const results = recalled.results;
-  const memoryContextHash = await sha256(stableJson({
-    memoryScopeIds,
-    query,
-    retrievalMode: recalled.retrievalMode,
-    results,
-  }));
+  const recalled = input.automationRunContext
+    ? await executeAutomationMemoryToolForRun(env, input, "search", { query })
+    : null;
+  env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
+  const workspaceRecall = recalled ? null : await hybridMemorySearch(env, input, query);
+  const memoryScopeIds = recalled
+    ? [input.automationRunContext!.automationId]
+    : workspaceRecall!.scopes.map((scope) => scope.memoryScopeId).sort();
+  const results = recalled
+    ? z.object({ results: z.array(z.object({
+        memoryItemId: z.string(),
+        memoryScopeId: z.string(),
+        scopeKind: z.literal("automation"),
+        text: z.string(),
+        revision: z.number().int().positive(),
+        expiresAt: z.string().nullable(),
+      }).strict()) }).passthrough().parse(recalled.output).results
+    : workspaceRecall!.results;
+  const retrievalMode = recalled ? "fts_only" as const : workspaceRecall!.retrievalMode;
+  const memoryContextHash = await sha256(stableJson({ memoryScopeIds, query, retrievalMode, results }));
   // The recall above costs a vector search, so the read and the write cannot be
   // one operation. A loser gets the winner's row rather than an outcome to
   // interpret: freezing recall exists so every replay of this attempt sees the
@@ -689,7 +700,7 @@ export async function freezeRunMemoryContext(
     now: Date.now(),
     memoryScopeIdsJson: JSON.stringify(memoryScopeIds),
     queryText: query,
-    retrievalMode: recalled.retrievalMode,
+    retrievalMode,
     resultsJson: JSON.stringify(results),
     memoryContextHash,
   });
@@ -1069,7 +1080,7 @@ async function invalidateMemory(
 
 export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): HarnessTool[] {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  return [
+  const tools: HarnessTool[] = [
     {
       definition: {
         name: "search",
@@ -1181,6 +1192,17 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
       execute: (raw, context) => invalidateMemory(env, input, raw, context),
     },
   ];
+  if (!input.automationRunContext) return tools;
+  return tools.map((tool) => ({
+    ...tool,
+    execute: async (raw, context) => executeAutomationMemoryToolForRun(
+      env,
+      input,
+      tool.definition.name as "search" | "add" | "update" | "invalidate",
+      raw,
+      context.providerIdempotencyKey,
+    ),
+  }));
 }
 
 interface OutboxRow {

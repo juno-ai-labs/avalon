@@ -194,7 +194,7 @@ describe('authoritative run outcome telemetry', () => {
       properties: {
         workstreamId,
         harnessRunId: runId,
-        runKind: 'workstream',
+        runKind: 'automation',
         triggerType: 'composer',
         terminalState: 'completed',
         duration: '5s_30s',
@@ -209,7 +209,10 @@ describe('authoritative run outcome telemetry', () => {
         fallbackUsed: true,
       },
     });
-    expect(JSON.parse(terminal.envelope_json).properties).not.toHaveProperty('automationId');
+    expect(JSON.parse(terminal.envelope_json).properties).toHaveProperty(
+      'automationId',
+      '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7903',
+    );
     expect(database.prepare(`
       SELECT event_id, json_extract(envelope_json, '$.name') AS name
       FROM telemetry_accepted_events

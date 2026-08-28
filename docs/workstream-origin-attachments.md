@@ -42,7 +42,6 @@ hydrates a currently authorized derivative only when the task needs it.
 | `apps/api/src/services/workstream-service.ts` | `create` attaches `input.originResource`; `createFromOpportunity` attaches a suggestion's activity provenance roots; `describeActivityOrigin` is the shared stored-row path both it and `attachActivityResource` use. |
 | `apps/api/src/services/slack-workspace-workstream-service.ts` | `create` attaches the origin for a Slack member who is not a Rally user. |
 | `apps/api/src/telemetry/workstream-creation.ts` | Resolves a started suggestion's canonical connector types from the same retained activity provenance roots, without copying source content or connection IDs into telemetry. |
-| `apps/api/src/queues/activity-consumer.ts` | `startActivityAutomation` attaches the activity that matched the trigger. |
 | `packages/db/migrations/0001_initial.sql` | `workstream_resources.relationship_type`, which carries the `origin` label. |
 
 ## How it works
@@ -135,11 +134,22 @@ opens the wrong workspace.
 An activity that names no provider resource describes something with no place to
 point at and produces no attachment.
 
-Two paths use it. A connector activity that matches an automation trigger
-attaches the object the automation fired on, ownerless — an automation fired,
-nobody attached anything. A suggestion that someone starts attaches the activity
+One path uses it today: a suggestion that someone starts attaches the activity
 provenance roots the ranking model was shown, credited to the member who selected
 it.
+
+**A connector activity that matches an automation trigger no longer attaches
+anything.** It used to — the object the automation fired on, ownerless, because
+an automation fired and nobody attached anything — from
+`startActivityAutomation` in the activity consumer. The durable automation
+lifecycle replaced that producer with `AutomationAgent.provisionNextRun`, which
+attaches a resource only for an inbound-email trigger's opening message. A run
+fired by a Slack message or a Linear issue therefore starts with no record of the
+object it fired on, and the agent answers about a thread it cannot see — the
+failure the **Invariants** below describe and the one this module exists to
+prevent. Restoring it means giving the external-event run context the same
+opening-resource shape the inbound-email one already carries, so the child
+attaches it where it attaches the email.
 
 ## Invariants
 
@@ -245,9 +255,9 @@ It deliberately does **not** cover:
   activity to an *existing* work stream; if re-enabled, accepting one produces
   an `attachment`, not an `origin`. See
   [`contextual-routing.md`](contextual-routing.md).
-- **Inbound email.** A work stream created from an address already attaches its
-  email resource in `resend-inbound-email-service.ts`, and a scheduled automation
-  run already copies its subscription's resources; neither is rewritten here.
+- **Inbound email.** An automation run created from an address attaches its email
+  resource itself, from the opening input frozen in its run context; that is
+  `AutomationAgent`'s and is not rewritten here.
 - **What the model does with the attachment.** The pageable
   `workstream_list_resources` index and bounded read/search tools are
   [`agent-harness.md`](agent-harness.md) and
@@ -282,10 +292,9 @@ It deliberately does **not** cover:
   adapter's undeclared type fall through to the activity derivation, which
   answered with a substitute origin and defeated the check that exists to stop a
   typo forking a resource identity.
-- **A queue invocation dies between committing an automation run and attaching
-  its origin.** The redelivery attaches it: the write sits on both the new-run
-  and existing-run paths, before the Workflow is created, and both statements
-  behind it are `ON CONFLICT DO NOTHING`. Repeating it costs one lookup.
+- **An automation run fired by connector activity has no origin at all.** Not a
+  race and not a swallowed failure: nothing on the current path attaches one. See
+  **Connector activity** above.
 - **The resource insert or the attachment write fails.** Logged as
   `workstream_origin_resource_attach_failed` with the workspace, work stream,
   provider, and resource type. The create continues. The resource row is resolved
@@ -364,6 +373,32 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-28 — Scope cut: an activity-triggered automation run loses its origin
+
+**What changed:** `startActivityAutomation` in the activity consumer, which
+attached the object an automation fired on to the run's work stream, is gone with
+the rest of the legacy automation runtime. Its replacement,
+`AutomationAgent.provisionNextRun`, attaches a resource only when the run context
+carries an `opening` — which today means inbound email and nothing else. An
+automation fired by a Slack message, a Linear issue, a GitHub pull request, a
+Notion page, or a Granola note now produces a work stream with no origin.
+
+**Why:** The durable automation lifecycle collapsed three run producers into one
+that builds its child from a frozen `AutomationRunContextV1`. The external-event
+trigger in that context carries the canonical event id, type, instant, and
+payload hash — enough to admit and deduplicate an occurrence, and not enough to
+describe a resource. The attachment was not deliberately dropped; it had nowhere
+to be carried and nobody noticed it was gone. This entry is that record.
+
+**Consequences:** The invariant above — an origin is attached before the run is
+launched, so the agent can see the thread it is answering about — does not hold
+for this trigger. Restoring it does not need a new mechanism: the inbound-email
+trigger already proves the shape, freezing a resource id into the run context's
+`opening` for the child to attach. An external-event trigger needs the same, with
+the resource resolved through `describeWorkstreamOrigin` where the canonical event
+is still in hand — in the matcher or the delivery consumer — rather than inside
+the agent, which holds ids and hashes and deliberately never reads the event body.
 
 ### 2026-08-28 — Re-fetch is advertised only when the connector implements it
 
