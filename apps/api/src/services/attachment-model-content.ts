@@ -13,6 +13,7 @@ import {
   type GifModelMetadata,
   parseGifModelMetadata,
 } from "./gif-storyboard";
+import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
 
 const MAX_INLINE_IMAGES = 8;
 const MAX_MODEL_IMAGE_BYTES = 8 * 1_024 * 1_024;
@@ -277,24 +278,31 @@ async function persistModelImage(
   const sha256 = await sha256Hex(normalized.bytes);
   if (!attachment.workspaceId) throw new Error("attachment_workspace_required");
   const at = new Date().toISOString();
-  await database.prepare(
-    `INSERT OR IGNORE INTO resource_object_deletion_outbox
-      (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-     VALUES (?, ?, ?, 'derivative', ?, ?)`,
-  ).bind(contentRef, attachment.workspaceId, attachment.id, at, at).run();
-  await payloads.put(contentRef, exactArrayBuffer(normalized.bytes), {
-    httpMetadata: {
-      contentType: normalized.mimeType,
-      contentDisposition: `inline; filename="${safeDerivativeFilename(attachment.fileName, extension)}"`,
+  await putStagedResourceObject({
+    database,
+    payloads,
+    objectRef: contentRef,
+    workspaceId: attachment.workspaceId,
+    resourceId: attachment.id,
+    objectKind: "derivative",
+    value: exactArrayBuffer(normalized.bytes),
+    options: {
+      httpMetadata: {
+        contentType: normalized.mimeType,
+        contentDisposition: `inline; filename="${safeDerivativeFilename(attachment.fileName, extension)}"`,
+      },
+      customMetadata: {
+        originalResourceId: attachment.id,
+        purpose: "model-input",
+        sha256,
+      },
     },
-    customMetadata: {
-      originalResourceId: attachment.id,
-      purpose: "model-input",
-      sha256,
-    },
+    at,
   });
-  try {
-    const result = await database.prepare(
+  // If this WorkspaceDO response fails, keep the staged bytes: its transaction
+  // may have committed before the response was lost, and a retry can observe
+  // the pointer while maintenance clears its staging row.
+  const result = await database.prepare(
       `UPDATE resources
           SET model_content_ref = ?, model_mime_type = ?, model_content_sha256 = ?,
               model_metadata_json = ?,
@@ -314,11 +322,10 @@ async function persistModelImage(
       attachment.id,
       attachment.contentRef,
       attachment.contentSha256 ?? null,
-    ).run();
-    if ((result.meta.changes ?? 0) === 0) await payloads.delete(contentRef);
-  } catch (error) {
-    await payloads.delete(contentRef).catch(() => undefined);
-    throw error;
+  ).run();
+  if ((result.meta.changes ?? 0) === 0) {
+    await releaseStagedResourceObject(database, attachment.workspaceId, contentRef)
+      .catch(() => undefined);
   }
 }
 

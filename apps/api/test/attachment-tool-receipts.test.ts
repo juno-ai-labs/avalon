@@ -91,6 +91,7 @@ function fixture() {
     CREATE TABLE notes (resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, archived_at TEXT, scope TEXT, owner_user_id TEXT, updated_at TEXT);
     CREATE TABLE resource_object_deletion_outbox (
       object_ref TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, object_kind TEXT NOT NULL,
+      cleanup_eligible INTEGER NOT NULL DEFAULT 1,
       attempt_count INTEGER NOT NULL DEFAULT 0, last_error_code TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     );

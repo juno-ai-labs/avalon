@@ -118,10 +118,9 @@ receives R2 credentials or a signed R2 URL.
 `AVALON_RESOURCE_DIR` into regional R2, creates a normal generated `resources`
 row, attaches it to the work stream, and uses the existing cleanup outbox. The
 published bytes do not enter model context. The resource inventory and existing
-attachment tools become the durable participant/model surface — though the
-desktop rail today lists a published resource without rendering its content, so
-the participant half is not yet delivered ([`agent-harness.md`](agent-harness.md),
-Failure modes and limits).
+attachment tools become the durable participant/model surface, and the desktop
+rail renders supported text and Markdown publications through the resource
+preview route.
 
 A published file's identity is the document's own coordinates — the work stream
 and the normalized published path, as `terminal:<workstream-id>:<path>` — so
@@ -291,10 +290,12 @@ network proxy, or a general GitHub administration surface.
   discoverable, but new executions fail closed with `sandbox_unavailable` while
   retained work remains available for lifecycle reconciliation.
 - A republish that loses the content compare-and-swap to a concurrent one
-  deletes the bytes it wrote and reports what the document now holds, rather
-  than clobbering the winner. The model is handed a successful result whose
-  hash is not the bytes it published, so a revision can be dropped without a
-  run-visible signal.
+  releases the bytes it wrote to asynchronous cleanup and reports what the
+  document now holds, rather than clobbering the winner. A failed WorkspaceDO
+  response is ambiguous and leaves staging intact, because it cannot prove
+  whether the pointer commit landed. The model is handed a successful result
+  whose hash is not the bytes it published, so a revision can be dropped
+  without a run-visible signal.
 - An opted-in but incomplete Daytona environment degrades to `unsupported`
   instead of failing Worker startup. This keeps ordinary local development
   usable without provider credentials; a complete but malformed configuration
@@ -583,6 +584,32 @@ warm, restore, failure-rate, snapshot-build/activation maintenance, and managed
 update lag before changing the default.
 
 ## Changelog
+
+### 2026-08-28 — Generated files stay staged until their pointer commits
+
+**What changed:** `publish_resource`, final-diff preservation, and repository
+backup publication register their R2 objects as staged. The cleanup alarm may
+clear that row after the resource pointer exists, but cannot delete the object
+while the publisher is between its R2 write and WorkspaceDO commit. Known
+failures release the object to cleanup; ambiguous commits preserve it for retry.
+
+**Why:** Production reproduced a generated Markdown resource with two retained
+versions and valid citation routing, while the current and historical content
+routes all returned 404. The cleanup alarm could win the gap between upload and
+pointer commit, delete the bytes, and still let the later metadata write
+succeed.
+
+**Considered and rejected:** Client-side fallback, because no client fetch can
+recover bytes the server deleted; and a time-based cleanup grace period, because
+its safety would depend on an arbitrary request-duration ceiling.
+
+**Consequences:** Ambiguous publication favors a recoverable storage leak over a
+broken document. A staged inactive object remains durable for retry or operator
+reconciliation but does not arm an alarm whose pass cannot act on it. A later
+supersession or deletion promotes the row to cleanup ownership. Every future
+Terminal publication path must use the same staging fence.
+
+Shipped in [#395](https://github.com/juno-ai-labs/avalon/pull/395).
 
 ### 2026-08-27 — A published document is identified by its path, not by the call
 
