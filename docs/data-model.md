@@ -824,6 +824,31 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-28 — Resource versions carry provenance, and resources carry an alias
+
+**What changed:** WorkspaceDO schema version 18 adds an author kind, its
+matching identity, a cause, and a storage kind to `resource_versions`, staged on
+`resources` as `revision_author_*`/`revision_cause` and copied by the capture
+triggers, with a fence refusing an identity its kind cannot have. Version 19
+adds `resources.slug` under a partial unique index.
+
+**Why:** A version row said which pointers a state held and nothing about who
+moved them, so the history the rail lists could not be attributed. The alias is
+for the surfaces a model reads and writes identifiers on, where a UUID costs
+about thirteen tokens per mention.
+
+**Considered and rejected:** Passing provenance into capture instead of staging
+it — capture is a trigger, so anything not on the row needs a second statement
+a crash can separate from the swap. A `CHECK` on `storage_kind` — SQLite cannot
+alter one on a STRICT table, and the column exists precisely to admit a shape
+nobody has built yet. Backfilling provenance for existing rows with `system` —
+inventing an author the migration cannot know.
+
+**Consequences:** Every swap site sets provenance in the statement that swaps,
+and a mismatch aborts the swap. Nothing in SQL can mint an alias, so existing
+rows start without one and a bounded maintenance pass fills them in; `slug IS
+NULL` is the durable record that one is owed.
+
 ### 2026-08-27 — Participant removal cannot empty a work stream
 
 **What changed:** The authoritative work-stream transition lets any current
@@ -894,31 +919,6 @@ scale with retained transcript size.
 object transaction before its receipt commits. The next stacked release may
 drop legacy owners only after the fleet receipt is complete and must switch all
 foreign keys/readers to canonical records first.
-
-### 2026-08-28 — Resource versions carry provenance, and resources carry an alias
-
-**What changed:** WorkspaceDO schema version 18 adds an author kind, its
-matching identity, a cause, and a storage kind to `resource_versions`, staged on
-`resources` as `revision_author_*`/`revision_cause` and copied by the capture
-triggers, with a fence refusing an identity its kind cannot have. Version 19
-adds `resources.slug` under a partial unique index.
-
-**Why:** A version row said which pointers a state held and nothing about who
-moved them, so the history the rail lists could not be attributed. The alias is
-for the surfaces a model reads and writes identifiers on, where a UUID costs
-about thirteen tokens per mention.
-
-**Considered and rejected:** Passing provenance into capture instead of staging
-it — capture is a trigger, so anything not on the row needs a second statement
-a crash can separate from the swap. A `CHECK` on `storage_kind` — SQLite cannot
-alter one on a STRICT table, and the column exists precisely to admit a shape
-nobody has built yet. Backfilling provenance for existing rows with `system` —
-inventing an author the migration cannot know.
-
-**Consequences:** Every swap site sets provenance in the statement that swaps,
-and a mismatch aborts the swap. Nothing in SQL can mint an alias, so existing
-rows start without one and a bounded maintenance pass fills them in; `slug IS
-NULL` is the durable record that one is owed.
 
 ### 2026-08-27 — Resource relationships derive direction and semantic writes retain versions
 

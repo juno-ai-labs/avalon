@@ -591,12 +591,14 @@ Repeating the same accept or dismissal reports the state the suggestion already
 reached; only a contradictory resolution is refused with
 `409 suggestion_already_resolved`.
 
-A routed watch activity names the resources it matched — id, alias, and title —
-in the system message's structured content, so the surface showing it can say
-which attached document went stale and offer the re-fetch that turns the stale
-snapshot into history. The notification marks staleness and nothing more: it
-never re-fetches anything itself, which is the line between a watch and
-continuous synchronization.
+A routed watch activity names the resources it matched. Their titles are in the
+message text a participant reads, so the person who sees the notification can
+tell which attached document went stale; their ids and aliases ride in the same
+message's structured content for a surface that wants to link them, which
+nothing does yet. The re-fetch that turns a stale snapshot into history is the
+right rail's own action on the resource, not something this message performs:
+the notification marks staleness and nothing more, which is the line between a
+watch and continuous synchronization.
 
 An explicit resource watch may move content only into an audience no broader
 than the activity's. Workspace-visible activity may enter any watched work
@@ -824,8 +826,9 @@ fixture table instead, where it is reviewable.
 
 ### 2026-08-28 — A routed watch activity names what went stale
 
-**What changed:** The watch-routed arm now carries the resources an activity
-matched into the injected message's structured content, by id and by alias.
+**What changed:** The watch-routed arm now names the resources an activity
+matched — in the message text by title, and in its structured content by id and
+alias.
 
 **Why:** The message said that something changed at the provider, not which of
 a work stream's attached documents did — and a re-fetch, which is what makes a
@@ -836,8 +839,10 @@ who cannot identify the resource.
 synchronization by another name, and it spends provider quota on changes nobody
 asked about.
 
-**Consequences:** The field is present only for the watch-routed arm, where a
-resource was actually matched. Nothing in this path performs a re-fetch.
+**Consequences:** Both the added line and the structured field are present only
+for the watch-routed arm, where a resource was actually matched. The text
+carries titles because the transcript renders text and no surface reads the
+structured field yet. Nothing in this path performs a re-fetch.
 
 ### 2026-08-26 — Connector-event processing uses native Queue retry
 
