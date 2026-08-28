@@ -392,7 +392,13 @@ message type. The rejected alternative, a dedicated message type with a card,
 costs a wire enum, cache and dispatch branches, and version-skew handling on
 every client to deliver what a link already carries.
 
-**Consequences:** A future scheme is three type errors, not three places to
+**Consequences:** Two visual defects were found in the real window and not by
+any test, which is the reason that pass exists: the pill first rendered as a
+coloured speck no reader could tell from another, and it was drawn with
+`brand-ink` on a solid tint — the pairing written for a *tinted* ground, washed
+out on a solid one. A marker at superscript size needs the brand's own
+on-colour and a heavier weight than an inline chip does. A future scheme is
+three type errors, not three places to
 remember — that is the reason the matrix is a table. Two cells are load-bearing
 and easy to "fix" wrongly: `image` × `https` stays a real image, because that
 syntax is live and means what it means everywhere, and `link` × unknown keeps

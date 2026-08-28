@@ -240,7 +240,16 @@ function asCitation(content: string): FootnoteCitation | null {
   const [match, label = "", href = ""] = links[0]!;
   const target = parseCitationHref(href);
   if (target.scheme === "unknown") return null;
-  return { label, target, text: content.replace(match, "").trim() };
+  // The words around the link, with the punctuation that only joined it to the
+  // link removed: `[Deck](…), slide 4` carries "slide 4", not ", slide 4",
+  // which reads as a fragment once the link is no longer beside it.
+  const text = content
+    .replace(match, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(/^[,;:—–-]\s*/u, "")
+    .trim();
+  return { label, target, text };
 }
 
 /**

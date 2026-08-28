@@ -239,6 +239,19 @@ describe('the exported document', () => {
     expect(html).toMatch(new RegExp(`\\.${className}\\b[^{]*\\{`, 'u'));
   });
 
+  /**
+   * Caught in a real capture, not in a component test: GFM gives the footnote
+   * section a heading it expects the host to hide, and this document loads none
+   * of the application stylesheet. Without a rule of its own the card printed a
+   * bare "Footnotes" heading above the list — a word from the renderer's
+   * plumbing, in the middle of somebody's saved picture.
+   */
+  it('hides a visually-hidden element, which this document has no rule for otherwise', () => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    expect(html).toMatch(/\.sr-only\b[^{]*\{[^}]*(?:display:\s*none|clip-path)/u);
+  });
+
   it('drops the popover and the chevron, which are affordances a still card cannot offer', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
 

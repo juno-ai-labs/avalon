@@ -81,7 +81,13 @@ describe("citationFootnotes", () => {
 
   it("carries the plain text around the link into the popover", () => {
     const { citations } = citationFootnotes("A.[^src]\n\n[^src]: [Deck](resource://d), page 4");
-    expect(citations.get("src")?.text).toBe(", page 4");
+    // Without the leading comma: it joined the words to the link, and in a
+    // popover that puts the source on its own line it reads as a fragment.
+    expect(citations.get("src")?.text).toBe("page 4");
+    expect(citationFootnotes("A.[^s]\n\n[^s]: [Deck](resource://d) — appendix B").citations.get("s")?.text)
+      .toBe("appendix B");
+    expect(citationFootnotes("A.[^s]\n\n[^s]: See [Deck](resource://d) for the split").citations.get("s")?.text)
+      .toBe("See for the split");
   });
 
   it("qualifies an external source, which opens in the browser rather than the rail", () => {
