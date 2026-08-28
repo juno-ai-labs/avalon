@@ -812,6 +812,38 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-28 — The host names the turn its final message repeats
+
+**What changed:** The workflow host passes `answeredByTurnId` when it persists a
+run's final message: the closing accepted turn — `<runId>:turn:<stats.turns>` —
+when the run accepted one and the attachment-grounding guard did not replace the
+text, and `null` otherwise. The object uses it to decide whether the aggregate
+needs a feed row of its own.
+
+**Why:** `streamedText` is the closing turn's `stream_completed` content, and
+that turn is already a canonical transcript entry, so persisting the aggregate
+as a feed row too showed one answer twice. Only the host knows the two cases
+where that reasoning does not hold — it is the code that substitutes the
+grounding-guard notice, and it holds the run stats that say whether a turn was
+accepted at all — so the host is what names the turn. It is not what decides:
+the object checks the text before suppressing anything, because a host that
+names the wrong turn should cost a duplicate rather than a lost answer.
+
+**Considered and rejected:** Having the object find the closing turn itself by
+scanning for the run's highest accepted turn, which duplicates knowledge of the
+turn-id grammar in a second place and still cannot tell a substituted notice
+from a model answer. Passing a boolean the host computes, which hides which turn
+was meant and cannot be checked.
+
+**Consequences:** `stats.turns` and `stableTurnIndex` have to keep agreeing —
+turns are counted from one and the closing accepted turn is
+`<runId>:turn:<stats.turns>`. Any new host path that rewrites `streamedText`
+after the loop, as the grounding guard does, must pass `null` with it, or the
+member reads the model's words where the host meant to speak. The object still
+publishes the aggregate on `stream_completed`, so the desktop reconciles the two
+records by text — see
+[`streaming-reveal.md`](streaming-reveal.md#changelog); a host that alters the
+aggregate's text on the way out would restore the duplicate on screen.
 
 ### 2026-08-27 — A third standing policy: an answer cites what it rests on
 

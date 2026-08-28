@@ -3469,12 +3469,21 @@ export async function runWorkstreamHarness(
     }).catch(() => undefined);
   } else if (streamedText) {
     const messagePort = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
+    // The closing accepted turn, when the run got one. `stats.turns` counts
+    // successfully completed model turns and `stableTurnIndex` names them from
+    // one, so this is the turn whose `stream_completed` content became
+    // `streamedText` — and the row already showing that answer in the feed.
+    // Not so when the grounding guard replaced the text above, so that case
+    // deliberately names no turn and keeps the aggregate's own feed row.
+    const answeredByTurnId = outcome.stats.turns > 0 && !attachmentBoundary
+      ? `${input.harnessRunId}:turn:${outcome.stats.turns}`
+      : null;
     await persistHarnessFinalMessage(
       runs,
       messagePort,
       input,
       liveness.lease,
-      { id: messageId, text: streamedText },
+      { id: messageId, text: streamedText, answeredByTurnId },
       {
         status: terminalResult.status,
         ...(terminalResult.error ? { error: terminalResult.error } : {}),

@@ -364,6 +364,40 @@ export function orderedTranscriptMessages(
     .map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
+/** The run a `harness:<runId>` client message id names, or null for anything else. */
+function runAggregateRunId(message: Message): string | null {
+  const clientMessageId = message.clientMessageId;
+  return clientMessageId?.startsWith('harness:')
+    ? clientMessageId.slice('harness:'.length)
+    : null;
+}
+
+/**
+ * Whether a run's aggregate final message is already on screen as its own turn.
+ *
+ * A run's answer has two durable records — the closing turn Bind accepted, which
+ * is the feed entry, and the aggregate row the digest, Slack and
+ * `runs.final_part_id` join against. The socket still delivers the aggregate on
+ * `stream_completed`, because a reader who caught no stream frames needs the
+ * answer before the canonical snapshot arrives; without this the aggregate then
+ * became a second copy of it, appended after everything.
+ *
+ * Matched on the text and not on the run alone, because the aggregate does not
+ * always repeat a turn: when the attachment-grounding guard replaces the model's
+ * closing words the backend keeps the aggregate its own turn, and a run cut
+ * short mid-stream accepted no turn at all. In both the aggregate is the only
+ * copy of what the member has to read, and a rule that suppressed it whenever
+ * the run had *any* loaded turn would hide it.
+ */
+function shownByItsOwnAcceptedTurn(canonical: readonly Message[], message: Message): boolean {
+  const runId = runAggregateRunId(message);
+  if (runId === null) return false;
+  const turnPrefix = `${runId}:turn:`;
+  return canonical.some((candidate) => candidate.transcriptTurnId?.startsWith(turnPrefix)
+    && candidate.messageType === 'text'
+    && candidate.text === message.text);
+}
+
 /**
  * Retain only live overlays that do not yet have a canonical turn/block. A
  * canonical turn arrives before a run necessarily becomes terminal, so run
@@ -378,7 +412,8 @@ export function transientMessagesWithoutCanonicalMatch(
     isSameLogicalMessage(candidate, message)
     || candidate.transcriptTurnId === message.id
     || (message.transcriptTurnId !== undefined
-      && candidate.transcriptTurnId === message.transcriptTurnId)));
+      && candidate.transcriptTurnId === message.transcriptTurnId))
+    && !shownByItsOwnAcceptedTurn(canonical, message));
 }
 
 /** Union the intervals the backend inspected; row presence is not coverage. */

@@ -527,6 +527,58 @@ export class WorkstreamMessageStorage {
   }
 
   /**
+   * Record a run's aggregate final message without giving it a feed turn.
+   *
+   * Its own operation, for the same reason a tool card has one: what it writes
+   * is a different set of rows, and making that a branch inside
+   * `appendPreparedMessage` would hide the distinction this exists to draw.
+   *
+   * Every assistant message Bind accepts is already a canonical
+   * `participant_transcript_turns` row, written by `commitBindTransition` at
+   * the transcript sequence it was accepted on — and the host's `streamedText`
+   * is the last of those turns' `stream_completed` content. So appending the
+   * aggregate through `appendPreparedMessage` wrote the closing answer into the
+   * feed a second time, at a sequence allocated at terminalization: after every
+   * tool block and later turn the answer had been interleaved with. One answer,
+   * read twice, the second copy out of order. The ordering unit is the model
+   * turn rather than the run, so the turn is the copy that stays.
+   *
+   * The aggregate row itself is not the duplicate and does not go: the message
+   * feed is what `transcriptLister`, the digest, Slack and note privacy read,
+   * and `runs.final_part_id` points at this row. It still takes a sequence
+   * number and an attention ordinal, because the caller copies that ordinal
+   * onto the closing turn — which is how the run's answer marks the work stream
+   * unread now that it has no feed row of its own.
+   */
+  appendPreparedRunAggregateMessage(
+    prepared: PreparedWorkstreamMessageRecord,
+  ): MessageAppendOutcome {
+    const { input } = prepared;
+    const existing = this.messageByClientId({ clientMessageId: input.clientMessageId });
+    if (existing) {
+      return {
+        outcome: "replayed" as const,
+        messageId: existing.id,
+        sequenceNumber: existing.sequence_number,
+      };
+    }
+    const root = this.sql.exec<{
+      next_sequence_number: number; next_attention_ordinal: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT next_sequence_number, next_attention_ordinal FROM workstream WHERE id = 1`,
+    ).one();
+    prepared.input.sequenceNumber = root.next_sequence_number;
+    prepared.input.attentionOrdinal = root.next_attention_ordinal;
+    insertWorkstreamMessageRecord(this.sql, prepared);
+    this.#advanceCounters(false, input.now);
+    return {
+      outcome: "appended" as const,
+      messageId: input.messageId,
+      sequenceNumber: root.next_sequence_number,
+    };
+  }
+
+  /**
    * Write or refresh the transcript card for one tool call.
    *
    * Keyed by the invocation's own id rather than a client message id, because

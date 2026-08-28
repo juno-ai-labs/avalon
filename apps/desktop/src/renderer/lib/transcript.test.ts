@@ -76,6 +76,57 @@ describe('ordered turn rendering', () => {
     expect(transientMessagesWithoutCanonicalMatch([canonical], [routed])).toEqual([]);
   });
 
+  it('drops a run aggregate the run\'s own accepted turn already shows', () => {
+    // The run's final message and its closing accepted turn are one answer with
+    // two records: the turn is the feed entry, the aggregate is what the digest,
+    // Slack and `runs.final_part_id` join against. The socket delivers the
+    // aggregate on `stream_completed` so a reader who caught no stream frames
+    // sees the answer before the canonical snapshot lands — and once that
+    // snapshot lands, the aggregate must not become a second copy at the end.
+    const canonical = createTextMessage({
+      ...base,
+      id: '00000000-0000-7000-8000-0000000000a1:turn:2:text:0',
+      transcriptTurnId: '00000000-0000-7000-8000-0000000000a1:turn:2',
+      text: 'Here is what I found.',
+    });
+    const aggregate = createTextMessage({
+      ...base,
+      id: '00000000-0000-7000-8000-0000000000c1',
+      clientMessageId: 'harness:00000000-0000-7000-8000-0000000000a1',
+      text: 'Here is what I found.',
+    });
+
+    expect(transientMessagesWithoutCanonicalMatch([canonical], [aggregate])).toEqual([]);
+    // A different run's turn is not cover for this one's answer.
+    const otherRun = createTextMessage({
+      ...base,
+      id: '00000000-0000-7000-8000-0000000000b1:turn:1:text:0',
+      transcriptTurnId: '00000000-0000-7000-8000-0000000000b1:turn:1',
+      text: 'Here is what I found.',
+    });
+    expect(transientMessagesWithoutCanonicalMatch([otherRun], [aggregate])).toEqual([aggregate]);
+  });
+
+  it('keeps a run aggregate whose words are the host\'s, not the turn\'s', () => {
+    // What the attachment-grounding guard produces: the run accepted turns, but
+    // the final message is the host's substituted notice rather than any of
+    // them. Suppressing on the run alone would hide it.
+    const canonical = createTextMessage({
+      ...base,
+      id: '00000000-0000-7000-8000-0000000000a1:turn:2:text:0',
+      transcriptTurnId: '00000000-0000-7000-8000-0000000000a1:turn:2',
+      text: 'Here is what I found.',
+    });
+    const notice = createTextMessage({
+      ...base,
+      id: '00000000-0000-7000-8000-0000000000c1',
+      clientMessageId: 'harness:00000000-0000-7000-8000-0000000000a1',
+      text: 'I could not read one of the attachments.',
+    });
+
+    expect(transientMessagesWithoutCanonicalMatch([canonical], [notice])).toEqual([notice]);
+  });
+
   it('orders and collapses an open elicitation with its durable answer', () => {
     const elicitation = {
       id: '00000000-0000-7000-8000-000000000111',

@@ -64,9 +64,13 @@ Four paths deliberately do not pace:
 - **A retried attempt.** A `reset` or epoch bump clamps the reveal back to the
   turn's start, so retracted text vanishes instantly instead of being animated
   away, and the replacement paces in from there.
-- **Completion.** `stream_completed` carries the canonical message, which
-  replaces the row whole. The batcher flushes at turn end, so the backlog at
-  that moment is ordinarily under the drain window's worth of text.
+- **Completion.** `stream_completed` carries the run's aggregate final message,
+  which replaces the row whole. The batcher flushes at turn end, so the backlog
+  at that moment is ordinarily under the drain window's worth of text. That
+  aggregate is not the feed's copy of the answer — the closing turn Bind
+  accepted is — so it is inserted only for a reader holding no stream cursors,
+  and `transientMessagesWithoutCanonicalMatch` drops it once the canonical
+  snapshot shows the same text on one of that run's turns.
 
 ## Invariants
 
@@ -171,6 +175,32 @@ body, a segment key that churns, a `mentions` default that mints a new array
 per render — multiplies at 60 commits a second, not 8.
 
 ## Changelog
+
+### 2026-08-28 — The completion row is an aggregate, and reconciles as one
+
+**What changed:** `transientMessagesWithoutCanonicalMatch` drops a routed
+`harness:<runId>` message when a canonical turn of that run already shows the
+same text. The row `stream_completed` delivers is described as the run
+aggregate rather than as the canonical message.
+
+**Why:** The backend stopped giving that aggregate a transcript turn, because
+the closing accepted turn already held the answer and the aggregate's sequence —
+allocated at terminalization — put a second copy after every tool block it had
+been interleaved with. That left the client the only place the duplicate could
+still appear: a reader who caught no stream frames inserts the aggregate on
+`stream_completed`, and nothing tied it to the turn that arrived in the next
+snapshot. Both records are wanted; only one of them is the feed's.
+
+**Considered and rejected:** Not inserting the aggregate at all, which leaves a
+reader who joined after the last frame with no answer until the snapshot lands.
+Matching on the run alone, which hides the attachment-grounding guard's
+substituted notice — the case where the aggregate's words are the host's and no
+turn carries them.
+
+**Consequences:** The match is on text, so a future change that rewrites the
+aggregate's text on the way to the client — trimming, decorating, normalizing —
+breaks the reconciliation and restores the duplicate. Anything that needs to
+alter it must give the two records an explicit shared identity first.
 
 ### 2026-08-26 — Reveal cursors are model-turn scoped
 

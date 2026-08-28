@@ -1151,6 +1151,21 @@ join crosses an object boundary.
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
+A run's aggregate final message is a `workstream_message_records` row and not a
+feed entry. Every assistant message Bind accepts is already a
+`participant_transcript_turns` row at the `transcript_sequence` it was accepted
+on, and the host's `streamedText` is the closing one of those turns, so giving
+the aggregate a turn of its own would show one answer twice — the second time
+after every tool block and later turn it was interleaved with, because the
+aggregate's sequence is allocated at terminalization. `publishFinalMessage`
+therefore takes the accepted turn expected to carry that text and suppresses the
+feed row only once the object has proved it does. Two cases legitimately have no
+such turn and keep the feed row: the attachment-grounding guard replaces the
+model's closing words with the host's own, and a run cut short mid-stream never
+accepted a closing turn. The aggregate still takes an attention ordinal, which
+the host copies onto the closing turn — with no feed row of its own, that is how
+the run's answer marks the work stream unread.
+
 `workstream_message_records.sequence_number` is transcript order, including tool and system rows.
 `workstream_message_records.attention_ordinal` is the independent people-visible main-substream
 waterline used by unread tracking. Product messages expose the latter as the
@@ -1277,6 +1292,46 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-28 — A run's aggregate final message is bookkeeping, not a second turn
+
+**What changed:** `publishFinalMessage` records the run aggregate through
+`appendPreparedRunAggregateMessage`, which writes the
+`workstream_message_records` row and moves the transcript and attention counters
+without allocating a `transcript_sequence` or inserting
+`participant_transcript_turns` and `participant_transcript_blocks`. It does that
+only where the accepted turn the caller names is proved to already carry the
+aggregate's exact text; otherwise the aggregate keeps a feed row as before.
+
+**Why:** The canonical turn projection landed on 2026-08-26 but the aggregate
+write that predated it was left in place, so every run that produced text ended
+by writing that text into the feed a second time. The aggregate's sequence is
+allocated at terminalization, so the duplicate sorted after every tool block and
+later turn the answer had been interleaved with. That is the reported
+out-of-order, doubled message blocks: the order the 2026-08-26 change existed to
+preserve was right in storage and wrong on screen for the whole time it shipped.
+
+**Considered and rejected:** Deduplicating in the desktop projection, which
+leaves one answer with two writers and hands the decision to a reader with no
+authority to make it. Deleting the aggregate row outright — `transcriptLister`,
+the scheduled digest, Slack and note-privacy notifications read the message feed
+rather than the turn projection, and `runs.final_part_id` points at this row.
+Suppressing the feed row unconditionally, which silently loses the two cases
+where the aggregate carries text no turn has: the attachment-grounding guard's
+substituted notice, and a run cut short before any turn was accepted. Also
+rejected rebuilding the execution model to remove the aggregate concept, which
+is a much larger change than the defect needs and would carry a schema cutover
+for a duplicate row.
+
+**Consequences, and what a future change has to respect:** The aggregate row and
+the closing accepted turn are one answer with two records, and only the turn is
+a feed entry. A caller publishing a final message must name the turn expected to
+carry its text, or `null`; the object checks rather than trusts that, and
+anything short of proof leaves the aggregate its feed row, so a wrong answer
+costs a duplicate rather than a lost message. The aggregate still consumes an
+attention ordinal for the host to copy onto the closing turn. Any new writer of
+run-level output must decide which of the two records it is adding, rather than
+appending through the participant path by default.
 
 ### 2026-08-27 — Participant removal preserves one reader
 

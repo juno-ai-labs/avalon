@@ -8,6 +8,7 @@ import {
   previousInstanceRecoveryOwner,
   WorkstreamHarnessRunStorage,
 } from "../src/durable-objects/workstream-harness-run-storage";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -1162,6 +1163,9 @@ describe("publishing a run's final message", () => {
     eventPayloadJson: '{"finalMessageId":"m"}',
     lifecycleEventId: "event-final",
     allowCancellationRequested: false,
+    // These cases seed no accepted turn, so nothing in the feed can already be
+    // carrying the answer and the aggregate keeps a feed row of its own.
+    answeredByTurnId: null,
   };
 
   function claimed() {
@@ -1246,6 +1250,150 @@ describe("publishing a run's final message", () => {
       ...fence, runId: RUN, ...publish,
       hostOutcomeStatus: "stopped", allowCancellationRequested: true,
     })).toMatchObject({ outcome: "published" });
+  });
+
+  /**
+   * The loop's own accepted turns, as `commitBindTransition` records them: an
+   * opening turn that calls a tool, that tool's result, and the closing answer.
+   *
+   * Driven here rather than in `test-workers/` because the workerd suite has no
+   * model credentials and so cannot produce an accepted turn at all: what is
+   * under test is which rows two storage classes write against the real
+   * checked-in object schema, which is what this rung proves.
+   * The closing answer's text is deliberately `publish.text` — that is exactly
+   * what the host hands `publishFinalMessage`, because `streamedText` holds the
+   * last turn's `stream_completed` content.
+   */
+  async function loopReachedItsAnswer(binding: DurableObjectStorage): Promise<void> {
+    const transcript = new WorkstreamTranscriptStorage(binding);
+    await transcript.commitBindTransition({
+      kind: "state_initialized",
+      loopId: RUN,
+      generation: 1,
+      stateRevision: 1,
+      systemProjection: {
+        revision: 1,
+        rendererVersion: "workstream-system-v1",
+        inputHash: "input-1",
+        message: { role: "system", content: "System" },
+      },
+      nonSystemMessages: [{ role: "user", content: "Question" }],
+      nonSystemMessageOrigins: [{
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: "message-1",
+        sourceRevision: 1,
+      }],
+    }, NOW);
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted",
+      loopId: RUN,
+      generation: 1,
+      stateRevision: 2,
+      turnId: `${RUN}:turn:1`,
+      modelTurnIndex: 1,
+      message: {
+        role: "assistant",
+        content: "Looking now.",
+        tool_calls: [{
+          id: "provider-1-0",
+          type: "function",
+          function: { name: "attachment_read", arguments: "{}" },
+        }],
+      },
+    }, NOW + 1);
+    await transcript.commitBindTransition({
+      kind: "tool_result_accepted",
+      loopId: RUN,
+      generation: 1,
+      stateRevision: 3,
+      turnId: `${RUN}:turn:1`,
+      toolCallId: `${RUN}:turn:1:tool:0`,
+      callIndex: 0,
+      message: { role: "tool", tool_call_id: "provider-1-0", content: '{"ok":true}' },
+    }, NOW + 2);
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted",
+      loopId: RUN,
+      generation: 1,
+      stateRevision: 4,
+      turnId: `${RUN}:turn:2`,
+      modelTurnIndex: 2,
+      message: { role: "assistant", content: publish.text },
+    }, NOW + 3);
+  }
+
+  it("leaves the accepted assistant turn as the feed's only copy of the answer", async () => {
+    const { storage, sql, binding } = claimed();
+    await loopReachedItsAnswer(binding);
+
+    await storage.publishFinalMessage({
+      ...fence, runId: RUN, ...publish, answeredByTurnId: `${RUN}:turn:2`,
+    });
+
+    // The ordering unit is the model turn, not the run. Every accepted turn is
+    // already a canonical transcript turn at the sequence it was accepted on,
+    // so a run-level aggregate carrying the last turn's text again would be a
+    // second feed copy of one answer — and, because it is allocated at
+    // terminalization, one that sorts after everything the turn was
+    // interleaved with.
+    expect(sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT turn_id FROM participant_transcript_turns
+        WHERE entry_kind = 'conversation' ORDER BY transcript_sequence`,
+    ).toArray().map((row) => row.turn_id)).toEqual([`${RUN}:turn:1`, `${RUN}:turn:2`]);
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM participant_transcript_blocks block
+         JOIN transcript_facts fact ON fact.fact_id = block.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE block.block_kind = 'text' AND payload.payload_json LIKE '%Here is what I found.%'`,
+    ).one()).toEqual({ count: 1 });
+  });
+
+  it("still records the run aggregate every message reader joins against", async () => {
+    const { storage, sql, binding } = claimed();
+    await loopReachedItsAnswer(binding);
+
+    expect(await storage.publishFinalMessage({
+      ...fence, runId: RUN, ...publish, answeredByTurnId: `${RUN}:turn:2`,
+    })).toEqual({ outcome: "published", sequenceNumber: 1 });
+
+    // `transcriptLister`, the digest, Slack and note privacy all read the
+    // aggregate feed rather than the turn projection, and `runs.final_part_id`
+    // points at this row. Dropping the duplicate *turn* must not drop it.
+    expect(sql.exec(
+      `SELECT author_type, content, client_message_id, attention_ordinal
+         FROM workstream_message_details WHERE id = ?`,
+      publish.messageId,
+    ).one()).toMatchObject({
+      author_type: "agent",
+      content: "Here is what I found.",
+      client_message_id: `harness:${RUN}`,
+      attention_ordinal: 1,
+    });
+  });
+
+  it("keeps a feed row when the named turn is not carrying this text", async () => {
+    const { storage, sql, binding } = claimed();
+    await loopReachedItsAnswer(binding);
+
+    // What the attachment-grounding guard does: the host throws away the
+    // model's closing words and substitutes its own. The turn is still there
+    // and still named, but it is no longer showing what the member has to
+    // read — so the aggregate is the only copy, and suppressing it here would
+    // lose the notice entirely.
+    await storage.publishFinalMessage({
+      ...fence,
+      runId: RUN,
+      ...publish,
+      text: "I could not read one of the attachments.",
+      answeredByTurnId: `${RUN}:turn:2`,
+    });
+
+    expect(sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT turn_id FROM participant_transcript_turns
+        WHERE entry_kind = 'conversation' ORDER BY transcript_sequence`,
+    ).toArray().map((row) => row.turn_id))
+      .toEqual([`${RUN}:turn:1`, `${RUN}:turn:2`, publish.messageId]);
   });
 
   it("replays rather than writing a second message for the same run", async () => {
