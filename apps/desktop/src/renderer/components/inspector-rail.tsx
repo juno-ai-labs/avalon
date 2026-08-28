@@ -447,10 +447,14 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
  *   no rather than asked to wait. A lost hash race or a lost claim resolves
  *   inside a lease. What none of that covers is a conversion killed without
  *   recording anything — an evicted isolate leaves the row claimed with nobody
- *   converting — and a panel left open would then re-ask, at up to four requests
- *   a second, for as long as the reader leaves the rail open, against a route
- *   that reads R2 and can start a Workers AI OCR pass. Only our own server can
- *   drive that, which is why the bound is generous rather than tight.
+ *   converting — and a panel left open would then re-ask for as long as the
+ *   reader leaves the rail open: once a second while a claim looks live, four
+ *   times a second on the paths that answer 250ms. The live-claim answer returns
+ *   before the route reads R2, so a steady-state poll costs a D1 read rather
+ *   than a source fetch; the R2 read and the Workers AI OCR pass belong to the
+ *   attempt that wins the claim, which in this case is the one being killed.
+ *   Only our own server can drive that, which is why the bound is generous
+ *   rather than tight.
  * Wall clock rather than an attempt count, because the route answers 250ms for a
  *   lost race and 1s for a held claim, so the same count of attempts means
  *   anywhere from 100 seconds to 6½ minutes depending on which it hits. The

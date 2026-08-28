@@ -280,8 +280,10 @@ carried and reads again, cancelling that wait when the reader moves on; it does
 not invent an interval of its own, and it does not extend the same treatment to
 a 404 or a 422, which are answers. What the client does own is when to stop,
 which is the invariant below. The inspector rail's resource detail does this
-today; the message-feed lightbox still renders the processing message as a
-terminal one.
+today. The lightbox does not — it renders the processing message as terminal —
+and it is reached from three places: the message feed, and the composer in both
+creation flows, so a document previewed before it is ever sent hits the same
+mid-conversion window as a cited one.
 
 Search derives UTF-16-safe ranges and section labels directly from the bounded
 versioned derivative, so it needs no second R2 object or lifecycle. Tool reads
@@ -440,11 +442,13 @@ generic tool execution/receipt loop is owned by
   re-read only once the delay the response carried has elapsed, an answer that
   never stops saying `processing` is given up on once the budget would be
   overspent and not re-read afterwards, a processing answer naming no delay or a
-  zero delay stays terminal, a 404 stays terminal and is never re-read, and a
-  pending wait is dropped when the panel unmounts or its resource is revised.
-  Its fixture delays are deliberately unlike the service's own 250 ms and one
-  second, so a delay hard-coded in the rail cannot pass, and the budget is
-  asserted against the two contract constants rather than a literal.
+  zero delay stays terminal, a rejection carrying any other code stays terminal
+  *even when it names a `retryAfterMs`*, and a pending wait is dropped when the
+  panel unmounts or its resource is revised. The delay is pinned to the exact
+  millisecond the response named, under fake timers, so a rail waiting on any
+  other cadence fails; and the budget is asserted against the two contract
+  constants rather than a literal, so it fails the day either moves without the
+  client following.
 - `apps/api/test-workers/participant-notification.test.ts` proves a real object
   snapshot hydrates message-local attachment descriptors from the durable part
   relationship; `apps/desktop/src/renderer/lib/transcript.test.ts` proves those
