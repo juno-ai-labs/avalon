@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SEAM_RESTING_PATH, SEAM_SPIN_RATE, SEAM_START_RADIANS, seamPath } from '../lib/rally-seam';
+import { SEAM_RESTING_PATH, SEAM_SPIN_DURATION_MS, SEAM_SPIN_RATE, SEAM_START_RADIANS, seamPath } from '../lib/rally-seam';
 import { AvatarStack, RallyMark, RallySeam, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
@@ -79,6 +79,22 @@ describe('RallySeam', () => {
     // only that the frame changed would pass with the tilt removed, which is
     // the half of the motion that cannot be had from a CSS rotation either.
     expect(later).not.toEqual(seamPath(SEAM_START_RADIANS + 1_200 * SEAM_SPIN_RATE));
+  });
+
+  it('plays the turn once and then settles on the still master\'s own frame', () => {
+    stubReducedMotion(false);
+    const { frames } = captureFrames();
+    const { container } = render(<RallySeam />);
+
+    act(() => frames.shift()?.(0));
+    act(() => frames.shift()?.(SEAM_SPIN_DURATION_MS));
+
+    // Nothing left in the queue: the loop stops scheduling itself once it has
+    // held, rather than continuing to turn for as long as the mark is mounted.
+    expect(frames).toHaveLength(0);
+    // The held frame is not just *a* stopping point — it is the exact angle
+    // the still master is drawn at, the same one reduced motion below holds.
+    expect(seamAttribute(container)).toEqual(SEAM_RESTING_PATH);
   });
 
   it('holds the resting frame for a reader who asked for less motion', () => {

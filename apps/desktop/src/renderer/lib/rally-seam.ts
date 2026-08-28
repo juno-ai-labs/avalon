@@ -39,6 +39,17 @@ export const SEAM_SPIN_RATE = 0.0013;
 export const SEAM_TILT_RATE = 0.00079;
 
 /**
+ * How long the mark turns before it holds, in milliseconds: exactly one full
+ * rotation about the vertical. Derived from `SEAM_SPIN_RATE` rather than
+ * restated, so the two numbers cannot drift apart.
+ *
+ * The mark plays this one turn once per mount and then holds at
+ * `SEAM_RESTING_PATH` — the same frame it started from — rather than
+ * spinning for as long as it is on screen.
+ */
+export const SEAM_SPIN_DURATION_MS = (2 * Math.PI) / SEAM_SPIN_RATE;
+
+/**
  * The seam's `d` at one rotation, as an orthographic projection.
  *
  * With `tilt` at zero the projection is mirror-exact about the vertical —
