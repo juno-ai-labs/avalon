@@ -372,6 +372,11 @@ ${syntax}
      would have named is on the pill's own line in the app, not here. The pill
      stays a plain numbered superscript, which is what a citation degrades to
      everywhere outside this renderer anyway. */
+  /* These three are buttons, and this document loads none of the application's
+     preflight — so without an explicit inherit they render in the UA's default
+     face: Arial beside Inter, invisible on a host where the two resolve alike
+     and obvious on a Mac. */
+  .citation-chip, .citation-card, .citation-pill { font: inherit; line-height: inherit; }
   .citation-chip {
     align-items: center;
     background: #eceade;
@@ -405,22 +410,39 @@ ${syntax}
   .citation-card-title { font-size: 0.97em; font-weight: 640; }
   .citation-card-kind { color: #6b6d5e; font-size: 0.82em; text-transform: capitalize; }
   .citation-card-chevron { display: none; }
-  .citation-pill-wrap { display: inline; }
+  /* Sized and raised exactly as the app's is, and for the same reason: GFM's
+     sup wrapper applies its own smaller and its own super, and stacking the
+     pill's on top of those left a digit too small to read. The card is the
+     turn, saved — the marker has to be the same marker. */
+  .markdown-body sup:has(.citation-pill) { font-size: inherit; vertical-align: baseline; }
   .citation-pill {
     background: #e4e6c8;
-    border: 0;
+    border: 1px solid #ccd4a0;
     border-radius: 999px;
     color: #4a6a12;
     display: inline-block;
-    font-size: 0.7em;
-    font-weight: 640;
+    font: inherit;
+    font-size: 0.72em;
+    font-weight: 680;
+    line-height: 1.5;
     margin: 0 1px;
     min-width: 1.5em;
     padding: 0 0.35em;
     text-align: center;
     vertical-align: super;
   }
-  .citation-pill-popover { display: none; }
+  /* The popover and its parts: a hover affordance printed into a still image is
+     a grey box over the text with no way to dismiss it, and the source it names
+     is already on the pill in the app. */
+  .citation-pill-popover,
+  .citation-pill-source,
+  .citation-pill-note,
+  .citation-pill-open { display: none; }
+  .citation-identity-label { font: inherit; }
+  /* A footnote that was not lifted still renders, and without a rule it reads as
+     an ordinary numbered list inside the answer. */
+  .markdown-body .footnotes { border-top: 1px solid #e2e0d3; color: #6b6d5e; font-size: 0.9em; margin-top: 22px; padding-top: 12px; }
+  .markdown-body .data-footnote-backref { display: none; }
   .citation-identity-card {
     background: #eceade;
     border: 1px solid #dcd9c9;

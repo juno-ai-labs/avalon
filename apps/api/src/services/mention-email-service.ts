@@ -1,3 +1,4 @@
+import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { workstreamCanonicalUrl, type Region } from "@rally/contracts";
 
 import type { Env } from "../env";
@@ -74,8 +75,16 @@ export async function sendWorkstreamMentionEmail(
   }, request);
 }
 
+/**
+ * The quoted line a mention email carries.
+ *
+ * A citation is reduced first, for the reason the `person:` strip beside it
+ * already exists: this quotes an agent's message text, and every internal
+ * syntax in it — a mention's UUID, a `resource://` target, a bare `[^1]` — is
+ * something a mail client shows verbatim.
+ */
 function messageExcerpt(value: string): string {
-  const normalized = singleLine(value.replace(
+  const normalized = singleLine(rewriteCitationsAsPlainText(value).replace(
     /\[@((?:\\.|[^\]])+)\]\(person:[0-9a-f-]{36}\)/giu,
     (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
   ));

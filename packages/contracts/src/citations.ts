@@ -31,7 +31,7 @@ export type CitationTarget =
   /** A real web address: opens in the system browser through the sanctioned path. */
   | { readonly scheme: "external"; readonly url: string }
   /** An identity. Named, rendered, and — deliberately — never navigable. */
-  | { readonly scheme: "person"; readonly personId: string }
+  | { readonly scheme: "person" }
   | { readonly scheme: "connector" }
   /** Everything else, which is text. */
   | { readonly scheme: "unknown" };
@@ -49,24 +49,7 @@ export type CitationTarget =
  */
 const CITATION_ID = /^[A-Za-z0-9_-]+$/u;
 
-/**
- * How long an identifier may be. **Open — set to the value at which the guard
- * changes nothing, and the number is the team's to choose**, per
- * `docs/adding-security-defensive-and-other-limits.md`.
- *
- * What a bound would contain: a model writing an enormous run of safe
- * characters into a citation target. The arithmetic for choosing one is that
- * nothing here is quadratic and nothing is retained — an over-long id fails to
- * resolve and renders as its label text, at the cost of one failed lookup — so
- * the honest read is that this guard has no work to do until an id is used as a
- * cache key or a URL somebody else parses. It is defined rather than omitted
- * because the resource system's identifiers are about to change shape, and the
- * place to bound them should already exist when they do.
- */
-const CITATION_ID_MAX_LENGTH = Number.POSITIVE_INFINITY;
-
 const RESOURCE_SCHEME = /^resource:(?:\/\/)?/u;
-const PERSON_SCHEME = /^person:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
 
 /**
  * Which scheme a link target names — the allowlist that decides navigation.
@@ -82,14 +65,11 @@ const PERSON_SCHEME = /^person:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu
 export function parseCitationHref(href: string | undefined): CitationTarget {
   if (href === undefined) return { scheme: "unknown" };
   if (/^https?:\/\//iu.test(href)) return { scheme: "external", url: href };
-  const person = PERSON_SCHEME.exec(href);
-  if (person) return { scheme: "person", personId: person[1]!.toLowerCase() };
+  if (/^person:/iu.test(href)) return { scheme: "person" };
   if (/^connector:/u.test(href)) return { scheme: "connector" };
   if (!RESOURCE_SCHEME.test(href)) return { scheme: "unknown" };
   const resourceId = href.replace(RESOURCE_SCHEME, "").split(/[?#]/u, 1)[0] ?? "";
-  return resourceId.length <= CITATION_ID_MAX_LENGTH && CITATION_ID.test(resourceId)
-    ? { scheme: "resource", resourceId }
-    : { scheme: "unknown" };
+  return CITATION_ID.test(resourceId) ? { scheme: "resource", resourceId } : { scheme: "unknown" };
 }
 
 /** Which cell of the renderer matrix a target belongs to, before it is parsed. */
@@ -131,8 +111,6 @@ export interface FootnoteCitation {
 export interface CitationFootnotes {
   /** Qualifying definitions, by footnote identifier, in the order defined. */
   readonly citations: ReadonlyMap<string, FootnoteCitation>;
-  /** Identifiers whose definition exists but is not a citation — classic footnotes. */
-  readonly plain: readonly string[];
   /** Every defined identifier's raw content, in definition order. */
   readonly definitions: ReadonlyMap<string, string>;
   /** Identifiers referenced in the body, in order of first reference. */
@@ -178,7 +156,6 @@ const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/u;
 export function citationFootnotes(markdown: string): CitationFootnotes {
   const definitions = new Map<string, string>();
   const citations = new Map<string, FootnoteCitation>();
-  const plain: string[] = [];
   const referenced: string[] = [];
   const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
 
@@ -227,9 +204,8 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
   for (const [identifier, content] of definitions) {
     const citation = asCitation(content);
     if (citation) citations.set(identifier, citation);
-    else plain.push(identifier);
   }
-  return { citations, plain, definitions, referenced };
+  return { citations, definitions, referenced };
 }
 
 /** One paragraph, exactly one link — or nothing, which is a classic footnote. */
@@ -283,13 +259,24 @@ export function rewriteCitationsAsPlainText(markdown: string): string {
   // definition that no longer looks like one cannot be found to remove.
   const source = numbers.size === 0 ? markdown : stripFootnoteDefinitions(markdown);
   const rewritten = mapOutsideCode(source, (segment) => segment
+    // `citationScheme`, not `parseCitationHref`: the question here is "is this
+    // a citation", not "is this a *resolvable* citation". A malformed
+    // identifier still has to be reduced — the renderer degrades it to its
+    // label, and a surface with no renderer must not be the one place the raw
+    // scheme shows through. Asking the strict parser instead left
+    // `[the deck](resource://Q3-deck.pdf)` verbatim in an email and
+    // `![Plan](resource://plans/2026)` as a broken image in a channel.
     .replace(INLINE_LINK, (match, label: string, href: string) =>
-      (parseCitationHref(href).scheme === "resource" ? label : match))
+      (citationScheme(href) === "resource" ? label : match))
     // Only a referenced *and* defined identifier is renumbered. A reference
     // whose definition never arrived is left exactly as written, because
     // rewriting it would invent a source that does not exist.
     .replace(FOOTNOTE_REFERENCE, (match, identifier: string) => {
-      const number = numbers.get(identifier);
+      // Folded, like every other read of an identifier in this module. The
+      // definitions and the source list below key on the folded form, so
+      // looking up the raw capture here left `[^Q3]` in the body above a
+      // source list it no longer pointed at.
+      const number = numbers.get(normalizeFootnoteIdentifier(identifier));
       return number === undefined ? match : `[${number}]`;
     }));
 

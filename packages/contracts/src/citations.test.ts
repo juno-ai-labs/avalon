@@ -54,6 +54,10 @@ describe("parseCitationHref", () => {
       url: "http://example.com",
     });
     expect(parseCitationHref("person:0192f3ac-1b2c-7000-8000-abcdefabcdef").scheme).toBe("person");
+    // Any `person:` target is an identity, well-formed or not — it must reach
+    // the cell that renders it inert rather than one that could give it a
+    // destination.
+    expect(parseCitationHref("person:someone").scheme).toBe("person");
     expect(parseCitationHref("connector:abc123:slack").scheme).toBe("connector");
   });
 
@@ -98,16 +102,18 @@ describe("citationFootnotes", () => {
   it("refuses a definition with no link, two links, or more than one block", () => {
     const two = citationFootnotes("A.[^a]\n\n[^a]: [One](resource://x) and [Two](resource://y)");
     expect(two.citations.size).toBe(0);
-    expect(two.plain).toEqual(["a"]);
+    // Still defined, so it still renders as a classic footnote rather than
+    // vanishing — the degradation the pinned grammar exists to produce.
+    expect(two.definitions.has("a")).toBe(true);
 
     expect(citationFootnotes("A.[^b]\n\n[^b]: Just a note").citations.size).toBe(0);
     expect(citationFootnotes("A.[^c]\n\n[^c]: [One](resource://x)\n\n    A second paragraph.").citations.size).toBe(0);
   });
 
   it("ignores a reference whose definition never arrives", () => {
-    const { citations, plain } = citationFootnotes("A claim.[^missing]");
+    const { citations, definitions } = citationFootnotes("A claim.[^missing]");
     expect(citations.size).toBe(0);
-    expect(plain).toEqual([]);
+    expect(definitions.size).toBe(0);
   });
 
   it("reads nothing out of a fenced block, where footnote syntax is sample text", () => {
@@ -131,6 +137,18 @@ describe("rewriteCitationsAsPlainText", () => {
   it("reduces an embed card to its label rather than a broken image", () => {
     expect(rewriteCitationsAsPlainText("Published:\n\n![Mute windows PRD](resource://prd-mute)\n"))
       .toBe("Published:\n\nMute windows PRD\n");
+  });
+
+  it("reduces a citation whose identifier is malformed, which is the one that leaks", () => {
+    // The renderer degrades a malformed target to its label; this has to agree,
+    // or the surface with no renderer is the one that shows the raw scheme. A
+    // dot or a slash in the id is the reachable case — the model is told never
+    // to invent an identifier precisely because invented ones look like this.
+    expect(rewriteCitationsAsPlainText("See [the deck](resource://Q3-deck.pdf) for detail."))
+      .toBe("See the deck for detail.");
+    expect(rewriteCitationsAsPlainText("Published:\n\n![Plan](resource://plans/2026)\n"))
+      .toBe("Published:\n\nPlan\n");
+    expect(rewriteCitationsAsPlainText("An [empty one](resource://).")).toBe("An empty one.");
   });
 
   it("leaves an external link and a real image alone", () => {
@@ -164,6 +182,25 @@ describe("rewriteCitationsAsPlainText", () => {
     expect(rewritten).toContain("Second claim.[1] First claim.[2]");
     expect(rewritten).toContain("1. Beta");
     expect(rewritten).toContain("2. Alpha");
+  });
+
+  it("renumbers a mixed-case reference, which GFM folds and this must too", () => {
+    // The definitions and the source list key on the folded identifier; the
+    // markers have to fold with them or a reader gets a literal `[^Q3]` above
+    // an orphaned list of sources it no longer points at.
+    expect(rewriteCitationsAsPlainText([
+      "Revenue grew 40%.[^Q3] Margin held.[^Memo]",
+      "",
+      "[^Q3]: [Q3 board deck](resource://board-deck)",
+      "[^Memo]: [Margin memo](https://example.com/memo)",
+    ].join("\n"))).toBe([
+      "Revenue grew 40%.[1] Margin held.[2]",
+      "",
+      "**Sources**",
+      "",
+      "1. Q3 board deck",
+      "2. [Margin memo](https://example.com/memo)",
+    ].join("\n"));
   });
 
   it("carries a non-qualifying footnote into the same list as its own text", () => {
@@ -222,11 +259,9 @@ describe("citationScheme", () => {
     }
   });
 
-  it("keeps an unresolvable identity in its own cell, which never navigates", () => {
-    // A `person:` href that is not an id is text a model wrote. It has to reach
-    // the identity cell so it renders as the mention fallback rather than as an
-    // anchor with a model-chosen destination.
-    expect(parseCitationHref("person:someone").scheme).toBe("unknown");
-    expect(citationScheme("person:someone")).toBe("person");
+  it("agrees with the parser on an identity, however malformed", () => {
+    // The two used to disagree here too, because the parser validated a UUID it
+    // then threw away. One question, one answer.
+    expect(citationScheme("person:someone")).toBe(parseCitationHref("person:someone").scheme);
   });
 });

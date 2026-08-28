@@ -122,6 +122,19 @@ describe("work-stream mention email", () => {
     expect(String(body.text)).not.toContain("person:");
   });
 
+  it("reduces a citation, which a mail client shows verbatim just like a mention", async () => {
+    const resend = successfulResend();
+    const messageText = "Revenue grew 40%.[^1] See [the deck](resource://board-deck).\n\n[^1]: [Q3 deck](resource://board-deck)";
+
+    await sendWorkstreamMentionEmail(environment(), { ...input, messageText }, resend);
+
+    const calls = resend.mock.calls as unknown as Array<[string, RequestInit]>;
+    const text = String((JSON.parse(String(calls[0]?.[1].body)) as Record<string, unknown>).text);
+    expect(text).not.toContain("resource:");
+    expect(text).not.toContain("[^1]");
+    expect(text).toContain("See the deck.");
+  });
+
   it("never sends email outside production", async () => {
     const resend = successfulResend();
 

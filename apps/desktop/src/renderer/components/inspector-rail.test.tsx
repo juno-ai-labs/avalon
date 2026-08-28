@@ -360,10 +360,27 @@ describe('resource detail content preview', () => {
     expect(screen.getByText('Version')).toBeInTheDocument();
   });
 
-  it('does not try to render an image or a binary as text', () => {
+  it('does not try to render an image as text', () => {
     const loadResourceContent = vi.fn();
     openDetail({ ...note, mimeType: 'image/png', title: 'Screenshot.png' }, loadResourceContent);
 
     expect(loadResourceContent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a Word document', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Plan.docx'],
+    ['a PDF', 'application/pdf', 'Contract.pdf'],
+    ['a resource with no declared type', null, 'Fetched page'],
+  ])('asks the preview route for %s rather than deciding locally that it is unreadable', async (_label, mimeType, title) => {
+    // The server owns what is previewable: it returns the bytes for text and
+    // an extracted-text derivative for everything else, and a clear 422 when it
+    // genuinely cannot. Deciding here instead meant a Word document rendered as
+    // the raw bytes of a zip, and a PDF — the most commonly attached document
+    // there is — showed nothing at all.
+    const loadResourceContent = vi.fn(async () => new Blob(['## Extracted\n\nReadable after all.']));
+    openDetail({ ...note, ...(mimeType ? { mimeType } : { mimeType: undefined }), title }, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith(note.id, expect.anything());
   });
 });

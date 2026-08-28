@@ -287,7 +287,9 @@ whole category of drift — a class added to the renderer with no rule written
 here — into a build failure, which is what this document had been asking for in
 prose since the stylesheet split. It does not check that a rule is *good*, only
 that one exists; the card is still read from a real capture, as everything
-visible here is.
+visible here is. Shipped in
+[#381](https://github.com/juno-ai-labs/avalon/pull/381). Design:
+[`docs/PRDs/2026-08-27_inline-resource-citations/prd.md`](PRDs/2026-08-27_inline-resource-citations/prd.md).
 
 ### 2026-08-25 — The export scheme is rallywithai-export://
 

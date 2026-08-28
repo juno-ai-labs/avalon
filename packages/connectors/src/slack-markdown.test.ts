@@ -184,6 +184,10 @@ describe("citations in a Slack delivery", () => {
     // otherwise renumber `[1]` into `[1]` of a list it had already emitted.
     const once = slackDeliveryMarkdown("A.[^a] See [the deck](resource://d).\n\n[^a]: [Deck](resource://d)");
 
+    // Pinned against the literal first: comparing the subject's output to its
+    // own output is satisfied by a no-op, so the identity function would pass
+    // an idempotence check that asserted only the second half of this.
+    expect(once).toBe("A.[1] See the deck.\n\n**Sources**\n\n1. Deck");
     expect(slackDeliveryMarkdown(once)).toBe(once);
   });
 
