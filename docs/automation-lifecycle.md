@@ -26,7 +26,7 @@ retired WorkspaceDO subscription-row design and is not implementation guidance.
 | `apps/api/src/durable-objects/automation-agent-memory.ts` | Automation-owned memory items and tables, and the generation-fenced tool executor generated runs reach them through. |
 | `apps/api/src/durable-objects/automation-cutover.ts` | The one-shot WorkspaceDO import: the legacy witness and its hash, the per-automation import, and `removeLegacyAutomationSchema`. |
 | `apps/api/src/durable-objects/ordered-transcript-sqlite/` | The shared ordered-transcript schema and canonical JSON the draft conversation is stored in — see [`ordered-transcript-sqlite.md`](ordered-transcript-sqlite.md). |
-| `apps/api/src/services/automation-agent-service.ts` | The single REST boundary. Claims an automation ID, addresses the named object, and wraps every RPC so the object's thrown code becomes an HTTP answer. |
+| `apps/api/src/services/automation-agent-service.ts` | The single REST boundary. Claims an automation ID, addresses the named object, and wraps each RPC in `withAutomationErrors` so the object's thrown code becomes an HTTP answer. Each call site wraps itself deliberately: a `Proxy` over the stub is shorter and does not work — its `get` trap hands the stub's own method the proxy as `this`, which a brand-checking stub rejects with a `TypeError`, and an RPC returns a pipelining thenable rather than a native `Promise`, so an `instanceof Promise` branch never attaches the mapping. Both failures are invisible until a request reaches a real object. |
 | `apps/api/src/services/automation-agent-errors.ts` | The one table mapping an AutomationAgent error code to a status and a sentence a person reads. |
 | `apps/api/src/services/automation-service.ts` | What is left of the old service: the shared **template** catalog, publishing, and version validation. It starts no runs. |
 | `apps/api/src/services/external-event-evaluator.ts` | The pure DNF predicate evaluator WorkspaceDO matches registrations with. |
@@ -243,12 +243,68 @@ realtime `event_sequence`, because acceptance resets that cursor and a projectio
 version that went backwards left the directory describing a live automation as an
 unfinished draft forever.
 
+An `attention_code` travels on the same projection and is the one thing the
+directory says about an automation that is *wrong* rather than merely paused. It
+is one of three reasons — `unsupported_trigger` for a legacy trigger the new
+grammar cannot express, `legacy_runtime_error` for an automation the old runtime
+had left in `error`, and `run_projection_integrity_conflict` for a run whose
+terminal receipt disagreed with what the parent already recorded. **The server
+sends the reason and never the sentence.** The words live in
+`apps/desktop/src/renderer/lib/automation-attention.ts`, beside the rest of the
+product's copy, so the wording can be rewritten without reprojecting every
+automation that already carries a reason — and so nothing a person reads was
+written for whoever was debugging the cutover. `unsupported_trigger` is the only
+one that says the automation will not run again; the other two are recoverable.
+
 The draft screen holds one WebSocket to the agent, admitted through the ordinary
 ticket flow (`GET /automations/:id/agent/socket`, then an upgrade at
 `/socket/automations/:id`). The room accepts through Cloudflare's hibernation
 API, consumes the ticket ID once in its own SQL, re-checks the session and
 membership against D1, and admits only the automation's **author**. It sends a
 snapshot on connect and rebroadcasts on every durable change.
+
+### The one-shot cutover
+
+The implementation ships in one merge and one coordinated deployment, and the
+workflow refuses to deploy a single region while the cutover is pending — a build
+whose authoring refuses in the region it skipped, and whose legacy timers never
+fire there again, is worse than no deploy.
+
+Inside the deploy job, before either Worker is replaced,
+`cutover-automation-agents.mjs --preflight` compares each region's D1 workspace
+inventory (read in keyset pages, because an unpaged D1 query silently truncates)
+against the Durable Object namespace listing, refuses a mismatch, and wakes every
+stored WorkspaceDO by opaque ID through the existing migration-command Queue.
+That establishes a historical migration ledger, which is how the new build tells
+a genuinely fresh object from a carried-over one.
+
+The workflow then deploys EU, deploys Global, applies Worker-first D1 migrations,
+and checks both health endpoints. `--apply` sends one named, idempotent cutover
+command per workspace through the same Queues. Each WorkspaceDO witnesses and
+hashes every value the destructive half can remove, checks the draft inventory it
+was told to expect, imports each accepted automation into its named
+AutomationAgent, verifies the returned receipt hash, re-hashes the source to
+prove nothing moved underneath it, then drops the legacy schema and records
+completion in `automation_cutover_campaign` — a table outside the removed schema,
+so a retry rolls forward from durable receipts and an ordinary object wake can
+never perform cleanup. Legacy drafts are discarded rather than imported; a legacy
+`error` status becomes `paused` plus an attention code, and a trigger the new
+grammar cannot express becomes an `unsupported_trigger` attention code.
+
+The apply loop waits one poll interval before its first backlog read — Queue
+metrics are eventually consistent, and an immediate read can report the
+pre-dispatch count and "prove" a drain that never happened — refuses any increase
+in either region's dead-letter queue, and is followed by a second two-region
+health check.
+
+A workspace born on the new build still creates the legacy tables, because they
+live in WorkspaceDO's frozen migration 1 and a released migration is never
+edited. It drops them in the same statement that writes its identity row, and
+marks its campaign `completed` with source hash `fresh`, so only carried-over
+objects require the explicit import.
+
+D1 remains identity, membership, routing, migration control, audit, and
+telemetry storage — not a product-state fallback.
 
 ## Invariants
 
@@ -348,6 +404,36 @@ email is addressed and rendered
 - **A workspace has not been cut over yet.** Authoring answers 503
   `automation_cutover_in_progress` rather than writing into an object whose
   legacy source has not been imported.
+- **A run receipt whose hash disagrees with the recorded one** sets
+  `run_projection_integrity_conflict` on the object and broadcasts it to an open
+  socket, but does **not** enqueue a projection of its own. The directory picks
+  the code up on the next lifecycle change that projects — a pause, a resume, an
+  activation — so until then the sidebar row shows nothing wrong while the
+  automation's own page does. Every projection reads the code as the object
+  currently holds it rather than sending a constant, which is what stops a pause
+  from clearing an imported automation's marker; the gap is only in *when* the
+  first projection carrying it goes out.
+
+## Testing
+
+| Suite | Command | Covers |
+| --- | --- | --- |
+| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions. |
+| `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
+| `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
+| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
+| `apps/api/test/automation-run-context.test.ts`, `automation-connector-bindings.test.ts`, `run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | The frozen run context and its destinations, connector binding validation, and the live-generation re-check before a provider write. |
+| `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts` | `pnpm --filter @rally/api test` | Pre-fetch and post-sender screening, admission receipts, and the address claim. |
+| `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out reaching AutomationAgent. |
+| `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx`, `screens/new-automation.test.tsx`, `screens/automation-overview.test.tsx` | `pnpm --filter @rally/desktop test` | Snapshot fencing against the compiler stream, the stable route, and both adapters. |
+| `scripts/cutover-automation-agents.test.mjs` | `pnpm test:scripts` | Argument modes, paged inventory, the DLQ refusal, and the drain deadline (driven with a finite value, since the shipped one is open). |
+
+Traps worth knowing before writing one here. The `test-workers` D1 starts with no
+schema, so a test that exercises membership or sessions declares those tables
+itself; anything that depends on a checked-in migration belongs in the Node
+suite. And an automation alarm armed at `now + 1` can fire while a test is still
+arranging state — park it in the same `runInDurableObject` invocation that admits
+the work, as [`durable-object-alarms.md`](durable-object-alarms.md) describes.
 
 ## Data model
 
@@ -385,49 +471,6 @@ cross-region call is the email-address reservation, which reaches the Global
 only. Queue messages between objects carry identifiers, generations, versions,
 and hashes.
 
-## The one-shot cutover
-
-The implementation ships in one merge and one coordinated deployment, and the
-workflow refuses to deploy a single region while the cutover is pending — a build
-whose authoring refuses in the region it skipped, and whose legacy timers never
-fire there again, is worse than no deploy.
-
-Inside the deploy job, before either Worker is replaced,
-`cutover-automation-agents.mjs --preflight` compares each region's D1 workspace
-inventory (read in keyset pages, because an unpaged D1 query silently truncates)
-against the Durable Object namespace listing, refuses a mismatch, and wakes every
-stored WorkspaceDO by opaque ID through the existing migration-command Queue.
-That establishes a historical migration ledger, which is how the new build tells
-a genuinely fresh object from a carried-over one.
-
-The workflow then deploys EU, deploys Global, applies Worker-first D1 migrations,
-and checks both health endpoints. `--apply` sends one named, idempotent cutover
-command per workspace through the same Queues. Each WorkspaceDO witnesses and
-hashes every value the destructive half can remove, checks the draft inventory it
-was told to expect, imports each accepted automation into its named
-AutomationAgent, verifies the returned receipt hash, re-hashes the source to
-prove nothing moved underneath it, then drops the legacy schema and records
-completion in `automation_cutover_campaign` — a table outside the removed schema,
-so a retry rolls forward from durable receipts and an ordinary object wake can
-never perform cleanup. Legacy drafts are discarded rather than imported; a legacy
-`error` status becomes `paused` plus an attention code, and a trigger the new
-grammar cannot express becomes an `unsupported_trigger` attention code.
-
-The apply loop waits one poll interval before its first backlog read — Queue
-metrics are eventually consistent, and an immediate read can report the
-pre-dispatch count and "prove" a drain that never happened — refuses any increase
-in either region's dead-letter queue, and is followed by a second two-region
-health check.
-
-A workspace born on the new build still creates the legacy tables, because they
-live in WorkspaceDO's frozen migration 1 and a released migration is never
-edited. It drops them in the same statement that writes its identity row, and
-marks its campaign `completed` with source hash `fresh`, so only carried-over
-objects require the explicit import.
-
-D1 remains identity, membership, routing, migration control, audit, and
-telemetry storage — not a product-state fallback.
-
 ## Security and trust model
 
 An automation's socket, REST reads, and every RPC re-derive authority from the
@@ -454,27 +497,6 @@ re-authorizes, so the [access-revocation queue](access-revocation.md) is the onl
 thing that ends a live automation feed; `WorkspaceDO.revokeSocketAccess` now
 returns the automation IDs alongside the work-stream IDs and the consumer fans
 out to both.
-
-## Testing
-
-| Suite | Command | Covers |
-| --- | --- | --- |
-| `apps/api/test-workers/automation-agent.test.ts` | `pnpm --filter @rally/api test:workers` | On real workerd: identity plus the first turn plus one compiler admission committed before dispatch; evaluator replacement and its receipt in one transaction; acceptance in place deleting only the draft conversation; generation-fenced memory with replayed write receipts; a memory table keeping its identity across revisions. |
-| `apps/api/test-workers/automation-cutover.test.ts` | `pnpm --filter @rally/api test:workers` | A fresh WorkspaceDO reaching the final schema with no legacy lifecycle tables, and an import that discards audited drafts and replays cleanup safely. |
-| `apps/api/test-workers/external-event-routing.test.ts` | `pnpm --filter @rally/api test:workers` | One accepted event and one matcher serving an automation and two watched work streams. |
-| `apps/api/test/external-event-evaluator.test.ts` | `pnpm --filter @rally/api test` | The pure predicate: legal and illegal documents, missing-field semantics, and the connector vocabulary. |
-| `apps/api/test/automation-run-context.test.ts`, `automation-connector-bindings.test.ts`, `run-authority-validity.test.ts` | `pnpm --filter @rally/api test` | The frozen run context and its destinations, connector binding validation, and the live-generation re-check before a provider write. |
-| `apps/api/test/resend-inbound-email.test.ts`, `workstream-email-routing.test.ts` | `pnpm --filter @rally/api test` | Pre-fetch and post-sender screening, admission receipts, and the address claim. |
-| `apps/api/test/access-revocation.test.ts` | `pnpm --filter @rally/api test` | The workspace fan-out reaching AutomationAgent. |
-| `apps/desktop/src/renderer/lib/use-automation-agent-socket.test.tsx`, `screens/new-automation.test.tsx`, `screens/automation-overview.test.tsx` | `pnpm --filter @rally/desktop test` | Snapshot fencing against the compiler stream, the stable route, and both adapters. |
-| `scripts/cutover-automation-agents.test.mjs` | `pnpm test:scripts` | Argument modes, paged inventory, the DLQ refusal, and the drain deadline (driven with a finite value, since the shipped one is open). |
-
-Traps worth knowing before writing one here. The `test-workers` D1 starts with no
-schema, so a test that exercises membership or sessions declares those tables
-itself; anything that depends on a checked-in migration belongs in the Node
-suite. And an automation alarm armed at `now + 1` can fire while a test is still
-arranging state — park it in the same `runInDurableObject` invocation that admits
-the work, as [`durable-object-alarms.md`](durable-object-alarms.md) describes.
 
 ## Operations
 
