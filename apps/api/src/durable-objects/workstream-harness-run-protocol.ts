@@ -16,8 +16,9 @@ import type { z } from "zod";
  * `lease_owner`. Those joins become this port's own fence.
  */
 type LocalOnlyHarnessRunOperation =
-  | "prepareFinalMessage"
-  | "publishPreparedFinalMessage";
+  | "prepareHostOutcome"
+  | "publishPreparedHostOutcome"
+  | "launchRun";
 export type HarnessRunOperation = Exclude<keyof WorkstreamHarnessRunStorage, LocalOnlyHarnessRunOperation>;
 
 export type HarnessRunObjectPort = ObjectPortOf<Pick<WorkstreamHarnessRunStorage, HarnessRunOperation>>;
@@ -29,8 +30,10 @@ const DISPATCHED_OPERATIONS = [
   "heartbeatAttempt",
   "attemptOwnership",
   "recordLifecycleEvent",
-  "publishFinalMessage",
+  "publishHostOutcome",
   "lifecycleEvent",
+  "finalAssistantTurn",
+  "hostOutcomeParticipantNotice",
   "persistScope",
   "scope",
   "memoryContext",
@@ -47,9 +50,11 @@ const DISPATCHED_OPERATIONS = [
   "terminalizeQueuedRun",
   "admitRun",
   "bindWorkflowInstance",
-  "launchRun",
   "recordRunProgress",
   "latestRootRun",
+  "latestActiveRootRun",
+  "runOutcomeTelemetry",
+  "toolTerminalTelemetry",
   "runIsActive",
   "triggerPartId",
   "failUnlaunchedRun",
@@ -59,6 +64,7 @@ const DISPATCHED_OPERATIONS = [
   "reapableInlineChildren",
   "reapStaleInlineChild",
   "recordReceiptReconciliation",
+  "seedDevelopmentRun",
 ] as const satisfies readonly HarnessRunOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
@@ -91,12 +97,11 @@ export const HARNESS_RUN_OPERATIONS:
 const RUN_STATE_WRITES = new Set<HarnessRunOperation>([
   "claimAttempt",
   "admitRun",
-  "launchRun",
   "terminalizeAttempt",
   "terminalizeQueuedRun",
   "failUnlaunchedRun",
   "reapStaleRoot",
-  "publishFinalMessage",
+  "publishHostOutcome",
 ]);
 
 export function mutatesRunState(operation: HarnessRunOperation): boolean {

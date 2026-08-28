@@ -95,7 +95,7 @@ Each main `SubstreamAgent` transcript has one semantic fact/payload owner and
 two ordering projections. `participant_transcript_turns` assigns
 `transcript_sequence` to participant-visible conversation turns and safe status
 events; `participant_transcript_blocks` orders text, tool, and generic thinking
-blocks inside a turn. `bind_loop_states` and `bind_loop_state_messages` assign
+blocks inside a turn. `bind_loop_heads` and `bind_loop_state_messages` assign
 the exact provider-facing state revision and `loop_sequence`, including private
 protocol messages and compaction replacements. Both projections reference
 `transcript_facts`; identical payloads are not independently copied merely to
@@ -117,12 +117,14 @@ latest conversation turns, unread attention anchors, sequence ranges, active
 activities, exact loop reconstruction, provider-boundary verification, and
 compaction lookup.
 
-`workstream_message_records` and its referenced content-addressed facts now own
-all message payloads. Canonical attachment and mention relations reference the
-message record directly. `transcript_compaction_checkpoints` references the
-exact model-only checkpoint fact. The pre-v27 projection and payload-transfer
-receipts were one-time migration evidence and are removed after schema v32's
-fail-closed reconciliation; they are not runtime sources of truth.
+`participant_transcript_turns` is the sole participant-visible identity and
+ordering boundary. Each turn references one content-addressed root fact;
+`participant_transcript_attachments` and `participant_transcript_mentions`
+reference the turn directly.
+`transcript_compaction_checkpoints` references the
+exact model-only checkpoint fact. The pre-v27 projection, payload-transfer
+receipts, and temporary message-record identity shim were migration evidence and
+are gone after schema v33; they are not runtime sources of truth.
 
 `WorkspaceDO` is the relational authority for workspace product state and
 cross-work-stream serving. It stores connector/product configuration, Terminal
@@ -152,9 +154,13 @@ Its singleton `agent_stream_checkpoint` stores the complete currently visible
 derived output, revision, epoch, and sequence;
 `block_dashboard_socket_ticket_receipts` provides one-time admission for the block's
 direct socket. It stores neither a copy of the source transcript nor one row per
-token. The main substream's runtime compatibility rows hold the Bind run/tool state
-that references its fenced transcript. These are connected by typed,
-hash-checked RPCs rather than cross-object SQL joins.
+token. Each `SubstreamAgent` instead owns one stable `substream_loops` row,
+not-yet-canonical `pending_loop_inputs`, minimal immutable
+`delivered_loop_inputs` replay receipts, exact `assistant_turn_reservations`,
+subordinate execution receipts in `runs`, and a
+Bind head rebuilt from canonical participant history when no stable projection
+exists. These are connected by typed, hash-checked RPCs rather than cross-object
+SQL joins.
 
 ### Work streams
 
@@ -306,13 +312,14 @@ hash-checked RPCs rather than cross-object SQL joins.
   because the attention row does not exist for somebody who has only been added.
   See [`workstream-markers.md`](workstream-markers.md). Viewer presence is
   intentionally absent from durable storage.
-- Object-local `workstream_message_records` has a per-work-stream
-  `sequence_number`; the root
+- Object-local `participant_transcript_turns` has a per-work-stream
+  `transcript_sequence`; the root
   `workstream.next_sequence_number` allocates ordered events. Conversation rows
   belong to a `substreams` row, with the main chat fixed at substream `0`.
-- `workstream_message_mentions` stores validated person and connector spans.
-- `workstream_message_attachments` relates a resource to one exact owning
-  message. A
+- `participant_transcript_mentions` stores validated person and connector spans
+  keyed to their canonical turn.
+- `participant_transcript_attachments` relates a resource to one exact owning
+  turn. A
   resource can appear in multiple work streams, so projections that report
   attachment state must use the current object's link; existence anywhere in the
   workspace is not the relationship for the current work stream.
@@ -349,6 +356,14 @@ hash-checked RPCs rather than cross-object SQL joins.
   version refs before deleting R2, and deleting the resource queues every retained
   original and derivative; detaching one relationship leaves shared resource
   objects intact.
+  WorkspaceDO `pending_attachment_reservations` is the deletion fence between a
+  draft upload and one preparing or ready work-stream input. It freezes workspace,
+  work-stream, author, input, and resource identity. Canonical
+  `workspace_workstream_resource_links` projection marks the upload attached and
+  removes the effect's exact input/resource reservations in the same transaction;
+  failed preparation uses an idempotent typed release RPC. SubstreamAgent's
+  `pending_attachment_reservation_recovery` is only the cross-object recovery
+  obligation, not a second resource or message authority.
   Object-local `attachment_tool_receipts` relates a versioned read, search, view, or summary
   receipt to every derivative it used. Replacing that version or deleting the
   resource invalidates the whole invocation and queues its JSON replay object;
@@ -848,6 +863,207 @@ inventing an author the migration cannot know.
 and a mismatch aborts the swap. Nothing in SQL can mint an alias, so existing
 rows start without one and a bounded maintenance pass fills them in; `slug IS
 NULL` is the durable record that one is owed.
+
+### 2026-08-28 — The cutover's data model: loops, receipts, one canonical transcript
+
+**What changed:** SubstreamAgent schema v33 (one forward-only cutover from
+shipped v32) adds the persistent-loop tables — `substream_loops`,
+`pending_loop_input_mailbox`, `pending_loop_inputs`, `delivered_loop_inputs`,
+`assistant_turn_reservations`, `bind_loop_heads`, `bind_activation_inputs` —
+keys every message relation to canonical `participant_transcript_turns`, and
+retires the compatibility message/dispatch/steering structures. The facets
+below are the decisions this change is made of.
+
+**Why:** Two representations of one datum — a compatibility record beside its
+canonical turn, a run-owned order beside the transcript's — are exactly the
+split authority the single-owner fact rule above exists to forbid.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+
+#### Ambiguous effects remain a first-class activity outcome
+
+**What changed:** The cutover rebuilds the execution-only
+`transcript_activities` projection with `ambiguous` as a terminal state and
+adds recovered timing provenance directly to its interval table. Canonical
+participant turns, facts, and payloads are not rebuilt.
+
+**Why:** Recovery already distinguishes an external write whose result cannot
+be proved from an ordinary failure. Rejecting that state at the activity-table
+CHECK either crashed recovery or forced the UI to lie that the write failed.
+
+**Considered and rejected:** Editing the frozen v27 migration or mapping
+ambiguous effects to `failed`. The former changes shipped migration history;
+the latter erases the reason Rally must not retry the operation.
+
+**Consequences:** The forward-only cutover discards old execution timing rows,
+which are derived and have no production users, while preserving all canonical
+message history. Tool blocks and their activity tree now agree on ambiguity.
+
+#### Canonical delivery retires the prepared pending envelope
+
+**What changed:** `pending_loop_inputs` now contains only inputs that are still
+pending. The atomic delivery transaction writes the canonical participant turn
+and facts, inserts one small `delivered_loop_inputs` replay receipt, and deletes
+the prepared payload, authorization witness, attachment and mention descriptors,
+mailbox, and draft-reservation recovery rows. `runs.loop_input_id` references the
+delivery receipt rather than the temporary pending envelope.
+
+**Why:** Once a participant turn is canonical, retaining the entire prepared
+input made two durable copies appear authoritative and kept private preparation
+data alive for the life of the work stream. Recovery needs only the input-to-turn
+identity, delivery order, attention ordinal, and timestamp; canonical history
+owns everything the participant or model can observe.
+
+**Considered and rejected:** Keeping a delivered state on the pending row or
+copying its client identity and payload into the receipt. Both preserve the
+duplicate authority this change removes. Client replay already resolves through
+the canonical turn, and activation response-loss recovery joins the minimal
+receipt to that turn.
+
+**Consequences:** Pending UI queries are simple existence queries. A queued
+pending-upsert realtime reference that drains after promotion is hydrated as an
+idempotent delivered removal from the receipt. Delivery also retires its mailbox
+and attachment-recovery obligation in the transaction that enqueues the
+canonical regional effect.
+
+#### Draft deletion is fenced across pending message admission
+
+**What changed:** WorkspaceDO schema v18 adds pending attachment reservations;
+The cutover adds the replayable recovery obligation written before
+the reservation RPC. Canonical directory projection attaches and releases in one
+WorkspaceDO transaction.
+
+**Why:** WorkspaceDO owns resources while SubstreamAgent owns pending inputs, so
+validation alone could not stop deletion during the async preparation interval.
+
+**Considered and rejected:** A WorkstreamDO copy of resource state and a
+best-effort release call. The former creates two resource authorities; the latter
+leaks holds or releases live ones when an RPC response is lost.
+
+**Consequences:** Every draft deleter and TTL eligibility query excludes active
+reservations. Recovery may replay reserve and release, while resource history
+continues to live only in WorkspaceDO.
+
+#### Bind has one current metadata authority
+
+**What changed:** The cutover replaces the historical
+`bind_loop_heads` plus `bind_loop_states` pair with one `bind_loop_heads` row
+containing generation, state revision, transition kind, system-projection
+identity, projector version, and assistant reservation cursor. Ordered current
+message facts now reference that head directly; provider boundaries remain
+immutable historical hashes and activation inputs remain immutable replay
+receipts.
+
+**Why:** Both former tables described the same current state and therefore
+could disagree. The second row existed only because the earlier schema stored a
+full snapshot for every transition; the cutover intentionally removes those snapshots
+and old run-shaped heads, so carrying the duplicate forward had no remaining
+ownership purpose.
+
+**Considered and rejected:** Migrating one of the old per-run heads or retaining
+`bind_loop_states` as a compatibility view. There is no authoritative choice
+among old run-shaped projections and there are no compatibility users; the
+stable loop bootstraps once from canonical participant history instead.
+
+**Consequences:** Current Bind metadata fields are added to the head or not at
+all. Message rows may be delta-updated, compaction may replace them, and
+provider/activation history remains independently inspectable without becoming
+a second current-state authority.
+
+#### Execution ownership closes with its terminal receipt
+
+**What changed:** Safe-step settlement leaves `substream_loops.status` as
+`executing` while it advances the step and Bind revisions. The terminal receipt
+transaction is the boundary that clears the active execution and returns the
+singleton to `idle`. `pending_loop_inputs` contains only immutable
+not-yet-canonical inputs; corrections are new rows. A delivered input leaves
+only its canonical turn and minimal replay receipt.
+
+**Why:** An idle singleton beside a running subordinate receipt admitted another
+activation before recovery had closed the first one. Mutable pending rows would
+introduce the same kind of split between admission order and the prepared value
+Bind eventually receives.
+
+**Considered and rejected:** Keeping an intermediate idle/running combination
+and repairing it by scanning `runs`, or adding pending edit/cancel revisions.
+Both add a second state machine to facts already owned by the singleton.
+
+**Consequences:** A safe step is not a lifecycle terminal. Queue delivery becomes
+eligible only after receipt terminalization, and every pending replay compares
+the exact immutable row admitted under its original FIFO sequence.
+
+
+#### Stable substream loops replace per-run compatibility state
+
+**What changed:** The cutover makes one `substream_loops` singleton the lifecycle
+and execution-fence authority, keeps prepared inputs non-canonical until atomic
+delivery, reserves every assistant transcript slot, and treats `runs` as
+subordinate receipts that may span multiple model turns. Recovery advances the
+current epoch on the singleton and receipt together. The migration drops the
+SubstreamAgent-local steering/dispatch tables and deletes obsolete per-run Bind
+heads; canonical transcript history survives and bootstraps the stable head.
+Bind keeps one current metadata row and ordered message set per loop. Delta
+transitions mutate only changed rows, compaction replaces the set, and
+`bind_activation_inputs` retains one immutable fact-backed receipt per logical
+activation without copying payload or provenance authority.
+
+**Why:** Reconstructing a conversation loop from message-owned runs left two
+ordering authorities and crash windows between delivery, Bind state, and
+execution recovery. Choosing one old run-shaped head during cutover would turn
+ambiguous derived context into new authority.
+
+**Considered and rejected:** Preserving the old tables as compatibility,
+assigning transcript or attention order at admission, and migrating whichever
+legacy Bind head happened to be newest. Each either retains split authority or
+guesses at order the canonical transcript already determines.
+
+**Consequences:** Pending inputs survive eviction without becoming visible or
+unread early. Safe-step settlement closes only the singleton; host outcome and
+harness terminalization close the receipt. BlockDashboardAgent retains its
+separate dispatch ledger because it is a different object authority.
+
+#### Canonical turns become the final relational boundary
+
+**What changed:** SubstreamAgent schema v33 adds canonical conversation metadata,
+rebuilds every message-related foreign key against
+`participant_transcript_turns(turn_id)`, renames attachment
+and mention relations around that turn identity, and deletes the temporary
+`workstream_message_records` key shim and detail view.
+The metadata additions and relation rebuild are one enforcement-on migration.
+Each referenced relation is copied to its canonical parent and old dependent
+tables are removed child-first; the cutover never depends on a connection-level
+foreign-key toggle.
+Human turns also carry immutable display-name and avatar snapshots beside the
+stable author user ID; mutable membership remains authorization state, not
+historical rendering authority. The one-time v32 upgrade freezes the neutral
+`A workspace member` display snapshot for a pre-snapshot human row because a
+work stream object cannot query a regional profile inside its synchronous migration;
+new writes always resolve and persist the actual profile before entering the
+object transaction, and no reader re-resolves old rows from membership.
+
+**Why:** The v32 payload cutover removed duplicate content ownership but left a
+compatibility identity table between canonical turns and seven dependent
+relations. That table still made a retired message identity look authoritative.
+
+**Considered and rejected:** Keeping an ID-only shim for rolling compatibility.
+There are no users to protect, and preserving it would make the supposedly
+forward-only model structurally incomplete.
+
+**Consequences:** Canonical turn identity, payload provenance, order, mentions,
+attachments, and downstream references now meet at one foreign-key boundary.
+Old schemas and clients must migrate forward; runtime transcript composition has
+no fallback table. The cutover also names the run's durable terminal reference
+`final_turn_id` and active output grouping `stream_id`, so neither operational
+identity can be confused with a second persisted message. During a rebuild,
+replacement tables reference one another by their temporary names until the
+rename; they must never acquire a foreign key to an old table the same migration
+is about to drop. Migration tests commit the populated old-schema fixture before
+starting the upgrade, matching a real object waking on a newer deployment. The
+fixture seeds every dependent relation whose omission could hide a cascade or
+failed parent removal.
+
 
 ### 2026-08-27 — Participant removal cannot empty a work stream
 

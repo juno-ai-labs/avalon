@@ -100,7 +100,7 @@ describe("harness-run authority on real workerd", () => {
     });
   });
 
-  it("prepares the final payload before atomically publishing its message and projection", async () => {
+  it("prepares host output before atomically publishing its turn and projection", async () => {
     const stub = agent();
     await boot(stub);
     const now = Date.now();
@@ -111,32 +111,65 @@ describe("harness-run authority on real workerd", () => {
     await harnessRuns(stub, "claimAttempt", claim({ now }));
 
     const publishedAt = now + 1_000;
-    const result = await harnessRuns(stub, "publishFinalMessage", {
+    const result = await harnessRuns(stub, "publishHostOutcome", {
       runId: RUN,
       attemptId: "attempt-1",
       owner: "owner-1",
       now: publishedAt,
-      messageId: "final-message-1",
-      text: "The work is complete.",
+      finalTurn: { turnId: `${RUN}:turn:1`, text: "The work is complete." },
+      participantNotice: {
+        turnId: `${RUN}:attachment-boundary`,
+        text: "Attachment content could not be verified.",
+      },
       hostOutcomeStatus: "completed",
-      eventPayloadJson: "{}",
-      lifecycleEventId: "final-message-event-1",
+      hostOutcomeError: null,
+      lifecycleEventId: "host-outcome-event-1",
       allowCancellationRequested: false,
     });
 
-    expect(result.value).toEqual({ outcome: "published", sequenceNumber: 1 });
+    expect(result.value).toEqual({
+      outcome: "published",
+      finalTurnSequenceNumber: 1,
+      participantNoticeSequenceNumber: 2,
+    });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
-        `SELECT content FROM workstream_message_details WHERE id = 'final-message-1'`,
-      ).one().content).toBe("The work is complete.");
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns
+          WHERE turn_id = ? AND actor = 'assistant'`,
+        `${RUN}:turn:1`,
+      ).one().count).toBe(1);
       expect(state.storage.sql.exec(
-        `SELECT event_type FROM run_lifecycle_events WHERE event_id = 'final-message-event-1'`,
-      ).one().event_type).toBe("final_message_persisted");
-      const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT author_type, message_type
+           FROM canonical_conversation_turn_details WHERE id = ?`,
+        `${RUN}:attachment-boundary`,
+      ).one()).toEqual({ author_type: "system", message_type: "system" });
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count
+           FROM participant_transcript_turns turn
+           JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+          WHERE fact.run_id = ? AND turn.entry_kind = 'conversation'`,
+        RUN,
+      ).one().count).toBe(2);
+      expect(state.storage.sql.exec(
+        `SELECT event_type FROM run_lifecycle_events WHERE event_id = 'host-outcome-event-1'`,
+      ).one().event_type).toBe("host_outcome_persisted");
+      // The publish enqueues its common effect in the same commit, but the
+      // object's own alarm can deliver and delete that row before this read.
+      // The envelope's `updatedAt` is `iso(root.updated_at)` at enqueue time,
+      // so when the row has already drained, the root row it snapshotted is
+      // the surviving witness of the same fact.
+      const outboxRow = state.storage.sql.exec<{ payload_json: string }>(
         `SELECT payload_json FROM durable_outbox
           WHERE partition_key = 'common' ORDER BY source_version DESC LIMIT 1`,
-      ).one().payload_json) as { effect: { updatedAt: string } };
-      expect(envelope.effect.updatedAt).toBe(new Date(publishedAt).toISOString());
+      ).toArray()[0];
+      if (outboxRow) {
+        const envelope = JSON.parse(outboxRow.payload_json) as { effect: { updatedAt: string } };
+        expect(envelope.effect.updatedAt).toBe(new Date(publishedAt).toISOString());
+      } else {
+        expect(state.storage.sql.exec<{ updated_at: number }>(
+          `SELECT updated_at FROM workstream WHERE id = 1`,
+        ).one().updated_at).toBe(publishedAt);
+      }
     });
   });
 

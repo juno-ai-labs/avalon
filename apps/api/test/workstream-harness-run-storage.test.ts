@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { BindLoopTransition } from "@rally/agent-harness";
+
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
 import {
   expireLocalAttemptLeasesFromPreviousInstance,
@@ -8,6 +10,9 @@ import {
   previousInstanceRecoveryOwner,
   WorkstreamHarnessRunStorage,
 } from "../src/durable-objects/workstream-harness-run-storage";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -56,7 +61,7 @@ function seedRun(
   } = {},
 ): void {
   // A delegated sub-agent gets its own substream, which is why a running child
-  // does not collide with its running parent under `runs_mutating_substream_uq`.
+  // receives a distinct substream and stable loop identity from its parent.
   const substreamId = overrides.parentToolCallId ? `run:${runId}` : "0";
   if (substreamId !== "0") {
     sql.exec(
@@ -209,13 +214,14 @@ describe("claiming a run's attempt", () => {
       owner: previousInstanceRecoveryOwner("attempt-1"),
       now: NOW + 2_000,
       status: "cancelled",
-      finalPartId: null,
+      finalTurnId: null,
       model: null,
       usageJson: null,
       errorJson: null,
       memberSafePayloadJson: '{"code":"run_cancelled"}',
       lifecycleEventId: "event-terminal",
       receiptMarkerEventKey: "residual_receipts_settled",
+      loopExecutionFence: null,
     })).toMatchObject({ outcome: "terminalized" });
     expect(sql.exec(
       `SELECT status, terminalized_at, lease_owner, lease_expires_at FROM runs WHERE run_id = ?`,
@@ -226,6 +232,168 @@ describe("claiming a run's attempt", () => {
       lease_owner: null,
       lease_expires_at: null,
     });
+    // Recovery and automation settlement read these fields through the typed
+    // run operation. Receipt cancellation remains provenance; it is not the
+    // persistent loop's stop authority.
+    expect(storage.run({ runId: RUN })).toMatchObject({
+      status: "cancelled",
+      terminalized_at: NOW + 2_000,
+      final_turn_id: null,
+      error_json: null,
+      cancellation_reason: "member_stop",
+    });
+  });
+
+  it("terminalizes a linked receipt and closes only its exact loop execution atomically", () => {
+    const { binding, storage, sql } = open();
+    seedRun(sql, RUN);
+    storage.claimAttempt({ ...fence, runId: RUN, leaseSeconds: 300, lifecycleEventId: "event-1" });
+    sql.exec(
+      `UPDATE runs SET execution_context_json = '{"kind":"test_execution"}' WHERE run_id = ?`,
+      RUN,
+    );
+    const loops = new SubstreamLoopStorage(binding);
+    const loopId = "terminal-loop";
+    loops.ensureLoop({ loopId, bindStateRevision: 0, now: NOW });
+    loops.activateExecutionReceipt({
+      runId: RUN,
+      loopId,
+      executionEpoch: 1,
+      leaseOwner: "loop-owner",
+      leaseExpiresAt: NOW + 300_000,
+      expectedLoopRevision: loops.loop()!.revision,
+      expectedBindStateRevision: 0,
+      now: NOW,
+    });
+    sql.exec(
+      `INSERT INTO transcript_activities
+         (activity_id, parent_activity_id, scope, subject_id, call_index, label,
+          lifecycle_state, revision, created_at, updated_at)
+       VALUES (?, NULL, 'response', ?, NULL, 'Working', 'active', 1, ?, ?),
+              (?, ?, 'assistant_turn', 'turn-1', 1, 'Assistant turn', 'active', 1, ?, ?)`,
+      `${RUN}:activity`,
+      RUN,
+      NOW - 1_000,
+      NOW - 1_000,
+      `${RUN}:turn:1:activity`,
+      `${RUN}:activity`,
+      NOW - 900,
+      NOW - 900,
+    );
+    sql.exec(
+      `INSERT INTO transcript_activity_intervals
+         (activity_id, interval_id, started_at, stopped_at, duration_ms,
+          boundary_source, timing_accuracy, revision)
+       VALUES (?, ?, ?, NULL, NULL, 'rally', 'observed', 1),
+              (?, ?, ?, NULL, NULL, 'rally', 'observed', 1)`,
+      `${RUN}:activity`,
+      `${RUN}:activity:1`,
+      NOW - 1_000,
+      `${RUN}:turn:1:activity`,
+      `${RUN}:turn:1:activity:1`,
+      NOW - 900,
+    );
+    const terminalInput = {
+      ...fence,
+      runId: RUN,
+      now: NOW + 1,
+      status: "failed" as const,
+      finalTurnId: null,
+      model: null,
+      usageJson: null,
+      errorJson: '{"code":"test_failure"}',
+      memberSafePayloadJson: '{"code":"test_failure"}',
+      lifecycleEventId: "event-terminal",
+      receiptMarkerEventKey: "residual_receipts_settled",
+    };
+
+    // A receipt-level cancellation request can arrive before the persistent
+    // loop reaches its safe boundary. It remains provenance on the receipt;
+    // only the exact loop execution fence may choose the terminal outcome.
+    sql.exec(
+      `UPDATE runs
+          SET cancellation_requested_at = ?, cancellation_reason = ?
+        WHERE run_id = ?`,
+      NOW,
+      "obsolete_receipt_stop",
+      RUN,
+    );
+
+    expect(storage.terminalizeAttempt({
+      ...terminalInput,
+      loopExecutionFence: {
+        loopId,
+        executionId: RUN,
+        executionEpoch: 1,
+        leaseOwner: "wrong-owner",
+      },
+    })).toEqual({ outcome: "ownership_lost" });
+    expect(sql.exec(
+      `SELECT status, terminalized_at FROM runs WHERE run_id = ?`, RUN,
+    ).one()).toEqual({ status: "running", terminalized_at: null });
+    expect(loops.loop()).toMatchObject({ status: "executing", active_execution_id: RUN });
+    expect(sql.exec(
+      `SELECT lifecycle_state FROM transcript_activities WHERE activity_id = ?`,
+      `${RUN}:activity`,
+    ).one()).toEqual({ lifecycle_state: "active" });
+
+    expect(storage.terminalizeAttempt({
+      ...terminalInput,
+      loopExecutionFence: {
+        loopId,
+        executionId: RUN,
+        executionEpoch: 1,
+        leaseOwner: "loop-owner",
+      },
+    })).toEqual({ outcome: "terminalized" });
+    expect(sql.exec(
+      `SELECT status, terminalized_at, cancellation_reason FROM runs WHERE run_id = ?`, RUN,
+    ).one()).toEqual({
+      status: "failed",
+      terminalized_at: NOW + 1,
+      cancellation_reason: "obsolete_receipt_stop",
+    });
+    expect(loops.loop()).toMatchObject({
+      status: "idle",
+      cycle_ordinal: 1,
+      active_execution_id: null,
+      active_execution_epoch: null,
+    });
+    expect(sql.exec(
+      `SELECT activity_id, lifecycle_state, revision
+         FROM transcript_activities
+        WHERE activity_id IN (?, ?) ORDER BY activity_id`,
+      `${RUN}:activity`,
+      `${RUN}:turn:1:activity`,
+    ).toArray()).toEqual([
+      { activity_id: `${RUN}:activity`, lifecycle_state: "failed", revision: 2 },
+      { activity_id: `${RUN}:turn:1:activity`, lifecycle_state: "failed", revision: 2 },
+    ]);
+    expect(sql.exec(
+      `SELECT activity_id, stopped_at, duration_ms, boundary_source,
+              timing_accuracy, revision
+         FROM transcript_activity_intervals
+        WHERE activity_id IN (?, ?) ORDER BY activity_id`,
+      `${RUN}:activity`,
+      `${RUN}:turn:1:activity`,
+    ).toArray()).toEqual([
+      {
+        activity_id: `${RUN}:activity`,
+        stopped_at: NOW + 1,
+        duration_ms: 1_001,
+        boundary_source: "recovered",
+        timing_accuracy: "upper_bound",
+        revision: 2,
+      },
+      {
+        activity_id: `${RUN}:turn:1:activity`,
+        stopped_at: NOW + 1,
+        duration_ms: 901,
+        boundary_source: "recovered",
+        timing_accuracy: "upper_bound",
+        revision: 2,
+      },
+    ]);
   });
 
   it("leaves an already-expired attempt for the stale-run reaper", () => {
@@ -432,6 +600,62 @@ describe("renewing and proving a lease", () => {
     expect(storage.attemptOwnership({ ...fence, runId: RUN })).toEqual({ outcome: "cancelled" });
     expect(storage.attemptOwnership({ ...fence, runId: RUN, allowCancellationRequested: true }))
       .toEqual({ outcome: "owned" });
+  });
+
+  it("keeps a heartbeat-extended loop lease takeover-proof until it truly lapses", () => {
+    const { binding, sql } = claimed();
+    sql.exec(
+      `UPDATE runs SET execution_context_json = '{"kind":"test_execution"}' WHERE run_id = ?`,
+      RUN,
+    );
+    const loops = new SubstreamLoopStorage(binding);
+    const loopId = "heartbeat-loop";
+    loops.ensureLoop({ loopId, bindStateRevision: 0, now: NOW });
+    loops.activateExecutionReceipt({
+      runId: RUN,
+      loopId,
+      executionEpoch: 1,
+      leaseOwner: "owner-a",
+      leaseExpiresAt: NOW + 60_000,
+      expectedLoopRevision: loops.loop()!.revision,
+      expectedBindStateRevision: 0,
+      now: NOW,
+    });
+
+    // Mid-tool heartbeat: the executor is alive and pushes its deadline out.
+    expect(loops.heartbeatExecution({
+      executionId: RUN,
+      executionEpoch: 1,
+      leaseOwner: "owner-a",
+      expectedLoopRevision: loops.loop()!.revision,
+      leaseExpiresAt: NOW + 120_000,
+      now: NOW + 30_000,
+    }).lease_expires_at).toBe(NOW + 120_000);
+
+    // A rival wakes after the ORIGINAL deadline. Without the heartbeat this
+    // recovery would be legitimate; with it, the lease is live and the
+    // takeover must be refused without disturbing the executing owner.
+    const takeover = (now: number) => loops.recoverExecution({
+      executionId: RUN,
+      newExecutionEpoch: 2,
+      leaseOwner: "owner-b",
+      leaseExpiresAt: now + 60_000,
+      expectedLoopRevision: loops.loop()!.revision,
+      now,
+    });
+    expect(() => takeover(NOW + 90_000)).toThrowError("substream_loop_lease_not_expired");
+    expect(loops.loop()).toMatchObject({
+      status: "executing",
+      lease_owner: "owner-a",
+      active_execution_epoch: 1,
+      lease_expires_at: NOW + 120_000,
+    });
+    // The identical takeover succeeds once the extended lease actually lapses,
+    // so the earlier refusal is attributable to the heartbeat alone.
+    expect(takeover(NOW + 121_000)).toMatchObject({
+      outcome: "recovered",
+      loop: { lease_owner: "owner-b", active_execution_epoch: 2 },
+    });
   });
 });
 
@@ -770,7 +994,7 @@ describe("settling a sub-agent", () => {
     childRunId: CHILD,
     childAttemptId: "attempt-child",
     childOwner: "owner-child",
-    status: "completed",
+    status: "completed" as const,
     model: "a-model",
     usageJson: '{"inputTokens":1}',
     errorJson: null,
@@ -953,7 +1177,7 @@ describe("ending a run that was never claimed", () => {
   const queued = {
     runId: RUN,
     attemptId: "attempt-queued",
-    status: "failed",
+    status: "failed" as const,
     errorJson: '{"code":"never_started"}',
     memberSafePayloadJson: '{"code":"never_started"}',
     lifecycleEventId: "event-queued",
@@ -1053,7 +1277,7 @@ describe("admitting a root run", () => {
   const base = {
     origin: "slack_workspace_message",
     executionPrincipalJson: '{"type":"workspace"}',
-    status: "running",
+    status: "running" as const,
     startedAt: NOW,
     model: null,
     triggerPartId: null,
@@ -1061,10 +1285,10 @@ describe("admitting a root run", () => {
     expectedLatestRunId: null,
   };
 
-  it("creates the run and marks the work stream busy", () => {
+  it("creates an execution receipt and projects the work stream as running", () => {
     const { storage, sql } = open();
 
-    expect(storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW }))
+    expect(storage.admitRun({ ...base, runId: RUN, now: NOW }))
       .toEqual({ outcome: "admitted" });
     expect(sql.exec(`SELECT substream_id, status, origin FROM runs WHERE run_id = ?`, RUN).one())
       .toMatchObject({ substream_id: "0", status: "running", origin: "slack_workspace_message" });
@@ -1072,65 +1296,21 @@ describe("admitting a root run", () => {
       .toMatchObject({ exact_state: "running" });
   });
 
-  it("refuses a second mutating run rather than throwing the transaction away", () => {
+  it("admits another receipt without cancelling the execution already owned by the loop", () => {
     const { storage, sql } = open();
-    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
+    storage.admitRun({ ...base, runId: RUN, now: NOW });
 
-    // `runs_mutating_substream_uq` allows one mutating run per substream and
-    // every root run shares '0'. A bare INSERT throws here, and the throw takes
-    // the whole transaction with it — including the supersede below, so the
-    // follow-up would neither start its run nor stop the one it replaced.
     expect(storage.admitRun({
-      ...base, runId: OTHER, supersedeActive: true, now: NOW + 1_000,
-    })).toEqual({ outcome: "busy" });
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM runs`).one()).toEqual({ count: 1 });
-    // The supersede still landed: the incumbent has been asked to stop, which
-    // is what lets the next attempt through once it does.
+      ...base, runId: OTHER, now: NOW + 1_000,
+    })).toEqual({ outcome: "admitted" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM runs`).one()).toEqual({ count: 2 });
     expect(sql.exec(
       `SELECT cancellation_requested_at, cancellation_reason FROM runs WHERE run_id = ?`,
       RUN,
     ).one()).toMatchObject({
-      cancellation_requested_at: NOW + 1_000,
-      cancellation_reason: "superseded_by_follow_up",
+      cancellation_requested_at: null,
+      cancellation_reason: null,
     });
-  });
-
-  it("admits once the incumbent has actually terminalized", () => {
-    const { storage, sql } = open();
-    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
-    sql.exec(
-      `UPDATE runs SET status = 'cancelled', terminalized_at = ? WHERE run_id = ?`,
-      NOW + 500,
-      RUN,
-    );
-
-    expect(storage.admitRun({
-      ...base, runId: OTHER, supersedeActive: true, now: NOW + 1_000,
-    })).toEqual({ outcome: "admitted" });
-  });
-
-  it("lets a scheduled run in beside a live one, because it is not yet mutating", () => {
-    const { storage } = open();
-    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
-
-    // `admitted` is outside the index's status list. An automation queues its
-    // run long before anything claims it, and must not be turned away by
-    // whatever happens to be running now.
-    expect(storage.admitRun({
-      ...base, runId: OTHER, status: "admitted", origin: "automation",
-      supersedeActive: false, now: NOW + 1_000,
-    })).toEqual({ outcome: "admitted" });
-  });
-
-  it("lets a HyperSight block in beside a live interactive run", () => {
-    const { storage } = open();
-    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
-
-    // The index exempts block runs on both sides, and so does this check.
-    expect(storage.admitRun({
-      ...base, runId: OTHER, origin: "block_dashboard_block",
-      supersedeActive: false, now: NOW + 1_000,
-    })).toEqual({ outcome: "admitted" });
   });
 
   it("refuses when the caller's view of the newest run is out of date", () => {
@@ -1138,7 +1318,7 @@ describe("admitting a root run", () => {
     seedRun(sql, OTHER);
 
     expect(storage.admitRun({
-      ...base, runId: RUN, supersedeActive: false,
+      ...base, runId: RUN,
       expectedLatestRunId: "00000000-0000-7000-8000-00000000ffff", now: NOW,
     })).toEqual({ outcome: "stale" });
     expect(sql.exec(`SELECT COUNT(*) AS count FROM runs WHERE run_id = ?`, RUN).one())
@@ -1147,19 +1327,141 @@ describe("admitting a root run", () => {
 
   it("reports a repeated id as an existing run rather than creating a second", () => {
     const { storage } = open();
-    storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW });
+    storage.admitRun({ ...base, runId: RUN, now: NOW });
 
-    expect(storage.admitRun({ ...base, runId: RUN, supersedeActive: false, now: NOW + 1_000 }))
+    expect(storage.admitRun({ ...base, runId: RUN, now: NOW + 1_000 }))
       .toEqual({ outcome: "exists" });
+  });
+
+  it("rejects retired per-run phase states at the active write boundary", () => {
+    const { storage } = open();
+
+    expect(() => storage.admitRun({
+      ...base, runId: RUN, status: "waiting", now: NOW,
+    } as never)).toThrow("admitted_run_status_invalid");
+    expect(() => storage.admitRun({
+      ...base, runId: RUN, status: "steering", now: NOW,
+    } as never)).toThrow("admitted_run_status_invalid");
   });
 });
 
-describe("publishing a run's final message", () => {
+describe("typed run and telemetry reads", () => {
+  it("finds only a live root receipt from the requested producer family", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN, { origin: "automation", startedAt: NOW });
+    seedRun(sql, OTHER, { origin: "member_message", startedAt: NOW + 1 });
+
+    expect(storage.latestActiveRootRun({ origin: "automation" })?.run_id).toBe(RUN);
+    sql.exec(`UPDATE runs SET status = 'completed', completed_at = ?, terminalized_at = ?
+      WHERE run_id = ?`, NOW + 2, NOW + 2, RUN);
+    expect(storage.latestActiveRootRun({ origin: "automation" })).toBeUndefined();
+  });
+
+  it("assembles terminal telemetry from normalized run, inference, and receipt rows", () => {
+    const { storage, sql } = open();
+    seedRun(sql, RUN, { origin: "member_message", startedAt: NOW });
+    sql.exec(
+      `UPDATE runs SET status = 'completed', completed_at = ?, terminalized_at = ?,
+          model = 'provider/model', usage_json = '{"run_stats":{"turns":2}}'
+        WHERE run_id = ?`,
+      NOW + 10_000,
+      NOW + 10_000,
+      RUN,
+    );
+    storage.recordInferenceAttempt({
+      inferenceAttemptId: "inference-telemetry",
+      runId: RUN,
+      attemptId: "attempt-telemetry",
+      turnId: "turn-telemetry",
+      endpointAttempt: 1,
+      fallbackAttempt: 1,
+      provider: "provider",
+      model: "provider/model",
+      credentialSourceHash: null,
+      workspaceIdentityHash: "workspace-hash",
+      routingDecisionJson: "{}",
+      outcome: "success",
+      failureClassification: null,
+      latencyMs: 1_000,
+      ttftMs: 250,
+      inputTokens: 10,
+      outputTokens: 5,
+      reasoningTokens: 0,
+      cachedTokens: 0,
+      costMicros: 1,
+      responseBytes: 20,
+      startedAt: NOW + 500,
+      completedAt: NOW + 1_500,
+      now: NOW + 1_500,
+    });
+    sql.exec(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          input_json, execution_plan_json, started_at, settled_at)
+       VALUES ('effect-telemetry', ?, 1, 0, 'occurrence-telemetry', 'create_issue',
+               'write', 'request-hash', 'test', 'completed', 'call-telemetry', '{}',
+               '{"pluginId":"linear","canonicalToolName":"create_issue","capability":"linear.issue.create","mode":"write"}',
+               ?, ?)`,
+      RUN,
+      NOW + 2_000,
+      NOW + 3_000,
+    );
+
+    expect(storage.runOutcomeTelemetry({ runId: RUN })).toMatchObject({
+      status: "completed",
+      model: "provider/model",
+      first_inference_started_at: NOW + 500,
+      first_ttft_ms: 250,
+      turn_count: 1,
+      tool_call_count: 1,
+      write_tool_call_count: 1,
+      fallback_used: 1,
+    });
+    expect(storage.toolTerminalTelemetry({
+      runId: RUN,
+      effectIntentId: "effect-telemetry",
+    })).toMatchObject({
+      effect_intent_id: "effect-telemetry",
+      run_id: RUN,
+      status: "completed",
+      origin: "member_message",
+    });
+    expect(storage.toolTerminalTelemetry({
+      runId: OTHER,
+      effectIntentId: "effect-telemetry",
+    })).toBeUndefined();
+  });
+
+  it("seeds development receipts idempotently and rejects retired phase states", () => {
+    const { storage, sql } = open();
+    const input = {
+      runId: RUN,
+      origin: "message",
+      executionPrincipalJson: "{}",
+      status: "completed" as const,
+      startedAt: NOW,
+      completedAt: NOW + 1,
+      terminalizedAt: NOW + 1,
+      createdAt: NOW,
+    };
+
+    expect(storage.seedDevelopmentRun(input)).toEqual({ outcome: "inserted" });
+    expect(storage.seedDevelopmentRun(input)).toEqual({ outcome: "exists" });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM runs WHERE run_id = ?`, RUN).one())
+      .toEqual({ count: 1 });
+    expect(() => storage.seedDevelopmentRun({
+      ...input, runId: OTHER, status: "steering",
+    } as never)).toThrow("persisted_run_status_invalid");
+  });
+});
+
+describe("publishing a run's final turn", () => {
   const publish = {
-    messageId: "00000000-0000-7000-8000-0000000000c1",
-    text: "Here is what I found.",
-    hostOutcomeStatus: "completed",
-    eventPayloadJson: '{"finalMessageId":"m"}',
+    finalTurn: { turnId: `${RUN}:turn:1`, text: "Here is what I found." },
+    participantNotice: null,
+    hostOutcomeStatus: "completed" as const,
+    hostOutcomeError: null,
     lifecycleEventId: "event-final",
     allowCancellationRequested: false,
   };
@@ -1173,43 +1475,204 @@ describe("publishing a run's final message", () => {
     return opened;
   }
 
-  it("appends the transcript row and records that it did, in one transaction", async () => {
+  async function commitFinalBindTurn(binding: DurableObjectStorage): Promise<void> {
+    const transcript = new WorkstreamTranscriptStorage(binding);
+    const loop = new SubstreamLoopStorage(binding);
+    const initialized: BindLoopTransition = {
+      kind: "state_initialized",
+      loopId: RUN,
+      generation: 1,
+      stateRevision: 1,
+      systemProjection: {
+        revision: 1,
+        rendererVersion: "final-turn-test-v1",
+        inputHash: "input-1",
+        message: { role: "system", content: "System" },
+      },
+      nonSystemMessages: [{ role: "user", content: "Question" }],
+      nonSystemMessageOrigins: [{
+        originKind: "derived",
+        sourceKind: "participant_turn",
+        sourceId: "question-1",
+        sourceRevision: 1,
+      }],
+    };
+    await transcript.commitBindTransition(initialized, NOW);
+    loop.ensureLoop({ loopId: RUN, bindStateRevision: 1, now: NOW });
+    binding.sql.exec(
+      `UPDATE runs SET execution_context_json = '{"kind":"test_execution"}' WHERE run_id = ?`,
+      RUN,
+    );
+    loop.activateExecutionReceipt({
+      runId: RUN,
+      loopId: RUN,
+      executionEpoch: 1,
+      leaseOwner: fence.owner,
+      leaseExpiresAt: NOW + 60_000,
+      expectedLoopRevision: loop.loop()!.revision,
+      expectedBindStateRevision: 1,
+      now: NOW,
+    });
+    const reservation = loop.reserveAssistantTurn({
+      executionId: RUN,
+      executionEpoch: 1,
+      leaseOwner: fence.owner,
+      expectedLoopRevision: loop.loop()!.revision,
+      receiptRunId: RUN,
+      turnId: publish.finalTurn.turnId,
+      modelTurnIndex: 1,
+      streamId: "final-turn-test-stream",
+      now: NOW,
+    });
+    if (reservation.outcome !== "reserved") throw new Error("test_assistant_turn_not_reserved");
+    await transcript.commitBindTransition({
+      kind: "assistant_reserved",
+      loopId: RUN,
+      generation: 1,
+      stateRevision: 2,
+      turnId: publish.finalTurn.turnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+    }, NOW, {
+      executionId: RUN,
+      executionEpoch: 1,
+      leaseOwner: fence.owner,
+      expectedBindStateRevision: 1,
+    });
+    await transcript.commitBindTransition({
+      kind: "assistant_accepted",
+      loopId: RUN,
+      generation: 1,
+      stateRevision: 3,
+      turnId: publish.finalTurn.turnId,
+      modelTurnIndex: 1,
+      transcriptSequence: reservation.reservation.transcript_sequence,
+      message: { role: "assistant", content: publish.finalTurn.text },
+    }, NOW + 1, {
+      executionId: RUN,
+      executionEpoch: 1,
+      leaseOwner: fence.owner,
+      expectedBindStateRevision: 2,
+    });
+    const current = loop.loop();
+    if (!current) throw new Error("test_substream_loop_not_found");
+    const settled = await transcript.settlePendingSteersAtStep({
+      loopId: RUN,
+      executionId: RUN,
+      executionEpoch: 1,
+      leaseOwner: fence.owner,
+      expectedLoopRevision: current.revision,
+      expectedStepOrdinal: 0,
+      expectedBindGeneration: 1,
+      expectedBindStateRevision: 3,
+      assistantTurnId: publish.finalTurn.turnId,
+      modelTurnIndex: 1,
+      enqueueRegionalEffectsInTransaction: () => undefined,
+      now: NOW + 2,
+    });
+    expect(settled).toMatchObject({
+      transitions: [],
+      removedInputIds: [],
+      stop: false,
+      loop: { status: "executing", bind_state_revision: 3, step_ordinal: 1 },
+    });
+  }
+
+  it("adopts the Bind assistant turn instead of copying its text", async () => {
+    const { binding, storage, sql } = claimed();
+    await commitFinalBindTurn(binding);
+
+    expect(sql.exec(
+      `SELECT status, terminalized_at FROM runs WHERE run_id = ?`, RUN,
+    ).one()).toEqual({ status: "running", terminalized_at: null });
+
+    expect(await storage.publishHostOutcome({ ...fence, runId: RUN, ...publish }))
+      .toEqual({
+        outcome: "published",
+        finalTurnSequenceNumber: 1,
+        participantNoticeSequenceNumber: null,
+      });
+    expect(sql.exec(
+      `SELECT turn_id, attention_ordinal FROM participant_transcript_turns
+        WHERE actor = 'assistant' ORDER BY transcript_sequence`,
+    ).toArray()).toEqual([{ turn_id: publish.finalTurn.turnId, attention_ordinal: 1 }]);
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM transcript_payloads
+        WHERE payload_json LIKE '%Here is what I found.%'`,
+    ).one()).toEqual({ count: 1 });
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count
+         FROM participant_transcript_turns turn
+         JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+        WHERE fact.run_id = ?`,
+      RUN,
+    ).one()).toEqual({ count: 1 });
+  });
+
+  it("fails closed with a payload-free diagnostic when final-turn identity diverges", async () => {
+    const { binding, storage } = claimed();
+    await commitFinalBindTurn(binding);
+
+    await expect(storage.publishHostOutcome({
+      ...fence,
+      runId: RUN,
+      ...publish,
+      finalTurn: {
+        ...publish.finalTurn,
+        text: "Different final bytes that must not replace the accepted turn.",
+      },
+    })).resolves.toEqual({ outcome: "content_mismatch", reasons: ["content"] });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" })).toBeUndefined();
+  });
+
+  it("finalizes one canonical assistant turn and records that it did, in one transaction", async () => {
     const { storage, sql } = claimed();
 
-    expect(await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
-      .toEqual({ outcome: "published", sequenceNumber: 1 });
+    expect(await storage.publishHostOutcome({ ...fence, runId: RUN, ...publish }))
+      .toEqual({
+        outcome: "published",
+        finalTurnSequenceNumber: 1,
+        participantNoticeSequenceNumber: null,
+      });
     expect(sql.exec(
-      `SELECT author_type, message_type, content, client_message_id, produced_by_run_id
-         FROM workstream_message_details WHERE id = ?`,
-      publish.messageId,
+      `SELECT turn.turn_id, turn.actor, payload.payload_json
+         FROM participant_transcript_turns turn
+         JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE turn.turn_id = ?`,
+      publish.finalTurn.turnId,
     ).one()).toMatchObject({
-      author_type: "agent",
-      message_type: "text",
-      content: "Here is what I found.",
-      client_message_id: `harness:${RUN}`,
-      produced_by_run_id: RUN,
+      turn_id: publish.finalTurn.turnId,
+      actor: "assistant",
+      payload_json: '{"content":"Here is what I found.","role":"assistant","structuredContent":null}',
     });
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count
+         FROM participant_transcript_turns turn
+         JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+        WHERE fact.run_id = ? AND turn.turn_id != ?`,
+      RUN,
+      publish.finalTurn.turnId,
+    ).one()).toEqual({ count: 0 });
     // The lifecycle event is what every later reader joins against. The routed
     // version wrote it as a second statement that re-read `messages` to check
     // the first had landed.
-    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "final_message" }))
-      .toMatchObject({ event_type: "final_message_persisted", status: "completed" });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" }))
+      .toMatchObject({ event_type: "host_outcome_persisted", status: "completed" });
   });
 
   it("moves the transcript counters the append consumed", async () => {
     const { storage, sql } = claimed();
 
-    await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
+    await storage.publishHostOutcome({ ...fence, runId: RUN, ...publish });
 
-    // The routed batch's third statement also assigned
-    // `latest_attention_sequence_number`, which was never a column — the view
-    // derived it and its trigger ignored the assignment. What it really did is
-    // this, and `appendMessage` already did it.
+    // Finalization consumes attention, but the already-ordered turn does not
+    // consume the legacy message sequence used by routed compatibility rows.
     expect(sql.exec(
       `SELECT next_sequence_number, next_attention_ordinal, last_people_activity_at
          FROM workstream WHERE id = 1`,
     ).one()).toMatchObject({
-      next_sequence_number: 2,
+      next_sequence_number: 1,
       next_attention_ordinal: 2,
       last_people_activity_at: NOW,
     });
@@ -1218,12 +1681,12 @@ describe("publishing a run's final message", () => {
   it("refuses an attempt that no longer holds the run", async () => {
     const { storage, sql } = claimed();
 
-    expect(await storage.publishFinalMessage({
+    expect(await storage.publishHostOutcome({
       ...fence, runId: RUN, owner: "someone-else", ...publish,
     })).toEqual({ outcome: "ownership_lost" });
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records WHERE id = ?`, publish.messageId).one())
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`, publish.finalTurn.turnId).one())
       .toEqual({ count: 0 });
-    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "final_message" })).toBeUndefined();
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" })).toBeUndefined();
   });
 
   it("refuses an ordinary publish once cancellation was requested", async () => {
@@ -1231,7 +1694,7 @@ describe("publishing a run's final message", () => {
     sql.exec(`UPDATE runs SET cancellation_requested_at = ? WHERE run_id = ?`, NOW, RUN);
 
     // A run asked to stop must not go on to report a completed answer.
-    expect(await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish }))
+    expect(await storage.publishHostOutcome({ ...fence, runId: RUN, ...publish }))
       .toEqual({ outcome: "ownership_lost" });
   });
 
@@ -1242,22 +1705,128 @@ describe("publishing a run's final message", () => {
     // The member asked it to stop, not to vanish: whatever the model had
     // produced by then is still theirs to read. Same exemption, and the same
     // reason, as `assertHarnessToolSettlementOwned`.
-    expect(await storage.publishFinalMessage({
+    expect(await storage.publishHostOutcome({
       ...fence, runId: RUN, ...publish,
       hostOutcomeStatus: "stopped", allowCancellationRequested: true,
     })).toMatchObject({ outcome: "published" });
   });
 
-  it("replays rather than writing a second message for the same run", async () => {
+  it("replays rather than writing a second assistant turn for the same run", async () => {
     const { storage, sql } = claimed();
-    await storage.publishFinalMessage({ ...fence, runId: RUN, ...publish });
+    await storage.publishHostOutcome({ ...fence, runId: RUN, ...publish });
 
-    expect(await storage.publishFinalMessage({
+    expect(await storage.publishHostOutcome({
       ...fence, runId: RUN, ...publish,
-      messageId: "00000000-0000-7000-8000-0000000000c2",
       lifecycleEventId: "event-final-2",
-    })).toEqual({ outcome: "replayed", sequenceNumber: 1 });
-    expect(sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records WHERE substream_id = '0'`).one())
+    })).toEqual({
+      outcome: "replayed",
+      finalTurnSequenceNumber: 1,
+      participantNoticeSequenceNumber: null,
+    });
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE actor = 'assistant'`).one())
       .toEqual({ count: 1 });
+  });
+
+  it("atomically publishes an accepted final turn and a separately-provenanced host notice", async () => {
+    const { storage, sql } = claimed();
+    const notice = {
+      turnId: `${RUN}:attachment-boundary`,
+      text: "Attachment content could not be verified.",
+    };
+
+    await expect(storage.publishHostOutcome({
+      ...fence,
+      runId: RUN,
+      ...publish,
+      participantNotice: notice,
+    })).resolves.toEqual({
+      outcome: "published",
+      finalTurnSequenceNumber: 1,
+      participantNoticeSequenceNumber: 2,
+    });
+    expect(sql.exec(
+      `SELECT turn_id, actor, message_type, transcript_sequence
+         FROM participant_transcript_turns ORDER BY transcript_sequence`,
+    ).toArray()).toEqual([
+      {
+        turn_id: publish.finalTurn.turnId,
+        actor: "assistant",
+        message_type: "text",
+        transcript_sequence: 1,
+      },
+      {
+        turn_id: notice.turnId,
+        actor: "system",
+        message_type: "system",
+        transcript_sequence: 2,
+      },
+    ]);
+  });
+
+  it("checkpoints a failed host outcome even when it has no assistant turn", async () => {
+    const { storage, sql } = claimed();
+
+    await expect(storage.publishHostOutcome({
+      ...fence,
+      runId: RUN,
+      finalTurn: null,
+      participantNotice: null,
+      hostOutcomeStatus: "failed",
+      hostOutcomeError: null,
+      lifecycleEventId: "event-host-failure",
+      allowCancellationRequested: false,
+    })).resolves.toEqual({
+      outcome: "published",
+      finalTurnSequenceNumber: null,
+      participantNoticeSequenceNumber: null,
+    });
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
+    ).one()).toEqual({ count: 0 });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" }))
+      .toMatchObject({ event_type: "host_outcome_persisted", status: "failed" });
+  });
+
+  it("refuses to checkpoint completion without a durable assistant turn", async () => {
+    const { storage } = claimed();
+
+    await expect(storage.publishHostOutcome({
+      ...fence,
+      runId: RUN,
+      ...publish,
+      finalTurn: null,
+    })).resolves.toEqual({ outcome: "content_mismatch", reasons: ["content"] });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" })).toBeUndefined();
+  });
+
+  it("refuses a conflicting participant notice before writing a final turn or lifecycle event", async () => {
+    const { binding, storage, sql } = claimed();
+    const messages = new WorkstreamMessageStorage(binding);
+    await messages.appendMessage({
+      messageId: "different-notice-turn",
+      clientMessageId: `${RUN}:attachment-boundary`,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      text: "Different notice bytes",
+      structuredContentJson: null,
+      producedByRunId: RUN,
+      now: NOW - 1,
+    });
+
+    await expect(storage.publishHostOutcome({
+      ...fence,
+      runId: RUN,
+      ...publish,
+      participantNotice: {
+        turnId: `${RUN}:attachment-boundary`,
+        text: "Attachment content could not be verified.",
+      },
+    })).resolves.toEqual({ outcome: "content_mismatch", reasons: ["notice"] });
+    expect(sql.exec(
+      `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE actor = 'assistant'`,
+    ).one()).toEqual({ count: 0 });
+    expect(storage.lifecycleEvent({ runId: RUN, eventKey: "host_outcome" })).toBeUndefined();
   });
 });

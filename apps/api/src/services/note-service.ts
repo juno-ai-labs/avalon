@@ -376,7 +376,7 @@ export class NoteService {
         endedAt: mode === "final" ? note.ended_at ?? nowIso() : note.ended_at,
         transcriptStatus: actualTranscriptStatus,
         refreshSeconds: mode === "live" ? refreshSeconds : null,
-      }, requestId);
+      }, requestId, `meeting-notes:${id}:loop`);
       await emitProductUsageTelemetry(this.env, {
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,

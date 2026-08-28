@@ -124,7 +124,14 @@ describe("the development seed", () => {
       workspaceTables: Record<string, Record<string, unknown>[]>;
       workstreams: {
         id: string; nextSequenceNumber: number;
-        messages: { sequence_number: number; structured_content_json: string | null }[];
+        messages: {
+          author_type: string;
+          author_user_id?: string | null;
+          author_name_snapshot?: string | null;
+          author_avatar_url_snapshot?: string | null;
+          sequence_number: number;
+          structured_content_json: string | null;
+        }[];
       }[];
     };
     expect(fixtures.workspaceId).toMatch(/^[0-9a-f-]{36}$/u);
@@ -134,6 +141,14 @@ describe("the development seed", () => {
       expect(Math.max(0, ...sequences)).toBeLessThan(workstream.nextSequenceNumber);
       for (const message of workstream.messages) {
         if (message.structured_content_json) JSON.parse(message.structured_content_json);
+        if (message.author_type === "human") {
+          expect(message.author_user_id).toMatch(/^[0-9a-f-]{36}$/u);
+          expect(message.author_name_snapshot?.trim()).not.toBe("");
+          expect(message.author_avatar_url_snapshot ?? null).toBeNull();
+        } else {
+          expect(message.author_name_snapshot).toBeUndefined();
+          expect(message.author_avatar_url_snapshot).toBeUndefined();
+        }
       }
     }
     for (const rows of Object.values(fixtures.workspaceTables)) {

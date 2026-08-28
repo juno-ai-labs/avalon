@@ -557,27 +557,17 @@ describe('WorkspaceSocketProvider', () => {
       type: 'client_command_succeeded',
       command: 'create_message',
       clientMessageId: 'client-message-1',
-      message: {
-        id: '00000000-0000-7000-8000-000000000004',
+      turn: {
+        turnId: '00000000-0000-7000-8000-000000000004',
         clientMessageId: 'client-message-1',
-        workspaceId: '00000000-0000-7000-8000-000000000001',
-        workstreamId: command.workstreamId,
-        sequenceNumber: 2,
-        author: { type: 'system' },
-        messageType: 'text',
-        textContent: command.payload.text,
-        structuredContent: null,
-        mentions: [],
-        attachments: [],
         createdAt: '2026-08-17T20:00:01.000Z',
-        editedAt: null,
       },
-      agentInvoked: false,
-      harnessRunId: null,
+      deliveryState: 'pending',
     }));
     await expect(result).resolves.toMatchObject({
       clientMessageId: 'client-message-1',
-      text: command.payload.text,
+      turnId: '00000000-0000-7000-8000-000000000004',
+      deliveryState: 'pending',
     });
   });
 

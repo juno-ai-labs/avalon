@@ -1,3 +1,4 @@
+import { createRef } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,18 +9,17 @@ import { useUiStore } from '../lib/ui-store';
 import {
   AddParticipantDialog,
   AddResourceDialog,
+  acceptedMessageOverlayDeliveryState,
   highestVisibleAttentionSequence,
   blockDashboardHoldsSidebar,
   initialTranscriptAnchorIndex,
   JumpToLatestButton,
   manualElicitationResponse,
-  mergeTranscriptPage,
   preservedPrependScrollTop,
   RunFailureNotice,
   RunStoppedNotice,
   orderedTranscriptOwnsRunTiming,
   shouldLoadEarlierFromScroll,
-  transcriptPageCursor,
   WorkstreamErrorState,
   WorkstreamHeader,
   workstreamPayloadBelongsToRoute,
@@ -29,6 +29,7 @@ import {
   resourceVersionsQueryKey,
   workspaceMemberFromSession,
 } from './workstream';
+import { WorkstreamComposer } from '../components/workstream-composer';
 
 describe('workspace foreground presence', () => {
   const member = (id: string, name: string): WorkspaceMember => ({
@@ -50,22 +51,6 @@ describe('workspace foreground presence', () => {
     )).toEqual([{ ...viewer, viewing: true }]);
   });
 });
-
-function transcriptMessage(
-  sequenceNumber: number,
-  messageType: Message['messageType'] = 'text',
-): Message {
-  return {
-    id: `message-${sequenceNumber}-${messageType}`,
-    workstreamId: 'workstream-pagination',
-    sequenceNumber,
-    attentionSequenceNumber: messageType === 'tool_event' ? null : sequenceNumber,
-    authorType: 'agent',
-    messageType,
-    text: `Message ${sequenceNumber}`,
-    createdAt: new Date(Date.UTC(2026, 7, 18, 12, 0, sequenceNumber)).toISOString(),
-  };
-}
 
 describe('a resource history follows swaps the rail did not make', () => {
   it('keys the history on the version the detail shows, not on the resource alone', () => {
@@ -99,59 +84,37 @@ describe('transcript cursor pagination', () => {
     expect(preservedPrependScrollTop(120, 2_000, 1_900)).toBe(120);
   });
 
-  it('merges successive pages in transcript order without duplicates, including suggestion rows', () => {
-    const current = [transcriptMessage(3), transcriptMessage(4), transcriptMessage(5)];
-    const first = mergeTranscriptPage(current, {
-      items: [
-        transcriptMessage(1),
-        transcriptMessage(2),
-        transcriptMessage(3),
-        transcriptMessage(99, 'activity_suggestion'),
-      ],
-      nextCursor: '1',
-      newerCursor: null,
-    });
-    const second = mergeTranscriptPage(first, {
-      items: [transcriptMessage(0)],
-      nextCursor: null,
-      newerCursor: null,
-    });
-
-    expect(second.map((message) => message.sequenceNumber)).toEqual([0, 1, 2, 3, 4, 5, 99]);
-  });
-
-  it('advances the direction-specific cursor and rejects a repeated page', () => {
-    const page = { items: [], nextCursor: '10', newerCursor: '30' };
-    expect(transcriptPageCursor(page, '20', 'before')).toBe('10');
-    expect(transcriptPageCursor(page, '20', 'after')).toBe('30');
-    expect(() => transcriptPageCursor(page, '10', 'before'))
-      .toThrow('Rally received a repeated transcript cursor.');
-    expect(() => transcriptPageCursor(page, '30', 'after'))
-      .toThrow('Rally received a repeated transcript cursor.');
-  });
 });
 
 describe('work-stream route handoff', () => {
   it('refuses to paint detail or transcript rows retained from another work stream', () => {
     const routeWorkstreamId = 'workstream-two';
     const workstream = { id: routeWorkstreamId };
-    const currentMessages = [{ workstreamId: routeWorkstreamId }];
+    const transcript = {
+      snapshotId: 'snapshot-route', snapshotThrough: 0, eventSequence: 0,
+      snapshotAtUtc: '2026-08-27T12:00:00.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const, ranges: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
 
-    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, currentMessages)).toBe(true);
-    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, { id: 'workstream-one' }, currentMessages)).toBe(false);
-    expect(workstreamPayloadBelongsToRoute(
-      routeWorkstreamId,
-      workstream,
-      [{ workstreamId: 'workstream-one' }],
-    )).toBe(false);
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, transcript)).toBe(true);
+    expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, { id: 'workstream-one' }, transcript)).toBe(false);
     expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, undefined)).toBe(false);
   });
 });
 
 const copyText = vi.hoisted(() => vi.fn());
 const getRuntimeConfig = vi.hoisted(() => vi.fn());
+const getApplicationSettings = vi.hoisted(() => vi.fn(async () => ({ debugEnabled: false })));
+const onApplicationSettingsChanged = vi.hoisted(() => vi.fn(() => () => undefined));
 
-vi.mock('../lib/platform', () => ({ desktopBridge: () => ({ copyText, getRuntimeConfig }) }));
+vi.mock('../lib/platform', () => ({
+  desktopBridge: () => ({
+    copyText,
+    getRuntimeConfig,
+    getApplicationSettings,
+    onApplicationSettingsChanged,
+  }),
+}));
 
 const headerWorkstream: WorkstreamDetail = {
   id: 'workstream-header',
@@ -178,6 +141,52 @@ const headerWorkstream: WorkstreamDetail = {
   backgroundTasks: [],
   automationRuns: [],
 };
+
+describe('running work-stream message delivery', () => {
+  it('keeps accepted pending messages visibly pending until canonical promotion', () => {
+    expect(acceptedMessageOverlayDeliveryState('pending', 'steer')).toBe('steer_pending');
+    expect(acceptedMessageOverlayDeliveryState('pending', 'queue')).toBe('queue_pending');
+    expect(acceptedMessageOverlayDeliveryState('pending', undefined)).toBe('steer_pending');
+    expect(acceptedMessageOverlayDeliveryState('canonical', 'queue')).toBeUndefined();
+  });
+
+  it('lets the person queue a message for the next loop and sends that exact choice', async () => {
+    const onSend = vi.fn(async () => undefined);
+    render(
+      <Tooltip.Provider>
+        <WorkstreamComposer
+          attachments={[]}
+          fileInputRef={createRef<HTMLInputElement>()}
+          members={[]}
+          onAttach={vi.fn()}
+          onOpenAttachment={vi.fn()}
+          onRemoveAttachment={vi.fn()}
+          onRetryAttachment={vi.fn()}
+          onSend={onSend}
+          onStop={vi.fn(async () => undefined)}
+          sending={false}
+          uploading={false}
+          workstream={{ ...headerWorkstream, harnessStatus: 'running' }}
+        />
+      </Tooltip.Provider>,
+    );
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Message delivery' }), {
+      target: { value: 'queue' },
+    });
+    const composer = screen.getByRole('textbox', { name: 'Message the work stream' });
+    fireEvent.change(composer, { target: { value: 'Do this after the current loop stops' } });
+    fireEvent.keyDown(composer, { key: 'Enter' });
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith(
+      'Do this after the current loop stops',
+      [],
+      undefined,
+      'queue',
+    ));
+    expect(screen.getByRole('combobox', { name: 'Message delivery' })).toHaveValue('steer');
+  });
+});
 
 /**
  * jsdom performs no layout, so every element reports a width of zero and a

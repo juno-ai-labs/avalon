@@ -665,7 +665,8 @@ function parseRelationships(bytes: Uint8Array | undefined): Map<string, string> 
 function appendNamedOfficeParts(
   sections: string[], entries: Record<string, Uint8Array>, pattern: RegExp, label: string,
 ): void {
-  for (const [name, bytes] of Object.entries(entries).sort(([left], [right]) => left.localeCompare(right))) {
+  for (const [name, bytes] of Object.entries(entries)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
     const number = pattern.exec(name)?.[1];
     pattern.lastIndex = 0;
     if (!number) continue;

@@ -121,6 +121,7 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
   const fingerprintQueue = useRef(Promise.resolve());
   const controllers = useRef(new Map<string, AbortController>());
   const removed = useRef(new Set<string>());
+  const leases = useRef(new Map<string, { key: string; attachments: PendingAttachment[] }>());
   const apiRef = useRef(api);
   apiRef.current = api;
   // Assigned during render, not in the effect below: a callback fired from the
@@ -316,6 +317,67 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
     void deleteDraftAttachments(draftKeyRef.current, localIds);
   }, []);
 
+  const leaseReady = useCallback(async (): Promise<{
+    leaseId: string;
+    attachments: PendingAttachment[];
+  }> => {
+    const ready = attachmentsRef.current.filter((attachment) =>
+      attachment.status === 'ready' && attachment.resource);
+    const leaseId = crypto.randomUUID();
+    const key = draftKeyRef.current;
+    leases.current.set(leaseId, { key, attachments: ready });
+    const leasedIds = new Set(ready.map((attachment) => attachment.localId));
+    replace((current) => current.filter((attachment) => !leasedIds.has(attachment.localId)));
+    // The lease is command-owned, not draft-owned. Remove it from the restart
+    // cache before sending so navigation or a renderer restart cannot surface
+    // the same attachments in a second draft while the first command is
+    // ambiguously pending on the workspace socket.
+    await deleteDraftAttachments(key, ready.map((attachment) => attachment.localId));
+    return { leaseId, attachments: ready };
+  }, [replace]);
+
+  const commitLease = useCallback((leaseId: string): void => {
+    const lease = leases.current.get(leaseId);
+    if (!lease) return;
+    leases.current.delete(leaseId);
+    for (const attachment of lease.attachments) {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    }
+    void deleteDraftAttachments(lease.key, lease.attachments.map((attachment) => attachment.localId));
+  }, []);
+
+  const restoreLease = useCallback(async (leaseId: string): Promise<void> => {
+    const lease = leases.current.get(leaseId);
+    if (!lease) return;
+    leases.current.delete(leaseId);
+    if (lease.key !== draftKeyRef.current) return;
+    replace((current) => {
+      const present = new Set(current.map((attachment) => attachment.localId));
+      return [...lease.attachments.filter((attachment) => !present.has(attachment.localId)), ...current];
+    });
+    const atEpoch = draftCacheEpoch();
+    await Promise.all(lease.attachments.map(async (attachment) => {
+      const stored = await writeDraftAttachment({
+        draftKey: lease.key,
+        localId: attachment.localId,
+        sortKey: nextDraftSortKey(),
+        fileName: attachment.file.name,
+        mimeType: attachment.file.type,
+        lastModified: attachment.file.lastModified,
+        bytes: await attachment.file.arrayBuffer(),
+        ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+      }, atEpoch);
+      if (stored && attachment.resource) {
+        await updateDraftAttachment(
+          lease.key,
+          attachment.localId,
+          { resource: attachment.resource },
+          atEpoch,
+        );
+      }
+    }));
+  }, [replace]);
+
   useEffect(() => {
     // Without a client the expired resources cannot be released, so the sweep
     // has not really happened: leave it un-run for a later composer to retry.
@@ -387,6 +449,9 @@ export function useFileAttachments(api: FileAttachmentsApi | null, draftKey: str
     removeAttachment,
     retryAttachment,
     consume,
+    leaseReady,
+    commitLease,
+    restoreLease,
     uploading: fingerprinting > 0 || attachments.some((attachment) => attachment.status === 'uploading'),
     ready: attachments.filter((attachment) => attachment.status === 'ready' && attachment.resource),
   };

@@ -715,7 +715,7 @@ describe("suggested-work aggregation", () => {
       insertOpportunityWorkstream(database, opportunityId, workstreamId, messageId);
       return {
         workstream: { id: workstreamId },
-        messageId,
+        turnId: messageId,
         harnessRunId: "run-one",
       } as never;
     });

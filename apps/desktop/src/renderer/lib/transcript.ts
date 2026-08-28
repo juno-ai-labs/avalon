@@ -3,6 +3,7 @@ import {
   ActivitySuggestionSchema,
   ElicitationSchema,
   type TranscriptActivity,
+  type PendingTranscriptInput,
   type TranscriptRange,
   type TranscriptTurn,
   type WorkstreamTranscriptSnapshot,
@@ -10,6 +11,88 @@ import {
 import { elicitationMessageId, normalizeElicitation } from './elicitation';
 
 export const TRANSCRIPT_RANGE_BLOCK_SIZE = 20;
+
+export type TranscriptOverlayIdentity =
+  | { type: 'client_message'; clientMessageId: string; turnId?: string }
+  | { type: 'loop_input'; inputId: string; futureTurnId: string }
+  | { type: 'assistant_turn'; turnId: string }
+  | { type: 'tool_call'; toolCallId: string }
+  | { type: 'elicitation'; elicitationId: string }
+  | { type: 'activity_suggestion'; suggestionId: string };
+
+export type TranscriptOverlayProvenance =
+  | { source: 'client_command'; phase: 'sending' | 'accepted' }
+  | { source: 'socket_event'; eventType: string; eventSequence: number }
+  | { source: 'socket_snapshot'; snapshotId: string }
+  | { source: 'rest_snapshot'; snapshotId: string }
+  | { source: 'stream_event'; streamId: string; eventType: 'stream_started' | 'stream_delta'; eventSequence: number }
+  | { source: 'stream_snapshot'; streamId: string; snapshotId: string };
+
+/**
+ * Explicit, non-durable presentation state layered over the canonical ordered
+ * transcript. A compatibility `Message` can never satisfy this type by
+ * accident: every overlay names both where it came from and the canonical
+ * identity that will replace it.
+ */
+export interface TranscriptOverlay {
+  identity: TranscriptOverlayIdentity;
+  provenance: TranscriptOverlayProvenance;
+  /** Insert after this durable transcript turn; room sequence orders peers. */
+  position: {
+    afterTranscriptSequence: number;
+    eventSequence: number;
+  };
+  message: Message;
+}
+
+/**
+ * Apply presentation-only elicitation state to every canonical copy of the
+ * turn. Ranges may overlap and active turns may duplicate a ranged turn, so an
+ * optimistic answer has to update all copies or composition can resurrect the
+ * still-open card. The turn revision is deliberately unchanged: the next
+ * authoritative upsert must remain able to replace this local projection.
+ */
+export function setTranscriptElicitationState(
+  snapshot: WorkstreamTranscriptSnapshot,
+  elicitationId: string,
+  state: { status: 'open' | 'answered'; answer: string | string[] | null },
+): WorkstreamTranscriptSnapshot {
+  const updateTurn = (turn: TranscriptTurn): TranscriptTurn => {
+    let changed = false;
+    const blocks = turn.blocks.map((block) => {
+      if (block.type !== 'text' || block.messageType !== 'elicitation' || !block.structuredContent) {
+        return block;
+      }
+      const wrapped = 'elicitation' in block.structuredContent;
+      const source = wrapped ? block.structuredContent['elicitation'] : block.structuredContent;
+      const parsed = ElicitationSchema.safeParse(source);
+      if (!parsed.success || parsed.data.id !== elicitationId) return block;
+      changed = true;
+      const elicitation = { ...parsed.data, status: state.status, answer: state.answer };
+      return {
+        ...block,
+        structuredContent: wrapped
+          ? { ...block.structuredContent, elicitation }
+          : elicitation,
+      };
+    });
+    return changed ? { ...turn, blocks } : turn;
+  };
+  return {
+    ...snapshot,
+    ranges: snapshot.ranges.map((range) => ({
+      ...range,
+      turns: range.turns.map(updateTurn),
+    })),
+    activeTurns: snapshot.activeTurns.map(updateTurn),
+  };
+}
+
+export function transcriptOverlaysQueryKey(
+  workstreamId: string,
+): readonly ['transcript-overlays', string] {
+  return ['transcript-overlays', workstreamId];
+}
 
 type TextMessageInput = Omit<Message, 'messageType' | 'text'> & { text: string };
 type ToolEventMessageInput = Omit<Message, 'messageType' | 'toolEvent'> & { toolEvent: ToolEventData };
@@ -31,18 +114,6 @@ export function appendDismissedSuggestionId(
   suggestionId: string,
 ): readonly string[] {
   return current?.includes(suggestionId) ? current : [...(current ?? []), suggestionId];
-}
-
-export function visibleTranscriptMessages(
-  messages: Message[],
-  dismissedSuggestionIds: readonly string[] = [],
-): Message[] {
-  const dismissed = new Set(dismissedSuggestionIds);
-  return messages.filter((message) => !(
-    message.messageType === 'activity_suggestion'
-    && message.activitySuggestion
-    && (message.activitySuggestion.status === 'dismissed' || dismissed.has(message.activitySuggestion.id))
-  ));
 }
 
 export function createTextMessage({ text, ...message }: TextMessageInput): Message {
@@ -104,10 +175,6 @@ export function upsertTranscriptMessage(messages: Message[] | undefined, message
   ];
 }
 
-export function removeTranscriptMessage(messages: Message[] | undefined, id: string): Message[] {
-  return (messages ?? []).filter((message) => message.id !== id);
-}
-
 /**
  * Flatten ordered turn blocks only at the existing render boundary. Ordering
  * and lifecycle remain owned by the turn/block protocol; the automation wizard
@@ -117,16 +184,9 @@ export function orderedTranscriptMessages(
   snapshot: WorkstreamTranscriptSnapshot | undefined,
   workstreamId: string,
   members: readonly WorkspaceMember[] = [],
-  routed: readonly Message[] = [],
 ): Message[] {
   if (!snapshot) return [];
   const membersById = new Map(members.map((member) => [member.id, member]));
-  const routedByClientId = new Map(routed.flatMap((message) =>
-    message.clientMessageId ? [[message.clientMessageId, message] as const] : []));
-  const routedByTurnId = new Map(routed.flatMap((message) => [
-    [message.id, message] as const,
-    ...(message.transcriptTurnId ? [[message.transcriptTurnId, message] as const] : []),
-  ]));
   const turns = new Map<number, TranscriptTurn>();
   for (const range of snapshot.ranges) {
     for (const turn of range.turns) {
@@ -147,6 +207,21 @@ export function orderedTranscriptMessages(
   const orderedTurns = [...turns.values()].sort(
     (left, right) => left.transcriptSequence - right.transcriptSequence,
   );
+  for (const turn of orderedTurns) {
+    if (turn.actor === 'human' && turn.revision > 0
+      && (!turn.authorUserId || !turn.authorSnapshot
+        || turn.authorSnapshot.userId !== turn.authorUserId)) {
+      throw new Error('canonical_human_author_provenance_invalid');
+    }
+  }
+  const turnsById = new Map(orderedTurns.map((turn) => [turn.turnId, turn]));
+  const lastTurnByResponseActivityId = new Map<string, TranscriptTurn>();
+  for (const turn of orderedTurns) {
+    const assistantActivity = turn.activityId ? activities.get(turn.activityId) : undefined;
+    if (assistantActivity?.scope === 'assistant_turn' && assistantActivity.parentActivityId) {
+      lastTurnByResponseActivityId.set(assistantActivity.parentActivityId, turn);
+    }
+  }
   const messages = orderedTurns
     .flatMap((turn) => turn.blocks
       .slice()
@@ -163,19 +238,21 @@ export function orderedTranscriptMessages(
             tieBreaker: block.blockId,
           });
         };
-        const routedMessage = (turn.clientMessageId
-          ? routedByClientId.get(turn.clientMessageId)
-          : undefined) ?? routedByTurnId.get(turn.turnId);
         const base = {
           id: block.blockId,
           transcriptTurnId: turn.turnId,
+          transcriptSequence: turn.transcriptSequence,
           workstreamId,
           sequenceNumber: 0,
           attentionSequenceNumber: turn.attentionOrdinal,
           authorType: turn.actor === 'assistant' ? 'agent' as const : turn.actor,
-          ...(turn.actor === 'human' && turn.authorUserId
-            ? { author: membersById.get(turn.authorUserId) ?? routedMessage?.author }
-            : {}),
+          ...(turn.actor === 'human' && turn.authorUserId ? {
+            author: turn.authorSnapshot ? {
+              id: turn.authorSnapshot.userId,
+              name: turn.authorSnapshot.displayName,
+              ...(turn.authorSnapshot.avatarUrl ? { avatarUrl: turn.authorSnapshot.avatarUrl } : {}),
+            } : turn.revision === 0 ? membersById.get(turn.authorUserId) : undefined,
+          } : {}),
           ...(turn.clientMessageId ? { clientMessageId: turn.clientMessageId } : {}),
           ...(turn.actor === 'external' && turn.externalActor
             ? { externalActor: { ...turn.externalActor } }
@@ -190,7 +267,16 @@ export function orderedTranscriptMessages(
           const suggestion = ActivitySuggestionSchema.safeParse(
             'suggestion' in structured ? structured['suggestion'] : structured,
           );
-          const messageType: Message['messageType'] = block.messageType === 'suggestion'
+          const statusKind = structured['kind'] === 'assistant_turn_failed'
+            || structured['kind'] === 'assistant_turn_stopped'
+            ? structured['kind']
+            : null;
+          const statusCode = typeof structured['code'] === 'string'
+            ? structured['code']
+            : 'assistant_turn_interrupted';
+          const messageType: Message['messageType'] = statusKind
+            ? 'system'
+            : block.messageType === 'suggestion'
             ? 'activity_suggestion'
             : block.messageType ?? 'text';
           const messageId = elicitation.success ? elicitationMessageId(elicitation.data.id) : block.blockId;
@@ -201,6 +287,7 @@ export function orderedTranscriptMessages(
             messageType,
             text: block.text,
             streaming: block.streaming,
+            ...(statusKind ? { statusEvent: { kind: statusKind, code: statusCode } } : {}),
             mentions: (block.mentions ?? []).map((mention) => {
               const member = mention.userId ? membersById.get(mention.userId) : undefined;
               return {
@@ -241,6 +328,7 @@ export function orderedTranscriptMessages(
             thoughtEvent: {
               status: activity?.state === 'active' ? 'started' : 'completed',
               durationMs: timing.durationMs,
+              timingAccuracy: timing.timingAccuracy,
               ...(timing.monotonicStartedAt === undefined
                 ? {}
                 : { monotonicStartedAt: timing.monotonicStartedAt }),
@@ -273,21 +361,48 @@ export function orderedTranscriptMessages(
           },
         };
       }));
+  for (const turn of orderedTurns) {
+    if (turn.blocksOmitted !== true) continue;
+    const messageId = `${turn.turnId}:blocks-omitted`;
+    messageOrder.set(messageId, {
+      turnSequence: turn.transcriptSequence,
+      position: 0,
+      tieBreaker: messageId,
+    });
+    messages.push({
+      id: messageId,
+      transcriptTurnId: turn.turnId,
+      transcriptSequence: turn.transcriptSequence,
+      workstreamId,
+      sequenceNumber: 0,
+      attentionSequenceNumber: turn.attentionOrdinal,
+      authorType: turn.actor === 'assistant' ? 'agent' : turn.actor,
+      ...(turn.actor === 'human' && turn.authorUserId && turn.authorSnapshot ? {
+        author: {
+          id: turn.authorSnapshot.userId,
+          name: turn.authorSnapshot.displayName,
+          ...(turn.authorSnapshot.avatarUrl ? { avatarUrl: turn.authorSnapshot.avatarUrl } : {}),
+        },
+      } : {}),
+      ...(turn.actor === 'external' && turn.externalActor
+        ? { externalActor: { ...turn.externalActor } }
+        : {}),
+      messageType: 'system',
+      text: 'This message is too large to display.',
+      createdAt: turn.createdAtUtc,
+      blocksOmittedPlaceholder: true,
+    });
+  }
   for (const activity of snapshot.activities) {
     if (activity.scope !== 'response') continue;
-    const assistantActivityIds = new Set(snapshot.activities
-      .filter((candidate) =>
-        candidate.scope === 'assistant_turn' && candidate.parentActivityId === activity.activityId)
-      .map((candidate) => candidate.activityId));
-    const ownedTurns = orderedTurns.filter((turn) =>
-      turn.activityId !== null && assistantActivityIds.has(turn.activityId));
-    const lastTurn = ownedTurns[ownedTurns.length - 1];
+    const lastTurn = lastTurnByResponseActivityId.get(activity.activityId);
     if (!lastTurn) continue;
     const timing = activityTiming(activity);
     const activeInterval = activity.intervals.find((interval) => interval.stoppedAtUtc === null);
     messages.push({
       id: activity.activityId,
       transcriptTurnId: lastTurn.turnId,
+      transcriptSequence: lastTurn.transcriptSequence,
       workstreamId,
       sequenceNumber: 0,
       attentionSequenceNumber: null,
@@ -297,6 +412,7 @@ export function orderedTranscriptMessages(
       thoughtEvent: {
         status: activity.state === 'active' ? 'started' : 'completed',
         durationMs: timing.durationMs,
+        timingAccuracy: timing.timingAccuracy,
         ...(timing.monotonicStartedAt === undefined
           ? {}
           : { monotonicStartedAt: timing.monotonicStartedAt }),
@@ -316,7 +432,7 @@ export function orderedTranscriptMessages(
       ? activities.get(activity.parentActivityId)
       : undefined;
     const lastTurn = parent?.scope === 'assistant_turn'
-      ? orderedTurns.find((turn) => turn.turnId === parent.subjectId)
+      ? turnsById.get(parent.subjectId)
       : undefined;
     if (!lastTurn) continue;
     const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) =>
@@ -327,6 +443,7 @@ export function orderedTranscriptMessages(
     messages.push({
       id: activity.activityId,
       transcriptTurnId: lastTurn.turnId,
+      transcriptSequence: lastTurn.transcriptSequence,
       workstreamId,
       sequenceNumber: 0,
       attentionSequenceNumber: null,
@@ -336,6 +453,7 @@ export function orderedTranscriptMessages(
       thoughtEvent: {
         status: activity.state === 'active' ? 'started' : 'completed',
         durationMs: timing.durationMs,
+        timingAccuracy: timing.timingAccuracy,
         ...(timing.monotonicStartedAt === undefined
           ? {}
           : { monotonicStartedAt: timing.monotonicStartedAt }),
@@ -349,19 +467,52 @@ export function orderedTranscriptMessages(
       tieBreaker: activity.activityId,
     });
   }
-  const logicalMessages = messages.reduce<Message[]>(
-    (current, message) => upsertTranscriptMessage(current, message),
-    [],
-  );
+  // Canonical blocks are not optimistic messages. In particular, every block
+  // in one human turn legitimately shares its `clientMessageId`; using the
+  // generic optimistic-message reconciler here would collapse those blocks and
+  // could lose text. Only protocol-declared singleton UI identities coalesce.
+  // The index also keeps flattening linear before the final display sort.
+  const logicalMessages: Message[] = [];
+  const logicalMessageIndexes = new Map<string, number>();
+  for (const message of messages) {
+    const key = canonicalLogicalMessageKey(message);
+    const index = logicalMessageIndexes.get(key);
+    if (index === undefined) {
+      logicalMessageIndexes.set(key, logicalMessages.length);
+      logicalMessages.push(message);
+    } else {
+      const anchored = logicalMessages[index]!;
+      logicalMessages[index] = {
+        ...preferLogicalMessage(anchored, message),
+        // One logical UI row keeps the first canonical slot even when a later
+        // answer replaces its presentation. Carrying the answer turn's
+        // sequence back to the question's position makes the ordered list
+        // internally non-monotonic and causes composition to fail closed.
+        transcriptTurnId: anchored.transcriptTurnId,
+        transcriptSequence: anchored.transcriptSequence,
+        attentionSequenceNumber: anchored.attentionSequenceNumber,
+      };
+    }
+  }
   return logicalMessages
     .sort((left, right) => {
       const leftOrder = messageOrder.get(left.id)!;
       const rightOrder = messageOrder.get(right.id)!;
       return leftOrder.turnSequence - rightOrder.turnSequence
         || leftOrder.position - rightOrder.position
-        || leftOrder.tieBreaker.localeCompare(rightOrder.tieBreaker);
+        || (leftOrder.tieBreaker < rightOrder.tieBreaker
+          ? -1 : leftOrder.tieBreaker > rightOrder.tieBreaker ? 1 : 0);
     })
     .map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
+}
+
+function canonicalLogicalMessageKey(message: Message): string {
+  if (message.elicitation) return `elicitation:${message.elicitation.id}`;
+  if (message.activitySuggestion) return `activity_suggestion:${message.activitySuggestion.id}`;
+  if (message.toolEvent) {
+    return `tool_call:${message.toolEvent.toolCallId ?? message.toolEvent.id}`;
+  }
+  return `block:${message.id}`;
 }
 
 /**
@@ -370,15 +521,229 @@ export function orderedTranscriptMessages(
  * status is not a safe reconciliation signal; the stable Bind turn and tool
  * call identities are.
  */
-export function transientMessagesWithoutCanonicalMatch(
+export function transcriptOverlaysWithoutCanonicalMatch(
   canonical: readonly Message[],
-  routed: readonly Message[],
+  overlays: readonly TranscriptOverlay[],
+): TranscriptOverlay[] {
+  const clientMessageIds = new Set(canonical.flatMap((message) =>
+    message.clientMessageId ? [message.clientMessageId] : []));
+  const turnIds = new Set(canonical.flatMap((message) =>
+    message.transcriptTurnId ? [message.transcriptTurnId] : []));
+  const settledAssistantTurnIds = new Set(canonical.flatMap((message) =>
+    message.transcriptTurnId
+      && ((message.messageType === 'text' && message.streaming !== true) || message.statusEvent)
+      ? [message.transcriptTurnId]
+      : []));
+  const toolCallIds = new Set(canonical.flatMap((message) => {
+    const id = message.toolEvent?.toolCallId ?? message.toolEvent?.id;
+    return id ? [id] : [];
+  }));
+  const elicitationIds = new Set(canonical.flatMap((message) =>
+    message.elicitation ? [message.elicitation.id] : []));
+  const suggestionIds = new Set(canonical.flatMap((message) =>
+    message.activitySuggestion ? [message.activitySuggestion.id] : []));
+  return overlays.filter((overlay) => {
+    const identity = overlay.identity;
+    if (identity.type === 'client_message') {
+      return !clientMessageIds.has(identity.clientMessageId)
+        && !(identity.turnId && turnIds.has(identity.turnId));
+    }
+    if (identity.type === 'loop_input') return !turnIds.has(identity.futureTurnId);
+    if (identity.type === 'assistant_turn') return !settledAssistantTurnIds.has(identity.turnId);
+    if (identity.type === 'tool_call') return !toolCallIds.has(identity.toolCallId);
+    if (identity.type === 'elicitation') return !elicitationIds.has(identity.elicitationId);
+    return !suggestionIds.has(identity.suggestionId);
+  });
+}
+
+export function upsertTranscriptOverlay(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  overlay: TranscriptOverlay,
+): TranscriptOverlay[] {
+  const current = overlays ?? [];
+  const index = current.findIndex((candidate) =>
+    transcriptOverlayIdentityKey(candidate.identity) === transcriptOverlayIdentityKey(overlay.identity));
+  return index < 0
+    ? [...current, overlay]
+    : [
+        ...current.slice(0, index),
+        { ...overlay, position: current[index]!.position },
+        ...current.slice(index + 1),
+      ];
+}
+
+/**
+ * Install server-owned overlays over any optimistic copies of the same
+ * protocol identities. The server position is authoritative: retaining the
+ * client's guessed anchor would make concurrent pending inputs visibly diverge
+ * from the order the loop will eventually deliver.
+ */
+export function reconcileAuthoritativeTranscriptOverlays(
+  canonical: readonly Message[],
+  current: readonly TranscriptOverlay[] | undefined,
+  authoritative: readonly TranscriptOverlay[],
+): TranscriptOverlay[] {
+  const retainedClientCommands = transcriptOverlaysWithoutCanonicalMatch(
+    canonical,
+    (current ?? []).filter((overlay) => overlay.provenance.source === 'client_command'),
+  );
+  const byIdentity = new Map(retainedClientCommands.map((overlay) =>
+    [transcriptOverlayIdentityKey(overlay.identity), overlay]));
+  for (const overlay of authoritative) {
+    byIdentity.set(transcriptOverlayIdentityKey(overlay.identity), overlay);
+  }
+  return transcriptOverlaysWithoutCanonicalMatch(canonical, [...byIdentity.values()]);
+}
+
+/** Replace one optimistic overlay with the server-owned position and bytes. */
+export function replaceTranscriptOverlay(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  overlay: TranscriptOverlay,
+): TranscriptOverlay[] {
+  const current = overlays ?? [];
+  const key = transcriptOverlayIdentityKey(overlay.identity);
+  const index = current.findIndex((candidate) =>
+    transcriptOverlayIdentityKey(candidate.identity) === key);
+  return index < 0
+    ? [...current, overlay]
+    : [...current.slice(0, index), overlay, ...current.slice(index + 1)];
+}
+
+export function transcriptOverlayIdentityKey(identity: TranscriptOverlayIdentity): string {
+  switch (identity.type) {
+    case 'client_message': return `client_message:${identity.clientMessageId}`;
+    case 'loop_input': return `loop_input:${identity.inputId}`;
+    case 'assistant_turn': return `assistant_turn:${identity.turnId}`;
+    case 'tool_call': return `tool_call:${identity.toolCallId}`;
+    case 'elicitation': return `elicitation:${identity.elicitationId}`;
+    case 'activity_suggestion': return `activity_suggestion:${identity.suggestionId}`;
+  }
+}
+
+/** Project one server-owned, non-canonical loop input into presentation state. */
+export function pendingTranscriptInputOverlay(
+  input: PendingTranscriptInput,
+  workstreamId: string,
+  provenance: Extract<TranscriptOverlayProvenance, {
+    source: 'socket_event' | 'socket_snapshot' | 'rest_snapshot';
+  }>,
+): TranscriptOverlay {
+  return {
+    identity: input.clientMessageId
+      ? { type: 'client_message', clientMessageId: input.clientMessageId, turnId: input.futureTurnId }
+      : { type: 'loop_input', inputId: input.inputId, futureTurnId: input.futureTurnId },
+    provenance,
+    position: {
+      afterTranscriptSequence: input.afterTranscriptSequence,
+      eventSequence: provenance.source === 'socket_event'
+        ? provenance.eventSequence
+        : input.inputSequence,
+    },
+    message: {
+      id: input.futureTurnId,
+      ...(input.clientMessageId ? { clientMessageId: input.clientMessageId } : {}),
+      workstreamId,
+      sequenceNumber: 0,
+      authorType: input.actor,
+      ...(input.authorSnapshot ? {
+        author: {
+          id: input.authorSnapshot.userId,
+          name: input.authorSnapshot.displayName,
+          ...(input.authorSnapshot.avatarUrl ? { avatarUrl: input.authorSnapshot.avatarUrl } : {}),
+        },
+      } : {}),
+      ...(input.externalActor ? { externalActor: { ...input.externalActor } } : {}),
+      messageType: input.block.messageType === 'system' ? 'system' : 'text',
+      text: input.block.text,
+      mentions: input.block.mentions?.map((mention) => ({
+        type: mention.type,
+        ...(mention.userId ? { personId: mention.userId } : {}),
+        ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
+        startOffset: mention.startOffset,
+        endOffset: mention.endOffset,
+      })),
+      attachments: input.block.attachments?.map((attachment) => ({ ...attachment })),
+      createdAt: input.admittedAtUtc,
+      deliveryState: input.deliveryMode === 'steer' ? 'steer_pending' : 'queue_pending',
+    },
+  };
+}
+
+/** Update presentation content without weakening its identity or provenance. */
+export function mapTranscriptOverlayMessages(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  update: (messages: Message[]) => Message[],
+): TranscriptOverlay[] {
+  const current = overlays ?? [];
+  const messages = current.map((overlay) => overlay.message);
+  const updated = update(messages);
+  if (updated.length === messages.length
+    && updated.every((message, index) => message === messages[index])) {
+    return current as TranscriptOverlay[];
+  }
+  const updatedById = new Map(updated
+    .map((message) => [message.id, message]));
+  return current.flatMap((overlay) => {
+    const message = updatedById.get(overlay.message.id);
+    return message ? [{ ...overlay, message }] : [];
+  });
+}
+
+export function removeTranscriptOverlay(
+  overlays: readonly TranscriptOverlay[] | undefined,
+  predicate: (overlay: TranscriptOverlay) => boolean,
+): TranscriptOverlay[] {
+  return (overlays ?? []).filter((overlay) => !predicate(overlay));
+}
+
+/**
+ * Compose already-ordered canonical rows with explicitly sourced, non-durable
+ * overlays. Canonical projection is the expensive side and is memoized by the
+ * screen; sorting it again on every reveal tick would put the whole loaded
+ * transcript on the display-rate path.
+ */
+export function composeTranscript(
+  canonical: readonly Message[],
+  overlays: readonly TranscriptOverlay[],
 ): Message[] {
-  return routed.filter((message) => !canonical.some((candidate) =>
-    isSameLogicalMessage(candidate, message)
-    || candidate.transcriptTurnId === message.id
-    || (message.transcriptTurnId !== undefined
-      && candidate.transcriptTurnId === message.transcriptTurnId)));
+  const live = transcriptOverlaysWithoutCanonicalMatch(canonical, overlays);
+  const activeAssistantTurns = new Set(live.flatMap((overlay) =>
+    overlay.identity.type === 'assistant_turn' ? [overlay.identity.turnId] : []));
+  let previousCanonicalSequence = 0;
+  const visibleCanonical = canonical.filter((message) => {
+    const transcriptSequence = message.transcriptSequence;
+    if (typeof transcriptSequence !== 'number'
+      || !Number.isSafeInteger(transcriptSequence)
+      || transcriptSequence < 1
+      || transcriptSequence < previousCanonicalSequence) {
+      throw new Error('Rally received an invalid transcript order. Reopen this work stream.');
+    }
+    previousCanonicalSequence = transcriptSequence;
+    return !(
+      message.messageType === 'text'
+      && message.streaming === true
+      && message.transcriptTurnId !== undefined
+      && activeAssistantTurns.has(message.transcriptTurnId)
+    );
+  });
+  const orderedLive = [...live].sort((left, right) =>
+    left.position.afterTranscriptSequence - right.position.afterTranscriptSequence
+    || left.position.eventSequence - right.position.eventSequence
+    || (left.message.id < right.message.id ? -1 : left.message.id > right.message.id ? 1 : 0));
+  const composed: Message[] = [];
+  let canonicalIndex = 0;
+  for (const overlay of orderedLive) {
+    while (canonicalIndex < visibleCanonical.length) {
+      const candidate = visibleCanonical[canonicalIndex];
+      if (!candidate || candidate.transcriptSequence === undefined
+        || candidate.transcriptSequence > overlay.position.afterTranscriptSequence) break;
+      composed.push(candidate);
+      canonicalIndex += 1;
+    }
+    composed.push(overlay.message);
+  }
+  composed.push(...visibleCanonical.slice(canonicalIndex));
+  return composed.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
 /** Union the intervals the backend inspected; row presence is not coverage. */
@@ -397,6 +762,19 @@ export function transcriptCoverage(snapshot: WorkstreamTranscriptSnapshot): Tran
     previous.endExclusive = Math.max(previous.endExclusive, range.endExclusive);
   }
   return merged;
+}
+
+export function transcriptCoverageAdvanced(
+  before: WorkstreamTranscriptSnapshot,
+  after: WorkstreamTranscriptSnapshot,
+): boolean {
+  const previous = transcriptCoverage(before);
+  const next = transcriptCoverage(after);
+  return previous.length !== next.length || next.some((covered, index) => {
+    const prior = previous[index];
+    return prior?.startInclusive !== covered.startInclusive
+      || prior.endExclusive !== covered.endExclusive;
+  });
 }
 
 export function transcriptGaps(snapshot: WorkstreamTranscriptSnapshot): TranscriptRange[] {
@@ -448,6 +826,20 @@ export function mergeRealtimeTranscriptTurn(
   turn: TranscriptTurn,
   eventSequence: number,
 ): WorkstreamTranscriptSnapshot {
+  const existingRevision = Math.max(
+    -1,
+    ...snapshot.ranges.flatMap((range) => range.turns
+      .filter((candidate) => candidate.turnId === turn.turnId)
+      .map((candidate) => candidate.revision)),
+    ...snapshot.activeTurns
+      .filter((candidate) => candidate.turnId === turn.turnId)
+      .map((candidate) => candidate.revision),
+  );
+  if (existingRevision >= turn.revision) {
+    return eventSequence <= snapshot.eventSequence
+      ? snapshot
+      : { ...snapshot, eventSequence };
+  }
   let replaced = false;
   const ranges = snapshot.ranges.map((range) => {
     const index = range.turns.findIndex((candidate) => candidate.turnId === turn.turnId);
@@ -476,6 +868,7 @@ export function mergeRealtimeTranscriptTurn(
   return {
     ...snapshot,
     eventSequence: Math.max(snapshot.eventSequence, eventSequence),
+    snapshotThrough: Math.max(snapshot.snapshotThrough, turn.transcriptSequence),
     ranges,
     activeTurns: snapshot.activeTurns.filter((candidate) => candidate.turnId !== turn.turnId),
   };
@@ -494,6 +887,100 @@ export function mergeTranscriptRange(
   return {
     ...snapshot,
     ranges: [...snapshot.ranges, range],
+    activities: mergedActivities,
+    activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
+  };
+}
+
+function uncoveredRangeSegments(
+  range: TranscriptRange,
+  covered: readonly TranscriptRange[],
+  upperExclusive: number,
+): TranscriptRange[] {
+  const endExclusive = Math.min(range.endExclusive, upperExclusive);
+  if (range.startInclusive >= endExclusive) return [];
+  const segments: TranscriptRange[] = [];
+  let cursor = range.startInclusive;
+  for (const replacement of covered) {
+    if (replacement.endExclusive <= cursor) continue;
+    if (replacement.startInclusive >= endExclusive) break;
+    if (cursor < replacement.startInclusive) {
+      segments.push({
+        startInclusive: cursor,
+        endExclusive: Math.min(replacement.startInclusive, endExclusive),
+      });
+    }
+    cursor = Math.max(cursor, replacement.endExclusive);
+    if (cursor >= endExclusive) break;
+  }
+  if (cursor < endExclusive) segments.push({ startInclusive: cursor, endExclusive });
+  return segments;
+}
+
+function activitiesForTurns(
+  activities: readonly TranscriptActivity[],
+  turns: readonly TranscriptTurn[],
+): TranscriptActivity[] {
+  const byId = new Map(activities.map((activity) => [activity.activityId, activity]));
+  const required = new Set(turns.flatMap((turn) => [
+    ...(turn.activityId ? [turn.activityId] : []),
+    ...turn.blocks.flatMap((block) => 'activityId' in block && block.activityId
+      ? [block.activityId]
+      : []),
+  ]));
+  for (const activityId of required) {
+    let parentId = byId.get(activityId)?.parentActivityId;
+    while (parentId && !required.has(parentId)) {
+      required.add(parentId);
+      parentId = byId.get(parentId)?.parentActivityId;
+    }
+  }
+  return activities.filter((activity) => required.has(activity.activityId));
+}
+
+/**
+ * Apply a fresh canonical snapshot without turning its deliberately bounded
+ * opening ranges into a deletion of history this reader already loaded. The
+ * new snapshot is authoritative inside its covered intervals; only older
+ * coverage outside those intervals is retained under the new snapshot fence.
+ */
+export function mergeCanonicalTranscriptSnapshot(
+  current: WorkstreamTranscriptSnapshot,
+  incoming: WorkstreamTranscriptSnapshot,
+): WorkstreamTranscriptSnapshot {
+  const incomingCoverage = transcriptCoverage(incoming);
+  const upperExclusive = incoming.snapshotThrough + 1;
+  const retainedRanges = current.ranges.flatMap((range) =>
+    uncoveredRangeSegments(range.covered, incomingCoverage, upperExclusive).map((covered) => {
+      const turns = range.turns.filter((turn) =>
+        turn.transcriptSequence >= covered.startInclusive
+        && turn.transcriptSequence < covered.endExclusive);
+      return {
+        purpose: 'requested' as const,
+        requested: covered,
+        covered,
+        turns,
+        activities: activitiesForTurns(range.activities, turns),
+      };
+    }));
+
+  // A snapshot enumerates all currently active work. Retain only historical
+  // terminal activity outside its opening ranges, then let equal/newer incoming
+  // revisions refresh timing baselines and lifecycle state.
+  const activities = new Map(current.activities
+    .filter((activity) => activity.state !== 'active')
+    .map((activity) => [activity.activityId, activity]));
+  for (const activity of incoming.activities) {
+    const existing = activities.get(activity.activityId);
+    if (!existing || existing.revision <= activity.revision) {
+      activities.set(activity.activityId, activity);
+    }
+  }
+  const mergedActivities = [...activities.values()];
+
+  return {
+    ...incoming,
+    ranges: [...retainedRanges, ...incoming.ranges],
     activities: mergedActivities,
     activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
   };
@@ -531,10 +1018,14 @@ function activityDuration(activity: TranscriptActivity | undefined): number {
 function activityTiming(activity: TranscriptActivity | undefined): {
   durationMs: number;
   monotonicStartedAt?: number;
+  timingAccuracy: 'observed' | 'upper_bound';
 } {
-  if (!activity) return { durationMs: 0 };
+  if (!activity) return { durationMs: 0, timingAccuracy: 'observed' };
+  const timingAccuracy = activity.intervals.some((interval) => interval.timingAccuracy === 'upper_bound')
+    ? 'upper_bound' as const
+    : 'observed' as const;
   const active = activity.intervals.find((interval) => interval.stoppedAtUtc === null);
-  if (!active) return { durationMs: activityDuration(activity) };
+  if (!active) return { durationMs: activityDuration(activity), timingAccuracy };
   const elapsedMsAtSnapshot = active.elapsedMsAtSnapshot ?? 0;
   const cached = activityReceiptMonotonic.get(activity);
   const receivedAt = cached
@@ -552,5 +1043,6 @@ function activityTiming(activity: TranscriptActivity | undefined): {
   return {
     durationMs: activityDuration(activity),
     monotonicStartedAt: receivedAt,
+    timingAccuracy,
   };
 }

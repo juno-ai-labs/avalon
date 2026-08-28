@@ -14,7 +14,6 @@ import {
   asWorkspaceId,
   asWorkstreamId,
   asUserId,
-  type Message as AvalonMessage,
   type WorkspaceId,
   type WorkstreamWorkflowInput
 } from "@rally/contracts";
@@ -22,7 +21,7 @@ import { z } from "zod";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
-import { workspaceDOName } from "../durable-objects/names";
+import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventProcessQueueMessageSchema,
@@ -46,20 +45,18 @@ import {
 } from "../services/activity-routing-feedback";
 import {
   createActivitySuggestion,
-  publishSubstreamAgentEvent,
 } from "../services/activity-suggestion-service";
 import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
-  workstreamExecutionEnvironment,
 } from "../services/workstream-runtime-database";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
-import { startWorkstreamWorkflow } from "../services/integrations";
+import { activateWorkstreamLoop } from "../services/integrations";
 import {
   activityOriginLocator,
   attachWorkstreamOriginResource,
@@ -997,7 +994,7 @@ async function injectActivityMessage(
   // and those two statements moved the other, and only the router sending them
   // together made that one fact. It is one operation now, and the replay is
   // its answer rather than something to ask twice.
-  const appended = await messages.appendMessage({
+  await messages.appendMessage({
     messageId: uuidV7(),
     clientMessageId,
     authorType: "system",
@@ -1009,29 +1006,11 @@ async function injectActivityMessage(
     producedByRunId: null,
     now,
   });
-  // A redelivery is routed — the activity did reach this work stream — but it
-  // publishes nothing, because the row it names is already on every client.
-  if (appended.outcome === "replayed") return true;
-
-  const canonicalMessage: AvalonMessage = {
-    id: appended.messageId,
-    clientMessageId,
-    workspaceId: activity.workspace_id,
-    workstreamId,
-    author: { type: "system" },
-    messageType: "system",
-    textContent: text,
-    structuredContent,
-    mentions: [],
-    attachments: [],
-    sequenceNumber: appended.sequenceNumber,
-    createdAt: new Date(now).toISOString(),
-    editedAt: null
-  };
-  await publishSubstreamAgentEvent(env, activity.workspace_region, asWorkspaceId(activity.workspace_id), asWorkstreamId(workstreamId), {
-    type: "message_created",
-    message: canonicalMessage
-  });
+  // `appendMessage` crosses the object port, whose authority publishes the
+  // canonical `transcript_turn_upserted` after the transaction commits. A
+  // second publisher here used to emit the retired compatibility message and
+  // could race the canonical turn, putting the same activity on two ordering
+  // paths with different identities.
   return true;
 }
 
@@ -1260,7 +1239,6 @@ async function startActivityAutomation(
         model,
         triggerPartId: null,
         parentRunId: null,
-        supersedeActive: false,
         expectedLatestRunId: null,
         now: Date.parse(now),
       });
@@ -1296,11 +1274,7 @@ async function startActivityAutomation(
     });
     run = { id: runId, workstream_id: workstreamId, workflow_instance_id: null, status: "running" };
   } else {
-    const executionEnv = await workstreamExecutionEnvironment(
-      env,
-      activity.workspace_id,
-      run.workstream_id,
-    );
+    const executionEnv = env;
     const harness = await createHarnessRunObjectPort(
       executionEnv,
       activity.workspace_id,
@@ -1347,6 +1321,7 @@ async function startActivityAutomation(
     region: activity.workspace_region,
     workspaceId: activity.workspace_id,
     workstreamId: run.workstream_id,
+    loopId: substreamLoopId(asWorkstreamId(run.workstream_id)),
     harnessRunId,
     triggerMessageId: null,
     automationSubscriptionId: subscription.id,
@@ -1355,21 +1330,17 @@ async function startActivityAutomation(
     reason: `Connected activity matched ${subscription.template_name}`
   });
 
-  const workflowId = await startWorkstreamWorkflow(env, workflowInput);
+  const executionReceiptId = await activateWorkstreamLoop(env, workflowInput);
 
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    activity.workspace_id,
-    run.workstream_id,
-  );
+  const executionEnv = env;
   const reconcileWorkflowId = () => Promise.all([
     env.DB.prepare(
       `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
-    ).bind(workflowId, run.id, activity.workspace_id).run(),
+    ).bind(executionReceiptId, run.id, activity.workspace_id).run(),
     createHarnessRunObjectPort(executionEnv, activity.workspace_id, run.workstream_id)
       .bindWorkflowInstance({
         runId: harnessRunId,
-        workflowInstanceId: workflowId,
+        workflowInstanceId: executionReceiptId,
         now: Date.now(),
       }),
   ]);

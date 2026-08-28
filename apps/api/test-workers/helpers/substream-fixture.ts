@@ -4,22 +4,28 @@
  * Fixtures for driving a `SubstreamAgent` through its real entry points.
  *
  * The object's own tables are the seam these tests work against: an object with
- * no `workstream` row has no identity, and a dispatch cannot be admitted
+ * no `workstream` row has no identity, and an execution receipt cannot be admitted
  * without one. Seeding the root here — rather than in each test — keeps the
  * tests about behaviour instead of about column lists, and keeps one place to
  * fix when the schema moves.
  */
 
-import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import {
-  insertWorkstreamMessageRecord,
-  prepareWorkstreamMessageRecord,
-  WorkstreamTranscriptStorage,
-} from "../../src/durable-objects/workstream-transcript-storage";
+  WorkstreamWorkflowInputSchema,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type WorkstreamWorkflowInput,
+} from "@rally/contracts";
+import { substreamLoopId } from "../../src/durable-objects/names";
+import { SubstreamLoopStorage } from "../../src/durable-objects/substream-loop-storage";
+import { WorkstreamTranscriptStorage } from "../../src/durable-objects/workstream-transcript-storage";
+import { canonicalModelMessageJson } from "../../src/services/workstream-participant-model-message";
 
 export const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000004a1");
 export const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000004a2");
 export const USER_ID = asUserId("00000000-0000-7000-8000-0000000004a3");
+export const LOOP_ID = substreamLoopId(WORKSTREAM_ID);
 
 /** Declare the production authority state required by all run ingress. */
 export async function seedOpenWorkstreamAuthority(database: D1Database): Promise<void> {
@@ -42,13 +48,17 @@ export async function seedOpenWorkstreamAuthority(database: D1Database): Promise
   ]);
 }
 
-/** A dispatch payload that satisfies `WorkstreamWorkflowInputSchema`. */
-export function runInput(runId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
+/** Immutable context carried by one subordinate execution receipt. */
+export function runInput(
+  runId: string,
+  overrides: Record<string, unknown> = {},
+): WorkstreamWorkflowInput {
+  return WorkstreamWorkflowInputSchema.parse({
     region: "global",
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
     substreamId: "0",
+    loopId: LOOP_ID,
     harnessRunId: runId,
     triggerMessageId: null,
     automationSubscriptionId: null,
@@ -56,10 +66,10 @@ export function runInput(runId: string, overrides: Record<string, unknown> = {})
     executionPrincipal: { type: "user", userId: USER_ID },
     reason: "user_message",
     ...overrides,
-  };
+  });
 }
 
-/** Gives the object the identity and main substream a dispatch requires. */
+/** Gives the object the identity and main substream its singleton loop requires. */
 export function seedWorkstreamRoot(
   state: DurableObjectState,
   now = 1,
@@ -128,6 +138,9 @@ export async function seedParticipantMessage(
     turnId: input.id,
     actor: authorType === "agent" ? "assistant" : authorType,
     authorUserId: input.authorUserId ?? (authorType === "human" ? USER_ID : null),
+    authorSnapshot: authorType === "human"
+      ? { displayName: "Test user", avatarUrl: null }
+      : null,
     clientMessageId: input.clientMessageId ?? input.id,
     messageType: input.messageType ?? "text",
     text: input.text,
@@ -157,35 +170,42 @@ export async function seedCanonicalMessageRecord(
   },
 ): Promise<void> {
   const now = input.now ?? input.sequence;
-  const prepared = await prepareWorkstreamMessageRecord({
-    messageId: input.id,
-    clientMessageId: input.clientMessageId ?? input.id,
-    authorType: "agent",
+  const transcript = new WorkstreamTranscriptStorage(state.storage);
+  await transcript.appendParticipantMessage({
+    turnId: input.id,
+    actor: "assistant",
     authorUserId: null,
-    externalActorJson: null,
-    messageType: input.messageType,
+    authorSnapshot: null,
+    clientMessageId: input.clientMessageId ?? input.id,
+    messageType: input.messageType === "tool" || input.messageType === "suggestion"
+      ? "text"
+      : input.messageType,
     text: input.text ?? "",
     structuredContentJson: input.structuredContentJson ?? null,
     producedByRunId: null,
-    role: "assistant",
-    kind: input.messageType === "tool" ? "tool_call" : "text",
-    effectIntentId: input.effectIntentId ?? null,
-    toolName: input.toolName ?? null,
-    toolMode: input.messageType === "tool" ? "read" : null,
-    toolStatus: input.toolStatus ?? null,
-    visibility: "people",
-    sequenceNumber: input.sequence,
+    messageSequenceNumber: input.sequence,
+    createdAtUtc: new Date(now).toISOString(),
     attentionOrdinal: null,
-    now,
   });
-  state.storage.transactionSync(() => insertWorkstreamMessageRecord(state.storage.sql, prepared));
+  if (input.messageType === "tool") {
+    state.storage.sql.exec(
+      `UPDATE participant_transcript_blocks
+          SET block_kind = 'tool', tool_call_id = ?, tool_name = ?,
+              lifecycle_state = ?, revision = revision + 1
+        WHERE turn_id = ? AND block_index = 0`,
+      input.effectIntentId ?? input.id,
+      input.toolName ?? "Tool",
+      input.toolStatus === "pending" ? "started" : input.toolStatus ?? "completed",
+      input.id,
+    );
+  }
 }
 
-/** A run row in the state a dispatch expects to find it. */
+/** A subordinate run row before immutable execution context is attached. */
 export function seedRun(
   state: DurableObjectState,
   runId: string,
-  status: "admitted" | "running" | "waiting" | "steering" = "admitted",
+  status: "admitted" | "running" = "admitted",
   now = 1,
 ): void {
   state.storage.sql.exec(
@@ -205,24 +225,211 @@ export function seedRun(
   );
 }
 
-export interface DispatchSnapshot extends Record<string, SqlStorageValue> {
-  run_id: string;
-  state: string;
-  attempt: number;
-  available_at: number;
-  started_at: number | null;
-  completed_at: number | null;
-  last_error_code: string | null;
-  lease_token: string | null;
-  lease_expires_at: number | null;
+/** Seed a crash-recoverable execution receipt without activating its loop. */
+export function seedExecutionReceipt(
+  state: DurableObjectState,
+  runId: string,
+  input: WorkstreamWorkflowInput = runInput(runId),
+  now = 1,
+): void {
+  seedRun(state, runId, "admitted", now);
+  state.storage.sql.exec(
+    `UPDATE runs SET execution_context_json = ?, execution_available_at = ?, updated_at = ?
+      WHERE run_id = ?`,
+    JSON.stringify(input),
+    now,
+    now,
+    runId,
+  );
 }
 
-export function dispatches(state: DurableObjectState): DispatchSnapshot[] {
-  return state.storage.sql.exec<DispatchSnapshot>(
-    `SELECT run_id, state, attempt, available_at, started_at, completed_at,
-            last_error_code, lease_token, lease_expires_at
-       FROM agent_run_dispatches ORDER BY created_at, run_id`,
+export interface ExecutionReceiptSnapshot extends Record<string, SqlStorageValue> {
+  run_id: string;
+  status: string;
+  execution_context_json: string | null;
+  execution_available_at: number | null;
+  substream_loop_id: string | null;
+  loop_cycle_ordinal: number | null;
+  loop_execution_id: string | null;
+  loop_execution_epoch: number | null;
+  loop_execution_sequence: number | null;
+}
+
+export function executionReceipts(state: DurableObjectState): ExecutionReceiptSnapshot[] {
+  return state.storage.sql.exec<ExecutionReceiptSnapshot>(
+    `SELECT run_id, status, execution_context_json, execution_available_at,
+            substream_loop_id, loop_cycle_ordinal, loop_execution_id, loop_execution_epoch,
+            loop_execution_sequence
+       FROM runs WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
   ).toArray();
+}
+
+/** Ensure and return the one stable main-substream loop for a fixture root. */
+export function ensureFixtureLoop(state: DurableObjectState, now = 1) {
+  return new SubstreamLoopStorage(state.storage).ensureLoop({
+    loopId: LOOP_ID,
+    bindStateRevision: 0,
+    now,
+  });
+}
+
+export function activateFixtureReceipt(
+  state: DurableObjectState,
+  runId: string,
+  input: { leaseOwner: string; leaseExpiresAt: number; now: number },
+) {
+  const storage = new SubstreamLoopStorage(state.storage);
+  const loop = storage.loop() ?? ensureFixtureLoop(state, input.now);
+  return storage.activateExecutionReceipt({
+    runId,
+    loopId: LOOP_ID,
+    expectedLoopRevision: loop.revision,
+    expectedBindStateRevision: loop.bind_state_revision,
+    executionEpoch: 1,
+    leaseOwner: input.leaseOwner,
+    leaseExpiresAt: input.leaseExpiresAt,
+    now: input.now,
+  }).loop;
+}
+
+/** Admit one immutable human input without going through the HTTP product API. */
+export async function admitFixturePendingInput(
+  state: DurableObjectState,
+  input: {
+    inputId: string;
+    text: string;
+    mode?: "steer" | "queue";
+    clientMessageId?: string;
+    loopId?: string;
+    now?: number;
+  },
+) {
+  const now = input.now ?? Date.now();
+  const loops = new SubstreamLoopStorage(state.storage);
+  const loopId = input.loopId ?? LOOP_ID;
+  if (!loops.loop()) loops.ensureLoop({ loopId, bindStateRevision: 0, now });
+  const clientMessageId = input.clientMessageId ?? input.inputId;
+  loops.reserveInputPreparation({
+    inputId: input.inputId,
+    loopId,
+    clientMessageId,
+    preparationKind: "human_message",
+    envelopeJson: JSON.stringify({ input: { text: input.text } }),
+    now,
+  });
+  const prepared = await new WorkstreamTranscriptStorage(state.storage)
+    .prepareParticipantMessage({
+      turnId: input.inputId,
+      actor: "human",
+      authorUserId: USER_ID,
+      authorSnapshot: { displayName: "Test user", avatarUrl: null },
+      clientMessageId,
+      messageType: "text",
+      text: input.text,
+      structuredContentJson: null,
+      externalActorJson: null,
+      producedByRunId: null,
+      messageSequenceNumber: 1,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: null,
+    });
+  return loops.completeInputPreparation({
+    inputId: input.inputId,
+    preparedTurnId: input.inputId,
+    mode: input.mode ?? "steer",
+    actor: "human",
+    authorUserId: USER_ID,
+    authorNameSnapshot: "Test user",
+    authorAvatarUrlSnapshot: null,
+    clientMessageId,
+    externalActorJson: null,
+    messageType: "text",
+    preparedPayloadId: prepared.fact.payloadId,
+    preparedFactId: prepared.fact.factId,
+    preparedPayloadAudience: prepared.fact.audience,
+    preparedPayloadMediaType: "application/json",
+    preparedPayloadJson: prepared.fact.canonical,
+    bindPayloadJson: canonicalModelMessageJson({ role: "user", content: input.text }),
+    preparedPayloadSha256: prepared.fact.hash,
+    preparedPayloadByteLength: new TextEncoder().encode(prepared.fact.canonical).byteLength,
+    provenanceJson: JSON.stringify({
+      factKind: prepared.fact.factKind,
+      originKind: prepared.fact.origin.originKind,
+      sourceKind: prepared.fact.origin.sourceKind,
+      sourceId: prepared.fact.origin.sourceId,
+      sourceRevision: prepared.fact.origin.sourceRevision,
+      runId: prepared.fact.runId,
+      toolCallId: prepared.fact.toolCallId,
+    }),
+    authorizationJson: JSON.stringify({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      executionPrincipal: { type: "user", userId: USER_ID },
+      confirmedParticipantUserIds: [],
+      // The product writes one epoch per authorized participant (author plus
+      // confirmed), read from the participants table; hydration refuses an
+      // authorization whose epoch keys do not cover exactly that set. Mirror
+      // the real shape — a seat may not exist yet in a bare fixture, which is
+      // the same null the product records for an unseated user.
+      participantEpochs: {
+        [USER_ID]: state.storage.sql.exec<{ participant_epoch: number }>(
+          `SELECT participant_epoch FROM participants WHERE user_id = ?`,
+          USER_ID,
+        ).toArray()[0]?.participant_epoch ?? null,
+      },
+      reason: "human_message",
+    }),
+    attachmentsJson: "[]",
+    mentionsJson: "[]",
+    now,
+  });
+}
+
+/**
+ * Pin the persistent loop in `executing` under a live lease held by nobody in
+ * this test, so queued inputs stay pending instead of being claimed the moment
+ * a background alarm drains the object. This is the durable shape of "a step
+ * is in flight while the queue grows" — the one state in which a large
+ * pending-only queue can actually be observed. Raw SQL because the only
+ * product path into `executing` claims a real execution receipt, which is the
+ * machinery these tests are deliberately not running.
+ */
+export function holdLoopExecuting(
+  state: DurableObjectState,
+  input: { loopId?: string; now?: number } = {},
+): void {
+  const now = input.now ?? Date.now();
+  const loops = new SubstreamLoopStorage(state.storage);
+  const loopId = input.loopId ?? LOOP_ID;
+  if (!loops.loop()) loops.ensureLoop({ loopId, bindStateRevision: 0, now });
+  const held = state.storage.sql.exec<{ loop_id: string }>(
+    `UPDATE substream_loops
+        SET status = 'executing', active_execution_id = 'held-execution',
+            active_execution_epoch = 1, lease_owner = 'test-holder',
+            lease_expires_at = ?, cycle_ordinal = cycle_ordinal + 1,
+            revision = revision + 1, updated_at = MAX(updated_at, ?)
+      WHERE id = 1 AND loop_id = ? AND status = 'idle'
+      RETURNING loop_id`,
+    now + 60_000,
+    now,
+    loopId,
+  ).toArray();
+  if (held.length !== 1) throw new Error("loop_hold_failed");
+}
+
+/** Release a `holdLoopExecuting` hold so the loop can activate normally. */
+export function releaseHeldLoop(state: DurableObjectState): void {
+  const released = state.storage.sql.exec<{ loop_id: string }>(
+    `UPDATE substream_loops
+        SET status = 'idle', active_execution_id = NULL,
+            active_execution_epoch = NULL, lease_owner = NULL,
+            lease_expires_at = NULL, revision = revision + 1,
+            updated_at = MAX(updated_at, ?)
+      WHERE id = 1 AND status = 'executing' AND lease_owner = 'test-holder'
+      RETURNING loop_id`,
+    Date.now(),
+  ).toArray();
+  if (released.length !== 1) throw new Error("loop_release_failed");
 }
 
 export function runStatus(state: DurableObjectState, runId: string): string | null {

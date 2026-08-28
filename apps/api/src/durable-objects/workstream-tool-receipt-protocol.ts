@@ -28,11 +28,13 @@ const DISPATCHED_OPERATIONS = [
   "fail",
   "settleResidualReceipts",
   "receiptForCall",
+  "receiptsForRun",
   "receiptsByIds",
   "attachmentDependencies",
   "recordAttachmentDependencies",
   "clearAttachmentDependencies",
   "discardReceipt",
+  "seedDevelopmentReceipt",
 ] as const satisfies readonly ToolReceiptOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */

@@ -181,7 +181,7 @@ export const backgroundTaskSchema = z
     durationMs: z.number().optional(),
     tokenCount: z.number().optional(),
     toolUses: z.number().optional(),
-    transcriptMessageId: z.string().optional(),
+    transcriptTurnId: z.string().optional(),
   })
   .passthrough();
 

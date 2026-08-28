@@ -5,7 +5,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __integrationTesting } from "../src/services/integrations";
 import { withLocalWorkstreamAuthorities } from "../src/runtime/local-authorities";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import {
   TERMINAL_PLUGIN_ACTIVATION_BUDGET_MS,
 } from "../src/services/terminal/contract";
@@ -19,6 +18,8 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
+  seedCanonicalConversationTurn,
   testSubstreamAgentsBinding,
   testTerminalOperationExecutor,
   testWorkstreamObjectStore,
@@ -64,13 +65,8 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
   const objectStores = new Map<string, DatabaseSync>([[S, objectStore]]);
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
-    R, W, S, JSON.stringify({ type: "user", userId: U }),
-  );
+  seedWorkstreamRun(objectStore, { id: R,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
@@ -81,7 +77,8 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
     TERMINAL_EMERGENCY_DISABLED: emergencyDisabled ? "true" : "false",
   });
   const input: WorkstreamWorkflowInput = {
-    region: "global", workspaceId: W, workstreamId: S, harnessRunId: R,
+    region: "global", workspaceId: W, workstreamId: S,
+    loopId: `workstream:${S}:substream:0:loop`, harnessRunId: R,
     triggerMessageId: null, automationSubscriptionId: null, activityId: null,
     executionPrincipal: { type: "user", userId: U }, reason: "user_message",
   };
@@ -159,7 +156,7 @@ function readGateway(baseSha = BASE): TerminalGitHubReadGateway {
 describe("Terminal Bind integration", () => {
   it("registers the complete deferred plugin without allocating a sandbox", async () => {
     const { objectStore, env, input } = fixture("supported");
-    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
+    const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
 
     expect(plugin).toMatchObject({ preload: false, explicit: false, shortWireName: "terminal" });
@@ -360,17 +357,16 @@ describe("Terminal Bind integration", () => {
       participationReason: "creator",
       addedAt: Date.parse("2026-08-13T00:00:00.000Z"),
     });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO messages
-         (id, workspace_id, workstream_id, author_type, author_user_id, message_type,
-          text_content, sequence_number, created_at)
-       VALUES (?, ?, ?, 'human', ?, 'text', 'Use Terminal twice', 1, '2026-08-13')`,
-      messageId,
-      W,
-      S,
-      U,
-    );
+    seedCanonicalConversationTurn(objectStore, {
+      turnId: messageId,
+      clientMessageId: messageId,
+      actor: "human",
+      authorUserId: U,
+      authorSnapshot: { displayName: "Terminal user", avatarUrl: null },
+      text: "Use Terminal twice",
+      transcriptSequence: 1,
+      createdAt: "2026-08-13",
+    });
     workstreamObjectRun(
       objectStore,
       `INSERT INTO terminal_repository
@@ -386,7 +382,7 @@ describe("Terminal Bind integration", () => {
     );
     workstreamObjectRun(
       objectStore,
-      "UPDATE harness_runs SET trigger_message_id = ? WHERE id = ?",
+      "UPDATE runs SET trigger_part_id = ? WHERE run_id = ?",
       messageId,
       R,
     );
@@ -399,7 +395,7 @@ describe("Terminal Bind integration", () => {
 
     await __integrationTesting.loadHarnessTools(
       withLocalWorkstreamAuthorities(
-        withWorkstreamRuntimeDatabase(env, W, S),
+        env,
         W,
         S,
         { terminal: resident },
@@ -419,7 +415,7 @@ describe("Terminal Bind integration", () => {
 
   it("omits Terminal in unsupported regions", async () => {
     const { env, input } = fixture("unsupported");
-    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
+    const tools = await __integrationTesting.loadHarnessTools(env, input);
     expect(tools.plugins.some((plugin) => plugin.canonicalId === "rally:terminal")).toBe(false);
   });
 
@@ -427,13 +423,13 @@ describe("Terminal Bind integration", () => {
     const { env, input } = fixture("supported");
     delete env.DAYTONA_API_KEY;
     delete env.DAYTONA_TARGET;
-    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
+    const tools = await __integrationTesting.loadHarnessTools(env, input);
     expect(tools.plugins.some((plugin) => plugin.canonicalId === "rally:terminal")).toBe(false);
   });
 
   it("keeps the complete plugin visible while the emergency breaker blocks provider operations", async () => {
     const { env, input } = fixture("supported", true);
-    const tools = await __integrationTesting.loadHarnessTools(withWorkstreamRuntimeDatabase(env, W, S), input);
+    const tools = await __integrationTesting.loadHarnessTools(env, input);
     const plugin = tools.plugins.find((candidate) => candidate.canonicalId === "rally:terminal");
     expect(plugin?.tools).toHaveLength(9);
     await expect(plugin!.onActivate!({

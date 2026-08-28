@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
+import {
+  canonicalModelMessageJson,
+  projectParticipantModelMessage,
+} from "../src/services/workstream-participant-model-message";
 import type { MessageObjectPort } from "../src/durable-objects/workstream-message-protocol";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import type { DatabaseSync } from "node:sqlite";
@@ -226,6 +230,13 @@ function transcriptPort(
 }
 
 describe("durable UI-to-model transcript projection", () => {
+  it("canonicalizes persisted model-message keys by UTF-16 code unit", () => {
+    expect(canonicalModelMessageJson({
+      role: "user",
+      content: { "é": 3, a: 2, "😀": 4, Z: 1 },
+    } as never)).toBe('{"content":{"Z":1,"a":2,"é":3,"😀":4},"role":"user"}');
+  });
+
   it("reconstructs sanitized failed-tool recovery data after a resume", async () => {
     const invocationId = "00000000-0000-4000-8000-000000000050";
     const call = `${PRIOR_RUN_ID}:turn:1:tool:0`;
@@ -501,6 +512,72 @@ describe("durable UI-to-model transcript projection", () => {
       },
     });
     expect(persisted?.content).toContain('"customResponse":"Also check the cap table"');
+  });
+
+  it("uses one provider projection for live external, mention, attachment, and elicitation inputs", async () => {
+    const external = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES">, {
+      author: {
+        type: "external",
+        actor: { provider: "slack", displayName: "Taylor", providerUserId: "U456" },
+      },
+      messageType: "text",
+      text: "Investigate this",
+      structuredContent: null,
+      mentions: [],
+      attachments: [],
+      includeAttachmentContents: false,
+    });
+    expect(external?.content).toContain("EXTERNALLY ATTRIBUTED SLACK WORKSPACE MEMBER REQUEST");
+    expect(external?.content).toContain("Provider member ID: U456");
+
+    const human = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES">, {
+      author: { type: "human" },
+      messageType: "text",
+      text: "Review this with @Ada",
+      structuredContent: null,
+      mentions: [{ type: "person", userId: USER_ID, displayName: "Ada" }],
+      attachments: [{
+        id: "resource-1",
+        fileName: "evidence.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 42,
+        contentRef: null,
+      }],
+      includeAttachmentContents: false,
+    });
+    expect(human?.content).toEqual([
+      expect.objectContaining({ type: "text", text: expect.stringContaining("<rally_mentions>") }),
+      expect.objectContaining({ type: "text", text: expect.stringContaining("evidence.pdf") }),
+    ]);
+
+    const elicitation = await projectParticipantModelMessage({} as Pick<Env, "PAYLOADS" | "DB" | "IMAGES">, {
+      author: { type: "human" },
+      messageType: "elicitation",
+      text: "",
+      structuredContent: {
+        kind: "elicitation_response",
+        elicitation: {
+          id: "00000000-0000-4000-8000-000000000031",
+          workstreamId: WORKSTREAM_ID,
+          harnessRunId: PRIOR_RUN_ID,
+          prompt: "Which environment?",
+          responseType: "single_select",
+          options: [{ value: "staging", label: "Staging", description: null }],
+          minimumSelections: 1,
+          maximumSelections: 1,
+          targetUserId: null,
+          status: "answered",
+          answer: "staging",
+          answeredByUserId: USER_ID,
+          createdAt: "2026-08-01T00:00:00.000Z",
+          answeredAt: "2026-08-01T00:01:00.000Z",
+        },
+      },
+      mentions: [],
+      attachments: [],
+      includeAttachmentContents: false,
+    });
+    expect(elicitation?.content).toContain('"label":"Staging"');
   });
 
   it("keeps the durable elicitation response in chronological model history", async () => {
@@ -894,6 +971,7 @@ describe("durable UI-to-model transcript projection", () => {
       },
       workspaceId: WORKSPACE_ID,
       workstreamId: WORKSTREAM_ID,
+      loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
       harnessRunId: "00000000-0000-4000-8000-000000000020",
       executionPrincipal: { type: "user", userId: USER_ID },
       systemPrompt: "Continue from durable, matched protocol history.",

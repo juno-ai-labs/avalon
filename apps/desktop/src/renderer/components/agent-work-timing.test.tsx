@@ -66,4 +66,17 @@ describe('AgentWorkTiming', () => {
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-paused', 'true');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '0');
   });
+
+  it('qualifies a recovered terminal duration as an upper bound', () => {
+    render(
+      <AgentWorkTiming
+        active={false}
+        durationMs={83_000}
+        timingAccuracy="upper_bound"
+      />,
+    );
+
+    expect(screen.getByText('worked for at most 1m 23s')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAccessibleName('worked for at most 1m 23s');
+  });
 });

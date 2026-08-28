@@ -236,6 +236,7 @@ export class ResourceService {
        WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
          AND uploaded_by_user_id = ? AND attachment_status = 'draft'
          AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links WHERE resource_id = resources.id)
+         AND NOT EXISTS (SELECT 1 FROM pending_attachment_reservations WHERE resource_id = resources.id)
        RETURNING content_ref, model_content_ref`,
     ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
       content_ref: string | null;

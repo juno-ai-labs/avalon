@@ -93,7 +93,7 @@ describe("starting a work opportunity", () => {
     // as already claimed, so the user loses work that did happen.
     const started = {
       workstream: WorkstreamSchema.parse(workstream()),
-      messageId: "00000000-0000-7000-8000-000000000004",
+      turnId: "00000000-0000-7000-8000-000000000004",
       harnessRunId: null,
     };
 

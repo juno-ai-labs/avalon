@@ -21,12 +21,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
@@ -77,19 +77,10 @@ function seededDatabase(): DatabaseSync {
     scope: "personal",
   });
   objectStores = new Map([[WORKSTREAM as string, objectStore]]);
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at,
-        attempt_id, lease_owner, lease_expires_at)
-     VALUES (?, ?, ?, 'user_message', ?, 'running', '2026-08-27', ?, ?, '2099-01-01T00:00:00.000Z')`,
-    RUN,
-    WORKSPACE,
-    WORKSTREAM,
-    JSON.stringify({ type: "user", userId: OWNER }),
-    ATTEMPT,
-    LEASE_OWNER,
-  );
+  seedWorkstreamRun(objectStore, { id: RUN, origin: "user_message",
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: OWNER }),
+    attemptId: ATTEMPT, leaseOwner: LEASE_OWNER,
+    leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z") });
   // Retrieval would otherwise decide whether the context loads at all; this
   // test is about which section reaches the model.
   workstreamObjectRun(
@@ -122,13 +113,14 @@ function envFor(
     DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
     TERMINAL_EMERGENCY_DISABLED: "false",
   });
-  return withWorkstreamRuntimeDatabase(base, WORKSPACE, WORKSTREAM);
+  return base;
 }
 
 const workflowInput: WorkstreamWorkflowInput = {
   region: "global",
   workspaceId: WORKSPACE,
   workstreamId: WORKSTREAM,
+  loopId: `workstream:${WORKSTREAM}:substream:0:loop`,
   harnessRunId: RUN,
   triggerMessageId: null,
   automationSubscriptionId: null,
@@ -200,8 +192,7 @@ describe("which runs are told to write documents", () => {
 
   it("says nothing while an operator has Terminal emergency-disabled", async () => {
     const database = seededDatabase();
-    const env = withWorkstreamRuntimeDatabase(
-      createTestEnv({
+    const env = createTestEnv({
         DB: sqliteD1(database),
         SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
         AVALON_REGION: "global",
@@ -213,10 +204,7 @@ describe("which runs are told to write documents", () => {
         DAYTONA_TARGET: "us",
         DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
         TERMINAL_EMERGENCY_DISABLED: "true",
-      }),
-      WORKSPACE,
-      WORKSTREAM,
-    );
+      });
 
     const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
 

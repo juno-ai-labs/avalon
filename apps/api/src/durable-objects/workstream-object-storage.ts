@@ -23,6 +23,13 @@ import {
   type WorkstreamRegionalEffect,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
+import {
+  acknowledgeSemanticRealtimeReference,
+  deferSemanticRealtimeReference,
+  dueSemanticRealtimeReferences,
+  nextSemanticRealtimeDueAt,
+  type SequencedSemanticRealtimeReference,
+} from "./workstream-semantic-realtime-outbox";
 
 const BLOCK_DASHBOARD_JOB_KEY = "block_dashboard_refresh";
 const ACTIVE_OUTPUT_CHUNK_MAX_BYTES = 60 * 1024;
@@ -50,7 +57,8 @@ interface ActiveOutputRow extends Record<string, SqlStorageValue> {
   run_id: string;
   attempt_epoch: number;
   turn_id: string;
-  message_id: string;
+  transcript_sequence: number;
+  stream_id: string;
   seen_turn_ids_json: string;
   turn_start_offset: number;
   durable_event_seq: number;
@@ -175,7 +183,7 @@ export function applyActiveStreamCheckpointEvent(
   event: ServerSocketEvent,
 ): ActiveStreamCheckpoint[] {
   if (event.type === "stream_completed") {
-    return checkpoints.filter((checkpoint) => checkpoint.messageId !== event.message.id);
+    return checkpoints.filter((checkpoint) => checkpoint.streamId !== event.streamId);
   }
   if (
     event.type === "harness_status_changed"
@@ -192,11 +200,14 @@ export function applyActiveStreamCheckpointEvent(
   const activeCheckpoints = event.type === "stream_started"
     ? checkpoints.filter((checkpoint) => checkpoint.harnessRunId === event.harnessRunId)
     : checkpoints;
-  const existing = activeCheckpoints.find((checkpoint) => checkpoint.messageId === event.messageId);
+  const existing = activeCheckpoints.find((checkpoint) => checkpoint.streamId === event.streamId);
   if (event.type === "stream_delta" && !existing) return checkpoints;
   if (existing) {
     if (event.sequence <= existing.roomSequence) return checkpoints;
     if (event.turnId === existing.turnId) {
+      if (event.transcriptSequence !== existing.transcriptSequence) {
+        throw new Error("active_stream_transcript_reservation_mismatch");
+      }
       if (event.epoch < existing.epoch) return checkpoints;
       if (event.epoch === existing.epoch && event.streamSeq <= existing.streamSeq) {
         return checkpoints;
@@ -223,9 +234,10 @@ export function applyActiveStreamCheckpointEvent(
     : existing?.harnessRunId;
   if (!harnessRunId) return checkpoints;
   return [{
-    messageId: event.messageId,
+    streamId: event.streamId,
     harnessRunId,
     turnId: event.turnId,
+    transcriptSequence: event.transcriptSequence,
     epoch: event.epoch,
     streamSeq: event.streamSeq,
     seenTurnIds,
@@ -247,7 +259,7 @@ function parseSeenTurnIds(value: string): string[] {
 
 function readActiveStreamCheckpoints(storage: DurableObjectStorage): ActiveStreamCheckpoint[] {
   const rows = storage.sql.exec<ActiveOutputRow>(
-    `SELECT run_id, attempt_epoch, turn_id, message_id, seen_turn_ids_json,
+    `SELECT run_id, attempt_epoch, turn_id, transcript_sequence, stream_id, seen_turn_ids_json,
             turn_start_offset, durable_event_seq, durable_through_frame_seq, started_at
        FROM active_output_turns
       ORDER BY started_at, run_id`,
@@ -262,9 +274,10 @@ function readActiveStreamCheckpoints(storage: DurableObjectStorage): ActiveStrea
       row.attempt_epoch,
     ).toArray().map((chunk) => chunk.text).join("");
     return {
-      messageId: row.message_id,
+      streamId: row.stream_id,
       harnessRunId: row.run_id,
       turnId: row.turn_id,
+      transcriptSequence: row.transcript_sequence,
       epoch: row.attempt_epoch,
       streamSeq: row.durable_through_frame_seq,
       seenTurnIds: parseSeenTurnIds(row.seen_turn_ids_json),
@@ -345,19 +358,9 @@ function applyActiveCompactionEvent(
   }
 }
 
-function runTerminalState(event: ServerSocketEvent): "cancelled" | "completed" | "failed" | "needs_input" | null {
-  if (event.type !== "harness_status_changed") return null;
-  if (event.status === "failed") return "failed";
-  if (event.status === "needs_input") return "needs_input";
-  if (event.status === "stopped") return "cancelled";
-  if (event.status === "completed" || event.status === "idle") return "completed";
-  return null;
-}
-
 function writeActiveStreamCheckpoints(
   storage: DurableObjectStorage,
   checkpoints: ActiveStreamCheckpoint[],
-  event: ServerSocketEvent | null,
 ): void {
   const sql = storage.sql;
   const desiredRunIds = new Set(checkpoints.map((checkpoint) => checkpoint.harnessRunId));
@@ -365,78 +368,38 @@ function writeActiveStreamCheckpoints(
     `SELECT run_id FROM active_output_turns`,
   ).toArray().map((row) => row.run_id);
   const now = Date.now();
-  const terminal = event ? runTerminalState(event) : null;
   for (const runId of activeRunIds) {
     if (desiredRunIds.has(runId)) continue;
     sql.exec(`DELETE FROM active_output_turns WHERE run_id = ?`, runId);
-    if (event?.type === "stream_completed" || terminal) continue;
-    sql.exec(
-      `UPDATE runs
-          SET status = ?, terminal_reason = ?, revision = revision + 1, updated_at = ?
-        WHERE run_id = ? AND status IN ('admitted', 'running', 'waiting', 'steering')`,
-      "cancelled",
-      "superseded_active_output",
-      now,
-      runId,
-    );
-  }
-  if (terminal) {
-    // `stream_completed` closes one model response, not necessarily the whole
-    // loop, and therefore removes the active turn before the later harness
-    // terminal event arrives. That terminal event carries no run id. Admission
-    // permits one root run per room, so settle every still-open local run rather
-    // than requiring an active-output row to survive until loop completion.
-    sql.exec(
-      `UPDATE runs
-          SET status = ?, terminal_reason = ?, revision = revision + 1, updated_at = ?
-        WHERE status IN ('admitted', 'running', 'waiting', 'steering')`,
-      terminal,
-      terminal,
-      now,
-    );
   }
 
   for (const checkpoint of checkpoints) {
+    const owner = first(sql.exec<{ active_execution_id: string | null }>(
+      `SELECT active_execution_id
+         FROM substream_loops
+        WHERE id = 1 AND status = 'executing'`,
+    ));
+    if (owner?.active_execution_id !== checkpoint.harnessRunId) {
+      throw new Error("active_stream_execution_fence_mismatch");
+    }
     const startedAt = Date.parse(checkpoint.createdAt);
     const effectiveStartedAt = Number.isFinite(startedAt) ? startedAt : now;
-    sql.exec(
-      `INSERT INTO runs
-         (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
-          model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
-          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
-          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-          terminal_reason, created_at, updated_at)
-       VALUES (?, '0', NULL, 'running', '{}', ?, 0, '', 0, 0, ?,
-               0, 0, 0, 0, 0, 0, 0, 0, 0, ?, NULL, ?, ?)
-       ON CONFLICT(run_id) DO UPDATE SET
-         status = 'running',
-         attempt_epoch = excluded.attempt_epoch,
-         output_bytes = excluded.output_bytes,
-         terminal_reason = NULL,
-         revision = runs.revision + 1,
-         updated_at = excluded.updated_at`,
-      checkpoint.harnessRunId,
-      checkpoint.epoch,
-      effectiveStartedAt,
-      new TextEncoder().encode(checkpoint.text).byteLength,
-      effectiveStartedAt,
-      now,
-    );
     sql.exec(`DELETE FROM active_output_turns WHERE run_id = ?`, checkpoint.harnessRunId);
     const chunks = splitActiveStreamCheckpointText(checkpoint.text);
     sql.exec(
       `INSERT INTO active_output_turns
-         (run_id, attempt_epoch, turn_id, substream_id, status, durable_event_seq,
-          durable_through_frame_seq, next_chunk_index, message_id, seen_turn_ids_json,
+         (run_id, attempt_epoch, turn_id, transcript_sequence, substream_id, status, durable_event_seq,
+          durable_through_frame_seq, next_chunk_index, stream_id, seen_turn_ids_json,
           turn_start_offset, started_at, checkpointed_at, updated_at)
-       VALUES (?, ?, ?, '0', 'streaming', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, '0', 'streaming', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       checkpoint.harnessRunId,
       checkpoint.epoch,
       checkpoint.turnId,
+      checkpoint.transcriptSequence,
       checkpoint.roomSequence,
       checkpoint.streamSeq,
       chunks.length,
-      checkpoint.messageId,
+      checkpoint.streamId,
       JSON.stringify(checkpoint.seenTurnIds),
       checkpoint.turnStartOffset,
       effectiveStartedAt,
@@ -557,7 +520,7 @@ export class WorkstreamObjectStore {
    * Whether this object may still be written through as the work stream's
    * authority.
    *
-   * The fence `executeWorkstreamRuntimeSql` put in front of every routed
+   * The fence the retired generic SQL endpoint put in front of every routed
    * statement, which the typed object ports have to keep now that they are the
    * path. It was written in two places rather than one, and both count: that
    * function refuses a `preparing` or `quarantined` object outright, and it
@@ -657,7 +620,7 @@ export class WorkstreamObjectStore {
       if (eventCanChangeActiveStreamCheckpoint(event)) {
         const checkpoints = readActiveStreamCheckpoints(this.storage);
         const next = applyActiveStreamCheckpointEvent(checkpoints, event);
-        if (next !== checkpoints) writeActiveStreamCheckpoints(this.storage, next, event);
+        if (next !== checkpoints) writeActiveStreamCheckpoints(this.storage, next);
       }
       applyActiveCompactionEvent(this.storage, event);
       return event;
@@ -759,6 +722,133 @@ export class WorkstreamObjectStore {
   }
 
   /**
+   * Enqueue regional effects inside a caller-owned SQLite transaction.
+   *
+   * This is intentionally synchronous: transcript promotion uses it before
+   * its canonical turn and pending-input state can commit. The caller remains
+   * responsible for arming the object alarm after the outer transaction; the
+   * outbox row is the durable authority and activation recovery also sees it.
+   */
+  enqueueEffectsInCurrentTransaction(commands: readonly RegionalEffectCommand[]): number {
+    const authority = first(this.storage.sql.exec<AuthorityRow>(
+      `SELECT workstream_key, parent_workspace_key, region, authority_mode, authority_generation
+         FROM workstream WHERE id = 1`,
+    ));
+    if (!authority || authority.authority_mode !== "authoritative"
+      || authority.authority_generation <= 0) {
+      throw new Error("workstream_regional_effect_authority_fenced");
+    }
+    const messageIds = commands.map(() => uuidV7());
+    let enqueued = 0;
+    for (const [index, command] of commands.entries()) {
+      const effect = WorkstreamRegionalEffectSchema.parse(command.effect);
+      const projectionKey = effect.kind === "directory_common"
+        ? "common"
+        : effect.kind === "directory_user"
+          ? `user:${effect.userId}`
+          : null;
+      let sourceVersion: number;
+      let messageId: string;
+      let requiredProjectionVersion: number | null = null;
+      let payloadHash = workstreamRegionalEffectHash(effect);
+
+      if (projectionKey) {
+        const previous = first(this.storage.sql.exec<ProjectionKeyRow>(
+          `SELECT next_version, last_payload_hash, last_enqueued_message_id
+             FROM projection_keys WHERE projection_key = ?`,
+          projectionKey,
+        ));
+        if (previous?.last_payload_hash === payloadHash) continue;
+        sourceVersion = previous?.next_version ?? 1;
+        messageId = messageIds[index]!;
+        this.storage.sql.exec(
+          `INSERT INTO projection_keys
+             (projection_key, next_version, last_payload_hash,
+              last_enqueued_message_id, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(projection_key) DO UPDATE SET
+             next_version = excluded.next_version,
+             last_payload_hash = excluded.last_payload_hash,
+             last_enqueued_message_id = excluded.last_enqueued_message_id,
+             updated_at = excluded.updated_at`,
+          projectionKey,
+          sourceVersion + 1,
+          payloadHash,
+          messageId,
+          Date.now(),
+        );
+      } else {
+        sourceVersion = z.number().int().positive().parse(command.sourceVersion);
+        const dedupeKey = z.string().min(1).max(450).parse(command.dedupeKey);
+        messageId = `effect:${dedupeKey}`;
+        if (isPersonNotificationEffect(effect)) {
+          const requiredKey = `user:${effect.recipientUserId}`;
+          if (command.dependsOnProjectionKey !== requiredKey) {
+            throw new Error("workstream_notification_projection_dependency_missing");
+          }
+          const dependency = first(this.storage.sql.exec<ProjectionKeyRow>(
+            `SELECT next_version, last_payload_hash, last_enqueued_message_id
+               FROM projection_keys WHERE projection_key = ?`,
+            requiredKey,
+          ));
+          requiredProjectionVersion = (dependency?.next_version ?? 1) - 1;
+          if (requiredProjectionVersion <= 0) {
+            throw new Error("workstream_notification_projection_dependency_uncommitted");
+          }
+          payloadHash = workstreamRegionalEffectHash(effect, requiredProjectionVersion);
+        } else if (command.dependsOnProjectionKey !== undefined) {
+          throw new Error("workstream_regional_effect_dependency_not_supported");
+        }
+      }
+
+      const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse({
+        kind: "workstream_regional_effect",
+        contractVersion: 1,
+        region: authority.region,
+        workspaceId: authority.parent_workspace_key,
+        workstreamId: authority.workstream_key,
+        generation: authority.authority_generation,
+        messageId,
+        partitionKey: projectionKey ?? command.partitionKey,
+        sourceVersion,
+        requiredProjectionVersion,
+        payloadHash,
+        effect,
+      });
+      const inserted = this.storage.sql.exec<{ message_id: string }>(
+        `INSERT OR IGNORE INTO durable_outbox
+           (message_id, channel, destination_kind, destination_id, partition_key,
+            source_version, source_epoch, contract_version, payload_json, payload_ref,
+            payload_hash, state, attempts, not_before, created_at, acked_at)
+         VALUES (?, ?, 'queue', ?, ?, ?, ?, 1, ?, NULL, ?, 'pending', 0, ?, ?, NULL)
+         RETURNING message_id`,
+        messageId,
+        REGIONAL_EFFECT_CHANNEL,
+        authority.region,
+        envelope.partitionKey,
+        envelope.sourceVersion,
+        envelope.generation,
+        JSON.stringify(envelope),
+        payloadHash,
+        Date.now(),
+        Date.now(),
+      );
+      if (inserted.toArray().length === 0) {
+        const existing = first(this.storage.sql.exec<{ payload_hash: string }>(
+          `SELECT payload_hash FROM durable_outbox WHERE message_id = ?`,
+          messageId,
+        ));
+        if (existing?.payload_hash !== payloadHash) {
+          throw new Error("workstream_regional_effect_idempotency_conflict");
+        }
+        continue;
+      }
+      enqueued += 1;
+    }
+    return enqueued;
+  }
+
+  /**
    * Commit projection/notification intents in the same SQLite transaction as
    * the product mutation that created them. Future authoritative write paths
    * pass their local SQL work through `mutate`; publishing never sits on the
@@ -770,127 +860,11 @@ export class WorkstreamObjectStore {
       | ((sql: SqlStorage, result: T) => readonly RegionalEffectCommand[]),
   ): Promise<{ result: T; enqueued: number }> {
     const committed = this.storage.transactionSync(() => {
-      const authority = first(this.storage.sql.exec<AuthorityRow>(
-        `SELECT workstream_key, parent_workspace_key, region, authority_mode, authority_generation
-           FROM workstream WHERE id = 1`,
-      ));
-      if (
-        !authority
-        || authority.authority_mode !== "authoritative"
-        || authority.authority_generation <= 0
-      ) throw new Error("workstream_regional_effect_authority_fenced");
-
       const result = mutate(this.storage.sql);
       const commands = typeof effects === "function"
         ? effects(this.storage.sql, result)
         : effects;
-      const messageIds = commands.map(() => uuidV7());
-      let enqueued = 0;
-      for (const [index, command] of commands.entries()) {
-        const effect = WorkstreamRegionalEffectSchema.parse(command.effect);
-        const projectionKey = effect.kind === "directory_common"
-          ? "common"
-          : effect.kind === "directory_user"
-            ? `user:${effect.userId}`
-            : null;
-        let sourceVersion: number;
-        let messageId: string;
-        let requiredProjectionVersion: number | null = null;
-        let payloadHash = workstreamRegionalEffectHash(effect);
-
-        if (projectionKey) {
-          const previous = first(this.storage.sql.exec<ProjectionKeyRow>(
-            `SELECT next_version, last_payload_hash, last_enqueued_message_id
-               FROM projection_keys WHERE projection_key = ?`,
-            projectionKey,
-          ));
-          if (previous?.last_payload_hash === payloadHash) continue;
-          sourceVersion = previous?.next_version ?? 1;
-          messageId = messageIds[index]!;
-          this.storage.sql.exec(
-            `INSERT INTO projection_keys
-               (projection_key, next_version, last_payload_hash,
-                last_enqueued_message_id, updated_at)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(projection_key) DO UPDATE SET
-               next_version = excluded.next_version,
-               last_payload_hash = excluded.last_payload_hash,
-               last_enqueued_message_id = excluded.last_enqueued_message_id,
-               updated_at = excluded.updated_at`,
-            projectionKey,
-            sourceVersion + 1,
-            payloadHash,
-            messageId,
-            Date.now(),
-          );
-        } else {
-          sourceVersion = z.number().int().positive().parse(command.sourceVersion);
-          const dedupeKey = z.string().min(1).max(450).parse(command.dedupeKey);
-          messageId = `effect:${dedupeKey}`;
-          if (isPersonNotificationEffect(effect)) {
-            const requiredKey = `user:${effect.recipientUserId}`;
-            if (command.dependsOnProjectionKey !== requiredKey) {
-              throw new Error("workstream_notification_projection_dependency_missing");
-            }
-            const dependency = first(this.storage.sql.exec<ProjectionKeyRow>(
-              `SELECT next_version, last_payload_hash, last_enqueued_message_id
-                 FROM projection_keys WHERE projection_key = ?`,
-              requiredKey,
-            ));
-            requiredProjectionVersion = (dependency?.next_version ?? 1) - 1;
-            if (requiredProjectionVersion <= 0) {
-              throw new Error("workstream_notification_projection_dependency_uncommitted");
-            }
-            payloadHash = workstreamRegionalEffectHash(effect, requiredProjectionVersion);
-          } else if (command.dependsOnProjectionKey !== undefined) {
-            throw new Error("workstream_regional_effect_dependency_not_supported");
-          }
-        }
-
-        const envelope = WorkstreamRegionalEffectEnvelopeSchema.parse({
-          kind: "workstream_regional_effect",
-          contractVersion: 1,
-          region: authority.region,
-          workspaceId: authority.parent_workspace_key,
-          workstreamId: authority.workstream_key,
-          generation: authority.authority_generation,
-          messageId,
-          partitionKey: projectionKey ?? command.partitionKey,
-          sourceVersion,
-          requiredProjectionVersion,
-          payloadHash,
-          effect,
-        });
-        const inserted = this.storage.sql.exec<{ message_id: string }>(
-          `INSERT OR IGNORE INTO durable_outbox
-             (message_id, channel, destination_kind, destination_id, partition_key,
-              source_version, source_epoch, contract_version, payload_json, payload_ref,
-              payload_hash, state, attempts, not_before, created_at, acked_at)
-           VALUES (?, ?, 'queue', ?, ?, ?, ?, 1, ?, NULL, ?, 'pending', 0, ?, ?, NULL)
-           RETURNING message_id`,
-          messageId,
-          REGIONAL_EFFECT_CHANNEL,
-          authority.region,
-          envelope.partitionKey,
-          envelope.sourceVersion,
-          envelope.generation,
-          JSON.stringify(envelope),
-          payloadHash,
-          Date.now(),
-          Date.now(),
-        );
-        if (inserted.toArray().length === 0) {
-          const existing = first(this.storage.sql.exec<{ payload_hash: string }>(
-            `SELECT payload_hash FROM durable_outbox WHERE message_id = ?`,
-            messageId,
-          ));
-          if (existing?.payload_hash !== payloadHash) {
-            throw new Error("workstream_regional_effect_idempotency_conflict");
-          }
-          continue;
-        }
-        enqueued += 1;
-      }
+      const enqueued = this.enqueueEffectsInCurrentTransaction(commands);
       return { result, enqueued };
     });
     if (committed.enqueued > 0) await this.storage.setAlarm(Date.now());
@@ -1008,5 +982,28 @@ export class WorkstreamObjectStore {
       REGIONAL_EFFECT_CHANNEL,
     ));
     return row?.due_at ?? null;
+  }
+
+  dueSemanticRealtime(
+    now = Date.now(),
+    limit = 100,
+  ): SequencedSemanticRealtimeReference[] {
+    return dueSemanticRealtimeReferences(this.storage.sql, now, limit);
+  }
+
+  acknowledgeSemanticRealtime(messageId: string, sequence: number): boolean {
+    return acknowledgeSemanticRealtimeReference(
+      this.storage.sql,
+      messageId,
+      sequence,
+    );
+  }
+
+  deferSemanticRealtime(messageId: string, sequence: number, notBefore: number): void {
+    deferSemanticRealtimeReference(this.storage.sql, messageId, sequence, notBefore);
+  }
+
+  nextSemanticRealtimeDueAt(): number | null {
+    return nextSemanticRealtimeDueAt(this.storage.sql);
   }
 }

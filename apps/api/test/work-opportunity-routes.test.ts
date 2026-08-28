@@ -161,7 +161,7 @@ describe("suggested-work HTTP product actions", () => {
         updatedAt: CREATED_AT,
         archivedAt: null,
       },
-      messageId: MESSAGE_ID,
+      turnId: MESSAGE_ID,
       harnessRunId: null,
       telemetryContext: CONTEXT,
     } as never);
@@ -178,6 +178,7 @@ describe("suggested-work HTTP product actions", () => {
     }, env);
 
     expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ turnId: MESSAGE_ID });
     expect(start).toHaveBeenCalledWith(OPPORTUNITY_ID, 3, "start-once");
   });
 });

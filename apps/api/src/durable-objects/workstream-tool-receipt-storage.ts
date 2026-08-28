@@ -27,41 +27,14 @@
 
 import { uuidV7 } from "../lib/uuid-v7";
 import {
-  insertWorkstreamMessageRecord,
-  prepareWorkstreamMessageRecord,
-  type PreparedWorkstreamMessageRecord,
-  type WorkstreamMessageRecordInput,
+  WorkstreamTranscriptStorage,
+  type PreparedToolLifecycle,
 } from "./workstream-transcript-storage";
-
-interface ResidualToolPartSource extends Record<string, SqlStorageValue> {
-  id: string;
-  client_message_id: string | null;
-  author_type: string;
-  author_user_id: string | null;
-  external_actor_json: string | null;
-  content: string;
-  structured_content_json: string | null;
-  produced_by_run_id: string | null;
-  role: string;
-  kind: string;
-  effect_intent_id: string | null;
-  tool_name: string | null;
-  tool_mode: string | null;
-  tool_status: string | null;
-  visibility: string;
-  sequence_number: number;
-  attention_ordinal: number | null;
-  created_at: number;
-  output_summary: string | null;
-  canonical_record_exists: number;
-}
 
 interface PreparedResidualToolPart {
   effectIntentId: string;
   status: "failed" | "ambiguous";
-  sourceJson: string | null;
-  structuredContentJson: string | null;
-  prepared: PreparedWorkstreamMessageRecord | null;
+  lifecycle: PreparedToolLifecycle | null;
 }
 
 /**
@@ -237,20 +210,7 @@ function first<T extends Record<string, SqlStorageValue>>(
   return cursor.toArray()[0];
 }
 
-/**
- * The run statuses that count as still holding a lease.
- *
- * These are the ones the retired `_runtime_harness_runs` view called `running`:
- * its projection mapped `waiting` and `steering` onto `running`, so the routed
- * fence this replaces accepted a run in any of them. Nothing writes those two
- * today, so fencing on `running` alone would also pass — but the two are not
- * equally safe to be wrong about. A fence that does not recognise a lease
- * refuses the write, and a refusal is reported as a lost lease, so the first
- * writer of either status would turn settled receipts into the residual stop
- * fallback rather than fail anywhere anyone would look. The block dashboard
- * storage's `#holdsLease` carries the same set for the same reason.
- */
-const LEASE_HOLDING_STATUSES = new Set(["running", "waiting", "steering"]);
+const LEASE_HOLDING_STATUSES = new Set(["running"]);
 
 export class WorkstreamToolReceiptStorage {
   constructor(private readonly storage: DurableObjectStorage) {}
@@ -677,6 +637,20 @@ export class WorkstreamToolReceiptStorage {
     return row ? receiptRecord(row) : null;
   }
 
+  /** Ordered relevant tool history used to rebuild run-local safety state after eviction. */
+  receiptsForRun(input: { runId: string; capabilities: readonly string[] }): ToolReceiptRecord[] {
+    if (input.capabilities.length === 0) return [];
+    const placeholders = input.capabilities.map(() => "?").join(", ");
+    return this.sql.exec<ReceiptRow>(
+      `SELECT ${RECEIPT_COLUMNS} FROM tool_effects
+        WHERE run_id = ?
+          AND json_extract(execution_plan_json, '$.capability') IN (${placeholders})
+        ORDER BY COALESCE(started_at, 0), effect_intent_id`,
+      input.runId,
+      ...input.capabilities,
+    ).toArray().map(receiptRecord);
+  }
+
   /**
    * Receipts for a set of ids, for the transcript projection.
    *
@@ -889,6 +863,7 @@ export class WorkstreamToolReceiptStorage {
     const preparedParts = new Map((await Promise.all(this.#residualReceipts(input.runId).map(
       (receipt) => this.#prepareResidualToolPart({
         effectIntentId: receipt.effect_intent_id,
+        toolCallId: receipt.tool_call_id,
         status: receipt.ambiguous === 1 ? "ambiguous" : "failed",
         errorJson: receipt.ambiguous === 1
           ? JSON.stringify({ code: "ambiguous_external_write", message: input.ambiguousMessage })
@@ -916,10 +891,7 @@ export class WorkstreamToolReceiptStorage {
           : input.errorJson;
         const preparedPart = preparedParts.get(receipt.effect_intent_id);
         if (!preparedPart
-          || preparedPart.status !== (ambiguous ? "ambiguous" : "failed")
-          || preparedPart.sourceJson !== this.#residualToolPartSourceJson(receipt.effect_intent_id)) {
-          throw new Error("residual_tool_part_source_moved");
-        }
+          || preparedPart.status !== (ambiguous ? "ambiguous" : "failed")) throw new Error("residual_tool_part_source_moved");
         const index = this.#appendCheckpoint({
           effectIntentId: receipt.effect_intent_id,
           runId: input.runId,
@@ -952,7 +924,10 @@ export class WorkstreamToolReceiptStorage {
           settledIndex,
           receipt.effect_intent_id,
         );
-        this.#projectSettledPart(preparedPart);
+        if (preparedPart.lifecycle) {
+          new WorkstreamTranscriptStorage(this.storage)
+            .upsertPreparedToolLifecycle(preparedPart.lifecycle);
+        }
         settled += 1;
       }
       // `open` is what the caller's terminal event is fenced on. It is normally
@@ -965,112 +940,42 @@ export class WorkstreamToolReceiptStorage {
 
   async #prepareResidualToolPart(input: {
     effectIntentId: string;
+    toolCallId: string;
     status: "failed" | "ambiguous";
     errorJson: string;
     settledAt: number;
   }): Promise<PreparedResidualToolPart> {
-    const source = this.#residualToolPartSource(input.effectIntentId);
-    if (!source) {
+    try {
+      const parsedError = parseObject(input.errorJson, "residual_tool_error_invalid");
+      const lifecycle = await new WorkstreamTranscriptStorage(this.storage).prepareToolLifecycle({
+        toolCallId: input.toolCallId,
+        status: input.status,
+        error: typeof parsedError.message === "string" ? parsedError.message : input.status,
+        occurredAtUtc: new Date(input.settledAt).toISOString(),
+      });
       return {
         effectIntentId: input.effectIntentId,
         status: input.status,
-        sourceJson: null,
-        structuredContentJson: null,
-        prepared: null,
+        lifecycle,
       };
-    }
-    const structured = parseObject(source.structured_content_json, "tool_part_structured_content_invalid");
-    const invocation = structured.invocation !== null
-      && typeof structured.invocation === "object"
-      && !Array.isArray(structured.invocation)
-      ? structured.invocation as Record<string, unknown>
-      : {};
-    const structuredContentJson = JSON.stringify({
-      ...structured,
-      invocation: {
-        ...invocation,
-        status: input.status,
-        activityName: null,
-        outputSummary: source.output_summary,
-        completedAt: new Date(input.settledAt).toISOString(),
-        error: JSON.parse(input.errorJson) as unknown,
-      },
-    });
-    if (source.canonical_record_exists !== 1) {
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "participant_tool_plan_missing") throw error;
       return {
         effectIntentId: input.effectIntentId,
         status: input.status,
-        sourceJson: JSON.stringify(source),
-        structuredContentJson,
-        prepared: null,
+        lifecycle: null,
       };
     }
-    const authorType = source.author_type === "member"
-      ? "human"
-      : source.author_type as WorkstreamMessageRecordInput["authorType"];
-    const prepared = await prepareWorkstreamMessageRecord({
-      messageId: source.id,
-      clientMessageId: source.client_message_id ?? `tool:${source.id}`,
-      authorType,
-      authorUserId: source.author_user_id,
-      externalActorJson: source.external_actor_json,
-      messageType: "tool",
-      text: source.content,
-      structuredContentJson,
-      producedByRunId: source.produced_by_run_id,
-      role: source.role as NonNullable<WorkstreamMessageRecordInput["role"]>,
-      kind: source.kind,
-      effectIntentId: source.effect_intent_id,
-      toolName: source.tool_name,
-      toolMode: source.tool_mode as "read" | "write" | null,
-      toolStatus: input.status,
-      visibility: source.visibility as NonNullable<WorkstreamMessageRecordInput["visibility"]>,
-      sequenceNumber: Number(source.sequence_number),
-      attentionOrdinal: source.attention_ordinal === null
-        ? null
-        : Number(source.attention_ordinal),
-      createdAt: Number(source.created_at),
-      editedAt: input.settledAt,
-      now: input.settledAt,
-    });
-    return {
-      effectIntentId: input.effectIntentId,
-      status: input.status,
-      sourceJson: JSON.stringify(source),
-      structuredContentJson,
-      prepared,
-    };
-  }
-
-  #residualToolPartSource(effectIntentId: string): ResidualToolPartSource | undefined {
-    return first(this.sql.exec<ResidualToolPartSource>(
-      `SELECT part.id, part.client_message_id, part.author_type, part.author_user_id,
-              part.external_actor_json, part.content, part.structured_content_json,
-              part.produced_by_run_id, part.role, part.kind, part.effect_intent_id,
-              part.tool_name, part.tool_mode, part.tool_status, part.visibility,
-              part.sequence_number, part.attention_ordinal, part.created_at,
-              effect.output_summary,
-              1 AS canonical_record_exists
-         FROM workstream_message_details part
-         JOIN tool_effects effect ON effect.effect_intent_id = part.id
-        WHERE part.id = ? AND part.message_type = 'tool'`,
-      effectIntentId,
-    ));
-  }
-
-  #residualToolPartSourceJson(effectIntentId: string): string | null {
-    const source = this.#residualToolPartSource(effectIntentId);
-    return source ? JSON.stringify(source) : null;
   }
 
   /** Receipts still open on a run, and whether each was mid-write. */
   #residualReceipts(runId: string): Array<{
-    effect_intent_id: string; ambiguous: number; checkpoint_index: number;
+    effect_intent_id: string; tool_call_id: string; ambiguous: number; checkpoint_index: number;
   } & Record<string, SqlStorageValue>> {
     return this.sql.exec<{
-      effect_intent_id: string; ambiguous: number; checkpoint_index: number;
+      effect_intent_id: string; tool_call_id: string; ambiguous: number; checkpoint_index: number;
     } & Record<string, SqlStorageValue>>(
-      `SELECT effect_intent_id, checkpoint_index,
+      `SELECT effect_intent_id, tool_call_id, checkpoint_index,
               CASE WHEN status = 'executing'
                      AND COALESCE(json_extract(execution_plan_json, '$.mode'), '') != 'read'
                    THEN 1 ELSE 0 END AS ambiguous
@@ -1086,26 +991,6 @@ export class WorkstreamToolReceiptStorage {
         WHERE effect_intent_id = ?`,
       effectIntentId,
     ))?.index ?? 0;
-  }
-
-  /**
-   * The tool card the member is looking at.
-   *
-   * Not bookkeeping: it is the only thing that stops a stopped or reaped run's
-   * tool card spinning forever. Ordinary execution settles the receipt and then
-   * writes the transcript row again, but neither the stop nor the sweep has an
-   * event publisher or a second write — so object schema migration 14 taught
-   * the *compatibility trigger* to project a terminal receipt into the same-id
-   * part inside the settling transaction. That put a piece of real product
-   * behavior, added after the cutover, inside a compatibility object. It lives
-   * here now, where it is visible, and it is why dropping that trigger was not
-   * a pure deletion.
-   */
-  #projectSettledPart(
-    projection: PreparedResidualToolPart,
-  ): void {
-    if (projection.structuredContentJson === null || projection.prepared === null) return;
-    insertWorkstreamMessageRecord(this.sql, projection.prepared);
   }
 
   // ----------------------------------------------------------------- settle
@@ -1288,5 +1173,49 @@ export class WorkstreamToolReceiptStorage {
         ? "already_persisted"
         : "ownership_lost";
     });
+  }
+
+  /** Restore checked-in development receipts through typed object authority. */
+  seedDevelopmentReceipt(input: {
+    effectIntentId: string;
+    runId: string;
+    toolPosition: number;
+    toolCallId: string;
+    toolName: string;
+    mode: "read" | "write";
+    requestHash: string;
+    status: ToolReceiptStatus;
+    connectionId: string | null;
+    inputJson: string;
+    outputSummary: string | null;
+    executionPlanJson: string | null;
+    startedAt: number | null;
+    settledAt: number | null;
+  }): { outcome: "inserted" | "exists" } {
+    if (this.#effect(input.effectIntentId)) return { outcome: "exists" as const };
+    this.sql.exec(
+      `INSERT INTO tool_effects
+         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+          tool_name, mode, request_hash, authority_revision, status, tool_call_id,
+          connection_id, input_json, output_summary, execution_plan_json,
+          started_at, settled_at)
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'development_fixture', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      input.effectIntentId,
+      input.runId,
+      input.toolPosition,
+      `development_fixture:${input.effectIntentId}`,
+      input.toolName,
+      input.mode,
+      input.requestHash,
+      input.status,
+      input.toolCallId,
+      input.connectionId,
+      input.inputJson,
+      input.outputSummary,
+      input.executionPlanJson,
+      input.startedAt,
+      input.settledAt,
+    );
+    return { outcome: "inserted" as const };
   }
 }

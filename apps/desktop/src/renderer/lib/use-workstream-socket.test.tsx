@@ -1,4 +1,10 @@
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
+import {
+  ClientSocketEventSchema,
+  type ClientSocketEvent,
+  type PendingTranscriptInput,
+  type WorkstreamTranscriptSnapshot,
+} from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
@@ -7,12 +13,10 @@ import type { BlockDashboard, BlockDashboardPreference, Message, WorkstreamBoot,
 import { setCachedWorkstreams } from './workstreams-cache';
 import {
   applyActiveStreamCheckpoints,
+  applyStreamingOverlayEvent,
   applyStreamingSocketEvent,
   insertMessage,
-  mergeCanonicalTranscript,
   nextTranscriptSequence,
-  reconcileCanonicalTranscript,
-  replaceWithCanonicalTranscript,
   SOCKET_STABLE_CONNECTION_MS,
   socketHeartbeatDelay,
   socketReconnectDelay,
@@ -25,6 +29,17 @@ import {
   useRetainedWorkstreamSocket,
 } from './workstream-socket-pool';
 import { WorkstreamSocketResumeProvider } from './workstream-socket-resume';
+import {
+  orderedTranscriptMessages,
+  transcriptGaps,
+  transcriptOverlaysQueryKey,
+  type TranscriptOverlay,
+} from './transcript';
+
+function overlayMessages(queryClient: QueryClient, workstreamId: string): Message[] {
+  return (queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId)) ?? [])
+    .map((overlay) => overlay.message);
+}
 
 const workspaceCreateMessage = vi.hoisted(() => vi.fn());
 vi.mock('./workspace-socket', () => ({
@@ -37,7 +52,6 @@ import {
   cancelWorkstreamFeedOpen,
   markWorkstreamFeedOpenStarted,
   workstreamFeedSourceQueryKey,
-  workstreamRecoveryFeedQueryKey,
   workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 
@@ -147,7 +161,6 @@ function socketApiWith(overrides: Partial<WorkstreamSocketApi>): WorkstreamSocke
     throw new Error('Unexpected socket API call.');
   };
   return {
-    getMessages: vi.fn(unexpected),
     getSocketTicket: vi.fn(unexpected),
     getWorkstreamControlSocketTicket: vi.fn(unexpected),
     getWorkstream: vi.fn(unexpected),
@@ -202,7 +215,49 @@ function emptyTranscriptSnapshot(): WorkstreamBoot['transcript'] {
     ranges: [],
     activities: [],
     activeActivities: [],
-    activeTurns: [],
+    activeTurns: [], pendingInputs: [],
+  };
+}
+
+function transcriptTurn(sequence: number, text: string) {
+  return {
+    transcriptSequence: sequence,
+    turnId: `turn-${sequence}`,
+    entryKind: 'conversation' as const,
+    actor: 'assistant' as const,
+    authorUserId: null,
+    authorSnapshot: null,
+    attentionOrdinal: null,
+    createdAtUtc: '2026-07-31T19:00:00.000Z',
+    revision: 1,
+    blocks: [{
+      type: 'text' as const,
+      blockId: `turn-${sequence}:text:0`,
+      blockIndex: 0,
+      text,
+      streaming: false,
+    }],
+    activityId: null,
+  };
+}
+
+function pendingInput(sequence: number, text: string): PendingTranscriptInput {
+  const inputId = `pending-${sequence}`;
+  return {
+    inputId,
+    futureTurnId: inputId,
+    inputSequence: sequence,
+    deliveryMode: 'queue',
+    afterTranscriptSequence: 0,
+    actor: 'human',
+    authorUserId: 'user-1',
+    authorSnapshot: { userId: 'user-1', displayName: 'Member', avatarUrl: null },
+    clientMessageId: `client-pending-${sequence}`,
+    externalActor: null,
+    block: {
+      type: 'text', blockId: `${inputId}:text:0`, blockIndex: 0, text, streaming: false,
+    },
+    admittedAtUtc: '2026-07-31T19:00:00.000Z',
   };
 }
 
@@ -211,8 +266,6 @@ function workstreamBoot(overrides: Partial<WorkstreamDetail> = {}): WorkstreamBo
   return {
     ...workstreamDetail(overrides),
     transcript: emptyTranscriptSnapshot(),
-    messageFeed: { items: [], nextCursor: null, newerCursor: null },
-    resumeFeed: null,
   };
 }
 
@@ -257,49 +310,32 @@ function wireWorkstreamDetail(overrides: Record<string, unknown> = {}): Record<s
   };
 }
 
-function wireTextMessage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: '00000000-0000-7000-8000-000000000103',
-    clientMessageId: null,
-    workspaceId: '00000000-0000-7000-8000-000000000001',
-    workstreamId: '00000000-0000-7000-8000-000000000091',
-    author: { type: 'agent' },
-    messageType: 'text',
-    textContent: 'Canonical text.',
-    structuredContent: null,
-    mentions: [],
-    sequenceNumber: 1,
-    createdAt: '2026-07-31T19:20:00.000Z',
-    editedAt: null,
-    ...overrides,
-  };
-}
-
 function snapshotFrame(input: {
   sequence: number;
+  reason?: 'initial' | 'reconciliation' | 'history_unavailable';
   workstream?: Record<string, unknown>;
-  messages?: Record<string, unknown>[];
-  resumeFeed?: Record<string, unknown> | null;
+  transcript?: WorkstreamBoot['transcript'];
+  pendingInputChunkCount?: number;
 }): Record<string, unknown> {
   return {
     type: 'snapshot',
+    reason: input.reason ?? 'initial',
     sequence: input.sequence,
     occurredAt: '2026-07-31T19:20:00.000Z',
     workstream: wireWorkstreamDetail(input.workstream),
-    transcript: emptyTranscriptSnapshot(),
-    messageFeed: { items: input.messages ?? [], nextCursor: null, newerCursor: null },
-    resumeFeed: input.resumeFeed ?? null,
+    transcript: input.transcript ?? emptyTranscriptSnapshot(),
+    pendingInputChunkCount: input.pendingInputChunkCount ?? 0,
     activeStreams: [],
     activeCompaction: null,
   };
 }
 
 /** The frames a socket was asked to send, in order, excluding raw keepalives. */
-function sentFrames(socket: FakeWebSocket): { type: string }[] {
+function sentFrames(socket: FakeWebSocket): ClientSocketEvent[] {
   return socket.send.mock.calls
     .map(([frame]) => frame)
     .filter((frame): frame is string => typeof frame === 'string' && frame.startsWith('{'))
-    .map((frame) => JSON.parse(frame) as { type: string });
+    .map((frame) => ClientSocketEventSchema.parse(JSON.parse(frame)));
 }
 
 afterEach(() => {
@@ -322,6 +358,72 @@ describe('useWorkstreamSocket', () => {
     rerender();
 
     expect(result.current).toBe(first);
+  });
+
+  it('installs an oversized authoritative pending snapshot only after every ordered chunk arrives', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-00000000062f';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const transcript = {
+      ...emptyTranscriptSnapshot(),
+      snapshotId: '00000000-0000-7000-8000-00000000072f',
+    };
+    const previous = pendingInput(9, 'previous authority');
+    act(() => socket.message({
+      type: 'loop_input_upserted',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      input: previous,
+    }));
+    act(() => socket.message(snapshotFrame({
+      sequence: 2,
+      transcript,
+      pendingInputChunkCount: 2,
+    })));
+    expect(overlayMessages(queryClient, workstreamId).map((message) => message.text))
+      .toEqual(['previous authority']);
+
+    const second = pendingInput(2, 'second');
+    act(() => socket.message({
+      type: 'pending_inputs_snapshot_chunk',
+      sequence: 2,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      snapshotId: transcript.snapshotId,
+      chunkIndex: 1,
+      chunkCount: 2,
+      inputs: [second],
+    }));
+    expect(overlayMessages(queryClient, workstreamId).map((message) => message.text))
+      .toEqual(['previous authority']);
+
+    const first = pendingInput(1, 'first');
+    act(() => socket.message({
+      type: 'pending_inputs_snapshot_chunk',
+      sequence: 2,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      snapshotId: transcript.snapshotId,
+      chunkIndex: 0,
+      chunkCount: 2,
+      inputs: [first],
+    }));
+    expect(overlayMessages(queryClient, workstreamId).map((message) => message.text))
+      .toEqual(['first', 'second']);
+    expect(queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+    )?.pendingInputs).toEqual([first, second]);
   });
 
   it('reuses the same socket when returning to a recently viewed work stream', async () => {
@@ -446,6 +548,7 @@ describe('useWorkstreamSocket', () => {
     await expect(result.current.createMessage({
         text: 'Please continue.',
         clientId: clientMessageId,
+        runMode: 'queue',
       })).resolves.toEqual(savedMessage);
     expect(workspaceCreateMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: 'create_message',
@@ -457,6 +560,7 @@ describe('useWorkstreamSocket', () => {
         mentions: [],
         confirmedParticipantUserIds: [],
         attachmentIds: [],
+        runMode: 'queue',
       },
     }));
   });
@@ -540,69 +644,6 @@ describe('useWorkstreamSocket', () => {
     expect(result.current.activeCompaction).toBeNull();
   });
 
-  it('loads an older message page through a correlated SubstreamAgent socket read', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const workstreamId = '00000000-0000-7000-8000-000000000621';
-    const messageId = '00000000-0000-7000-8000-000000000622';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
-      wrapper: createWrapper(),
-    });
-
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    const pagePromise = result.current.loadMessagePage({ before: '42', limit: 25 });
-    const command = JSON.parse(String(socket.send.mock.calls.at(-1)?.[0])) as {
-      type: string;
-      requestId: string;
-      limit: number;
-      cursor: { direction: string; value: string };
-    };
-    expect(command).toMatchObject({
-      type: 'load_message_page',
-      limit: 25,
-      cursor: { direction: 'before', value: '42' },
-    });
-
-    act(() => socket.message({
-      type: 'message_page',
-      requestId: command.requestId,
-      occurredAt: '2026-08-18T12:00:00.000Z',
-      page: {
-        items: [{
-          id: messageId,
-          clientMessageId: null,
-          workspaceId: '00000000-0000-7000-8000-000000000623',
-          workstreamId,
-          sequenceNumber: 21,
-          author: { type: 'agent' },
-          messageType: 'text',
-          textContent: 'An older message',
-          structuredContent: null,
-          mentions: [],
-          attachments: [],
-          createdAt: '2026-08-18T11:00:00.000Z',
-          editedAt: null,
-        }],
-        nextCursor: '21',
-        newerCursor: null,
-      },
-    }));
-
-    await expect(pagePromise).resolves.toMatchObject({
-      items: [{ id: messageId, text: 'An older message' }],
-      nextCursor: '21',
-      newerCursor: null,
-    });
-  });
-
   it('lets a reopened reader request base state from an already-connected room', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const workstreamId = '00000000-0000-7000-8000-000000000625';
@@ -626,6 +667,298 @@ describe('useWorkstreamSocket', () => {
       { type: 'subscribe', afterSequence: 0, publishPresence: false },
       { type: 'request_snapshot' },
     ]);
+  });
+
+  it('keeps a narrowed history prefix requestable and retains it across reconciliation', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000626';
+    const firstSnapshotId = '00000000-0000-7000-8000-000000000727';
+    const refreshedSnapshotId = '00000000-0000-7000-8000-000000000728';
+    const latestTurn = transcriptTurn(25, 'latest');
+    const historicalTurn = transcriptTurn(5, 'history the reader loaded');
+    const openingTranscript = {
+      ...emptyTranscriptSnapshot(),
+      snapshotId: firstSnapshotId,
+      snapshotThrough: 30,
+      eventSequence: 1,
+      ranges: [{
+        purpose: 'latest' as const,
+        requested: { startInclusive: 21, endExclusive: 31 },
+        covered: { startInclusive: 21, endExclusive: 31 },
+        turns: [latestTurn],
+        activities: [],
+      }],
+    };
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 1, transcript: openingTranscript })));
+
+    const rangePromise = result.current.loadTranscriptRange({
+      snapshotId: firstSnapshotId,
+      range: { startInclusive: 1, endExclusive: 21 },
+      resumeAfterEventSequence: 1,
+    });
+    const rangeCommand = sentFrames(socket).at(-1) as {
+      type: 'load_transcript_range'; requestId: string;
+    };
+    act(() => socket.message({
+      type: 'transcript_range',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      requestId: rangeCommand.requestId,
+      snapshotId: firstSnapshotId,
+      result: {
+        purpose: 'requested',
+        requested: { startInclusive: 1, endExclusive: 21 },
+        covered: { startInclusive: 1, endExclusive: 8 },
+        turns: [historicalTurn],
+        activities: [],
+      },
+    }));
+    await expect(rangePromise).resolves.toMatchObject({
+      requested: { startInclusive: 1, endExclusive: 21 },
+      covered: { startInclusive: 1, endExclusive: 8 },
+    });
+    const partiallyLoaded = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+    );
+    expect(partiallyLoaded && transcriptGaps(partiallyLoaded)).toContainEqual({
+      startInclusive: 8,
+      endExclusive: 21,
+    });
+
+    act(() => result.current.requestSnapshot());
+    act(() => socket.message(snapshotFrame({
+      sequence: 1,
+      reason: 'reconciliation',
+      transcript: { ...openingTranscript, snapshotId: refreshedSnapshotId },
+    })));
+
+    const refreshed = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+    );
+    expect(refreshed?.snapshotId).toBe(refreshedSnapshotId);
+    expect(refreshed?.ranges.flatMap((range) => range.turns).map((turn) => turn.transcriptSequence))
+      .toEqual([5, 25]);
+  });
+
+  it('drops old-fence lifecycle turns when replay history is unavailable and reloads them under the new fence', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-00000000062a';
+    const oldSnapshotId = '00000000-0000-7000-8000-00000000072a';
+    const recoveredSnapshotId = '00000000-0000-7000-8000-00000000072b';
+    const toolTurn = {
+      ...transcriptTurn(5, ''),
+      revision: 1,
+      blocks: [{
+        type: 'tool' as const,
+        blockId: 'turn-5:tool:0',
+        blockIndex: 0,
+        toolCallId: 'call-old-fence',
+        pluginId: 'github',
+        toolName: 'Search',
+        callIndex: 0,
+        status: 'started' as const,
+        participantSafeInput: null,
+        participantSafeResult: null,
+        error: null,
+        activityId: 'activity-old-fence',
+      }],
+    };
+    const staleActivity = {
+      activityId: 'activity-old-fence', parentActivityId: null, scope: 'tool_call' as const,
+      subjectId: 'call-old-fence', callIndex: 0, label: 'Search', state: 'active' as const,
+      intervals: [], revision: 1,
+    };
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+      {
+        ...emptyTranscriptSnapshot(),
+        snapshotId: oldSnapshotId,
+        snapshotThrough: 30,
+        eventSequence: 1,
+        ranges: [{
+          purpose: 'requested',
+          requested: { startInclusive: 1, endExclusive: 21 },
+          covered: { startInclusive: 1, endExclusive: 21 },
+          turns: [toolTurn],
+          activities: [staleActivity],
+        }, {
+          purpose: 'latest',
+          requested: { startInclusive: 21, endExclusive: 31 },
+          covered: { startInclusive: 21, endExclusive: 31 },
+          turns: [transcriptTurn(25, 'latest')],
+          activities: [],
+        }],
+        activities: [staleActivity],
+        activeActivities: [staleActivity],
+      },
+    );
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message(snapshotFrame({
+      sequence: 2,
+      reason: 'history_unavailable',
+      workstream: { id: workstreamId },
+      transcript: {
+        ...emptyTranscriptSnapshot(),
+        snapshotId: recoveredSnapshotId,
+        snapshotThrough: 30,
+        eventSequence: 2,
+        ranges: [{
+          purpose: 'latest',
+          requested: { startInclusive: 21, endExclusive: 31 },
+          covered: { startInclusive: 21, endExclusive: 31 },
+          turns: [transcriptTurn(25, 'latest')],
+          activities: [],
+        }],
+      },
+    })));
+
+    const recovered = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+    );
+    expect(recovered?.snapshotId).toBe(recoveredSnapshotId);
+    expect(recovered?.ranges.flatMap((range) => range.turns)
+      .map((turn) => turn.transcriptSequence)).toEqual([25]);
+    expect(recovered?.activities).toEqual([]);
+
+    const rangePromise = result.current.loadTranscriptRange({
+      snapshotId: recoveredSnapshotId,
+      range: { startInclusive: 1, endExclusive: 21 },
+      resumeAfterEventSequence: 2,
+    });
+    const rangeCommand = sentFrames(socket).at(-1) as {
+      type: 'load_transcript_range'; requestId: string;
+    };
+    act(() => socket.message({
+      type: 'transcript_range',
+      sequence: 2,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      requestId: rangeCommand.requestId,
+      snapshotId: recoveredSnapshotId,
+      result: {
+        purpose: 'requested',
+        requested: { startInclusive: 1, endExclusive: 21 },
+        covered: { startInclusive: 1, endExclusive: 21 },
+        turns: [{
+          ...toolTurn,
+          revision: 2,
+          blocks: [{ ...toolTurn.blocks[0]!, status: 'completed' as const }],
+        }],
+        activities: [{ ...staleActivity, state: 'completed' as const, revision: 2 }],
+      },
+    }));
+    await rangePromise;
+
+    const reloaded = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+    );
+    expect(reloaded?.ranges.flatMap((range) => range.turns)
+      .find((turn) => turn.turnId === toolTurn.turnId)?.blocks[0]).toMatchObject({
+      type: 'tool', status: 'completed',
+    });
+    expect(reloaded?.activities.find((activity) => activity.activityId === staleActivity.activityId))
+      .toMatchObject({ state: 'completed', revision: 2 });
+  });
+
+  it('rejects an in-flight range from a superseded snapshot instead of reporting a successful no-op', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000627';
+    const firstSnapshotId = '00000000-0000-7000-8000-000000000729';
+    const refreshedSnapshotId = '00000000-0000-7000-8000-000000000730';
+    const openingTranscript = {
+      ...emptyTranscriptSnapshot(),
+      snapshotId: firstSnapshotId,
+      snapshotThrough: 30,
+      eventSequence: 1,
+      ranges: [{
+        purpose: 'latest' as const,
+        requested: { startInclusive: 21, endExclusive: 31 },
+        covered: { startInclusive: 21, endExclusive: 31 },
+        turns: [transcriptTurn(25, 'latest')],
+        activities: [],
+      }],
+    };
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message(snapshotFrame({ sequence: 1, transcript: openingTranscript })));
+    const settled = result.current.loadTranscriptRange({
+      snapshotId: firstSnapshotId,
+      range: { startInclusive: 1, endExclusive: 21 },
+      resumeAfterEventSequence: 1,
+    }).then(() => null, (error: unknown) => error);
+    const rangeCommand = sentFrames(socket).at(-1) as {
+      type: 'load_transcript_range'; requestId: string;
+    };
+
+    act(() => result.current.requestSnapshot());
+    act(() => socket.message(snapshotFrame({
+      sequence: 1,
+      reason: 'reconciliation',
+      transcript: { ...openingTranscript, snapshotId: refreshedSnapshotId },
+    })));
+    act(() => socket.message({
+      type: 'transcript_range',
+      sequence: 1,
+      occurredAt: '2026-07-31T19:20:00.000Z',
+      requestId: rangeCommand.requestId,
+      snapshotId: firstSnapshotId,
+      result: {
+        purpose: 'requested',
+        requested: { startInclusive: 1, endExclusive: 21 },
+        covered: { startInclusive: 1, endExclusive: 21 },
+        turns: [transcriptTurn(5, 'stale history')],
+        activities: [],
+      },
+    }));
+
+    await expect(settled).resolves.toMatchObject({ code: 'transcript_snapshot_changed' });
+    const current = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+    );
+    expect(current?.snapshotId).toBe(refreshedSnapshotId);
+    expect(current?.ranges.flatMap((range) => range.turns).map((turn) => turn.transcriptSequence))
+      .toEqual([25]);
   });
 
   it('applies personal and shared HyperSight updates without letting stale runs win', async () => {
@@ -788,89 +1121,6 @@ describe('useWorkstreamSocket', () => {
     expect(nextTranscriptSequence([pendingHuman])).toBe(9);
   });
 
-  it('advances cached read bounds when a canonical attention message arrives', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workspaceId = '00000000-0000-7000-8000-000000000201';
-    const workstreamId = '00000000-0000-7000-8000-000000000202';
-    const messageId = '00000000-0000-7000-8000-000000000203';
-    const summary: WorkstreamSummary = {
-      id: workstreamId,
-      title: 'Watched activity',
-      titleStatus: 'settled' as const,
-      origin: 'ad_hoc',
-      harnessStatus: 'completed',
-      scope: 'workspace',
-      latestAttentionSequenceNumber: 3,
-      readThroughSequenceNumber: 3,
-      manualUnreadFromSequenceNumber: null,
-      manualUnreadGeneration: 0,
-      hasUnread: false,
-      firstUnreadSequenceNumber: null,
-      nextPendingWakeup: null,
-      pinPosition: null,
-      lastActivityAt: '2026-07-31T19:20:00.000Z',
-    };
-    const detail: WorkstreamDetail = {
-      ...summary,
-      createdAt: '2026-07-31T19:00:00.000Z',
-      participants: [],
-      viewers: [],
-      resources: [],
-      connections: [],
-      backgroundTasks: [],
-      automationRuns: [],
-    };
-    queryClient.setQueryData(['workstream', workstreamId], detail);
-    setCachedWorkstreams(queryClient, [summary]);
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
-
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    act(() => socket.message({
-      type: 'message_created',
-      sequence: 1,
-      occurredAt: '2026-07-31T19:21:00.000Z',
-      message: {
-        id: messageId,
-        clientMessageId: 'activity:provider-event-one',
-        workspaceId,
-        workstreamId,
-        author: { type: 'system' },
-        messageType: 'system',
-        textContent: 'A watched resource changed.',
-        structuredContent: { kind: 'connected_activity' },
-        mentions: [],
-        attachments: [],
-        sequenceNumber: 8,
-        attentionSequenceNumber: 4,
-        createdAt: '2026-07-31T19:21:00.000Z',
-        editedAt: null,
-      },
-    }));
-
-    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])).toMatchObject({
-      latestAttentionSequenceNumber: 4,
-      readThroughSequenceNumber: 3,
-      hasUnread: true,
-      firstUnreadSequenceNumber: 4,
-      lastActivityAt: '2026-07-31T19:21:00.000Z',
-    });
-    expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])?.[0]).toMatchObject({
-      latestAttentionSequenceNumber: 4,
-      hasUnread: true,
-      firstUnreadSequenceNumber: 4,
-    });
-  });
-
   it('reconciles the persisted realtime echo with its optimistic human message', () => {
     const clientMessageId = 'client-message-one';
     const pendingHuman: Message = {
@@ -894,7 +1144,6 @@ describe('useWorkstreamSocket', () => {
 
     expect(insertMessage([pendingHuman], persistedHuman)).toEqual([persistedHuman]);
     expect(insertMessage([pendingHuman, persistedHuman], persistedHuman)).toEqual([persistedHuman]);
-    expect(mergeCanonicalTranscript([pendingHuman], [persistedHuman])).toEqual([persistedHuman]);
   });
 
   it('does not let stale transcript data reopen an answered elicitation', () => {
@@ -923,80 +1172,15 @@ describe('useWorkstreamSocket', () => {
     expect(insertMessage([open], answered)).toEqual([answered]);
   });
 
-  it('retains an unmatched optimistic human message during a canonical refresh', () => {
-    const pendingHuman: Message = {
-      id: 'client-message-two',
-      clientMessageId: 'client-message-two',
-      workstreamId: 'workstream-one',
-      sequenceNumber: 10,
-      authorType: 'human',
-      messageType: 'text',
-      text: 'Still being sent.',
-      createdAt: '2026-07-31T19:20:02.000Z',
-      deliveryState: 'sending',
-    };
-    const canonicalHuman: Message = {
-      id: 'persisted-message-one',
-      clientMessageId: 'client-message-one',
-      workstreamId: 'workstream-one',
-      sequenceNumber: 9,
-      authorType: 'human',
-      messageType: 'text',
-      text: 'Already sent.',
-      createdAt: '2026-07-31T19:20:01.000Z',
-    };
-
-    expect(mergeCanonicalTranscript([pendingHuman], [canonicalHuman])).toEqual([
-      canonicalHuman,
-      pendingHuman,
-    ]);
-  });
-
-  it('retains previously loaded history when the newest canonical page refreshes', () => {
-    const message = (id: string, sequenceNumber: number): Message => ({
-      id,
-      workstreamId: 'workstream-one',
-      sequenceNumber,
-      authorType: 'agent',
-      messageType: 'text',
-      text: id,
-      createdAt: `2026-07-31T19:${String(sequenceNumber).padStart(2, '0')}:00.000Z`,
-    });
-    const older = message('older', 1);
-    const staleLatest = message('latest', 201);
-    const refreshedLatest = { ...staleLatest, text: 'refreshed' };
-
-    expect(mergeCanonicalTranscript([older, staleLatest], [refreshedLatest])).toEqual([older, refreshedLatest]);
-    expect(replaceWithCanonicalTranscript([older, staleLatest], [refreshedLatest])).toEqual([older, refreshedLatest]);
-  });
-
-  it('retains an active assistant stream across a canonical refresh', () => {
-    const streaming: Message = {
-      id: 'streaming-message',
-      workstreamId: 'workstream-one',
-      sequenceNumber: 9,
-      authorType: 'agent',
-      messageType: 'text',
-      text: 'The response so far',
-      createdAt: '2026-07-31T19:20:00.000Z',
-      streaming: true,
-      realtimeOrder: { anchorSequenceNumber: 9, eventSequence: 12, placement: 'at_anchor' },
-    };
-
-    expect(mergeCanonicalTranscript([streaming], [])).toEqual([streaming]);
-    expect(replaceWithCanonicalTranscript([streaming], [])).toEqual([]);
-    expect(reconcileCanonicalTranscript([streaming], [], 'running')).toEqual([streaming]);
-    expect(reconcileCanonicalTranscript([streaming], [], 'failed')).toEqual([]);
-  });
-
   it('joins an unseen active stream at its checkpoint and appends only new chunks', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000071';
     const messageId = '00000000-0000-7000-8000-000000000072';
     const cursors = new Map();
     let transcript = applyActiveStreamCheckpoints([], [{
-      messageId,
+      streamId: messageId,
       harnessRunId: '00000000-0000-7000-8000-000000000073',
       turnId: 'turn-cold-join',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 2,
       seenTurnIds: ['turn-cold-join'],
@@ -1012,8 +1196,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 21,
       occurredAt: '2026-07-31T19:20:01.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-cold-join',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 2,
       reset: false,
@@ -1023,8 +1208,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 22,
       occurredAt: '2026-07-31T19:20:02.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-cold-join',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 3,
       reset: false,
@@ -1039,66 +1225,6 @@ describe('useWorkstreamSocket', () => {
     });
   });
 
-  it('reanchors a cold-join checkpoint after canonical history arrives', () => {
-    const workstreamId = '00000000-0000-7000-8000-000000000074';
-    const messageId = '00000000-0000-7000-8000-000000000075';
-    const cursors = new Map();
-    const checkpoint = applyActiveStreamCheckpoints([], [{
-      messageId,
-      harnessRunId: '00000000-0000-7000-8000-000000000076',
-      turnId: 'turn-cold-order',
-      epoch: 0,
-      streamSeq: 1,
-      seenTurnIds: ['turn-cold-order'],
-      text: 'Current response',
-      turnStartOffset: 0,
-      roomSequence: 40,
-      createdAt: '2026-07-31T19:20:02.000Z',
-    }], workstreamId, cursors);
-    const canonical: Message[] = [{
-      id: '00000000-0000-7000-8000-000000000077',
-      workstreamId,
-      sequenceNumber: 39,
-      authorType: 'human',
-      messageType: 'text',
-      text: 'Triggering message',
-      createdAt: '2026-07-31T19:20:01.000Z',
-    }];
-
-    const merged = mergeCanonicalTranscript(checkpoint, canonical);
-
-    expect(merged.map((message) => message.id)).toEqual([canonical[0]?.id, 'turn-cold-order']);
-    expect(merged[1]?.realtimeOrder?.anchorSequenceNumber).toBe(40);
-  });
-
-  it('drops synthetic realtime tool rows after a terminal canonical refresh', () => {
-    const canonicalTool: Message = {
-      id: '00000000-0000-7000-8000-000000000081',
-      workstreamId: 'workstream-one',
-      sequenceNumber: 11,
-      authorType: 'agent',
-      messageType: 'tool_event',
-      createdAt: '2026-07-31T19:20:02.000Z',
-      toolEvent: {
-        id: '00000000-0000-7000-8000-000000000081',
-        name: 'google_drive_search',
-        status: 'completed',
-      },
-    };
-    const staleRealtimeTool: Message = {
-      ...canonicalTool,
-      id: `tool-${canonicalTool.id}`,
-      toolEvent: { ...canonicalTool.toolEvent!, status: 'started' },
-      realtimeOrder: {
-        anchorSequenceNumber: 12,
-        eventSequence: 91,
-        placement: 'before_anchor',
-      },
-    };
-
-    expect(replaceWithCanonicalTranscript([staleRealtimeTool], [canonicalTool])).toEqual([canonicalTool]);
-  });
-
   it('deduplicates replayed chunks and replaces only the retried Bind turn on reset', () => {
     const workstreamId = '00000000-0000-7000-8000-000000000021';
     const messageId = '00000000-0000-7000-8000-000000000051';
@@ -1108,9 +1234,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 10,
       occurredAt: '2026-07-31T19:21:00.000Z',
-      messageId,
+      streamId: messageId,
       harnessRunId,
       turnId: 'turn-one',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -1119,8 +1246,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 11,
       occurredAt: '2026-07-31T19:21:01.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-one',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1132,8 +1260,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 12,
       occurredAt: '2026-07-31T19:21:01.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-one',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1143,8 +1272,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 13,
       occurredAt: '2026-07-31T19:21:02.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-one',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 2,
       reset: false,
@@ -1156,9 +1286,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 14,
       occurredAt: '2026-07-31T19:21:03.000Z',
-      messageId,
+      streamId: messageId,
       harnessRunId,
       turnId: 'turn-two',
+      transcriptSequence: 2,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -1167,8 +1298,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 15,
       occurredAt: '2026-07-31T19:21:04.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-two',
+      transcriptSequence: 2,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1178,8 +1310,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 16,
       occurredAt: '2026-07-31T19:21:05.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-two',
+      transcriptSequence: 2,
       epoch: 1,
       streamSeq: 2,
       reset: true,
@@ -1189,8 +1322,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 17,
       occurredAt: '2026-07-31T19:21:06.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-two',
+      transcriptSequence: 2,
       epoch: 1,
       streamSeq: 3,
       reset: false,
@@ -1201,8 +1335,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 18,
       occurredAt: '2026-07-31T19:21:07.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-two',
+      transcriptSequence: 2,
       epoch: 0,
       streamSeq: 99,
       reset: false,
@@ -1217,22 +1352,10 @@ describe('useWorkstreamSocket', () => {
     const frames = stubAnimationFrames();
     const queryClient = new QueryClient();
     const workstreamId = '00000000-0000-7000-8000-000000000021';
-    const workspaceId = '00000000-0000-7000-8000-000000000002';
     const harnessRunId = '00000000-0000-7000-8000-000000000051';
     const assistantMessageId = harnessRunId;
     const toolOneId = '00000000-0000-7000-8000-000000000052';
     const toolTwoId = '00000000-0000-7000-8000-000000000053';
-    const humanMessage: Message = {
-      id: '00000000-0000-7000-8000-000000000032',
-      workstreamId,
-      sequenceNumber: 17,
-      authorType: 'human',
-      author: { id: 'user-one', name: 'Adam', email: 'adam@example.com', timezone: 'America/Los_Angeles' },
-      messageType: 'text',
-      text: 'Investigate this.',
-      createdAt: '2026-07-31T19:20:00.000Z',
-    };
-    queryClient.setQueryData(['messages', workstreamId], [humanMessage]);
     const getSocketTicket = vi.fn(async () => ({
       url: `wss://api.rally.test/workstreams/${workstreamId}`,
       ticket: 'socket-ticket',
@@ -1249,9 +1372,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 204,
       occurredAt: '2026-07-31T19:21:00.000Z',
-      messageId: assistantMessageId,
+      streamId: assistantMessageId,
       harnessRunId,
       turnId: 'turn-one',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -1260,8 +1384,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 205,
       occurredAt: '2026-07-31T19:21:00.500Z',
-      messageId: assistantMessageId,
+      streamId: assistantMessageId,
       turnId: 'turn-one',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1310,9 +1435,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 210,
       occurredAt: '2026-07-31T19:21:06.500Z',
-      messageId: assistantMessageId,
+      streamId: assistantMessageId,
       harnessRunId,
       turnId: 'turn-two',
+      transcriptSequence: 4,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -1321,8 +1447,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 211,
       occurredAt: '2026-07-31T19:21:06.750Z',
-      messageId: assistantMessageId,
+      streamId: assistantMessageId,
       turnId: 'turn-two',
+      transcriptSequence: 4,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1330,99 +1457,41 @@ describe('useWorkstreamSocket', () => {
     }));
     await frames.flush();
 
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])
-      ?.filter((message) => message.id === 'turn-one' || message.id === 'turn-two')
+    expect(overlayMessages(queryClient, workstreamId)
+      .filter((message) => message.id === 'turn-one' || message.id === 'turn-two')
       .map((message) => [message.id, message.text])).toEqual([
         ['turn-one', 'I will check. '],
         ['turn-two', 'Here is the result.'],
       ]);
 
-    const assistantMessage: Message = {
-      id: assistantMessageId,
-      workstreamId,
-      sequenceNumber: 20,
-      authorType: 'agent',
-      messageType: 'text',
-      text: 'I will check. Here is the result.',
-      createdAt: '2026-07-31T19:21:07.000Z',
-    };
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_completed',
       sequence: 212,
       occurredAt: '2026-07-31T19:21:07.000Z',
-      message: {
-        id: assistantMessage.id,
-        clientMessageId: null,
-        workspaceId,
-        workstreamId,
-        author: { type: 'agent' },
-        messageType: 'text',
-        textContent: assistantMessage.text,
-        structuredContent: null,
-        mentions: [],
-        sequenceNumber: assistantMessage.sequenceNumber,
-        createdAt: assistantMessage.createdAt,
-        editedAt: null,
-      },
+      streamId: assistantMessageId,
     }));
     act(() => FakeWebSocket.instances[0]?.message({
       type: 'stream_delta',
       sequence: 213,
       occurredAt: '2026-07-31T19:21:08.000Z',
-      messageId: assistantMessageId,
+      streamId: assistantMessageId,
       turnId: 'turn-two',
+      transcriptSequence: 4,
       epoch: 0,
       streamSeq: 2,
       reset: false,
       delta: 'This late chunk must be ignored.',
     }));
 
-    const live = queryClient.getQueryData<Message[]>(['messages', workstreamId]) ?? [];
+    const live = overlayMessages(queryClient, workstreamId);
     expect(live.map((message) => message.id)).toEqual([
-      humanMessage.id,
       'turn-one',
       `tool-${toolOneId}`,
       `tool-${toolTwoId}`,
       'turn-two',
     ]);
-
-    const refreshedBeforePersistence = mergeCanonicalTranscript(live, [humanMessage, assistantMessage]);
-    expect(refreshedBeforePersistence.map((message) => message.id)).toEqual([
-      humanMessage.id,
-      `tool-${toolOneId}`,
-      `tool-${toolTwoId}`,
-      assistantMessage.id,
-    ]);
-
-    const canonicalToolMessages = live
-      .filter((message) => message.messageType === 'tool_event')
-      .map((message, index): Message => ({
-        ...message,
-        id: message.toolEvent!.id,
-        sequenceNumber: 18 + index,
-        realtimeOrder: undefined,
-      }));
-    const canonical = [humanMessage, ...canonicalToolMessages, assistantMessage];
-
-    // A cold load needs no realtime history to reconstruct the turn.
-    expect(canonical.map((message) => message.id)).toEqual([
-      humanMessage.id,
-      toolOneId,
-      toolTwoId,
-      assistantMessage.id,
-    ]);
-
-    // A REST refresh that lands while realtime rows are still cached replaces
-    // them by invocation identity instead of displaying both copies.
-    const reconciled = mergeCanonicalTranscript(live, canonical);
-    expect(reconciled.map((message) => message.id)).toEqual([
-      humanMessage.id,
-      toolOneId,
-      toolTwoId,
-      assistantMessage.id,
-    ]);
-    expect(reconciled.filter((message) => message.messageType === 'tool_event')).toHaveLength(2);
-    expect(reconciled.find((message) => message.id === assistantMessage.id)?.text).toBe('I will check. Here is the result.');
+    expect(live.filter((message) => message.messageType === 'text').map((message) => message.text))
+      .toEqual(['I will check. ', 'Here is the result.']);
   });
 
   it('holds streamed text back and reveals it across animation frames', async () => {
@@ -1447,9 +1516,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 1,
       occurredAt: '2026-08-23T12:00:00.000Z',
-      messageId,
+      streamId: messageId,
       harnessRunId: '00000000-0000-7000-8000-000000000703',
       turnId: 'turn-paced',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -1458,8 +1528,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 2,
       occurredAt: '2026-08-23T12:00:00.100Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-paced',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1468,12 +1539,204 @@ describe('useWorkstreamSocket', () => {
 
     // The wire frame landed, and nothing of it is visible yet: the reveal
     // loop, not the socket event, is what grows the message.
-    const held = queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0];
+    const held = overlayMessages(queryClient, workstreamId)[0];
     expect(held?.streaming).toBe(true);
     expect(held?.text).toBe('');
+    act(() => socket.message({
+      type: 'stream_completed',
+      sequence: 3,
+      occurredAt: '2026-08-23T12:00:00.200Z',
+      streamId: messageId,
+    }));
+    expect(overlayMessages(queryClient, workstreamId)[0]).toMatchObject({
+      text: 'A burst of text held back by the paced reveal.',
+      streaming: false,
+    });
     await frames.flush();
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text)
+    expect(overlayMessages(queryClient, workstreamId)[0]?.text)
       .toBe('A burst of text held back by the paced reveal.');
+  });
+
+  it('clears failed partial output when the reserved canonical error turn arrives', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000706';
+    const runId = '00000000-0000-7000-8000-000000000707';
+    const turnId = 'reserved-failed-turn';
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+      emptyTranscriptSnapshot(),
+    );
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message({
+      type: 'stream_started',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      streamId: runId,
+      harnessRunId: runId,
+      turnId,
+      transcriptSequence: 1,
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }));
+    act(() => socket.message({
+      type: 'stream_delta',
+      sequence: 2,
+      occurredAt: '2026-08-23T12:00:00.100Z',
+      streamId: runId,
+      turnId,
+      transcriptSequence: 1,
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'observable partial',
+    }));
+    await frames.flush();
+    expect(overlayMessages(queryClient, workstreamId)).toMatchObject([{
+      text: 'observable partial',
+      streaming: true,
+    }]);
+
+    act(() => socket.message({
+      type: 'transcript_turn_upserted',
+      sequence: 3,
+      occurredAt: '2026-08-23T12:00:00.200Z',
+      turn: {
+        transcriptSequence: 1,
+        turnId,
+        entryKind: 'status',
+        actor: 'system',
+        authorUserId: null,
+        authorSnapshot: null,
+        attentionOrdinal: null,
+        createdAtUtc: '2026-08-23T12:00:00.200Z',
+        revision: 1,
+        blocks: [{
+          type: 'text',
+          blockId: `${turnId}:status`,
+          blockIndex: 0,
+          text: 'Response could not be completed',
+          streaming: false,
+          messageType: 'system',
+          structuredContent: { kind: 'assistant_turn_failed', code: 'provider_failed' },
+        }],
+        activityId: null,
+      },
+    }));
+    act(() => socket.message({
+      type: 'stream_completed',
+      sequence: 4,
+      occurredAt: '2026-08-23T12:00:00.300Z',
+      streamId: runId,
+    }));
+
+    expect(overlayMessages(queryClient, workstreamId)).toEqual([]);
+    const canonical = orderedTranscriptMessages(
+      queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId]),
+      workstreamId,
+    );
+    expect(canonical).toMatchObject([{
+      transcriptTurnId: turnId,
+      messageType: 'system',
+      text: 'Response could not be completed',
+      statusEvent: { kind: 'assistant_turn_failed', code: 'provider_failed' },
+    }]);
+    expect(canonical.map((message) => message.text)).not.toContain('observable partial');
+  });
+
+  it('ignores completion for an older stream without closing the active stream', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const frames = stubAnimationFrames();
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000704';
+    const oldStreamId = '00000000-0000-7000-8000-000000000714';
+    const activeStreamId = '00000000-0000-7000-8000-000000000715';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const start = (
+      sequence: number,
+      streamId: string,
+      turnId: string,
+      transcriptSequence: number,
+    ) => socket.message({
+      type: 'stream_started', sequence, occurredAt: '2026-08-23T12:00:00.000Z',
+      streamId, harnessRunId: streamId, turnId, transcriptSequence,
+      epoch: 0, streamSeq: 0, reset: false,
+    });
+    act(() => start(1, oldStreamId, 'turn-old', 1));
+    act(() => start(2, activeStreamId, 'turn-active', 2));
+    act(() => socket.message({
+      type: 'stream_delta', sequence: 3, occurredAt: '2026-08-23T12:00:00.100Z',
+      streamId: activeStreamId, turnId: 'turn-active', transcriptSequence: 2,
+      epoch: 0, streamSeq: 1,
+      reset: false, delta: 'still running',
+    }));
+    act(() => socket.message({
+      type: 'stream_completed', sequence: 4, occurredAt: '2026-08-23T12:00:00.200Z',
+      streamId: oldStreamId,
+    }));
+    act(() => socket.message({
+      type: 'stream_delta', sequence: 5, occurredAt: '2026-08-23T12:00:00.300Z',
+      streamId: activeStreamId, turnId: 'turn-active', transcriptSequence: 2,
+      epoch: 0, streamSeq: 2,
+      reset: false, delta: ' after stale completion',
+    }));
+    await frames.flush();
+
+    expect(overlayMessages(queryClient, workstreamId).find((message) => message.id === 'turn-active'))
+      .toMatchObject({ text: 'still running after stale completion', streaming: true });
+  });
+
+  it('does not let a requested snapshot roll back a newer canonical transcript event', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    stubAnimationFrames();
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000705';
+    const current = { ...emptyTranscriptSnapshot(), snapshotThrough: 4, eventSequence: 9 };
+    queryClient.setQueryData(['ordered-transcript', workstreamId], current);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    act(() => socket.message(snapshotFrame({
+      sequence: 10,
+      transcript: { ...emptyTranscriptSnapshot(), snapshotThrough: 3, eventSequence: 8 },
+    })));
+
+    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toBe(current);
   });
 
   it('reveals streamed text immediately while the document is hidden', async () => {
@@ -1500,9 +1763,10 @@ describe('useWorkstreamSocket', () => {
         type: 'stream_started',
         sequence: 1,
         occurredAt: '2026-08-23T12:00:00.000Z',
-        messageId,
+        streamId: messageId,
         harnessRunId: '00000000-0000-7000-8000-000000000713',
         turnId: 'turn-hidden',
+        transcriptSequence: 1,
         epoch: 0,
         streamSeq: 0,
         reset: false,
@@ -1511,15 +1775,16 @@ describe('useWorkstreamSocket', () => {
         type: 'stream_delta',
         sequence: 2,
         occurredAt: '2026-08-23T12:00:00.100Z',
-        messageId,
+        streamId: messageId,
         turnId: 'turn-hidden',
+        transcriptSequence: 1,
         epoch: 0,
         streamSeq: 1,
         reset: false,
         delta: 'Shown at once — no animation frames fire in a hidden window.',
       }));
 
-      expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text)
+      expect(overlayMessages(queryClient, workstreamId)[0]?.text)
         .toBe('Shown at once — no animation frames fire in a hidden window.');
     } finally {
       visibility.mockRestore();
@@ -1563,9 +1828,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 1,
       occurredAt: '2026-08-23T12:00:00.000Z',
-      messageId,
+      streamId: messageId,
       harnessRunId: '00000000-0000-7000-8000-000000000733',
       turnId: 'turn-inherited',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -1574,21 +1840,22 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 2,
       occurredAt: '2026-08-23T12:00:00.100Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-inherited',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
       delta: 'Held back across the remount.',
     }));
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text).toBe('');
+    expect(overlayMessages(queryClient, workstreamId)[0]?.text).toBe('');
 
     rendered.rerender(<Tree mounted={false} />);
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
     try {
       rendered.rerender(<Tree mounted />);
       await flushPromises();
-      expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text)
+      expect(overlayMessages(queryClient, workstreamId)[0]?.text)
         .toBe('Held back across the remount.');
     } finally {
       visibility.mockRestore();
@@ -1603,8 +1870,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 1,
       occurredAt: '2026-08-23T12:00:00.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-retry',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1616,8 +1884,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 2,
       occurredAt: '2026-08-23T12:00:00.500Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-retry',
+      transcriptSequence: 1,
       epoch: 1,
       streamSeq: 2,
       reset: true,
@@ -1629,6 +1898,43 @@ describe('useWorkstreamSocket', () => {
     expect(transcript.find((message) => message.id === 'turn-retry')?.text).toBe('');
     expect(cursors.get('turn-retry')).toMatchObject({
       receivedText: 'A fresh attempt.',
+      revealed: 0,
+    });
+  });
+
+  it('does not rewrite the overlay cache for a paced wire delta that reveals no new text', () => {
+    const workstreamId = '00000000-0000-7000-8000-000000000723';
+    const streamId = '00000000-0000-7000-8000-000000000724';
+    const cursors = new Map();
+    const started = applyStreamingOverlayEvent([], {
+      type: 'stream_started',
+      sequence: 1,
+      occurredAt: '2026-08-23T12:00:00.000Z',
+      streamId,
+      harnessRunId: streamId,
+      turnId: 'turn-paced-cache',
+      transcriptSequence: 1,
+      epoch: 0,
+      streamSeq: 0,
+      reset: false,
+    }, workstreamId, 0, cursors, { paced: true });
+
+    const held = applyStreamingOverlayEvent(started, {
+      type: 'stream_delta',
+      sequence: 2,
+      occurredAt: '2026-08-23T12:00:00.100Z',
+      streamId,
+      turnId: 'turn-paced-cache',
+      transcriptSequence: 1,
+      epoch: 0,
+      streamSeq: 1,
+      reset: false,
+      delta: 'held for the reveal frame',
+    }, workstreamId, 0, cursors, { paced: true });
+
+    expect(held).toBe(started);
+    expect(cursors.get('turn-paced-cache')).toMatchObject({
+      receivedText: 'held for the reveal frame',
       revealed: 0,
     });
   });
@@ -1658,9 +1964,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 1,
       occurredAt: '2026-07-31T19:21:00.000Z',
-      messageId,
+      streamId: messageId,
       harnessRunId,
       turnId: 'turn-reconnect',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -1669,8 +1976,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 2,
       occurredAt: '2026-07-31T19:21:01.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-reconnect',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1686,8 +1994,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 3,
       occurredAt: '2026-07-31T19:21:02.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-reconnect',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -1697,114 +2006,16 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 4,
       occurredAt: '2026-07-31T19:21:03.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-reconnect',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 2,
       reset: false,
       delta: ' two',
     }));
     await frames.flush();
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.[0]?.text).toBe('One two');
-  });
-
-  it('self-heals stale and duplicate realtime tool rows after reconnect without a reload', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-000000000091';
-    const invocationId = '00000000-0000-7000-8000-000000000092';
-    const staleTool: Message = {
-      id: `tool-${invocationId}`,
-      workstreamId,
-      sequenceNumber: 4,
-      authorType: 'agent',
-      messageType: 'tool_event',
-      createdAt: '2026-07-31T19:20:00.000Z',
-      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
-      toolEvent: { id: invocationId, name: 'firecrawl.fetch', status: 'started' },
-    };
-    const wireToolMessage = wireTextMessage({
-      id: invocationId,
-      workstreamId,
-      messageType: 'tool',
-      textContent: '',
-      sequenceNumber: 5,
-      structuredContent: {
-        invocation: {
-          id: invocationId,
-          harnessRunId: '00000000-0000-7000-8000-000000000093',
-          toolCallId: 'call-one',
-          toolName: 'firecrawl.fetch',
-          activityName: null,
-          connectionId: null,
-          plugin: null,
-          status: 'completed',
-          inputSummary: 'https://example.test',
-          outputSummary: null,
-          startedAt: null,
-          completedAt: null,
-          error: null,
-        },
-      },
-    });
-    // Written out rather than derived through `mapMessage`: the mapping is part
-    // of what this test covers, so expecting its own output would assert
-    // nothing.
-    const canonicalTool: Message = {
-      id: invocationId,
-      workstreamId,
-      sequenceNumber: 5,
-      authorType: 'agent',
-      messageType: 'tool_event',
-      text: '',
-      mentions: [],
-      attachments: [],
-      createdAt: '2026-07-31T19:20:00.000Z',
-      attentionSequenceNumber: null,
-      toolEvent: {
-        id: invocationId,
-        name: 'firecrawl.fetch',
-        summary: 'https://example.test',
-        status: 'completed',
-        input: 'https://example.test',
-      },
-    };
-    queryClient.setQueryData(['messages', workstreamId], [staleTool]);
-    queryClient.setQueryData(['block-dashboard', workstreamId], { versionId: null, versionNumber: 0, blocks: [], updatedAt: null });
-    queryClient.setQueryData(['block-dashboard-preference', workstreamId], { visible: false, updatedAt: null });
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
-
-    await flushPromises();
-    const first = FakeWebSocket.instances[0]!;
-    act(() => first.open());
-    act(() => first.close());
-    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
-    const second = FakeWebSocket.instances[1]!;
-    act(() => second.open());
-    await flushPromises();
-
-    // The cursor is the reconciliation: the reconnect subscribes, and the room
-    // answers a cursor it cannot replay from with the canonical snapshot. No
-    // REST call is made for it — `socketApiWith` throws on any it did not stub.
-    expect(sentFrames(second)).toEqual([{ type: 'subscribe', afterSequence: 0, publishPresence: false }]);
-    act(() => second.message(snapshotFrame({
-      sequence: 6,
-      workstream: { id: workstreamId, harnessStatus: 'completed' },
-      messages: [wireToolMessage],
-    })));
-    await flushPromises();
-
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
-    expect(queryClient.getQueryState(['block-dashboard', workstreamId])?.isInvalidated).toBe(true);
+    expect(overlayMessages(queryClient, workstreamId)[0]?.text).toBe('One two');
   });
 
   it('shows the name Rally gives a work stream in its header and its sidebar row', async () => {
@@ -1907,11 +2118,10 @@ describe('useWorkstreamSocket', () => {
       scope: 'workspace',
       harnessStatus: 'completed',
     } as WorkstreamDetail);
-    queryClient.setQueryData(['messages', workstreamId], [{ id: 'message-1' }] as Message[]);
-    queryClient.setQueryData(['messages-newer-cursor', workstreamId], 'message-cursor');
+    queryClient.setQueryData(['ordered-transcript', workstreamId], { snapshotId: 'sensitive' });
+    queryClient.setQueryData(transcriptOverlaysQueryKey(workstreamId), [{ sensitive: true }]);
     queryClient.setQueryData(['block-dashboard', workstreamId], { blocks: [{ sensitive: true }] });
-    queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'legacy_page');
-    queryClient.setQueryData(workstreamRecoveryFeedQueryKey(workstreamId), { resumeFeed: null });
+    queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
     queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
     setCachedWorkstreams(queryClient, [
       { id: workstreamId, title: 'Compensation review' },
@@ -1943,11 +2153,10 @@ describe('useWorkstreamSocket', () => {
     expect(api.getSocketTicket).toHaveBeenCalledTimes(1);
     expect(FakeWebSocket.instances).toHaveLength(1);
     expect(queryClient.getQueryData(['workstream', workstreamId])).toBeUndefined();
-    expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
-    expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(transcriptOverlaysQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData(['block-dashboard', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBeUndefined();
-    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBeUndefined();
     expect(queryClient.getQueryData<WorkstreamSummary[]>(['workstreams'])).toEqual([
       { id: '00000000-7000-7000-8000-000000000406', title: 'August planning' },
@@ -1973,7 +2182,6 @@ describe('useWorkstreamSocket', () => {
     const api = socketApiWith({
       getSocketTicket,
       getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'completed' })),
-      getMessages: vi.fn(async () => []),
     });
     const openAttemptId = markWorkstreamFeedOpenStarted(workstreamId, 'recent', 'cold', 0);
     renderHook(
@@ -2065,6 +2273,7 @@ describe('useWorkstreamSocket', () => {
     queryClient.setQueryData(['workstream-context', workstreamId, null], { resources: [] });
     act(() => socket.message(snapshotFrame({
       sequence: 2,
+      reason: 'reconciliation',
       workstream: {
         id: workstreamId,
         harnessStatus: 'running',
@@ -2115,7 +2324,6 @@ describe('useWorkstreamSocket', () => {
         protocols: socketTicketProtocols('socket-ticket'),
       })),
       getWorkstream: vi.fn(async () => workstreamBoot({ id: workstreamId, harnessStatus: 'needs_input' })),
-      getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
 
@@ -2137,255 +2345,6 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.harnessStatus).toBe('needs_input');
     expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(false);
     await flushPromises();
-  });
-
-  it('does not lose socket messages that arrive while a snapshot request is in flight', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workspaceId = '00000000-0000-7000-8000-000000000101';
-    const workstreamId = '00000000-0000-7000-8000-000000000102';
-    const messageId = '00000000-0000-7000-8000-000000000103';
-    const socketMessage = {
-      id: messageId,
-      clientMessageId: null,
-      workspaceId,
-      workstreamId,
-      author: { type: 'agent' as const },
-      messageType: 'text' as const,
-      textContent: 'Arrived while reconciling.',
-      structuredContent: null,
-      mentions: [],
-      sequenceNumber: 12,
-      attentionSequenceNumber: 7,
-      createdAt: '2026-07-31T19:20:02.000Z',
-      editedAt: null,
-    };
-    const canonicalMessage: Message = {
-      id: messageId,
-      workstreamId,
-      sequenceNumber: 12,
-      attentionSequenceNumber: 7,
-      authorType: 'agent',
-      messageType: 'text',
-      text: 'Arrived while reconciling.',
-      attachments: [],
-      mentions: [],
-      createdAt: '2026-07-31T19:20:02.000Z',
-    };
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
-
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    act(() => socket.message({
-      type: 'harness_status_changed',
-      sequence: 10,
-      occurredAt: '2026-07-31T19:20:00.000Z',
-      status: 'completed',
-    }));
-    expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0, publishPresence: false },
-      { type: 'request_snapshot' },
-    ]);
-
-    // Published after the request was sent, so it reaches the client ahead of
-    // an answer assembled before it existed.
-    act(() => socket.message({
-      type: 'message_created',
-      sequence: 12,
-      occurredAt: '2026-07-31T19:20:02.000Z',
-      message: socketMessage,
-    }));
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalMessage]);
-
-    // The room's answer is older than what the client has already applied. The
-    // ordering guard drops it, which is the whole reason this path needs no
-    // retry: the newer state is already installed, so there is nothing to go
-    // back for.
-    act(() => socket.message(snapshotFrame({ sequence: 11, workstream: { id: workstreamId } })));
-    await flushPromises();
-
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalMessage]);
-    // And the dropped answer released the slot rather than wedging it: a later
-    // status change can still ask again.
-    act(() => socket.message({
-      type: 'harness_status_changed',
-      sequence: 13,
-      occurredAt: '2026-07-31T19:20:03.000Z',
-      status: 'idle',
-    }));
-    expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0, publishPresence: false },
-      { type: 'request_snapshot' },
-      { type: 'request_snapshot' },
-    ]);
-  });
-
-  it('treats needs-input as terminal and reconciles synthetic realtime rows', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-000000000111';
-    const invocationId = '00000000-0000-7000-8000-000000000112';
-    const staleTool: Message = {
-      id: `tool-${invocationId}`,
-      workstreamId,
-      sequenceNumber: 4,
-      authorType: 'agent',
-      messageType: 'tool_event',
-      createdAt: '2026-07-31T19:20:00.000Z',
-      realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 8, placement: 'before_anchor' },
-      toolEvent: { id: invocationId, name: 'rally.ask', status: 'started' },
-    };
-    const wireToolMessage = wireTextMessage({
-      id: invocationId,
-      workstreamId,
-      messageType: 'tool',
-      textContent: '',
-      sequenceNumber: 5,
-      structuredContent: {
-        invocation: {
-          id: invocationId,
-          harnessRunId: '00000000-0000-7000-8000-000000000113',
-          toolCallId: 'call-ask',
-          toolName: 'rally.ask',
-          activityName: null,
-          connectionId: null,
-          plugin: null,
-          status: 'completed',
-          inputSummary: 'Which repository?',
-          outputSummary: null,
-          startedAt: null,
-          completedAt: null,
-          error: null,
-        },
-      },
-    });
-    const canonicalTool: Message = {
-      id: invocationId,
-      workstreamId,
-      sequenceNumber: 5,
-      authorType: 'agent',
-      messageType: 'tool_event',
-      text: '',
-      mentions: [],
-      attachments: [],
-      createdAt: '2026-07-31T19:20:00.000Z',
-      attentionSequenceNumber: null,
-      toolEvent: {
-        id: invocationId,
-        name: 'rally.ask',
-        summary: 'Which repository?',
-        status: 'completed',
-        input: 'Which repository?',
-      },
-    };
-    queryClient.setQueryData(['messages', workstreamId], [staleTool]);
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
-
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    act(() => socket.message({
-      type: 'harness_status_changed',
-      sequence: 1,
-      occurredAt: '2026-07-31T19:20:00.000Z',
-      status: 'needs_input',
-    }));
-    await flushPromises();
-
-    expect(sentFrames(socket)).toEqual([
-      { type: 'subscribe', afterSequence: 0, publishPresence: false },
-      { type: 'request_snapshot' },
-    ]);
-    act(() => socket.message(snapshotFrame({
-      sequence: 2,
-      workstream: { id: workstreamId, harnessStatus: 'needs_input' },
-      messages: [wireToolMessage],
-    })));
-    await flushPromises();
-
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])).toEqual([canonicalTool]);
-  });
-
-  it('does not pull the reader backwards when a later snapshot carries a resume window', async () => {
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const queryClient = new QueryClient();
-    const workstreamId = '00000000-0000-7000-8000-000000000151';
-    const api = socketApiWith({
-      getSocketTicket: vi.fn(async () => ({
-        url: `wss://api.rally.test/workstreams/${workstreamId}`,
-        ticket: 'socket-ticket',
-        protocols: socketTicketProtocols('socket-ticket'),
-      })),
-    });
-    renderHook(() => useWorkstreamSocket(api, workstreamId, true), { wrapper: createWrapper(queryClient) });
-
-    await flushPromises();
-    const socket = FakeWebSocket.instances[0]!;
-    act(() => socket.open());
-    queryClient.setQueryData(workstreamRecoveryFeedQueryKey(workstreamId), {
-      messageFeed: { items: [], nextCursor: null, newerCursor: null },
-      resumeFeed: null,
-    });
-
-    // Arriving: the reader is behind, so the resume window is what they see.
-    act(() => socket.message(snapshotFrame({
-      sequence: 5,
-      workstream: { id: workstreamId },
-      messages: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000152', sequenceNumber: 90 })],
-      resumeFeed: {
-        items: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000153', sequenceNumber: 12 })],
-        nextCursor: '12',
-        newerCursor: '13',
-      },
-    })));
-    await flushPromises();
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
-      .toEqual([12]);
-    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
-    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
-    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBe(1);
-
-    // Reconciling: the same frame shape, but the reader has been watching this
-    // run. Read acknowledgement stops while the window is unfocused, so their
-    // first-unread is still far behind and the room keeps sending a resume
-    // window — applying it here would throw away what they just watched arrive.
-    act(() => socket.message({
-      type: 'harness_status_changed',
-      sequence: 6,
-      occurredAt: '2026-07-31T19:20:00.000Z',
-      status: 'completed',
-    }));
-    act(() => socket.message(snapshotFrame({
-      sequence: 7,
-      workstream: { id: workstreamId },
-      messages: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000154', sequenceNumber: 91 })],
-      resumeFeed: {
-        items: [wireTextMessage({ id: '00000000-0000-7000-8000-000000000153', sequenceNumber: 12 })],
-        nextCursor: '12',
-        newerCursor: '13',
-      },
-    })));
-    await flushPromises();
-
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((m) => m.sequenceNumber))
-      .toEqual([91]);
-    expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBeNull();
-    expect(queryClient.getQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId))).toBe(2);
   });
 
   it('does not re-ask for a snapshot as a run streams under it', async () => {
@@ -2421,8 +2380,9 @@ describe('useWorkstreamSocket', () => {
         type: 'stream_delta',
         sequence: 1 + streamSeq,
         occurredAt: '2026-07-31T19:20:01.000Z',
-        messageId,
+        streamId: messageId,
         turnId: 'turn-one',
+        transcriptSequence: 1,
         epoch: 0,
         streamSeq,
         reset: false,
@@ -2450,6 +2410,7 @@ describe('useWorkstreamSocket', () => {
     // reconciliation that matters.
     act(() => socket.message(snapshotFrame({
       sequence: 28,
+      reason: 'reconciliation',
       workstream: { id: workstreamId, harnessStatus: 'running' },
     })));
     act(() => socket.message({
@@ -2597,7 +2558,6 @@ describe('useWorkstreamSocket', () => {
         id: workstreamId,
         harnessStatus: 'running',
       })),
-      getMessages: vi.fn(async () => []),
     });
 
     function Socket({ workstreamId }: { workstreamId: string }): null {
@@ -2635,9 +2595,10 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_started',
       sequence: 1,
       occurredAt: '2026-07-31T19:21:00.000Z',
-      messageId,
+      streamId: messageId,
       harnessRunId,
       turnId: 'turn-route-change',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -2646,8 +2607,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 2,
       occurredAt: '2026-07-31T19:21:01.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-route-change',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -2665,8 +2627,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 3,
       occurredAt: '2026-07-31T19:21:02.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-route-change',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -2676,8 +2639,9 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 4,
       occurredAt: '2026-07-31T19:21:03.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-route-change',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 2,
       reset: false,
@@ -2685,7 +2649,7 @@ describe('useWorkstreamSocket', () => {
     }));
     await flushPromises();
     await frames.flush();
-    expect(queryClient.getQueryData<Message[]>(['messages', firstWorkstreamId])?.[0]?.text).toBe('One two');
+    expect(overlayMessages(queryClient, firstWorkstreamId)[0]?.text).toBe('One two');
 
     rendered.rerender(<Tree view="returned" />);
     await flushPromises();
@@ -2696,15 +2660,16 @@ describe('useWorkstreamSocket', () => {
       type: 'stream_delta',
       sequence: 5,
       occurredAt: '2026-07-31T19:21:04.000Z',
-      messageId,
+      streamId: messageId,
       turnId: 'turn-route-change',
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 3,
       reset: false,
       delta: ' three',
     }));
     await frames.flush();
-    expect(queryClient.getQueryData<Message[]>(['messages', firstWorkstreamId])?.[0]?.text).toBe('One two three');
+    expect(overlayMessages(queryClient, firstWorkstreamId)[0]?.text).toBe('One two three');
   });
 
   it('keeps retrying ticket failures beyond the old four-attempt cutoff', async () => {
@@ -2801,7 +2766,6 @@ describe('useWorkstreamSocket', () => {
     const api = socketApiWith({
       getSocketTicket,
       getWorkstream: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
-      getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
@@ -2841,6 +2805,97 @@ describe('useWorkstreamSocket', () => {
     ]);
   });
 
+  it('releases an in-flight transcript range immediately when its socket closes', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const settled = result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then(() => null, (error: unknown) => error);
+    expect(sentFrames(socket).at(-1)).toMatchObject({ type: 'load_transcript_range' });
+
+    act(() => socket.close(1006));
+
+    await expect(settled).resolves.toMatchObject({ code: 'workstream_socket_unavailable' });
+  });
+
+  it('treats a transcript-range send race as a reconnectable socket interruption', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    socket.send.mockImplementationOnce(() => {
+      throw new Error('socket entered closing state');
+    });
+
+    await expect(result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    })).rejects.toMatchObject({ code: 'workstream_socket_unavailable' });
+  });
+
+  it('releases an in-flight transcript range immediately when the room requires resync', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: 'wss://api.rally.test/workstreams/workstream-one',
+        ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
+      })),
+      getWorkstream: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
+    });
+    const { result } = renderHook(
+      () => useWorkstreamSocket(api, 'workstream-one', true),
+      { wrapper: createWrapper() },
+    );
+
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const settled = result.current.loadTranscriptRange({
+      snapshotId: '00000000-0000-7000-8000-000000000777',
+      range: { startInclusive: 1, endExclusive: 2 },
+      resumeAfterEventSequence: 0,
+    }).then(() => null, (error: unknown) => error);
+
+    act(() => socket.message({
+      type: 'resync_required',
+      sequence: 14,
+      latestSequence: 14,
+      occurredAt: '2026-07-31T20:00:00.000Z',
+      reason: 'history_unavailable',
+      activeStreams: [],
+      activeCompaction: null,
+    }));
+
+    await expect(settled).resolves.toMatchObject({ code: 'workstream_socket_unavailable' });
+  });
+
   it('counts one drop when a resync frame lands in the same batch as an abrupt close', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
@@ -2852,7 +2907,6 @@ describe('useWorkstreamSocket', () => {
     const api = socketApiWith({
       getSocketTicket,
       getWorkstream: vi.fn(async () => workstreamBoot({ id: 'workstream-one' })),
-      getMessages: vi.fn(async () => []),
     });
     renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), { wrapper: createWrapper() });
 
@@ -2944,130 +2998,4 @@ describe('useWorkstreamSocket', () => {
     expect(socket.send.mock.calls.filter(([frame]) => frame === 'ping')).toHaveLength(2);
   });
 
-  it('retains its replay cursor until direct canonical recovery succeeds', async () => {
-    vi.useFakeTimers();
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.stubGlobal('WebSocket', FakeWebSocket);
-    const frames = stubAnimationFrames();
-    const queryClient = new QueryClient();
-    const messageId = '00000000-0000-7000-8000-000000000501';
-    const harnessRunId = '00000000-0000-7000-8000-000000000502';
-    queryClient.setQueryData(['workstream', 'workstream-one'], {
-      id: 'workstream-one',
-      title: 'Stale',
-      harnessStatus: 'completed',
-      latestHarnessRunId: '00000000-0000-7000-8000-000000000503',
-    });
-    queryClient.setQueryData(['messages', 'workstream-one'], []);
-    const laterPage = workstreamSummary({
-      id: '00000000-0000-7000-8000-000000000504',
-      title: 'Later page',
-    });
-    const debugRow = workstreamSummary({
-      id: '00000000-0000-7000-8000-000000000505',
-      title: 'System row',
-      systemKind: 'digest',
-    });
-    setCachedWorkstreams(queryClient, [
-      workstreamSummary({ id: 'workstream-one', title: 'Stale' }),
-      laterPage,
-      debugRow,
-    ]);
-    const getSocketTicket = vi.fn(async () => ({
-      url: 'wss://api.rally.test/workstreams/workstream-one',
-      ticket: 'socket-ticket', protocols: socketTicketProtocols('socket-ticket'),
-    }));
-    const canonicalWorkstream = workstreamBoot({
-      id: 'workstream-one',
-      title: 'Canonical',
-      harnessStatus: 'running',
-      latestHarnessRunId: harnessRunId,
-    });
-    const getWorkstream = vi.fn(async () => canonicalWorkstream);
-    const getMessages = vi.fn()
-      .mockRejectedValueOnce(new Error('transient D1 failure'))
-      .mockResolvedValueOnce([]);
-    const api = socketApiWith({
-      getSocketTicket,
-      getWorkstream,
-      getMessages,
-    });
-    const { result } = renderHook(() => useWorkstreamSocket(api, 'workstream-one', true), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    await flushPromises();
-    act(() => FakeWebSocket.instances[0]?.open());
-    act(() => FakeWebSocket.instances[0]?.message({
-      type: 'resync_required',
-      sequence: 14,
-      latestSequence: 14,
-      occurredAt: '2026-07-31T20:00:00.000Z',
-      reason: 'history_unavailable',
-      activeStreams: [{
-        messageId,
-        harnessRunId,
-        turnId: 'turn-resync',
-        epoch: 0,
-        streamSeq: 2,
-        seenTurnIds: ['turn-resync'],
-        text: 'Recovered partial',
-        turnStartOffset: 0,
-        roomSequence: 14,
-        createdAt: '2026-07-31T19:59:59.000Z',
-      }],
-      activeCompaction: {
-        harnessRunId,
-        attemptId: '00000000-0000-7000-8000-000000000504',
-        compactionIndex: 2,
-        trigger: 'auto',
-        startedAt: '2026-07-31T19:59:58.000Z',
-      },
-    }));
-    expect(result.current.activeCompaction).toMatchObject({ harnessRunId, compactionIndex: 2 });
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(750); });
-    expect(getMessages).toHaveBeenCalledOnce();
-    expect(FakeWebSocket.instances).toHaveLength(1);
-    expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Stale');
-    expect(queryClient.getQueryData<Message[]>(['messages', 'workstream-one'])?.[0]?.text)
-      .toBe('Recovered partial');
-
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
-    expect(getMessages).toHaveBeenCalledTimes(2);
-    expect(FakeWebSocket.instances).toHaveLength(2);
-    act(() => FakeWebSocket.instances[1]?.open());
-    expect(FakeWebSocket.instances[1]?.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: 'subscribe', afterSequence: 14, publishPresence: false }),
-    );
-    expect(queryClient.getQueryData<{ title: string }>(['workstream', 'workstream-one'])?.title).toBe('Canonical');
-    expect(queryClient.getQueryData(['workstreams'])).toEqual([
-      workstreamSummary({ id: 'workstream-one', title: 'Stale' }),
-      laterPage,
-      debugRow,
-    ]);
-    expect(queryClient.getQueryState(['workstreams'])?.isInvalidated).toBe(true);
-    act(() => FakeWebSocket.instances[1]?.message({
-      type: 'harness_status_changed',
-      sequence: 15,
-      occurredAt: '2026-07-31T20:00:01.000Z',
-      status: 'completed',
-    }));
-    expect(result.current.activeCompaction).toBeNull();
-    act(() => FakeWebSocket.instances[1]?.message({
-      type: 'stream_delta',
-      sequence: 16,
-      occurredAt: '2026-07-31T20:00:01.000Z',
-      messageId,
-      harnessRunId,
-      turnId: 'turn-resync',
-      epoch: 0,
-      streamSeq: 3,
-      reset: false,
-      delta: ' plus live',
-    }));
-    await frames.flush();
-    expect(queryClient.getQueryData<Message[]>(['messages', 'workstream-one'])?.[0]?.text)
-      .toBe('Recovered partial plus live');
-  });
 });

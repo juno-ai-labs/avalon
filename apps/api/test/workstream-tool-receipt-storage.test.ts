@@ -6,10 +6,6 @@ import {
   WorkstreamToolReceiptStorage,
   type ToolReceiptFence,
 } from "../src/durable-objects/workstream-tool-receipt-storage";
-import {
-  insertWorkstreamMessageRecord,
-  prepareWorkstreamMessageRecord,
-} from "../src/durable-objects/workstream-transcript-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -275,15 +271,9 @@ describe("the run lease every receipt write is fenced against", () => {
     ["the run left running", `UPDATE runs SET status = 'completed'`, "ownership_lost"],
   ] as const;
 
-  /**
-   * The statuses the retired `_runtime_harness_runs` view projected as
-   * `running`. Nothing writes either one today, so these two cases pass on the
-   * `runs` CHECK constraint's vocabulary rather than on a path the product can
-   * reach — which is the point: the fence is what would silently start
-   * refusing settled receipts if a writer ever appeared.
-   */
+  /** The cutover leaves retired phase spellings inert even though v1's CHECK retains them. */
   for (const status of ["waiting", "steering"] as const) {
-    it(`still holds the lease while the run is ${status}`, () => {
+    it(`refuses a retired ${status} receipt phase`, () => {
       const { storage, sql } = open();
       storage.admit(plan());
       sql.exec(`UPDATE runs SET status = '${status}'`);
@@ -292,9 +282,9 @@ describe("the run lease every receipt write is fenced against", () => {
         effectIntentId: "effect-1", checkpointIndex: 1, outputRef: "ref",
         outputSummary: "done", providerOperationId: null, payloadJson: "{}",
         allowAmbiguousReconciliation: false, fence, now: NOW,
-      })).toBe("persisted");
+      })).toBe("ownership_lost");
       expect(sql.exec(`SELECT status FROM tool_effects`).toArray())
-        .toEqual([{ status: "completed" }]);
+        .toEqual([{ status: "executing" }]);
     });
   }
 
@@ -614,6 +604,36 @@ describe("reading receipts by id", () => {
   });
 });
 
+describe("restoring run-local attachment safety", () => {
+  it("loads only the requested attachment capabilities in deterministic execution order", () => {
+    const { storage } = open();
+    storage.admit(plan({
+      effectIntentId: "effect-view",
+      toolCallId: "call-view",
+      executionPlanJson: '{"mode":"read","capability":"workstream.resources.view"}',
+      now: NOW + 2,
+    }));
+    storage.admit(plan({
+      effectIntentId: "effect-unrelated",
+      toolCallId: "call-unrelated",
+      executionPlanJson: '{"mode":"read","capability":"linear.issues.read"}',
+      now: NOW + 1,
+    }));
+    storage.admit(plan({
+      effectIntentId: "effect-read",
+      toolCallId: "call-read",
+      executionPlanJson: '{"mode":"read","capability":"workstream.resources.read"}',
+      now: NOW,
+    }));
+
+    expect(storage.receiptsForRun({
+      runId: RUN,
+      capabilities: ["workstream.resources.read", "workstream.resources.view"],
+    }).map((receipt) => receipt.effectIntentId)).toEqual(["effect-read", "effect-view"]);
+    expect(storage.receiptsForRun({ runId: RUN, capabilities: [] })).toEqual([]);
+  });
+});
+
 // -------------------------------------------------- attachment dependencies
 
 /**
@@ -903,6 +923,42 @@ describe("discarding a receipt whose replay is no longer valid", () => {
  * here rather than trusted from the caller, so the method is safe to call
  * outside the batch that terminalized the run.
  */
+describe("development fixture receipts", () => {
+  it("writes through the normalized receipt authority and is idempotent by effect identity", () => {
+    const { storage, sql } = open();
+    const input = {
+      effectIntentId: "effect-development",
+      runId: RUN,
+      toolPosition: 4,
+      toolCallId: "call-development",
+      toolName: "read_resource",
+      mode: "read" as const,
+      requestHash: "request-development",
+      status: "completed" as const,
+      connectionId: null,
+      inputJson: "{}",
+      outputSummary: "Fixture output",
+      executionPlanJson: '{"mode":"read"}',
+      startedAt: NOW,
+      settledAt: NOW + 1,
+    };
+
+    expect(storage.seedDevelopmentReceipt(input)).toEqual({ outcome: "inserted" });
+    expect(storage.seedDevelopmentReceipt(input)).toEqual({ outcome: "exists" });
+    expect(sql.exec(
+      `SELECT effect_intent_id, run_id, status, tool_position, authority_revision
+         FROM tool_effects WHERE effect_intent_id = ?`,
+      input.effectIntentId,
+    ).one()).toEqual({
+      effect_intent_id: input.effectIntentId,
+      run_id: RUN,
+      status: "completed",
+      tool_position: 4,
+      authority_revision: "development_fixture",
+    });
+  });
+});
+
 describe("settling the residual receipts of a terminal run", () => {
   function reaped(sql: ReturnType<typeof createTestSqlStorage>, at = NOW): void {
     sql.exec(
@@ -982,77 +1038,92 @@ describe("settling the residual receipts of a terminal run", () => {
       .toEqual([{ status: "completed" }]);
   });
 
-  it("settles the tool card the member is looking at, not just the receipt", async () => {
+  it("marks a canonical in-flight write ambiguous when its terminal receipt is ambiguous", async () => {
     const { storage, sql } = open();
-    storage.admit(plan());
-    // A rendered tool part carrying the same id as its receipt, mid-flight.
-    insertWorkstreamMessageRecord(sql, await prepareWorkstreamMessageRecord({
-      messageId: "effect-1",
-      clientMessageId: "tool:effect-1",
-      authorType: "agent",
-      authorUserId: null,
-      externalActorJson: null,
-      messageType: "tool",
-      text: "",
-      structuredContentJson:
-        '{"invocation":{"status":"started","completedAt":null,"error":null}}',
-      producedByRunId: null,
-      role: "assistant",
-      kind: "tool_call",
-      effectIntentId: "effect-1",
-      toolName: "read_resource",
-      toolMode: "read",
-      toolStatus: "pending",
-      visibility: "both",
-      sequenceNumber: 2,
-      attentionOrdinal: null,
-      createdAt: 1,
-      editedAt: null,
-      now: 1,
+    storage.admit(plan({
+      toolName: "publish_resource",
+      mode: "write",
+      executionPlanJson: '{"mode":"write"}',
     }));
+    sql.exec(`INSERT INTO transcript_payloads
+        (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+      VALUES ('tool-start-payload', 'participant', 'application/json',
+              '{"participantSafeInput":null,"participantSafeResult":null,"error":null,"status":"started"}',
+              'tool-start-hash', 1, 1)`);
+    sql.exec(`INSERT INTO transcript_facts
+        (fact_id, fact_kind, payload_id, origin_kind, tool_call_id, created_at)
+      VALUES ('tool-start-fact', 'participant_tool_lifecycle', 'tool-start-payload',
+              'canonical', 'call-1', 1)`);
+    sql.exec(`INSERT INTO participant_transcript_turns
+        (transcript_sequence, turn_id, entry_kind, actor, root_fact_id, activity_id,
+         attention_ordinal, revision, created_at, updated_at)
+      VALUES (1, 'assistant-turn-1', 'conversation', 'assistant', 'tool-start-fact',
+              NULL, NULL, 1, 1, 1)`);
+    sql.exec(`INSERT INTO participant_transcript_blocks
+        (turn_id, block_id, block_index, block_kind, fact_id, tool_call_id,
+         plugin_id, tool_name, call_index, lifecycle_state, activity_id, revision, updated_at)
+      VALUES ('assistant-turn-1', 'tool-block-1', 0, 'tool', 'tool-start-fact', 'call-1',
+              NULL, 'publish_resource', 0, 'started', NULL, 1, 1)`);
+    expect(sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_blocks`).one().count).toBe(1);
     reaped(sql);
 
     await settleResidual(storage);
 
-    // Without this the receipt goes terminal and the card spins forever. It
-    // used to be the compatibility trigger's job — object schema migration 14
-    // taught it to project a settled receipt into the same-id part, because the
-    // sweep has no event publisher and never writes the transcript row again.
-    // Dropping that trigger is therefore not a pure deletion, and this is the
-    // spec that says so.
-    expect(sql.exec(
-      `SELECT tool_status,
-              json_extract(structured_content_json, '$.invocation.status') AS visible_status,
-              json_extract(structured_content_json, '$.invocation.error.code') AS visible_error
-         FROM workstream_message_details WHERE id = 'effect-1'`,
-    ).toArray()).toEqual([{
-      tool_status: "failed",
-      visible_status: "failed",
-      visible_error: "parent_run_terminated",
+    expect(sql.exec(`
+      SELECT block.lifecycle_state,
+             json_extract(payload.payload_json, '$.status') AS visible_status,
+             json_extract(payload.payload_json, '$.error') AS visible_error
+        FROM participant_transcript_blocks block
+        LEFT JOIN transcript_facts fact ON fact.fact_id = block.fact_id
+        LEFT JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+       WHERE block.tool_call_id = 'call-1'
+    `).toArray()).toEqual([{
+      lifecycle_state: "ambiguous",
+      visible_status: "ambiguous",
+      visible_error: "The parent run lost its durable lease while an external write was in flight",
     }]);
-    const canonical = sql.exec<{
-      tool_status: string;
-      edited_at: number | null;
-      payload_json: string;
-    } & Record<string, SqlStorageValue>>(
-      `SELECT record.tool_status, record.edited_at, payload.payload_json
-         FROM workstream_message_records record
-         JOIN transcript_facts fact ON fact.fact_id = record.fact_id
-         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE record.id = 'effect-1'`,
-    ).one();
-    expect(canonical.tool_status).toBe("failed");
-    expect(canonical.edited_at).toBe(NOW);
-    expect(JSON.parse(canonical.payload_json)).toMatchObject({
-      structuredContent: {
-        invocation: {
-          status: "failed",
-          error: { code: "parent_run_terminated" },
-        },
-      },
-    });
   });
 
+  it("marks a canonical unstarted read failed when its terminal receipt failed", async () => {
+    const { storage, sql } = open();
+    storage.admit(plan());
+    sql.exec(`INSERT INTO transcript_payloads
+        (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+      VALUES ('tool-start-payload', 'participant', 'application/json',
+              '{"participantSafeInput":null,"participantSafeResult":null,"error":null,"status":"started"}',
+              'tool-start-hash', 1, 1)`);
+    sql.exec(`INSERT INTO transcript_facts
+        (fact_id, fact_kind, payload_id, origin_kind, tool_call_id, created_at)
+      VALUES ('tool-start-fact', 'participant_tool_lifecycle', 'tool-start-payload',
+              'canonical', 'call-1', 1)`);
+    sql.exec(`INSERT INTO participant_transcript_turns
+        (transcript_sequence, turn_id, entry_kind, actor, root_fact_id, activity_id,
+         attention_ordinal, revision, created_at, updated_at)
+      VALUES (1, 'assistant-turn-1', 'conversation', 'assistant', 'tool-start-fact',
+              NULL, NULL, 1, 1, 1)`);
+    sql.exec(`INSERT INTO participant_transcript_blocks
+        (turn_id, block_id, block_index, block_kind, fact_id, tool_call_id,
+         plugin_id, tool_name, call_index, lifecycle_state, activity_id, revision, updated_at)
+      VALUES ('assistant-turn-1', 'tool-block-1', 0, 'tool', 'tool-start-fact', 'call-1',
+              NULL, 'read_resource', 0, 'started', NULL, 1, 1)`);
+    reaped(sql);
+
+    await settleResidual(storage);
+
+    expect(sql.exec(`
+      SELECT block.lifecycle_state,
+             json_extract(payload.payload_json, '$.status') AS visible_status,
+             json_extract(payload.payload_json, '$.error') AS visible_error
+        FROM participant_transcript_blocks block
+        LEFT JOIN transcript_facts fact ON fact.fact_id = block.fact_id
+        LEFT JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+       WHERE block.tool_call_id = 'call-1'
+    `).toArray()).toEqual([{
+      lifecycle_state: "failed",
+      visible_status: "failed",
+      visible_error: "The parent run lost its durable lease",
+    }]);
+  });
   it("refuses when the run was not terminalized at the instant claimed", async () => {
     const { storage, sql } = open();
     storage.admit(plan());

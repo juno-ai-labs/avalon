@@ -26,10 +26,6 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
 vi.mock("../src/services/integrations", () => ({
   publishWorkstreamEvent: vi.fn(async () => undefined),
 }));
-vi.mock("../src/services/workstream-service", () => ({
-  launchWorkstreamHarness: vi.fn(async () => "harness-run"),
-}));
-
 const databases: DatabaseSync[] = [];
 
 afterEach(() => {
@@ -94,19 +90,27 @@ describe("Slack work stream creator attribution", () => {
         user_id: "a0000000-0000-4000-8000-000000000a10",
         participation_reason: "creator",
       }]);
-    // Attribution never rewrites authorship: the opening message stays the
-    // external Slack member's, so the audit trail keeps the provider identity.
-    // The object encodes that authorship as `external` + the actor's json —
-    // its parts table refuses the legacy `system` + actor-json shape.
+    // Attribution never rewrites authorship: the opening message is immutable
+    // pending loop input until an eligible delivery boundary, and it already
+    // carries the provider actor rather than borrowing the mapped member.
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT author_type, author_user_id, external_actor_json FROM messages WHERE workstream_id = ?",
-      created.workstream.id,
+      `SELECT actor, author_user_id, external_actor_json
+         FROM pending_loop_inputs WHERE client_message_id = 'event:opening'`,
     )).toMatchObject({
-      author_type: "external",
+      actor: "external",
       author_user_id: null,
       external_actor_json: JSON.stringify(actor),
     });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details",
+    )).toEqual({ count: 0 });
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM runs",
+    )).toEqual({ count: 0 });
+    expect(Object.keys(created)).toEqual(["workstream"]);
     expect(JSON.parse(String((database.prepare(
       "SELECT envelope_json FROM telemetry_accepted_events WHERE event_id = ?",
     ).get(created.workstream.id) as { envelope_json: string }).envelope_json))).toMatchObject({

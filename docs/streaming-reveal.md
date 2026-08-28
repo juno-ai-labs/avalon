@@ -61,12 +61,14 @@ Four paths deliberately do not pace:
   watching the animation.
 - **An active-stream checkpoint.** Someone arriving at a work stream mid-turn
   gets the accumulated text at once; pacing begins with the first live delta.
-- **A retried attempt.** A `reset` or epoch bump clamps the reveal back to the
-  turn's start, so retracted text vanishes instantly instead of being animated
-  away, and the replacement paces in from there.
-- **Completion.** `stream_completed` carries the canonical message, which
-  replaces the row whole. The batcher flushes at turn end, so the backlog at
-  that moment is ordinarily under the drain window's worth of text.
+- **A failed observable attempt.** Provider retry and fallback are already
+  closed once a delta is visible. The canonical failure status removes the
+  ephemeral assistant overlay immediately rather than animating its text away;
+  there is no replacement answer under the same turn.
+- **Completion.** `stream_completed` is lifecycle-only and names the transient
+  stream. The client flushes that stream's reveal backlog before marking it
+  complete; the independently published canonical turn then replaces the
+  overlay by explicit turn identity.
 
 ## Invariants
 
@@ -161,16 +163,74 @@ narration through a different surface and is deliberately not paced by this.
 
 The budget: a reveal tick's commit must fit a 60Hz frame at every reply
 length, because pacing multiplies the commit rate by roughly five (8Hz wire →
-up to 60Hz reveal). The tick itself is a string slice and one cache write; the
-cost that had to be engineered away was rendering, where the whole growing
-body used to be re-parsed per commit — that work is
+up to 60Hz reveal). The tick itself is a string slice and one cache write. The
+screen memoizes canonical turn flattening independently from transient overlays,
+then linearly merges the already ordered canonical rows with the small sorted
+overlay set, so a reveal does not re-dedupe and re-sort loaded history. The other
+cost that had to be engineered away was rendering, where the whole growing body
+used to be re-parsed per commit — that work is
 [`markdown-rendering.md`](markdown-rendering.md)'s streaming mode, and the
 numbers live in the pull request that introduced both. What to watch: anything
 that makes a per-tick commit O(reply length) again — an unmemoised markdown
-body, a segment key that churns, a `mentions` default that mints a new array
-per render — multiplies at 60 commits a second, not 8.
+body, canonical projection depending on overlay identity, a global transcript
+sort, a segment key that churns, a `mentions` default that mints a new array per
+render — multiplies at 60 commits a second, not 8.
 
 ## Changelog
+
+### 2026-08-28 — The reveal layer follows the persistent-loop cutover
+
+**What changed:** The paced-reveal layer was re-anchored to the canonical
+ordered transcript that the persistent substream loop cutover made the only
+display authority. The facets below are the decisions this change is made
+of — each carries its own rejected alternative and its own invariant.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+#### Failed previews disappear instead of becoming a retried answer
+
+**What changed:** Once assistant text is observable, provider failure removes
+the transient preview immediately and the canonical failure status takes its
+reserved transcript position. Retry and fallback remain possible only before a
+byte is published or a tool effect begins, when there is no visible text to
+reveal or retract.
+
+**Why:** Treating a streamed prefix as retractable retry input allowed another
+provider to produce a second semantic answer for the same turn. The animation
+layer then made a model-execution policy look like harmless presentation state.
+
+**Considered and rejected:** Resetting the visible prefix and pacing a fallback
+answer under the same identity. That preserves smooth motion but loses truthful
+authorship and makes observable work retryable.
+
+**Consequences:** Failure rollback is immediate, not paced. The reveal cursor
+still rejects stale epochs and reset frames defensively, but production does not
+use those mechanics to retry a turn after output became visible.
+
+#### Reveal ticks no longer rebuild canonical history
+
+**What changed:** The work-stream screen memoizes canonical transcript
+projection separately from overlay composition. Composition treats canonical
+rows as an ordered contract, sorts only the small live-overlay set, and merges
+the two inputs in one pass.
+
+**Why:** Each paced prefix changes the overlay cache at up to the display rate.
+Including that cache in the canonical projection memo rebuilt maps, flattened
+blocks, and globally sorted every loaded message for each visible character
+step, turning smooth reveal into work proportional to all loaded history.
+
+**Considered and rejected:** Lowering the reveal cadence, preserving the global
+sort, and enforcing sorted overlay arrays across every producer. The first
+undoes the visible behavior this module owns; the second retains the expensive
+path; the third spreads a new invariant across optimistic commands, snapshots,
+and stream events when sorting the small overlay copy is sufficient.
+
+**Consequences:** Canonical input to composition must already be in durable
+sequence/block order and malformed decreasing input fails immediately. A reveal
+tick performs overlay reconciliation, a small overlay sort, one linear merge,
+and the final display renumbering; canonical projection runs only when canonical
+state or posting-time author data changes.
 
 ### 2026-08-26 — Reveal cursors are model-turn scoped
 

@@ -3,7 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthContext, Env } from "../src/env";
-import { startWorkstreamWorkflow } from "../src/services/integrations";
+import { activateWorkstreamLoop } from "../src/services/integrations";
 import { launchWorkstreamHarness, WorkstreamService } from "../src/services/workstream-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -88,7 +88,6 @@ describe("a stack that never opened the durable-object authority", () => {
     const calls: Array<Promise<unknown>> = [
       service.get(workstreamId),
       service.update(workstreamId, { title: "Renamed" }),
-      service.messages(workstreamId, 10),
       service.acknowledgeRead(workstreamId, {
         readThroughSequenceNumber: 0,
         observedManualUnreadGeneration: 0,
@@ -142,13 +141,15 @@ describe("a stack that never opened the durable-object authority", () => {
       workspaceId,
       workstreamId,
       triggerMessageId: null,
-      origin: "human_message",
+      origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
+      scheduledWakeupId: "00000000-0000-7000-8000-0000000000e0",
     })).rejects.toMatchObject(refusal);
-    await expect(startWorkstreamWorkflow(env, {
+    await expect(activateWorkstreamLoop(env, {
       region: "global",
       workspaceId,
       workstreamId,
+      loopId: `workstream:${workstreamId}:substream:0:loop`,
       harnessRunId: asHarnessRunId("00000000-0000-7000-8000-0000000000b1"),
       triggerMessageId: null,
       automationSubscriptionId: null,
@@ -162,12 +163,13 @@ describe("a stack that never opened the durable-object authority", () => {
 });
 
 describe("launching a run against the open authority", () => {
-  it("persists static member-safe copy while logging launch diagnostics", async () => {
+  it("keeps a durably recorded activation replayable when the activation response is lost", async () => {
     const database = preRetirementProductSqliteDatabase();
     databases.push(database);
     openWorkstreamAuthorityForTest(database);
     seed(database);
     const diagnostic = "provider response included a private upstream detail";
+    let loseFirstActivationResponse = true;
     const objectStores = new Map<string, DatabaseSync>();
     const env = createTestEnv({
       DB: sqliteD1(database),
@@ -175,7 +177,11 @@ describe("launching a run against the open authority", () => {
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
         objectStores,
         failDispatch: () => {
-          throw new Error(diagnostic);
+          if (loseFirstActivationResponse) {
+            loseFirstActivationResponse = false;
+            throw new Error(diagnostic);
+          }
+          return null;
         },
       }),
     });
@@ -185,28 +191,31 @@ describe("launching a run against the open authority", () => {
       workspaceId,
       workstreamId,
       triggerMessageId: null,
-      origin: "human_message",
+      origin: "scheduled_wakeup",
       executionPrincipal: { type: "user", userId: memberId },
-    })).rejects.toMatchObject({
-      status: 503,
-      code: "workflow_unavailable",
-      message: "The Rally harness could not be started",
-    });
+      scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
+    })).rejects.toThrow(diagnostic);
 
     const objectStore = objectStores.get(workstreamId);
     if (!objectStore) throw new Error("expected the launch to open the work-stream object");
     databases.push(objectStore);
     const row = workstreamObjectGet(
       objectStore,
-      "SELECT id, status, error_json FROM harness_runs WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 1",
+      "SELECT run_id AS id, status, error_json FROM runs ORDER BY created_at DESC LIMIT 1",
+    ) as { id: string; status: string; error_json: string | null };
+    expect(row).toMatchObject({ status: "running", error_json: null });
+    await expect(launchWorkstreamHarness(env, {
+      workspaceId,
       workstreamId,
-    ) as { id: string; status: string; error_json: string };
-    expect(row.status).toBe("failed");
-    expect(JSON.parse(row.error_json)).toEqual({
-      code: "workflow_unavailable",
-      message: "Rally could not start this run",
-    });
-    expect(row.error_json).not.toContain(diagnostic);
+      triggerMessageId: null,
+      origin: "scheduled_wakeup",
+      executionPrincipal: { type: "user", userId: memberId },
+      scheduledWakeupId: "00000000-0000-7000-8000-0000000000e1",
+    })).resolves.toBe(row.id);
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM runs",
+    )).toEqual({ count: 1 });
     expect(consoleError).toHaveBeenCalledWith(expect.objectContaining({
       event: "workstream_harness_launch_failed",
       request_id: row.id,

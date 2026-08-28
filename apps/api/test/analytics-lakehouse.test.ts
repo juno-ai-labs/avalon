@@ -74,6 +74,11 @@ function backendEvent(): TelemetryEnvelope {
 }
 
 describe("analytics events lakehouse", () => {
+  it("canonicalizes telemetry keys by UTF-16 code unit", () => {
+    expect(canonicalTelemetryJson({ "é": 3, a: 2, "😀": 4, Z: 1 }))
+      .toBe('{"Z":1,"a":2,"é":3,"😀":4}');
+  });
+
   it("projects backend events through the same accepted-event path", async () => {
     const database = migratedSqliteDatabase();
     const pointers: unknown[] = [];

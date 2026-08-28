@@ -30,7 +30,8 @@
       { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
-      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" }
+      { "name": "SLACK_REACTION_TICKERS", "class_name": "SlackReactionTicker" },
+      { "name": "MIGRATION_PROBE_DO", "class_name": "MigrationProbeDO" }
     ]
   },
   "migrations": [
@@ -41,7 +42,8 @@
         "BlockDashboardAgent",
         "WorkstreamDO",
         "WorkspaceDO",
-        "SlackReactionTicker"
+        "SlackReactionTicker",
+        "MigrationProbeDO"
       ]
     }
   ],
@@ -51,5 +53,11 @@
       { "binding": "INFERENCE_LAKEHOUSE_QUEUE", "queue": "avalon-do-runtime-test-inference-lakehouse" },
       { "binding": "ACCESS_REVOCATION_QUEUE", "queue": "avalon-do-runtime-test-access-revocations" }
     ]
-  }
+  },
+  // Tool settlement stores each replayable result in R2 before completing the
+  // receipt; without this binding every completed tool call dies in the
+  // suite's one place production would have persisted it.
+  "r2_buckets": [
+    { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
+  ]
 }

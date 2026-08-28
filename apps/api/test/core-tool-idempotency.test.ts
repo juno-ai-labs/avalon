@@ -6,15 +6,13 @@ import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { NoteService } from "../src/services/note-service";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
-  executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
-  workstreamObjectRun,
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -94,16 +92,8 @@ function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv
     exactState: "running",
   });
 
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-     VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-03')`,
-    HARNESS_RUN_ID,
-    WORKSPACE_ID,
-    WORKSTREAM_ID,
-    JSON.stringify({ type: "user", userId: USER_ID }),
-  );
+  seedWorkstreamRun(objectStore, { id: HARNESS_RUN_ID,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }) });
   const baseEnv = createTestEnv({
     DB: sqliteD1(database),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
@@ -118,13 +108,7 @@ function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv
     database,
     objectStore,
     baseEnv,
-    env: withWorkstreamRuntimeDatabase(
-      baseEnv,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      "0",
-      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-    ),
+    env: baseEnv,
   };
 }
 
@@ -174,6 +158,7 @@ function workflowInput(): WorkstreamWorkflowInput {
     region: "global",
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
+    loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null,
     automationSubscriptionId: null,
@@ -309,16 +294,10 @@ describe("Avalon core write-tool idempotency", () => {
     // caller acts on: the second attempt writes nothing and announces nothing,
     // and the first attempt's question is still the only one.
     const roomEvents: Array<Record<string, unknown>> = [];
-    const env = withWorkstreamRuntimeDatabase(
-      createTestEnv({
+    const env = createTestEnv({
         ...baseEnv,
         SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, { roomEvents }),
-      }),
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      "0",
-      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-    );
+      });
     const tool = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
     expect(tool?.definition.idempotency).toBe("provider_key");
@@ -344,7 +323,7 @@ describe("Avalon core write-tool idempotency", () => {
     expect(workstreamObjectGet(objectStore, "SELECT target_user_id FROM elicitation_requests")).toEqual({ target_user_id: null });
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT COUNT(*) AS count FROM messages WHERE message_type = 'elicitation'",
+      "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE message_type = 'elicitation'",
     )).toEqual({ count: 1 });
     // `next_attention_ordinal` is the object's own counter; the retired view
     // rendered it as `latest_attention_sequence_number = next_attention_ordinal - 1`.

@@ -5,6 +5,7 @@ import { reconcileDueTerminalSandbox } from "../src/services/terminal/lifecycle"
 import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
 import {
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testHarnessRunPortFactory,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -88,13 +89,8 @@ describe("Terminal scheduled lifecycle", () => {
       archive: "2026-08-13T13:00:00.000Z",
       expire: "2026-09-12T12:00:00.000Z",
     });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES ('run-expired-active', ?, ?, 'test', ?, 'running', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: "run-expired-active",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     workstreamObjectRun(
       objectStore,
       `UPDATE terminal_workspace
@@ -197,13 +193,8 @@ describe("Terminal scheduled lifecycle", () => {
     const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-lifecycle', ?, ?, 'test', ?, 'running', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: "run-lifecycle",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     workstreamObjectRun(
       objectStore,
       `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = 'run-lifecycle'`,
@@ -257,13 +248,8 @@ describe("Terminal scheduled lifecycle", () => {
       const { objectStore, provider } = fixture("running", {
         warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
       });
-      workstreamObjectRun(
-        objectStore,
-        `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-submitting-lifecycle', ?, ?, 'test', ?, 'needs_input', '2026-08-13')`,
-        W, S, JSON.stringify({ type: "user", userId: U }),
-      );
+      seedWorkstreamRun(objectStore, { id: "run-submitting-lifecycle", status: "needs_input",
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
       workstreamObjectRun(
         objectStore,
         `UPDATE terminal_workspace
@@ -333,15 +319,10 @@ describe("Terminal scheduled lifecycle", () => {
     const { objectStore, provider } = fixture("archived", {
       warm: "2026-08-13T11:00:00.000Z", archive: "2026-08-13T11:30:00.000Z", expire: "2026-08-13T11:59:00.000Z",
     });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-missing-sandbox', ?, ?, 'test', ?, 'needs_input', '2026-08-13'),
-             ('run-after-missing-sandbox', ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: "run-missing-sandbox", status: "needs_input",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    seedWorkstreamRun(objectStore, { id: "run-after-missing-sandbox", status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     workstreamObjectRun(
       objectStore,
       `UPDATE terminal_workspace
@@ -405,13 +386,8 @@ describe("Terminal scheduled lifecycle", () => {
       archive: "2026-08-13T11:30:00.000Z",
       expire: "2026-08-13T11:59:00.000Z",
     });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES ('run-cancel-failure', ?, ?, 'test', ?, 'needs_input', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: "run-cancel-failure", status: "needs_input",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     workstreamObjectRun(
       objectStore,
       `UPDATE terminal_workspace
@@ -503,15 +479,10 @@ describe("Terminal scheduled lifecycle", () => {
     const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-lifecycle-race', ?, ?, 'test', ?, 'needs_input', '2026-08-13'),
-             ('run-linked-race', ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: "run-lifecycle-race", status: "needs_input",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    seedWorkstreamRun(objectStore, { id: "run-linked-race", status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     workstreamObjectRun(
       objectStore,
       `UPDATE terminal_workspace
@@ -581,13 +552,8 @@ describe("Terminal scheduled lifecycle", () => {
     const { objectStore, provider } = fixture("running", {
       warm: "2026-08-13T11:55:00.000Z", archive: "2026-08-13T13:00:00.000Z", expire: "2026-09-12T12:00:00.000Z",
     });
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-      VALUES ('run-lifecycle-batch', ?, ?, 'test', ?, 'needs_input', '2026-08-13')`,
-      W, S, JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: "run-lifecycle-batch", status: "needs_input",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     workstreamObjectRun(
       objectStore,
       `UPDATE terminal_workspace

@@ -983,6 +983,15 @@ function SystemMessageBlock({ disclosure, message }: { disclosure?: SystemRowDis
   const expanded = disclosure ? disclosure.expanded.has(message.id) : locallyExpanded;
   const clamped = useTextClamped(textNode, text, !expanded);
 
+  if (message.statusEvent) {
+    return (
+      <div className="assistant-turn-status-pill" id={`message-${message.id}`} role="status">
+        <CircleAlert aria-hidden="true" size={12} />
+        <span>{text}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="system-message" id={`message-${message.id}`}>
       <span aria-hidden="true" className="system-message-dot" />
@@ -1026,6 +1035,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
       active={thought.status === 'started'}
       durationMs={thought.durationMs}
       monotonicStartedAt={thought.monotonicStartedAt}
+      timingAccuracy={thought.timingAccuracy}
       activeVerb={thought.activeVerb}
       completedVerb={thought.completedVerb}
       {...(thought.startedAt === undefined ? {} : { startedAt: thought.startedAt })}
@@ -1437,9 +1447,18 @@ export function MessageBlock({
     ? `${message.externalActor?.displayName ?? 'Slack workspace member'} · Slack`
     : message.author?.name ?? 'Workspace member';
   const sending = message.deliveryState === 'sending';
+  const pending = message.deliveryState === 'steer_pending'
+    || message.deliveryState === 'queue_pending';
+  const pendingLabel = message.deliveryState === 'steer_pending'
+    ? 'Will steer after this response'
+    : message.deliveryState === 'queue_pending'
+      ? 'Queued for the next loop'
+      : null;
   return (
     <article
-      aria-label={sending ? 'Sending message' : human ? `Message from ${humanAuthorName}` : undefined}
+      aria-label={sending ? 'Sending message' : pending && pendingLabel
+        ? `${pendingLabel}: message from ${humanAuthorName}`
+        : human ? `Message from ${humanAuthorName}` : undefined}
       aria-busy={message.streaming || sending || undefined}
       className={clsx(
         'message-block',
@@ -1447,6 +1466,7 @@ export function MessageBlock({
         human && (ownHumanMessage ? 'own-human-message' : 'coworker-message'),
         message.streaming && 'is-streaming',
         sending && 'is-sending',
+        pending && 'is-pending-delivery',
       )}
       id={`message-${message.id}`}
       style={human ? { '--person-accent': personAccent(message.author?.id ?? message.externalActor?.providerUserId ?? message.id) } as React.CSSProperties : undefined}
@@ -1490,6 +1510,7 @@ export function MessageBlock({
                   >{message.text}</MarkdownBody>
                 </div>
               ) : null}
+              {pendingLabel && <span className="message-delivery-pill">{pendingLabel}</span>}
             </div>
           ) : (
             <>
