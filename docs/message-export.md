@@ -266,14 +266,21 @@ Two traps:
 
 **What changed:** Rules for the citation chip, the embed card, the footnote pill
 and the identity card, written for a light card. The pill's popover and the
-card's chevron are hidden. A parameterised test names every citation class the
-renderer emits and fails when one has no rule here.
+card's chevron are hidden, and so is `.sr-only`. A parameterised test names every
+citation class the renderer emits and fails when one has no rule here.
 
 **Why:** The card shares `MarkdownBody`'s markup and none of its stylesheet, so
 each new class arrived here unstyled — and this document already recorded that
 the miss shows up as an unstyled element in the first card anybody looks at,
 which is a long way from the change that caused it. Citations added eleven
 classes at once, which made "somebody will notice" a worse bet than usual.
+
+The `.sr-only` rule is the one that was not predicted. GFM titles its footnote
+section with a heading it expects the host to hide, and this document loads none
+of the application stylesheet — so the first captured card printed a bare
+"Footnotes" above the list, a word out of the renderer's plumbing in the middle
+of somebody's saved picture. It was invisible to every component test and
+obvious in the first real capture, which is the whole argument for taking one.
 
 **Consequences:** The guard is the interesting part, not the rules. It turns a
 whole category of drift — a class added to the renderer with no rule written
