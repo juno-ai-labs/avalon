@@ -5754,9 +5754,11 @@ describe("Durable Objects in the Workers runtime", () => {
     // rather than forcing it: a `runDurableObjectAlarm` call is a no-op in
     // the window where an auto-fired overdue alarm has not yet re-armed, and
     // a direct `alarm()` invocation would keep this test green even if
-    // construction stopped arming the alarm. The poll only reads, so it
-    // cannot interleave with the drain it is waiting for, and it fails by
-    // timeout if the reconstructed object never armed or never delivered.
+    // construction stopped arming the alarm. A probe may run while the drain
+    // is still in flight, but a read-only probe can neither advance nor
+    // duplicate delivery and succeeds only once the drain has synchronously
+    // acknowledged the row; it fails by timeout if the reconstructed object
+    // never armed or never delivered.
     await evictDurableObject(stub);
     await stub.wake();
     await expect.poll(
