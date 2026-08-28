@@ -27,15 +27,15 @@ owns the automation's canonical identity and lifecycle:
 ```text
 draft -> activating -> active <-> paused
 draft -> archived
-activating -> needs_attention -> activating
-needs_attention -> draft  (only before irreversible registration)
+activating -> deleted
 active -> deleted
 paused -> deleted
 ```
 
-`needs_attention` is non-runnable activation state, not an active automation or
-an editable compiler draft. It may return to `draft` only when cancellation can
-prove that no irreversible registration was installed.
+`activating` may carry a safe error and retry action. It remains non-runnable
+until every required registration is acknowledged. Acceptance is not rolled
+back into an editable draft after external installation begins; the person may
+retry activation or delete the automation.
 
 While the automation is a draft, its AutomationAgent owns the canonical wizard
 conversation, current compiled definition, structured elicitation, streamed
@@ -91,8 +91,8 @@ sidebar and activity-trigger evaluation, as well as shared template catalogs,
 connector resources, membership, and other workspace-wide authorities. Each
 AutomationAgent publishes a versioned, type-safe evaluator set that tells its
 WorkspaceDO which canonical Gmail, Linear, Granola, or other external events are
-candidates for that automation. WorkspaceDO evaluates those rules beside the
-event authority and delivers only durable, idempotent matches to the
+candidates for that automation. WorkspaceDO evaluates those predicates beside
+the event authority and delivers only durable, idempotent matches to the
 AutomationAgent. Calendar and interval timers never enter that evaluator set;
 the AutomationAgent schedules them directly through its inherited multi-alarm
 index. The same WorkspaceDO evaluator index, match receipt, outbox, and ID-only
@@ -137,7 +137,8 @@ current execution boundary stops short of that promise:
    owner that can recover it from committed Bind boundaries.
 3. Two windows each send a whole conversation and settle last-turn-wins. One
    accepted write can erase a different accepted turn, even though the sidebar
-   presents both windows as editing the same durable draft.
+   presents both windows as editing the same durable draft. The replacement is
+   append-only turn admission, not another whole-draft compare-and-swap.
 4. Draft promotion is atomic today only because draft and active automation
    state both live inside WorkspaceDO. A draft-only agent was therefore the
    wrong boundary: promotion would have transferred authority across objects.
@@ -267,9 +268,9 @@ tables, and let the post-merge system have exactly one canonical writer.
 10. **Choosing new numeric timeouts, transcript ceilings, retry counts, or
     concurrency caps.** Existing limits remain unless implementation evidence
     requires a change; any new defensive number is a separate team decision.
-11. **Using Cloudflare Flagship as the runtime or control plane.** Its ordered
-    first-match rules, typed operators, missing-attribute behavior, stable
-    context, and safe default inform the local grammar. Automation routing stays
+11. **Using Cloudflare Flagship as the runtime or control plane.** Its typed
+    operators, missing-attribute behavior, stable context, and safe default
+    inform the local grammar. Automation routing stays
     regional and workspace-authoritative, and this PRD does not add a Flagship
     binding, percentage rollout, or remote flag dependency.
 12. **A staged automation-authority rollout or legacy compatibility path.** The
@@ -360,24 +361,28 @@ open a second draft.
 
 ### Ordering and concurrent windows
 
-The AutomationAgent serializes compiler turns. Each submission names the draft
-revision it was composed against and is admitted only if that revision is still
-current and no earlier turn is active. A stale or concurrent submission is
-refused before inference or tool execution, and the client reloads the
-canonical conversation. Rally never resolves a conflict by overwriting one
-accepted conversation with another.
+The AutomationAgent serializes compiler turns. A submitted message is
+idempotent by its client message ID. If no compiler turn is active, one
+object-local transaction appends the human turn and admits its compiler run; if
+a turn is active, the object refuses the new submission as busy before
+inference or tool execution and the client preserves the unsent composer text.
+The request does not carry a draft revision or expected transcript head. Drafts
+are single-author, turns append rather than replace state, and the compiler
+always reads the latest canonical conversation, so a stale window cannot cause
+a lost update and does not need an optimistic-concurrency token.
 
-Answering a structured elicitation is a new, revision-fenced human turn. A
-submitted answer is idempotent by its client message ID, so reconnect and retry
+Answering a structured elicitation names the still-pending elicitation and is a
+new human turn. The answer is admitted only while that elicitation remains
+unanswered and is idempotent by its client message ID, so reconnect and retry
 cannot answer the same question twice.
 
 ### Reviewing and accepting
 
-The review screen reads the current object revision and submits the person's
-chosen scope, principal, connector bindings, schedule interpretation, model
-override, resource relationships, memory/table definitions, and delivery
-destinations against that revision. Suggested scope and destination remain
-proposals until this action.
+The review screen reads the current compiled definition revision and submits
+the person's chosen scope, principal, connector bindings, schedule
+interpretation, model override, resource relationships, memory/table
+definitions, and delivery destinations against that revision. Suggested scope
+and destination remain proposals until this action.
 
 The AutomationAgent claims acceptance once. It freezes the accepted definition
 and moves to `activating`. While activating:
@@ -396,11 +401,11 @@ The automation becomes `active` only after the registrations required by its
 configuration are acknowledged. The UI keeps the same row and ID and shows an
 activating state rather than reporting success early. Repeating the accept
 request returns the same result. A recoverable activation failure leaves the
-same non-runnable object in a reviewable `needs attention` state with the
-failure named; retry moves it back through `activating`. An ambiguous external
-registration remains `activating` until reconciliation determines its result.
-The object returns all the way to editable `draft` only when cancellation can
-prove that no irreversible registration was installed.
+same non-runnable object in `activating` with the failure named; retry continues
+the same activation operation. An ambiguous external registration remains
+`activating` until reconciliation determines its result. The person may delete
+an activation that cannot be completed, but Rally does not attempt distributed
+compensation in order to reopen it as an editable draft.
 
 The conversation remains canonical while activation is incomplete so a
 reviewable failure still has its authoring context. The commit to `active`
@@ -413,7 +418,7 @@ the transcript is not copied to WorkspaceDO or Global storage for convenience.
 
 An active AutomationAgent serves the automation overview and owns pause,
 resume, archive/delete, definition/version adoption, next-run state, and run
-history. A paused, archived, deleted, draft, activating, or `needs_attention`
+history. A paused, archived, deleted, draft, or activating
 object rejects every run trigger even if a stale projection routes one to it.
 
 - **Calendar and interval:** each canonical schedule is mirrored as an indexed
@@ -427,14 +432,12 @@ object rejects every run trigger even if a stale projection routes one to it.
   identifies the requested run.
 - **External activity:** WorkspaceDO parses and persists the normalized event,
   selects evaluator projections by exact connection and event type, evaluates
-  each ordered rule set once, and durably delivers an ID-only match receipt to
+  each typed predicate once, and durably delivers an ID-only match receipt to
   each candidate AutomationAgent. Each object rechecks lifecycle, evaluator
   generation, event receipt, and frozen connector authority before admission.
   Activation does not report `active` until the evaluator snapshot has an
   acknowledged routing boundary, so an event cannot fall into a
-  visible-but-unroutable gap. Semantic triggers use the same deterministic
-  predicate as a prefilter and run their structured semantic gate only after
-  that predicate matches.
+  visible-but-unroutable gap.
 - **Inbound email:** the Global ledger resolves the permanent address to region,
   workspace, and automation ID. The regional AutomationAgent rechecks active
   state, sender eligibility, receipt idempotency, and the existing restricted
@@ -507,7 +510,7 @@ An optional `resourceId` further narrows that exact source for a resource-watch
 trigger; acceptance proves that the resource belongs to the named connection
 and expands a watch covering several declared events into separate evaluators.
 Webhook and poll sources share the same post-normalization contract. A draft
-semantic trigger that proposes “any connector” is not registered as a wildcard:
+trigger that proposes “any connector” is not registered as a wildcard:
 acceptance expands the currently authorized, declared source/event pairs into an
 explicit snapshot, and a connector added later does not silently broaden it.
 
@@ -531,15 +534,7 @@ type ExternalEventEvaluatorV1 = {
     eventType: ConnectorEventType;
     resourceId?: ResourceId;
   };
-  rules: NonEmptyArray<{
-    ruleId: ExternalEventEvaluatorRuleId;
-    when: ExternalEventPredicateV1;
-    result: "match" | "no_match";
-  }>;
-  defaultResult: "no_match";
-  gate:
-    | { kind: "deterministic" }
-    | { kind: "semantic"; condition: NonEmptyString };
+  when: ExternalEventPredicateV1;
 };
 
 type ExternalEventPredicateV1 =
@@ -652,20 +647,11 @@ type DraftExternalEventEvaluatorV1 = {
       | { kind: "event_family"; eventFamily: ConnectorEventFamily };
     resourceId?: ResourceId;
   };
-  rules: NonEmptyArray<{
-    ruleKey: DraftEvaluatorRuleKey;
-    when: ExternalEventPredicateV1;
-    result: "match" | "no_match";
-  }>;
-  gate:
-    | { kind: "deterministic" }
-    | { kind: "semantic"; condition: NonEmptyString };
+  when: ExternalEventPredicateV1;
 };
 
 type AutomationSetEvaluatorRulesResultV1 = {
   accepted: true;
-  stagedSetRevision: DraftEvaluatorSetRevision;
-  stagedSetHash: CanonicalPayloadHash;
   evaluators: Array<{
     evaluatorKey: DraftEvaluatorKey;
     expandedEventTypes: NonEmptyArray<ConnectorEventType>;
@@ -673,29 +659,32 @@ type AutomationSetEvaluatorRulesResultV1 = {
 };
 ```
 
-`DraftEvaluatorKey` and `DraftEvaluatorRuleKey` are bounded non-empty stable
-keys unique within the submitted set. They are model-authored references such
-as `github_pr_merged`, not UUIDs and not storage authority. The host derives
-canonical evaluator and rule IDs from the AutomationAgent ID, accepted
-definition revision, authoring key, and exact expanded event type. The host
-also supplies the automation ID, author, workspace, region, expected draft
-revision, authority generation, projection version, resolved connection ID,
-and payload hash; none is accepted from tool arguments.
+`DraftEvaluatorKey` is a bounded non-empty stable key unique within the
+submitted set. It is a model-authored reference such as `github_pr_merged`, not
+a UUID and not storage authority. The host derives canonical evaluator IDs from
+the AutomationAgent ID, accepted definition revision, authoring key, and exact
+expanded event type. The host also supplies the automation ID, author,
+workspace, region, authority generation, projection version, resolved
+connection ID, and payload hash; none is accepted from tool arguments.
 
 The tool uses complete-replacement semantics. Every successful call supersedes
 the previously staged set for that compiler run, and `evaluators: []` is the
-only clear operation. A recovered provider call replays its durable tool receipt
-and returns the same staged revision/hash. It never appends implicitly, because
-an append API would retain rules the architect stopped mentioning and make it
-impossible to distinguish a retry from a second desired rule. More than one
-successful call in a compiler run is allowed so the architect can revise its
-work; only the latest successful staged revision may be submitted.
+only explicit tool-level clear operation. A recovered provider call replays its
+durable tool receipt and returns the same result. It never appends implicitly,
+because an append API would retain rules the architect stopped mentioning and
+make it impossible to distinguish a retry from a second desired rule. More than
+one successful call in a compiler run is allowed so the architect can revise
+its work; only the latest successfully validated set may be submitted. The
+model-visible result does not expose an internal staged-set revision or payload
+hash that no subsequent model action consumes.
 
-The architect must successfully call `automation_set_evaluator_rules` during
-every compiler run before `automation_submit_draft`, including with an empty set
-when the draft has only manual/timer triggers or when a partial draft cannot yet
-name a legal source. This per-run requirement makes changing an existing draft
-from event-driven to timer-only remove the old rules rather than inherit them.
+The architect must successfully call `automation_set_evaluator_rules` before
+`automation_submit_draft` when the proposed definition contains an external-
+event trigger. A definition containing only manual or timer triggers needs no
+empty tool call: `automation_submit_draft` atomically clears the prior evaluator
+set because the submitted definition has no external-event trigger. This also
+makes an edit from event-driven to timer-only remove old evaluators without
+asking the model to emit bookkeeping.
 `automation_submit_draft` references evaluator keys from the latest staged set;
 it does not carry `deterministicFilters`, `deterministicPrefilter`, raw evaluator
 JSON, canonical IDs, or projection metadata. For a `ready = true` draft, the
@@ -704,8 +693,8 @@ the referenced staged evaluator keys, rejects unused evaluators, and rejects a
 trigger whose keys span incompatible source bindings. A `ready = false` draft
 may stage an empty or incomplete set, but it cannot be accepted or projected.
 Resource-watch registrations synthesized from authoritative watched links do
-not pass through this model tool and cannot acquire a semantic gate or custom
-predicate through it.
+not pass through this model tool and cannot acquire a custom predicate through
+it.
 
 The first parser is the strict recursive Zod schema advertised to the provider;
 the tool's `validateInput` hook runs the same structural parse so refinements
@@ -720,12 +709,13 @@ a raw object through a type assertion or silently remove an illegal leaf.
 A successful tool call durably records its provider-call receipt and run-scoped
 staged set in AutomationAgent SQLite. It performs no connector RPC, Queue send,
 timer arm, or WorkspaceDO write. `automation_submit_draft` atomically promotes
-the latest staged revision and the submitted definition into one new canonical
-draft revision; a crash before submission leaves only resumable compiler-run
-state, not a half-updated draft. Acceptance later resolves each binding to an
-authorized connection, repeats contextual parsing against the frozen accepted
-manifest revision, mints the authoritative envelope shown above, and projects
-it through the receipt-backed WorkspaceDO path.
+the latest staged set and submitted definition into one new canonical compiled
+definition revision, or binds an empty evaluator set when the definition has no
+external-event trigger; a crash before submission leaves only resumable
+compiler-run state, not a half-updated definition. Acceptance later resolves
+each binding to an authorized connection, repeats contextual parsing against
+the frozen accepted manifest revision, mints the authoritative envelope shown
+above, and projects it through the receipt-backed WorkspaceDO path.
 
 That AutomationAgent-owned envelope is one publisher's wire contract, not a
 reason to build an automation-only matcher. WorkspaceDO compiles every accepted
@@ -757,18 +747,17 @@ type WorkspaceExternalEventRegistrationV1 = {
 
 The internal type is produced only by the registry-aware compiler and is never
 accepted directly from a request. For an automation, it preserves the authored
-rules and deterministic or semantic gate. For a work-stream resource watch, the
+typed predicate. For a work-stream resource watch, the
 existing versioned resource-link effect is the registration boundary:
 `watchEnabled = true` compiles to the exact resource/connection/event source,
-`always -> match`, `defaultResult = no_match`, and a deterministic gate;
+`when = always`;
 `watchEnabled = false`, link removal, archival, or a new authority generation
 removes or supersedes that registration. A connector that can report several
 legal update event types produces one registration per exact event type. The
 registration and evaluator identities are deterministic from the watched-link
 identity, destination generation, and event type, so projection replay cannot
-mint a second route. The watch may not add a semantic condition or arbitrary
-predicate because the person's decision was to receive updates for that named
-resource, not to create
+mint a second route. The watch may not add an arbitrary predicate because the
+person's decision was to receive updates for that named resource, not to create
 a second hidden automation.
 
 WorkstreamDO/SubstreamAgent remains canonical for the attachment and whether it
@@ -782,23 +771,21 @@ fences reconcile the two authorities.
 
 The TypeScript aliases illustrate the contract; checked-in strict Zod schemas
 are the runtime authority. Every object rejects unknown keys. Empty strings,
-empty groups, empty operator lists, duplicate evaluator IDs, duplicate rule IDs,
-duplicate source tuples, non-finite numbers, and invalid revision or generation
-identities are structurally invalid. The stateful receiver additionally rejects
-a lower projection version and treats the same version with a different hash as
-an integrity failure. Array order is rule priority: WorkspaceDO evaluates rules
-from first to last and stops at the first result. If no rule matches, the only
-legal default is `no_match`. An `always` predicate makes a catch-all explicit.
-There is no general `not` node; negative leaf operators preserve the field's
-type and avoid inventing ambiguous negation semantics for a missing value.
+empty groups, empty operator lists, duplicate evaluator IDs, duplicate source
+tuples, non-finite numbers, and invalid revision or generation identities are
+structurally invalid. The stateful receiver additionally rejects a lower
+projection version and treats the same version with a different hash as an
+integrity failure. One typed predicate tree produces `match` or `no_match`; an
+`always` predicate is the explicit unconditional match. There is no general
+`not` node; negative leaf operators preserve the field's type and avoid
+inventing ambiguous negation semantics for a missing value.
 
 All string comparison is case-sensitive and performs no trimming, locale
 folding, parsing, or scalar-to-array coercion. A missing attribute makes every
 leaf predicate false, including `not_equals`, `not_in`, and `has_none`; missing
 data never turns an exclusion into a match. `all` matches only when every child
 matches, and `any` matches when at least one child matches. The evaluator is run
-once against one immutable event context and one immutable evaluator revision;
-it cannot observe a value changing between rules.
+once against one immutable event context and one immutable evaluator revision.
 
 Structure alone cannot prove that an attribute belongs to a dynamically
 registered connector event. Registration therefore has a second contextual
@@ -819,14 +806,14 @@ the snapshot unless:
 The successful result is a branded `ValidatedExternalEvaluatorSet`, and
 internal compilation, persistence, projection, and evaluation APIs accept that
 type rather than the raw wire type. Serialization erases the brand, so the
-receiver parses again. Validation occurs when the architect stages evaluator
-rules, when `automation_submit_draft` binds that staged set to a definition,
-when acceptance resolves the proposed source binding to a connection, when
-AutomationAgent reads or writes its SQLite record, on every
-AutomationAgent-to-WorkspaceDO projection RPC, when WorkspaceDO reads or writes
-its evaluator index, and before an evaluator is executed. A malformed stored
-row is an integrity failure and fail-closed registration, never an empty filter
-or a permissive fallback.
+receiver parses again. Structural and manifest-context validation occur at the
+model tool boundary; acceptance revalidates while resolving proposed bindings
+to authoritative connections; WorkspaceDO parses the projection RPC; and each
+object parses serialized evaluator rows when hydrating them from SQLite. Inside
+one of those typed call paths, branded values are not parsed again before every
+helper, write, or predicate evaluation. A malformed stored row is an integrity
+failure and fail-closed registration, never an empty filter or a permissive
+fallback.
 
 Normalized connector events retain their existing broader canonical evidence,
 but evaluation sees a separate closed context containing only fields declared
@@ -916,16 +903,17 @@ The accepted state ID is a frozen configuration value, not a display name
 resolved differently on each event.
 
 The deterministic grammar borrows Cloudflare Flagship's
-[ordered first-match rules and nested conditions](https://developers.cloudflare.com/flagship/targeting/),
+[nested typed conditions](https://developers.cloudflare.com/flagship/targeting/),
 [type-specific operators and missing-attribute behavior](https://developers.cloudflare.com/flagship/targeting/operators/),
 and guidance to use a
 [stable evaluation context and safe fallback](https://developers.cloudflare.com/flagship/best-practices/).
-It intentionally does not copy Flagship's percentage rollout: random event loss
-has no useful meaning for an automation trigger. Semantic meaning is also not
-smuggled into a generic operator. A semantic evaluator first produces `match`
-from the typed rules, then evaluates its non-empty natural-language condition
-through the existing structured inference contract; only a true structured
-result becomes a delivery.
+It intentionally does not copy Flagship's ordered first-match rule program or
+percentage rollout. Every trigger required here is one typed boolean predicate;
+priority, per-rule results, and random event loss add machinery without adding a
+requested behavior. Natural-language semantic evaluation is likewise outside
+V1. If a future trigger cannot be represented by reviewed connector fields,
+adding a model-evaluated gate is a separate product, cost, privacy, and retry
+decision rather than an optional branch in every evaluator.
 
 Flagship's own numerical rule and nesting limits are platform constraints, not
 Rally product requirements, so this PRD does not copy their values. If the
@@ -989,7 +977,7 @@ WorkspaceDO owns the evaluation and delivery transaction boundary:
 verified provider event or poll
   -> WorkspaceDO canonical event + parsed evaluation context
   -> exact (connectionId, eventType, optional resourceId) registrations
-  -> ordered deterministic evaluation; optional semantic gate
+  -> deterministic typed predicate evaluation
   -> WorkspaceDO durable delivery receipt + outbox
   -> regional Queue ID-only wake-up
   -> destination adapter
@@ -1097,8 +1085,8 @@ work is durable, and every automation run owns exactly one work stream.
 
 There are five deliberate visible improvements beneath that contract: a failed
 first compiler turn is returnable, an admitted compiler run survives navigation,
-concurrent windows conflict before model work instead of silently losing a
-turn, the draft feed preserves ordered turns and reconnects through the shared
+concurrent windows can no longer replace one another's whole conversation, the
+draft feed preserves append-only ordered turns and reconnects through the shared
 transcript contract, and generated runs move from the global work-stream sidebar
 to a paged list on their automation home. Active automation semantics,
 `You`/`Workspace` scope badges, generated work-stream privacy, and typed
@@ -1115,6 +1103,21 @@ customers, not a change to the post-cutover product promise: a draft created in
 AutomationAgent remains durable and returnable from its first admitted turn.
 
 ## Decision log
+
+- **2026-08-27 — Remove concurrency and evaluator machinery that does not serve
+  a current behavior.** Draft messages use idempotent append plus one active
+  compiler turn; they do not carry a draft revision or transcript-head
+  compare-and-swap because a single author appending a message cannot overwrite
+  prior state. Evaluator V1 uses one typed deterministic predicate per exact
+  source and does not include ordered per-rule results or a semantic-model gate,
+  because every required connector trigger is expressible without either.
+  Timer-only and manual-only submissions clear prior evaluators from the
+  submitted definition instead of requiring the architect to call a tool with
+  an empty array. Activation failures remain `activating` with an error and
+  retry action instead of introducing `needs_attention` plus conditional
+  distributed rollback to an editable draft. These mechanisms can be added
+  later only with a concrete collaborative-editing, semantic-trigger,
+  priority-rule, or activation-cancellation requirement.
 
 - **2026-08-27 — Share one renderer conversation surface between Workstream
   and the Automation Draft Wizard.** The wizard reuses the feed, transcript
@@ -1214,11 +1217,13 @@ AutomationAgent remains durable and returnable from its first admitted turn.
    a product query; and synchronous fan-out to every automation for each list
    or activity event.
 
-7. **Draft turns conflict before inference.** A revision precondition plus one
-   active turn produces a canonical order without paying for model work that
-   cannot commit. *Rejected:* today's last-turn-wins behavior, and a post-run
-   compare-and-swap that rejects only after research and tool calls have
-   already occurred.
+7. **Draft turns append and compiler runs serialize.** A client message ID makes
+   admission idempotent, the object's SQLite transaction appends rather than
+   replaces the conversation, and one active compiler turn prevents overlapping
+   model work. A stale idle window may append a message because the compiler
+   reads the latest canonical conversation and no accepted turn can be lost.
+   *Rejected:* today's whole-conversation last-turn-wins write, and an
+   optimistic-concurrency token that rejects safe single-author appends.
 
 8. **The authoring conversation is not runtime context.** Acceptance freezes
    the resulting definition and receipt, then seals the conversation from
@@ -1284,10 +1289,10 @@ AutomationAgent remains durable and returnable from its first admitted turn.
     turns unrelated objects into the query plan; and routing timers through
     WorkspaceDO, which splits schedule authority from run admission.
 
-15. **Evaluator rules are a closed algebra with a manifest-validated context.**
-    Ordered first-match rules and an immutable `no_match` default make exclusions
-    and fallbacks explicit. Discriminated leaf types make illegal
-    operator/value combinations structurally unrepresentable, while the
+15. **Evaluator predicates are a closed algebra with a manifest-validated
+    context.** One deterministic predicate tree returns match or no-match.
+    Discriminated leaf types make illegal operator/value combinations
+    structurally unrepresentable, while the
     registry-aware parser proves that a field belongs to the exact event source.
     *Rejected:* the current `Record<string, unknown>` plus JSON deep equality,
     arbitrary metadata paths, implicit coercion, and a generic operator/value
@@ -1327,7 +1332,7 @@ authority split is fixed by this PRD:
 
 | Authority | Canonical records |
 | --- | --- |
-| AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle and revision; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections from the shared ordered transcript substrate; attachments, active checkpoints, activities, and event fences; compiled and accepted definition revisions; elicitation; local Bind runtime ledger; canonical timer configuration and due work; the shared `_internal_durable_alarms` index; the compiled external-event evaluator snapshot and projection receipts; run occurrence admission/idempotency/history plus content-free child execution projections and their receipts; automation memory/table definitions; resource and connector references; delivery targets and receipts; projection/registration outbox and receipts; tombstone. |
+| AutomationAgent SQLite | Immutable automation identity and workspace/region fence; lifecycle; draft canonical facts plus author-visible `transcript_sequence` and restricted `loop_sequence` projections from the shared ordered transcript substrate; attachments, active checkpoints, activities, and event fences; compiled and accepted definition revisions; elicitation; local Bind runtime ledger; canonical timer configuration and due work; the shared `_internal_durable_alarms` index; the compiled external-event evaluator snapshot and projection receipts; run occurrence admission/idempotency/history plus content-free child execution projections and their receipts; automation memory/table definitions; resource and connector references; delivery targets and receipts; projection/registration outbox and receipts; tombstone. |
 | WorkspaceDO SQLite | First-prompt creation-key claims mapping one workspace author submission to one server-minted automation ID; automation directory projections; viewer visibility summaries; validated automation evaluators and watched work-stream resource registrations in one exact connection/event/resource candidate index; canonical normalized events and closed evaluation contexts; destination-typed evaluation delivery receipts/outbox; shared template/version catalog; connector connections and workspace resources; membership-derived routing inputs. |
 | Generated SubstreamAgent SQLite | Ordered-turn canonical facts, participant transcript and restricted Bind-loop projections; participants and reader audience; run scope; Bind execution, tools, activity/checkpoints and output; authoritative work-stream resource links/watch flags and memory provenance; idempotent connected-activity message receipts; content-free automation-run and resource-link projection outbox. |
 | Global control-plane D1 | Permanent inbound-email address route and tombstone, plus the existing region/workspace routing facts needed before a regional object can be selected. |
@@ -1407,7 +1412,8 @@ than from review-sensitive line positions:
   give its executor the same advertised-schema/strict-Zod validation symmetry,
   and keep its staged state in the durable host adapter rather than a process
   closure. The automation compiler prompt in the `prompts` section is where the
-  required set-before-submit and explicit-clear behavior is taught.
+  external-trigger-only set-before-submit behavior is taught; the host clears
+  evaluators itself when the submitted definition has no external trigger.
 - [`apps/api/src/durable-objects/workstream-object-schema.ts`](../../../apps/api/src/durable-objects/workstream-object-schema.ts)
   contains the SubstreamAgent object migration history. Find the migration
   whose description says it adds the canonical ordered transcript and lossless
@@ -1739,11 +1745,9 @@ never-reuse/tombstone rules.
 - Workspace projections contain only list/routing fields plus the frozen
   accepted evaluator configuration required to decide external events. They
   contain no draft conversation, compiler or generated-run prompt, attachment
-  content, connector credential, tool result, or generated transcript. A
-  semantic evaluator's accepted condition is stored because WorkspaceDO owns
-  that gate; it remains regional product configuration and is excluded from
-  logs and telemetry. Current object authority is checked before a projection
-  leads to sensitive disclosure or mutation.
+  content, connector credential, tool result, or generated transcript. Current
+  object authority is checked before a projection leads to sensitive disclosure
+  or mutation.
 - Evaluators can inspect only the closed, manifest-declared context for their
   exact connector event type. Raw provider bodies, arbitrary metadata, subject
   and actor records, transcript text, and credentials cannot become evaluator
@@ -1795,23 +1799,25 @@ From the person's perspective, the architect gains durable continuity:
 - an elicitation remains answerable after restart;
 - a recoverable run resumes from committed state;
 - a failed run remains attached to the turn that caused it; and
-- stale concurrent input is rejected before the architect sees it.
+- a concurrent send is refused as busy before a second compiler run starts,
+  while the unsent composer text remains available to send afterward.
 
 The host, not the model, chooses the AutomationAgent ID, author, workspace,
-region, admitted attachments, connector catalog, account timezones, expected
-revision, and acceptance authority. Loading a connector plugin grants only the
+region, admitted attachments, connector catalog, account timezones, and
+acceptance authority. Loading a connector plugin grants only the
 same frozen, reauthorized capability surface it grants today. The architect may
 propose a definition but cannot install routes, choose final scope, accept the
 draft, create generated work streams, or broaden a connector grant.
 
 The automation compiler prompt requires one successful
-`automation_set_evaluator_rules` call in every compiler run before
-`automation_submit_draft`. It teaches complete replacement and explicit empty
-clears, requires source plugin inspection first, and tells the architect to use
-the staged evaluator keys in its external-event triggers. Tool-call turns keep
-the existing no-assistant-text rule. A validation rejection is repaired through
-the tool's named issue path; it is not narrated to the person and does not erase
-the last canonical draft revision.
+`automation_set_evaluator_rules` call before `automation_submit_draft` whenever
+the proposed definition contains an external-event trigger. It teaches complete
+replacement, requires source plugin inspection first, and tells the architect
+to use the staged evaluator keys in its external-event triggers. For a manual-
+or timer-only definition, submission clears prior evaluators without a model
+tool call. Tool-call turns keep the existing no-assistant-text rule. A validation
+rejection is repaired through the tool's named issue path; it is not narrated to
+the person and does not erase the last canonical compiled definition revision.
 
 The shared runtime kernel is internal and introduces no model-visible wire
 names. Each host's existing tool catalog and product policy remain distinct.
@@ -1903,16 +1909,21 @@ steps.
 3. Stop an object between run admission, a tool receipt, an elicitation, output
    checkpointing, and terminal settlement. Each case recovers from the last
    committed boundary and reaches one coherent terminal state.
-4. Submit conflicting turns from two windows. Exactly one is admitted; the
-   other is refused before any inference or tool execution and reloads the
-   winning revision.
+4. Submit turns simultaneously from two windows. Exactly one compiler run is
+   admitted; the other submission is refused as busy before inference or tool
+   execution and its composer text is preserved. After the first turn settles,
+   submitting the second appends it after the canonical result and compiles
+   against the complete current conversation. No whole-conversation write or
+   stale window can erase either turn.
 5. Accept one draft concurrently from two clients. The automation keeps its ID,
    creates each schedule, address claim, table/memory definition, relationship,
    and delivery target once, and becomes active only after required routes are
    acknowledged.
-6. Fail each activation side effect in turn. The UI shows `activating` or a
-   reviewable failure, retry reconciles the recorded receipt, and no draft or
-   partially activated automation runs.
+6. Fail each activation side effect in turn. The UI keeps the automation in
+   non-runnable `activating`, shows the safe error and retry action, and retry
+   reconciles the recorded receipt. Deleting the failed activation cleans up
+   live projections and tombstones permanent claims without reopening an
+   editable draft; no partially activated automation runs.
 7. Exercise calendar, interval, manual, activity, and inbound-email triggers
    through alarm retry, object eviction, Queue/provider redelivery, pause,
    resume, and deletion. Each logical trigger resolves to at most one run and
@@ -1970,11 +1981,11 @@ steps.
     operators, undeclared attributes, wrong plugin/connection/event pairs, stale
     projection versions, and same-version hash conflicts. Demonstrate that
     production evaluator APIs cannot receive an unbranded raw object.
-18. Evaluate nested first-match rules for string, number, boolean, and string
-    array attributes. Verify case-sensitive comparisons, no coercion, and that a
-    missing attribute makes positive and negative leaves false. No matching rule
-    must return `no_match`; a semantic trigger must not call inference until its
-    deterministic rules return `match`.
+18. Evaluate nested predicates for string, number, boolean, and string-array
+    attributes. Verify case-sensitive comparisons, no coercion, and that a
+    missing attribute makes positive and negative leaves false. A false
+    predicate must return `no_match`, and evaluator processing must never invoke
+    model inference.
 19. Ingest representative `email.received`, `linear.issue.update`, and
     `note.generated` events. WorkspaceDO evaluates only manifest-declared
     context, stores one delivery receipt per evaluator revision, and sends an
@@ -2037,16 +2048,17 @@ steps.
     serving product dual-write or expose a per-automation authority flag, and
     the completed implementation requires no follow-up cleanup merge.
 29. Run the architect through a timer-only draft, one exact event, one event
-    family, several rules, a semantic gate, a selected resource, and an edit
-    from event-driven to timer-only. Every compiler run calls
-    `automation_set_evaluator_rules` before `automation_submit_draft`; the final
-    edit sends `evaluators: []`; provider-call replay returns the same staged
-    revision; a later successful set replaces rather than appends; and draft
-    submission atomically binds only the latest staged hash. Reject submission
-    when the set tool was not called in that run, when a ready trigger references
-    a missing or incompatible evaluator key, or when an evaluator is unused.
-    Prove that the tool performs no connector effect or WorkspaceDO write and
-    that acceptance, not the model, resolves connections and mints canonical
+    family, nested predicates, a selected resource, and an edit from
+    event-driven to timer-only. External-event drafts call
+    `automation_set_evaluator_rules` before `automation_submit_draft`;
+    provider-call replay returns the same result; and a later successful set
+    replaces rather than appends. Timer-only and manual-only drafts make no
+    evaluator tool call, and submission atomically clears any evaluator set from
+    the preceding definition. Reject an external-event submission when the set
+    tool was not called in that run, when a ready trigger references a missing
+    or incompatible evaluator key, or when an evaluator is unused. Prove that
+    the tool performs no connector effect or WorkspaceDO write and that
+    acceptance, not the model, resolves connections and mints canonical
     evaluator identities and projection metadata.
 30. In the Electron client, render equivalent settled, streaming, failed, and
     elicitation transcripts through WorkstreamScreen and the Automation Draft
