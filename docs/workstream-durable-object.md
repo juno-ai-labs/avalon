@@ -1424,7 +1424,7 @@ generated work stream carrying an immutable run context. Workspace directories
 exclude it from the global sidebar; the parent exposes only content-free paged
 history, and opening the child rechecks its own current audience. Every generated
 child is `personal` with the automation's author as its only participant,
-whatever the automation's scope. On this object's side, migration 21 adds
+whatever the automation's scope. On this object's side, migration 22 adds
 `automation_directory`, `automation_creation_claims`, the external-event
 registration and delivery tables, and the cutover ledger; the cutover then drops
 the whole `automation_subscriptions` family, rebuilds `schedules` without its

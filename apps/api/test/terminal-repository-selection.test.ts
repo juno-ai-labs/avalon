@@ -53,6 +53,14 @@ async function fixture(input?: {
 }) {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
+  // This focused selector fixture still forwards workspace resource SQL to
+  // its pre-cutover D1 snapshot. Give that compatibility table the column the
+  // WorkspaceDO migration adds in production.
+  database.exec(
+    `ALTER TABLE resource_object_deletion_outbox
+       ADD COLUMN cleanup_eligible INTEGER NOT NULL DEFAULT 1
+       CHECK (cleanup_eligible IN (0, 1))`,
+  );
   const emailAddressSql = input?.emailAddress === null
     ? "NULL"
     : `'${input?.emailAddress ?? "bright-coastal-exact-heron@automation.with-avalon.com"}'`;

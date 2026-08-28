@@ -15,6 +15,7 @@ import {
 import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
+import { putStagedResourceObject } from "../resource-object-cleanup";
 
 const MAX_WORKSPACE_BACKUP_BYTES = 50 * 1_048_576;
 
@@ -341,14 +342,19 @@ export function createTerminalFinalDiffPreserver(
     const digest = await sha256Hex(bytes);
     const timestamp = new Date().toISOString();
     const objectRef = `${env.AVALON_REGION}/${workspaceId}/resources/${resourceId}/terminal-final-diff/${digest}`;
-    await workspace.prepare(
-      `INSERT OR IGNORE INTO resource_object_deletion_outbox
-       (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, 'original', ?, ?)`,
-    ).bind(objectRef, workspaceId, resourceId, timestamp, timestamp).run();
-    await env.PAYLOADS.put(objectRef, bytes, {
-      httpMetadata: { contentType: summaryOnly ? "text/plain" : "text/x-diff" },
-      customMetadata: { source: "terminal", sandboxGeneration: String(generation) },
+    await putStagedResourceObject({
+      database: workspace,
+      payloads: env.PAYLOADS,
+      objectRef,
+      workspaceId,
+      resourceId,
+      objectKind: "original",
+      value: bytes,
+      options: {
+        httpMetadata: { contentType: summaryOnly ? "text/plain" : "text/x-diff" },
+        customMetadata: { source: "terminal", sandboxGeneration: String(generation) },
+      },
+      at: timestamp,
     });
     const resourceStatement = workspace.prepare(
         `INSERT INTO resources
@@ -371,7 +377,8 @@ export function createTerminalFinalDiffPreserver(
         timestamp,
       );
     const cleanupStatement = workspace.prepare(
-        "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+        `DELETE FROM resource_object_deletion_outbox
+          WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
       ).bind(workspaceId, objectRef);
     // The resource and its object-cleanup outbox are WorkspaceDO authority;
     // the link is the work-stream object's. The link runs after the resource
@@ -382,17 +389,18 @@ export function createTerminalFinalDiffPreserver(
     // runtime database was installed, which production requires before request
     // dispatch — so it has not run since the cutover, and it wrote
     // `workstream_resources` through a view this slice retires.
-    {
-      await resourceStatement.run();
-      await attachWorkstreamRuntimeResource(env, {
-        workspaceId,
-        workstreamId,
-        resourceId,
-        attachedByUserId: null,
-        relationshipType: "generated",
-      });
-      await cleanupStatement.run();
-    }
+    // A resource or link mutation failure may be an acknowledged-after-commit
+    // response loss. Keep staging fenced; a committed pointer is reconciled by
+    // maintenance, while an inactive row requires explicit recovery.
+    await resourceStatement.run();
+    await attachWorkstreamRuntimeResource(env, {
+      workspaceId,
+      workstreamId,
+      resourceId,
+      attachedByUserId: null,
+      relationshipType: "generated",
+    });
+    await cleanupStatement.run().catch(() => undefined);
     await terminal.setFinalDiffResourceId(resourceId, Date.now());
   };
 }
@@ -521,14 +529,19 @@ export function createTerminalWorkspaceBackup(
     const createdAt = new Date().toISOString();
     const title = `Terminal backup before ${input.repositoryFullName}`;
     const objectRef = `${env.AVALON_REGION}/${input.workspaceId}/resources/${resourceId}/terminal-workspace-backup/${actualSha256}`;
-    await workspace.prepare(
-      `INSERT OR IGNORE INTO resource_object_deletion_outbox
-       (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, 'original', ?, ?)`,
-    ).bind(objectRef, input.workspaceId, resourceId, createdAt, createdAt).run();
-    await env.PAYLOADS.put(objectRef, bytes, {
-      httpMetadata: { contentType: "application/gzip" },
-      customMetadata: { source: "terminal_repository_replacement", sandboxGeneration: String(input.generation) },
+    await putStagedResourceObject({
+      database: workspace,
+      payloads: env.PAYLOADS,
+      objectRef,
+      workspaceId: input.workspaceId,
+      resourceId,
+      objectKind: "original",
+      value: bytes,
+      options: {
+        httpMetadata: { contentType: "application/gzip" },
+        customMetadata: { source: "terminal_repository_replacement", sandboxGeneration: String(input.generation) },
+      },
+      at: createdAt,
     });
     const resourceStatement = workspace.prepare(
         `INSERT INTO resources
@@ -556,22 +569,23 @@ export function createTerminalWorkspaceBackup(
         createdAt,
       );
     const cleanupStatement = workspace.prepare(
-        "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
+        `DELETE FROM resource_object_deletion_outbox
+          WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
       ).bind(input.workspaceId, objectRef);
     // Same two authorities and ordering as the final-diff preserver: resource
     // and outbox via WorkspaceDO, followed by the WorkstreamDO link.
-    {
-      await resourceStatement.run();
-      await (inObjectResourceAttacher ?? ((attachment) =>
-        attachWorkstreamRuntimeResource(env, attachment)))({
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        resourceId,
-        attachedByUserId: null,
-        relationshipType: "generated",
-      });
-      await cleanupStatement.run();
-    }
+    // As above, an ambiguous resource/link response keeps staging fenced until
+    // pointer state is observable.
+    await resourceStatement.run();
+    await (inObjectResourceAttacher ?? ((attachment) =>
+      attachWorkstreamRuntimeResource(env, attachment)))({
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      resourceId,
+      attachedByUserId: null,
+      relationshipType: "generated",
+    });
+    await cleanupStatement.run().catch(() => undefined);
     return {
       resourceId,
       title,
