@@ -219,6 +219,27 @@ describe("workspace Slack mention delivery", () => {
     expect(posts[2]?.body).toMatchObject({ thread_ts: "1786060000.001" });
   });
 
+  it("reduces a citation, which Slack shows verbatim just like a mention's UUID", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, false);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    const messageText = "Revenue grew 40%.[^1] See [the deck](resource://board-deck).\n\n[^1]: [Q3 deck](resource://board-deck)";
+
+    await expect(sendWorkstreamMentionSlack(
+      env,
+      { ...mention(), messageText },
+      slackApiFixture(calls),
+      async () => undefined,
+    )).resolves.toBe("sent");
+
+    const posted = calls.filter((call) => call.method === "chat.postMessage")
+      .map((call) => String(call.body.text)).join("");
+    expect(posted).not.toContain("resource:");
+    expect(posted).not.toContain("[^1]");
+    expect(posted).toContain("See the deck.");
+  });
+
   it("paces and retries a rate-limited Slack chunk using Retry-After", async () => {
     const database = migratedDatabase();
     const env = environment(database);

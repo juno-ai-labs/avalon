@@ -32,9 +32,11 @@ import { RailSurface } from './rail-surface';
 interface InspectorRailProps {
   error?: string;
   /**
-   * Reads a resource's stored bytes, so the detail can show what the thing
-   * actually says. Absent on a surface that has no API session, where the
-   * detail stays the metadata card it has always been.
+   * Reads a resource's readable preview, so the detail can show what the thing
+   * actually says. This is the authorized preview route — the same one the
+   * attachment lightbox uses — not the raw object: it is what turns a Word
+   * file or a PDF into prose. Absent on a surface that has no API session,
+   * where the detail stays the metadata card it has always been.
    */
   loadResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>;
   workstream?: WorkstreamDetail;
@@ -341,20 +343,24 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
 }
 
 /**
- * Whether a resource's bytes are worth rendering as prose.
+ * Whether to ask for a readable preview at all.
  *
- * The same question the attachment lightbox asks, asked the same way: the
- * classifier owns what a file is, and a second opinion here would be a second
- * answer for the same file on two surfaces. An image or a binary is not
- * previewed at all rather than rendered as mojibake — the rail is 360 pixels
- * wide and a PNG's bytes as text is worse than the metadata alone.
+ * Deliberately almost nothing: the *server* owns what is previewable. The
+ * preview route returns the bytes for text and markdown and a materialized
+ * text derivative for everything else — a Word file's prose, a PDF's OCR — and
+ * answers 422 when it genuinely cannot. Deciding here instead is how a second
+ * opinion about the same file gets two answers on two surfaces, and it already
+ * had: reading `classifyAttachmentKind` locally called a `.docx` a "document"
+ * and rendered the raw bytes of a zip, while calling a PDF unreadable and
+ * showing nothing for the most commonly attached document there is.
+ *
+ * What stays local is the one thing the rail decides for itself: an image is
+ * not prose. The rail is 360 pixels wide and this is the readable half of a
+ * detail card, not a lightbox.
  */
 function readableAsText(resource: WorkstreamResource): boolean {
   if (!resource.contentAvailable) return false;
-  const mimeType = resource.mimeType?.split(';', 1)[0]?.trim().toLowerCase() ?? '';
-  if (mimeType.startsWith('image/')) return false;
-  if (mimeType.startsWith('text/')) return true;
-  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) === 'document';
+  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) !== 'image';
 }
 
 /**

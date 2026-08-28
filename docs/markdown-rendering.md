@@ -21,7 +21,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
-| `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guard that `react-markdown` stays mounted in one place. |
+| `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
 Nine call sites, all passing a markdown string as `children`:
 
@@ -258,8 +258,20 @@ cannot be written this way is a sign it is not a typography override.
 ## Boundary
 
 This module owns how a markdown string becomes DOM in the renderer, and how that
-DOM is styled. It exposes exactly one thing: `MarkdownBody`, taking a markdown
-string and an optional `mentions` array.
+DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
+`mentions` array and an optional `citations` context — plus the citation matrix
+and `ResourceIcon`, which the inspector rail renders too so that one resource
+kind draws one glyph everywhere.
+
+**It does not own where a citation goes.** The host supplies resolution and
+click routing as `CitationContext` (`lib/use-citations.ts` builds the
+work-stream screen's), and a surface that supplies none is not broken — every
+citation on it degrades to the label text the message already carried. That
+split is deliberate: the renderer knows the protocol, the host knows the
+application, and neither should be guessing about the other. The two
+non-renderer delivery surfaces own their own reductions rather than borrowing
+this one; [`digests.md`](digests.md) and
+[`slack-integration.md`](slack-integration.md) hold those rules.
 
 It does not own the repair applied to that string before it is parsed, either.
 `MarkdownBody` calls `normalizeModelMarkdown` on its children so a model's TeX
@@ -279,8 +291,11 @@ meeting participant, or an inbound email. `react-markdown` does not evaluate HTM
 in its input and no `rehype-raw` is configured, so markup in the source is text.
 [`security.md`](security.md) owns the wider trust model.
 
-Markdown rendered anywhere other than the desktop renderer is a different
-problem with different constraints, and is deliberately not shared with this:
+The *protocol* is shared; the *rendering* is not. `@rally/contracts/citations`
+holds the scheme allowlist, the footnote grammar, and the plain-text reduction,
+because three surfaces have to agree on what a citation is and the cost of them
+disagreeing is invisible until somebody reads an email. How a markdown string
+becomes DOM is still this module's alone, and deliberately not shared:
 Rally's outbound email has one shared converter,
 `apps/api/src/services/email-markdown.ts`, for the reason
 [`digests.md`](digests.md) records — a general markdown library emits far more
@@ -330,7 +345,7 @@ that stylesheet and the reasoning behind not deriving it from this one.
 
 ## Testing
 
-Two source guards and two component suites cover different failures — none
+Two source guards and several component suites cover different failures — none
 subsumes the others.
 
 ```bash
@@ -409,7 +424,9 @@ whole-body re-parse the streaming segmentation exists to prevent, and the
 streaming-cost test is what would catch it. The pinned dependency versions are
 now part of the contract: the footnote DOM is read by attribute and class name,
 so unpinning them reintroduces a failure that shows up as citations quietly
-becoming superscripts.
+becoming superscripts. Shipped in
+[#381](https://github.com/juno-ai-labs/avalon/pull/381). Design:
+[`docs/PRDs/2026-08-27_inline-resource-citations/prd.md`](PRDs/2026-08-27_inline-resource-citations/prd.md).
 
 ### 2026-08-23 — A code block gets a header bar instead of a floating button
 

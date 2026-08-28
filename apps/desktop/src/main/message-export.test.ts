@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest } from '../common/message-export';
 import { exportSyntaxPalette } from '../common/theme-assets';
@@ -130,6 +132,25 @@ describe('recognising an export URL', () => {
   });
 });
 
+/**
+ * Every `citation-*` class `markdown-citations.tsx` puts in the DOM.
+ *
+ * Read off the source with `node:fs`, the way the renderer's own guards read
+ * theirs — this file runs in the node project, so that is available here.
+ */
+function citationClassesTheRendererEmits(): string[] {
+  const source = readFileSync(
+    resolve(process.cwd(), 'src/renderer/components/markdown-citations.tsx'),
+    'utf8',
+  );
+  const classes = new Set<string>();
+  for (const [, value] of source.matchAll(/className="([^"]*)"/gu)) {
+    for (const name of value!.split(/\s+/u)) if (name.startsWith('citation-')) classes.add(name);
+  }
+  if (classes.size === 0) throw new Error('No citation classes found — has the renderer moved?');
+  return [...classes].sort();
+}
+
 describe('the exported document', () => {
   it('renders the message inside the card, signed, for a picture', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>Hello</p>', logoDataUrl: LOGO });
@@ -218,25 +239,19 @@ describe('the exported document', () => {
    * miss shows up as an unstyled element in the first card anybody looks at,
    * not as a failure anywhere near the change that caused it. This is the guard
    * that turns that into a test failure instead.
+   *
+   * The list is read off the renderer rather than typed here, which is the only
+   * version that closes the category: a hand-kept list cannot fail for a class
+   * added tomorrow, and the first hand-kept version was already missing four of
+   * the seventeen on the day it landed.
    */
-  it.each([
-    'citation-chip',
-    'citation-chip-icon',
-    'citation-chip-label',
-    'citation-card',
-    'citation-card-icon',
-    'citation-card-text',
-    'citation-card-title',
-    'citation-card-kind',
-    'citation-card-chevron',
-    'citation-pill',
-    'citation-pill-wrap',
-    'citation-pill-popover',
-    'citation-identity-card',
-  ])('styles .%s, which the renderer emits and this document would not', (className) => {
+  it.each(citationClassesTheRendererEmits())('styles .%s, which the renderer emits and this document would not', (className) => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
 
-    expect(html).toMatch(new RegExp(`\\.${className}\\b[^{]*\\{`, 'u'));
+    // `\b` matches between `p` and `-`, so `.citation-chip` was satisfied by
+    // `.citation-chip-icon {` — the three rules that matter most could each be
+    // deleted with this test still green.
+    expect(html).toMatch(new RegExp(`\\.${className}(?![\\w-])[^{]*\\{`, 'u'));
   });
 
   /**

@@ -5,7 +5,8 @@ import {
   citationScheme,
   parseCitationHref,
 } from '@rally/contracts/citations';
-import { ExternalLink, File, FileText, Link2 } from 'lucide-react';
+import * as Tooltip from '@radix-ui/react-tooltip';
+import { ChevronRight, File, FileText, Link2 } from 'lucide-react';
 import { createContext, useContext } from 'react';
 
 /**
@@ -90,6 +91,19 @@ const EMPTY_RENDER: CitationRender = {
   prefix: '',
 };
 
+/**
+ * A resource kind as a person would read it.
+ *
+ * `resourceType` is a free-form system identifier — the values in the tree are
+ * `github_pull_request`, `gmail_thread`, `linear_project_update`. A CSS
+ * `capitalize` on that prints `Github_pull_request`; the underscores have to go
+ * before the words do.
+ */
+export function resourceKindLabel(resourceType: string): string {
+  const words = resourceType.replace(/[_-]+/gu, ' ').trim();
+  return words ? `${words[0]!.toUpperCase()}${words.slice(1)}` : resourceType;
+}
+
 /** The kind of thing a resource is, at a glance. Shared with the rail's own list. */
 export function ResourceIcon({ type }: { type: string }): React.JSX.Element {
   const normalized = type.toLowerCase();
@@ -142,9 +156,9 @@ function ResourceEmbedCard({ label, resource, onOpen }: {
       <span aria-hidden="true" className="citation-card-icon"><ResourceIcon type={resource.resourceType} /></span>
       <span className="citation-card-text">
         <strong className="citation-card-title">{label}</strong>
-        <small className="citation-card-kind">{resource.resourceType}</small>
+        <small className="citation-card-kind">{resourceKindLabel(resource.resourceType)}</small>
       </span>
-      <ExternalLink aria-hidden="true" className="citation-card-chevron" size={14} />
+      <ChevronRight aria-hidden="true" className="citation-card-chevron" size={15} />
     </button>
   );
 }
@@ -152,44 +166,50 @@ function ResourceEmbedCard({ label, resource, onOpen }: {
 /**
  * A grounding source: a numbered marker after the punctuation, and nothing else.
  *
- * The popover is a sibling rather than the pill's own content so the marker
- * stays one character wide, and it is wired with `aria-describedby` rather than
- * `aria-label` so the number a sighted reader sees and the source a screen
- * reader hears are the same two facts in the same order.
+ * The popover rides the app's own tooltip rather than a hand-positioned box.
+ * That is not a preference: the transcript is a scroll container, and an
+ * absolutely-positioned popover inside one is *clipped* by it — a pill on the
+ * top visible line lost its popover entirely, and a pill near the right edge
+ * had the source's title sheared off mid-word. Radix portals the content out
+ * and handles the collision, and it brings the rest of the interaction the
+ * hand-rolled version was missing: a dismiss on Escape, the same open delay
+ * every other hover surface in Rally uses, and a description a screen reader
+ * actually announces.
  *
- * A source with nowhere to go renders the same marker without a button. That is
- * the degradation the whole feature leans on: the reader still sees that the
- * claim was sourced, and loses only the click.
+ * A source with nowhere to go is still a pill and still carries its popover —
+ * it just does not navigate. The reader loses the click, not the source's name,
+ * which is the whole point of showing a marker at all.
  */
-function CitationPill({ citation, number, popoverId, onOpen }: {
+function CitationPill({ citation, number, onOpen }: {
   citation: FootnoteCitation;
   number: React.ReactNode;
-  popoverId: string;
   onOpen?: () => void;
 }): React.JSX.Element {
-  const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in the rail';
-  const popover = (
-    <span className="citation-pill-popover" id={popoverId} role="tooltip">
-      <span className="citation-pill-source">{citation.label}</span>
-      {citation.text && <span className="citation-pill-note">{citation.text}</span>}
-      {onOpen && <span className="citation-pill-open">{opens}</span>}
-    </span>
-  );
+  const opens = citation.target.scheme === 'external' ? 'Opens in your browser' : 'Opens in Details';
+  const label = typeof number === 'string' || typeof number === 'number'
+    ? `Source ${String(number)}: ${citation.label}`
+    : `Source: ${citation.label}`;
   return (
-    <span className="citation-pill-wrap">
-      {onOpen
-        ? (
+    <Tooltip.Provider>
+      <Tooltip.Root delayDuration={450}>
+        <Tooltip.Trigger asChild>
           <button
-            aria-describedby={popoverId}
-            aria-label={`Source: ${citation.label}`}
+            aria-label={label}
             className="citation-pill"
             onClick={onOpen}
             type="button"
           >{number}</button>
-        )
-        : <span aria-describedby={popoverId} className="citation-pill">{number}</span>}
-      {popover}
-    </span>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content className="tooltip citation-pill-popover" collisionPadding={12} side="top" sideOffset={6}>
+            <span className="citation-pill-source">{citation.label}</span>
+            {citation.text && <span className="citation-pill-note">{citation.text}</span>}
+            {onOpen && <span className="citation-pill-open">{opens}</span>}
+            <Tooltip.Arrow className="tooltip-arrow" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
   );
 }
 
@@ -225,7 +245,6 @@ interface ImageArgs extends CellArgs {
 interface FootnoteArgs extends CellArgs {
   readonly citation: FootnoteCitation;
   readonly number: React.ReactNode;
-  readonly popoverId: string;
 }
 
 type Matrix<Args> = Readonly<Record<CitationScheme, (args: Args) => React.ReactNode>>;
@@ -282,7 +301,6 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
       citation={args.citation}
       number={args.number}
       onOpen={resolved(args) ? opener(args.render, args.target) : undefined}
-      popoverId={args.popoverId}
     />
   ),
   external: (args) => (
@@ -290,11 +308,10 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
       citation={args.citation}
       number={args.number}
       onOpen={opener(args.render, args.target)}
-      popoverId={args.popoverId}
     />
   ),
-  person: (args) => <CitationPill citation={args.citation} number={args.number} popoverId={args.popoverId} />,
-  connector: (args) => <CitationPill citation={args.citation} number={args.number} popoverId={args.popoverId} />,
+  person: (args) => <CitationPill citation={args.citation} number={args.number} />,
+  connector: (args) => <CitationPill citation={args.citation} number={args.number} />,
   // Unreachable through the pinned grammar, which refuses a definition whose one
   // link names no known scheme. Defined anyway, because "cannot happen" is not a
   // thing the type system can check and a superscript is the honest fallback.
@@ -333,7 +350,6 @@ export function CitationLink({ anchor, children, footnoteRef, href, identity }: 
           citation,
           label: children,
           number: children,
-          popoverId: `${render.prefix}cite-${identifier}`,
           render,
           target: citation.target,
         })}</>

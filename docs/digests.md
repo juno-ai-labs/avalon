@@ -459,6 +459,23 @@ a single tag is added, so an `href` can only ever be one it built itself — wit
 cannot match within the attribute. A table or a fenced block is kept verbatim in
 a `<pre>`; other unknown syntax degrades to visible text.
 
+**Citations are reduced before the renderer sees them.** A model's answer may
+carry `resource://` link and image targets and GFM footnotes
+([`markdown-rendering.md`](markdown-rendering.md)), none of which a mail client
+has heard of — so `markdownToEmailHtml`, `markdownToEmailText` and
+`markdownToEmailPreheader` each run `rewriteCitationsAsPlainText` first. Chips
+and embeds become the words the model wrote; footnotes become numbered markers
+over one trailing source list, with an internal source as its title and an
+external one as a real link, because a link is the only way a reader outside
+Rally can follow it. Without that pass all three leak: the HTML path links only
+`http(s)` targets, so a `resource://` link arrives as literal bracket syntax;
+the text path appends whatever target it is handed; and neither part has any
+footnote handling at all.
+
+**The order is load-bearing:** citations first, then `normalizeModelMarkdown`.
+The TeX repair escapes Markdown punctuation in what it unwraps, and a `\[` it
+manufactured would stop looking like the link the citation pass has to find.
+
 The brief names exactly that subset, so what the model writes and what the
 template styles are the same list. Each source group carries its canonical link,
 so the digest points at the real thing rather than describing it.
@@ -666,6 +683,31 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-27 — Every email reduces a model's citations before rendering
+
+**What changed:** All three `email-markdown.ts` entry points run
+`rewriteCitationsAsPlainText` ahead of their existing work — before
+`normalizeModelMarkdown` on the two that call it. Chips and embeds reduce to
+their label text; footnotes reduce to numbered markers over one trailing source
+list.
+
+**Why:** Model answers began carrying `resource://` targets and GFM footnotes,
+and this renderer had no rule for any of it — the HTML path links only
+`http(s)`, so an internal link passed through as literal bracket syntax; the
+text path appends any target it is given; footnotes were unhandled in both. A
+reader would have got a raw internal URL and a page of `[^1]` markers above
+nothing. The rejected alternative was teaching this renderer to render
+citations: there is nothing for a mail client to render them *as*, and a
+trailing source list is the one place a source can live on a surface with no
+rail to open.
+
+**Consequences:** The ordering is a constraint, not an accident — widening what
+`normalizeModelMarkdown` escapes breaks citation rewriting in email, several
+modules from the cause. The reduction is idempotent, so a path that grows a
+second call does not double-renumber. Shipped in
+[#381](https://github.com/juno-ai-labs/avalon/pull/381). Design:
+[`docs/PRDs/2026-08-27_inline-resource-citations/prd.md`](PRDs/2026-08-27_inline-resource-citations/prd.md).
 
 ### 2026-08-25 — The Digest settings section hides when digests-enabled is off
 
