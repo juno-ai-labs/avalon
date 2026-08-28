@@ -132,6 +132,15 @@ describe("email markdown rendering", () => {
     expect(markdownToEmailHtml("Backlog $\\rightarrow$ Done")).toContain("Backlog → Done");
     expect(markdownToEmailText("Backlog $\\rightarrow$ Done")).toBe("Backlog → Done");
     expect(markdownToEmailPreheader("Backlog $\\rightarrow$ Done")).toBe("Backlog → Done");
+  });
+
+  it("spends the preheader on the answer rather than on its bibliography", () => {
+    // These are the 160 characters an inbox shows beside the subject. Reducing
+    // the citations is right; appending the source list before truncating spent
+    // the preview on `Sources 1. Q3 deck` for any answer short enough to reach
+    // it.
+    expect(markdownToEmailPreheader("Revenue grew 40%.[^1] Margin held.\n\n[^1]: [Q3 deck](resource://board-deck)"))
+      .toBe("Revenue grew 40%.[1] Margin held.");
     // And leaves money and shell variables alone, which is the reason the
     // math rule is written the way it is.
     expect(markdownToEmailHtml("Seats cost $50 and $70")).toContain("Seats cost $50 and $70");

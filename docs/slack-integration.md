@@ -785,6 +785,24 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
+### 2026-08-28 — A notification's source list is written in words, not in Markdown
+
+**What changed:** `slack-notification-service.humanReadableMessage` reduces with
+`sources: "plain"` — a bare `Sources` line over `1. The memo — https://…` — while
+`slackMarkdownMessages` keeps the Markdown shape.
+
+**Why:** The two Slack paths do not render the same thing. `slackMarkdownMessages`
+builds a `markdown` block; a mention notification posts to `chat.postMessage`'s
+`text` field, which is mrkdwn and has neither `**bold**` nor `[label](url)`. The
+reduction added for that surface therefore replaced one leak with another — a
+literal `**Sources**` over a literal bracketed link, in front of the channel. Its
+test passed because the fixture's only source was internal, which reduces to a
+bare title; the fixture now carries an external one.
+
+**What a future change has to respect:** Anything posting agent text outside a
+`markdown` block wants the plain shape. The rule is what the *consumer* renders,
+not which service the call sits in.
+
 ### 2026-08-28 — The reduction reads code and titled links the way the parser does
 
 **What changed:** Two corrections in `rewriteCitationsAsPlainText`, both in

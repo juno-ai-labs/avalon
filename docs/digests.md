@@ -684,6 +684,28 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-28 — The reduction is written for the surface that renders it
+
+**What changed:** `rewriteCitationsAsPlainText` takes a `sources` option:
+`markdown` (the default, for the HTML and text paths here, which render Markdown
+and reduce its marks), `plain`, and `none`. `markdownToEmailPreheader` uses
+`none`, and so does `mention-email-service.messageExcerpt`.
+
+**Why:** The reduction emits Markdown — a `**Sources**` heading and
+`[label](url)` for an external source — and two of the surfaces it was given
+render none. A mention excerpt is HTML-escaped into a table cell and quoted into
+the plain-text body, so the list arrived as literal syntax; it is also a single
+line, and `singleLine` flattened a bibliography into the quote, where it
+competed with the length budget and truncated mid-entry. The preheader is the
+160 characters an inbox shows beside the subject, and appending the source list
+before truncating spent them on `Sources 1. Q3 deck` for any answer short enough
+to reach it. Both call sites want the reduction and neither wants the list.
+
+**What a future change has to respect:** A new caller picks the shape its
+consumer can render, the way `normalizeModelMarkdown` and `normalizeModelText`
+are already two entry points for the same reason. The default is the Markdown
+one, so a caller that renders nothing has to say so.
+
 ### 2026-08-28 — The reduction reads code and titled links the way the parser does
 
 **What changed:** Two corrections in `rewriteCitationsAsPlainText`, both in
