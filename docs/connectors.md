@@ -591,6 +591,13 @@ Repeating the same accept or dismissal reports the state the suggestion already
 reached; only a contradictory resolution is refused with
 `409 suggestion_already_resolved`.
 
+A routed watch activity names the resources it matched — id, alias, and title —
+in the system message's structured content, so the surface showing it can say
+which attached document went stale and offer the re-fetch that turns the stale
+snapshot into history. The notification marks staleness and nothing more: it
+never re-fetches anything itself, which is the line between a watch and
+continuous synchronization.
+
 An explicit resource watch may move content only into an audience no broader
 than the activity's. Workspace-visible activity may enter any watched work
 stream. Restricted activity requires a private target whose complete
@@ -814,6 +821,23 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-28 — A routed watch activity names what went stale
+
+**What changed:** The watch-routed arm now carries the resources an activity
+matched into the injected message's structured content, by id and by alias.
+
+**Why:** The message said that something changed at the provider, not which of
+a work stream's attached documents did — and a re-fetch, which is what makes a
+stale snapshot into history rather than a loss, cannot be asked for by someone
+who cannot identify the resource.
+
+**Considered and rejected:** Re-fetching on the notification. That is
+synchronization by another name, and it spends provider quota on changes nobody
+asked about.
+
+**Consequences:** The field is present only for the watch-routed arm, where a
+resource was actually matched. Nothing in this path performs a re-fetch.
 
 ### 2026-08-26 — Connector-event processing uses native Queue retry
 

@@ -459,6 +459,26 @@ field.
 
 ## Changelog
 
+### 2026-08-28 — A maintenance pass names the resources that have no alias yet
+
+**What changed:** A `resource_slugs` maintenance task joins the workspace
+alarm's reconciled entries, due at the oldest `resources` row whose `slug` is
+null and reporting the rows it named as progress.
+
+**Why:** A resource's alias is minted by an HMAC over its coordinates, so no
+migration can write one — every row that existed before the column, and every
+row whose creation path could not finish its own allocation, needs a pass. The
+resource row is its own durable record of the work, which is why the arm counts
+exactly what the pass writes and the entry disappears once none are left.
+
+**Considered and rejected:** Allocating lazily on a read. That puts a write on
+a read path, and leaves a resource unnamed for as long as nobody looks at it —
+which is exactly the resource a model is about to be handed.
+
+**Consequences:** The pass shares the reap batch bound of its neighbours in the
+same module, and an allocation failure at creation costs a delay rather than
+the row.
+
 ### 2026-08-25 — Phase timing distinguishes slow work from a cancelled queued alarm
 
 **What changed:** Workspace alarms now emit content-free start, completion, and
