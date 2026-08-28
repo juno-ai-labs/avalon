@@ -101,6 +101,23 @@ import { WorkstreamComposer } from '../components/workstream-composer';
 import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
 import { useRailCrossFade } from '../components/rail-surface';
 
+/**
+ * The cache key for one resource's version history.
+ *
+ * Keyed on the version the detail is showing as well as the resource, for the
+ * same reason the preview beside it is: a republish or a watch-driven
+ * re-ingest keeps the resource's id and arrives over the socket, so a key made
+ * of the id alone leaves the rail showing a history missing its newest entry
+ * while presenting itself as the whole record. Only the participant's own
+ * re-fetch invalidates explicitly; every other writer moves this number.
+ */
+export function resourceVersionsQueryKey(
+  resourceId: string | null,
+  currentVersion: number | null,
+): readonly [string, string | null, number | null] {
+  return ['resource-versions', resourceId, currentVersion];
+}
+
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
   if (!session?.workspace) return undefined;
   return {
@@ -1698,8 +1715,10 @@ export function WorkstreamScreen(): React.JSX.Element {
   // The rail's detail shows one resource at a time, so its history is fetched
   // for that one rather than for every attachment the work stream carries.
   const inspectedResourceId = inspector?.type === 'resource' ? inspector.id : null;
+  const inspectedResourceVersion = workstream.data?.resources
+    .find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
   const resourceVersions = useQuery({
-    queryKey: ['resource-versions', inspectedResourceId],
+    queryKey: resourceVersionsQueryKey(inspectedResourceId, inspectedResourceVersion),
     queryFn: ({ signal }) => api!.getResourceVersions(inspectedResourceId!, signal),
     // `closeRail` deliberately keeps the inspector's selection, so without the
     // rail's own state here the query keeps refetching for a panel nobody can
@@ -1718,6 +1737,9 @@ export function WorkstreamScreen(): React.JSX.Element {
       } : current);
       // The re-fetch is exactly the pointer swap that writes a version, so the
       // list the rail is showing is one entry out of date the moment it lands.
+      // Prefix-matched, because the key carries the version this resource was
+      // at: the swap moves that number and would refetch on its own, and this
+      // covers the re-fetch the provider answered without changing anything.
       void queryClient.invalidateQueries({ queryKey: ['resource-versions', refreshed.id] });
     },
   });
