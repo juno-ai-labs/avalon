@@ -5761,6 +5761,12 @@ describe("Durable Objects in the Workers runtime", () => {
     // never armed or never delivered.
     await evictDurableObject(stub);
     await stub.wake();
+    // The empty outbox is the complete witness: the drain acknowledges the
+    // row only after the semantic frame and the dashboard-refresh intent are
+    // both durable, so nothing further is asserted here. `realtime_state` is
+    // written at enqueue time and would pass before the drain ever ran, and
+    // the pending dashboard-refresh row is consumed by the debounced alarm,
+    // so asserting either from a separate invocation proves nothing or races.
     await expect.poll(
       () => runInDurableObject(stub, (_instance, state) => Number(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM durable_outbox
@@ -5768,11 +5774,6 @@ describe("Durable Objects in the Workers runtime", () => {
       ).one().count)),
       { timeout: 4_000, interval: 50 },
     ).toBe(0);
-    await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(
-        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
-      ).one()).toEqual({ event_sequence: 1 });
-    });
     // Above the 5s suite default so the harness deadline cannot preempt the
     // poll's own `expected 1 to be +0` diagnostic when setup runs long on a
     // loaded machine; the poll keeps its tighter 4s budget.

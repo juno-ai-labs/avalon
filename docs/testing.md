@@ -273,7 +273,11 @@ beforeEach(async () => {
   neither advance nor duplicate delivery, and it reports success only once
   the drain has synchronously settled the state it asserts on. And unlike a direct
   `instance.alarm()` call, it still fails when construction stops arming the
-  alarm, which is half of what such a test exists to prove.
+  alarm, which is half of what such a test exists to prove. Letting the poll's
+  timeout be the failure requires that it actually gets to fire: the suite's
+  default `testTimeout` is 5 seconds and covers the test's setup too, so give
+  the `it()` its own wider timeout — otherwise a loaded machine turns the
+  poll's legible `expected 1 to be +0` into an opaque harness timeout.
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
