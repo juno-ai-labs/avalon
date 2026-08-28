@@ -1410,6 +1410,32 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-28 — Desktop/API skew no longer removes the work-stream open path
+
+**What changed:** The desktop wire adapter recognizes the immediately previous
+create envelope (`messageId`) and socket snapshot envelope (`messageFeed` and
+`resumeFeed` without the new reason/chunk fields), plus the previous workspace
+socket create-message receipt (`message`). It normalizes all three to the
+current `turnId`, canonical transcript, and `{ turn, deliveryState }` forms.
+Missing transcript provenance receives the same conservative values as the
+server migration, and retired message pages are removed. Current application
+code and the Durable Object remain single-shape.
+
+**Why:** The canonical transcript cutover below was deployed as a breaking
+client/server pair, but Electron updates and regional Worker deployment are not
+atomic. Rally 1.200 could reach a previous Worker, reject a successful create,
+discard its cold-open snapshot, stay on “Opening work stream…” indefinitely,
+or fail to resolve a successful message send.
+
+**Considered and rejected:** Relying on release order or telling the person to
+restart. Release order cannot prevent an already downloaded desktop from
+meeting a lagging region, and restarting does not change either wire version.
+
+**Consequences, and what a future change has to respect:** Wire replacements
+use expand-and-contract compatibility at the desktop boundary. A predecessor
+is accepted only when its identifying fields are present and the replacement's
+fields are absent; malformed current frames still fail strict validation.
+
 ### 2026-08-28 — Persistent substream loops over a canonical ordered transcript
 
 **What changed:** One breaking, forward-only cutover (schema v33 from shipped

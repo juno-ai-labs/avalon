@@ -814,6 +814,30 @@ converting this one back requires answering the ambiguity that produced it.
 
 ## Changelog
 
+### 2026-08-28 — A socket-first open remains readable across a staggered release
+
+**What changed:** Electron accepts and immediately normalizes the one previous
+work-stream creation envelope, SubstreamAgent snapshot envelope, and workspace
+socket create-message receipt. The legacy snapshot already contains the
+canonical transcript fence; its missing author/timing provenance and pending
+input collection are conservatively supplied, and its redundant message pages
+are discarded at the parser boundary before current code sees the frame.
+
+**Why:** Rally 1.200 shipped a strict snapshot and renamed the opening
+`messageId` to `turnId` while the previous regional Worker could still be
+serving. The new desktop discarded the only cold-open snapshot, rejected a
+creation response after the work stream had already been committed, and could
+not correlate a successful send acknowledgement.
+
+**Considered and rejected:** Treating desktop and Worker publication as an
+atomic deploy. They are separate release channels, and a restart cannot make a
+new desktop speak an old Worker's contract.
+
+**Consequences:** A wire-shape replacement must ship as an expand-and-contract
+change: readers accept the predecessor until every writer has crossed the
+boundary. Strict validation remains after the narrow normalization; this is not
+a general permissive parser or a second transcript authority.
+
 ### 2026-08-26 — Transcript history becomes range-addressed socket state
 
 **What changed:** Work-stream opening and history use snapshot-fenced transcript

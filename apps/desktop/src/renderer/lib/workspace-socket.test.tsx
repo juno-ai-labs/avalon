@@ -11,7 +11,11 @@ import { useEffect, type JSX } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkstreamSummary } from './types';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
-import { WorkspaceSocketProvider, useWorkspaceSocket } from './workspace-socket';
+import {
+  parseWorkspaceSocketCommandResult,
+  WorkspaceSocketProvider,
+  useWorkspaceSocket,
+} from './workspace-socket';
 import { setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 
 import type * as TelemetryModule from './telemetry';
@@ -120,6 +124,31 @@ afterEach(() => {
 });
 
 describe('WorkspaceSocketProvider', () => {
+  it('accepts the previous create-message receipt while the API deployment catches up', () => {
+    expect(parseWorkspaceSocketCommandResult({
+      type: 'client_command_succeeded',
+      command: 'create_message',
+      clientMessageId: 'client-message-previous',
+      message: {
+        id: '00000000-0000-7000-8000-000000000004',
+        clientMessageId: 'client-message-previous',
+        createdAt: '2026-08-17T20:00:01.000Z',
+      },
+      agentInvoked: true,
+      harnessRunId: '00000000-0000-7000-8000-000000000005',
+    })).toEqual({
+      type: 'client_command_succeeded',
+      command: 'create_message',
+      clientMessageId: 'client-message-previous',
+      turn: {
+        turnId: '00000000-0000-7000-8000-000000000004',
+        clientMessageId: 'client-message-previous',
+        createdAt: '2026-08-17T20:00:01.000Z',
+      },
+      deliveryState: 'canonical',
+    });
+  });
+
   it('reports app and work-stream foreground separately and receives viewer-scoped presence', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     applicationFocus.foregrounded = true;

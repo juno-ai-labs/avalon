@@ -280,11 +280,31 @@ const wireTemplatePageSchema = z.object({
     })).default([]),
   })),
 });
-const createWorkstreamResponseSchema = z.object({
+const currentCreateWorkstreamResponseSchema = z.object({
   workstream: WireWorkstreamSchema,
   turnId: z.string(),
   harnessRunId: z.string().nullable(),
 }).strict();
+const previousCreateWorkstreamResponseSchema = z.object({
+  workstream: WireWorkstreamSchema,
+  messageId: z.string(),
+  harnessRunId: z.string().nullable(),
+}).strict();
+/**
+ * Desktop and Worker releases are independent. Rally 1.200 renamed the opening
+ * turn without first giving the previous Worker a dual-shape response, so a
+ * freshly updated desktop rejected a create the still-rolling Worker had
+ * already committed. Keep the previous envelope at this wire boundary and
+ * normalize it immediately; callers continue to see only `turnId`.
+ */
+const createWorkstreamResponseSchema = z.union([
+  currentCreateWorkstreamResponseSchema,
+  previousCreateWorkstreamResponseSchema,
+]).transform((response) => 'turnId' in response ? response : {
+  workstream: response.workstream,
+  turnId: response.messageId,
+  harnessRunId: response.harnessRunId,
+});
 const runNowResponseSchema = z.object({
   runId: z.string(),
   workstreamId: z.string(),

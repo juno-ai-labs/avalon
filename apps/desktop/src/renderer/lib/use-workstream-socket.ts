@@ -80,6 +80,202 @@ export type { StreamCursor } from './workstream-socket-resume';
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
 export type WorkstreamMessageDeliveryMode = 'steer' | 'queue';
 
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function normalizePreviousTranscriptActivity(value: unknown): unknown {
+  const activity = objectRecord(value);
+  if (!activity) return value;
+  return {
+    ...activity,
+    intervals: Array.isArray(activity['intervals'])
+      ? activity['intervals'].map((candidate) => {
+          const interval = objectRecord(candidate);
+          return interval ? {
+            ...interval,
+            boundarySource: interval['boundarySource'] ?? 'rally',
+            timingAccuracy: interval['timingAccuracy'] ?? 'observed',
+          } : candidate;
+        })
+      : activity['intervals'],
+  };
+}
+
+function normalizePreviousTranscriptTurn(
+  value: unknown,
+  participants: ReadonlyMap<string, { displayName: string; avatarUrl: string | null }>,
+): unknown {
+  const turn = objectRecord(value);
+  if (!turn) return value;
+  const authorUserId = typeof turn['authorUserId'] === 'string' ? turn['authorUserId'] : null;
+  const participant = authorUserId ? participants.get(authorUserId) : undefined;
+  return {
+    ...turn,
+    authorSnapshot: turn['actor'] === 'human' && authorUserId
+      ? {
+          userId: authorUserId,
+          displayName: participant?.displayName ?? 'A workspace member',
+          avatarUrl: participant?.avatarUrl ?? null,
+        }
+      : null,
+  };
+}
+
+function normalizePreviousTranscript(
+  value: unknown,
+  participants: ReadonlyMap<string, { displayName: string; avatarUrl: string | null }>,
+): Record<string, unknown> | null {
+  const transcript = objectRecord(value);
+  if (!transcript) return null;
+  const turns = (candidates: unknown): unknown => Array.isArray(candidates)
+    ? candidates.map((candidate) => normalizePreviousTranscriptTurn(candidate, participants))
+    : candidates;
+  const activities = (candidates: unknown): unknown => Array.isArray(candidates)
+    ? candidates.map(normalizePreviousTranscriptActivity)
+    : candidates;
+  return {
+    ...transcript,
+    ranges: Array.isArray(transcript['ranges'])
+      ? transcript['ranges'].map((candidate) => {
+          const range = objectRecord(candidate);
+          return range ? {
+            ...range,
+            turns: turns(range['turns']),
+            activities: activities(range['activities']),
+          } : candidate;
+        })
+      : transcript['ranges'],
+    activities: activities(transcript['activities']),
+    activeActivities: activities(transcript['activeActivities']),
+    activeTurns: turns(transcript['activeTurns']),
+    pendingInputs: [],
+  };
+}
+
+function previousSnapshotParticipants(workstream: Record<string, unknown>): Map<
+  string,
+  { displayName: string; avatarUrl: string | null }
+> {
+  const participants = new Map<string, { displayName: string; avatarUrl: string | null }>();
+  if (!Array.isArray(workstream['participants'])) return participants;
+  for (const candidate of workstream['participants']) {
+    const user = objectRecord(objectRecord(candidate)?.['user']);
+    if (!user || typeof user['id'] !== 'string' || typeof user['name'] !== 'string') continue;
+    participants.set(user['id'], {
+      displayName: user['name'],
+      avatarUrl: typeof user['avatarUrl'] === 'string' ? user['avatarUrl'] : null,
+    });
+  }
+  return participants;
+}
+
+function normalizePreviousActiveStreams(
+  value: unknown,
+  transcript: Record<string, unknown>,
+  messageFeed: unknown,
+): unknown[] {
+  if (!Array.isArray(value)) return [];
+  const sequenceByTurnId = new Map<string, number>();
+  const rememberTurn = (candidate: unknown): void => {
+    const turn = objectRecord(candidate);
+    if (turn && typeof turn['turnId'] === 'string'
+      && typeof turn['transcriptSequence'] === 'number'
+      && turn['transcriptSequence'] > 0) {
+      sequenceByTurnId.set(turn['turnId'], turn['transcriptSequence']);
+    }
+  };
+  if (Array.isArray(transcript['ranges'])) {
+    for (const candidate of transcript['ranges']) {
+      const range = objectRecord(candidate);
+      if (Array.isArray(range?.['turns'])) range['turns'].forEach(rememberTurn);
+    }
+  }
+  if (Array.isArray(transcript['activeTurns'])) transcript['activeTurns'].forEach(rememberTurn);
+  const feed = objectRecord(messageFeed);
+  if (Array.isArray(feed?.['items'])) {
+    for (const candidate of feed['items']) {
+      const message = objectRecord(candidate);
+      if (!message || typeof message['transcriptSequence'] !== 'number') continue;
+      for (const id of [message['transcriptTurnId'], message['id']]) {
+        if (typeof id === 'string') sequenceByTurnId.set(id, message['transcriptSequence']);
+      }
+    }
+  }
+  return value.flatMap((candidate) => {
+    const checkpoint = objectRecord(candidate);
+    if (!checkpoint) return [];
+    const streamId = typeof checkpoint['streamId'] === 'string'
+      ? checkpoint['streamId']
+      : checkpoint['messageId'];
+    const transcriptSequence = typeof checkpoint['transcriptSequence'] === 'number'
+      ? checkpoint['transcriptSequence']
+      : typeof checkpoint['turnId'] === 'string'
+        ? sequenceByTurnId.get(checkpoint['turnId'])
+        : undefined;
+    if (typeof streamId !== 'string' || typeof transcriptSequence !== 'number' || transcriptSequence <= 0) return [];
+    return [{ ...checkpoint, streamId, transcriptSequence }];
+  });
+}
+
+/**
+ * Normalize the snapshot sent by the release immediately before canonical
+ * transcript snapshots became the only desktop feed shape.
+ *
+ * The old frame already carried the canonical `transcript`, but that snapshot
+ * predates author provenance, timing provenance, and pending loop inputs. Rally
+ * 1.200 made the new snapshot strict while the previous Worker could still be
+ * serving, which caused the parser below to discard the only frame capable of
+ * painting a cold open. Detect only that exact predecessor shape, enrich its
+ * canonical fields with the same conservative values the server migration
+ * uses, strip its retired message pages, and supply the new envelope fields.
+ * Other malformed frames still fail closed.
+ */
+export function parseWorkstreamServerSocketEvent(value: unknown): ServerSocketEvent | null {
+  let candidate = value;
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const snapshot = value as Record<string, unknown>;
+    const isPreviousSnapshot = snapshot['type'] === 'snapshot'
+      && !('reason' in snapshot)
+      && !('pendingInputChunkCount' in snapshot)
+      && ('messageFeed' in snapshot || 'resumeFeed' in snapshot);
+    if (isPreviousSnapshot) {
+      const workstream = objectRecord(snapshot['workstream']);
+      const participants = workstream ? previousSnapshotParticipants(workstream) : new Map();
+      const transcript = normalizePreviousTranscript(snapshot['transcript'], participants);
+      const normalizedWorkstream = workstream ? {
+        ...workstream,
+        backgroundTasks: Array.isArray(workstream['backgroundTasks'])
+          ? workstream['backgroundTasks'].map((candidate) => {
+              const task = objectRecord(candidate);
+              return task ? {
+                ...task,
+                transcriptTurnId: task['transcriptTurnId'] ?? task['transcriptMessageId'] ?? null,
+              } : candidate;
+            })
+          : workstream['backgroundTasks'],
+      } : snapshot['workstream'];
+      const normalized: Record<string, unknown> = {
+        ...snapshot,
+        reason: 'initial',
+        workstream: normalizedWorkstream,
+        transcript,
+        pendingInputChunkCount: 0,
+        activeStreams: transcript
+          ? normalizePreviousActiveStreams(snapshot['activeStreams'], transcript, snapshot['messageFeed'])
+          : [],
+      };
+      delete normalized['messageFeed'];
+      delete normalized['resumeFeed'];
+      candidate = normalized;
+    }
+  }
+  const parsed = ServerSocketEventSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
   RallyApi,
@@ -1694,8 +1890,8 @@ export function useWorkstreamSocket(
           }
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
-            const event = ServerSocketEventSchema.safeParse(parsed);
-            if (event.success) {
+            const event = parseWorkstreamServerSocketEvent(parsed);
+            if (event) {
               if (openTrace === trace) {
                 // The first server frame after `subscribe` is the one that
                 // fills the screen — a snapshot, a replayed event, or the
@@ -1703,17 +1899,17 @@ export function useWorkstreamSocket(
                 // three arrived is most of the diagnosis.
                 trace.mark('first_frame');
                 trace.end({
-                  outcome: event.data.type,
-                  ...(event.data.type === 'snapshot' ? {
-                    messageCount: event.data.transcript.ranges.reduce(
+                  outcome: event.type,
+                  ...(event.type === 'snapshot' ? {
+                    messageCount: event.transcript.ranges.reduce(
                       (count, range) => count + range.turns.length,
-                      event.data.transcript.activeTurns.length,
+                      event.transcript.activeTurns.length,
                     ),
                   } : {}),
                 });
                 openTrace = null;
               }
-              applyEvent(event.data);
+              applyEvent(event);
               return;
             }
             const personalEvent = PersonalSocketEventSchema.safeParse(parsed);

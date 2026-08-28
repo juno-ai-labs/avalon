@@ -690,6 +690,24 @@ describe('Rally API wire adapter', () => {
     });
   });
 
+  it('accepts the previous create response while the API deployment catches up', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({
+      workstream: detail,
+      messageId,
+      harnessRunId: null,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.createWorkstream({
+      openingMessage: 'Start a compatible work stream',
+      participantIds: [],
+    })).resolves.toMatchObject({
+      turnId: messageId,
+      workstream: { id: workstreamId },
+    });
+  });
+
   it('given a project launcher, when a work stream is created, then the project is sent to the authorization gate', async () => {
     const projectId = '00000000-0000-7000-8000-0000000000a7';
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
