@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
+import { ApiError } from '../lib/api';
 import type { WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { InspectorRail } from './inspector-rail';
@@ -300,6 +301,20 @@ describe('InspectorRail details', () => {
 });
 
 describe('resource detail content preview', () => {
+  // The rail renders nothing at all while `railOpen` is false, and this block
+  // used to inherit an open rail from the last test of the block above — which
+  // held only while the file ran in source order. Under `--sequence.shuffle`
+  // every test here failed against an empty document, reported as the preview
+  // never arriving rather than as a panel that was never on screen.
+  beforeEach(() => {
+    useUiStore.setState({
+      railOpen: true,
+      railVariant: 'context',
+      railWidth: 360,
+      inspector: null,
+    });
+  });
+
   const note: WorkstreamResource = {
     id: 'resource-note',
     title: 'Q3 board deck',
@@ -384,6 +399,127 @@ describe('resource detail content preview', () => {
 
     await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
     expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  // 409 `resource_processing` is the preview route's "not yet": it is still
+  // materializing this PDF's or Office file's text and it names the moment to
+  // ask again. The delay below is deliberately nothing like the 250ms and 1s
+  // the server actually sends, so a delay hard-coded in the rail cannot pass
+  // the tests underneath it.
+  const stillPreparing = (retryAfterMs: number): ApiError => new ApiError(
+    'The attachment preview is still being prepared',
+    409,
+    'resource_processing',
+    { retryAfterMs },
+  );
+
+  type LoadResourceContent = (id: string, signal?: AbortSignal) => Promise<Blob>;
+
+  it('waits out a preview that is still being prepared, for as long as the server asked', async () => {
+    // A citation chip opens this panel, so a citation naming a PDF attached a
+    // moment ago used to land on "This preview is not available" and stay there
+    // for the life of the mount — the reader had to close and reopen the rail
+    // to find out the preview had existed all along.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loadResourceContent = vi.fn<LoadResourceContent>()
+        .mockRejectedValueOnce(stillPreparing(30_000))
+        .mockResolvedValueOnce(new Blob(['## Findings\n\nRevenue grew 40%.']));
+      openDetail(note, loadResourceContent);
+
+      await waitFor(() => expect(loadResourceContent).toHaveBeenCalledOnce());
+
+      // Before the moment the server named: still loading, not given up on,
+      // and not asked again either.
+      await act(async () => { await vi.advanceTimersByTimeAsync(29_000); });
+      expect(loadResourceContent).toHaveBeenCalledOnce();
+      expect(screen.queryByText(/preview is not available/iu)).not.toBeInTheDocument();
+      expect(screen.getByRole('status')).toHaveTextContent(/Loading preview/u);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument());
+      expect(loadResourceContent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('takes a terminal rejection as the answer instead of asking again forever', async () => {
+    // Only the processing case is a *not yet*. Content that was never hydrated
+    // is a no, and re-asking would spin a request loop behind a panel that has
+    // nothing better to show for it.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loadResourceContent = vi.fn<LoadResourceContent>()
+        .mockRejectedValue(new ApiError('Resource content has not been hydrated', 404, 'resource_content_unavailable'));
+      openDetail(note, loadResourceContent);
+
+      await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+
+      expect(loadResourceContent).toHaveBeenCalledOnce();
+      expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a pending retry when the panel goes away', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loadResourceContent = vi.fn<LoadResourceContent>().mockRejectedValue(stillPreparing(30_000));
+      const { unmount } = render(
+        <Tooltip.Provider>
+          <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [note] }} />
+        </Tooltip.Provider>,
+      );
+      act(() => { useUiStore.getState().inspect({ type: 'resource', id: note.id }); });
+      await waitFor(() => expect(loadResourceContent).toHaveBeenCalledOnce());
+
+      unmount();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+
+      expect(loadResourceContent).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a pending retry when the resource is revised out from under it', async () => {
+    // The wait armed for version 2 belongs to a read that is over. Letting it
+    // fire would put a request for the superseded revision behind the one the
+    // metadata beside it now describes.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loadResourceContent = vi.fn<LoadResourceContent>()
+        .mockRejectedValueOnce(stillPreparing(30_000))
+        .mockResolvedValue(new Blob(['## Findings\n\nRevenue grew 30%.']));
+      const { rerender } = render(
+        <Tooltip.Provider>
+          <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [note] }} />
+        </Tooltip.Provider>,
+      );
+      act(() => { useUiStore.getState().inspect({ type: 'resource', id: note.id }); });
+      await waitFor(() => expect(loadResourceContent).toHaveBeenCalledOnce());
+
+      rerender(
+        <Tooltip.Provider>
+          <InspectorRail
+            loadResourceContent={loadResourceContent}
+            workstream={{ ...workstream, resources: [{ ...note, currentVersion: note.currentVersion + 1 }] }}
+          />
+        </Tooltip.Provider>,
+      );
+      await waitFor(() => expect(screen.getByText('Revenue grew 30%.')).toBeInTheDocument());
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+
+      expect(loadResourceContent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not try to render an image as text', () => {

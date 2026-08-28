@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useState } from 'react';
+import { ApiError } from '../lib/api';
 import { formatDateTime, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -364,6 +365,38 @@ function readableAsText(resource: WorkstreamResource): boolean {
 }
 
 /**
+ * How long the server said to wait before asking for this preview again, or
+ * `undefined` when the rejection is the reader's final answer.
+ *
+ * The preview route materializes a PDF's or an Office file's text on demand and
+ * answers 409 `resource_processing` while another request holds the conversion
+ * claim. That state ends on its own: the holder publishes the derivative, or its
+ * lease goes stale and the next caller re-claims and converts. So it is the one
+ * rejection that is a *not yet* rather than a *no*, and the panel that treated
+ * it as a no left a citation onto a freshly attached PDF looking at "This
+ * preview is not available" until the rail was closed and reopened.
+ *
+ * Every other rejection stays terminal, and this narrowing is what keeps it
+ * that way: a 404 for content that was never hydrated or an object that has
+ * gone, a 422 for a format that cannot be converted or a conversion that
+ * failed, a network error. None of those become true by being asked again.
+ *
+ * The delay is the server's own `retryAfterMs` and nothing else — it is the
+ * only party that knows whether it is waiting on a compare-and-set it just lost
+ * or on somebody else's OCR. A `resource_processing` that arrives without one
+ * is treated as terminal rather than retried on an interval this file invented;
+ * the whole point of asking again is that the server said when.
+ */
+function processingRetryDelayMs(error: unknown): number | undefined {
+  if (!(error instanceof ApiError) || error.code !== 'resource_processing') return undefined;
+  const details = error.details;
+  if (typeof details !== 'object' || details === null || !('retryAfterMs' in details)) return undefined;
+  const retryAfterMs: unknown = details.retryAfterMs;
+  if (typeof retryAfterMs !== 'number' || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) return undefined;
+  return retryAfterMs;
+}
+
+/**
  * What the resource says, under what the record says about it.
  *
  * The rail's detail was metadata only — type, direction, version, remove — and
@@ -384,19 +417,40 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
 
   useEffect(() => {
     const controller = new AbortController();
+    // One handle, reassigned by each wait. The cleanup below closes over this
+    // binding rather than a copy, so it clears whichever wait is outstanding.
+    let pendingRetry: number | undefined;
     setState({});
-    void loadResourceContent(resource.id, controller.signal)
-      .then((blob) => blob.text())
-      .then((text) => {
-        if (!controller.signal.aborted) setState({ text });
-      })
-      .catch(() => {
-        // A resource whose content was never hydrated, or whose object has since
-        // gone, is not an error the reader can act on — the metadata above is
-        // still true, and saying so beats an empty panel.
-        if (!controller.signal.aborted) setState({ failed: true });
-      });
-    return () => controller.abort();
+    const read = (): void => {
+      void loadResourceContent(resource.id, controller.signal)
+        .then((blob) => blob.text())
+        .then((text) => {
+          if (!controller.signal.aborted) setState({ text });
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          const retryAfterMs = processingRetryDelayMs(error);
+          if (retryAfterMs === undefined) {
+            // A resource whose content was never hydrated, or whose object has
+            // since gone, is not an error the reader can act on — the metadata
+            // above is still true, and saying so beats an empty panel.
+            setState({ failed: true });
+            return;
+          }
+          // The state is left alone, so the panel goes on saying “Loading
+          // preview…” — which is what is happening. There is no ceiling on the
+          // number of waits and deliberately so: the server's own processing
+          // state is self-terminating, the delay is its to name, and a count
+          // invented here would end the wait with the same dead panel this
+          // change exists to remove. See `processingRetryDelayMs`.
+          pendingRetry = window.setTimeout(read, retryAfterMs);
+        });
+    };
+    read();
+    return () => {
+      controller.abort();
+      if (pendingRetry !== undefined) window.clearTimeout(pendingRetry);
+    };
     // `currentVersion` as well as the id: a watched source re-ingested in place
     // keeps its id, and the metadata above this preview shows the new version
     // number. Without it the panel put version 3's number over version 2's
