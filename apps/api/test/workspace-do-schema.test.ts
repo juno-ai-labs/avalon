@@ -204,6 +204,83 @@ describe("the WorkspaceDO resource-publication fence migration", () => {
     expect(database.prepare(
       "SELECT cleanup_eligible FROM resource_object_deletion_outbox WHERE object_ref = 'r2/staged'",
     ).get()).toEqual({ cleanup_eligible: 0 });
+
+    expect(() => database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES ('r2/invalid', ?, 'resource-invalid', 'original', 2, '2026-08-28', '2026-08-28')`,
+    ).run(WORKSPACE_ID)).toThrow(/CHECK constraint failed/u);
+
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+          metadata_json, attachment_status, created_at, updated_at)
+       VALUES ('resource-new', ?, 'generated_file', 'avalon_generated', 'Staged',
+               'text/plain', 'r2/staged', '{}', 'attached', '2026-08-28', '2026-08-28')`,
+    ).run(WORKSPACE_ID);
+    // A resource can be deleted before maintenance observes that its staged
+    // pointer committed. The older enqueue trigger uses INSERT OR IGNORE, so
+    // migration 21's promotion trigger must transfer the existing row to the
+    // reaper instead of leaving it fenced forever.
+    database.exec("DELETE FROM resources WHERE id = 'resource-new'");
+    expect(database.prepare(
+      "SELECT cleanup_eligible FROM resource_object_deletion_outbox WHERE object_ref = 'r2/staged'",
+    ).get()).toEqual({ cleanup_eligible: 1 });
+  });
+
+  it("promotes staged ownership when pointers are replaced or history is deleted", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, RESOURCE_PUBLICATION_FENCE_VERSION);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+          model_content_ref, metadata_json, attachment_status, created_at, updated_at)
+       VALUES ('resource-replaced', ?, 'generated_file', 'avalon_generated', 'Replaced',
+               'text/plain', 'r2/original-old', 'r2/model-old', '{}', 'attached',
+               '2026-08-28', '2026-08-28')`,
+    ).run(WORKSPACE_ID);
+    const stage = database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES (?, ?, 'resource-replaced', ?, 0, '2026-08-28', '2026-08-28')`,
+    );
+    stage.run("r2/original-old", WORKSPACE_ID, "original");
+    stage.run("r2/model-old", WORKSPACE_ID, "derivative");
+
+    database.exec(
+      `UPDATE resources
+          SET content_ref = 'r2/original-new', model_content_ref = 'r2/model-new',
+              updated_at = '2026-08-29'
+        WHERE id = 'resource-replaced'`,
+    );
+    expect(database.prepare(
+      `SELECT object_ref, cleanup_eligible FROM resource_object_deletion_outbox
+        WHERE object_ref IN ('r2/original-old', 'r2/model-old') ORDER BY object_ref`,
+    ).all()).toEqual([
+      { object_ref: "r2/model-old", cleanup_eligible: 1 },
+      { object_ref: "r2/original-old", cleanup_eligible: 1 },
+    ]);
+
+    database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES ('r2/history-only', ?, 'resource-replaced', 'original', 0,
+               '2026-08-28', '2026-08-28')`,
+    ).run(WORKSPACE_ID);
+    database.exec(
+      `UPDATE resource_versions SET content_ref = 'r2/history-only'
+        WHERE resource_id = 'resource-replaced' AND version = 1`,
+    );
+    database.exec(
+      "DELETE FROM resource_versions WHERE resource_id = 'resource-replaced' AND version = 1",
+    );
+    expect(database.prepare(
+      `SELECT cleanup_eligible FROM resource_object_deletion_outbox
+        WHERE object_ref = 'r2/history-only'`,
+    ).get()).toEqual({ cleanup_eligible: 1 });
+    database.close();
   });
 });
 

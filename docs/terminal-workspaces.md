@@ -290,10 +290,12 @@ network proxy, or a general GitHub administration surface.
   discoverable, but new executions fail closed with `sandbox_unavailable` while
   retained work remains available for lifecycle reconciliation.
 - A republish that loses the content compare-and-swap to a concurrent one
-  deletes the bytes it wrote and reports what the document now holds, rather
-  than clobbering the winner. The model is handed a successful result whose
-  hash is not the bytes it published, so a revision can be dropped without a
-  run-visible signal.
+  releases the bytes it wrote to asynchronous cleanup and reports what the
+  document now holds, rather than clobbering the winner. A failed WorkspaceDO
+  response is ambiguous and leaves staging intact, because it cannot prove
+  whether the pointer commit landed. The model is handed a successful result
+  whose hash is not the bytes it published, so a revision can be dropped
+  without a run-visible signal.
 - An opted-in but incomplete Daytona environment degrades to `unsupported`
   instead of failing Worker startup. This keeps ordinary local development
   usable without provider credentials; a complete but malformed configuration
@@ -601,10 +603,13 @@ succeed.
 recover bytes the server deleted; and a time-based cleanup grace period, because
 its safety would depend on an arbitrary request-duration ceiling.
 
-**Consequences:** Ambiguous publication favors a bounded storage leak over a
-broken document. A staged inactive object keeps maintenance visibly outstanding
-until a retry or operator reconciliation releases it. Every future Terminal
-publication path must use the same staging fence.
+**Consequences:** Ambiguous publication favors a recoverable storage leak over a
+broken document. A staged inactive object remains durable for retry or operator
+reconciliation but does not arm an alarm whose pass cannot act on it. A later
+supersession or deletion promotes the row to cleanup ownership. Every future
+Terminal publication path must use the same staging fence.
+
+Shipped in [#395](https://github.com/juno-ai-labs/avalon/pull/395).
 
 ### 2026-08-27 — A published document is identified by its path, not by the call
 
@@ -639,9 +644,8 @@ WorkspaceDO version triggers capture the superseded state on the same update;
 the "latest-only until versioning lands" limitation the terminal-artifact
 generation PRD accepted does not ship, since that layer landed first. Two work
 streams publishing `report.md` stay distinct, and two different files in one
-work stream stay distinct. A lost compare-and-swap releases the bytes this call
-wrote to asynchronous cleanup and reports what the document now holds rather
-than clobbering the winner.
+work stream stay distinct. A lost compare-and-swap deletes the bytes this call
+wrote and reports what the document now holds rather than clobbering the winner.
 The model-facing contract — name, inputs, outputs, receipt behavior — does not
 change, and an unreceipted publish is still refused before anything is written.
 `createTerminalWorkspaceBackup` remains keyed to `toolCallId`, unchanged by this.

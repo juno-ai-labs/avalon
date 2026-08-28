@@ -243,12 +243,21 @@ row and enqueues the former pointer; a known failed publication releases its row
 to cleanup. An ambiguous pointer response stays staged because preserving an
 orphan is recoverable while deleting bytes a committed pointer may name is not.
 Maintenance clears a staged row once it observes an active pointer and never
-deletes an inactive staged object. `resource_versions` retains the original and
-derivative refs selected by every semantic version; cleanup treats those
-historical refs as active. Deleting a resource—not merely detaching one
-relationship—enqueues every retained original and derivative. Scheduled cleanup
-reaps at most 100 eligible references per pass; a failed R2 deletion increments
-bounded retry metadata and remains queued.
+deletes an inactive staged object. Inactive staging is durable reconciliation
+state, not an actionable cleanup row, so it does not arm a maintenance alarm
+that cannot make progress; an explicit retry or operator decision must release
+it. Publisher cleanup removes only a row that is still staged; it cannot erase
+a deletion trigger's later handoff, and maintenance rechecks the active pointer
+inside the statement that retires staging. A staging-insert response lost before
+R2 is attempted is safe to release because no bytes were written. `resource_versions`
+retains the original and derivative refs selected by
+every semantic version; cleanup treats those historical refs as active. When a
+resource or version is superseded or deleted before maintenance clears its
+staging row, object-local triggers promote the row to cleanup ownership.
+Deleting a resource—not merely detaching one relationship—therefore enqueues
+every retained original and derivative. Scheduled cleanup reaps at most 100
+eligible references per pass; a failed R2 deletion increments bounded retry
+metadata and remains queued.
 
 ### Reusable derivatives
 
@@ -451,12 +460,18 @@ generic tool execution/receipt loop is owned by
   validation, output budgets, and provider failure. The harness suite proves
   ephemeral image parts reach only the next model request and never its durable
   completion event. `apps/api/test/workstream-read-state.test.ts` proves the
-  sidebar uses the same visibility boundary.
+sidebar uses the same visibility boundary.
 - `apps/api/test/resource-upload.test.ts`,
   `apps/api/test/attachment-derivative-state.test.ts`, and
   `apps/api/test/resource-object-cleanup.test.ts` cover lifecycle schema,
   exact-byte hashing, legacy interpretation, derivative-change and deletion
   receipt invalidation, cleanup retry, and convergence.
+- `apps/api/test-workers/resource-object-cleanup.test.ts` runs the publication
+  fence against real WorkspaceDO SQLite and R2: cleanup during the upload-to-
+  pointer gap preserves bytes, a committed pointer retires staging without an
+  object delete, resource writes refresh the cleanup alarm, a known failure
+  becomes reapable, and deleting a staged resource promotes its object to
+  cleanup ownership.
 - `apps/api/test-workers/workspace-draft-attachment-reservation.test.ts` uses a
   real WorkspaceDO to prove owner-fenced idempotent reservation, exact
   input/resource projection release, concurrent holds, explicit-deletion
@@ -581,8 +596,11 @@ An unexpected raw tool name in a transcript points first to
 should be split into schema/length, signature, expiry, and authorization metrics
 without logging the cursor itself. The scheduled Worker drains
 `resource_object_deletion_outbox`; a growing oldest `created_at` or
-`attempt_count` means R2 cleanup is unhealthy. Inspect bounded events by resource
-ID and object kind, never object key.
+`attempt_count` among eligible rows means R2 cleanup is unhealthy. An inactive
+staged row is deliberately absent from the due queue because cleanup cannot
+distinguish a crashed writer from an in-flight one without an invented lease;
+inspect and release it only after proving no current or historical pointer can
+commit. Inspect bounded events by resource ID and object kind, never object key.
 
 ## Performance and cost
 
@@ -598,11 +616,13 @@ cheap discovery and continuation paths.
 ### 2026-08-28 — Publication staging closes the R2 cleanup race
 
 **What changed:** Resource-object cleanup rows now distinguish an in-flight
-publication from an object eligible for deletion. Terminal publications,
-connector refreshes, and derivative writers stage their generation before the
-R2 put. A committed pointer clears the row; a known failed or losing write
+publication from an object eligible for deletion. Draft uploads, Terminal
+publications, connector refreshes, and derivative writers stage their generation
+before the R2 put. A committed pointer clears the row; a known failed or losing write
 releases it. The reaper clears staged rows only after finding an active current
-or historical pointer and never deletes an inactive staged object.
+or historical pointer and never deletes an inactive staged object. Cleanup
+retirement and publisher cancellation preserve a deletion handoff that races
+them, and ambiguous Terminal pointer writes remain staged for reconciliation.
 
 **Why:** The WorkspaceDO cleanup alarm could run after R2 accepted a generated
 file but before the following resource-pointer commit. It saw no pointer yet,
@@ -616,9 +636,13 @@ depend on a number the system cannot derive; a failed response cannot prove the
 transaction failed and can therefore delete a successfully committed document.
 
 **Consequences:** A crash before pointer publication can leave a staged object
-and a maintenance alarm requiring reconciliation, which is the visible and
-recoverable failure. Writers must release staging only when they know no pointer
-committed. Future cleanup paths must preserve that distinction.
+requiring explicit reconciliation, which is the recoverable failure. It does
+not keep an unactionable maintenance alarm due. Writers must release staging
+only when they know no pointer committed; supersession and deletion triggers
+must promote any staging row they make unreachable. Future cleanup paths must
+preserve both distinctions.
+
+Shipped in [#395](https://github.com/juno-ai-labs/avalon/pull/395).
 
 ### 2026-08-28 — Message attachments ride the persistent-loop cutover
 

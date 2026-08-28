@@ -480,6 +480,7 @@ describe("attachment derivative conversion", () => {
       contentRef: null as string | null,
     };
     const outbox = new Set<string>();
+    let failRelease = false;
     const database = createTestD1Database({
       prepare(sql: string) {
         return {
@@ -499,6 +500,9 @@ describe("attachment derivative conversion", () => {
                 if (sql.includes("INSERT OR IGNORE INTO resource_object_deletion_outbox")) {
                   outbox.add(String(values[0]));
                   return { meta: { changes: 1 } };
+                }
+                if (failRelease && sql.includes("UPDATE resource_object_deletion_outbox")) {
+                  throw new Error("release_unavailable");
                 }
                 if (sql.includes("SET model_content_ref = ?")) {
                   if (state.status !== "processing" || state.claimId !== values[13]) return { meta: { changes: 0 } };
@@ -566,15 +570,16 @@ describe("attachment derivative conversion", () => {
     expect(publisherB.status).toBe("ready");
     const winningRef = state.contentRef;
 
+    failRelease = true;
     releaseFirst();
     await expect(publisherA).resolves.toEqual({ status: "processing", retryAfterMs: 250 });
     expect(state.contentRef).toBe(winningRef);
     expect(winningRef).not.toBeNull();
     expect(objects.has(winningRef!)).toBe(true);
     // Losing the claim proves no pointer committed, so that generation is
-    // released to the outbox rather than deleted in the request. An ambiguous
-    // WorkspaceDO failure follows the same storage-safe rule without guessing
-    // whether its pointer transaction committed.
+    // released to the outbox rather than deleted in the request. Even if the
+    // release RPC fails, the already-staged row is recoverable residue and
+    // must not replace the settled processing result.
     expect(deleted).toEqual([]);
     const losingRefs = [...objects.keys()].filter((key) => key !== "original" && key !== winningRef);
     expect(losingRefs).toHaveLength(1);
