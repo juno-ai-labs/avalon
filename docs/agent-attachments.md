@@ -324,6 +324,19 @@ character envelope.
 - A resource may have no alias. `slug IS NULL` is the durable record that one is
   owed, and every model-facing listing carries the field as nullable rather than
   waiting for one.
+- `resource_processing` is the only preview rejection that is a *not yet*: it
+  names the delay to wait, and a client that renders it as permanent
+  unavailability is wrong. Every other preview rejection is final, and re-asking
+  cannot change it.
+- **A client waits out `resource_processing` for one claim lease plus one
+  converter timeout, and no longer.**
+  `ATTACHMENT_PROCESSING_LEASE_MS + ATTACHMENT_CONVERTER_TIMEOUT_MS` is the
+  longest a `processing` answer can still be followed by a *ready* one: another
+  caller's claim runs out its whole lease without publishing, and only then does
+  this caller take the stale claim and spend a full converter timeout doing the
+  conversion itself. Both constants are shared rather than server-private for
+  exactly this arithmetic — a client holding its own copy gives up early,
+  silently, the day either is raised here.
 
 ## Boundary
 
@@ -443,7 +456,16 @@ generic tool execution/receipt loop is owned by
   the structured content a surface could read.
 - `apps/desktop/src/renderer/components/inspector-rail.test.tsx` covers the
   version list's author labels, the current badge, which rows are openable, and
-  the error the list renders rather than hides;
+  the error the list renders rather than hides. It also covers the rail's half
+  of the processing contract: a `resource_processing` rejection is re-read only
+  once the delay the response carried has elapsed, an answer that never stops
+  saying `processing` is given up on once the budget would be overspent and not
+  re-read afterwards, a processing answer naming no delay or a zero delay stays
+  terminal, a rejection carrying any other code stays terminal *even when it
+  names a `retryAfterMs`*, and a pending wait is dropped when the panel unmounts
+  or its resource is revised. The delay is pinned to the exact millisecond the
+  response named, under fake timers, and the budget is asserted against the two
+  contract constants rather than a literal;
   `apps/desktop/src/renderer/lib/use-citations.test.tsx` proves a citation
   resolves by alias as well as by id.
 - `apps/api/test-workers/participant-notification.test.ts` proves a real object
@@ -547,6 +569,70 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-28 — A preview still being prepared is a wait, not a dead panel
+
+**What changed:** The desktop inspector rail's resource preview keeps the typed
+`ApiError` its loader rejects with instead of collapsing every rejection into one
+terminal state. A 409 `resource_processing` is re-read after the response's own
+`retryAfterMs`, on the effect's existing `AbortController`, so an unmount or a
+move to another resource — or another revision of the same one — cancels the
+pending wait. Every other rejection, 404 and 422 and a network failure alike,
+still ends on "This preview is not available." The read gives up once a
+wall-clock budget would be overspent, and `ATTACHMENT_PROCESSING_LEASE_MS` and
+`ATTACHMENT_CONVERTER_TIMEOUT_MS` moved out of
+`attachment-derivative-service.ts` into `@rally/contracts` so that budget is the
+server's own arithmetic rather than a copy of its numbers.
+
+**Why:** Because the route materializes a PDF's or an Office file's text on
+demand, `processing` is the ordinary first answer for a freshly attached
+document, not an edge case. The rail mapped it to permanent unavailability and
+never read again, and nothing reset that state, so it lasted the life of the
+mount: the reader had to close and reopen the rail to discover the preview had
+been there all along. A citation chip now opens this panel, which is how a
+citation naming a document attached moments earlier came to land on a dead end —
+the exact failure the preview was added to remove.
+
+**Considered and rejected:** A client-side backoff schedule, and a maximum
+attempt count. The delay is the server's to name — it is the only party that
+knows whether it is waiting on a compare-and-set it just lost or on somebody
+else's OCR — and an attempt count bounds nothing a reader feels, because the
+route's two cadences differ fourfold. Also rejected: making the rail's `.catch`
+retry on any rejection, which would turn a settled 404 into a request loop.
+
+**On the ceiling, which two implementations disagreed about.** An earlier reading
+had `processing` respawning forever, on the belief that a conversion which cannot
+finish inside its request aborts and releases its claim. It does not: `withTimeout`
+rejects with `conversion_timeout` after `ATTACHMENT_CONVERTER_TIMEOUT_MS` and that
+is written as a terminal state and cached, so the next read is refused rather than
+asked to wait. `conversion_aborted` — the one path that does release the claim and
+answer `processing` again — fires only when the requesting client's own signal
+aborts, which means nobody is waiting on it. So every *named* path is
+self-terminating, and the budget is not what makes the loop end in any case anyone
+has described. What it covers is the unnamed one: a conversion killed without
+recording anything leaves the row claimed with nobody converting, and a panel left
+open would re-ask until the reader closed the rail. That is why the number is the
+largest one that still lets a converging wait finish, rather than the smallest one
+that would end a doomed loop quickly. That value was put to the team with the
+arithmetic and the alternatives — 60 seconds, the lease alone, and no ceiling —
+and confirmed on 2026-08-28. It is a decision rather than only a derivation,
+which is what
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md#when-to-ask-before-you-finish)
+asks of a change that introduces the loop it bounds. What was priced is the
+trip: an unchanging "Loading preview…" for up to five and a half minutes,
+against never ending a wait that could still have produced the document.
+
+**Consequences:** `retryAfterMs` is part of the preview endpoint's contract with
+a client now, not diagnostic detail, and a `resource_processing` that arrives
+without one — or with a zero, which is a request rate rather than a delay — is
+treated as terminal rather than retried on an interval the client invented. A
+second preview surface — the message-feed lightbox is the one that exists —
+should read the same field rather than grow its own delay. Widening the retry to
+another response code turns this into a general retry layer over answers that
+are already final, which is what the narrow check in `processingRetryDelayMs`
+exists to prevent. The rail's own half of this — how the wait is rendered and
+where the loop lives — is in
+[`markdown-rendering.md`](markdown-rendering.md).
 
 ### 2026-08-28 — Versions say who moved the pointers, and the rail shows them
 
