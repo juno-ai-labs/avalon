@@ -5752,11 +5752,17 @@ describe("Durable Objects in the Workers runtime", () => {
     // alarm from the persisted outbox; the real alarm then drains it.
     await evictDurableObject(stub);
     await stub.wake();
-    // An overdue alarm may fire automatically while `wake()` yields. Explicit
-    // delivery is still safe when it remains armed; the durable outbox
-    // assertions below prove either scheduling path completed the same work.
-    await runDurableObjectAlarm(stub);
-    await runInDurableObject(stub, (_instance, state) => {
+    // An overdue alarm may fire automatically while `wake()` yields, and the
+    // platform clears the alarm slot for the whole of that invocation — so
+    // `runDurableObjectAlarm` can find nothing armed while the auto-fired
+    // drain is still in flight, and an assertion made from a separate
+    // invocation would interleave into it and read the row it has not yet
+    // acknowledged. Run the handler and the check inside one invocation
+    // instead: the drain converges under a concurrent auto-fired alarm, and
+    // once `alarm()` returns the outbox row is acknowledged whichever
+    // invocation delivered it.
+    await runInDurableObject(stub, async (instance, state) => {
+      await instance.alarm();
       expect(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM durable_outbox
           WHERE channel = 'semantic_realtime_v1'`,
