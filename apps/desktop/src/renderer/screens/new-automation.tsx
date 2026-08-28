@@ -7,11 +7,15 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  Copy,
   Ellipsis,
   Info,
   LoaderCircle,
   Mail,
   MessageSquare,
+  RefreshCcw,
+  Square,
+  Trash2,
   Users,
   WandSparkles,
   Zap,
@@ -22,9 +26,9 @@ import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
-import { JumpToLatestButton } from '../components/conversation-follow';
+import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { MarkdownBody, MessageBlock } from '../components/workstream-blocks';
-import { RallyMark, Badge, Button, EmptyState, IconButton, InlineError } from '../components/primitives';
+import { RallyMark, Badge, Button, EmptyState, IconButton, InlineError, Modal, SocketStatusIndicator } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { useAppSession } from '../lib/app-session';
 import { ApiError } from '../lib/api';
@@ -47,6 +51,7 @@ import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMenti
 import { createElicitationMessage, createTextMessage, createToolEventMessage, upsertTranscriptMessage } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { useAutomationAgentSocket } from '../lib/use-automation-agent-socket';
 import { useTranscriptFollow } from '../lib/use-transcript-follow';
 import { useWindowFilePaste } from '../lib/use-file-paste';
@@ -66,6 +71,8 @@ import type {
 } from '../lib/types';
 
 const AUTOMATION_CHAT_ID = 'automation-creator';
+/** The blank builder's conversation, before a turn has named a draft. */
+const NEW_AUTOMATION_CONVERSATION = 'new-automation';
 const AUTOMATION_USER_ID = 'automation-current-user';
 const AUTOMATION_USER = {
   id: AUTOMATION_USER_ID,
@@ -138,6 +145,47 @@ export function retainableNarration(narration: string): string {
   const head = trimmed.slice(0, RETAINED_NARRATION_CHARACTERS);
   const lastBreak = head.lastIndexOf('\n\n');
   return `${(lastBreak > 0 ? head.slice(0, lastBreak) : head).trimEnd()}\n\n…`;
+}
+
+/**
+ * What a failed turn says out loud.
+ *
+ * AutomationAgent stores the thrown `error.message` verbatim, and every
+ * string the agent throws is internal vocabulary — `automation_evaluator_
+ * rules_required`, `memory_table_key_schema_invalid`. Rendering those puts
+ * "evaluator", "compiler", "definition" and "memory table" in front of
+ * somebody who asked Rally to watch a blog, and none of them names
+ * anything they can act on. The raw text stays as the last resort, for a
+ * code no release of the API has taught this map yet.
+ */
+const COMPILER_ERROR_COPY: Record<string, string> = {
+  automation_evaluator_rules_required: 'Rally could not work out how to check this automation’s results. Describe what a good result looks like and send it again.',
+  automation_compiler_busy: 'Rally is still working on the previous message. Wait for it to finish, then send this one.',
+  automation_plugin_unavailable: 'One of the connections this automation needs is unavailable. Reconnect it from Settings, then try again.',
+  memory_table_key_schema_invalid: 'Rally could not settle on what this automation should remember between runs. Describe what it should keep track of and send it again.',
+  automation_definition_not_ready: 'This automation is not finished yet. Keep describing what it should do.',
+  automation_not_draft: 'This automation has already been created, so it cannot be edited as a draft.',
+  automation_workspace_scope_requires_admin: 'Only a workspace owner or admin can create a workspace automation. Choose You under Runs as.',
+  automation_authority_mismatch: 'This draft changed somewhere else while you were writing. Reopen it to pick up the newest version.',
+  automation_not_active: 'This automation is not running, so it cannot do that right now.',
+  automation_acceptance_conflict: 'This draft changed while it was being created. Reopen it and create it again.',
+  automation_personal_connection_access_denied: 'This automation cannot use that connection. Choose one of your own connections, or ask an admin to share it with the workspace.',
+  automation_compiler_run_not_retryable: 'That message can no longer be retried. Send it again to pick the conversation back up.',
+  automation_compiler_run_not_found: 'That message is no longer available to retry. Send it again to pick the conversation back up.',
+};
+
+export function automationErrorCopy(
+  code: string | null | undefined,
+  message?: string | null,
+): string {
+  const known = code ? COMPILER_ERROR_COPY[code] : undefined;
+  if (known) return known;
+  const fallbackCode = message ? COMPILER_ERROR_COPY[message] : undefined;
+  if (fallbackCode) return fallbackCode;
+  // A sentence the API wrote for a person still reads better than a code;
+  // a bare snake_case token reads as neither, so it is not shown at all.
+  if (message && /\s/u.test(message.trim())) return message;
+  return 'Rally could not finish this turn.';
 }
 
 function settleThought(turns: Message[], thoughtId: string): Message[] {
@@ -634,6 +682,19 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   // the turn was compiling is carried over by hand rather than dropped.
   const [composerDraftId, setComposerDraftId] = useState<string | null>(resumeDraftId);
   const automationId = composerDraftId ?? resumeDraftId;
+  /**
+   * The conversation the reader is looking at, which is deliberately not
+   * the draft id. This screen writes its own id into the address bar the
+   * moment a turn is admitted — mid-compile — and anything keyed on that
+   * transition resets as the turn runs. The transcript follow is the one
+   * that must never: re-keying it re-arms `following` and yanks a reader
+   * who had scrolled up back to the bottom, which is the single thing
+   * `useTranscriptFollow`'s docblock says cannot happen. It moves only
+   * when the *reader* opens a different draft, below.
+   */
+  const [conversationKey, setConversationKey] = useState<string>(
+    resumeDraftId ?? NEW_AUTOMATION_CONVERSATION,
+  );
   const agentFeed = useAutomationAgentSocket(api, automationId);
   const carriedInput = useRef<string | null>(null);
   const draftKey = newAutomationDraftKey(workspace.id, composerDraftId);
@@ -651,19 +712,16 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [attachmentPreview, setAttachmentPreview] = useState<AttachmentPreview | null>(null);
   const [draft, setDraft] = useState<AutomationDraftResponse | null>(null);
   const [turns, setTurns] = useState<Message[]>([]);
-  const [streamingText, setStreamingText] = useState('');
+  // Folded by the socket hook rather than here: a turn's deltas number in
+  // the hundreds, and an array of them handed over one at a time costs
+  // this screen a re-read of the whole turn per delta.
+  const streamingText = agentFeed.narration;
   /**
-   * The same narration, readable from a settled-mutation callback. `onError`
-   * runs after the stream is over and has to keep what the architect said;
-   * the state above is the render source and this is the imperative read, both
-   * written only by `applyNarration` below.
+   * The same narration, readable from a settled-mutation callback, which
+   * runs after the render that last changed it.
    */
   const streamingNarrationRef = useRef('');
-  const applyNarration = useCallback((next: (current: string) => string) => {
-    const settled = next(streamingNarrationRef.current);
-    streamingNarrationRef.current = settled;
-    setStreamingText(settled);
-  }, []);
+  streamingNarrationRef.current = streamingText;
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [defaultPluginIds, setDefaultPluginIds] = useState<string[]>([]);
@@ -674,6 +732,19 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   const [initializedRecommendations, setInitializedRecommendations] = useState('');
   const [initializedActivitySources, setInitializedActivitySources] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState<WorkspaceTemplate | null>(null);
+  /**
+   * The turn the reader stopped, and what they stopped. AutomationAgent
+   * keeps no cancelled run, so nothing in the feed says a turn was ever
+   * stopped — without this the transcript reads as though Rally simply
+   * stopped mid-thought, with the "thinking" row still animating.
+   *
+   * Retry re-sends the message rather than reviving the run:
+   * `retryCompilerRun` accepts a *failed* run only, so a cancelled one
+   * has no server-side resumption to ask for.
+   */
+  const [stoppedTurn, setStoppedTurn] = useState<{ conversationKey: string; text: string } | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const debugEnabled = useDebugEnabled();
 
   useEffect(() => {
     if (workspaceTemplatesEnabled) return;
@@ -747,6 +818,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     // that very draft later in the same screen.
     if (movedToAnotherDraft && resumeDraftId !== null && resumeDraftId !== selfNamedDraftId.current) {
       selfNamedDraftId.current = null;
+      setConversationKey(resumeDraftId);
     }
     if (resumeDraftId === null) {
       // New automation was chosen while a draft was on screen. The route did
@@ -765,6 +837,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         setComposerDraftId(null);
         setDraft(null);
         setTurns([]);
+        setConversationKey(NEW_AUTOMATION_CONVERSATION);
       }
       return;
     }
@@ -800,15 +873,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       if (compilerRun?.state !== 'failed') return resumed;
       return settleThought(resumed, `${compilerRun.admittedTurnId}-thought`);
     });
-    if (!snapshot.activeCompilerRun) applyNarration(() => '');
-    else if (snapshot.compilerCheckpoint?.narration) {
-      applyNarration((current) => (
-        snapshot.activeCompilerRun?.state === 'failed' || current.length === 0
-          ? snapshot.compilerCheckpoint!.narration
-          : current
-      ));
-    }
-  }, [agentFeed.snapshot, api, applyNarration, automationId]);
+  }, [agentFeed.snapshot, api, automationId]);
 
   const handledStreamSequence = useRef(0);
   useEffect(() => {
@@ -819,14 +884,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       if (entry.sequence <= handledStreamSequence.current) continue;
       handledStreamSequence.current = entry.sequence;
       const event = entry.event;
-      if (event.type === 'started') {
-        applyNarration(() => '');
-        continue;
-      }
-      if (event.type === 'delta') {
-        applyNarration((current) => event.reset ? event.delta : current + event.delta);
-        continue;
-      }
       const activeTurnId = agentFeed.snapshot?.activeCompilerRun?.admittedTurnId;
       if (!activeTurnId) continue;
       if (event.type === 'thinking') {
@@ -872,7 +929,7 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
         });
       }
     }
-  }, [agentFeed.snapshot?.activeCompilerRun?.admittedTurnId, agentFeed.streamEvents, applyNarration]);
+  }, [agentFeed.snapshot?.activeCompilerRun?.admittedTurnId, agentFeed.streamEvents]);
   const visibleMentionConnections = mentionQuery === null
     ? []
     : (connections.data ?? [])
@@ -1049,7 +1106,10 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       inputMode: payload.inputMode,
     }),
     onMutate: (payload) => {
-      applyNarration(() => '');
+      // The narration is not cleared here. It belongs to the run,
+      // and the agent's own snapshot for the admitted turn carries
+      // an empty checkpoint — so the feed clears it, in the one
+      // place that can also put it back after a reconnect.
       setTurns((current) => {
         const updated = payload.elicitation
           ? resolveElicitationMessages(current, payload.elicitation.id, payload.elicitation.answer)
@@ -1064,7 +1124,10 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
     },
     onSuccess: (response, payload) => {
       attachmentDraft.consume(payload.attachmentLocalIds);
-      queryClient.removeQueries({ queryKey: ['automation-draft', response.automationId] });
+      // The draft entry is not evicted here. The socket hook owns
+      // that key now and writes every snapshot into it, so removing
+      // it would throw away state newer than anything a refetch
+      // could return — and cost a second read to get back.
       if (!showsTurn(payload)) return;
       // Admission returns the durable identity immediately. The same
       // conversation subtree adopts it while compilation continues by socket.
@@ -1098,7 +1161,6 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       // that a column of tool rows does not — and clearing it here would
       // delete the explanation at the one moment it is needed.
       const narration = retainableNarration(streamingNarrationRef.current);
-      applyNarration(() => '');
       setTurns((current) => {
         const settled = settleThought(current, `${payload.turnId}-thought`);
         return narration
@@ -1109,22 +1171,65 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
   });
 
   const compilerRun = agentFeed.snapshot?.activeCompilerRun;
+  // Connecting counts: the first read is in flight and its answer is
+  // about to arrive, so the composer must not open for a moment first.
+  const socketMayStillDeliver = agentFeed.state === 'connected' || agentFeed.state === 'connecting';
   const compilePending = compile.isPending
-    || compilerRun?.state === 'admitted'
-    || compilerRun?.state === 'running';
+    // Only while the feed can still contradict it. A dropped socket
+    // leaves the last `running` snapshot standing forever, and latching
+    // the composer shut on it strands the reader with a spinner and
+    // nothing on screen naming the network — so a connection that is
+    // gone relaxes the wait rather than holding it.
+    || (socketMayStillDeliver && (compilerRun?.state === 'admitted' || compilerRun?.state === 'running'));
   const compilerError = compilerRun?.state === 'failed'
-    ? compilerRun.errorMessage ?? compilerRun.errorCode ?? 'Rally could not finish this turn.'
+    ? automationErrorCopy(compilerRun.errorCode, compilerRun.errorMessage)
     : null;
   const stopCompiler = useMutation({
     mutationFn: () => api!.stopAutomationCompiler(automationId!, compilerRun!.id),
+    // Read before the request, applied after it: AutomationAgent drops a
+    // cancelled run — and the checkpoint holding its narration with
+    // it — so by the time this settles the feed has already forgotten
+    // what Rally had said. Nothing is written until the stop is real.
+    onMutate: () => ({
+      turnId: compilerRun?.admittedTurnId ?? null,
+      text: compilerRun
+        ? turns.find((turn) => turn.id === compilerRun.admittedTurnId)?.text ?? ''
+        : '',
+      narration: retainableNarration(streamingNarrationRef.current),
+    }),
+    onSuccess: (_result, _input, context) => {
+      setTurns((current) => {
+        const settled = context.turnId
+          ? settleThought(current, `${context.turnId}-thought`)
+          : current;
+        return context.narration
+          ? [...settled, automationTextMessage(crypto.randomUUID(), 'agent', context.narration)]
+          : settled;
+      });
+      setStoppedTurn({ conversationKey, text: context.text });
+    },
   });
   const retryCompiler = useMutation({
     mutationFn: () => api!.retryAutomationCompiler(automationId!, compilerRun!.id),
   });
+  const deleteDraft = useMutation({
+    mutationFn: () => api!.deleteAutomation(automationId!),
+    onSuccess: () => {
+      setDeleteOpen(false);
+      // No list write: AutomationAgent projects its tombstone and
+      // WorkspaceDO pushes the rewritten list off the back of it —
+      // the same path the sidebar's own delete takes.
+      queryClient.removeQueries({ queryKey: ['automation-draft', automationId] });
+      queryClient.removeQueries({ queryKey: ['automation', automationId] });
+      // Replaced rather than pushed, so Back cannot return to a
+      // draft the API no longer serves.
+      void navigate('/workstreams/new', { replace: true });
+    },
+  });
   const transcriptFollow = useTranscriptFollow(
     transcriptScrollRef,
     compilePending,
-    draft?.draftId ?? resumeDraftId ?? 'new-automation',
+    conversationKey,
   );
 
   const deliveryConnection = (connections.data ?? []).find((connection) =>
@@ -1142,9 +1247,52 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
       },
     }),
     onSuccess: (automation) => {
+      // The route this navigates to is the one it is already on, so
+      // nothing unmounts the wizard: `AutomationScreen` dispatches on
+      // the `['automations']` row, which still says `draft` until a
+      // socket push corrects it. Seeding the accepted row is what
+      // actually hands the screen over — and until it does, the Create
+      // button stays held below, or a second click POSTs a second
+      // create against a draft that has already been accepted.
+      queryClient.setQueryData<AutomationSummary[]>(['automations'], (current = []) => (
+        current.some((item) => item.id === automation.id)
+          ? current.map((item) => item.id === automation.id
+            ? { ...item, name: automation.name, scope: automation.scope, status: automation.status }
+            : item)
+          : [{
+              id: automation.id,
+              name: automation.name,
+              scope: automation.scope,
+              status: automation.status,
+              updatedAt: automation.updatedAt,
+            }, ...current]
+      ));
+      queryClient.setQueryData(['automation', automation.id], automation);
       void navigate(`/automations/${automation.id}`);
     },
   });
+
+  // A stop belongs to the turn it stopped. A new run — or another
+  // conversation — makes the notice a statement about something the
+  // reader is no longer looking at.
+  useEffect(() => {
+    if (!compilerRun) return;
+    setStoppedTurn(null);
+  }, [compilerRun?.id]);
+  useEffect(() => {
+    setStoppedTurn((current) => current?.conversationKey === conversationKey ? current : null);
+  }, [conversationKey]);
+  // A resumed conversation opens at its newest turn, once. `atEnd`
+  // starts true and only a scroll event moves it, and nothing scrolls
+  // on mount, so a long draft would open at the top with no way of
+  // knowing there was anything below.
+  const openedConversation = useRef<string | null>(null);
+  const scrollToEnd = transcriptFollow.scrollToEnd;
+  useEffect(() => {
+    if (turns.length === 0 || openedConversation.current === conversationKey) return;
+    openedConversation.current = conversationKey;
+    scrollToEnd();
+  }, [conversationKey, scrollToEnd, turns.length]);
 
   const submitAsync = async (
     message = input,
@@ -1201,24 +1349,64 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content align="end" className="menu-content" sideOffset={8}>
+              {/* Behind Debug, as the sidebar's own copy item is. An id
+                  is for a bug report, not for the reader's day. */}
+              {debugEnabled && (
+                <DropdownMenu.Item
+                  className="menu-item"
+                  disabled={!draftId}
+                  onSelect={() => {
+                    if (draftId) void desktopBridge().copyText(draftId)
+                      .then(() => reportTelemetryProductIntent({
+                        kind: 'content_copied', contentType: 'automation_id', resourceType: 'automation',
+                        resourceId: draftId,
+                      }))
+                      .catch(() => undefined);
+                  }}
+                >
+                  <Info size={14} /> Copy draft ID
+                </DropdownMenu.Item>
+              )}
               <DropdownMenu.Item
-                className="menu-item"
-                disabled={!draftId}
+                className="menu-item menu-item-danger"
+                disabled={!automationId}
                 onSelect={() => {
-                  if (draftId) void desktopBridge().copyText(draftId)
-                    .then(() => reportTelemetryProductIntent({
-                      kind: 'content_copied', contentType: 'automation_id', resourceType: 'automation',
-                      resourceId: draftId,
-                    }))
-                    .catch(() => undefined);
+                  deleteDraft.reset();
+                  setDeleteOpen(true);
                 }}
               >
-                <Info size={14} /> Copy draft ID
+                <Trash2 size={14} /> Delete draft
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
       </div>
+      <Modal
+        footer={(
+          <>
+            <Button disabled={deleteDraft.isPending} onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button
+              className="button-danger"
+              disabled={deleteDraft.isPending}
+              onClick={() => deleteDraft.mutate()}
+            >
+              {deleteDraft.isPending ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />} Delete
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (deleteDraft.isPending) return;
+          setDeleteOpen(open);
+        }}
+        open={deleteOpen}
+        title="Delete draft"
+      >
+        <p className="modal-copy">
+          This conversation and the automation it was drafting are deleted for good. Rally has
+          no way to bring a draft back.
+        </p>
+        {deleteDraft.error && <InlineError>{deleteDraft.error.message}</InlineError>}
+      </Modal>
       <div className={clsx('automation-builder', (turns.length > 0 || draft) && 'has-conversation')}>
         {workspaceTemplatesEnabled && templatesOpen ? (
           <TemplateBrowser
@@ -1272,8 +1460,12 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 <RallyMark />
                 <p className="eyebrow">Draft automation</p>
                 <h1 id="automation-builder-heading">This draft could not be opened</h1>
-                <p>{resumedDraft.error instanceof ApiError ? resumedDraft.error.message : 'Rally could not load this conversation.'}</p>
-                <Button className="button-secondary" onClick={() => void resumedDraft.refetch()}>Try again</Button>
+                <p>{resumedDraft.error instanceof ApiError
+                  ? automationErrorCopy(resumedDraft.error.code, resumedDraft.error.message)
+                  : 'Rally could not load this conversation.'}</p>
+                <Button className="button-secondary" onClick={() => void resumedDraft.refetch()}>
+                  <RefreshCcw aria-hidden="true" size={13} /> Try again
+                </Button>
               </section>
             ) : resumeDraftId !== null && !draft && turns.length === 0 && !agentFeed.snapshot ? (
               <section className="automation-builder-intro" aria-labelledby="automation-builder-heading">
@@ -1351,7 +1543,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                 {draft && (
                   <DraftSummary
                     connections={connections.data ?? []}
-                    creating={create.isPending}
+                    // Held past the request, until the screen changes
+                    // hands: the wizard stays mounted on the route it
+                    // navigates to, so a re-enabled button here is a
+                    // second create against an accepted draft.
+                    creating={create.isPending || create.isSuccess}
                     activitySourcePluginIds={activitySourcePluginIds}
                     emailDelivery={emailDelivery}
                     ownerEmail={session?.user.email ?? ''}
@@ -1366,6 +1562,16 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                     onDeliveryConnectionChange={setDeliveryConnectionId}
                   />
                 )}
+                {stoppedTurn && !compilerRun && (
+                  <RunStoppedNotice
+                    onRetry={() => {
+                      const retried = stoppedTurn.text;
+                      setStoppedTurn(null);
+                      if (retried) submit(retried);
+                    }}
+                    retrying={compilePending}
+                  />
+                )}
               </div>
             )}
 
@@ -1373,6 +1579,11 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
               <div className="automation-composer-wrap">
                 {!transcriptFollow.atEnd && (
                   <JumpToLatestButton onJump={() => transcriptFollow.scrollToEnd({ smooth: true })} />
+                )}
+                {automationId && (
+                  <div className="automation-socket-state">
+                    <SocketStatusIndicator state={agentFeed.state} />
+                  </div>
                 )}
                 {visibleMentionConnections.length > 0 && (
                   <div className="mention-popover" id="automation-mention-listbox" role="listbox" aria-label="Connections">
@@ -1431,26 +1642,72 @@ export function NewAutomationScreen({ workspace }: { workspace: Workspace }): Re
                   value={input}
                 />
                 {automationId && compilerRun && ['admitted', 'running'].includes(compilerRun.state) && (
-                  <Button
-                    className="button-secondary"
-                    disabled={stopCompiler.isPending}
-                    onClick={() => stopCompiler.mutate()}
-                  >
-                    Stop
-                  </Button>
+                  <div className="automation-error-actions">
+                    <Button
+                      className="button-secondary"
+                      disabled={stopCompiler.isPending}
+                      onClick={() => stopCompiler.mutate()}
+                    >
+                      <Square aria-hidden="true" size={13} /> Stop
+                    </Button>
+                  </div>
                 )}
-                {(compile.error || compilerError || create.error || connections.error || attachmentDraft.error) && (
+                {(compile.error
+                  || compilerError
+                  || create.error
+                  || connections.error
+                  || attachmentDraft.error
+                  || stopCompiler.error
+                  || retryCompiler.error) && (
                   <div className="automation-error-actions">
                     <InlineError>
-                      {compile.error?.message ?? compilerError ?? create.error?.message ?? connections.error?.message ?? attachmentDraft.error}
+                      {compile.error
+                        ? automationErrorCopy(
+                            compile.error instanceof ApiError ? compile.error.code : null,
+                            compile.error.message,
+                          )
+                        : compilerError
+                          ?? (create.error
+                            ? automationErrorCopy(
+                                create.error instanceof ApiError ? create.error.code : null,
+                                create.error.message,
+                              )
+                            : null)
+                          // Both were computed and neither was ever rendered:
+                          // a stop or a retry that failed left the button
+                          // enabled and said nothing at all.
+                          ?? (stopCompiler.error
+                            ? automationErrorCopy(
+                                stopCompiler.error instanceof ApiError ? stopCompiler.error.code : null,
+                                stopCompiler.error.message,
+                              )
+                            : null)
+                          ?? (retryCompiler.error
+                            ? automationErrorCopy(
+                                retryCompiler.error instanceof ApiError ? retryCompiler.error.code : null,
+                                retryCompiler.error.message,
+                              )
+                            : null)
+                          ?? connections.error?.message
+                          ?? attachmentDraft.error}
                       {compile.error instanceof ApiError && compile.error.requestId ? ` · Request ${compile.error.requestId}` : ''}
                     </InlineError>
                     {compilerError && automationId && compilerRun && (
-                      <Button disabled={retryCompiler.isPending} onClick={() => retryCompiler.mutate()}>Retry</Button>
+                      <Button
+                        className="button-secondary"
+                        disabled={retryCompiler.isPending}
+                        onClick={() => retryCompiler.mutate()}
+                      >
+                        <RefreshCcw aria-hidden="true" size={13} /> Retry
+                      </Button>
                     )}
                     {compile.error instanceof ApiError && compile.error.requestId && (() => {
                       const requestId = compile.error.requestId;
-                      return <Button onClick={() => void desktopBridge().copyText(requestId)}>Copy request ID</Button>;
+                      return (
+                        <Button className="button-secondary" onClick={() => void desktopBridge().copyText(requestId)}>
+                          <Copy aria-hidden="true" size={13} /> Copy request ID
+                        </Button>
+                      );
                     })()}
                   </div>
                 )}

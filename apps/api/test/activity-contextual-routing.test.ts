@@ -722,7 +722,7 @@ describe("contextual routing: where the bar starts", () => {
     const env = envFor(database);
     modelAnswers({ confidence: 0.82 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f1", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f1", eventType: NEWS })))
       .resolves.toBe(true);
     expect(suggestionCount()).toBe(1);
   });
@@ -735,13 +735,13 @@ describe("contextual routing: where the bar starts", () => {
     // that would have carried a review request is no longer enough.
     modelAnswers({ confidence: 0.85 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f2", eventType: MACHINERY }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f2", eventType: MACHINERY })))
       .resolves.toBe(false);
     expect(suggestionCount()).toBe(0);
 
     runStructuredInference.mockReset();
     modelAnswers({ confidence: 0.95 });
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f3", eventType: MACHINERY }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f3", eventType: MACHINERY })))
       .resolves.toBe(true);
   });
 
@@ -758,7 +758,7 @@ describe("contextual routing: where the bar starts", () => {
     });
     modelAnswers({ confidence: 0.82 });
 
-    await expect(routeContextually(env, { ...webhook, connector_type: "generic_webhook", provider: "generic_webhook" }, new Set()))
+    await expect(routeContextually(env, { ...webhook, connector_type: "generic_webhook", provider: "generic_webhook" }))
       .resolves.toBe(true);
     expect(suggestionCount()).toBe(1);
   });
@@ -770,7 +770,7 @@ describe("contextual routing: where the bar starts", () => {
     const env = envFor(database, { GITHUB_APP_ID: undefined });
     modelAnswers({ confidence: 0.82 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f5", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f5", eventType: NEWS })))
       .resolves.toBe(true);
   });
 });
@@ -795,7 +795,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
     }
     modelAnswers({ confidence: 0.99 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f7", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f7", eventType: NEWS })))
       .resolves.toBe(false);
     // The saving is the point: a type that cannot produce a card must not buy
     // an inference to discover that.
@@ -815,7 +815,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
     }
     modelAnswers({ confidence: 0.9 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fc", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fc", eventType: NEWS })))
       .resolves.toBe(false);
     // Not suppressed — the model was still asked, and the type can still earn
     // the acceptance that would lift the bar again.
@@ -823,7 +823,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
 
     runStructuredInference.mockReset();
     modelAnswers({ confidence: 0.96 });
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fd", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fd", eventType: NEWS })))
       .resolves.toBe(true);
   });
 
@@ -842,14 +842,14 @@ describe("contextual routing: an event type's record in this workspace", () => {
     // longer enough on its own.
     modelAnswers({ confidence: 0.85 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f8", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f8", eventType: NEWS })))
       .resolves.toBe(false);
     expect(runStructuredInference).toHaveBeenCalledOnce();
     expect(suggestionCount()).toBe(0);
 
     runStructuredInference.mockReset();
     modelAnswers({ confidence: 0.95 });
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f9", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000f9", eventType: NEWS })))
       .resolves.toBe(true);
     expect(suggestionCount()).toBe(1);
   });
@@ -870,7 +870,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
     }
     modelAnswers({ confidence: 0.85 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000ff", eventType: MACHINERY }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000ff", eventType: MACHINERY })))
       .resolves.toBe(true);
     expect(suggestionCount()).toBe(1);
   });
@@ -885,7 +885,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
 
     // One dismissal out of one is a 0% accept rate that means nothing, and
     // suppressing on it would remove the only way the type can earn a record.
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fa", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fa", eventType: NEWS })))
       .resolves.toBe(true);
     expect(suggestionCount()).toBe(1);
   });
@@ -907,7 +907,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
     }
     modelAnswers({ confidence: 0.82 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000101", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000101", eventType: NEWS })))
       .resolves.toBe(true);
     expect(runStructuredInference).toHaveBeenCalledOnce();
     expect(suggestionCount()).toBe(1);
@@ -928,7 +928,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
     }
     modelAnswers({ confidence: 0.82 });
 
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000102", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-000000000102", eventType: NEWS })))
       .resolves.toBe(true);
   });
 
@@ -944,7 +944,7 @@ describe("contextual routing: an event type's record in this workspace", () => {
 
     // The one card this costs is the price of suppression being a decaying
     // opinion rather than permanent.
-    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fb", eventType: NEWS }), new Set()))
+    await expect(routeContextually(env, insertActivity(database, { id: "00000000-0000-7000-8000-0000000000fb", eventType: NEWS })))
       .resolves.toBe(true);
   });
 });

@@ -2,6 +2,7 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
+  AlertTriangle,
   CalendarClock,
   Check,
   ChevronRight,
@@ -26,6 +27,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppSession } from '../lib/app-session';
+import { automationAttentionNotice } from '../lib/automation-attention';
 import { formatDuration, formatRelative } from '../lib/format';
 import { desktopBridge } from '../lib/platform';
 import {
@@ -43,17 +45,46 @@ import { RallyMark, AvatarStack, Badge, Button, EmptyState, IconButton, InlineEr
 
 type RunFilter = 'all' | 'scheduled' | 'manual';
 
+/**
+ * What separates one run from the next, since the title cannot.
+ *
+ * Every run of an automation is titled after the automation, so a
+ * list of them is the same sentence repeated. What actually differs
+ * is why each one started and when.
+ */
+function runTriggerLabel(triggerType: string): string {
+  if (triggerType === 'manual') return 'Run now';
+  if (triggerType === 'scheduled') return 'On schedule';
+  if (triggerType === 'inbound_email') return 'By email';
+  if (triggerType === 'external_event') return 'By activity';
+  return triggerType.replaceAll('_', ' ');
+}
+
+function runResultSummary(run: AutomationRunSummary): string {
+  if (run.resultSummary) return run.resultSummary;
+  if (run.status === 'running') return 'Rally is working…';
+  // "No result summary" is what a failed run said before, which
+  // reads as an absence rather than as the thing that happened.
+  if (run.status === 'failed') return 'Failed';
+  if (run.status === 'stopped') return 'Stopped';
+  return 'No result summary';
+}
+
 function RunRow({ run, onOpen }: { run: AutomationRunSummary; onOpen: () => void }): React.JSX.Element {
   return (
     <button className="automation-run-row" onClick={onOpen} type="button">
-      <StatusDot compact status={run.status} />
+      {/* With a tooltip: a compact dot carries no visible label, so
+          without one its colour is the only thing saying how the
+          run ended — and colour alone is not a reading. */}
+      <StatusDot compact status={run.status} tooltip />
       <span className="automation-run-main">
-        <strong>{run.title}</strong>
-        <small>{run.resultSummary ?? (run.status === 'running' ? 'Rally is working…' : 'No result summary')}</small>
+        <strong>{runTriggerLabel(run.triggerType)}</strong>
+        <small>{runResultSummary(run)}</small>
       </span>
       {run.participants?.length ? <AvatarStack limit={3} members={run.participants} /> : <span />}
       {run.durationMs !== undefined && <span className="run-duration">{formatDuration(run.durationMs)}</span>}
-      <Badge>{run.triggerType.toUpperCase()}</Badge>
+      {/* The trigger badge is gone: the row's own title now names
+          the trigger, and saying it twice per row is noise. */}
       <time dateTime={run.triggerTime}>{formatRelative(run.triggerTime)}</time>
       <ChevronRight aria-hidden="true" size={14} />
     </button>
@@ -193,6 +224,7 @@ export function AutomationOverviewScreen(): React.JSX.Element {
   }
 
   const detail = automation.data;
+  const attention = detail.attention ? automationAttentionNotice(detail.attention) : null;
   const automationEmailAddress = detail.emailAddress;
   const deliveryTargets = detail.deliveryTargets ?? [];
   const availableDeliveryConnections = (connections.data ?? []).filter((connection) =>
@@ -390,6 +422,25 @@ export function AutomationOverviewScreen(): React.JSX.Element {
           </aside>
 
           <div className="automation-main-column">
+            {/* Beside the Status fact rather than under it: the facts column is
+                250px, and the sentence that matters most here — an automation
+                that will never start again — is not one to set in a column that
+                becomes a half-width cell on a narrow window. It reads as the
+                first thing on the automation, level with the status it
+                explains. */}
+            {attention && (
+              <section
+                aria-label="Automation needs attention"
+                className={clsx('automation-attention-notice', attention.blocking && 'is-blocking')}
+                role="status"
+              >
+                <span aria-hidden="true" className="automation-attention-icon"><AlertTriangle size={16} /></span>
+                <div className="automation-attention-copy">
+                  <strong>{attention.heading}</strong>
+                  <p>{attention.body}</p>
+                </div>
+              </section>
+            )}
             <section className="automation-description">
               <p>{detail.description}</p>
             </section>
@@ -398,7 +449,10 @@ export function AutomationOverviewScreen(): React.JSX.Element {
               <div className="instructions-card"><pre>{detail.instructions}</pre></div>
             </section>
             <section className="run-history-section">
-              <header><div><h2>Runs</h2><span>{detail.runs.length} total</span></div></header>
+              {/* "Recent", not a total: the API returns the newest
+                  page of runs rather than all of them, so a count
+                  of what arrived is not how many there have been. */}
+              <header><div><h2>Recent runs</h2><span>Last {detail.runs.length}</span></div></header>
               <div className="run-filter" role="group" aria-label="Filter automation runs">
                 {(['all', 'scheduled', 'manual'] as const).map((value) => (
                   <button className={filter === value ? 'is-selected' : ''} key={value} onClick={() => setFilter(value)} type="button">
@@ -450,9 +504,16 @@ export function AutomationOverviewScreen(): React.JSX.Element {
         open={deleteOpen}
         title="Delete automation"
       >
+        {/* What deleting actually does. The reassurance this
+            said before — that the runs and their work streams
+            stay where they are — was the opposite of the
+            truth: the delete enqueues an archive for every work
+            stream the runs created, and the runs leave the
+            product with the automation. */}
         <p className="modal-copy">
-          <strong>{detail.name}</strong> stops running and leaves the sidebar for good. Its past
-          runs and the work streams it created stay where they are.
+          <strong>{detail.name}</strong> stops running and leaves the sidebar for good.
+          Every past run — and the work stream each one created — is archived with it,
+          and Rally has no way to bring them back.
         </p>
         {remove.error && <InlineError>{remove.error.message}</InlineError>}
       </Modal>

@@ -1,30 +1,25 @@
 import {
   renderActivityRoutingMessages,
-  renderSemanticTriggerMessages,
 } from "@rally/agent-harness";
 import { ConnectorError, connectorOriginUrl, connectorRetryAfterMs } from "@rally/connectors";
 import {
   ACTIVITY_STREAM_NOT_DIGESTIBLE_METADATA_KEY,
   ActivityQueueMessageSchema,
   ActivityRoutingResultSchema,
-  ExecutionPrincipalSchema,
   SlackIngressQueueMessageSchema,
-  TriggerDefinitionSchema,
-  WorkstreamWorkflowInputSchema,
   WorkspaceExternalEventDeliveryQueueMessageSchema,
   asAutomationId,
   asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
   asUserId,
-  type WorkspaceId,
-  type WorkstreamWorkflowInput
+  type WorkspaceId
 } from "@rally/contracts";
 import { z } from "zod";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
-import { automationAgentName, substreamAgentName, substreamLoopId, workspaceDOName } from "../durable-objects/names";
+import { automationAgentName, substreamAgentName, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventProcessQueueMessageSchema,
@@ -36,8 +31,6 @@ import type { AuthContext } from "../env";
 import { contentAudienceContainsWorkstream } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
-import { truncateUtf16Safe } from "../lib/text";
-import { createMessageObjectPort } from "../runtime/message-port";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
   BASE_CONFIDENCE_FLOOR,
@@ -49,27 +42,13 @@ import {
 import {
   createActivitySuggestion,
 } from "../services/activity-suggestion-service";
-import { WorkstreamEmailRoutingService } from "../services/workstream-email-routing-service";
-import {
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
-} from "../services/workstream-runtime-database";
 import { SlackAgentService } from "../services/slack-agent-service";
-import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { runStructuredInference } from "../services/structured-inference";
 import { enqueueActivityOpportunity } from "../services/work-opportunity-batching";
 import { recordActivityEvent } from "../services/activity-event-service";
-import { activateWorkstreamLoop } from "../services/integrations";
-import {
-  activityOriginLocator,
-  attachWorkstreamOriginResource,
-  describeWorkstreamOrigin,
-} from "../services/workstream-origin-resource";
 import { diagnosticErrorCode, logDebug, logInfo, logWarn } from "../observability/logger";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
-import { activityContentAudience, restrictedActivityUserIds } from "../lib/activity-visibility";
-import { readWorkstreamRuntimeAudience } from "../services/workstream-object-client";
-import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
+import { restrictedActivityUserIds } from "../lib/activity-visibility";
 import {
   enqueueWorkspaceConnectorEventProcess,
 } from "../services/workspace-connector-event-ingress";
@@ -82,7 +61,6 @@ import {
   processWorkstreamNotificationIntent,
 } from "../services/workstream-regional-effect-service";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { consumeWorkstreamBatchUpdate } from "../services/workstream-batch-update";
 import { WorkstreamService } from "../services/workstream-service";
 
@@ -117,32 +95,8 @@ interface ActivityRow {
   processing_status: "pending" | "processing" | "processed" | "failed";
 }
 
-interface SubscriptionRow {
-  id: string;
-  scope: "personal" | "workspace";
-  owner_user_id: string | null;
-  template_owner_user_id: string;
-  execution_principal_json: string;
-  connector_bindings_json: string;
-  activity_trigger_bindings_json: string;
-  model_override: string | null;
-  trigger_definitions_json: string;
-  template_name: string;
-  template_description: string;
-}
 
-type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
 
-const SemanticTriggerResultSchema = z.object({ matches: z.boolean(), confidence: z.number().min(0).max(1) });
-const semanticTriggerJsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    matches: { type: "boolean" },
-    confidence: { type: "number", minimum: 0, maximum: 1 }
-  },
-  required: ["matches", "confidence"]
-};
 const routingJsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -190,10 +144,6 @@ function matchesFilters(activity: ActivityRow, filters: Record<string, unknown>)
   return Object.entries(filters).every(([key, expected]) => deepEqual(available[key], expected));
 }
 
-function visibleToPersonalOwner(activity: ActivityRow, ownerUserId: string): boolean {
-  const restrictedUserIds = restrictedActivityUserIds(activity);
-  return restrictedUserIds == null || restrictedUserIds.includes(ownerUserId);
-}
 
 /** Cloudflare Queue entrypoint for control effects and connector events. */
 export async function consumeActivityQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
@@ -584,7 +534,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
             ? claim.retryAt
             : null,
       });
-        if (claim.outcome === "processed") {
+      if (claim.outcome === "processed") {
         logInfo(env, "connector_event_process_terminal", {
           workspace_id: input.workspaceId,
           connector_event_id: input.eventId,
@@ -598,19 +548,6 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         return;
       }
       if (claim.outcome === "busy") {
-        if (claim.retryAt === null) {
-          logInfo(env, "connector_event_process_terminal", {
-            workspace_id: input.workspaceId,
-            connector_event_id: input.eventId,
-            processing_owner_id: input.processingOwnerId,
-            processing_attempt: processingAttempt,
-            outcome: "skipped",
-            reason: claim.reason,
-            queue_attempts: message.attempts,
-          });
-          message.ack();
-          return;
-        }
         if (claim.retryAt === null) {
           logInfo(env, "connector_event_process_terminal", {
             workspace_id: input.workspaceId,
@@ -830,11 +767,12 @@ export async function processConnectorEvent(
   env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
   // WorkspaceDO's typed registration index is the only automation/watch
   // fan-out. The old D1 scans were a second matcher with stale authority.
-  const directWorkstreamIds = new Set<string>();
+  // Contextual routing is therefore all this step still decides, and the
+  // opportunity is enqueued whenever it declines.
   const routedContextually = SUGGESTED_CONTEXT_ENABLED
-    ? await routeContextually(env, activity, directWorkstreamIds)
+    ? await routeContextually(env, activity)
     : false;
-  if (directWorkstreamIds.size === 0 && !routedContextually) {
+  if (!routedContextually) {
     await enqueueActivityOpportunity(env, activity.id, asWorkspaceId(activity.workspace_id));
   }
   await projectActivityEvent(env, activity);
@@ -844,9 +782,8 @@ export async function processConnectorEvent(
     connector_type: activity.connector_type,
     provider: activity.provider,
     connector_event_id: activity.id,
-    direct_workstream_count: directWorkstreamIds.size,
     routed_contextually: routedContextually,
-    opportunity_enqueued: directWorkstreamIds.size === 0 && !routedContextually,
+    opportunity_enqueued: !routedContextually,
     outcome: "processed",
   });
 }
@@ -1006,470 +943,6 @@ function connectorActorLabel(activity: ActivityRow): string {
   return activity.provider;
 }
 
-async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<string>> {
-  const entityKeys = parseStrings(activity.entity_keys_json);
-  if (!activity.provider_resource_id && entityKeys.length === 0) return new Set();
-
-  const resources = await env.DB.prepare(
-    `SELECT id, slug, title FROM resources
-      WHERE workspace_id = ?1 AND connection_id = ?2 AND provider = ?3
-        AND (provider_resource_id = ?4 OR EXISTS (
-          SELECT 1 FROM json_each(?5) WHERE json_each.value = provider_resource_id
-        ))
-      ORDER BY id`,
-  ).bind(
-    activity.workspace_id,
-    activity.connection_id,
-    activity.provider,
-    activity.provider_resource_id,
-    JSON.stringify(entityKeys),
-  ).all<{ id: string; slug: string | null; title: string }>();
-  const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
-  // Which resource went stale, per work stream that watches it. A message
-  // saying only that something changed at the provider leaves the participant
-  // reading it unable to tell which attached document a re-fetch would
-  // refresh — and the re-fetch is the whole point of watching one.
-  const staleByWorkstream = new Map<string, StaleWatchedResource[]>();
-  for (const resource of resources.results ?? []) {
-    const resolved = await workspace.workstreamsForResource({
-      workspaceId: activity.workspace_id,
-      resourceId: resource.id,
-      watchedOnly: true,
-    });
-    for (const workstreamId of resolved.workstreamIds) {
-      const stale = staleByWorkstream.get(workstreamId) ?? [];
-      // Truncated at the same bound the resource projections use: the column
-      // has no length constraint, and this title is provider-controlled and
-      // lands in a durable message row that is broadcast to every client.
-      stale.push({
-        resourceId: resource.id,
-        slug: resource.slug,
-        title: truncateUtf16Safe(resource.title, 300),
-      });
-      staleByWorkstream.set(workstreamId, stale);
-    }
-  }
-  const directWorkstreamIds = [...staleByWorkstream.keys()];
-
-  const routed = new Set<string>();
-  const sourceAudience = activityContentAudience(activity);
-  if (!sourceAudience) return routed;
-  for (const workstreamId of directWorkstreamIds) {
-    // The work stream is the authority for scope and participation. WorkspaceDO
-    // is only a regional projection and may still name a member whose removal
-    // has committed but whose directory effect has not arrived yet.
-    const targetAudience = await readWorkstreamRuntimeAudience(
-      env,
-      activity.workspace_id,
-      workstreamId,
-    );
-    if (!contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
-    if (await injectActivityMessage(env, activity, workstreamId, staleByWorkstream.get(workstreamId) ?? [])) {
-      routed.add(workstreamId);
-    }
-  }
-  return routed;
-}
-
-/** An attached resource this activity says the provider has moved on from. */
-interface StaleWatchedResource {
-  resourceId: string;
-  slug: string | null;
-  title: string;
-}
-
-async function injectActivityMessage(
-  env: Env,
-  activity: ActivityRow,
-  workstreamId: string,
-  staleResources: StaleWatchedResource[] = []
-): Promise<boolean> {
-  const clientMessageId = `activity:${activity.id}`;
-  const structuredContent = {
-    kind: "connected_activity",
-    activityId: activity.id,
-    provider: activity.provider,
-    eventType: activity.event_type,
-    // Present only for the watch-routed arm, and only naming resources — the
-    // notification marks staleness and nothing here re-fetches anything.
-    ...(staleResources.length > 0 ? { staleResources } : {}),
-  };
-  const text = [
-    [activity.title, activity.summary].filter(Boolean).join(" — "),
-    // Named in the text and not only in the structured content above: the
-    // transcript renders text, no surface reads that field yet, and a
-    // participant who cannot tell which attached document went stale cannot
-    // ask for the re-fetch this notification exists to invite.
-    ...(staleResources.length > 0
-      ? [`Attached here and now out of date: ${staleResources.map((resource) => resource.title).join(", ")}`]
-      : []),
-  ].join("\n");
-  const now = Date.now();
-  const messages = createMessageObjectPort(env, activity.workspace_id, workstreamId);
-  // Four routed statements: a replay check, a sequence claim with `RETURNING`,
-  // an `INSERT OR IGNORE` whose changes count re-answered the replay question,
-  // and a second counter update. The insert's trigger moved one set of counters
-  // and those two statements moved the other, and only the router sending them
-  // together made that one fact. It is one operation now, and the replay is
-  // its answer rather than something to ask twice.
-  await messages.appendMessage({
-    messageId: uuidV7(),
-    clientMessageId,
-    authorType: "system",
-    authorUserId: null,
-    externalActorJson: null,
-    messageType: "system",
-    text,
-    structuredContentJson: JSON.stringify(structuredContent),
-    producedByRunId: null,
-    now,
-  });
-  // `appendMessage` crosses the object port, whose authority publishes the
-  // canonical `transcript_turn_upserted` after the transaction commits. A
-  // second publisher here used to emit the retired compatibility message and
-  // could race the canonical turn, putting the same activity on two ordering
-  // paths with different identities.
-  return true;
-}
-
-async function runMatchingAutomations(env: Env, activity: ActivityRow): Promise<Set<string>> {
-  const subscriptions = await env.DB.prepare(
-    `SELECT s.id, s.scope, s.owner_user_id, s.execution_principal_json,
-            s.connector_bindings_json, s.activity_trigger_bindings_json, s.model_override,
-            tv.trigger_definitions_json, t.owner_user_id AS template_owner_user_id,
-            t.name AS template_name,
-            t.description AS template_description
-       FROM automation_subscriptions s
-       JOIN automation_template_versions tv ON tv.id = s.template_version_id
-       JOIN automation_templates t ON t.id = s.template_id
-      WHERE s.workspace_id = ?1 AND s.status = 'active' AND s.lifecycle_state = 'visible'`
-  )
-    .bind(activity.workspace_id)
-    .all<SubscriptionRow>();
-
-  const resourceIds = await matchingResourceIds(env, activity);
-  const createdWorkstreamIds = new Set<string>();
-  for (const subscription of subscriptions.results) {
-    if (
-      subscription.scope === "personal" &&
-      (!subscription.owner_user_id || !visibleToPersonalOwner(activity, subscription.owner_user_id))
-    ) {
-      continue;
-    }
-    if (activity.connection_scope === "personal" && subscription.scope === "workspace") continue;
-    if (
-      subscription.scope === "workspace"
-      && parseRecord(activity.visibility_json).workspaceAutomationAllowed === false
-    ) {
-      continue;
-    }
-
-    let triggerDefinitions: unknown;
-    try {
-      triggerDefinitions = JSON.parse(subscription.trigger_definitions_json) as unknown;
-    } catch {
-      continue;
-    }
-    const parsedTriggers = z.array(TriggerDefinitionSchema).safeParse(triggerDefinitions);
-    if (!parsedTriggers.success) continue;
-    const connectorBindings = parseRecord(subscription.connector_bindings_json);
-    const activityTriggerBindings = parseRecord(subscription.activity_trigger_bindings_json);
-
-    let matched = false;
-    for (const trigger of parsedTriggers.data) {
-      if (await triggerMatches(env, activity, trigger, resourceIds, connectorBindings, activityTriggerBindings)) {
-        matched = true;
-        break;
-      }
-    }
-    if (matched) {
-      const workstreamId = await startActivityAutomation(env, activity, subscription);
-      if (workstreamId) createdWorkstreamIds.add(workstreamId);
-    }
-  }
-  return createdWorkstreamIds;
-}
-
-async function matchingResourceIds(env: Env, activity: ActivityRow): Promise<Set<string>> {
-  const entityKeys = parseStrings(activity.entity_keys_json);
-  if (!activity.provider_resource_id && entityKeys.length === 0) return new Set();
-  const resources = await env.DB.prepare(
-    `SELECT id FROM resources
-      WHERE workspace_id = ?1 AND connection_id = ?2 AND provider = ?3
-        AND (
-          provider_resource_id = ?4
-          OR EXISTS (
-            SELECT 1 FROM json_each(?5)
-            WHERE json_each.value = resources.provider_resource_id
-          )
-        )`
-  )
-    .bind(activity.workspace_id, activity.connection_id, activity.provider, activity.provider_resource_id, JSON.stringify(entityKeys))
-    .all<{ id: string }>();
-  return new Set(resources.results.map((resource) => resource.id));
-}
-
-async function triggerMatches(
-  env: Env,
-  activity: ActivityRow,
-  trigger: TriggerDefinition,
-  resourceIds: Set<string>,
-  connectorBindings: Record<string, unknown>,
-  activityTriggerBindings: Record<string, unknown>,
-): Promise<boolean> {
-  if (trigger.type === "connector_activity" || trigger.type === "webhook" || trigger.type === "semantic_activity") {
-    if (trigger.sourceBindingKey) {
-      const sourcePluginId = activityTriggerBindings[trigger.sourceBindingKey];
-      if (typeof sourcePluginId !== "string" || connectorBindings[sourcePluginId] !== activity.connection_id) {
-        return false;
-      }
-    } else if (!Object.values(connectorBindings).includes(activity.connection_id)) {
-      return false;
-    }
-  }
-  if (trigger.type === "connector_activity") {
-    return (
-      (trigger.connectorType === activity.connector_type || trigger.connectorType === activity.provider) &&
-      trigger.eventTypes.includes(activity.event_type) &&
-      matchesFilters(activity, trigger.deterministicFilters)
-    );
-  }
-  if (trigger.type === "webhook") {
-    return activity.connector_type === "generic_webhook" && trigger.eventTypes.includes(activity.event_type);
-  }
-  if (trigger.type === "resource_watch") return resourceIds.has(trigger.resourceId);
-  if (trigger.type !== "semantic_activity") return false;
-  if (trigger.connectorType && trigger.connectorType !== activity.connector_type && trigger.connectorType !== activity.provider) {
-    return false;
-  }
-  if (!matchesFilters(activity, trigger.deterministicPrefilter)) return false;
-  if (!env.OPENROUTER_API_KEY) return false;
-
-  const { result } = await runStructuredInference(env, {
-    role: "activity_structured",
-    context: { workspaceId: activity.workspace_id },
-    messages: renderSemanticTriggerMessages({
-      condition: trigger.condition,
-      activity: {
-        provider: activity.provider,
-        eventType: activity.event_type,
-        title: activity.title,
-        summary: activity.summary,
-        textSnippet: activity.text_snippet.slice(0, 2_000),
-      },
-    }),
-    schemaName: "semantic_activity_trigger",
-    jsonSchema: semanticTriggerJsonSchema,
-    parse: (value) => SemanticTriggerResultSchema.parse(value)
-  });
-  return result.matches && result.confidence >= 0.8;
-}
-
-async function startActivityAutomation(
-  env: Env,
-  activity: ActivityRow,
-  subscription: SubscriptionRow
-): Promise<string | null> {
-  const emailRouting = new WorkstreamEmailRoutingService(env);
-  const audienceUserId = subscription.owner_user_id ?? subscription.template_owner_user_id;
-  let run = await env.DB.prepare(
-    `SELECT id, workstream_id, workflow_instance_id, status
-       FROM automation_runs
-      WHERE automation_subscription_id = ?1 AND trigger_activity_id = ?2
-      LIMIT 1`
-  )
-    .bind(subscription.id, activity.id)
-    .first<{ id: string; workstream_id: string; workflow_instance_id: string | null; status: string }>();
-
-  let harnessRunId: string;
-  const now = new Date().toISOString();
-  const principal = ExecutionPrincipalSchema.parse(JSON.parse(subscription.execution_principal_json));
-
-  if (!run) {
-    const workstreamId = uuidV7();
-    const runId = uuidV7();
-    harnessRunId = uuidV7();
-    const emailRoute = await emailRouting.reserve({
-      region: activity.workspace_region,
-      workspaceId: activity.workspace_id,
-      workstreamId,
-    });
-    // The automation's pin follows the work streams its runs create. The work
-    // stream is provisioned below, alongside its harness run, so the pin cannot
-    // be read back from the row yet — it is the value being written beside it.
-    const modelOverride = automationModelOverride(env, subscription.model_override, {
-      workspaceId: activity.workspace_id,
-      automationSubscriptionId: subscription.id,
-    });
-    const model = modelOverride ?? await scheduledWorkstreamModel(env, {
-      workspaceId: activity.workspace_id,
-      workstreamId,
-    });
-    const executionEnv = await bootstrapWorkstreamRuntimeEnvironment(
-      env,
-      activity.workspace_id,
-      workstreamId,
-    );
-    const runStatement = env.DB.prepare(
-      `INSERT INTO automation_runs (
-         id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-         trigger_activity_id, planned_for, started_at, completed_at, status,
-         result_summary, workflow_instance_id, created_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, NULL, 'running', NULL, NULL, ?7)`,
-    ).bind(runId, activity.workspace_id, subscription.id, workstreamId, activity.event_type, activity.id, now);
-    // The regional row is a control-plane run record; the work stream and
-    // harness run below belong to the newly bootstrapped object.
-    const inserted = await runStatement.run();
-    const controlRunInserted = (inserted.meta.changes ?? 0) > 0;
-    try {
-      await provisionWorkstreamObject(env, {
-        workspaceId: asWorkspaceId(activity.workspace_id),
-        workstreamId: asWorkstreamId(workstreamId),
-        title: `${subscription.template_name}: ${activity.title}`.slice(0, 180),
-        objective: subscription.template_description,
-        scope: subscription.scope,
-        originType: "automation",
-        createdByUserId: audienceUserId,
-        participantUserIds: [audienceUserId],
-        harnessStatus: "scheduled",
-        emailAddress: emailRoute.emailAddress,
-        emailRouteStatus: "reserved",
-        systemKind: null,
-        automationSubscriptionId: subscription.id,
-        // The routed batch wrote this as a fifth statement, a bare `UPDATE`
-        // after the insert that had just written the same row. It is one field
-        // of what the work stream is, so it is provisioned with the rest.
-        automationRunId: runId,
-        plannedFor: null,
-        modelOverride: modelOverride,
-        now: Date.parse(now),
-      });
-      await createHarnessRunObjectPort(
-        executionEnv,
-        activity.workspace_id,
-        workstreamId,
-      ).admitRun({
-        runId: harnessRunId,
-        origin: "automation_activity",
-        executionPrincipalJson: JSON.stringify(principal),
-        status: "admitted",
-        startedAt: Date.parse(now),
-        model,
-        triggerPartId: null,
-        parentRunId: null,
-        expectedLatestRunId: null,
-        now: Date.parse(now),
-      });
-    } catch (error) {
-      if (controlRunInserted) {
-        try {
-          const deleted = await env.DB.prepare(
-            `DELETE FROM automation_runs
-              WHERE id = ? AND workspace_id = ? AND workflow_instance_id IS NULL
-              RETURNING id`,
-          ).bind(runId, activity.workspace_id).first<{ id: string }>();
-          if (deleted?.id !== runId) {
-            throw new Error("activity_automation_run_compensation_not_applied", { cause: error });
-          }
-        } catch (compensationError) {
-          throw new AggregateError(
-            [error, compensationError],
-            "activity_automation_run_compensation_failed",
-            { cause: compensationError },
-          );
-        }
-      }
-      throw error;
-    }
-    await recordWorkstreamCreatedTelemetry(env, {
-      workspaceId: asWorkspaceId(activity.workspace_id),
-      workstreamId,
-      creationSource: "automation_activity",
-      connectorTypes: [activity.connector_type],
-      principal: principal.type === "user"
-        ? { type: "user", userId: principal.userId }
-        : { type: "workspace" },
-    });
-    run = { id: runId, workstream_id: workstreamId, workflow_instance_id: null, status: "running" };
-  } else {
-    const executionEnv = env;
-    const harness = await createHarnessRunObjectPort(
-      executionEnv,
-      activity.workspace_id,
-      run.workstream_id,
-    ).latestRootRun();
-    if (!harness) throw new Error("activity_harness_run_missing");
-    harnessRunId = harness.run_id;
-  }
-
-  await emailRouting.ensureWorkstreamAddress({
-    region: activity.workspace_region,
-    workspaceId: activity.workspace_id,
-    workstreamId: run.workstream_id,
-  });
-
-  // The activity is the whole reason this work stream exists, so the object
-  // behind it is attached before the Workflow starts — the run's first context
-  // read then already names the issue, page, or thread it is about. Ownerless on
-  // purpose: an automation fired, nobody attached anything.
-  //
-  // On both run paths, not only the one that just created the work stream. A
-  // queue invocation killed after the batch commits but before this write leaves
-  // the run durable and the origin missing; the redelivery then takes the
-  // existing-run branch and would launch the Workflow permanently without it.
-  // Both writes behind this are `ON CONFLICT DO NOTHING`, so repeating it costs
-  // one lookup and fixes that.
-  const originResource = await describeWorkstreamOrigin(env, {
-    connectorType: activity.connector_type,
-    connectionId: activity.connection_id,
-    provider: activity.provider,
-    locator: activityOriginLocator(activity),
-  });
-  if (originResource) {
-    await attachWorkstreamOriginResource(env, {
-      workspaceId: activity.workspace_id,
-      workstreamId: run.workstream_id,
-      attachedByUserId: null,
-      descriptor: originResource,
-    });
-  }
-
-  if (["completed", "failed", "needs_input"].includes(run.status)) return run.workstream_id;
-  const workflowInput: WorkstreamWorkflowInput = WorkstreamWorkflowInputSchema.parse({
-    region: activity.workspace_region,
-    workspaceId: activity.workspace_id,
-    workstreamId: run.workstream_id,
-    loopId: substreamLoopId(asWorkstreamId(run.workstream_id)),
-    harnessRunId,
-    triggerMessageId: null,
-    automationSubscriptionId: subscription.id,
-    activityId: activity.id,
-    executionPrincipal: principal,
-    reason: `Connected activity matched ${subscription.template_name}`
-  });
-
-  const executionReceiptId = await activateWorkstreamLoop(env, workflowInput);
-
-  const executionEnv = env;
-  const reconcileWorkflowId = () => Promise.all([
-    env.DB.prepare(
-      `UPDATE automation_runs SET workflow_instance_id = ?1 WHERE id = ?2 AND workspace_id = ?3`,
-    ).bind(executionReceiptId, run.id, activity.workspace_id).run(),
-    createHarnessRunObjectPort(executionEnv, activity.workspace_id, run.workstream_id)
-      .bindWorkflowInstance({
-        runId: harnessRunId,
-        workflowInstanceId: executionReceiptId,
-        now: Date.now(),
-      }),
-  ]);
-  try {
-    await reconcileWorkflowId();
-  } catch {
-    await reconcileWorkflowId();
-  }
-  return run.workstream_id;
-}
-
 /**
  * Where an event type's confidence bar starts, before this workspace has said
  * anything about it.
@@ -1517,7 +990,6 @@ function declaredConfidenceFloor(env: Env, activity: ActivityRow): number {
 async function routeContextually(
   env: Env,
   activity: ActivityRow,
-  excludedWorkstreamIds: Set<string>
 ): Promise<boolean> {
   if (!env.OPENROUTER_API_KEY) return false;
 
@@ -1554,11 +1026,18 @@ async function routeContextually(
   // The dismissal run and the already-routed exclusion the D1 arm expressed as
   // subqueries are the object's now; the shape it returns is mapped to the
   // candidate rows the prompt renderer takes.
+  //
+  // Nothing to exclude from here any more. The exclusion used to be the
+  // work streams this same invocation had just routed the activity into
+  // directly, from the consumer's own D1 watch scan — and that fan-out is
+  // WorkspaceDO's typed registration index now, so the object is the only
+  // side that knows what it already routed. An empty list is stated rather
+  // than dropped so the call still says which side owns the question.
   const candidates = await (await workspaceDirectory(env, asWorkspaceId(activity.workspace_id)))
     .routingCandidates({
       workspaceId: activity.workspace_id,
       audience: sourceAudience,
-      excludedWorkstreamIds: [...excludedWorkstreamIds],
+      excludedWorkstreamIds: [],
       feedbackSince: dismissalRunCutoff(),
       dismissalLimit: DISMISSAL_RUN_LIMIT,
       limit: 12,
@@ -1630,9 +1109,6 @@ export const __testing = {
   matchesFilters,
   projectActivityEvent,
   restrictedActivityUserIds,
-  routeDirectWatches,
   routeContextually,
-  runMatchingAutomations,
   contentAudienceContainsWorkstream,
-  triggerMatches,
 };

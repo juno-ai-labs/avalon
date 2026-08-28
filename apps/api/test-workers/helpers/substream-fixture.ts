@@ -402,19 +402,34 @@ export function holdLoopExecuting(
   const loops = new SubstreamLoopStorage(state.storage);
   const loopId = input.loopId ?? LOOP_ID;
   if (!loops.loop()) loops.ensureLoop({ loopId, bindStateRevision: 0, now });
+  // `idle` OR an activation that got here first. Admissions schedule loop
+  // activation a millisecond out, and under a full-suite run that alarm can
+  // fire between the object's last await and this call — so a hold that only
+  // accepted `idle` failed with `loop_hold_failed` on a slow machine while
+  // passing every time in isolation. Taking over the lease is not hiding that
+  // race: the loop being in flight is the state these tests are asking for,
+  // and if the activation had already promoted the pending inputs, the test's
+  // own assertions still say so, in their own words rather than as a fixture
+  // crash. `releaseHeldLoop` keys on `test-holder`, so the loop is left owned
+  // by whoever holds it here either way.
   const held = state.storage.sql.exec<{ loop_id: string }>(
     `UPDATE substream_loops
         SET status = 'executing', active_execution_id = 'held-execution',
             active_execution_epoch = 1, lease_owner = 'test-holder',
             lease_expires_at = ?, cycle_ordinal = cycle_ordinal + 1,
             revision = revision + 1, updated_at = MAX(updated_at, ?)
-      WHERE id = 1 AND loop_id = ? AND status = 'idle'
+      WHERE id = 1 AND loop_id = ? AND status IN ('idle', 'executing')
       RETURNING loop_id`,
     now + 60_000,
     now,
     loopId,
   ).toArray();
-  if (held.length !== 1) throw new Error("loop_hold_failed");
+  if (held.length !== 1) {
+    const actual = state.storage.sql.exec<{ status: string }>(
+      `SELECT status FROM substream_loops WHERE id = 1 AND loop_id = ?`, loopId,
+    ).toArray()[0]?.status ?? "absent";
+    throw new Error(`loop_hold_failed:${actual}`);
+  }
 }
 
 /** Release a `holdLoopExecuting` hold so the loop can activate normally. */

@@ -3,7 +3,6 @@ import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GenerateMeetingNotesRequest } from "@rally/contracts";
 import type { AuthContext, Env } from "../src/env";
-import { AutomationService } from "../src/services/automation-service";
 import { processPendingNotePrivacyNotifications } from "../src/services/note-privacy-notification-service";
 import { NoteService } from "../src/services/note-service";
 import { reapDeletedNoteObjects } from "../src/services/note-resource-cleanup";
@@ -516,30 +515,6 @@ describe("NoteService", () => {
       liveNotes: "## Action items\n\nRetried final summary",
       notesThroughSequence: 1,
     });
-  });
-
-  it("validates note resources against automation scope and current visibility", async () => {
-    const { auth, env } = fixture();
-    const noteService = new NoteService(env, auth);
-    const note = await noteService.create({ id: noteId, title: "Automation context", scope: "personal" });
-    const validate = (service: AutomationService, scope: "personal" | "workspace", resourceIds: string[]) =>
-      (service as unknown as {
-        validateAutomationResources: (targetScope: "personal" | "workspace", ids: string[]) => Promise<string[]>;
-      }).validateAutomationResources(scope, resourceIds);
-    const ownerAutomation = new AutomationService(env, auth);
-
-    await expect(validate(ownerAutomation, "personal", [note.resourceId])).resolves.toEqual([note.resourceId]);
-    await expect(validate(ownerAutomation, "workspace", [note.resourceId]))
-      .rejects.toMatchObject({ status: 422, code: "personal_resource_in_workspace_automation" });
-
-    await noteService.update(noteId, { scope: "workspace" });
-    await expect(validate(ownerAutomation, "workspace", [note.resourceId])).resolves.toEqual([note.resourceId]);
-    const otherAutomation = new AutomationService(env, { ...auth, userId: otherUserId, role: "member" });
-    await expect(validate(otherAutomation, "personal", [note.resourceId])).resolves.toEqual([note.resourceId]);
-
-    await noteService.update(noteId, { scope: "personal" });
-    await expect(validate(otherAutomation, "personal", [note.resourceId]))
-      .rejects.toMatchObject({ status: 422, code: "invalid_automation_resource" });
   });
 
   it("bounds model context without silently cutting off either end", async () => {

@@ -1,5 +1,8 @@
+import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AutomationAgentSnapshotSchema,
+  AutomationAttentionReasonSchema,
+  WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   AutomationDraftSchema,
   AutomationDraftTurnAdmissionRequestSchema,
   AutomationDraftTurnAdmissionResultSchema,
@@ -34,7 +37,7 @@ import { z } from "zod";
 import { sha256 } from "../lib/crypto";
 import { assertDurableObjectJurisdiction } from "../lib/durable-object-namespace";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logWarn } from "../observability/logger";
 import { assistantMessageForDraft } from "../services/automation-service";
 import { compileAutomationDraft } from "../services/integrations";
 import { activateWorkstreamLoop } from "../services/integrations";
@@ -45,7 +48,7 @@ import {
 } from "../services/workstream-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { scheduledWorkstreamModel } from "../services/agent-model-flags";
+import { automationModelOverride, scheduledWorkstreamModel } from "../services/agent-model-flags";
 import { numericEnv, type Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { substreamAgentName, substreamLoopId, workspaceDOName } from "./names";
@@ -59,6 +62,7 @@ import { AGENT_RUN_DISPATCH_LEASE_MS } from "./agent-run-dispatch-queue";
 import {
   SCHEDULED_ALARM_SCHEMA_STATEMENTS,
   ScheduledDurableObject,
+  scheduledAlarmRetryDelay,
   type ScheduledAlarm,
   type ScheduledAlarmOutcome,
 } from "./scheduled-alarms";
@@ -109,6 +113,40 @@ const AutomationAcceptDraftRequestSchema = z.object({
   activitySourcePluginIds: ActivitySourcePluginIdsSchema,
   deliveryTargets: AutomationDeliveryTargetSetSchema,
   modelOverride: AgentModelOverrideSchema.nullable(),
+  /**
+   * The caller's workspace membership role, resolved by the Worker. Present
+   * because a workspace-scoped automation binds workspace connector
+   * credentials and publishes a directory entry every member sees, so only an
+   * owner or admin may create one. Optional so an import or a replayed
+   * personal acceptance parses unchanged.
+   */
+  actorRole: z.string().optional(),
+}).strict();
+
+const AutomationSocketRevocationSchema = z.object({
+  reason: z.string().min(1),
+  workspaceId: z.string().uuid(),
+  userId: z.string().uuid().nullable(),
+  sessionId: z.string().min(1).nullable(),
+}).strict();
+
+const AutomationSocketIdentitySchema = z.object({
+  workspaceId: z.string().uuid(),
+  userId: z.string().uuid(),
+  automationId: z.string().uuid(),
+  sessionId: z.string().min(1),
+  ticketId: z.string().min(1),
+  ticketExpiresAt: z.coerce.number().int().positive(),
+}).strict();
+
+const AutomationInboundEmailScreenSchema = z.object({
+  schemaVersion: z.literal(1),
+  automationId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  emailAddress: z.string().min(1),
+  resendEmailId: z.string().min(1),
+  /** Absent before the message is fetched; null once fetched and unresolvable. */
+  senderUserId: z.string().uuid().nullable().optional(),
 }).strict();
 
 const AutomationLegacyImportRequestSchema = z.object({
@@ -459,6 +497,27 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
   version: 6,
   description: "fenced automation memory items and complete mutation receipts",
   statements: automationMemorySchemaStatements,
+}, {
+  version: 7,
+  description: "one-time socket ticket receipts and a monotonic projection counter",
+  statements: [
+    // Separate from `event_sequence`, which acceptance resets so the draft
+    // conversation's realtime cursor starts clean. WorkspaceDO orders
+    // projections by (generation, version) and discards anything not newer, so
+    // a counter that can go backwards silently drops the activation projection
+    // and leaves the directory describing a draft forever.
+    `ALTER TABLE automation_state ADD COLUMN projection_version INTEGER NOT NULL DEFAULT 0`,
+    // Stored per turn so a replayed admission answers with the coordinate it
+    // originally allocated. Answering with a fresh one would let a replay of
+    // the first turn overwrite newer directory state.
+    `ALTER TABLE automation_draft_message_metadata ADD COLUMN projection_version INTEGER`,
+    `CREATE TABLE automation_socket_ticket_receipts (
+      ticket_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires_at INTEGER NOT NULL CHECK (expires_at >= 0),
+      consumed_at INTEGER NOT NULL CHECK (consumed_at >= 0)
+    ) STRICT`,
+  ],
 }];
 
 interface ActiveCompilerRow extends Record<string, SqlStorageValue> {
@@ -522,20 +581,134 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     if (request.method !== "GET" || new URL(request.url).pathname !== "/socket") {
       return Response.json({ error: "not_found" }, { status: 404 });
     }
-    const workspaceId = request.headers.get("x-rally-workspace-id");
-    const userId = request.headers.get("x-rally-user-id");
-    const automationId = request.headers.get("x-rally-automation-id");
-    if (!workspaceId || !userId || !automationId) {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      return Response.json({ error: "websocket_upgrade_required" }, { status: 426 });
+    }
+    const identity = AutomationSocketIdentitySchema.safeParse({
+      workspaceId: readRallyHeader(request.headers, RALLY_HEADERS.WORKSPACE_ID) ?? null,
+      userId: readRallyHeader(request.headers, RALLY_HEADERS.USER_ID) ?? null,
+      automationId: readRallyHeader(request.headers, RALLY_HEADERS.AUTOMATION_ID) ?? null,
+      sessionId: readRallyHeader(request.headers, RALLY_HEADERS.SESSION_ID) ?? null,
+      ticketId: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_ID) ?? null,
+      ticketExpiresAt: readRallyHeader(request.headers, RALLY_HEADERS.SOCKET_TICKET_EXPIRES_AT) ?? null,
+    });
+    if (!identity.success) {
       return Response.json({ error: "automation_socket_identity_required" }, { status: 401 });
+    }
+    const { workspaceId, userId, automationId } = identity.data;
+    // A ticket authorizes exactly one upgrade. Without consuming it, a 60
+    // second window is replayable and a signed-out session that still holds
+    // one keeps opening feeds.
+    if (!this.consumeSocketTicket(identity.data)) {
+      return Response.json({ error: "socket_ticket_replayed" }, { status: 401 });
+    }
+    // And the ticket is not the authority on current access: a session that
+    // has been revoked, or a member removed from the workspace since the
+    // ticket was minted, must be refused here rather than trusted.
+    if (!await this.sessionIsActive(identity.data)) {
+      return Response.json({ error: "forbidden" }, { status: 403 });
     }
     this.assertAuthor(automationId, workspaceId, userId);
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
     this.state.acceptWebSocket(server, [automationId, userId]);
-    server.serializeAttachment({ automationId, userId, eventSequence: this.eventSequence() });
+    server.serializeAttachment({
+      automationId,
+      userId,
+      sessionId: identity.data.sessionId,
+      eventSequence: this.eventSequence(),
+    });
     server.send(JSON.stringify({ type: "snapshot", snapshot: this.snapshotUnchecked() }));
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * Close every socket a revoked session or ended membership held.
+   *
+   * The room admits on a ticket and never re-authorizes, so this queue hop is
+   * the only thing that ends a live feed when access goes away.
+   */
+  async revokeSocketAccess(revocation: unknown): Promise<void> {
+    await this.initialized;
+    const request = AutomationSocketRevocationSchema.parse(revocation);
+    for (const socket of this.state.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() as {
+        userId?: unknown;
+        sessionId?: unknown;
+      } | null;
+      if (!attachment || attachment.userId !== request.userId) continue;
+      // A revoked session closes only the windows that presented it; an ended
+      // membership carries no session and closes all of them.
+      if (request.sessionId && attachment.sessionId !== request.sessionId) continue;
+      try {
+        socket.close(WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "You can no longer access this automation");
+      } catch {
+        // A socket the runtime already tore down needs no close.
+      }
+    }
+  }
+
+  private consumeSocketTicket(identity: {
+    ticketId: string;
+    ticketExpiresAt: number;
+    userId: string;
+  }): boolean {
+    // Ticket claims carry epoch seconds; object SQL stores unix-ms.
+    const now = Date.now();
+    const expiresAtMs = identity.ticketExpiresAt * 1_000;
+    if (expiresAtMs <= now) return false;
+    return this.state.storage.transactionSync(() => {
+      this.state.storage.sql.exec(
+        `DELETE FROM automation_socket_ticket_receipts WHERE expires_at < ?`,
+        now - 300_000,
+      );
+      return this.state.storage.sql.exec<{ ticket_id: string }>(
+        `INSERT OR IGNORE INTO automation_socket_ticket_receipts
+           (ticket_id, user_id, expires_at, consumed_at)
+         VALUES (?, ?, ?, ?) RETURNING ticket_id`,
+        identity.ticketId,
+        identity.userId,
+        expiresAtMs,
+        now,
+      ).toArray().length === 1;
+    });
+  }
+
+  /** Current membership, read from D1 rather than inferred from the ticket. */
+  private async sessionIsActive(identity: {
+    sessionId: string;
+    userId: string;
+    workspaceId: string;
+  }): Promise<boolean> {
+    if (this.env.APP_ENV === "development"
+      && this.env.RALLY_DEV_AUTH === "true"
+      && identity.sessionId === "development") {
+      const row = await this.env.DB.prepare(
+        `SELECT member.user_id FROM workspace_members member
+          JOIN workspaces workspace ON workspace.id = member.workspace_id
+         WHERE member.workspace_id = ? AND member.user_id = ?
+           AND member.status = 'active' AND workspace.region = ?`,
+      ).bind(identity.workspaceId, identity.userId, this.env.AVALON_REGION).first<{ user_id: string }>();
+      return row !== null;
+    }
+    const row = await this.env.DB.prepare(
+      `SELECT member.user_id FROM sessions session
+        JOIN workspace_members member
+          ON member.workspace_id = session.workspace_id
+         AND member.user_id = session.user_id AND member.status = 'active'
+        JOIN workspaces workspace ON workspace.id = session.workspace_id
+       WHERE session.id = ? AND session.user_id = ? AND session.workspace_id = ?
+         AND session.revoked_at IS NULL AND session.expires_at > ?
+         AND workspace.region = ?`,
+    ).bind(
+      identity.sessionId,
+      identity.userId,
+      identity.workspaceId,
+      new Date().toISOString(),
+      this.env.AVALON_REGION,
+    ).first<{ user_id: string }>();
+    return row !== null;
   }
 
   async admitDraftTurn(rawInput: AutomationDraftTurnAdmissionRequest): Promise<AutomationDraftTurnAdmissionResult> {
@@ -559,7 +732,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         turn_id: string;
         transcript_sequence: number;
         compiler_run_id: string;
-      }>(`SELECT metadata.turn_id, turn.transcript_sequence, metadata.compiler_run_id
+        projection_version: number | null;
+      }>(`SELECT metadata.turn_id, turn.transcript_sequence, metadata.compiler_run_id,
+                 metadata.projection_version
            FROM automation_draft_message_metadata metadata
            JOIN participant_transcript_turns turn ON turn.turn_id = metadata.turn_id
           WHERE metadata.client_message_id = ?`, input.clientMessageId).toArray()[0];
@@ -570,6 +745,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
           transcriptSequence: existing.transcript_sequence,
           compilerRunId: existing.compiler_run_id,
           admitted: false,
+          ...(existing.projection_version === null
+            ? {}
+            : { projectionVersion: existing.projection_version }),
         });
       }
       const busy = this.activeCompilerRun();
@@ -585,15 +763,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
               ON evaluator.compiler_run_id = definition.compiler_run_id
            ORDER BY definition.definition_revision DESC LIMIT 1`).toArray()[0];
       const sequence = this.transcript().appendPreparedMessage(preparedMessage);
+      const projectionVersion = this.nextProjectionVersion();
       this.state.storage.sql.exec(
         `INSERT INTO automation_draft_message_metadata
-           (turn_id, client_message_id, attachment_ids_json, compiler_run_id, input_mode)
-         VALUES (?, ?, ?, ?, ?)`,
+           (turn_id, client_message_id, attachment_ids_json, compiler_run_id, input_mode,
+            projection_version)
+         VALUES (?, ?, ?, ?, ?, ?)`,
         turnId,
         input.clientMessageId,
         JSON.stringify(input.attachmentIds),
         runId,
         input.inputMode,
+        projectionVersion,
       );
       this.state.storage.sql.exec(
         `INSERT INTO automation_compiler_runs
@@ -620,12 +801,21 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         );
       }
       this.appendRealtimeEvent("turn_admitted", { turnId, runId, transcriptSequence: sequence }, now);
+      // A failed turn keeps its narration on screen until the next one starts,
+      // so deltas are retired when they are superseded rather than when their
+      // run settles.
+      this.retireSupersededCompilerStreamEvents(runId);
       return AutomationDraftTurnAdmissionResultSchema.parse({
         automationId: input.automationId,
         turnId,
         transcriptSequence: sequence,
         compilerRunId: runId,
         admitted: true,
+        // The Worker writes the first directory projection itself so the
+        // sidebar row exists before the outbox drains; it must use the
+        // coordinate this object allocated, not one derived from a cursor
+        // acceptance later resets.
+        projectionVersion,
       });
     });
     if (result.admitted) {
@@ -669,7 +859,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     this.assertAuthor(input.automationId, input.workspaceId, input.userId);
     const now = Date.now();
-    const retried = this.state.storage.transactionSync(() => {
+    // No success flag to test afterwards: every rejection below throws, so the
+    // transaction either commits the retry or does not return at all. A
+    // `if (!retried) return` here would be a branch that can never be taken,
+    // and reads as though one of these refusals were survivable.
+    this.state.storage.transactionSync(() => {
       const run = this.state.storage.sql.exec<{ state: string }>(
         `SELECT state FROM automation_compiler_runs WHERE run_id = ?`,
         input.runId,
@@ -686,9 +880,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         input.runId,
       );
       this.appendRealtimeEvent("compiler_retried", { runId: input.runId }, now);
-      return true;
     });
-    if (!retried) return;
     await this.scheduleAlarm({ kind: COMPILER_DISPATCH_ALARM_KIND, key: input.runId, dueAt: now });
     await this.armNextAlarm();
     this.broadcastLatestEvents();
@@ -801,7 +993,15 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     await this.initialized;
     const input = AutomationAcceptDraftRequestSchema.parse(rawInput);
     this.assertAuthor(input.automationId, input.workspaceId, input.authorUserId);
-    const requestHash = await sha256(JSON.stringify(input));
+    if (input.scope === "workspace" && input.actorRole !== "owner" && input.actorRole !== "admin") {
+      throw new Error("automation_workspace_scope_requires_admin");
+    }
+    // The role authorizes the request; it is not part of what was requested.
+    // Hashing it would make an identical retry by a second admin look like a
+    // changed acceptance and refuse with `automation_acceptance_conflict`.
+    const hashedInput: Record<string, unknown> = { ...input };
+    delete hashedInput.actorRole;
+    const requestHash = await sha256(JSON.stringify(hashedInput));
     const existingAcceptance = this.acceptance();
     if (existingAcceptance && existingAcceptance.request_hash !== requestHash) {
       throw new Error("automation_acceptance_conflict");
@@ -1163,9 +1363,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return { sourceHash: input.sourceHash, lifecycle, authorityGeneration: 1 };
   }
 
-  async pause(input: { automationId: string; workspaceId: string; userId: string }): Promise<void> {
+  async pause(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
     await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
+    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
     if (this.lifecycle() === "paused") return;
     if (this.lifecycle() !== "active" && this.lifecycle() !== "activating") {
       throw new Error("automation_not_pausable");
@@ -1218,9 +1418,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     this.broadcastLatestEvents();
   }
 
-  async resume(input: { automationId: string; workspaceId: string; userId: string }): Promise<void> {
+  async resume(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
     await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
+    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
     if (this.lifecycle() === "active") return;
     if (this.lifecycle() !== "paused") throw new Error("automation_not_resumable");
     const acceptance = this.acceptance();
@@ -1301,10 +1501,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     automationId: string;
     workspaceId: string;
     userId: string;
+    actorRole?: string;
     deliveryTargets: unknown;
   }): Promise<AutomationDetail> {
     await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
+    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
     if (!["active", "paused"].includes(this.lifecycle())) throw new Error("automation_not_configurable");
     const acceptance = this.acceptance();
     if (!acceptance) throw new Error("automation_acceptance_missing");
@@ -1322,9 +1523,9 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     return this.detailUnchecked();
   }
 
-  async deleteAutomation(input: { automationId: string; workspaceId: string; userId: string }): Promise<void> {
+  async deleteAutomation(input: { automationId: string; workspaceId: string; userId: string; actorRole?: string }): Promise<void> {
     await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
+    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
     if (this.lifecycle() === "deleted") return;
     const acceptance = this.acceptance();
     if (!acceptance) {
@@ -1436,10 +1637,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     automationId: string;
     workspaceId: string;
     userId: string;
+    actorRole?: string;
     idempotencyKey: string;
   }): Promise<{ runId: string; workstreamId: string; harnessRunId: string; reused: boolean }> {
     await this.initialized;
-    this.assertAuthor(input.automationId, input.workspaceId, input.userId);
+    this.assertManager(input.automationId, input.workspaceId, input.userId, input.actorRole);
     if (this.lifecycle() !== "active") throw new Error("automation_not_active");
     const occurrenceKey = `manual:${input.idempotencyKey}`;
     const existing = this.state.storage.sql.exec<{
@@ -1482,6 +1684,68 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     await this.armNextAlarm();
     this.broadcastLatestEvents();
     return { runId, workstreamId, harnessRunId, reused: false };
+  }
+
+  /**
+   * Whether an inbound message is worth fetching and storing, before it is.
+   *
+   * Admission is still the authority — it re-runs every one of these checks
+   * inside the transaction that consumes the hourly budget and writes the
+   * receipt. This exists so a message that admission would refuse never
+   * reaches R2 or the workspace resource table: the address is a routing
+   * identifier exposed to every member, not a secret, so anyone holding one
+   * could otherwise make us store unbounded attacker-titled objects. Called
+   * once without a sender (replay, lifecycle, and address are decidable from
+   * the webhook alone) and again once the message has been fetched and its
+   * sender resolved.
+   */
+  async screenInboundEmail(rawInput: unknown): Promise<{
+    admissible: boolean;
+    duplicate: boolean;
+    outcomeCode: string;
+    runId: string | null;
+    workstreamId: string | null;
+  }> {
+    await this.initialized;
+    const input = AutomationInboundEmailScreenSchema.parse(rawInput);
+    const identity = this.identity();
+    if (identity.automation_id !== input.automationId || identity.workspace_id !== input.workspaceId) {
+      throw new Error("automation_inbound_email_destination_mismatch");
+    }
+    const existing = this.state.storage.sql.exec<{
+      state: "admitted" | "refused";
+      outcome_code: string;
+      run_id: string | null;
+      workstream_id: string | null;
+    }>(`SELECT state, outcome_code, run_id, workstream_id
+          FROM automation_inbound_email_receipts WHERE resend_email_id = ?`,
+    input.resendEmailId).toArray()[0];
+    if (existing) return {
+      admissible: false,
+      duplicate: true,
+      outcomeCode: existing.outcome_code,
+      runId: existing.run_id,
+      workstreamId: existing.workstream_id,
+    };
+    const route = this.state.storage.sql.exec<{ email_address: string }>(
+      `SELECT email_address FROM automation_email_route WHERE id = 1`,
+    ).toArray()[0];
+    const acceptance = this.acceptance();
+    const refusal = this.lifecycle() !== "active" || !acceptance
+      ? "automation_not_active"
+      : !route || route.email_address.toLowerCase() !== input.emailAddress.toLowerCase()
+        ? "automation_email_route_mismatch"
+        : input.senderUserId !== undefined && (input.senderUserId === null
+          || (acceptance.scope === "personal" && input.senderUserId !== identity.author_user_id))
+          ? "email_sender_not_authorized"
+          : null;
+    return {
+      admissible: refusal === null,
+      duplicate: false,
+      outcomeCode: refusal ?? "admissible",
+      runId: null,
+      workstreamId: null,
+    };
   }
 
   async admitInboundEmail(rawInput: unknown): Promise<{
@@ -1553,9 +1817,12 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         return { admitted: false, duplicate: false, outcomeCode: refusal, runId: null, workstreamId: null };
       }
 
-      const limit = Math.min(
-        numericEnv(this.env, "AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR", DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR),
-        10_000,
+      // The env var and its default are the team's number; a second ceiling
+      // invented here bounds a resource that is already bounded.
+      const limit = numericEnv(
+        this.env,
+        "AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR",
+        DEFAULT_AUTOMATION_EMAIL_MAX_RUNS_PER_HOUR,
       );
       const windowStartedAt = Math.floor(now / 3_600_000) * 3_600_000;
       const budget = this.state.storage.sql.exec<{ accepted_count: number }>(
@@ -1659,7 +1926,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       workstreamGeneration: z.number().int().positive(),
       sourceVersion: z.number().int().positive(),
       payloadHash: z.string().min(1),
-      state: z.string().min(1),
+      // A closed set, not an open string: this crosses WorkstreamDO →
+      // WorkspaceDO → here, so an older or newer deployment sending an
+      // unrecognised state would otherwise be silently mapped to "running"
+      // and leave a finished run running forever.
+      state: z.enum([
+        "completed", "failed", "error", "needs_input", "stopped", "cancelled", "running",
+      ]),
       completedAt: z.number().int().nonnegative().nullable(),
     }).strict().parse(input);
     const identity = this.identity();
@@ -1743,6 +2016,34 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       input.runId,
     ).toArray()[0];
     return run ? { automationId: identity.automation_id, triggerType: run.trigger_type } : null;
+  }
+
+  /**
+   * Whether a run may still act on the world.
+   *
+   * A generated run holds frozen authority for its whole execution, which is
+   * right for what it may *see* — but pausing or deleting an automation is a
+   * person telling it to stop, and connector writes have to observe that. The
+   * child re-reads this between tool batches; memory is already fenced on the
+   * generation, and this brings provider writes under the same fence.
+   */
+  async readRunAuthority(input: {
+    automationId: string;
+    workspaceId: string;
+    runId: string;
+  }): Promise<{ lifecycle: string; authorityGeneration: number; runPresent: boolean } | null> {
+    await this.initialized;
+    const identity = this.identity();
+    if (identity.automation_id !== input.automationId || identity.workspace_id !== input.workspaceId) return null;
+    const run = this.state.storage.sql.exec<{ run_id: string }>(
+      `SELECT run_id FROM automation_runs WHERE run_id = ?`,
+      input.runId,
+    ).toArray()[0];
+    return {
+      lifecycle: this.lifecycle(),
+      authorityGeneration: identity.authority_generation,
+      runPresent: run !== undefined,
+    };
   }
 
   /** Fenced automation-memory bootstrap used when the child freezes its prompt context. */
@@ -2013,8 +2314,21 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   }
 
   protected override async runDueAlarmWork(): Promise<void> {
-    await this.provisionNextRun();
-    await this.deliverNextOutboxEffect();
+    // Two independent lanes on one alarm. Awaiting them in sequence let a run
+    // that cannot be provisioned — a disabled connector, a deleted resource —
+    // throw before the outbox ever ran, so workspace projections and the
+    // child-archive effects that `deleteAutomation` depends on stopped with
+    // it. Each lane keeps its own failure, and the first one to fail is
+    // rethrown after both have had their pass so the alarm still retries.
+    const failures: unknown[] = [];
+    for (const lane of [() => this.provisionNextRun(), () => this.deliverNextOutboxEffect()]) {
+      try {
+        await lane();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) throw failures[0];
   }
 
   protected override async scheduledAlarmDeferral(): Promise<number | null> {
@@ -2022,10 +2336,15 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
   }
 
   protected override onScheduledAlarmFailure(alarm: ScheduledAlarm, error: unknown, attempt: number): void {
+    // `diagnosticErrorCode`, not the raw message. An alarm lane runs the
+    // compiler and the connector tools, so the error reaching here can carry a
+    // provider's prose — which may quote the workspace's own retrieved content
+    // — and a log line is exactly where that must not end up. The helper keeps
+    // a snake_case code and discards anything that is not one.
     logWarn(this.env, "automation_alarm_failed", {
       kind: alarm.kind,
       attempt,
-      code: error instanceof Error ? error.message : "unknown_error",
+      code: diagnosticErrorCode(error, "automation_alarm_failed"),
     });
   }
 
@@ -2235,6 +2554,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         definitionRevision: revision,
         ready: durableDraft.ready,
       }, now);
+      this.retireCompilerStreamEvents(runId);
       const identity = this.identity();
       this.state.storage.sql.exec(
         `INSERT INTO automation_outbox
@@ -2273,7 +2593,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         effect_id: string;
         effect_kind: string;
         payload_json: string;
-      }>(`SELECT effect_id, effect_kind, payload_json
+        attempt: number;
+      }>(`SELECT effect_id, effect_kind, payload_json, attempt
             FROM automation_outbox
            WHERE state IN ('pending', 'delivering') AND not_before <= ?
            ORDER BY created_at, effect_id LIMIT 1`, now).toArray()[0];
@@ -2312,6 +2633,14 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
           throw new Error(`automation_child_archive_refused:${result.reason ?? "unknown"}`);
         }
       } else {
+        // A kind nothing can deliver never becomes deliverable by waiting, so
+        // it is retired rather than retried forever behind the effects queued
+        // after it.
+        this.state.storage.sql.exec(
+          `UPDATE automation_outbox SET state = 'failed', updated_at = ? WHERE effect_id = ?`,
+          Date.now(),
+          claimed.effect_id,
+        );
         throw new Error(`automation_outbox_effect_unknown:${claimed.effect_kind}`);
       }
       this.state.storage.sql.exec(
@@ -2320,9 +2649,17 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         claimed.effect_id,
       );
     } catch (error) {
+      // Returning it at `not_before = now` with the attempt count unread meant
+      // a permanently failing effect span-locked the lane at full speed. The
+      // shared backoff spaces the retries and the attempt is what advances it.
+      const attempt = claimed.attempt + 1;
       this.state.storage.sql.exec(
-        `UPDATE automation_outbox SET state = 'pending', not_before = ?, updated_at = ? WHERE effect_id = ?`,
-        Date.now(),
+        `UPDATE automation_outbox
+            SET state = CASE WHEN state = 'failed' THEN 'failed' ELSE 'pending' END,
+                attempt = ?, not_before = ?, updated_at = ?
+          WHERE effect_id = ?`,
+        attempt,
+        Date.now() + scheduledAlarmRetryDelay(attempt),
         Date.now(),
         claimed.effect_id,
       );
@@ -2803,7 +3140,19 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         });
         triggerMessageId = appended.messageId;
       }
-      const model = context.modelOverride ?? await scheduledWorkstreamModel(executionEnv, {
+      // The pin is validated on its way onto the run, not taken as read. It
+      // was frozen into the run context when the automation was accepted, and
+      // a model retired from the catalog since then would otherwise be handed
+      // to the provider as though it still existed — with nothing in the logs
+      // to connect the failure to the pin. `automationModelOverride` drops an
+      // unknown model back to the flag's choice and says so as
+      // `workstream_model_override_unknown`, which is the diagnostic
+      // `docs/feature-flags.md` promises for exactly this case.
+      const pinned = automationModelOverride(executionEnv, context.modelOverride, {
+        workspaceId: identity.workspace_id,
+        automationSubscriptionId: context.automationId,
+      });
+      const model = pinned ?? await scheduledWorkstreamModel(executionEnv, {
         workspaceId: identity.workspace_id,
         workstreamId,
       });
@@ -3066,15 +3415,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
 
   private async settleCompilerFailure(runId: string, error: unknown): Promise<void> {
     const now = Date.now();
-    const code = error instanceof Error ? error.name : "automation_compile_failed";
-    const message = error instanceof Error ? error.message : "Automation compilation failed";
+    // `error.name` is "Error" for every `new Error(code)` the harness throws,
+    // so it carried no information; the message often does — including raw
+    // provider text, which must not reach a person through the snapshot.
+    const raw = error instanceof Error ? error.message : "";
+    const code = /^[a-z][a-z0-9_]*$/u.test(raw) ? raw : "automation_compile_failed";
     this.state.storage.transactionSync(() => {
       this.state.storage.sql.exec(
         `UPDATE automation_compiler_runs
             SET state = 'failed', error_code = ?, error_message = ?, settled_at = ?, updated_at = ?
           WHERE run_id = ? AND state = 'running'`,
         code,
-        message.slice(0, 1_200),
+        null,
         now,
         now,
         runId,
@@ -3082,6 +3434,32 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       this.appendRealtimeEvent("compiler_failed", { runId, code }, now);
     });
     this.broadcastLatestEvents();
+  }
+
+  /**
+   * Drop a settled run's narration deltas.
+   *
+   * They exist to rebuild the *current* run's narration for a reader who
+   * connects mid-compile. Once the run settles nothing reads them again, and
+   * left in place they were the one table that grew without bound for the life
+   * of the automation — one row per streamed token.
+   */
+  private retireCompilerStreamEvents(runId: string): void {
+    this.state.storage.sql.exec(
+      `DELETE FROM automation_realtime_events
+        WHERE event_type = 'compiler_stream' AND json_extract(payload_json, '$.runId') = ?`,
+      runId,
+    );
+  }
+
+  /** Drop every run's narration deltas except the one just admitted. */
+  private retireSupersededCompilerStreamEvents(currentRunId: string): void {
+    this.state.storage.sql.exec(
+      `DELETE FROM automation_realtime_events
+        WHERE event_type = 'compiler_stream'
+          AND json_extract(payload_json, '$.runId') <> ?`,
+      currentRunId,
+    );
   }
 
   private ensureIdentity(input: AutomationDraftTurnAdmissionRequest, now: number): void {
@@ -3125,6 +3503,13 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     }>(`SELECT lifecycle FROM automation_state WHERE id = 1`).one().lifecycle;
   }
 
+  /** Why this automation needs a person, or `null` when it does not. */
+  private attentionCode(): string | null {
+    return this.state.storage.sql.exec<{ attention_code: string | null }>(
+      `SELECT attention_code FROM automation_state WHERE id = 1`,
+    ).one().attention_code;
+  }
+
   private acceptance(): AutomationAcceptanceRow | null {
     return this.state.storage.sql.exec<AutomationAcceptanceRow>(
       `SELECT definition_revision, request_hash, scope, default_plugin_ids_json,
@@ -3165,6 +3550,24 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     this.state.storage.sql.exec(`DELETE FROM transcript_payloads`);
   }
 
+  /**
+   * The next projection coordinate, monotonic for the life of the object.
+   *
+   * WorkspaceDO compares (authorityGeneration, projectionVersion) and refuses
+   * anything that is not strictly newer. Deriving this from `event_sequence`
+   * made acceptance — which resets that cursor — publish version 1 behind the
+   * draft's own higher versions, so the activation projection was discarded
+   * and the directory kept showing a live automation as an unfinished draft.
+   */
+  private nextProjectionVersion(): number {
+    const row = this.state.storage.sql.exec<{ projection_version: number }>(
+      `UPDATE automation_state SET projection_version = projection_version + 1
+        WHERE id = 1 RETURNING projection_version`,
+    ).toArray()[0];
+    if (!row) throw new Error("automation_state_missing");
+    return row.projection_version;
+  }
+
   private enqueueWorkspaceProjection(input: {
     lifecycle: "draft" | "activating" | "active" | "paused" | "deleted";
     scope: "personal" | "workspace";
@@ -3173,10 +3576,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     now: number;
   }): void {
     const identity = this.identity();
-    const projectionVersion = Math.max(1, this.eventSequence());
+    const projectionVersion = this.nextProjectionVersion();
     const nextRunAt = this.state.storage.sql.exec<{ next_due_at: number | null }>(
       `SELECT MIN(next_due_at) AS next_due_at FROM automation_schedules WHERE paused = 0`,
     ).toArray()[0]?.next_due_at ?? null;
+    // The reason as this object currently holds it, not a constant. A projection
+    // that always said "nothing is wrong" cleared the directory's copy on the
+    // next pause or resume, so an imported automation whose trigger cannot fire
+    // lost its sidebar marker the first time anybody touched it — while this
+    // object went on saying the trigger cannot fire.
+    const attentionCode = AutomationAttentionReasonSchema.nullable().parse(
+      this.attentionCode(),
+    );
     this.state.storage.sql.exec(
       `INSERT INTO automation_outbox
          (effect_id, effect_kind, payload_json, state, attempt, not_before, created_at, updated_at)
@@ -3195,7 +3606,7 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         title: input.definition?.name ?? "New automation",
         description: input.definition?.description ?? "",
         nextRunAt,
-        attentionCode: null,
+        attentionCode,
       }),
       input.now,
       input.now,
@@ -3209,9 +3620,11 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     if (!acceptance) throw new Error("automation_not_accepted");
     const definition = this.currentDefinition();
     if (!definition) throw new Error("automation_definition_missing");
-    const state = this.state.storage.sql.exec<{ lifecycle: string; updated_at: number }>(
-      `SELECT lifecycle, updated_at FROM automation_state WHERE id = 1`,
-    ).one();
+    const state = this.state.storage.sql.exec<{
+      lifecycle: string;
+      attention_code: string | null;
+      updated_at: number;
+    }>(`SELECT lifecycle, attention_code, updated_at FROM automation_state WHERE id = 1`).one();
     const nextRunAt = this.state.storage.sql.exec<{ next_due_at: number | null }>(
       `SELECT MIN(next_due_at) AS next_due_at FROM automation_schedules WHERE paused = 0`,
     ).toArray()[0]?.next_due_at ?? null;
@@ -3234,6 +3647,10 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       emailAddress,
       scope: acceptance.scope,
       status: state.lifecycle === "paused" ? "paused" : "active",
+      // This object is the authority on the reason; the directory row is a copy
+      // of it. `AutomationDetailSchema` is what turns the stored code into one
+      // of the contract's reasons.
+      attention: state.attention_code,
       nextRunAt: nextRunAt === null ? null : new Date(nextRunAt).toISOString(),
       lastRunAt: lastRunAt === null ? null : new Date(lastRunAt).toISOString(),
       updatedAt: new Date(state.updated_at).toISOString(),
@@ -3279,6 +3696,34 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         // Reconnect reads the active snapshot from the durable object.
       }
     }
+  }
+
+  /**
+   * Who may change an automation that already belongs to the workspace.
+   *
+   * The author always may. A workspace-scoped automation additionally answers
+   * to the workspace's owners and admins, because it holds workspace connector
+   * bindings and publishes a directory entry every member sees — the same
+   * people who authorized its scope are the ones who can withdraw it. A
+   * personal automation is its author's alone, and an admin role does not
+   * reach into it.
+   */
+  private assertManager(
+    automationId: string,
+    workspaceId: string,
+    userId: string,
+    actorRole: string | undefined,
+  ): void {
+    const identity = this.identity();
+    if (
+      identity.automation_id !== automationId
+      || identity.workspace_id !== workspaceId
+      || identity.region !== this.env.AVALON_REGION
+    ) throw new Error("automation_authority_mismatch");
+    if (identity.author_user_id === userId) return;
+    const workspaceScoped = this.acceptance()?.scope === "workspace";
+    if (workspaceScoped && (actorRole === "owner" || actorRole === "admin")) return;
+    throw new Error("automation_authority_mismatch");
   }
 
   private assertAuthor(automationId: string, workspaceId: string, userId: string): void {
@@ -3469,13 +3914,20 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
     const visibleCompilerRun = this.visibleCompilerRun();
     let narration = "";
     if (visibleCompilerRun) {
+      // Filtered in SQL rather than in JS: every snapshot read and every
+      // socket connect used to parse each delta this automation had ever
+      // streamed, across all prior compiler runs, to rebuild one run's
+      // narration.
       const streamEvents = this.state.storage.sql.exec<{ payload_json: string }>(
         `SELECT payload_json FROM automation_realtime_events
-          WHERE event_type = 'compiler_stream' ORDER BY event_sequence`,
+          WHERE event_type = 'compiler_stream'
+            AND json_extract(payload_json, '$.runId') = ?
+          ORDER BY event_sequence`,
+        visibleCompilerRun.run_id,
       ).toArray();
       for (const row of streamEvents) {
         const payload = JSON.parse(row.payload_json) as { runId?: unknown; event?: unknown };
-        if (payload.runId !== visibleCompilerRun.run_id || !payload.event || typeof payload.event !== "object") continue;
+        if (!payload.event || typeof payload.event !== "object") continue;
         const event = payload.event as { type?: unknown; delta?: unknown; reset?: unknown };
         if (event.type === "started") narration = "";
         if (event.type === "delta" && typeof event.delta === "string") {

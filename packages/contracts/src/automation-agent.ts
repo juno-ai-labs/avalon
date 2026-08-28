@@ -57,6 +57,15 @@ export const AutomationDraftTurnAdmissionResultSchema = z.object({
   transcriptSequence: z.number().int().positive(),
   compilerRunId: IdSchema,
   admitted: z.boolean(),
+  /**
+   * The coordinate the agent allocated for this turn's directory projection.
+   *
+   * The Worker seeds the first projection directly so the sidebar row exists
+   * before the outbox drains, and WorkspaceDO discards a projection that is
+   * not strictly newer — so both writers have to draw from the object's one
+   * monotonic counter rather than each inventing a number.
+   */
+  projectionVersion: z.number().int().positive().optional(),
 }).strict();
 
 export const AutomationDraftMessageSchema = z.object({

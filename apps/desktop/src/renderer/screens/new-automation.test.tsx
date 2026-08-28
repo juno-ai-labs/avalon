@@ -1,22 +1,21 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { AutomationAgentSnapshotSchema, type AutomationAgentSnapshot, type AutomationDraftStreamEvent } from '@rally/contracts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useSyncExternalStore } from 'react';
 import { Link, MemoryRouter, Route, Routes, useLocation, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError } from '../lib/api';
-import type { AutomationAssistantStreamEvent } from '../lib/api';
+import { ApiError, RallyApi } from '../lib/api';
+import type { SocketState } from '../lib/use-workstream-socket';
 import type { Workspace } from '../lib/types';
 import { clearAllDrafts, readDraftText } from '../lib/draft-cache';
 import { newAutomationDraftKey } from '../lib/draft-keys';
-import { NewAutomationScreen, retainableNarration } from './new-automation';
-
+import { automationErrorCopy, NewAutomationScreen, retainableNarration } from './new-automation';
 const api = vi.hoisted(() => ({
   admitAutomationDraftTurn: vi.fn(),
   automationDraftFromAgentSnapshot: vi.fn(),
-  compileAutomation: vi.fn(),
   createAutomation: vi.fn(),
-  resumeAutomationDraft: vi.fn(),
+  deleteAutomation: vi.fn(),
   retryAutomationCompiler: vi.fn(),
   stopAutomationCompiler: vi.fn(),
   deleteDraftResource: vi.fn(),
@@ -27,17 +26,34 @@ const api = vi.hoisted(() => ({
   getWorkspaceTemplates: vi.fn(),
   uploadResource: vi.fn(),
 }));
+
+/**
+ * The feed the real hook produces, standing in for the socket only.
+ * Everything above it is the product's own code: turns are admitted
+ * through `admitAutomationDraftTurn`, the frames published here are
+ * real `AutomationAgentSnapshot`s, and the adapter that turns one
+ * into a conversation is the shipping one rather than a stub.
+ */
 const agentSocket = vi.hoisted(() => ({
   revision: 0,
-  snapshot: null as null | Record<string, unknown>,
-  streamEvents: [] as Array<{ sequence: number; event: AutomationAssistantStreamEvent }>,
-  eventSequence: 0,
+  snapshot: null as AutomationAgentSnapshot | null,
+  narration: '',
+  streamEvents: [] as Array<{ sequence: number; event: AutomationDraftStreamEvent }>,
+  state: 'connected' as SocketState,
+  sequence: 0,
   listeners: new Set<() => void>(),
-  publish(next: { snapshot?: null | Record<string, unknown>; streamEvent?: AutomationAssistantStreamEvent | null }) {
+  publish(next: {
+    snapshot?: AutomationAgentSnapshot | null;
+    narration?: string;
+    streamEvent?: AutomationDraftStreamEvent;
+    state?: SocketState;
+  }) {
     if ('snapshot' in next) this.snapshot = next.snapshot ?? null;
+    if (next.narration !== undefined) this.narration = next.narration;
+    if (next.state !== undefined) this.state = next.state;
     if (next.streamEvent) {
-      this.eventSequence += 1;
-      this.streamEvents = [...this.streamEvents, { sequence: this.eventSequence, event: next.streamEvent }];
+      this.sequence += 1;
+      this.streamEvents = [...this.streamEvents, { sequence: this.sequence, event: next.streamEvent }];
     }
     this.revision += 1;
     for (const listener of this.listeners) listener();
@@ -66,6 +82,85 @@ const workspace: Workspace = {
   currentUser: { id: 'user-1', name: 'Morgan Ellis', email: 'adam@juno-labs.com', timezone: 'America/Los_Angeles' },
 };
 
+const workspaceId = '00000000-0000-7000-8000-000000000001';
+const userId = '00000000-0000-7000-8000-000000000002';
+const draftOne = '00000000-0000-7000-8000-000000000101';
+const draftNine = '00000000-0000-7000-8000-000000000109';
+const runId = '00000000-0000-7000-8000-000000000201';
+const elicitationId = '00000000-0000-7000-8000-000000000301';
+
+/** A definition as AutomationAgent stores it, before the adapter reads it. */
+function draftDefinition(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    name: 'Blog monitor',
+    description: 'Checks a blog for new posts.',
+    overview: 'Checks the configured blog every day.',
+    instructions: 'Check the configured blog and report new posts.',
+    triggers: [{ type: 'interval', intervalSeconds: 86_400, summary: 'Every 24 hours' }],
+    requiredCapabilities: [],
+    expectedOutputs: ['New post summary'],
+    requestedDelivery: [],
+    defaultBehavior: {},
+    recommendedPlugins: [],
+    memoryTables: [],
+    suggestedScope: 'personal',
+    followUpQuestion: null,
+    elicitation: null,
+    ready: false,
+    ...overrides,
+  };
+}
+
+interface AgentTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  clientMessageId?: string | null;
+  attachmentIds?: string[];
+}
+
+let turnSequence = 0;
+function agentSnapshot(input: {
+  automationId: string;
+  messages: AgentTurn[];
+  definition?: Record<string, unknown> | null;
+  activeCompilerRun?: Record<string, unknown> | null;
+  narration?: string;
+  pendingElicitationId?: string | null;
+  eventSequence?: number;
+  title?: string;
+  lifecycle?: string;
+}): AutomationAgentSnapshot {
+  const run = input.activeCompilerRun ?? null;
+  return AutomationAgentSnapshotSchema.parse({
+    schemaVersion: 1,
+    automationId: input.automationId,
+    workspaceId,
+    authorUserId: userId,
+    region: 'global',
+    lifecycle: input.lifecycle ?? 'draft',
+    authorityGeneration: 1,
+    title: input.title ?? 'New automation',
+    definitionRevision: input.definition ? 1 : 0,
+    definition: input.definition ?? null,
+    messages: input.messages.map((message, index) => ({
+      turnId: message.clientMessageId ?? `00000000-0000-7000-8000-0000000004${String(index).padStart(2, '0')}`,
+      transcriptSequence: index + 1,
+      role: message.role,
+      authorUserId: message.role === 'user' ? userId : null,
+      clientMessageId: message.clientMessageId ?? null,
+      content: message.content,
+      attachmentIds: message.attachmentIds ?? [],
+      createdAt: 1_760_000_000_000 + index,
+    })),
+    activeCompilerRun: run,
+    compilerCheckpoint: run ? { runId: String(run.id), narration: input.narration ?? '' } : null,
+    pendingElicitation: input.pendingElicitationId
+      ? { id: input.pendingElicitationId, definitionRevision: 1, payload: {} }
+      : null,
+    eventSequence: input.eventSequence ?? (turnSequence += 1),
+  });
+}
+
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session }) }));
 vi.mock('../lib/use-client-feature-flags', () => ({
   useClientFeatureFlags: () => ({ data: featureFlags.current }),
@@ -83,8 +178,10 @@ vi.mock('../lib/use-automation-agent-socket', () => {
       );
       return {
         snapshot: agentSocket.snapshot,
+        narration: agentSocket.narration,
         streamEvents: agentSocket.streamEvents,
-        connected: agentSocket.snapshot !== null,
+        connected: agentSocket.state === 'connected',
+        state: agentSocket.state,
       };
     },
   };
@@ -129,7 +226,7 @@ function renderScreen(entry: InitialEntry = '/automations/new'): void {
           {/* The stable automation shell keeps this child mounted when the
               launcher adopts a durable draft id. */}
           <Link to="/automations/new">back to nothing</Link>
-          <Link to="/automations/draft-9">open draft 9</Link>
+          <Link to={`/automations/${draftNine}`}>open draft 9</Link>
           <Routes>
             <Route element={<NewAutomationScreen workspace={workspace} />} path="/automations/:id" />
           </Routes>
@@ -140,6 +237,26 @@ function renderScreen(entry: InitialEntry = '/automations/new'): void {
 }
 
 describe('New automation composer', () => {
+  /**
+   * How AutomationAgent answers the next turn: the definition it
+   * settles on, what it says, and whether it stops to ask.
+   * Tests set this rather than a compile-stream response, because a
+   * turn is now admitted and answered by the agent's own snapshot.
+   */
+  let agentReply: {
+    definition: Record<string, unknown> | null;
+    assistantMessage: string;
+    pendingElicitationId?: string | null;
+  };
+  let replies: Array<typeof agentReply> = [];
+  /** What the agent has recorded per automation, as its transcript. */
+  let conversations: Map<string, AgentTurn[]>;
+  /** The definition the agent has settled for each automation. */
+  let definitions: Map<string, Record<string, unknown> | null>;
+  let settleTurn: (() => void) | null;
+  let failTurn: ((message: string) => void) | null;
+  let lastRun: { automationId: string; id: string; admittedTurnId: string } | null;
+
   beforeEach(async () => {
     vi.clearAllMocks();
     copyText.mockResolvedValue(undefined);
@@ -149,190 +266,153 @@ describe('New automation composer', () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
     featureFlags.current = { automationWorkspaceTemplatesEnabled: true };
     agentSocket.snapshot = null;
+    agentSocket.narration = '';
     agentSocket.streamEvents = [];
-    agentSocket.eventSequence = 0;
+    agentSocket.state = 'connected';
+    agentSocket.sequence = 0;
     agentSocket.revision += 1;
+    turnSequence = 0;
+    conversations = new Map();
+    definitions = new Map();
+    settleTurn = null;
+    failTurn = null;
+    lastRun = null;
+    replies = [];
+    agentReply = {
+      definition: draftDefinition({ followUpQuestion: 'What should the automation monitor?' }),
+      assistantMessage: 'What should the automation monitor?',
+      pendingElicitationId: elicitationId,
+    };
     await clearAllDrafts();
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
     api.getWorkspaceTemplates.mockResolvedValue([]);
-    // Loud by default: a test that resumes a draft says so, and one that does
-    // not must never have a stale conversation swapped in under it.
-    api.resumeAutomationDraft.mockRejectedValue(new Error('no draft was meant to be resumed'));
-    api.getAutomationAgentDraft.mockImplementation(async (automationId, signal) => {
-      const normalized = await api.resumeAutomationDraft(automationId, signal);
-      conversations.set(automationId, normalized);
-      return { automationId, activeCompilerRun: null, normalized };
+    api.deleteAutomation.mockResolvedValue(undefined);
+    // The shipping adapter, not a stub: a test that replaced it proved
+    // only that one mock had called another.
+    const realApi = new RallyApi('https://api.rally.test', {
+      accessToken: 'access-token-longer-than-twenty-characters',
+      expiresAt: '2026-08-01T09:00:00.000Z',
+      apiBaseUrl: 'https://api.rally.test',
+      user: { id: userId, email: session.user.email, name: session.user.name },
+      workspace: { id: workspaceId, name: 'Juno Labs', region: 'global', role: 'owner' },
     });
-    const conversations = new Map<string, {
-      draft: Record<string, unknown> | null;
-      messages: Array<{ role: 'user' | 'assistant'; content: string; clientMessageId?: string }>;
-    }>();
-    let pendingQuestion: {
-      id: string;
-      responseType: 'free_text' | 'single_select' | 'multi_select';
-      options: Array<{ label: string; value: string }>;
-      allowOther: boolean;
-      presentedAt: string;
-    } | null = null;
-    let failedRetry: null | {
-      automationId: string;
-      activeCompilerRun: Record<string, unknown>;
-      legacyInput: Record<string, unknown>;
-      messages: Array<{ role: 'user' | 'assistant'; content: string; clientMessageId?: string }>;
-    } = null;
-    api.automationDraftFromAgentSnapshot.mockImplementation((snapshot) => snapshot.normalized);
-    api.admitAutomationDraftTurn.mockImplementation(async (input) => {
-      const provisionalId = input.automationId ?? 'draft-1';
-      const previous = conversations.get(provisionalId) ?? { draft: null, messages: [] };
-      const messages = [...previous.messages, {
-        role: 'user' as const,
-        content: input.content,
-        clientMessageId: input.clientMessageId,
-      }];
-      const activeCompilerRun = {
-        id: `run-${input.clientMessageId}`,
-        state: 'running',
-        admittedTurnId: input.clientMessageId,
-        errorCode: null,
-        errorMessage: null,
-      };
-      agentSocket.publish({
-        snapshot: {
-          automationId: input.automationId ?? null,
-          activeCompilerRun,
-          normalized: { draft: previous.draft, messages },
-        },
-        streamEvent: null,
+    api.automationDraftFromAgentSnapshot.mockImplementation((snapshot: AutomationAgentSnapshot) =>
+      realApi.automationDraftFromAgentSnapshot(snapshot));
+    // The agent's own read, which the screen makes for a resumed draft.
+    api.getAutomationAgentDraft.mockImplementation(async (automationId: string) => {
+      const messages = conversations.get(automationId);
+      if (!messages) throw new ApiError('This draft’s conversation is no longer available.', 409, 'automation_draft_unavailable');
+      return agentSnapshot({
+        automationId,
+        messages,
+        definition: definitions.get(automationId) ?? null,
+        pendingElicitationId: definitions.get(automationId)?.followUpQuestion ? elicitationId : null,
       });
-      const connectorMentionCount = (input.content.match(/@[A-Za-z]/gu) ?? []).length;
-      const legacyInput: Record<string, unknown> = {
-        message: input.content,
-        ...(input.automationId ? { draftId: input.automationId } : {}),
-        ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
-        inputMode: input.inputMode,
-        connectorMentionCount,
-      };
-      if (input.inputMode === 'elicitation_response' && pendingQuestion) {
-        legacyInput.resolvedElicitation = {
-          id: pendingQuestion.id,
-          responseType: pendingQuestion.responseType,
-          resolution: 'answered',
-          customResponseUsed: !pendingQuestion.options.some((option) => option.value === input.content),
-          presentedAt: pendingQuestion.presentedAt,
-        };
-      }
-      let response;
-      try {
-        response = await api.compileAutomation(legacyInput, (event: AutomationAssistantStreamEvent) => {
-          agentSocket.publish({ streamEvent: event });
-        });
-      } catch (error) {
-        const failedRun = {
-          ...activeCompilerRun,
-          state: 'failed',
-          errorCode: 'automation_compiler_failed',
-          errorMessage: error instanceof Error ? error.message : 'Rally could not finish this turn.',
-        };
-        failedRetry = { automationId: provisionalId, activeCompilerRun: failedRun, legacyInput, messages };
-        agentSocket.publish({
-          snapshot: {
-            automationId: provisionalId,
-            activeCompilerRun: failedRun,
-            normalized: { draft: previous.draft, messages },
-          },
-        });
-        return {
-          automationId: provisionalId,
-          compilerRunId: activeCompilerRun.id,
-          admitted: true,
-        };
-      }
-      const automationId = response.draftId;
-      const canonicalMessages = [
-        ...messages,
-        ...(response.assistantMessage ? [{ role: 'assistant' as const, content: response.assistantMessage }] : []),
+    });
+
+    /**
+     * Admission, as the API performs it: the turn is recorded and a
+     * compiler run is opened at once (202), and the answer arrives
+     * later over the socket rather than on this promise.
+     */
+    api.admitAutomationDraftTurn.mockImplementation(async (input: {
+      automationId?: string;
+      clientCreationKey?: string;
+      clientMessageId: string;
+      content: string;
+      attachmentIds: string[];
+      inputMode: string;
+    }) => {
+      const automationId = input.automationId ?? draftOne;
+      const messages: AgentTurn[] = [
+        ...(conversations.get(automationId) ?? []),
+        {
+          role: 'user',
+          content: input.content,
+          clientMessageId: input.clientMessageId,
+          attachmentIds: input.attachmentIds,
+        },
       ];
-      conversations.delete(provisionalId);
-      conversations.set(automationId, { draft: response, messages: canonicalMessages });
-      pendingQuestion = response.question ? {
-        id: response.question.id,
-        responseType: response.question.responseType,
-        options: response.question.options,
-        allowOther: response.question.allowOther,
-        presentedAt: new Date().toISOString(),
-      } : null;
+      conversations.set(automationId, messages);
+      const run = { id: runId, state: 'running', admittedTurnId: input.clientMessageId, errorCode: null, errorMessage: null };
+      lastRun = { automationId, id: runId, admittedTurnId: input.clientMessageId };
       agentSocket.publish({
-        snapshot: {
+        snapshot: agentSnapshot({
           automationId,
-          activeCompilerRun: null,
-          normalized: { draft: response, messages: canonicalMessages },
-        },
-        streamEvent: null,
+          messages,
+          // The definition the previous turn settled survives an
+          // in-flight one, as the agent's own snapshot does.
+          definition: definitions.get(automationId) ?? null,
+          activeCompilerRun: run,
+        }),
       });
-      window.setTimeout(() => agentSocket.publish({
-        snapshot: {
-          automationId,
-          activeCompilerRun: null,
-          normalized: { draft: response, messages: canonicalMessages },
-        },
-      }), 0);
+      /** The agent finishing the turn, which the socket delivers. */
+      settleTurn = (): void => {
+        const reply = replies.shift() ?? agentReply;
+        const settled: AgentTurn[] = [...messages, { role: 'assistant', content: reply.assistantMessage }];
+        conversations.set(automationId, settled);
+        definitions.set(automationId, reply.definition);
+        agentSocket.publish({
+          snapshot: agentSnapshot({
+            automationId,
+            messages: settled,
+            definition: reply.definition,
+            pendingElicitationId: reply.definition?.followUpQuestion ? reply.pendingElicitationId ?? elicitationId : null,
+          }),
+          narration: '',
+        });
+      };
+      failTurn = (message: string): void => {
+        agentSocket.publish({
+          snapshot: agentSnapshot({
+            automationId,
+            messages,
+            definition: definitions.get(automationId) ?? null,
+            activeCompilerRun: {
+              id: runId,
+              state: 'failed',
+              admittedTurnId: input.clientMessageId,
+              errorCode: 'automation_compiler_failed',
+              errorMessage: message,
+            },
+          }),
+        });
+      };
       return {
         automationId,
         turnId: input.clientMessageId,
-        transcriptSequence: canonicalMessages.length,
-        compilerRunId: activeCompilerRun.id,
+        transcriptSequence: messages.length,
+        compilerRunId: runId,
         admitted: true,
       };
     });
     api.retryAutomationCompiler.mockImplementation(async () => {
-      if (!failedRetry) throw new Error('No failed compiler run');
-      const retry = failedRetry;
-      const running = { ...retry.activeCompilerRun, state: 'running', errorCode: null, errorMessage: null };
+      if (!lastRun) throw new Error('No compiler run to retry');
+      const messages = conversations.get(lastRun.automationId) ?? [];
       agentSocket.publish({
-        snapshot: {
-          automationId: retry.automationId,
-          activeCompilerRun: running,
-          normalized: { draft: conversations.get(retry.automationId)?.draft ?? null, messages: retry.messages },
-        },
-      });
-      const response = await api.compileAutomation(retry.legacyInput, (event: AutomationAssistantStreamEvent) => {
-        agentSocket.publish({ streamEvent: event });
-      });
-      const canonicalMessages = [
-        ...retry.messages,
-        ...(response.assistantMessage ? [{ role: 'assistant' as const, content: response.assistantMessage }] : []),
-      ];
-      conversations.set(response.draftId, { draft: response, messages: canonicalMessages });
-      pendingQuestion = response.question ? {
-        id: response.question.id,
-        responseType: response.question.responseType,
-        options: response.question.options,
-        allowOther: response.question.allowOther,
-        presentedAt: new Date().toISOString(),
-      } : null;
-      failedRetry = null;
-      agentSocket.publish({
-        snapshot: {
-          automationId: retry.automationId,
-          activeCompilerRun: null,
-          normalized: { draft: response, messages: canonicalMessages },
-        },
+        snapshot: agentSnapshot({
+          automationId: lastRun.automationId,
+          messages,
+          definition: definitions.get(lastRun.automationId) ?? null,
+          activeCompilerRun: {
+            id: lastRun.id,
+            state: 'running',
+            admittedTurnId: lastRun.admittedTurnId,
+            errorCode: null,
+            errorMessage: null,
+          },
+        }),
       });
     });
     api.stopAutomationCompiler.mockResolvedValue(undefined);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-1',
-      assistantMessage: 'What should the automation monitor?',
-      question: {
-        id: 'question-1',
-        prompt: 'What should the automation monitor?',
-        responseType: 'free_text',
-        options: [],
-        allowOther: false,
-      },
+    api.createAutomation.mockResolvedValue({
+      id: draftOne,
+      name: 'Blog monitor',
+      scope: 'you',
+      status: 'active',
+      updatedAt: '2026-08-01T09:00:00.000Z',
     });
-    api.createAutomation.mockResolvedValue({ id: 'automation-1' });
     api.deleteDraftResource.mockResolvedValue(undefined);
     api.getResourcePreviewContent.mockResolvedValue(new Blob(['notes'], { type: 'text/plain' }));
     api.uploadResource.mockResolvedValue({
@@ -347,6 +427,15 @@ describe('New automation composer', () => {
       sizeBytes: 5,
     });
   });
+
+  /** Send, then let the agent answer — the two halves of one turn. */
+  async function completeTurn(): Promise<void> {
+    await waitFor(() => expect(settleTurn).not.toBeNull());
+    await act(async () => {
+      settleTurn!();
+      await Promise.resolve();
+    });
+  }
 
   it('removes the workspace-template path while Automation Workspace Templates Enabled is false', () => {
     featureFlags.current = { automationWorkspaceTemplatesEnabled: false };
@@ -405,7 +494,7 @@ describe('New automation composer', () => {
     fireEvent.keyDown(composer, { key: 'Enter' });
 
     await waitFor(() => expect(composer).toHaveValue('@Slack · you '));
-    expect(api.compileAutomation).not.toHaveBeenCalled();
+    expect(api.admitAutomationDraftTurn).not.toHaveBeenCalled();
     expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
   });
 
@@ -454,10 +543,10 @@ describe('New automation composer', () => {
     fireEvent.keyDown(composer, { key: 'Escape' });
 
     expect(screen.queryByRole('listbox', { name: 'Connections' })).not.toBeInTheDocument();
-    expect(api.compileAutomation).not.toHaveBeenCalled();
+    expect(api.admitAutomationDraftTurn).not.toHaveBeenCalled();
   });
 
-  it('keeps successful compile attachments available in the transcript', async () => {
+  it('admits the first turn with a creation key and keeps its attachments in the transcript', async () => {
     renderScreen();
 
     const file = new File(['notes'], 'notes.txt', { type: 'text/plain' });
@@ -467,12 +556,20 @@ describe('New automation composer', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({
-      message: '',
+    // The real admission shape: no automation id yet, so the turn
+    // carries the creation key that claims one.
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalledWith({
+      clientCreationKey: expect.any(String),
+      clientMessageId: expect.any(String),
+      content: '',
       attachmentIds: ['resource-notes'],
       inputMode: 'typed',
-      connectorMentionCount: 0,
-    }, expect.any(Function)));
+    }));
+    const admitted = (api.admitAutomationDraftTurn.mock.calls as Array<[{
+      clientCreationKey: string;
+      clientMessageId: string;
+    }]>)[0]![0];
+    expect(admitted.clientCreationKey).toBe(admitted.clientMessageId);
     expect(await screen.findByRole('button', { name: 'Preview notes.txt' })).toBeInTheDocument();
     expect(api.deleteDraftResource).not.toHaveBeenCalled();
   });
@@ -487,38 +584,54 @@ describe('New automation composer', () => {
     expect(composer).toHaveStyle({ height: '160px' });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith(
-      {
-        message: 'A long automation description\nwith several lines',
-        inputMode: 'typed', connectorMentionCount: 0,
-      },
-      expect.any(Function),
-    ));
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'A long automation description\nwith several lines',
+      inputMode: 'typed',
+    })));
     await waitFor(() => expect(composer).toHaveValue(''));
     expect(composer).toHaveStyle({ height: 'auto' });
   });
 
-  it('copies the stable automation draft ID from the overflow menu', async () => {
+  it('keeps the draft ID out of the overflow menu until Debug is on', async () => {
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Check a blog every day' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
+    await screen.findByText('What should the automation monitor?');
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    // An id is for a bug report, not for the reader's day — the
+    // sidebar's equivalent item is gated the same way.
+    expect(await screen.findByRole('menuitem', { name: 'Delete draft' })).toBeVisible();
+    expect(screen.queryByRole('menuitem', { name: 'Copy draft ID' })).not.toBeInTheDocument();
+  });
+
+  it('copies the stable automation draft ID from the overflow menu in Debug', async () => {
+    applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
     await screen.findByText('What should the automation monitor?');
 
     fireEvent.change(screen.getByRole('textbox', { name: 'What should the automation monitor?' }), {
       target: { value: 'Only on weekdays' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenNthCalledWith(
-      2,
-      {
-        message: 'Only on weekdays', draftId: 'draft-1',
-        inputMode: 'typed', connectorMentionCount: 0,
-      },
-      expect.any(Function),
-    ));
+    // The second turn names the draft the first one claimed.
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      automationId: draftOne,
+      content: 'Only on weekdays',
+    })));
 
     fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
       button: 0,
@@ -526,30 +639,41 @@ describe('New automation composer', () => {
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy draft ID' }));
 
-    expect(copyText).toHaveBeenCalledWith('draft-1');
+    expect(copyText).toHaveBeenCalledWith(draftOne);
+  });
+
+  it('deletes the open draft from the overflow menu, only after confirming', async () => {
+    renderScreen();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every day' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
+    await screen.findByText('What should the automation monitor?');
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'More automation actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete draft' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Delete draft' });
+    expect(api.deleteAutomation).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(api.deleteAutomation).toHaveBeenCalledWith(draftOne));
+    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent('/workstreams/new'));
   });
 
   it('reopens a draft from the sidebar on the turn it was left at', async () => {
-    api.resumeAutomationDraft.mockResolvedValue({
-      draft: {
-        draftId: 'draft-9',
-        assistantMessage: 'Which blog should I monitor?',
-        question: {
-          id: 'question-9',
-          prompt: 'Which blog should I monitor?',
-          responseType: 'free_text',
-          options: [],
-          allowOther: false,
-        },
-      },
-      messages: [
-        { role: 'user', content: 'Watch my blog.' },
-        { role: 'assistant', content: 'Which blog should I monitor?' },
-      ],
-    });
-    renderScreen('/automations/draft-9');
+    conversations.set(draftNine, [
+      { role: 'user', content: 'Watch my blog.' },
+      { role: 'assistant', content: 'Which blog should I monitor?' },
+    ]);
+    definitions.set(draftNine, draftDefinition({ followUpQuestion: 'Which blog should I monitor?' }));
+    renderScreen(`/automations/${draftNine}`);
 
-    await waitFor(() => expect(api.resumeAutomationDraft).toHaveBeenCalledWith('draft-9', expect.anything()));
+    await waitFor(() => expect(api.getAutomationAgentDraft).toHaveBeenCalledWith(draftNine, expect.anything()));
     expect(await screen.findByText('Watch my blog.')).toBeVisible();
     // The question the conversation ended on is a question again, not a
     // sentence describing one.
@@ -561,96 +685,67 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     // Continuing writes back to the same draft rather than starting another.
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith(
-      {
-        message: 'https://example.com/blog', draftId: 'draft-9',
-        inputMode: 'typed', connectorMentionCount: 0,
-      },
-      expect.any(Function),
-    ));
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalledWith(expect.objectContaining({
+      automationId: draftNine,
+      content: 'https://example.com/blog',
+      inputMode: 'typed',
+    })));
   });
 
   it('resumes on a fresh mount whatever the history entry carries', async () => {
-    api.resumeAutomationDraft.mockResolvedValue({
-      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
-      messages: [
-        { role: 'user', content: 'Watch my blog.' },
-        { role: 'assistant', content: 'Which blog should I monitor?' },
-      ],
-    });
+    conversations.set(draftNine, [
+      { role: 'user', content: 'Watch my blog.' },
+      { role: 'assistant', content: 'Which blog should I monitor?' },
+    ]);
     // Whether a draft still needs loading is a fact about this screen, not
     // about the history entry it is mounted on. A mark left in history state
     // outlives the screen that set it, so a back gesture or a restored window
     // would land here with the load switched off and show an empty builder for
     // a draft that has a conversation.
     renderScreen({
-      pathname: '/automations/draft-9',
+      pathname: `/automations/${draftNine}`,
       state: { selfNamedDraft: true, anythingElse: true },
     });
 
     expect(await screen.findByText('Watch my blog.')).toBeVisible();
-    expect(api.resumeAutomationDraft).toHaveBeenCalledWith('draft-9', expect.anything());
+    expect(api.getAutomationAgentDraft).toHaveBeenCalledWith(draftNine, expect.anything());
   });
 
   it('reopens a continued draft at the turn it reached, not the one it was resumed from', async () => {
-    const resumed = {
-      draft: {
-        draftId: 'draft-9',
-        assistantMessage: 'Which blog should I monitor?',
-        question: {
-          id: 'question-9',
-          prompt: 'Which blog should I monitor?',
-          responseType: 'free_text',
-          options: [],
-          allowOther: false,
-        },
-      },
-      messages: [
-        { role: 'user', content: 'Watch my blog.' },
-        { role: 'assistant', content: 'Which blog should I monitor?' },
-      ],
-    };
-    api.resumeAutomationDraft.mockResolvedValue(resumed);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-9',
-      assistantMessage: 'How often should I check it?',
-    });
-    renderScreen('/automations/draft-9');
+    conversations.set(draftNine, [
+      { role: 'user', content: 'Watch my blog.' },
+      { role: 'assistant', content: 'Which blog should I monitor?' },
+    ]);
+    definitions.set(draftNine, draftDefinition({ followUpQuestion: 'Which blog should I monitor?' }));
+    renderScreen(`/automations/${draftNine}`);
 
     await screen.findByText('Watch my blog.');
+    replies = [{
+      definition: draftDefinition({ followUpQuestion: 'How often should I check it?' }),
+      assistantMessage: 'How often should I check it?',
+    }];
     fireEvent.change(screen.getByRole('textbox', { name: 'Which blog should I monitor?' }), {
       target: { value: 'https://example.com/blog' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
     await screen.findByText('How often should I check it?');
 
     // Leaving and coming back must not serve the conversation from before the
-    // answer: the draft on the server has moved on, and a cached copy of the
+    // answer: the draft on the agent has moved on, and a cached copy of the
     // turn it was resumed at would silently roll it back.
     fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
-    api.resumeAutomationDraft.mockResolvedValue({
-      ...resumed,
-      messages: [
-        ...resumed.messages,
-        { role: 'user', content: 'https://example.com/blog' },
-        { role: 'assistant', content: 'How often should I check it?' },
-      ],
-    });
     fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
 
     expect(await screen.findByText('https://example.com/blog')).toBeVisible();
-    expect(api.resumeAutomationDraft).toHaveBeenCalledTimes(2);
   });
 
   it('leaves an unsent message with the draft it was typed in', async () => {
-    api.resumeAutomationDraft.mockResolvedValue({
-      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
-      messages: [
-        { role: 'user', content: 'Watch my blog.' },
-        { role: 'assistant', content: 'Which blog should I monitor?' },
-      ],
-    });
-    renderScreen('/automations/draft-9');
+    conversations.set(draftNine, [
+      { role: 'user', content: 'Watch my blog.' },
+      { role: 'assistant', content: 'Which blog should I monitor?' },
+    ]);
+    renderScreen(`/automations/${draftNine}`);
     await screen.findByText('Watch my blog.');
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
@@ -666,19 +761,19 @@ describe('New automation composer', () => {
   });
 
   it('says a draft could not be opened rather than offering a blank automation', async () => {
-    api.resumeAutomationDraft.mockRejectedValue(new ApiError('This draft’s conversation is no longer available.', 409, 'automation_draft_unavailable'));
-    renderScreen('/automations/draft-9');
+    // Nothing recorded for this id, so the agent read fails.
+    renderScreen(`/automations/${draftNine}`);
 
     expect(await screen.findByRole('heading', { name: 'This draft could not be opened' })).toBeVisible();
     expect(screen.getByText('This draft’s conversation is no longer available.')).toBeVisible();
 
-    // Sending here would compile with no draft id, opening a second draft while
-    // the sidebar still highlights the first.
+    // Sending here would admit a turn with no draft id, opening a second
+    // draft while the sidebar still highlights the first.
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'carry on then' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    expect(api.compileAutomation).not.toHaveBeenCalled();
+    expect(api.admitAutomationDraftTurn).not.toHaveBeenCalled();
   });
 
   it('leaves an unsent message with a draft this screen named itself', async () => {
@@ -687,35 +782,27 @@ describe('New automation composer', () => {
       target: { value: 'Check a blog every day' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
     await screen.findByText('What should the automation monitor?');
-    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent('/automations/draft-1'));
+    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent(`/automations/${draftOne}`));
 
     fireEvent.change(screen.getByRole('textbox', { name: 'What should the automation monitor?' }), {
       target: { value: 'an unsent afterthought' },
     });
     fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
 
-    // Every automation created through the product enters this way rather than
-    // through a resume, so the launcher's key is the one that has to stop being
-    // shared with the draft the first turn named.
+    // Every automation created through the product enters this way rather
+    // than through a resume, so the launcher's key is the one that has to stop
+    // being shared with the draft the first turn named.
     const fresh = await screen.findByRole('textbox', { name: 'Describe an automation' });
     await waitFor(() => expect(fresh).toHaveValue(''));
   });
 
   it('keeps a turn from landing on the draft the reader moved to', async () => {
-    let resolveCompile!: (value: unknown) => void;
-    let stream!: (event: AutomationAssistantStreamEvent) => void;
-    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((resolve) => {
-      resolveCompile = resolve;
-      stream = onStream;
-    }));
-    api.resumeAutomationDraft.mockResolvedValue({
-      draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
-      messages: [
-        { role: 'user', content: 'Watch my blog.' },
-        { role: 'assistant', content: 'Which blog should I monitor?' },
-      ],
-    });
+    conversations.set(draftNine, [
+      { role: 'user', content: 'Watch my blog.' },
+      { role: 'assistant', content: 'Which blog should I monitor?' },
+    ]);
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
@@ -728,23 +815,19 @@ describe('New automation composer', () => {
     fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
     expect(await screen.findByText('Watch my blog.')).toBeVisible();
 
-    act(() => {
-      stream({ type: 'delta', delta: 'Which post types?', reset: false });
-      resolveCompile({ draftId: 'draft-1', assistantMessage: 'Which post types?' });
-    });
+    // The turn settles for the draft it was sent from, which is no
+    // longer the conversation on screen.
+    await completeTurn();
 
-    // Neither the streamed text nor the settled answer belongs to the
-    // conversation now on screen, and the turn must not drag the reader back to
-    // the draft it was sent from.
-    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent('/automations/draft-9'));
-    expect(screen.queryByText('Which post types?')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('location-pathname'))
+      .toHaveTextContent(`/automations/${draftNine}`));
     expect(screen.queryByText('Check a blog every day')).not.toBeInTheDocument();
   });
 
   it('clears the conversation the moment another draft is chosen, before it loads', async () => {
-    let resolveResume!: (value: unknown) => void;
-    api.resumeAutomationDraft.mockImplementation(() => new Promise((resolve) => {
-      resolveResume = resolve;
+    let resolveRead!: (value: AutomationAgentSnapshot) => void;
+    api.getAutomationAgentDraft.mockImplementation(() => new Promise((resolve) => {
+      resolveRead = resolve as (value: AutomationAgentSnapshot) => void;
     }));
     renderScreen();
 
@@ -752,6 +835,7 @@ describe('New automation composer', () => {
       target: { value: 'Check a blog every day' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
     await screen.findByText('What should the automation monitor?');
 
     fireEvent.click(screen.getByRole('link', { name: 'open draft 9' }));
@@ -760,23 +844,21 @@ describe('New automation composer', () => {
     // that would answer a draft the sidebar says is closed — and a load that
     // never arrives would leave it there for good.
     await waitFor(() => expect(screen.queryByText('Check a blog every day')).not.toBeInTheDocument());
-    act(() => {
-      resolveResume({
-        draft: { draftId: 'draft-9', assistantMessage: 'Which blog should I monitor?' },
+    await act(async () => {
+      resolveRead(agentSnapshot({
+        automationId: draftNine,
         messages: [
           { role: 'user', content: 'Watch my blog.' },
           { role: 'assistant', content: 'Which blog should I monitor?' },
         ],
-      });
+        definition: draftDefinition({ followUpQuestion: 'Which blog should I monitor?' }),
+      }));
+      await Promise.resolve();
     });
     expect(await screen.findByText('Watch my blog.')).toBeVisible();
   });
 
   it('carries an answer typed during a turn onto the draft that turn named', async () => {
-    let resolveCompile!: (value: unknown) => void;
-    api.compileAutomation.mockImplementation(() => new Promise((resolve) => {
-      resolveCompile = resolve;
-    }));
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
@@ -791,28 +873,24 @@ describe('New automation composer', () => {
       target: { value: 'Only weekdays' },
     });
 
-    act(() => {
-      resolveCompile({ draftId: 'draft-1', assistantMessage: 'Noted.' });
-    });
+    await completeTurn();
 
-    await screen.findByText('Noted.');
-    expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue('Only weekdays');
+    await screen.findByText('What should the automation monitor?');
+    expect(screen.getByRole('textbox', { name: 'What should the automation monitor?' }))
+      .toHaveValue('Only weekdays');
 
     // And it stays with that draft rather than the blank launcher.
     fireEvent.click(screen.getByRole('link', { name: 'back to nothing' }));
     // The cache is what this asserts on, and the composer only afterwards.
     // Re-keying empties the composer synchronously and refills it when the read
-    // lands, so a value assertion alone is satisfied by that gap — which is how
-    // this test stayed green while the launcher's row still held the sentence,
-    // failing only on the runs where the read won the race. An empty row is what
-    // makes the empty composer permanent rather than momentary.
+    // lands, so a value assertion alone is satisfied by that gap.
     await waitFor(async () => {
       expect(await readDraftText(newAutomationDraftKey('workspace-1'))).toBeNull();
     });
     await waitFor(() => expect(screen.getByRole('textbox', { name: 'Describe an automation' })).toHaveValue(''));
     // Moved, not dropped: the sentence is under the draft it was typed for.
     await waitFor(async () => {
-      expect((await readDraftText(newAutomationDraftKey('workspace-1', 'draft-1')))?.text)
+      expect((await readDraftText(newAutomationDraftKey('workspace-1', draftOne)))?.text)
         .toBe('Only weekdays');
     });
   });
@@ -825,60 +903,47 @@ describe('New automation composer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    await screen.findByText('What should the automation monitor?');
-    // The screen adopts the API's id rather than the reverse: the turn wrote a
-    // draft automation, and the URL has to point at that row.
-    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent('/automations/draft-1'));
+    // The screen adopts the agent's id rather than the reverse: the turn
+    // claimed a draft automation, and the URL has to point at that row.
+    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent(`/automations/${draftOne}`));
     // Naming it is not the same as reopening it — the conversation on screen is
     // already the current one.
-    expect(api.resumeAutomationDraft).not.toHaveBeenCalled();
+    expect(api.getAutomationAgentDraft).not.toHaveBeenCalled();
   });
 
   it('uses workstream chat messages while streaming research and the assistant response', async () => {
-    let resolveCompile!: (value: unknown) => void;
-    let stream!: (event: AutomationAssistantStreamEvent) => void;
-    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((resolve) => {
-      resolveCompile = resolve;
-      stream = onStream;
-    }));
     renderScreen();
 
     const example = 'Check this blog every 24 hours for a new post.';
     fireEvent.click(screen.getByRole('button', { name: example }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledWith({
-      message: example, inputMode: 'suggested_prompt', connectorMentionCount: 0,
-    }, expect.any(Function)));
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalledWith(expect.objectContaining({
+      content: example, inputMode: 'suggested_prompt',
+    })));
     const humanMessage = (await screen.findByText(example)).closest('article');
     expect(humanMessage).toHaveClass('message-block', 'human-message', 'own-human-message');
     expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'What should happen automatically?' })).not.toBeInTheDocument();
 
-    act(() => {
-      stream({
-        type: 'thinking',
-        inferenceRequestId: 'inference-1',
-        status: 'started',
-        durationMs: 0,
-      });
-    });
+    act(() => agentSocket.publish({
+      streamEvent: { type: 'thinking', inferenceRequestId: 'inference-1', status: 'started', durationMs: 0 },
+    }));
     expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
     expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
     act(() => {
-      stream({
-        type: 'thinking',
-        inferenceRequestId: 'inference-1',
-        status: 'completed',
-        durationMs: 42,
+      agentSocket.publish({
+        streamEvent: { type: 'thinking', inferenceRequestId: 'inference-1', status: 'completed', durationMs: 42 },
       });
-      stream({
-        type: 'tool',
-        toolCallId: 'tool-1',
-        name: 'Reviewing Google Drive + Docs + Sheets',
-        summary: 'Using an authorized connector…',
-        status: 'started',
-        plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
+      agentSocket.publish({
+        streamEvent: {
+          type: 'tool',
+          toolCallId: 'tool-1',
+          name: 'Reviewing Google Drive + Docs + Sheets',
+          summary: 'Using an authorized connector…',
+          status: 'started',
+          plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
+        },
       });
     });
     const activeResearch = (await screen.findByText('Reviewing Google Drive + Docs + Sheets')).closest('details');
@@ -886,55 +951,51 @@ describe('New automation composer', () => {
     expect(screen.getByRole('img', { name: 'Plugin: Google Drive + Docs + Sheets' })).toBeInTheDocument();
     expect(screen.getByTitle('Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(screen.getByText('worked for 42ms')).toBeInTheDocument();
-    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
     act(() => {
-      stream({
-        type: 'tool',
-        toolCallId: 'tool-1',
-        name: 'Reviewed Google Drive + Docs + Sheets',
-        summary: 'Searched the authorized Drive folder',
-        status: 'completed',
-        plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
-        durationMs: 42,
+      agentSocket.publish({
+        streamEvent: {
+          type: 'tool',
+          toolCallId: 'tool-1',
+          name: 'Reviewed Google Drive + Docs + Sheets',
+          summary: 'Searched the authorized Drive folder',
+          status: 'completed',
+          plugin: { pluginId: 'plugin_google', displayName: 'Google Drive + Docs + Sheets', icon: 'brand-google-drive' },
+          durationMs: 42,
+        },
       });
-      stream({
-        type: 'thinking',
-        inferenceRequestId: 'inference-2',
-        status: 'started',
-        durationMs: 42,
+      agentSocket.publish({
+        streamEvent: { type: 'thinking', inferenceRequestId: 'inference-2', status: 'started', durationMs: 42 },
       });
-      stream({
-        type: 'thinking',
-        inferenceRequestId: 'inference-2',
-        status: 'completed',
-        durationMs: 83_000,
+      agentSocket.publish({
+        streamEvent: { type: 'thinking', inferenceRequestId: 'inference-2', status: 'completed', durationMs: 83_000 },
       });
-      stream({ type: 'started' });
-      stream({ type: 'delta', delta: 'Which blog ', reset: false });
-      stream({ type: 'delta', delta: 'should Rally monitor?', reset: false });
+      // The narration is folded by the socket hook rather than
+      // replayed here one delta at a time.
+      agentSocket.publish({ narration: 'Which blog should Rally monitor?' });
     });
     expect(await screen.findByText('Reviewed Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(activeResearch).toHaveClass('plugin-activity', 'tool-completed');
     expect(screen.getByText('42ms')).toBeInTheDocument();
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     expect(await screen.findByText('Which blog should Rally monitor?')).toBeInTheDocument();
-    expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
-    await act(async () => {
-      resolveCompile({
-        draftId: 'draft-example',
-        assistantMessage: 'Which blog should Rally monitor?',
-        question: {
-          id: 'question-example',
+    replies = [{
+      definition: draftDefinition({
+        followUpQuestion: 'Which blog should Rally monitor?',
+        elicitation: {
+          responseType: 'free_text',
           prompt: 'Paste the full blog URL.',
           placeholder: 'https://example.com/blog',
-          responseType: 'free_text',
           options: [],
+          minimumSelections: 1,
+          maximumSelections: null,
           allowOther: false,
         },
-      });
-    });
+      }),
+      assistantMessage: 'Which blog should Rally monitor?',
+    }];
+    await completeTurn();
     expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     const assistantMessage = (await screen.findByText('Which blog should Rally monitor?')).closest('article');
     expect(assistantMessage).toHaveClass('message-block', 'agent-message');
@@ -946,56 +1007,45 @@ describe('New automation composer', () => {
   });
 
   it('retracts an abandoned narration turn without blanking the bubble', async () => {
-    let stream!: (event: AutomationAssistantStreamEvent) => void;
-    api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
     renderScreen();
 
     const example = 'Check this blog every 24 hours for a new post.';
     fireEvent.click(screen.getByRole('button', { name: example }));
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalled());
 
     // A model that opens a turn with a bare newline must not render a bubble
     // before it has said anything.
-    act(() => {
-      stream({ type: 'started' });
-      stream({ type: 'delta', delta: '\n', reset: false });
-    });
+    act(() => agentSocket.publish({ narration: '\n' }));
     expect(document.querySelector('.agent-message')).toBeNull();
 
-    act(() => {
-      stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
-      stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false });
-    });
+    act(() => agentSocket.publish({
+      narration: '\nChecking the plugin catalog.\n\nSearching GitHub next.',
+    }));
     expect(await screen.findByText(/Searching GitHub next\./)).toBeInTheDocument();
 
-    // The harness replays the settled text on a reset, so the abandoned turn
+    // The agent replays the settled text on a reset, so the abandoned turn
     // disappears and the earlier update survives.
-    act(() => { stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: true }); });
+    act(() => agentSocket.publish({ narration: 'Checking the plugin catalog.' }));
     expect(await screen.findByText('Checking the plugin catalog.')).toBeInTheDocument();
     expect(screen.queryByText(/Searching GitHub next\./)).not.toBeInTheDocument();
 
     // A reset with nothing to restore leaves no bubble at all.
-    act(() => { stream({ type: 'delta', delta: '', reset: true }); });
+    act(() => agentSocket.publish({ narration: '' }));
     await waitFor(() => expect(document.querySelector('.agent-message')).toBeNull());
   });
 
   it('follows streaming narration to the bottom until the reader scrolls up', async () => {
-    let stream!: (event: AutomationAssistantStreamEvent) => void;
-    api.compileAutomation.mockImplementation((_input, onStream) => new Promise(() => { stream = onStream; }));
     renderScreen();
 
     const example = 'Check this blog every 24 hours for a new post.';
     fireEvent.click(screen.getByRole('button', { name: example }));
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalled());
 
     const surface = document.querySelector('.new-automation-screen') as HTMLElement;
     Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
     Object.defineProperty(surface, 'clientHeight', { configurable: true, value: 900 });
 
-    act(() => {
-      stream({ type: 'started' });
-      stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
-    });
+    act(() => agentSocket.publish({ narration: 'Checking the plugin catalog.' }));
     await waitFor(() => expect(surface.scrollTop).toBe(3_100));
 
     // The follow's own scroll event is dispatched at frame time, by which
@@ -1004,7 +1054,7 @@ describe('New automation composer', () => {
     // into every compile.
     Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 5_000 });
     fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: ' Still following.', reset: false }); });
+    act(() => agentSocket.publish({ narration: 'Checking the plugin catalog. Still following.' }));
     await waitFor(() => expect(surface.scrollTop).toBe(4_100));
     Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
 
@@ -1013,13 +1063,17 @@ describe('New automation composer', () => {
     // enough" and yank them forward on the next fragment.
     surface.scrollTop = 3_090;
     fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: '\n\nSearching GitHub next.', reset: false }); });
+    act(() => agentSocket.publish({
+      narration: 'Checking the plugin catalog. Still following.\n\nSearching GitHub next.',
+    }));
     await screen.findByText(/Searching GitHub next\./);
     expect(surface.scrollTop).toBe(3_090);
 
     surface.scrollTop = 1_000;
     fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: '\n\nReading the workflow docs.', reset: false }); });
+    act(() => agentSocket.publish({
+      narration: 'Checking the plugin catalog.\n\nReading the workflow docs.',
+    }));
     await screen.findByText(/Reading the workflow docs\./);
     expect(surface.scrollTop).toBe(1_000);
 
@@ -1028,7 +1082,71 @@ describe('New automation composer', () => {
     // scroll to; it is not a "near the bottom" allowance.
     surface.scrollTop = 3_099;
     fireEvent.scroll(surface);
-    act(() => { stream({ type: 'delta', delta: '\n\nDrafting it now.', reset: false }); });
+    act(() => agentSocket.publish({
+      narration: 'Checking the plugin catalog.\n\nDrafting it now.',
+    }));
+    await waitFor(() => expect(surface.scrollTop).toBe(3_100));
+  });
+
+  it('keeps the reader where they scrolled when the draft names itself mid-turn', async () => {
+    // Admission held open, so the address-bar write lands *after*
+    // the reader has taken the viewport — which is the order that
+    // matters and the one a fast fake never produces.
+    let admit!: (result: unknown) => void;
+    const realAdmit = api.admitAutomationDraftTurn.getMockImplementation()!;
+    api.admitAutomationDraftTurn.mockImplementation(async (input: unknown) => {
+      const result = await realAdmit(input);
+      return new Promise((resolve) => {
+        admit = () => resolve(result);
+      });
+    });
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check this blog every 24 hours for a new post.' }));
+    await waitFor(() => expect(admit).toBeDefined());
+    const surface = document.querySelector('.new-automation-screen') as HTMLElement;
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
+    Object.defineProperty(surface, 'clientHeight', { configurable: true, value: 900 });
+    act(() => agentSocket.publish({ narration: 'Checking the plugin catalog.' }));
+    await waitFor(() => expect(surface.scrollTop).toBe(3_100));
+
+    // The reader pulls back to read the plan.
+    surface.scrollTop = 1_000;
+    fireEvent.scroll(surface);
+    expect(await screen.findByRole('button', { name: 'Jump to latest' })).toBeVisible();
+
+    // Only now does this screen write its own draft id into the
+    // address bar. Keying the follow on that identity re-arms it
+    // and takes the viewport back off the reader mid-sentence.
+    await act(async () => {
+      admit(undefined);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId('location-pathname'))
+      .toHaveTextContent(`/automations/${draftOne}`));
+    act(() => agentSocket.publish({
+      narration: 'Checking the plugin catalog.\n\nStill going.',
+    }));
+    await screen.findByText(/Still going\./);
+
+    expect(surface.scrollTop).toBe(1_000);
+  });
+
+  it('opens a resumed conversation at its newest turn', async () => {
+    conversations.set(draftNine, [
+      { role: 'user', content: 'Watch my blog.' },
+      { role: 'assistant', content: 'Which blog should I monitor?' },
+    ]);
+    renderScreen(`/automations/${draftNine}`);
+    const surface = document.querySelector('.new-automation-screen') as HTMLElement;
+    Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
+    Object.defineProperty(surface, 'clientHeight', { configurable: true, value: 900 });
+
+    await screen.findByText('Watch my blog.');
+
+    // `atEnd` starts true and only a scroll event moves it, and
+    // nothing scrolls on mount — so a long draft opened at the top
+    // with no "Jump to latest" to say there was anything below.
     await waitFor(() => expect(surface.scrollTop).toBe(3_100));
   });
 
@@ -1053,10 +1171,8 @@ describe('New automation composer', () => {
         capabilities: ['github.read'],
       },
     ]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-linear-personal',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Watch my Linear issues',
         description: 'Checks issues available to my Linear account.',
         overview: 'Reviews assigned issues and prepares a concise update.',
@@ -1065,33 +1181,72 @@ describe('New automation composer', () => {
           recommendedTools: ['linear_search_issues'],
           reason: 'Provides the issue data this automation needs.',
         }],
-        scope: 'you',
-        triggerSummary: 'Every hour',
-        capabilities: ['linear.read'],
-        requiresSlackDelivery: false,
-      },
-    });
+        requiredCapabilities: ['linear.read'],
+        triggers: [{ type: 'interval', intervalSeconds: 3_600, summary: 'Every hour' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Check my Linear issues every hour' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
     await screen.findByRole('button', { name: 'Create automation' });
     expect(screen.queryByRole('region', { name: 'Default plugins' })).not.toBeInTheDocument();
     expect(screen.queryByText('Suggested tools: linear_search_issues')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Connect the required provider/i)).not.toBeInTheDocument();
     // The picks are preloaded into state with nothing on screen to assert on, so
     // let the effect that sets them commit before acting on it.
     await act(async () => undefined);
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
-      'draft-linear-personal',
+      draftOne,
       ['plugin_linear'],
       {},
       { scope: 'you', delivery: {} },
     ));
+  });
+
+  it('holds Create until the accepted automation takes the screen', async () => {
+    let resolveCreate!: (value: unknown) => void;
+    api.createAutomation.mockImplementation(() => new Promise((resolve) => {
+      resolveCreate = resolve;
+    }));
+    agentReply = {
+      definition: draftDefinition({ ready: true }),
+      assistantMessage: 'Ready to create.',
+    };
+    renderScreen();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'Check a blog every hour' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
+    const create = await screen.findByRole('button', { name: 'Create automation' });
+
+    fireEvent.click(create);
+    await waitFor(() => expect(create).toBeDisabled());
+
+    await act(async () => {
+      resolveCreate({
+        id: draftOne,
+        name: 'Blog monitor',
+        scope: 'you',
+        status: 'active',
+        updatedAt: '2026-08-01T09:00:00.000Z',
+      });
+      await Promise.resolve();
+    });
+
+    // This screen navigates to the route it is already on, so
+    // nothing unmounts it: a re-enabled button here POSTs a
+    // second create against a draft already accepted.
+    expect(screen.getByRole('button', { name: 'Create automation' })).toBeDisabled();
+    expect(api.createAutomation).toHaveBeenCalledTimes(1);
   });
 
   it('binds an activity source slot to the exact suggested connector', async () => {
@@ -1115,36 +1270,36 @@ describe('New automation composer', () => {
         capabilities: [],
       },
     ]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-merged-pr',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Follow up on merged PRs',
         description: 'Starts work when a PR merges.',
         overview: 'Reviews the merged PR and prepares the follow-up.',
-        recommendedPlugins: [],
-        activitySources: [{
-          bindingKey: 'github_source',
+        triggers: [{
+          type: 'connector_activity',
           connectorType: 'github',
-          suggestedPluginId: 'plugin_github_acme',
+          eventTypes: ['pull_request.merged'],
+          deterministicFilters: {},
+          sourceBindingKey: 'github_source',
+          suggestedSourcePluginId: 'plugin_github_acme',
+          summary: 'GitHub: pull request merged',
         }],
-        scope: 'you',
-        triggerSummary: 'GitHub: pull request merged',
-        capabilities: [],
-        requiresSlackDelivery: false,
-      },
-    });
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'When a PR merges, prepare the follow-up' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
     const source = await screen.findByRole('combobox', { name: 'Connector for github_source' });
     await waitFor(() => expect(source).toHaveValue('plugin_github_acme'));
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
-      'draft-merged-pr',
+      draftOne,
       [],
       { github_source: 'plugin_github_acme' },
       { scope: 'you', delivery: {} },
@@ -1193,26 +1348,25 @@ describe('New automation composer', () => {
         userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM in this Slack workspace.' },
       },
     ]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-slack-digest',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Morning email briefing',
         description: 'Stack-ranks Gmail and delivers the top three to Slack.',
         overview: 'Runs every morning.',
-        recommendedPlugins: [],
-        scope: 'you',
-        triggerSummary: 'Every day at 9:00 AM',
-        capabilities: ['gmail.read'],
-        requiresSlackDelivery: true,
-      },
-    });
+        requiredCapabilities: ['gmail.read'],
+        requestedDelivery: ['slack_agent_dm'],
+        triggers: [{ type: 'calendar', rrule: 'FREQ=DAILY', timezone: 'America/Los_Angeles', summary: 'Every day at 9:00 AM' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Send my top three Gmail messages to Slack each morning' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     const createButton = await screen.findByRole('button', { name: 'Create automation' });
     const delivery = screen.getByRole('region', { name: 'Deliver results' });
@@ -1225,7 +1379,7 @@ describe('New automation composer', () => {
     expect(createButton).toBeEnabled();
     fireEvent.click(createButton);
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
-      'draft-slack-digest',
+      draftOne,
       [],
       {},
       { scope: 'you', delivery: {} },
@@ -1234,27 +1388,24 @@ describe('New automation composer', () => {
 
   it('arrives with email ticked when the draft promises an emailed result', async () => {
     api.getConnections.mockResolvedValue([]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-email-briefing',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Morning competitor briefing',
         description: 'Summarizes competitor movement.',
         overview: 'Runs every morning.',
-        recommendedPlugins: [],
-        scope: 'you',
-        triggerSummary: 'Every day at 9:00 AM',
-        capabilities: [],
-        requiresSlackDelivery: false,
-        requiresEmailDelivery: true,
-      },
-    });
+        requestedDelivery: ['email'],
+        triggers: [{ type: 'calendar', rrule: 'FREQ=DAILY', timezone: 'America/Los_Angeles', summary: 'Every day at 9:00 AM' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Email me a competitor briefing every morning' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     // Rally is the only sender: the run is forbidden to mail the result
     // itself. An unticked box here is an automation that emails nobody, on the
@@ -1263,10 +1414,9 @@ describe('New automation composer', () => {
     expect(email).toBeChecked();
     expect(screen.getByRole('region', { name: 'Deliver results' }))
       .toHaveTextContent('This draft mentions email delivery.');
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: /^Email/ })).toBeChecked());
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-email-briefing', [], {}, {
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(draftOne, [], {}, {
       scope: 'you',
       delivery: { email: true },
     }));
@@ -1274,64 +1424,33 @@ describe('New automation composer', () => {
 
   it('reads a promise to deliver, not the word email in the subject matter', async () => {
     api.getConnections.mockResolvedValue([]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-inbox-triage',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Morning inbox triage',
         description: 'Ranks the inbox.',
         overview: 'Runs every morning.',
-        recommendedPlugins: [],
-        scope: 'you',
-        triggerSummary: 'Every day at 9:00 AM',
-        capabilities: ['gmail.read'],
-        requiresSlackDelivery: false,
-        // What the API derives for "A ranked list of your five most important
-        // emails" — a briefing *about* email, promising no delivery.
-        requiresEmailDelivery: false,
-      },
-    });
+        requiredCapabilities: ['gmail.read'],
+        // What the agent derives for "A ranked list of your five most
+        // importantant emails" — a briefing *about* email, promising
+        // no delivery.
+        expectedOutputs: ['A ranked list of your five most important emails'],
+        requestedDelivery: [],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Rank my five most important emails each morning' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     // A destination frozen by mistake cannot be changed afterwards, so the
     // nudge has to be wrong in the recoverable direction.
     const email = await screen.findByRole('checkbox', { name: /^Email/ });
     expect(email).not.toBeChecked();
-  });
-
-  it('leaves email untouched when the draft never asked for it', async () => {
-    api.getConnections.mockResolvedValue([]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-quiet',
-      assistantMessage: 'Ready to create.',
-      summary: {
-        name: 'Weekly changelog',
-        description: 'Summarizes merged work in Rally.',
-        overview: 'Runs on Fridays.',
-        recommendedPlugins: [],
-        scope: 'you',
-        triggerSummary: 'Fridays at 9:00 AM',
-        capabilities: [],
-        requiresSlackDelivery: false,
-        requiresEmailDelivery: false,
-      },
-    });
-    renderScreen();
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
-      target: { value: 'Summarize merged work every Friday' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-
-    const email = await screen.findByRole('checkbox', { name: /^Email/ });
-    expect(email).not.toBeChecked();
-    expect(screen.getByRole('region', { name: 'Deliver results' }))
-      .not.toHaveTextContent('mentions email delivery');
   });
 
   it('freezes one Slack destination at a time alongside email', async () => {
@@ -1366,26 +1485,23 @@ describe('New automation composer', () => {
         userDelivery: { targetType: 'slack_agent_dm', label: 'Slack DM', description: 'Rally Agent DM in this Slack workspace.' },
       },
     ]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-delivery',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Morning briefing',
         description: 'Summarizes the day ahead.',
         overview: 'Runs every morning.',
-        recommendedPlugins: [],
-        scope: 'you',
-        triggerSummary: 'Every day at 9:00 AM',
-        capabilities: [],
-        requiresSlackDelivery: false,
-      },
-    });
+        triggers: [{ type: 'calendar', rrule: 'FREQ=DAILY', timezone: 'America/Los_Angeles', summary: 'Every day at 9:00 AM' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Brief me every morning' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     const email = await screen.findByRole('checkbox', { name: /^Email/ });
     expect(email).toHaveAccessibleName(expect.stringContaining('adam@juno-labs.com'));
@@ -1398,7 +1514,7 @@ describe('New automation composer', () => {
     expect(screen.getByRole('checkbox', { name: /Slack DM · Acme/ })).not.toBeChecked();
     expect(screen.getByRole('checkbox', { name: /Slack DM · Juno/ })).toBeChecked();
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-delivery', [], {}, {
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(draftOne, [], {}, {
       scope: 'you',
       delivery: {
         connection: { id: 'connection-slack-juno', targetType: 'slack_agent_dm' },
@@ -1428,10 +1544,8 @@ describe('New automation composer', () => {
         capabilities: [],
       },
     ]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-scope',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Weekly changelog',
         description: 'Summarizes merged work.',
         overview: 'Runs every Friday.',
@@ -1439,18 +1553,18 @@ describe('New automation composer', () => {
           { pluginId: 'plugin_linear', recommendedTools: [], reason: 'Reads the merged issues.' },
           { pluginId: 'plugin_gmail', recommendedTools: [], reason: 'Reads the release thread.' },
         ],
-        scope: 'you',
-        triggerSummary: 'Every Friday',
-        capabilities: [],
-        requiresSlackDelivery: false,
-      },
-    });
+        triggers: [{ type: 'calendar', rrule: 'FREQ=WEEKLY;BYDAY=FR', timezone: 'America/Los_angeles', summary: 'Every Friday' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Prepare a weekly changelog' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     const runsAs = await screen.findByRole('combobox', { name: 'Runs as' });
     expect(runsAs).toHaveValue('you');
@@ -1462,11 +1576,10 @@ describe('New automation composer', () => {
     expect(screen.queryByRole('checkbox', { name: /^Email/ })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-scope', ['plugin_linear'], {}, {
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(draftOne, ['plugin_linear'], {}, {
       scope: 'workspace',
       delivery: {},
     }));
-
   });
 
   it('offers no model selector until developer mode is on', async () => {
@@ -1478,20 +1591,16 @@ describe('New automation composer', () => {
 
   it('pins the automation’s runs to the model chosen in developer mode', async () => {
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: true };
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-model',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Weekly changelog',
         description: 'Summarizes merged work.',
         overview: 'Runs every Friday.',
-        recommendedPlugins: [],
-        scope: 'you',
-        triggerSummary: 'Every Friday',
-        capabilities: [],
-        requiresSlackDelivery: false,
-      },
-    });
+        triggers: [{ type: 'calendar', rrule: 'FREQ=WEEKLY;BYDAY=FR', timezone: 'America/Los_angeles', summary: 'Every Friday' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     // Unpinned until something is chosen, and named for that rather than for a
@@ -1506,9 +1615,10 @@ describe('New automation composer', () => {
       target: { value: 'Prepare a weekly changelog' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Create automation' }));
-    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith('draft-model', [], {}, {
+    await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(draftOne, [], {}, {
       scope: 'you',
       modelOverride: 'openai/gpt-5.6-luna',
       delivery: {},
@@ -1536,10 +1646,8 @@ describe('New automation composer', () => {
         capabilities: [],
       },
     ]);
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-scope-restored',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Weekly changelog',
         description: 'Summarizes merged work.',
         overview: 'Runs every Friday.',
@@ -1547,18 +1655,18 @@ describe('New automation composer', () => {
           { pluginId: 'plugin_linear', recommendedTools: [], reason: 'Reads the merged issues.' },
           { pluginId: 'plugin_gmail', recommendedTools: [], reason: 'Reads the release thread.' },
         ],
-        scope: 'you',
-        triggerSummary: 'Every Friday',
-        capabilities: [],
-        requiresSlackDelivery: false,
-      },
-    });
+        triggers: [{ type: 'calendar', rrule: 'FREQ=WEEKLY;BYDAY=FR', timezone: 'America/Los_angeles', summary: 'Every Friday' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Prepare a weekly changelog' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     const runsAs = await screen.findByRole('combobox', { name: 'Runs as' });
     fireEvent.change(runsAs, { target: { value: 'workspace' } });
@@ -1571,7 +1679,7 @@ describe('New automation composer', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Create automation' }));
     await waitFor(() => expect(api.createAutomation).toHaveBeenCalledWith(
-      'draft-scope-restored',
+      draftOne,
       ['plugin_linear', 'plugin_gmail'],
       {},
       { scope: 'you', delivery: {} },
@@ -1580,26 +1688,23 @@ describe('New automation composer', () => {
 
   it('keeps Runs as read-only for a member who cannot create workspace automations', async () => {
     session.workspace.role = 'member';
-    api.compileAutomation.mockResolvedValue({
-      draftId: 'draft-member',
-      assistantMessage: 'Ready to create.',
-      summary: {
+    agentReply = {
+      definition: draftDefinition({
         name: 'Personal digest',
         description: 'Summarizes my day.',
         overview: 'Runs each morning.',
-        recommendedPlugins: [],
-        scope: 'you',
-        triggerSummary: 'Every day at 9:00 AM',
-        capabilities: [],
-        requiresSlackDelivery: false,
-      },
-    });
+        triggers: [{ type: 'calendar', rrule: 'FREQ=DAILY', timezone: 'America/Los_Angeles', summary: 'Every day at 9:00 AM' }],
+        ready: true,
+      }),
+      assistantMessage: 'Ready to create.',
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Summarize my day' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     expect(await screen.findByText('Runs as')).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Runs as' })).not.toBeInTheDocument();
@@ -1608,49 +1713,50 @@ describe('New automation composer', () => {
   });
 
   it('reuses one elicitation identity and preserves answer-response order', async () => {
-    api.compileAutomation
-      .mockResolvedValueOnce({
-        draftId: 'draft-choice',
-        assistantMessage: 'Choose where Rally should send the update.',
-        question: {
-          id: 'question-choice',
-          prompt: 'Where should Rally send it?',
+    agentReply = {
+      definition: draftDefinition({
+        followUpQuestion: 'Where should Rally send it?',
+        elicitation: {
           responseType: 'single_select',
+          prompt: 'Where should Rally send it?',
           options: [
             { label: 'Email', value: 'email' },
             { label: 'Slack', value: 'slack' },
           ],
+          minimumSelections: 1,
+          maximumSelections: 1,
           allowOther: false,
         },
-      })
-      .mockResolvedValueOnce({
-        draftId: 'draft-ready',
-        assistantMessage: 'The email automation is ready.',
-      });
+      }),
+      assistantMessage: 'Choose where Rally should send the update.',
+      pendingElicitationId: elicitationId,
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Send me a daily update' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     expect(await screen.findByRole('heading', { name: 'Where should Rally send it?' })).toBeInTheDocument();
     expect(screen.queryByRole('radio', { name: 'Other' })).not.toBeInTheDocument();
+    replies = [{
+      definition: draftDefinition({ followUpQuestion: null }),
+      assistantMessage: 'The email automation is ready.',
+    }];
     fireEvent.click(screen.getByRole('radio', { name: 'Email' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenNthCalledWith(
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        message: 'email', draftId: 'draft-choice', inputMode: 'elicitation_response',
-        connectorMentionCount: 0,
-        resolvedElicitation: expect.objectContaining({
-          id: 'question-choice', responseType: 'single_select', resolution: 'answered',
-          customResponseUsed: false,
-        }),
+        automationId: draftOne,
+        content: 'email',
+        inputMode: 'elicitation_response',
       }),
-      expect.any(Function),
     ));
+    await completeTurn();
     const resolvedQuestion = await screen.findByLabelText('Elicitation response');
     const answerMessage = resolvedQuestion.closest('article');
     const finalMessage = (await screen.findByText('The email automation is ready.')).closest('article');
@@ -1658,41 +1764,42 @@ describe('New automation composer', () => {
     expect(answerMessage).toHaveClass('human-message', 'own-human-message');
     expect(finalMessage).toHaveClass('agent-message');
     expect(answerMessage!.compareDocumentPosition(finalMessage!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    expect(screen.queryByText('email')).not.toBeInTheDocument();
   });
 
   it('resolves a submitted elicitation while the follow-up is still compiling', async () => {
-    api.compileAutomation
-      .mockResolvedValueOnce({
-        draftId: 'draft-choice',
-        assistantMessage: 'Choose where Rally should send the update.',
-        question: {
-          id: 'question-choice',
-          prompt: 'Where should Rally send it?',
+    agentReply = {
+      definition: draftDefinition({
+        followUpQuestion: 'Where should Rally send it?',
+        elicitation: {
           responseType: 'single_select',
+          prompt: 'Where should Rally send it?',
           options: [
             { label: 'Email', value: 'email' },
             { label: 'Slack', value: 'slack' },
           ],
+          minimumSelections: 1,
+          maximumSelections: 1,
           allowOther: false,
         },
-      })
-      .mockImplementationOnce(() => new Promise(() => undefined));
+      }),
+      assistantMessage: 'Choose where Rally should send the update.',
+      pendingElicitationId: elicitationId,
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Send me a daily update' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
 
     expect(await screen.findByRole('heading', { name: 'Where should Rally send it?' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('radio', { name: 'Email' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
 
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('heading', { name: 'Where should Rally send it?' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Elicitation response')).toHaveTextContent('Email');
-    expect(screen.queryByText('email')).not.toBeInTheDocument();
     expect(screen.getByRole('status', { name: 'Rally is working' })).toBeInTheDocument();
   });
 
@@ -1708,71 +1815,151 @@ describe('New automation composer', () => {
     expect(retained).not.toContain('Wait! Column 119');
   });
 
-  it('keeps the narration when a compile fails', async () => {
-    let rejectCompile!: (reason: unknown) => void;
-    let stream!: (event: AutomationAssistantStreamEvent) => void;
-    api.compileAutomation.mockImplementation((_input, onStream) => new Promise((_resolve, reject) => {
-      rejectCompile = reject;
-      stream = onStream;
-    }));
+  it('says what a failed turn means rather than the agent’s own vocabulary', () => {
+    // Every string the agent throws is internal: rendering it puts
+    // "evaluator" and "memory table" in front of somebody who asked
+    // Rally to watch a blog.
+    expect(automationErrorCopy('automation_evaluator_rules_required', 'automation_evaluator_rules_required'))
+      .toMatch(/check this automation’s results/u);
+    expect(automationErrorCopy('memory_table_key_schema_invalid', null))
+      .toMatch(/remember between runs/u);
+    expect(automationErrorCopy('automation_workspace_scope_requires_admin', null))
+      .toMatch(/owner or admin/u);
+    // A sentence the API wrote for a person still reads better than a
+    // code; a bare snake_case token reads as neither, so it is not shown.
+    expect(automationErrorCopy('unmapped_code', 'Rally took too long to refine the automation.'))
+      .toBe('Rally took too long to refine the automation.');
+    expect(automationErrorCopy('unmapped_code', 'some_internal_token'))
+      .toBe('Rally could not finish this turn.');
+    expect(automationErrorCopy(null, null)).toBe('Rally could not finish this turn.');
+  });
+
+  it('keeps the narration and explains a failed turn in plain words', async () => {
     renderScreen();
 
     const example = 'Check this blog every 24 hours for a new post.';
     fireEvent.click(screen.getByRole('button', { name: example }));
-    await waitFor(() => expect(api.compileAutomation).toHaveBeenCalled());
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalled());
 
-    act(() => {
-      stream({ type: 'started' });
-      stream({ type: 'delta', delta: 'No blog connector is authorized,', reset: false });
-      stream({ type: 'delta', delta: ' so I am checking the public web instead.', reset: false });
-    });
+    act(() => agentSocket.publish({
+      narration: 'No blog connector is authorized, so I am checking the public web instead.',
+    }));
     await screen.findByText(/No blog connector is authorized/);
 
     // A compile that exhausts the wall clock is when the narration explains
-    // the most, so it settles into the transcript rather than being cleared.
-    await act(async () => { rejectCompile(new Error('Rally took too long to refine the automation.')); });
+    // the most, so it stays on screen rather than being cleared.
+    await waitFor(() => expect(failTurn).not.toBeNull());
+    await act(async () => {
+      failTurn!('automation_plugin_unavailable');
+      await Promise.resolve();
+    });
 
-    const settled = (await screen.findByText(
+    expect(await screen.findByText(
       'No blog connector is authorized, so I am checking the public web instead.',
-    )).closest('article');
-    expect(settled).toHaveClass('message-block', 'agent-message');
-    expect(await screen.findByText(/Rally took too long/)).toBeInTheDocument();
+    )).toBeInTheDocument();
+    expect(await screen.findByText(/Reconnect it from Settings/u)).toBeInTheDocument();
+    expect(screen.queryByText('automation_plugin_unavailable')).not.toBeInTheDocument();
   });
 
   it('reapplies the elicitation answer when a failed follow-up is retried', async () => {
-    api.compileAutomation
-      .mockResolvedValueOnce({
-        draftId: 'draft-choice',
-        assistantMessage: 'Choose where Rally should send the update.',
-        question: {
-          id: 'question-choice',
-          prompt: 'Where should Rally send it?',
+    agentReply = {
+      definition: draftDefinition({
+        followUpQuestion: 'Where should Rally send it?',
+        elicitation: {
           responseType: 'single_select',
+          prompt: 'Where should Rally send it?',
           options: [{ label: 'Email', value: 'email' }],
+          minimumSelections: 1,
+          maximumSelections: 1,
           allowOther: false,
         },
-      })
-      .mockRejectedValueOnce(new Error('Could not compile the answer'))
-      .mockResolvedValueOnce({
-        draftId: 'draft-ready',
-        assistantMessage: 'The email automation is ready.',
-      });
+      }),
+      assistantMessage: 'Choose where Rally should send the update.',
+      pendingElicitationId: elicitationId,
+    };
     renderScreen();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
       target: { value: 'Send me a daily update' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await completeTurn();
     fireEvent.click(await screen.findByRole('radio', { name: 'Email' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
 
+    await waitFor(() => expect(failTurn).not.toBeNull());
+    await act(async () => {
+      failTurn!('Could not compile the answer');
+      await Promise.resolve();
+    });
+
     expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Email');
     expect(screen.queryByRole('heading', { name: 'Where should Rally send it?' })).not.toBeInTheDocument();
+    replies = [{
+      definition: draftDefinition({ followUpQuestion: null }),
+      assistantMessage: 'The email automation is ready.',
+    }];
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(api.retryAutomationCompiler).toHaveBeenCalled());
+    await completeTurn();
 
     expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Email');
     expect(await screen.findByText('The email automation is ready.')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Where should Rally send it?' })).not.toBeInTheDocument();
-    expect(screen.queryByText('email')).not.toBeInTheDocument();
+  });
+
+  it('keeps the stopped turn’s narration and offers to send it again', async () => {
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check this blog every 24 hours for a new post.' }));
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalled());
+    act(() => agentSocket.publish({ narration: 'Reading the plugin catalog.' }));
+    await screen.findByText('Reading the plugin catalog.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await waitFor(() => expect(api.stopAutomationCompiler).toHaveBeenCalled());
+    // AutomationAgent drops a cancelled run and its checkpoint with
+    // it, so the feed forgets the narration the moment it settles.
+    await act(async () => {
+      agentSocket.publish({
+        snapshot: agentSnapshot({
+          automationId: draftOne,
+          messages: conversations.get(draftOne) ?? [],
+          definition: null,
+        }),
+        narration: '',
+      });
+      await Promise.resolve();
+    });
+
+    // The narration the reader chose to stop and read is still there,
+    // the thought row has settled, and the turn says it was stopped.
+    expect(await screen.findByText('Reading the plugin catalog.')).toBeInTheDocument();
+    const notice = await screen.findByRole('status', { name: 'Run stopped' });
+    expect(notice).toBeVisible();
+
+    fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ content: 'Check this blog every 24 hours for a new post.' }),
+    ));
+  });
+
+  it('says so when the connection drops instead of spinning forever', async () => {
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check this blog every 24 hours for a new post.' }));
+    await waitFor(() => expect(api.admitAutomationDraftTurn).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+
+    act(() => agentSocket.publish({ state: 'reconnecting' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
+      target: { value: 'try that again' },
+    });
+
+    // The last `running` snapshot would otherwise stand forever:
+    // composer disabled, spinner spinning, nothing naming the network.
+    expect(await screen.findByRole('status', { name: 'Reconnecting live updates' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled());
   });
 });

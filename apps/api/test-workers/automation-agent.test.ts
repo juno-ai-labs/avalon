@@ -9,7 +9,10 @@ import {
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AutomationAgent } from "../src/durable-objects/automation-agent";
+import { materializeAutomationMemoryDefinitions } from "../src/durable-objects/automation-agent-memory";
 import { automationAgentName } from "../src/durable-objects/names";
+import type { Env } from "../src/env";
+import { AutomationAgentService } from "../src/services/automation-agent-service";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000b1");
 const AUTHOR_ID = asUserId("00000000-0000-7000-8000-0000000000b2");
@@ -309,6 +312,61 @@ describe("AutomationAgent", () => {
         operation: "search",
         args: { query: "release" },
       })).rejects.toThrow("automation_memory_authority_fenced");
+    });
+  });
+
+  it("answers a refusal from a real stub as the API's own error, not a 500", async () => {
+    // Against a real Durable Object stub, deliberately. The mapping used to be
+    // a `Proxy` around the stub, which every plain-object double in the tree
+    // accepted and workerd did not: the trap handed the stub's own method the
+    // proxy as its receiver, and an RPC's return value is a pipelining thenable
+    // rather than a native `Promise`, so the branch attaching the mapping never
+    // ran. Only a real stub can tell those apart.
+    const service = new AutomationAgentService(env as unknown as Env, {
+      sessionId: "session-1",
+      userId: AUTHOR_ID,
+      workspaceId: WORKSPACE_ID,
+      region: "global",
+      role: "member",
+    });
+
+    // Nobody has opened this automation, so the object has no identity and
+    // refuses with `automation_identity_missing` — a 404, not a server fault.
+    await expect(service.detail(AUTOMATION_ID)).rejects.toMatchObject({
+      status: 404,
+      code: "automation_identity_missing",
+    });
+  });
+
+  it("keeps a memory table's identity when a later revision adds one ahead of it", async () => {
+    const table = (name: string) => ({
+      name,
+      description: `Rows about ${name}.`,
+      usageInstructions: `Look up ${name} by key.`,
+      columns: [{ name: "key", description: "The natural key.", type: "string", required: true, searchable: false }],
+      keyColumns: ["key"],
+    });
+    await runInDurableObject(automationStub(), async (_instance: AutomationAgent, state) => {
+      const materialize = (definitions: unknown): void =>
+        materializeAutomationMemoryDefinitions(state.storage, AUTOMATION_ID, definitions, 1_800_000_000_000);
+
+      materialize([table("Releases")]);
+      const before = state.storage.sql.exec<{ table_id: string; name: string }>(
+        `SELECT table_id, name FROM automation_memory_tables`,
+      ).toArray();
+
+      // The compiler is free to emit the set in any order, and a later
+      // revision that puts a new table first used to be handed the id the
+      // surviving table already holds.
+      materialize([table("Incidents"), table("Releases")]);
+
+      const after = state.storage.sql.exec<{ table_id: string; name: string }>(
+        `SELECT table_id, name FROM automation_memory_tables ORDER BY name`,
+      ).toArray();
+      expect(after.map((row) => row.name)).toEqual(["Incidents", "Releases"]);
+      expect(new Set(after.map((row) => row.table_id)).size).toBe(2);
+      expect(after.find((row) => row.name === "Releases")?.table_id)
+        .toBe(before[0]?.table_id);
     });
   });
 });

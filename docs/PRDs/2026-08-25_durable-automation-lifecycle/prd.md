@@ -1565,6 +1565,25 @@ AutomationAgent remains durable and returnable from its first admitted turn.
 
 ## Decision log
 
+- **2026-08-28 — Ship goal 10 as a shared schema only, and cut the rest of the
+  extraction.** The module that shipped is `schema-v1.ts`,
+  `canonical-payload-store.ts`, and `participant-transcript-store.ts` — not the
+  seven files under [Shared SQLite module](#shared-sqlite-module). The Bind-loop
+  ledger, activity store, snapshot store, and kernel were not extracted;
+  `workstream-transcript-storage.ts` keeps its own implementation of every
+  richer read and write over the same tables. AutomationAgent installs the
+  `bind_loop_*` tables and never writes them, so the second half of goal 10 —
+  the draft compiler's exact Bind state made durable — did not ship: an evicted
+  compiler run re-enters the model from the stored conversation, with staged
+  submissions and tool receipts making the re-entry safe. Extracting the
+  work-stream transcript's reads, or building a second durable Bind host, inside
+  an irreversible authority cutover was rejected as risk taken for symmetry no
+  product behavior needed. Picking it back up requires moving the work-stream
+  host's reads onto the shared module without changing their behavior, as a
+  change of its own; the durable consequence is recorded in
+  [`ordered-transcript-sqlite.md`](../../ordered-transcript-sqlite.md) and
+  [`automation-lifecycle.md`](../../automation-lifecycle.md).
+
 - **2026-08-28 — Bootstrap fresh WorkspaceDOs on the current schema while
   receipt-gating cleanup of historical objects.** The pre-deploy inventory
   materializes every existing workspace on the immutable historical ledger.

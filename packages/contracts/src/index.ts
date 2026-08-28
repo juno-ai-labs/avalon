@@ -1370,6 +1370,23 @@ export const AutomationDraftStateSchema = z.object({
   draft: AutomationDraftSchema
 });
 
+/**
+ * Why an automation needs a person to look at it, when its status alone cannot
+ * say. `unsupported_trigger` is the load-bearing one: the automation's trigger
+ * has no equivalent in the runtime that replaced the one it was built on, so it
+ * will not start on its own again.
+ *
+ * The wire carries the reason and not a sentence. The words a person reads are
+ * the client's — that keeps the copy rewritable without reprojecting every
+ * automation that already carries a reason, and keeps a server-side string that
+ * was written for an operator out of a product surface.
+ */
+export const AutomationAttentionReasonSchema = z.enum([
+  "unsupported_trigger",
+  "legacy_runtime_error",
+  "run_projection_integrity_conflict",
+]);
+
 export const AutomationSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
@@ -1377,6 +1394,8 @@ export const AutomationSummarySchema = z.object({
   emailAddress: z.string().email().nullable().default(null),
   scope: ScopeSchema,
   status: z.enum(["draft", "active", "paused", "error"]),
+  /** Null for every automation nothing is wrong with, which is nearly all. */
+  attention: AutomationAttentionReasonSchema.nullable().default(null),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
   /** Last time the subscription itself changed. It is the only activity a draft
@@ -3235,6 +3254,7 @@ export type AutomationCompilerMessage = z.infer<typeof AutomationCompilerMessage
 export type AutomationDraftState = z.infer<typeof AutomationDraftStateSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
+export type AutomationAttentionReason = z.infer<typeof AutomationAttentionReasonSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
 export type AutomationTemplateUpdate = z.infer<typeof AutomationTemplateUpdateSchema>;
 export type ActivitySourcePluginIds = z.infer<typeof ActivitySourcePluginIdsSchema>;

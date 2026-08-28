@@ -84,8 +84,15 @@ function evaluateLeaf(
         case "has_all": return desired.every((value) => actual.includes(value));
         case "has_none": return desired.every((value) => !actual.includes(value));
       }
+      return false;
     }
   }
+  // Every case above returns, so this is only reachable if a stored rule names
+  // an operator this build does not know — a rule written by a later
+  // deployment and replayed here. Falling out of the switch would return
+  // `undefined`, which the callers' `some`/`every` happen to coerce to false;
+  // saying it outright is what keeps that from depending on the caller.
+  return false;
 }
 
 function isStringArray(value: ExternalEventContextValue): value is readonly string[] {

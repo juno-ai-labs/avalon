@@ -417,15 +417,26 @@ export function materializeAutomationMemoryDefinitions(
 ): void {
   const parsed = z.array(AutomationMemoryTableSchema).parse(definitions ?? []);
   const names = new Set<string>();
-  parsed.forEach((definition, tableIndex) => {
-    const normalized = definition.name.toLocaleLowerCase();
+  for (const definition of parsed) {
+    // `toLowerCase`, not `toLocaleLowerCase`: this string decides a stored
+    // identifier, and the locale-aware form maps `I` to a dotless `ı` under a
+    // Turkish locale, so the same definition could name two different tables.
+    const normalized = definition.name.toLowerCase();
     if (names.has(normalized)) throw new Error("automation_memory_table_name_duplicate");
     names.add(normalized);
     const existing = storage.sql.exec<{ table_id: string }>(
       `SELECT table_id FROM automation_memory_tables WHERE name = ? COLLATE NOCASE`, definition.name,
     ).toArray()[0];
-    if (existing) return;
-    const tableId = `${automationId}:table:${tableIndex}`;
+    if (existing) continue;
+    // Derived from the table's name, never from its position in the array.
+    // The name is what identity already means here — it is what the lookup
+    // above dedupes on, and what a later revision is matched by — while the
+    // position is whatever order the compiler happened to emit. A revision
+    // that adds a table ahead of an existing one shifts every index after it,
+    // so a position-derived id would be handed the id of a table that is still
+    // there: a primary-key collision that fails the acceptance of a perfectly
+    // legitimate edit, and only for automations that already had memory.
+    const tableId = `${automationId}:table:${encodeURIComponent(normalized)}`;
     const columns = definition.columns.map((column, columnIndex) => ({
       ...column,
       columnId: `${tableId}:column:${columnIndex}`,
@@ -452,7 +463,7 @@ export function materializeAutomationMemoryDefinitions(
       column.columnId, tableId, column.name, column.description, column.type,
       column.required ? 1 : 0, column.searchable ? 1 : 0, position,
     ));
-  });
+  }
 }
 
 export function importLegacyAutomationMemory(
