@@ -412,9 +412,9 @@ jobs:
           cp "$config" "$RUNNER_TEMP/release.config.json"
 
           # Committed from a separate worktree so this job's checkout is never
-          # moved off the release commit. Switching the main working tree to
-          # origin/main would leave the site deployed from newer sources than
-          # the dependencies installed for this release.
+          # moved off the release commit it built, tagged, and recorded as the
+          # watermark. The site deploy below also works from a worktree of
+          # main's tip, with its own install, rather than by moving this one.
           sync="$RUNNER_TEMP/main-sync"
           rm -rf "$sync"
           cleanup() { git -C "$GITHUB_WORKSPACE" worktree remove --force "$sync" 2>/dev/null || true; }
@@ -451,9 +451,10 @@ jobs:
           echo "Could not record the release config on main after 3 attempts" >&2
           exit 1
 
-      - name: Deploy the landing site with the verified release
-        run: pnpm --filter @rally/site run deploy
-
+      # From here the run executes code from main's tip — commits this job
+      # never built — so the signing identity is torn down first rather than
+      # at the end of the job. if: always() keeps it running on every failure
+      # path above too.
       - name: Remove the temporary signing keychain
         if: always()
         shell: bash
@@ -461,3 +462,56 @@ jobs:
           if [ -n "${RALLY_SIGNING_KEYCHAIN:-}" ]; then
             security delete-keychain "$RALLY_SIGNING_KEYCHAIN" || true
           fi
+
+      # The site deploys from the tip of main, not from this job's checkout —
+      # the release commit, by now up to a build's length stale. On 2026-08-27
+      # that staleness reverted a site fix in production for twenty-five
+      # minutes: the fix merged and deployed through deploy-site.yml while the
+      # 1.182.0 build ran, and this step then rebuilt the site from its
+      # hour-old checkout. Every push-triggered deploy-site.yml run deploys a
+      # commit on main, so main's freshly fetched tip is never older than one
+      # of those; a manual dispatch of that workflow on another branch sits
+      # outside this guarantee. The step stays after the record step above so
+      # the tip carries the release config this run just committed — deploying
+      # earlier would advertise the previous version.
+      #
+      # A fresh worktree, because this checkout must stay on the tagged
+      # release commit; its own frozen install, because the tip may have moved
+      # the lockfile; filtered to the site's dependency closure — a
+      # two-project scope instead of the whole workspace, which keeps
+      # Electron and the desktop toolchain out of a step that runs after the
+      # release is already live, though wrangler and vite are site
+      # dependencies, so workerd and esbuild still install here and run their
+      # allowed build scripts; and --fail-if-no-match, because a filter that
+      # matches nothing exits 0 and a green run would deploy no site at all.
+      # The site's typecheck and tests cover the one change no other workflow
+      # verifies: the record commit above is pushed with GITHUB_TOKEN, whose
+      # pushes start no runs, so the site tests here are the only check that
+      # asserts on the committed release config before it ships. Deliberately
+      # no workspace-wide lint or typecheck: an unrelated package must not
+      # fail a live release's final step. The live-channel guard is the same
+      # last-line check deploy-site.yml runs, kept so both deploy paths
+      # verify the advertised version the same way; it fails open on network
+      # errors.
+      #
+      # Why the deploy stays inside this run at all, and the alternatives
+      # rejected, are recorded in docs/runbook.md under "How the site learns
+      # the desktop version".
+      - name: Deploy the landing site from the tip of main
+        shell: bash
+        run: |
+          set -euo pipefail
+          site="$RUNNER_TEMP/site-deploy"
+          cleanup() {
+            git -C "$GITHUB_WORKSPACE" worktree remove --force "$site" 2>/dev/null || true
+            rm -rf "$site"
+          }
+          trap cleanup EXIT
+          cleanup
+          git fetch origin main
+          git worktree add --detach "$site" origin/main
+          pnpm -C "$site" install --frozen-lockfile --filter "@rally/site..." --fail-if-no-match
+          pnpm -C "$site" --filter @rally/site --fail-if-no-match typecheck
+          pnpm -C "$site" --filter @rally/site --fail-if-no-match test
+          node "$site/scripts/check-site-release-config.mjs"
+          pnpm -C "$site" --filter @rally/site --fail-if-no-match run deploy
