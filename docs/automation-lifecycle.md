@@ -684,6 +684,45 @@ is what the old code effectively did and what let the two statements disagree.
 **Consequences:** The filter and the plugin lookup are one row now; a future
 column the search needs must come off the same join rather than a second query.
 
+#### The wire carries an attention reason; the client owns the words
+
+**What changed:** `AutomationSummary` and `AutomationDetail` carry
+`attention`, a nullable enum of `unsupported_trigger`,
+`legacy_runtime_error`, and `run_projection_integrity_conflict`.
+`applyAutomationProjection` parses the incoming `attentionCode` against that
+same enum rather than accepting any string, so a code no screen can render is
+refused where it is written rather than stored and later ignored. Both
+directory readers project it beside `status`, `detailUnchecked` returns the
+object's own copy, and every AutomationAgent projection now carries the
+object's current attention code instead of a hard-coded `null`. The sentences
+a person reads live in the desktop client.
+
+**Why:** The cutover already computed both of the first two codes — a legacy
+trigger with no equivalent in the new runtime, and a subscription that was
+already failing — and nothing carried them past WorkspaceDO. Worse, the
+cutover *pauses* an automation whenever it sets one, and both readers rank
+`paused` ahead of `attention_code`, so the entire account a person got of an
+automation that will never run again was the word "Paused". An upgrade that
+silently strands somebody's automation and then declines to say so is the
+failure this facet exists to close.
+
+**Considered and rejected:** Sending the sentence from the server, which would
+have frozen the copy into every row already projected and let text written for
+whoever was debugging the cutover reach a product surface — the stored
+`automation_state.attention_message` is exactly that, operator-voiced, and is
+now read by nothing. Keeping the write boundary at `z.string().nullable()`,
+which is what let a stale fixture project `"paused"` — a lifecycle state, not
+a reason — without complaint.
+
+**Consequences:** A new reason is a contract change and a client change
+together; adding one server-side alone renders nothing. `status` semantics are
+untouched, so an automation with no attention code is unaffected. Two gaps
+remain and are deliberate: `run_projection_integrity_conflict` is set on the
+object and shown in the detail read but enqueues no projection, so the sidebar
+learns of it only at the next unrelated projection; and whether `error` should
+outrank `paused` for a carried-over automation is a product decision nobody
+has taken.
+
 #### Scope cut: the shared substrate is the schema, not the Bind state
 
 **What changed:** Only the frozen schema array, the canonical JSON and fact
