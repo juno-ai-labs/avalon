@@ -116,6 +116,17 @@ describe("citationFootnotes", () => {
     expect(definitions.size).toBe(0);
   });
 
+  it("qualifies a definition whose one link carries a title, as the renderer does", () => {
+    // remark-gfm reads this as a link and the desktop lifts it into a pill, so
+    // a grammar that refused it would disagree with the surface it describes.
+    const { citations } = citationFootnotes('X.[^1]\n\n[^1]: [Q3 deck](resource://abc "Q3 board deck")\n');
+    expect(citations.get("1")).toEqual({
+      label: "Q3 deck",
+      target: { scheme: "resource", resourceId: "abc" },
+      text: "",
+    });
+  });
+
   it("reads nothing out of a fenced block, where footnote syntax is sample text", () => {
     const { citations } = citationFootnotes([
       "```md",
@@ -240,6 +251,30 @@ describe("rewriteCitationsAsPlainText", () => {
   it("leaves an inline code span showing the syntax alone", () => {
     expect(rewriteCitationsAsPlainText("Write `[Title](resource://id)` to cite."))
       .toBe("Write `[Title](resource://id)` to cite.");
+  });
+
+  it("counts no reference inside a code span, which invented a source list", () => {
+    // A message explaining the syntax cites nothing, and the reader of the
+    // delivered copy must not be handed sources it never claimed.
+    expect(rewriteCitationsAsPlainText("Write `[^1]` to cite.\n\n[^1]: [Q3 deck](resource://abc)\n"))
+      .toBe("Write `[^1]` to cite.\n");
+  });
+
+  it("numbers a real footnote past a code span as the transcript numbers it", () => {
+    // The delivered copy and the transcript are read side by side. A marker
+    // inside a span is sample text to GFM, so it takes no number there either.
+    expect(rewriteCitationsAsPlainText("Sample `[^b]`, then real.[^a]\n\n[^a]: [Deck](resource://a)\n[^b]: [Memo](resource://b)\n"))
+      .toBe("Sample `[^b]`, then real.[1]\n\n**Sources**\n\n1. Deck");
+  });
+
+  it("reduces a link whose target carries a title, which reached the inbox raw", () => {
+    expect(rewriteCitationsAsPlainText('See [the deck](resource://abc "Q3 board deck").'))
+      .toBe("See the deck.");
+  });
+
+  it("reduces an angle-bracketed target and a label carrying brackets", () => {
+    expect(rewriteCitationsAsPlainText("See [the deck](<resource://abc>).")).toBe("See the deck.");
+    expect(rewriteCitationsAsPlainText("See [Q3 [draft] deck](resource://abc).")).toBe("See Q3 [draft] deck.");
   });
 });
 
