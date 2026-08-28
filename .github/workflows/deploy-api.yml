@@ -48,6 +48,7 @@ on:
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
+      - "scripts/cutover-automation-agents.mjs"
   workflow_dispatch:
     inputs:
       ref:
@@ -145,6 +146,14 @@ jobs:
 
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+
+      # The new build distinguishes a truly fresh WorkspaceDO from an older
+      # object by the presence of its object-local migration ledger. Wake every
+      # stored workspace through the still-running regional Workers before
+      # replacing either one, and refuse a D1/object inventory mismatch.
+      - name: Establish historical WorkspaceDO migration ledgers on the old build
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: node scripts/cutover-automation-agents.mjs --preflight
 
       # The symbolicator image compiles `minidump-stackwalk` from source, which
       # costs about three and a half minutes and depends on nothing in this
@@ -382,6 +391,14 @@ jobs:
           if [ "$DEPLOY_EU" = "true" ]; then regions="$regions eu"; fi
           if [ "$DEPLOY_GLOBAL" = "true" ]; then regions="$regions global"; fi
           node scripts/check-regional-health.mjs $regions
+
+      - name: Cut over workspace automations to AutomationAgent
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: node scripts/cutover-automation-agents.mjs --apply
+
+      - name: Verify regional health after automation cutover
+        if: env.DEPLOY_EU == 'true' && env.DEPLOY_GLOBAL == 'true'
+        run: node scripts/check-regional-health.mjs eu global
 
       - name: Record the remaining manual release gates
         if: success()

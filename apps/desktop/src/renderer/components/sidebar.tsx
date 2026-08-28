@@ -320,16 +320,11 @@ function CopyWorkstreamLinkItem({ workstreamId }: { workstreamId: string }): Rea
   );
 }
 
-/** The draft the builder currently has open, or null when it is writing a new
- * one. Every draft row points at the same path and differs only in the query,
- * which NavLink does not consider — left to itself it would light up every
- * draft, and the New automation entry beside them, the moment the builder
- * opened. */
+/** The durable automation route currently open, excluding the new route. */
 function useOpenDraftId(): string | null {
   const location = useLocation();
-  return location.pathname === '/automations/new'
-    ? new URLSearchParams(location.search).get('draft')
-    : null;
+  const id = /^\/automations\/([^/]+)$/u.exec(location.pathname)?.[1] ?? null;
+  return id === 'new' ? null : id;
 }
 
 function AutomationRow({
@@ -353,13 +348,12 @@ function AutomationRow({
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <div className="sidebar-context-target">
-          {/* A draft has no overview to open — no runs, no next run, nothing it
-              has done. What it has is the conversation that was left unfinished,
-              so its row goes back to the builder to carry on writing it. */}
+          {/* AutomationScreen dispatches the same durable route to either the
+              draft conversation or accepted home from lifecycle state. */}
           <NavLink
             className={({ isActive }) => clsx('sidebar-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
-            to={isDraft ? `/automations/new?draft=${encodeURIComponent(automation.id)}` : `/automations/${automation.id}`}
+            to={`/automations/${automation.id}`}
           >
             <span className="sidebar-row-icon" aria-hidden="true">
               {automation.status === 'paused' ? <CirclePause size={13} /> : <span className={clsx('mini-state', automation.status)} />}

@@ -75,15 +75,14 @@ export function backgroundRealtimeWorkstreamIds(
  * Whether the screen at this route is showing the named automation, and would
  * therefore be stranded once it stops being served.
  *
- * There are two such screens, not one. An automation that runs is read on its
- * overview; a draft is read in the builder, which the sidebar reaches through a
- * query rather than a path. Missing the second leaves the builder on a
+ * There are two lifecycle views behind this route: an accepted automation is
+ * read on its overview and a draft in the builder. Missing the second leaves the builder on a
  * conversation the API will not serve again — and with a Create button that
  * would insert a second automation instead of promoting this one.
  */
 export function showsAutomation(pathname: string, search: string, automationId: string): boolean {
-  if (pathname === `/automations/${automationId}`) return true;
-  return pathname === '/automations/new' && new URLSearchParams(search).get('draft') === automationId;
+  void search;
+  return pathname === `/automations/${automationId}`;
 }
 
 export function openWorkstreamId(pathname: string): string | null {
@@ -304,9 +303,9 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         automationWorkspaceTemplatesAvailable={featureFlags.data?.automationWorkspaceTemplatesEnabled === true}
         onArchiveDraftAutomation={async (automation) => {
           if (!api) return;
-          await api.archiveDraftAutomation(automation.id);
-          // No list invalidation: archiving writes `automation_subscriptions`,
-          // and WorkspaceDO pushes the rewritten list off the back of that write.
+          await api.deleteAutomation(automation.id);
+          // No list invalidation: AutomationAgent projects its tombstone and
+          // WorkspaceDO pushes the rewritten list off the back of that write.
           leaveAutomationScreen(automation.id);
         }}
         onArchiveNote={async (note) => {

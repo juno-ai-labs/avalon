@@ -7,6 +7,11 @@ per independently addressable model context, and one `BlockDashboardAgent`
 per stable configured HyperSight block. The main conversation is external
 substream `0`.
 
+AutomationAgent is a sibling product authority rather than another node in this
+work-stream hierarchy. It reuses the ordered transcript and Bind capability
+modules while draft, and provisions private SubstreamAgent-backed work streams
+for accepted runs. See [`automation-lifecycle.md`](automation-lifecycle.md).
+
 `BlockDashboard` is the internal architecture and protocol name for the
 user-facing **HyperSight** feature. Durable Object classes, bindings, object
 names, SQL tables, RPC contracts, socket audiences, and `/block-dashboard`
@@ -1410,6 +1415,19 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-28 — Generated automation runs become hidden child work streams
+
+**What changed:** AutomationAgent provisions each occurrence as a private
+generated work stream with immutable origin context. Workspace directories
+exclude it from the global sidebar; the parent exposes only content-free paged
+history, and opening the child rechecks its own current audience.
+
+**Why:** Runs need the proven work-stream execution loop, but most people care
+about the automation rather than implementation work streams in navigation.
+
+**Consequences:** SubstreamAgent remains the child execution authority;
+AutomationAgent never stores child transcript or participant payloads.
+
 ### 2026-08-28 — Persistent substream loops over a canonical ordered transcript
 
 **What changed:** One breaking, forward-only cutover (schema v33 from shipped
@@ -2020,7 +2038,6 @@ run-final adoption, hibernation recovery, and deletion/FK integrity.
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
 the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
-
 ### 2026-08-27 — Participant removal preserves one reader
 
 **What changed:** `removeParticipant` now treats the room as collaborative:

@@ -396,7 +396,7 @@ describe("automation lifecycle", () => {
       "SELECT action, metadata_json FROM audit_events WHERE target_id = ?",
     ).get("00000000-0000-7000-8000-000000000009") as { action: string; metadata_json: string };
     expect(failure.action).toBe("schedule.failed");
-    expect(failure.metadata_json).toContain("automation_subscription_unavailable");
+    expect(failure.metadata_json).toContain("unsupported_schedule_target");
   });
 
   it("leaves the work stream of a run that already started alone", async () => {

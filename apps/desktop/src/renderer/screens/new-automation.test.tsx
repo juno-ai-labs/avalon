@@ -1,6 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useSyncExternalStore } from 'react';
 import { Link, MemoryRouter, Route, Routes, useLocation, type InitialEntry } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../lib/api';
@@ -11,15 +12,36 @@ import { newAutomationDraftKey } from '../lib/draft-keys';
 import { NewAutomationScreen, retainableNarration } from './new-automation';
 
 const api = vi.hoisted(() => ({
+  admitAutomationDraftTurn: vi.fn(),
+  automationDraftFromAgentSnapshot: vi.fn(),
   compileAutomation: vi.fn(),
   createAutomation: vi.fn(),
   resumeAutomationDraft: vi.fn(),
+  retryAutomationCompiler: vi.fn(),
+  stopAutomationCompiler: vi.fn(),
   deleteDraftResource: vi.fn(),
+  getAutomationAgentDraft: vi.fn(),
   getConnections: vi.fn(),
   getNotes: vi.fn(),
   getResourcePreviewContent: vi.fn(),
   getWorkspaceTemplates: vi.fn(),
   uploadResource: vi.fn(),
+}));
+const agentSocket = vi.hoisted(() => ({
+  revision: 0,
+  snapshot: null as null | Record<string, unknown>,
+  streamEvents: [] as Array<{ sequence: number; event: AutomationAssistantStreamEvent }>,
+  eventSequence: 0,
+  listeners: new Set<() => void>(),
+  publish(next: { snapshot?: null | Record<string, unknown>; streamEvent?: AutomationAssistantStreamEvent | null }) {
+    if ('snapshot' in next) this.snapshot = next.snapshot ?? null;
+    if (next.streamEvent) {
+      this.eventSequence += 1;
+      this.streamEvents = [...this.streamEvents, { sequence: this.eventSequence, event: next.streamEvent }];
+    }
+    this.revision += 1;
+    for (const listener of this.listeners) listener();
+  },
 }));
 const copyText = vi.hoisted(() => vi.fn());
 // The composer reads Application → Developer → Debug enabled to decide whether
@@ -48,6 +70,25 @@ vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api, session }) }
 vi.mock('../lib/use-client-feature-flags', () => ({
   useClientFeatureFlags: () => ({ data: featureFlags.current }),
 }));
+vi.mock('../lib/use-automation-agent-socket', () => {
+  return {
+    useAutomationAgentSocket: () => {
+      useSyncExternalStore(
+        (listener) => {
+          agentSocket.listeners.add(listener);
+          return () => agentSocket.listeners.delete(listener);
+        },
+        () => agentSocket.revision,
+        () => agentSocket.revision,
+      );
+      return {
+        snapshot: agentSocket.snapshot,
+        streamEvents: agentSocket.streamEvents,
+        connected: agentSocket.snapshot !== null,
+      };
+    },
+  };
+});
 vi.mock('../lib/platform', () => ({
   desktopBridge: () => ({
     copyText,
@@ -64,11 +105,16 @@ vi.mock('thinking-orbs', () => ({
   ),
 }));
 
-/** The address bar, readable from a test. The screen writes the draft it is on
- * into the query string, and the sidebar reads that back to mark the row. */
+/** The address bar, readable from a test. A durable draft gets its own stable
+ * automation path as soon as the first turn is admitted. */
 function LocationProbe(): React.JSX.Element {
   const location = useLocation();
-  return <span data-testid="location-search">{location.search}</span>;
+  return (
+    <>
+      <span data-testid="location-pathname">{location.pathname}</span>
+      <span data-testid="location-search">{location.search}</span>
+    </>
+  );
 }
 
 function renderScreen(entry: InitialEntry = '/automations/new'): void {
@@ -80,12 +126,12 @@ function renderScreen(entry: InitialEntry = '/automations/new'): void {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[entry]}>
           <LocationProbe />
-          {/* What the sidebar offers: the same route with and without a draft
-              named in the query, so neither remounts the screen. */}
+          {/* The stable automation shell keeps this child mounted when the
+              launcher adopts a durable draft id. */}
           <Link to="/automations/new">back to nothing</Link>
-          <Link to="/automations/new?draft=draft-9">open draft 9</Link>
+          <Link to="/automations/draft-9">open draft 9</Link>
           <Routes>
-            <Route element={<NewAutomationScreen workspace={workspace} />} path="/automations/new" />
+            <Route element={<NewAutomationScreen workspace={workspace} />} path="/automations/:id" />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -102,6 +148,10 @@ describe('New automation composer', () => {
     session.workspace.role = 'owner';
     applicationSettings.current = { lockdownMode: false, lockdownAvailable: false, debugEnabled: false };
     featureFlags.current = { automationWorkspaceTemplatesEnabled: true };
+    agentSocket.snapshot = null;
+    agentSocket.streamEvents = [];
+    agentSocket.eventSequence = 0;
+    agentSocket.revision += 1;
     await clearAllDrafts();
     api.getConnections.mockResolvedValue([]);
     api.getNotes.mockResolvedValue([]);
@@ -109,6 +159,168 @@ describe('New automation composer', () => {
     // Loud by default: a test that resumes a draft says so, and one that does
     // not must never have a stale conversation swapped in under it.
     api.resumeAutomationDraft.mockRejectedValue(new Error('no draft was meant to be resumed'));
+    api.getAutomationAgentDraft.mockImplementation(async (automationId, signal) => {
+      const normalized = await api.resumeAutomationDraft(automationId, signal);
+      conversations.set(automationId, normalized);
+      return { automationId, activeCompilerRun: null, normalized };
+    });
+    const conversations = new Map<string, {
+      draft: Record<string, unknown> | null;
+      messages: Array<{ role: 'user' | 'assistant'; content: string; clientMessageId?: string }>;
+    }>();
+    let pendingQuestion: {
+      id: string;
+      responseType: 'free_text' | 'single_select' | 'multi_select';
+      options: Array<{ label: string; value: string }>;
+      allowOther: boolean;
+      presentedAt: string;
+    } | null = null;
+    let failedRetry: null | {
+      automationId: string;
+      activeCompilerRun: Record<string, unknown>;
+      legacyInput: Record<string, unknown>;
+      messages: Array<{ role: 'user' | 'assistant'; content: string; clientMessageId?: string }>;
+    } = null;
+    api.automationDraftFromAgentSnapshot.mockImplementation((snapshot) => snapshot.normalized);
+    api.admitAutomationDraftTurn.mockImplementation(async (input) => {
+      const provisionalId = input.automationId ?? 'draft-1';
+      const previous = conversations.get(provisionalId) ?? { draft: null, messages: [] };
+      const messages = [...previous.messages, {
+        role: 'user' as const,
+        content: input.content,
+        clientMessageId: input.clientMessageId,
+      }];
+      const activeCompilerRun = {
+        id: `run-${input.clientMessageId}`,
+        state: 'running',
+        admittedTurnId: input.clientMessageId,
+        errorCode: null,
+        errorMessage: null,
+      };
+      agentSocket.publish({
+        snapshot: {
+          automationId: input.automationId ?? null,
+          activeCompilerRun,
+          normalized: { draft: previous.draft, messages },
+        },
+        streamEvent: null,
+      });
+      const connectorMentionCount = (input.content.match(/@[A-Za-z]/gu) ?? []).length;
+      const legacyInput: Record<string, unknown> = {
+        message: input.content,
+        ...(input.automationId ? { draftId: input.automationId } : {}),
+        ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+        inputMode: input.inputMode,
+        connectorMentionCount,
+      };
+      if (input.inputMode === 'elicitation_response' && pendingQuestion) {
+        legacyInput.resolvedElicitation = {
+          id: pendingQuestion.id,
+          responseType: pendingQuestion.responseType,
+          resolution: 'answered',
+          customResponseUsed: !pendingQuestion.options.some((option) => option.value === input.content),
+          presentedAt: pendingQuestion.presentedAt,
+        };
+      }
+      let response;
+      try {
+        response = await api.compileAutomation(legacyInput, (event: AutomationAssistantStreamEvent) => {
+          agentSocket.publish({ streamEvent: event });
+        });
+      } catch (error) {
+        const failedRun = {
+          ...activeCompilerRun,
+          state: 'failed',
+          errorCode: 'automation_compiler_failed',
+          errorMessage: error instanceof Error ? error.message : 'Rally could not finish this turn.',
+        };
+        failedRetry = { automationId: provisionalId, activeCompilerRun: failedRun, legacyInput, messages };
+        agentSocket.publish({
+          snapshot: {
+            automationId: provisionalId,
+            activeCompilerRun: failedRun,
+            normalized: { draft: previous.draft, messages },
+          },
+        });
+        return {
+          automationId: provisionalId,
+          compilerRunId: activeCompilerRun.id,
+          admitted: true,
+        };
+      }
+      const automationId = response.draftId;
+      const canonicalMessages = [
+        ...messages,
+        ...(response.assistantMessage ? [{ role: 'assistant' as const, content: response.assistantMessage }] : []),
+      ];
+      conversations.delete(provisionalId);
+      conversations.set(automationId, { draft: response, messages: canonicalMessages });
+      pendingQuestion = response.question ? {
+        id: response.question.id,
+        responseType: response.question.responseType,
+        options: response.question.options,
+        allowOther: response.question.allowOther,
+        presentedAt: new Date().toISOString(),
+      } : null;
+      agentSocket.publish({
+        snapshot: {
+          automationId,
+          activeCompilerRun: null,
+          normalized: { draft: response, messages: canonicalMessages },
+        },
+        streamEvent: null,
+      });
+      window.setTimeout(() => agentSocket.publish({
+        snapshot: {
+          automationId,
+          activeCompilerRun: null,
+          normalized: { draft: response, messages: canonicalMessages },
+        },
+      }), 0);
+      return {
+        automationId,
+        turnId: input.clientMessageId,
+        transcriptSequence: canonicalMessages.length,
+        compilerRunId: activeCompilerRun.id,
+        admitted: true,
+      };
+    });
+    api.retryAutomationCompiler.mockImplementation(async () => {
+      if (!failedRetry) throw new Error('No failed compiler run');
+      const retry = failedRetry;
+      const running = { ...retry.activeCompilerRun, state: 'running', errorCode: null, errorMessage: null };
+      agentSocket.publish({
+        snapshot: {
+          automationId: retry.automationId,
+          activeCompilerRun: running,
+          normalized: { draft: conversations.get(retry.automationId)?.draft ?? null, messages: retry.messages },
+        },
+      });
+      const response = await api.compileAutomation(retry.legacyInput, (event: AutomationAssistantStreamEvent) => {
+        agentSocket.publish({ streamEvent: event });
+      });
+      const canonicalMessages = [
+        ...retry.messages,
+        ...(response.assistantMessage ? [{ role: 'assistant' as const, content: response.assistantMessage }] : []),
+      ];
+      conversations.set(response.draftId, { draft: response, messages: canonicalMessages });
+      pendingQuestion = response.question ? {
+        id: response.question.id,
+        responseType: response.question.responseType,
+        options: response.question.options,
+        allowOther: response.question.allowOther,
+        presentedAt: new Date().toISOString(),
+      } : null;
+      failedRetry = null;
+      agentSocket.publish({
+        snapshot: {
+          automationId: retry.automationId,
+          activeCompilerRun: null,
+          normalized: { draft: response, messages: canonicalMessages },
+        },
+      });
+    });
+    api.stopAutomationCompiler.mockResolvedValue(undefined);
     api.compileAutomation.mockResolvedValue({
       draftId: 'draft-1',
       assistantMessage: 'What should the automation monitor?',
@@ -335,7 +547,7 @@ describe('New automation composer', () => {
         { role: 'assistant', content: 'Which blog should I monitor?' },
       ],
     });
-    renderScreen('/automations/new?draft=draft-9');
+    renderScreen('/automations/draft-9');
 
     await waitFor(() => expect(api.resumeAutomationDraft).toHaveBeenCalledWith('draft-9', expect.anything()));
     expect(await screen.findByText('Watch my blog.')).toBeVisible();
@@ -372,8 +584,7 @@ describe('New automation composer', () => {
     // would land here with the load switched off and show an empty builder for
     // a draft that has a conversation.
     renderScreen({
-      pathname: '/automations/new',
-      search: '?draft=draft-9',
+      pathname: '/automations/draft-9',
       state: { selfNamedDraft: true, anythingElse: true },
     });
 
@@ -404,7 +615,7 @@ describe('New automation composer', () => {
       draftId: 'draft-9',
       assistantMessage: 'How often should I check it?',
     });
-    renderScreen('/automations/new?draft=draft-9');
+    renderScreen('/automations/draft-9');
 
     await screen.findByText('Watch my blog.');
     fireEvent.change(screen.getByRole('textbox', { name: 'Which blog should I monitor?' }), {
@@ -439,7 +650,7 @@ describe('New automation composer', () => {
         { role: 'assistant', content: 'Which blog should I monitor?' },
       ],
     });
-    renderScreen('/automations/new?draft=draft-9');
+    renderScreen('/automations/draft-9');
     await screen.findByText('Watch my blog.');
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Describe an automation' }), {
@@ -456,7 +667,7 @@ describe('New automation composer', () => {
 
   it('says a draft could not be opened rather than offering a blank automation', async () => {
     api.resumeAutomationDraft.mockRejectedValue(new ApiError('This draft’s conversation is no longer available.', 409, 'automation_draft_unavailable'));
-    renderScreen('/automations/new?draft=draft-9');
+    renderScreen('/automations/draft-9');
 
     expect(await screen.findByRole('heading', { name: 'This draft could not be opened' })).toBeVisible();
     expect(screen.getByText('This draft’s conversation is no longer available.')).toBeVisible();
@@ -477,7 +688,7 @@ describe('New automation composer', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('What should the automation monitor?');
-    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-1'));
+    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent('/automations/draft-1'));
 
     fireEvent.change(screen.getByRole('textbox', { name: 'What should the automation monitor?' }), {
       target: { value: 'an unsent afterthought' },
@@ -525,7 +736,7 @@ describe('New automation composer', () => {
     // Neither the streamed text nor the settled answer belongs to the
     // conversation now on screen, and the turn must not drag the reader back to
     // the draft it was sent from.
-    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-9'));
+    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent('/automations/draft-9'));
     expect(screen.queryByText('Which post types?')).not.toBeInTheDocument();
     expect(screen.queryByText('Check a blog every day')).not.toBeInTheDocument();
   });
@@ -617,7 +828,7 @@ describe('New automation composer', () => {
     await screen.findByText('What should the automation monitor?');
     // The screen adopts the API's id rather than the reverse: the turn wrote a
     // draft automation, and the URL has to point at that row.
-    await waitFor(() => expect(screen.getByTestId('location-search')).toHaveTextContent('?draft=draft-1'));
+    await waitFor(() => expect(screen.getByTestId('location-pathname')).toHaveTextContent('/automations/draft-1'));
     // Naming it is not the same as reopening it — the conversation on screen is
     // already the current one.
     expect(api.resumeAutomationDraft).not.toHaveBeenCalled();
@@ -674,7 +885,7 @@ describe('New automation composer', () => {
     expect(activeResearch).toHaveClass('plugin-activity', 'tool-started');
     expect(screen.getByRole('img', { name: 'Plugin: Google Drive + Docs + Sheets' })).toBeInTheDocument();
     expect(screen.getByTitle('Google Drive + Docs + Sheets')).toBeInTheDocument();
-    expect(screen.getByText('working for 42ms')).toBeInTheDocument();
+    expect(screen.getByText('worked for 42ms')).toBeInTheDocument();
     expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
     act(() => {
@@ -706,7 +917,7 @@ describe('New automation composer', () => {
     expect(await screen.findByText('Reviewed Google Drive + Docs + Sheets')).toBeInTheDocument();
     expect(activeResearch).toHaveClass('plugin-activity', 'tool-completed');
     expect(screen.getByText('42ms')).toBeInTheDocument();
-    expect(screen.getByText('working for 1m 23s')).toBeInTheDocument();
+    expect(screen.getByText('worked for 1m 23s')).toBeInTheDocument();
     expect(await screen.findByText('Which blog should Rally monitor?')).toBeInTheDocument();
     expect(screen.queryByText('Rally is working')).not.toBeInTheDocument();
 
@@ -785,7 +996,7 @@ describe('New automation composer', () => {
       stream({ type: 'started' });
       stream({ type: 'delta', delta: 'Checking the plugin catalog.', reset: false });
     });
-    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
+    await waitFor(() => expect(surface.scrollTop).toBe(3_100));
 
     // The follow's own scroll event is dispatched at frame time, by which
     // point more narration has landed and the bottom has moved. Measuring
@@ -794,7 +1005,7 @@ describe('New automation composer', () => {
     Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 5_000 });
     fireEvent.scroll(surface);
     act(() => { stream({ type: 'delta', delta: ' Still following.', reset: false }); });
-    await waitFor(() => expect(surface.scrollTop).toBe(5_000));
+    await waitFor(() => expect(surface.scrollTop).toBe(4_100));
     Object.defineProperty(surface, 'scrollHeight', { configurable: true, value: 4_000 });
 
     // A few pixels above the bottom of the 3_100 scroll range is still the
@@ -818,7 +1029,7 @@ describe('New automation composer', () => {
     surface.scrollTop = 3_099;
     fireEvent.scroll(surface);
     act(() => { stream({ type: 'delta', delta: '\n\nDrafting it now.', reset: false }); });
-    await waitFor(() => expect(surface.scrollTop).toBe(4_000));
+    await waitFor(() => expect(surface.scrollTop).toBe(3_100));
   });
 
   it('preloads Rally’s plugin picks without a Default plugins section', async () => {
@@ -1555,7 +1766,8 @@ describe('New automation composer', () => {
     fireEvent.click(await screen.findByRole('radio', { name: 'Email' }));
     fireEvent.click(screen.getByRole('button', { name: /Submit/u }));
 
-    expect(await screen.findByRole('heading', { name: 'Where should Rally send it?' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Email');
+    expect(screen.queryByRole('heading', { name: 'Where should Rally send it?' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByLabelText('Elicitation response')).toHaveTextContent('Email');

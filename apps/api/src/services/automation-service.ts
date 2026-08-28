@@ -1305,9 +1305,7 @@ export class AutomationService {
   async listTemplates() {
     const result = await this.env.DB.prepare(
       `SELECT t.*,
-       (SELECT COUNT(*) FROM automation_subscriptions s
-         WHERE s.template_id = t.id AND s.workspace_id = t.workspace_id
-           AND s.lifecycle_state = 'visible') AS use_count,
+       0 AS use_count,
        v.required_capabilities_json, v.trigger_definitions_json
        FROM automation_templates t
        JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
@@ -1882,30 +1880,29 @@ export class AutomationService {
     // Projection succeeds only after the stable receipt has been accepted by
     // SubstreamAgent. Together these fields are durable proof that this exact
     // activation crossed both boundaries; replay is for the ambiguous
-    // scheduled state only.
-    if (run.runStatus === "running" && run.workflowInstanceId) return;
+    // scheduled state only. The receipt is the authority here — the legacy
+    // workspace row stays 'scheduled' and is never advanced by the child.
+    if (run.harnessStatus === "running" && run.workflowInstanceId) return;
     if (!run.harnessRunId) {
       throw new ApiError(503, "workflow_launch_pending", "The automation run is still being prepared; retry with the same key");
     }
     if (run.workflowInstanceId) {
       const executionEnv = this.env;
       const { harnessRunId, workflowInstanceId } = run;
-      const reconcile = () => Promise.all([
-        createHarnessRunObjectPort(executionEnv, this.auth.workspaceId, run.workstreamId)
-          .bindWorkflowInstance({
-            runId: harnessRunId,
-            workflowInstanceId,
-            now: Date.now(),
-          }),
-        this.env.DB.prepare(
-          "UPDATE automation_runs SET workflow_instance_id = ? WHERE id = ? AND workspace_id = ?",
-        ).bind(run.workflowInstanceId, run.runId, this.auth.workspaceId).run(),
-      ]);
+      // The legacy workspace row is no longer the run authority: recovery
+      // reconciles only the generated work stream's receipt, and
+      // AutomationAgent consumes that projection separately.
+      const reconcile = () => createHarnessRunObjectPort(executionEnv, this.auth.workspaceId, run.workstreamId)
+        .bindWorkflowInstance({
+          runId: harnessRunId,
+          workflowInstanceId,
+          now: Date.now(),
+        });
       try {
         await reconcile();
       } catch {
-        // Both writes are idempotent. Repeating both repairs whichever side of
-        // the cross-object pair did not commit before the transient failure.
+        // The write is idempotent; repeating it repairs a commit the transient
+        // failure left unproven.
         await reconcile();
       }
       // The receipt commits before SubstreamAgent activation. A lost response
@@ -2433,7 +2430,7 @@ function parseJson<T>(value: unknown, fallback: T): T {
  * the route because the saved transcript and the streamed reply have to be the
  * same sentence — a resumed draft that ends on a different question than the
  * one on screen reads as a different conversation. */
-function assistantMessageForDraft(draft: AutomationDraft): string {
+export function assistantMessageForDraft(draft: AutomationDraft): string {
   return draft.elicitation?.prompt
     ?? draft.followUpQuestion
     ?? (draft.ready

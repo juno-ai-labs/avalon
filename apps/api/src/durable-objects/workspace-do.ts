@@ -1,5 +1,16 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
+  AutomationDraftCreationClaimRequestSchema,
+  AutomationDraftCreationClaimResultSchema,
+  ExternalEventEvaluatorV1Schema,
+  ExternalEventRegistrationProjectionV1Schema,
+  WorkspaceExternalEventDeliveryQueueMessageSchema,
+  WorkspaceExternalEventDeliveryClaimRequestSchema,
+  WorkspaceExternalEventDeliveryClaimResultSchema,
+  WorkspaceExternalEventDeliverySettleRequestSchema,
+  WorkspaceExternalEventMatchResultSchema,
+  AutomationIdSchema,
+  asAutomationId,
   asWorkspaceId,
   IdSchema,
   MESSAGE_MAX_CHARACTERS,
@@ -28,6 +39,8 @@ import {
   WorkstreamSchema,
   WorkstreamSocketCommandResultSchema,
   type AutomationSummary,
+  type AutomationDraftCreationClaimRequest,
+  type AutomationDraftCreationClaimResult,
   type WorkspaceSidebar,
   type NoteSummary,
   type ProjectSnapshot,
@@ -43,8 +56,10 @@ import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { connectorRegistryForEnv } from "../lib/connector-registry";
 import {
   assertDurableObjectJurisdiction,
+  durableObjectStubForWorkspace,
   isWorkspacePlacementAffinityForRegion,
   workspacePlacementAffinity,
   type WorkspacePlacementAffinity,
@@ -65,12 +80,9 @@ import {
   type SocketAccessRevocation,
 } from "../services/access-revocation";
 import {
-  AUTOMATION_SIDEBAR_SQL,
-  AutomationSidebarRowSchema,
   NOTE_SIDEBAR_SQL,
   NoteSidebarRowSchema,
   SIDEBAR_LIST_LIMIT,
-  toAutomationSummary,
   toNoteSummary,
 } from "../services/sidebar-reads";
 import {
@@ -99,7 +111,13 @@ import {
   type WorkspaceScheduleTargetKind,
 } from "../services/workspace-schedule-execution";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
-import { workspaceDOName } from "./names";
+import { evaluateExternalEventPredicate } from "../services/external-event-evaluator";
+import { automationAgentName, workspaceDOName } from "./names";
+import {
+  automationCutoverWitness as readAutomationCutoverWitness,
+  cutoverWorkspaceAutomations,
+  removeLegacyAutomationSchema,
+} from "./automation-cutover";
 import { reportScheduledAlarmAttempt } from "./scheduled-alarm-report";
 import {
   WorkspaceDirectoryApplyRequestSchema,
@@ -1463,7 +1481,158 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ],
+}, {
+  version: 21,
+  description: "index durable automations and typed external-event destinations",
+  statements: [
+    `CREATE TABLE automation_creation_claims (
+      workspace_id TEXT NOT NULL,
+      author_user_id TEXT NOT NULL,
+      client_creation_key TEXT NOT NULL,
+      automation_id TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL CHECK (created_at >= 0),
+      PRIMARY KEY(workspace_id, author_user_id, client_creation_key)
+    ) STRICT`,
+    `CREATE TABLE automation_directory (
+      automation_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      author_user_id TEXT NOT NULL,
+      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+      projection_version INTEGER NOT NULL CHECK (projection_version > 0),
+      payload_hash TEXT NOT NULL,
+      lifecycle TEXT NOT NULL CHECK (lifecycle IN ('draft', 'activating', 'active', 'paused', 'deleted')),
+      scope TEXT NOT NULL CHECK (scope IN ('personal', 'workspace')),
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      next_run_at INTEGER,
+      attention_code TEXT,
+      projected_at INTEGER NOT NULL CHECK (projected_at >= 0)
+    ) STRICT`,
+    `CREATE INDEX automation_directory_sidebar_idx
+      ON automation_directory(workspace_id, lifecycle, projected_at DESC, automation_id)`,
+    `CREATE TABLE workspace_external_event_registrations (
+      registration_id TEXT PRIMARY KEY,
+      destination_key TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+      projection_version INTEGER NOT NULL CHECK (projection_version > 0),
+      source_hash TEXT NOT NULL,
+      effective_after_event_sequence INTEGER NOT NULL CHECK (effective_after_event_sequence >= 0),
+      connection_id TEXT NOT NULL,
+      connector_type TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      resource_id TEXT,
+      evaluator_json TEXT NOT NULL CHECK (json_valid(evaluator_json)),
+      destination_kind TEXT NOT NULL CHECK (destination_kind IN ('automation', 'workstream_resource_update')),
+      automation_id TEXT,
+      workstream_id TEXT,
+      substream_id TEXT,
+      destination_resource_id TEXT,
+      state TEXT NOT NULL CHECK (state IN ('active', 'removed', 'integrity_failed')),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      CHECK (
+        (destination_kind = 'automation' AND automation_id IS NOT NULL
+          AND workstream_id IS NULL AND substream_id IS NULL AND destination_resource_id IS NULL)
+        OR
+        (destination_kind = 'workstream_resource_update' AND automation_id IS NULL
+          AND workstream_id IS NOT NULL AND substream_id IS NOT NULL AND destination_resource_id IS NOT NULL)
+      ),
+      UNIQUE(registration_id, authority_generation, projection_version)
+    ) STRICT`,
+    `CREATE INDEX workspace_external_event_candidates_idx
+      ON workspace_external_event_registrations(
+        connection_id, event_type, resource_id, state, registration_id
+      )`,
+    `CREATE INDEX workspace_external_event_destination_idx
+      ON workspace_external_event_registrations(
+        destination_kind, destination_key, authority_generation, projection_version
+      )`,
+    `CREATE TABLE workspace_external_event_deliveries (
+      delivery_id TEXT PRIMARY KEY,
+      workspace_event_id TEXT NOT NULL REFERENCES workspace_connector_events(event_id) ON DELETE CASCADE,
+      event_sequence INTEGER NOT NULL CHECK (event_sequence > 0),
+      registration_id TEXT NOT NULL REFERENCES workspace_external_event_registrations(registration_id),
+      authority_generation INTEGER NOT NULL CHECK (authority_generation > 0),
+      projection_version INTEGER NOT NULL CHECK (projection_version > 0),
+      source_hash TEXT NOT NULL,
+      destination_kind TEXT NOT NULL CHECK (destination_kind IN ('automation', 'workstream_resource_update')),
+      destination_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('pending', 'delivering', 'delivered', 'not_delivered', 'failed')),
+      outcome_code TEXT,
+      lease_id TEXT,
+      lease_expires_at INTEGER,
+      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(workspace_event_id, registration_id, authority_generation, destination_id)
+    ) STRICT`,
+    `CREATE INDEX workspace_external_event_deliveries_pending_idx
+      ON workspace_external_event_deliveries(state, created_at, delivery_id)`,
+    `CREATE TABLE automation_cutover_campaign (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      workspace_id TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN ('legacy', 'fenced', 'importing', 'cleaning', 'completed')),
+      source_hash TEXT,
+      source_witness_json TEXT CHECK (source_witness_json IS NULL OR json_valid(source_witness_json)),
+      cursor_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(cursor_json)),
+      completed_at INTEGER,
+      updated_at INTEGER NOT NULL
+    ) STRICT`,
+    `CREATE TRIGGER automation_creation_claims_workspace_identity_insert
+      BEFORE INSERT ON automation_creation_claims
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER automation_creation_claims_workspace_identity_update
+      BEFORE UPDATE OF workspace_id ON automation_creation_claims
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER automation_directory_workspace_identity_insert
+      BEFORE INSERT ON automation_directory
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER automation_directory_workspace_identity_update
+      BEFORE UPDATE OF workspace_id ON automation_directory
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER workspace_external_event_registrations_workspace_identity_insert
+      BEFORE INSERT ON workspace_external_event_registrations
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+    `CREATE TRIGGER workspace_external_event_registrations_workspace_identity_update
+      BEFORE UPDATE OF workspace_id ON workspace_external_event_registrations
+      WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
+      BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
+  ],
 }];
+
+function compareProjectionCoordinate(
+  generation: number,
+  version: number,
+  existingGeneration: number,
+  existingVersion: number,
+): number {
+  return generation === existingGeneration
+    ? Math.sign(version - existingVersion)
+    : Math.sign(generation - existingGeneration);
+}
+
+function externalEventContext(
+  metadata: Record<string, unknown>,
+  textSnippet: string | null,
+): Record<string, string | number | boolean | readonly string[]> {
+  const context: Record<string, string | number | boolean | readonly string[]> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    if (typeof value === "string" || typeof value === "boolean") context[key] = value;
+    else if (typeof value === "number" && Number.isFinite(value)) context[key] = value;
+    else if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      context[key] = value;
+    }
+  }
+  if (textSnippet !== null) context.messageText = textSnippet;
+  return context;
+}
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status });
@@ -2708,6 +2877,571 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     this.ensureIdentity(workspaceId, placementAffinity);
   }
 
+  /** Resolve an uncertain first wizard send to exactly one server identity. */
+  async claimAutomationDraft(
+    input: AutomationDraftCreationClaimRequest,
+  ): Promise<AutomationDraftCreationClaimResult> {
+    await this.initialized;
+    const request = AutomationDraftCreationClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (request.region !== this.env.AVALON_REGION) throw new Error("automation_region_mismatch");
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.authorUserId)) {
+      throw new Error("automation_author_access_denied");
+    }
+    const cutover = this.state.storage.sql.exec<{ state: string }>(
+      `SELECT state FROM automation_cutover_campaign WHERE id = 1`,
+    ).toArray()[0];
+    if (cutover?.state !== "completed") throw new Error("automation_cutover_in_progress");
+    return this.state.storage.transactionSync(() => {
+      const existing = this.state.storage.sql.exec<{ automation_id: string }>(
+        `SELECT automation_id FROM automation_creation_claims
+          WHERE workspace_id = ? AND author_user_id = ? AND client_creation_key = ?`,
+        request.workspaceId,
+        request.authorUserId,
+        request.clientCreationKey,
+      ).toArray()[0];
+      if (existing) {
+        return AutomationDraftCreationClaimResultSchema.parse({
+          automationId: existing.automation_id,
+          created: false,
+        });
+      }
+      const automationId = uuidV7();
+      this.state.storage.sql.exec(
+        `INSERT INTO automation_creation_claims
+           (workspace_id, author_user_id, client_creation_key, automation_id, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        request.workspaceId,
+        request.authorUserId,
+        request.clientCreationKey,
+        automationId,
+        Date.now(),
+      );
+      return AutomationDraftCreationClaimResultSchema.parse({ automationId, created: true });
+    });
+  }
+
+  async finalizeAutomationCutover(input: unknown): Promise<{
+    state: "completed";
+    imported: number;
+    discardedDrafts: number;
+    sourceHash: string;
+  }> {
+    await this.initialized;
+    const workspaceId = z.object({ workspaceId: WorkspaceIdSchema }).passthrough().parse(input).workspaceId;
+    this.assertWorkspace(workspaceId);
+    const result = await cutoverWorkspaceAutomations({
+      env: this.env,
+      storage: this.state.storage,
+      request: input,
+      applyProjection: (projection) => this.applyAutomationProjection(projection),
+    });
+    await this.refreshSchedule(workspaceId);
+    return result;
+  }
+
+  async automationCutoverWitness(input: { workspaceId: string }): Promise<{ draftIds: string[] }> {
+    await this.migrationsReady();
+    this.assertWorkspace(input.workspaceId);
+    return readAutomationCutoverWitness(this.state.storage, input.workspaceId);
+  }
+
+  /** Content-free list projection; the AutomationAgent remains canonical. */
+  async applyAutomationProjection(input: unknown): Promise<{ applied: boolean }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      automationId: IdSchema,
+      workspaceId: WorkspaceIdSchema,
+      authorUserId: UserIdSchema,
+      authorityGeneration: z.number().int().positive(),
+      projectionVersion: z.number().int().positive(),
+      payloadHash: z.string().min(1),
+      lifecycle: z.enum(["draft", "activating", "active", "paused", "deleted"]),
+      scope: z.enum(["personal", "workspace"]),
+      title: z.string(),
+      description: z.string(),
+      nextRunAt: z.number().int().nonnegative().nullable(),
+      attentionCode: z.string().nullable(),
+    }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = this.state.storage.transactionSync(() => {
+      const existing = this.state.storage.sql.exec<{
+        authority_generation: number;
+        projection_version: number;
+        payload_hash: string;
+      }>(`SELECT authority_generation, projection_version, payload_hash
+            FROM automation_directory WHERE automation_id = ?`, request.automationId).toArray()[0];
+      if (existing) {
+        const coordinate = compareProjectionCoordinate(
+          request.authorityGeneration,
+          request.projectionVersion,
+          existing.authority_generation,
+          existing.projection_version,
+        );
+        if (coordinate < 0) return { applied: false };
+        if (coordinate === 0) {
+          if (existing.payload_hash !== request.payloadHash) {
+            throw new Error("automation_projection_hash_conflict");
+          }
+          return { applied: false };
+        }
+      }
+      this.state.storage.sql.exec(
+        `INSERT INTO automation_directory
+           (automation_id, workspace_id, author_user_id, authority_generation,
+            projection_version, payload_hash, lifecycle, scope, title, description,
+            next_run_at, attention_code, projected_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(automation_id) DO UPDATE SET
+           author_user_id = excluded.author_user_id,
+           authority_generation = excluded.authority_generation,
+           projection_version = excluded.projection_version,
+           payload_hash = excluded.payload_hash,
+           lifecycle = excluded.lifecycle,
+           scope = excluded.scope,
+           title = excluded.title,
+           description = excluded.description,
+           next_run_at = excluded.next_run_at,
+           attention_code = excluded.attention_code,
+           projected_at = excluded.projected_at`,
+        request.automationId,
+        request.workspaceId,
+        request.authorUserId,
+        request.authorityGeneration,
+        request.projectionVersion,
+        request.payloadHash,
+        request.lifecycle,
+        request.scope,
+        request.title,
+        request.description,
+        request.nextRunAt,
+        request.attentionCode,
+        Date.now(),
+      );
+      this.state.storage.sql.exec(
+        `UPDATE workspace_sidebar_list_state
+            SET waterline = waterline + 1
+          WHERE list = 'automations'`,
+      );
+      return { applied: true };
+    });
+    if (result.applied) this.publishSidebarList("automations");
+    return result;
+  }
+
+  /** Content-free automation sidebar projection; AutomationAgent remains authority. */
+  async listAutomationDirectory(input: unknown): Promise<{ items: AutomationSummary[] }> {
+    await this.initialized;
+    const request = z.object({ workspaceId: WorkspaceIdSchema, userId: UserIdSchema }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      throw new Error("automation_directory_access_denied");
+    }
+    const rows = this.state.storage.sql.exec<{
+      automation_id: string;
+      lifecycle: "draft" | "activating" | "active" | "paused";
+      scope: "personal" | "workspace";
+      title: string;
+      description: string;
+      next_run_at: number | null;
+      attention_code: string | null;
+      projected_at: number;
+    }>(`SELECT automation_id, lifecycle, scope, title, description, next_run_at,
+              attention_code, projected_at
+          FROM automation_directory
+         WHERE workspace_id = ? AND lifecycle <> 'deleted'
+           AND (scope = 'workspace' OR author_user_id = ?)
+         ORDER BY CASE lifecycle WHEN 'draft' THEN 1 ELSE 0 END,
+                  projected_at DESC, automation_id
+         LIMIT 250`, request.workspaceId, request.userId).toArray();
+    return {
+      items: rows.map((row) => ({
+        id: row.automation_id,
+        name: row.title || "New automation",
+        description: row.description,
+        emailAddress: null,
+        scope: row.scope,
+        status: row.lifecycle === "draft"
+          ? "draft"
+          : row.lifecycle === "paused"
+            ? "paused"
+            : row.attention_code ? "error" : "active",
+        nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
+        lastRunAt: null,
+        updatedAt: new Date(row.projected_at).toISOString(),
+        updateAvailable: false,
+      })),
+    };
+  }
+
+  /** Current membership plus projected scope gates direct AutomationAgent reads. */
+  async authorizeAutomationViewer(input: unknown): Promise<{ authorized: boolean }> {
+    await this.initialized;
+    const request = z.object({
+      workspaceId: WorkspaceIdSchema,
+      automationId: AutomationIdSchema,
+      userId: UserIdSchema,
+    }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    if (!await this.activeWorkspaceMember(request.workspaceId, request.userId)) {
+      return { authorized: false };
+    }
+    const row = this.state.storage.sql.exec<{
+      scope: "personal" | "workspace";
+      author_user_id: string;
+    }>(`SELECT scope, author_user_id FROM automation_directory
+          WHERE workspace_id = ? AND automation_id = ? AND lifecycle <> 'deleted'`,
+    request.workspaceId, request.automationId).toArray()[0];
+    return {
+      authorized: Boolean(row && (row.scope === "workspace" || row.author_user_id === request.userId)),
+    };
+  }
+
+  /** Complete-replace one automation or watched-link evaluator generation. */
+  async applyExternalEventRegistrations(input: unknown): Promise<{
+    applied: boolean;
+    effectiveAfterEventSequence: number;
+  }> {
+    await this.initialized;
+    const request = ExternalEventRegistrationProjectionV1Schema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return this.state.storage.transactionSync(() => {
+      const destinationKind = request.destination.kind;
+      const destinationKey = destinationKind === "automation"
+        ? `automation:${request.destination.automationId}`
+        : `workstream:${request.destination.workstreamId}:${request.destination.substreamId}:${request.destination.resourceId}`;
+      const existing = this.state.storage.sql.exec<{
+        authority_generation: number;
+        projection_version: number;
+        source_hash: string;
+      }>(`SELECT authority_generation, projection_version, source_hash
+            FROM workspace_external_event_registrations
+           WHERE destination_kind = ?
+             AND destination_key = ?
+           ORDER BY authority_generation DESC, projection_version DESC LIMIT 1`,
+      destinationKind, destinationKey).toArray()[0];
+      if (existing) {
+        const coordinate = compareProjectionCoordinate(
+          request.authorityGeneration,
+          request.projectionVersion,
+          existing.authority_generation,
+          existing.projection_version,
+        );
+        if (coordinate < 0) {
+          return { applied: false, effectiveAfterEventSequence: this.latestConnectorEventSequence() };
+        }
+        if (coordinate === 0) {
+          if (existing.source_hash !== request.sourceHash) {
+            throw new Error("external_event_registration_hash_conflict");
+          }
+          const cutoff = this.state.storage.sql.exec<{ cutoff: number }>(
+            `SELECT MAX(effective_after_event_sequence) AS cutoff
+               FROM workspace_external_event_registrations
+              WHERE destination_kind = ? AND destination_key = ?
+                AND authority_generation = ? AND projection_version = ?`,
+            destinationKind,
+            destinationKey,
+            request.authorityGeneration,
+            request.projectionVersion,
+          ).toArray()[0]?.cutoff ?? this.latestConnectorEventSequence();
+          return { applied: false, effectiveAfterEventSequence: cutoff };
+        }
+      }
+      const now = Date.now();
+      const cutoff = this.latestConnectorEventSequence();
+      this.state.storage.sql.exec(
+        `UPDATE workspace_external_event_registrations
+            SET state = 'removed', updated_at = ?
+          WHERE destination_kind = ? AND destination_key = ?
+            AND state = 'active'`,
+        now,
+        destinationKind,
+        destinationKey,
+      );
+      for (const evaluator of request.evaluators) {
+        const registrationId = uuidV7();
+        this.state.storage.sql.exec(
+          `INSERT INTO workspace_external_event_registrations
+             (registration_id, destination_key, workspace_id, authority_generation, projection_version,
+              source_hash, effective_after_event_sequence, connection_id, connector_type,
+              event_type, resource_id, evaluator_json, destination_kind, automation_id,
+              workstream_id, substream_id, destination_resource_id, state, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+          registrationId,
+          destinationKey,
+          request.workspaceId,
+          request.authorityGeneration,
+          request.projectionVersion,
+          request.sourceHash,
+          cutoff,
+          evaluator.source.connectionId,
+          evaluator.source.connectorType,
+          evaluator.source.eventType,
+          evaluator.source.resourceId ?? null,
+          JSON.stringify(evaluator),
+          destinationKind,
+          destinationKind === "automation" ? request.destination.automationId : null,
+          destinationKind === "workstream_resource_update" ? request.destination.workstreamId : null,
+          destinationKind === "workstream_resource_update" ? request.destination.substreamId : null,
+          destinationKind === "workstream_resource_update" ? request.destination.resourceId : null,
+          now,
+          now,
+        );
+      }
+      return { applied: true, effectiveAfterEventSequence: cutoff };
+    });
+  }
+
+  /** Cheap connector-ingress admission check; matching still happens after normalization. */
+  async hasActiveExternalEventRegistration(input: unknown): Promise<{ active: boolean }> {
+    await this.initialized;
+    const request = z.object({
+      workspaceId: WorkspaceIdSchema,
+      connectionId: IdSchema,
+      eventType: z.string().min(1).max(200),
+    }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ one: number }>(
+      `SELECT 1 AS one
+         FROM workspace_external_event_registrations
+        WHERE workspace_id = ? AND connection_id = ? AND event_type = ? AND state = 'active'
+        LIMIT 1`,
+      request.workspaceId,
+      request.connectionId,
+      request.eventType,
+    ).toArray()[0];
+    return { active: row !== undefined };
+  }
+
+  /** Deterministically create ID-only destination receipts for one accepted event. */
+  async matchExternalEventDestinations(input: unknown) {
+    await this.initialized;
+    const request = z.object({ workspaceId: WorkspaceIdSchema, eventId: IdSchema }).strict().parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const event = this.state.storage.sql.exec<{
+      event_id: string;
+      event_sequence: number;
+      payload_hash: string;
+      connection_id: string;
+      connector_type: string;
+      event_type: string;
+      text_snippet: string | null;
+      metadata_json: string;
+    }>(`SELECT event_id, event_sequence, payload_hash, connection_id, connector_type,
+              event_type, text_snippet, metadata_json
+          FROM workspace_connector_events WHERE event_id = ?`, request.eventId).toArray()[0];
+    if (!event) throw new Error("connector_event_not_found");
+    const metadata = JSON.parse(event.metadata_json) as Record<string, unknown>;
+    const context = externalEventContext(metadata, event.text_snippet);
+    const resourceIds = Array.isArray(metadata.resourceIds)
+      ? metadata.resourceIds.filter((value): value is string => typeof value === "string")
+      : [];
+    const registrations = this.state.storage.sql.exec<{
+      registration_id: string;
+      authority_generation: number;
+      projection_version: number;
+      source_hash: string;
+      resource_id: string | null;
+      evaluator_json: string;
+      destination_kind: "automation" | "workstream_resource_update";
+      automation_id: string | null;
+      workstream_id: string | null;
+    }>(`SELECT registration_id, authority_generation, projection_version, source_hash,
+              resource_id, evaluator_json, destination_kind, automation_id, workstream_id
+          FROM workspace_external_event_registrations
+         WHERE state = 'active' AND connection_id = ? AND connector_type = ?
+           AND event_type = ? AND effective_after_event_sequence < ?
+         ORDER BY registration_id`,
+    event.connection_id, event.connector_type, event.event_type, event.event_sequence).toArray();
+    const deliveries = this.state.storage.transactionSync(() => registrations.flatMap((registration) => {
+      if (registration.resource_id && !resourceIds.includes(registration.resource_id)) return [];
+      const evaluator = ExternalEventEvaluatorV1Schema.parse(JSON.parse(registration.evaluator_json));
+      if (!evaluateExternalEventPredicate(evaluator.when, context)) return [];
+      const destinationId = registration.automation_id ?? registration.workstream_id;
+      if (!destinationId) throw new Error("external_event_destination_missing");
+      const deliveryId = uuidV7();
+      const payloadHash = `${event.payload_hash}:${registration.source_hash}`;
+      const inserted = this.state.storage.sql.exec<{ delivery_id: string }>(
+        `INSERT OR IGNORE INTO workspace_external_event_deliveries
+           (delivery_id, workspace_event_id, event_sequence, registration_id,
+            authority_generation, projection_version, source_hash, destination_kind,
+            destination_id, payload_hash, state, attempts, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+         RETURNING delivery_id`,
+        deliveryId,
+        event.event_id,
+        event.event_sequence,
+        registration.registration_id,
+        registration.authority_generation,
+        registration.projection_version,
+        registration.source_hash,
+        registration.destination_kind,
+        destinationId,
+        payloadHash,
+        Date.now(),
+        Date.now(),
+      ).toArray()[0];
+      if (!inserted) return [];
+      return [WorkspaceExternalEventDeliveryQueueMessageSchema.parse({
+        type: "workspace_external_event_delivery_v1",
+        schemaVersion: 1,
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        workspaceEventId: event.event_id,
+        deliveryId: inserted.delivery_id,
+        payloadHash,
+      })];
+    }));
+    const pending = this.state.storage.sql.exec<{
+      delivery_id: string;
+      payload_hash: string;
+    }>(`SELECT delivery_id, payload_hash FROM workspace_external_event_deliveries
+          WHERE workspace_event_id = ? AND state = 'pending'
+          ORDER BY delivery_id`, event.event_id).toArray().map((row) => (
+      WorkspaceExternalEventDeliveryQueueMessageSchema.parse({
+        type: "workspace_external_event_delivery_v1",
+        schemaVersion: 1,
+        region: this.env.AVALON_REGION,
+        workspaceId: request.workspaceId,
+        workspaceEventId: event.event_id,
+        deliveryId: row.delivery_id,
+        payloadHash: row.payload_hash,
+      })
+    ));
+    return WorkspaceExternalEventMatchResultSchema.parse({
+      deliveries: [...new Map([...deliveries, ...pending].map((delivery) => [delivery.deliveryId, delivery])).values()],
+    });
+  }
+
+  async claimExternalEventDelivery(input: unknown) {
+    await this.initialized;
+    const request = WorkspaceExternalEventDeliveryClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return WorkspaceExternalEventDeliveryClaimResultSchema.parse(
+      this.state.storage.transactionSync(() => {
+        const row = this.state.storage.sql.exec<{
+          state: string;
+          payload_hash: string;
+          lease_expires_at: number | null;
+          destination_kind: "automation" | "workstream_resource_update";
+          authority_generation: number;
+          projection_version: number;
+          automation_id: string | null;
+          workstream_id: string | null;
+          substream_id: string | null;
+          destination_resource_id: string | null;
+          event_id: string;
+          event_sequence: number;
+          event_type: string;
+          title: string;
+          summary: string;
+          occurred_at: number;
+          visibility_json: string;
+          target_user_ids_json: string;
+        }>(`SELECT delivery.state, delivery.payload_hash, delivery.lease_expires_at,
+                  registration.destination_kind, delivery.authority_generation,
+                  delivery.projection_version, registration.automation_id,
+                  registration.workstream_id, registration.substream_id,
+                  registration.destination_resource_id, event.event_id, event.event_sequence, event.event_type,
+                  event.title, event.summary, event.occurred_at, event.visibility_json,
+                  event.target_user_ids_json
+              FROM workspace_external_event_deliveries delivery
+              JOIN workspace_external_event_registrations registration
+                ON registration.registration_id = delivery.registration_id
+              JOIN workspace_connector_events event
+                ON event.event_id = delivery.workspace_event_id
+             WHERE delivery.delivery_id = ? AND delivery.workspace_event_id = ?`,
+        request.deliveryId, request.workspaceEventId).toArray()[0];
+        if (!row || row.payload_hash !== request.payloadHash) {
+          throw new Error("external_event_delivery_not_found");
+        }
+        if (row.state === "delivered" || row.state === "not_delivered") return { outcome: "delivered" as const };
+        const now = Date.now();
+        if (row.state === "delivering" && (row.lease_expires_at ?? 0) > now) {
+          return { outcome: "busy" as const, retryAt: row.lease_expires_at! };
+        }
+        const leaseExpiresAt = now + CONNECTOR_EVENT_PROCESSING_LEASE_MS;
+        this.state.storage.sql.exec(
+          `UPDATE workspace_external_event_deliveries
+              SET state = 'delivering', lease_id = ?, lease_expires_at = ?,
+                  attempts = attempts + 1, updated_at = ?
+            WHERE delivery_id = ?`,
+          request.leaseId,
+          leaseExpiresAt,
+          now,
+          request.deliveryId,
+        );
+        const visibility = JSON.parse(row.visibility_json) as { kind?: unknown; scope?: unknown };
+        const audienceKind = visibility.kind === "workspace" || visibility.scope === "workspace"
+          ? "workspace"
+          : "restricted";
+        const audienceUserIds = JSON.parse(row.target_user_ids_json) as string[];
+        const destination = row.destination_kind === "automation"
+          ? {
+              kind: "automation" as const,
+              automationId: row.automation_id!,
+              authorityGeneration: row.authority_generation,
+              projectionVersion: row.projection_version,
+            }
+          : {
+              kind: "workstream_resource_update" as const,
+              workstreamId: row.workstream_id!,
+              substreamId: row.substream_id!,
+              resourceId: row.destination_resource_id!,
+              authorityGeneration: row.authority_generation,
+              projectionVersion: row.projection_version,
+            };
+        return {
+          outcome: "claimed" as const,
+          leaseExpiresAt,
+          destination,
+          event: {
+            id: row.event_id,
+            eventSequence: row.event_sequence,
+            eventType: row.event_type,
+            title: row.title,
+            summary: row.summary,
+            occurredAt: row.occurred_at,
+            audienceUserIds,
+            audienceKind,
+          },
+        };
+      }),
+    );
+  }
+
+  async settleExternalEventDelivery(input: unknown): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceExternalEventDeliverySettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const changed = this.state.storage.sql.exec<{ delivery_id: string }>(
+      `UPDATE workspace_external_event_deliveries
+          SET state = ?, outcome_code = ?, lease_id = NULL, lease_expires_at = NULL,
+              updated_at = ?
+        WHERE delivery_id = ? AND state = 'delivering' AND lease_id = ?
+        RETURNING delivery_id`,
+      request.outcome,
+      request.outcomeCode,
+      Date.now(),
+      request.deliveryId,
+      request.leaseId,
+    ).toArray();
+    if (changed.length === 1) return;
+    const settled = this.state.storage.sql.exec<{ state: string; outcome_code: string | null }>(
+      `SELECT state, outcome_code FROM workspace_external_event_deliveries WHERE delivery_id = ?`,
+      request.deliveryId,
+    ).toArray()[0];
+    if (settled?.state === request.outcome && settled.outcome_code === request.outcomeCode) return;
+    throw new Error("external_event_delivery_settlement_fenced");
+  }
+
+  private latestConnectorEventSequence(): number {
+    return this.state.storage.sql.exec<{ sequence: number }>(
+      `SELECT COALESCE(MAX(event_sequence), 0) AS sequence FROM workspace_connector_events`,
+    ).one().sequence;
+  }
+
   async createProject(input: WorkspaceProjectCreateRequest): Promise<WorkspaceProjectMutationResult> {
     await this.initialized;
     const request = WorkspaceProjectCreateRequestSchema.parse(input);
@@ -3004,6 +3738,47 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     this.assertWorkspace(request.workspaceId);
     const activity = request.event.activity;
+    // Evaluators address canonical Rally identities, never provider IDs. Resolve
+    // provider relationships once before the canonical event commits so every
+    // destination sees one closed context without per-evaluator provider work.
+    const relatedResourceIds = this.state.storage.sql.exec<{ id: string }>(
+      `SELECT id FROM resources
+        WHERE workspace_id = ? AND connection_id = ? AND provider = ?
+          AND provider_resource_id IS NOT NULL
+          AND (provider_resource_id = ? OR EXISTS (
+            SELECT 1 FROM json_each(?) entity
+             WHERE entity.value = resources.provider_resource_id
+          ))
+        ORDER BY id`,
+      request.workspaceId,
+      activity.connectionId,
+      activity.provider,
+      activity.providerResourceId,
+      JSON.stringify(activity.entityKeys),
+    ).toArray().map((row) => row.id);
+    const resolvedPeople = (activity.externalPeople ?? []).flatMap((person) => {
+      const row = this.state.storage.sql.exec<{ user_id: string }>(
+        `SELECT user_id FROM external_user_identities
+          WHERE workspace_id = ? AND provider = ?
+            AND provider_tenant_id = ? AND provider_user_id = ?`,
+        request.workspaceId,
+        person.provider,
+        person.providerTenantId,
+        person.providerUserId,
+      ).toArray()[0];
+      return row ? [{ userId: row.user_id, role: person.role }] : [];
+    });
+    const participantPersonIds = [...new Set(resolvedPeople.map((person) => person.userId))];
+    const authorPersonIds = [...new Set(resolvedPeople
+      .filter((person) => person.role === "author" || person.role === "actor")
+      .map((person) => person.userId))];
+    const evaluatorMetadata = {
+      ...activity.metadata,
+      ...(relatedResourceIds.length > 0 ? { resourceIds: relatedResourceIds } : {}),
+      ...(participantPersonIds.length > 0 ? { participantPersonIds } : {}),
+      ...(authorPersonIds.length > 0 ? { authorPersonIds } : {}),
+      ...(authorPersonIds[0] ? { actorPersonId: authorPersonIds[0] } : {}),
+    };
     const result = WorkspaceConnectorEventIngestResultSchema.parse(
       this.state.storage.transactionSync(() => {
         const receipt = this.state.storage.sql.exec<{
@@ -3094,7 +3869,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             JSON.stringify(activity.entityKeys),
             activity.dedupeKey,
             activity.rawContentHash,
-            JSON.stringify(activity.metadata),
+            JSON.stringify(evaluatorMetadata),
             JSON.stringify(activity.externalPeople ?? []),
             now,
             now,
@@ -3990,10 +4765,9 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     if (subscriptionIds.length > 0) {
       const placeholders = subscriptionIds.map(() => "?").join(",");
       const labels = this.state.storage.sql.exec<{ id: string; name: string }>(
-        `SELECT subscription.id, template.name
-           FROM automation_subscriptions subscription
-           JOIN automation_templates template ON template.id = subscription.template_id
-          WHERE subscription.workspace_id = ? AND subscription.id IN (${placeholders})`,
+        `SELECT automation_id AS id, title AS name
+           FROM automation_directory
+          WHERE workspace_id = ? AND automation_id IN (${placeholders})`,
         request.workspaceId,
         ...subscriptionIds,
       ).toArray();
@@ -4003,6 +4777,21 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     }
     let directoryChanged = false;
     const commonChanges = new Set<string>();
+    const watchReconciliations = new Map<string, {
+      authorityGeneration: number;
+      projectionVersion: number;
+      sourceHash: string;
+    }>();
+    const automationRunProjections = new Map<string, {
+      automationId: string;
+      runId: string;
+      workstreamId: string;
+      workstreamGeneration: number;
+      sourceVersion: number;
+      payloadHash: string;
+      state: string;
+      completedAt: number | null;
+    }>();
     const viewerChanges = new Map<string, Set<string>>();
     const accepted: WorkspaceDirectoryApplyResult["accepted"] = [];
     for (const envelope of request.envelopes) {
@@ -4015,8 +4804,70 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         users.add(envelope.effect.userId);
         viewerChanges.set(envelope.workstreamId, users);
       }
+      if (envelope.effect.kind === "directory_common") {
+        const current = this.state.storage.sql.exec<{
+          authority_generation: number;
+          waterline: number;
+          payload_hash: string;
+        }>(`SELECT authority_generation, waterline, payload_hash
+              FROM workspace_workstream_directory WHERE workstream_id = ?`,
+        envelope.workstreamId).toArray()[0];
+        // Reconcile on an exact replay as well as the first application. The
+        // directory row and registration replacement are separate durable
+        // transactions, so a failed connector lookup must be recoverable by
+        // replaying the same outbox envelope.
+        if (current
+          && current.authority_generation === envelope.generation
+          && current.waterline === envelope.sourceVersion
+          && current.payload_hash === envelope.payloadHash) {
+          watchReconciliations.set(envelope.workstreamId, {
+            authorityGeneration: envelope.generation,
+            projectionVersion: envelope.sourceVersion,
+            sourceHash: envelope.payloadHash,
+          });
+          const durableAutomation = envelope.effect.automationSubscriptionId
+            ? this.state.storage.sql.exec<{ one: number }>(
+                `SELECT 1 AS one FROM automation_directory WHERE automation_id = ?`,
+                envelope.effect.automationSubscriptionId,
+              ).toArray()[0]
+            : null;
+          if (durableAutomation && envelope.effect.automationSubscriptionId && envelope.effect.automationRunId) {
+            automationRunProjections.set(envelope.effect.automationRunId, {
+              automationId: envelope.effect.automationSubscriptionId,
+              runId: envelope.effect.automationRunId,
+              workstreamId: envelope.workstreamId,
+              workstreamGeneration: envelope.generation,
+              sourceVersion: envelope.sourceVersion,
+              payloadHash: envelope.payloadHash,
+              state: envelope.effect.state,
+              completedAt: epoch(envelope.effect.completedAt),
+            });
+          }
+        }
+      }
       accepted.push({ messageId: envelope.messageId, payloadHash: envelope.payloadHash });
     }
+    await Promise.all([...watchReconciliations].map(([workstreamId, coordinate]) => (
+      this.reconcileWorkstreamResourceRegistrations({
+        workspaceId: request.workspaceId,
+        workstreamId,
+        ...coordinate,
+      })
+    )));
+    await Promise.all([...automationRunProjections.values()].map(async (projection) => {
+      const automationId = asAutomationId(projection.automationId);
+      const agent = await durableObjectStubForWorkspace(
+        this.env,
+        this.env.AUTOMATION_AGENTS,
+        request.workspaceId,
+        automationAgentName(this.env.AVALON_REGION, asWorkspaceId(request.workspaceId), automationId),
+      );
+      await agent.applyRunProjection({
+        schemaVersion: 1,
+        workspaceId: request.workspaceId,
+        ...projection,
+      });
+    }));
     if (commonChanges.size > 0) {
       // A `directory_common` effect is the only writer of
       // `next_terminal_action_at`, and it arrives outside any alarm — off the
@@ -4046,6 +4897,87 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       )));
     }
     return WorkspaceDirectoryApplyResultSchema.parse({ accepted, directoryChanged });
+  }
+
+  /**
+   * Turn authoritative watched links into exact typed registrations. The work
+   * stream projects only the link intent; WorkspaceDO resolves resource and
+   * connector facts and uses the same replacement engine as automations.
+   */
+  private async reconcileWorkstreamResourceRegistrations(input: {
+    workspaceId: string;
+    workstreamId: string;
+    authorityGeneration: number;
+    projectionVersion: number;
+    sourceHash: string;
+  }): Promise<void> {
+    const linkedResources = this.state.storage.sql.exec<{
+      resource_id: string;
+      watch_enabled: number;
+      connection_id: string | null;
+      resource_type: string | null;
+    }>(`SELECT link.resource_id, link.watch_enabled, resource.connection_id, resource.resource_type
+          FROM workspace_workstream_resource_links link
+          LEFT JOIN resources resource ON resource.id = link.resource_id
+         WHERE link.workstream_id = ?
+         ORDER BY link.resource_id`, input.workstreamId).toArray();
+    const linkedById = new Map(linkedResources.map((resource) => [resource.resource_id, resource]));
+    const destinationResourceIds = new Set([
+      ...linkedById.keys(),
+      ...this.state.storage.sql.exec<{ destination_resource_id: string }>(
+        `SELECT DISTINCT destination_resource_id
+           FROM workspace_external_event_registrations
+          WHERE destination_kind = 'workstream_resource_update'
+            AND workstream_id = ? AND destination_resource_id IS NOT NULL`,
+        input.workstreamId,
+      ).toArray().map((row) => row.destination_resource_id),
+    ]);
+    if (destinationResourceIds.size === 0) return;
+    const connections = this.state.storage.sql.exec<{
+      id: string;
+      connector_type: string;
+      status: string;
+    }>(`SELECT id, connector_type, status FROM connector_connections WHERE workspace_id = ?`, input.workspaceId)
+      .toArray();
+    const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
+    const manifests = new Map(connectorRegistryForEnv(this.env).list().map((manifest) => [manifest.type, manifest]));
+
+    for (const resourceId of destinationResourceIds) {
+      const resource = linkedById.get(resourceId);
+      const connection = resource?.connection_id ? connectionsById.get(resource.connection_id) : undefined;
+      const manifest = connection ? manifests.get(connection.connector_type) : undefined;
+      const descriptors = resource?.watch_enabled === 1
+        && resource.resource_type
+        && connection?.status === "active"
+        && manifest?.supportsWatches
+        ? manifest.activityTriggers.filter((descriptor) => descriptor.resourceRelationships.some(
+            (relationship) => relationship.resourceType === resource.resource_type,
+          ))
+        : [];
+      await this.applyExternalEventRegistrations({
+        schemaVersion: 1,
+        workspaceId: input.workspaceId,
+        destination: {
+          kind: "workstream_resource_update",
+          workstreamId: input.workstreamId,
+          substreamId: "0",
+          resourceId,
+        },
+        authorityGeneration: input.authorityGeneration,
+        projectionVersion: input.projectionVersion,
+        sourceHash: input.sourceHash,
+        evaluators: descriptors.map((descriptor) => ({
+          evaluatorId: uuidV7(),
+          source: {
+            connectorType: connection!.connector_type,
+            connectionId: connection!.id,
+            eventType: descriptor.eventType,
+            resourceId,
+          },
+          when: { kind: "always" },
+        })),
+      });
+    }
   }
 
   /**
@@ -5046,26 +5978,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
             epoch(effect.updatedAt ?? effect.lastActivityAt),
             now,
           );
-          const automationStatus = effect.state === "completed"
-            ? "completed"
-            : ["failed", "error", "stopped"].includes(effect.state)
-              ? "failed"
-              : effect.state === "needs_input" ? "needs_input" : null;
-          if (effect.automationRunId && automationStatus) {
-            this.state.storage.sql.exec(
-              `UPDATE automation_runs
-                  SET status = ?,
-                      completed_at = CASE WHEN ? IN ('completed', 'failed')
-                        THEN COALESCE(?, completed_at) ELSE completed_at END
-                WHERE id = ? AND workspace_id = ?
-                  AND status IN ('scheduled', 'running', 'needs_input')`,
-              automationStatus,
-              automationStatus,
-              effect.completedAt ?? effect.updatedAt ?? effect.lastActivityAt,
-              effect.automationRunId,
-              envelope.workspaceId,
-            );
-          }
           this.state.storage.sql.exec(
             `DELETE FROM workspace_workstream_resource_links WHERE workstream_id = ?`,
             envelope.workstreamId,
@@ -5252,6 +6164,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const rows = this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NULL
+         AND directory.origin_type <> 'automation'
          AND directory.exact_state NOT IN ('running', 'interrupting', 'preparing_context',
                                            'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
@@ -5305,12 +6218,37 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * along with the statement both callers use.
    */
   private listSidebarAutomations(workspaceId: string, userId: string): AutomationSummary[] {
-    return this.state.storage.sql.exec<Record<string, SqlStorageValue>>(
-      AUTOMATION_SIDEBAR_SQL,
-      workspaceId,
-      userId,
-      SIDEBAR_LIST_LIMIT,
-    ).toArray().map((row) => toAutomationSummary(AutomationSidebarRowSchema.parse(row)));
+    return this.state.storage.sql.exec<{
+      automation_id: string;
+      lifecycle: "draft" | "activating" | "active" | "paused";
+      title: string;
+      description: string;
+      scope: "personal" | "workspace";
+      next_run_at: number | null;
+      attention_code: string | null;
+      projected_at: number;
+    }>(`SELECT automation_id, lifecycle, title, description, scope, next_run_at,
+              attention_code, projected_at
+          FROM automation_directory
+         WHERE workspace_id = ? AND lifecycle <> 'deleted'
+           AND (scope = 'workspace' OR author_user_id = ?)
+         ORDER BY title COLLATE NOCASE, automation_id
+         LIMIT ?`, workspaceId, userId, SIDEBAR_LIST_LIMIT).toArray().map((row) => ({
+      id: row.automation_id,
+      name: row.title || "New automation",
+      description: row.description,
+      emailAddress: null,
+      scope: row.scope,
+      status: row.lifecycle === "draft"
+        ? "draft"
+        : row.lifecycle === "paused"
+          ? "paused"
+          : row.attention_code ? "error" : "active",
+      nextRunAt: row.next_run_at === null ? null : new Date(row.next_run_at).toISOString(),
+      lastRunAt: null,
+      updatedAt: new Date(row.projected_at).toISOString(),
+      updateAvailable: false,
+    }));
   }
 
   private listSidebarNotes(workspaceId: string, userId: string): NoteSummary[] {
@@ -5326,6 +6264,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL AND pin.user_id IS NOT NULL
+         AND directory.origin_type <> 'automation'
          AND (? = 1 OR directory.system_kind IS NULL)
          AND (directory.scope = 'workspace' OR viewer.is_participant = 1)
        ORDER BY pin.position, directory.workstream_id`,
@@ -5344,6 +6283,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return this.state.storage.sql.exec<WorkspaceDirectoryRow>(
       `${SELECT_WORKSPACE_DIRECTORY}
        WHERE directory.archived_at IS NULL
+         AND directory.origin_type <> 'automation'
          AND directory.exact_state IN ('running', 'interrupting', 'preparing_context',
                                        'waiting_capacity')
          AND (? = 1 OR directory.system_kind IS NULL)
@@ -5420,6 +6360,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).toArray()[0];
       if (!row) continue;
       const visible = row.archived_at === null
+        && row.origin_type !== "automation"
         && (row.scope === "workspace" || row.is_participant === 1);
       const stateVersion = directoryStateVersion(row);
       const payload = JSON.stringify(WorkspaceWorkstreamStateEventSchema.parse({
@@ -5637,6 +6578,19 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       workspaceId,
       this.env.AVALON_REGION,
       placementAffinity,
+      now,
+      now,
+    );
+    removeLegacyAutomationSchema(this.state.storage);
+    // A workspace born on the new build has no legacy authority to import. It
+    // starts past the campaign fence; only carried objects require the
+    // explicit audit/import/cleanup RPC before authoring is admitted.
+    this.state.storage.sql.exec(
+      `INSERT INTO automation_cutover_campaign
+         (id, workspace_id, state, source_hash, source_witness_json,
+          cursor_json, completed_at, updated_at)
+       VALUES (1, ?, 'completed', 'fresh', '{}', '{}', ?, ?)`,
+      workspaceId,
       now,
       now,
     );

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { HonoAppEnv } from "../env";
 import {
   BlockDashboardBlockSocketService,
+  AutomationSocketService,
   SocketService,
   WorkspaceSocketService,
   WorkstreamControlSocketService,
@@ -24,6 +25,16 @@ socketRoutes.get("/workstreams/:id/substreams/:substreamId", zValidator("param",
   new SocketService(c.env).upgrade(
     c.req.valid("param").id,
     c.req.valid("param").substreamId,
+    c.req.valid("query").ticket,
+    c.req.raw,
+  ),
+);
+socketRoutes.get(
+  "/automations/:id",
+  zValidator("param", params),
+  zValidator("query", query),
+  async (c) => new AutomationSocketService(c.env).upgrade(
+    c.req.valid("param").id,
     c.req.valid("query").ticket,
     c.req.raw,
   ),

@@ -19,15 +19,10 @@
  */
 import {
   ConnectorPollWorkflowInputSchema,
-  ExecutionPrincipalSchema,
   RegionSchema,
-  WorkstreamWorkflowInputSchema,
   asWorkspaceId,
-  asWorkstreamId,
   type ConnectorPollWorkflowInput,
-  type ExecutionPrincipal,
   type Workstream,
-  type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { newId } from "@rally/db";
 
@@ -45,11 +40,8 @@ import type {
 } from "../durable-objects/workspace-notification-intent-protocol";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { uuidV7 } from "../lib/uuid-v7";
-import { substreamLoopId } from "../durable-objects/names";
 import { logStructuredEvent } from "../observability/logger";
-import { automationModelOverride, scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import { fireDigestSchedule } from "./digest-run-service";
-import { activateWorkstreamLoop } from "./integrations";
 import { processMemoryIndexOutbox } from "./memory-service";
 import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
 import { reapDeletedNoteObjects } from "./note-resource-cleanup";
@@ -65,17 +57,10 @@ import { parseTerminalRegionConfiguration } from "./terminal/contract";
 import { createDaytonaTerminalProvider } from "./terminal/daytona-provider";
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "./terminal/lifecycle";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
-import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
-import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
-import {
-  bootstrapWorkstreamRuntimeEnvironment,
-  provisionWorkstreamObject,
-} from "./workstream-runtime-database";
 import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
 import { SLACK_LINK_CHALLENGE_GRACE_MS } from "./slack-agent-service";
 import type { TerminalLifecycleTransition } from "./terminal/lifecycle";
-import { createHarnessRunObjectPort, createHarnessRunPortFactory } from "../runtime/harness-run-port";
-import { createIdentityObjectPort } from "../runtime/identity-port";
+import { createHarnessRunPortFactory } from "../runtime/harness-run-port";
 
 /**
  * The directory reads a schedule needs, satisfied without an RPC hop.
@@ -129,7 +114,6 @@ interface AlarmTargetRow {
 interface ScheduleRow {
   id: string;
   workspace_id: string;
-  automation_subscription_id: string | null;
   connector_connection_id: string | null;
   digest_schedule_id: string | null;
   schedule_type: string;
@@ -144,29 +128,11 @@ interface ScheduleRow {
   updated_at: string;
 }
 
-interface AutomationSourceRow {
-  subscription_id: string;
-  scope: "personal" | "workspace";
-  audience_user_id: string;
-  execution_principal_json: string;
-  model_override: string | null;
-  template_name: string;
-  template_description: string;
-  instructions: string;
-}
-
 interface ResourceWatchRow {
   id: string;
   workspace_id: string;
   connection_id: string;
   next_poll_at: string;
-}
-
-interface AutomationRunRow {
-  id: string;
-  workstream_id: string;
-  status: string;
-  workflow_instance_id: string | null;
 }
 
 export interface ScheduleTiming {
@@ -582,9 +548,7 @@ async function runSchedule(
   const nextRunAt = calculateNextOccurrence(schedule, now);
   const workspaceEnv = ctx.workspaceEnv;
 
-  if (schedule.automation_subscription_id) {
-    await startAutomation(ctx, schedule, now);
-  } else if (schedule.connector_connection_id) {
+  if (schedule.connector_connection_id) {
     await startConnectorPoll(ctx, schedule);
   } else if (schedule.digest_schedule_id) {
     // The occurrence is identified by the due time, not by this row: several
@@ -629,227 +593,6 @@ async function runSchedule(
     return;
   }
 
-  if (schedule.automation_subscription_id) {
-    await workspaceEnv.DB.prepare(
-      `UPDATE automation_subscriptions
-          SET last_run_at = ?1, next_run_at = ?2, updated_at = ?1
-        WHERE id = ?3 AND workspace_id = ?4`
-    )
-      .bind(now.toISOString(), nextRunAt, schedule.automation_subscription_id, schedule.workspace_id)
-      .run();
-  }
-}
-
-async function startAutomation(
-  ctx: WorkspaceScheduleContext,
-  schedule: ScheduleRow,
-  now: Date,
-): Promise<void> {
-  const subscriptionId = schedule.automation_subscription_id;
-  if (!subscriptionId) throw new Error("missing_automation_subscription");
-  const emailRouting = new WorkstreamEmailRoutingService(ctx.env);
-  const workspaceEnv = ctx.workspaceEnv;
-
-  const source = await workspaceEnv.DB.prepare(
-    `SELECT s.id AS subscription_id,
-            s.scope,
-            COALESCE(s.owner_user_id, t.owner_user_id) AS audience_user_id,
-            s.execution_principal_json,
-            s.model_override,
-            t.name AS template_name,
-            t.description AS template_description,
-            tv.instructions
-       FROM automation_subscriptions s
-       JOIN automation_templates t ON t.id = s.template_id
-       JOIN automation_template_versions tv ON tv.id = s.template_version_id
-      WHERE s.id = ?1
-        AND s.workspace_id = ?2
-        AND s.status = 'active'
-        AND s.lifecycle_state = 'visible'
-      LIMIT 1`
-  )
-    .bind(subscriptionId, schedule.workspace_id)
-    .first<AutomationSourceRow>();
-  if (!source) throw new Error("automation_subscription_unavailable");
-  const principal = ExecutionPrincipalSchema.parse(JSON.parse(source.execution_principal_json));
-
-  let run = await workspaceEnv.DB.prepare(
-    `SELECT id, workstream_id, status, workflow_instance_id
-       FROM automation_runs
-      WHERE automation_subscription_id = ?1 AND planned_for = ?2
-      LIMIT 1`
-  )
-    .bind(subscriptionId, schedule.next_run_at)
-    .first<AutomationRunRow>();
-
-  if (!run) {
-    const planned = await ctx.directory.plannedAutomationWorkstream({
-      workspaceId: schedule.workspace_id,
-      automationSubscriptionId: subscriptionId,
-      plannedFor: schedule.next_run_at,
-    }).then((workstream) => workstream ? ({
-      id: workstream.id,
-      automation_run_id: workstream.automationRunId,
-    }) : null);
-
-    const workstreamId = planned?.id ?? uuidV7(now.getTime());
-    const createdWorkstreamId = planned ? null : workstreamId;
-    const runId = uuidV7(now.getTime());
-    const timestamp = now.toISOString();
-    // A work stream nobody has opened yet has no object; the bootstrap is what
-    // makes one, and it is the only reason this branch survives the move off
-    // the routed statements. Nothing here reads through the environment any
-    // more — every write below addresses its own authority.
-    if (!planned) {
-      await bootstrapWorkstreamRuntimeEnvironment(workspaceEnv, schedule.workspace_id, workstreamId);
-    }
-
-    if (!planned) {
-      const emailRoute = await emailRouting.reserve({
-        region: ctx.env.AVALON_REGION,
-        workspaceId: schedule.workspace_id,
-        workstreamId,
-      });
-      await provisionWorkstreamObject(workspaceEnv, {
-        workspaceId: asWorkspaceId(schedule.workspace_id),
-        workstreamId: asWorkstreamId(workstreamId),
-        title: source.template_name,
-        objective: source.template_description || source.instructions,
-        scope: source.scope,
-        originType: "automation",
-        createdByUserId: source.audience_user_id,
-        participantUserIds: [source.audience_user_id],
-        harnessStatus: "scheduled",
-        emailAddress: emailRoute.emailAddress,
-        emailRouteStatus: "reserved",
-        systemKind: null,
-        automationSubscriptionId: subscriptionId,
-        automationRunId: null,
-        plannedFor: Date.parse(schedule.next_run_at),
-        // The automation's pin follows every run it produces, not only the
-        // ones `AutomationService.createRun` builds. `ensureHarnessRun` below
-        // resolves the model from this row, so writing it here is what makes a
-        // scheduled run honour the choice.
-        modelOverride: automationModelOverride(ctx.env, source.model_override, {
-          workspaceId: schedule.workspace_id,
-          automationSubscriptionId: subscriptionId,
-        }),
-        now: Date.parse(timestamp),
-      });
-    }
-
-    const inserted = await workspaceEnv.DB.prepare(
-      `INSERT OR IGNORE INTO automation_runs (
-         id, workspace_id, automation_subscription_id, workstream_id, trigger_type,
-         trigger_activity_id, planned_for, started_at, completed_at, status,
-         result_summary, workflow_instance_id, created_at
-       ) VALUES (?1, ?2, ?3, ?4, 'scheduled', NULL, ?5, ?6, NULL, 'running', NULL, NULL, ?6)`
-    )
-      .bind(runId, schedule.workspace_id, subscriptionId, workstreamId, schedule.next_run_at, timestamp)
-      .run();
-
-    if (changes(inserted) === 0) {
-      run = await workspaceEnv.DB.prepare(
-        `SELECT id, workstream_id, status, workflow_instance_id
-           FROM automation_runs
-          WHERE automation_subscription_id = ?1 AND planned_for = ?2
-          LIMIT 1`
-      )
-        .bind(subscriptionId, schedule.next_run_at)
-        .first<AutomationRunRow>();
-    } else {
-      run = {
-        id: runId,
-        workstream_id: workstreamId,
-        status: "running",
-        workflow_instance_id: null
-      };
-      await createIdentityObjectPort(ctx.env, schedule.workspace_id, workstreamId)
-        .bindAutomationRun({ automationRunId: runId, now: Date.parse(timestamp) });
-      if (createdWorkstreamId) {
-        await recordWorkstreamCreatedTelemetry(ctx.env, {
-          workspaceId: asWorkspaceId(schedule.workspace_id),
-          workstreamId: createdWorkstreamId,
-          creationSource: "automation_scheduled",
-          principal: principal.type === "user"
-            ? { type: "user", userId: principal.userId }
-            : { type: "workspace" },
-        });
-      }
-    }
-  }
-
-  if (!run) throw new Error("automation_run_claim_failed");
-  await emailRouting.ensureWorkstreamAddress({
-    region: ctx.env.AVALON_REGION,
-    workspaceId: schedule.workspace_id,
-    workstreamId: run.workstream_id,
-  });
-  if (["completed", "failed", "needs_input"].includes(run.status)) return;
-
-  const harnessRunId = await ensureHarnessRun(
-  ctx,
-    schedule.workspace_id,
-    run.workstream_id,
-    principal,
-    now
-  );
-  const input: WorkstreamWorkflowInput = WorkstreamWorkflowInputSchema.parse({
-    region: RegionSchema.parse(ctx.env.AVALON_REGION),
-    workspaceId: schedule.workspace_id,
-    workstreamId: run.workstream_id,
-    loopId: substreamLoopId(asWorkstreamId(run.workstream_id)),
-    harnessRunId,
-    triggerMessageId: null,
-    automationSubscriptionId: subscriptionId,
-    activityId: null,
-    executionPrincipal: principal,
-    reason: `Scheduled automation: ${source.template_name}`
-  });
-
-  const executionReceiptId = await activateWorkstreamLoop(workspaceEnv, input);
-
-  await workspaceEnv.DB.prepare(
-    `UPDATE automation_runs
-        SET workflow_instance_id = ?1, status = 'running', started_at = COALESCE(started_at, ?2)
-      WHERE id = ?3 AND workspace_id = ?4`,
-  ).bind(executionReceiptId, now.toISOString(), run.id, schedule.workspace_id).run();
-  const executionEnv = workspaceEnv;
-  await createHarnessRunObjectPort(executionEnv, schedule.workspace_id, run.workstream_id)
-    .bindWorkflowInstance({
-      runId: harnessRunId,
-      workflowInstanceId: executionReceiptId,
-      now: now.getTime(),
-    });
-}
-
-async function ensureHarnessRun(
-  ctx: WorkspaceScheduleContext,
-  workspaceId: string,
-  workstreamId: string,
-  executionPrincipal: ExecutionPrincipal,
-  now: Date,
-): Promise<string> {
-  const executionEnv = ctx.workspaceEnv;
-  const runs = createHarnessRunObjectPort(executionEnv, workspaceId, workstreamId);
-  const existing = await runs.latestActiveRootRun({ origin: "automation" });
-  if (existing) return existing.run_id;
-
-  const id = uuidV7(now.getTime());
-  const model = await scheduledWorkstreamModelForExisting(executionEnv, { workspaceId, workstreamId });
-  await runs.admitRun({
-    runId: id,
-    origin: "automation",
-    executionPrincipalJson: JSON.stringify(executionPrincipal),
-    status: "admitted",
-    startedAt: now.getTime(),
-    model,
-    triggerPartId: null,
-    parentRunId: null,
-    expectedLatestRunId: null,
-    now: now.getTime(),
-  });
-  return id;
 }
 
 async function startConnectorPoll(

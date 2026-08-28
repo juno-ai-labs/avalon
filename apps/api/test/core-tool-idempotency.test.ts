@@ -300,7 +300,7 @@ describe("Avalon core write-tool idempotency", () => {
       });
     const tool = __integrationTesting.createAvalonTools(env, workflowInput())
       .find((candidate) => candidate.definition.name === "request_elicitation");
-    expect(tool?.definition.idempotency).toBe("provider_key");
+    expect(tool?.definition.idempotency).toBe("record_before_execute");
     expect(tool?.definition.inputSchema).not.toHaveProperty("properties.targetUserId");
 
     const args = {

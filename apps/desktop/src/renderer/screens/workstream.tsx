@@ -5,7 +5,6 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import clsx from 'clsx';
 import {
   AlertTriangle,
-  ArrowDown,
   ArrowUp,
   CalendarClock,
   Check,
@@ -82,6 +81,8 @@ import { useWorkstreamFeedOpenTelemetry } from '../lib/use-workstream-feed-open-
 import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-ready-telemetry';
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
+import { JumpToLatestButton } from '../components/conversation-follow';
+export { JumpToLatestButton } from '../components/conversation-follow';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
 import { type SocketState, type WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
@@ -788,14 +789,6 @@ export function WorkstreamErrorState({
         title="Work stream could not be opened"
       />
     </div>
-  );
-}
-
-export function JumpToLatestButton({ onJump }: { onJump: () => void }): React.JSX.Element {
-  return (
-    <IconButton className="jump-bottom" label="Jump to latest" onClick={onJump} tooltipSide="top">
-      <ArrowDown aria-hidden="true" size={15} />
-    </IconButton>
   );
 }
 

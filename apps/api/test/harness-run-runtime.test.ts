@@ -1023,8 +1023,8 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.database.prepare(
       "SELECT status, completed_at, result_summary FROM automation_runs WHERE id = ?",
     ).get(automationRunId)).toMatchObject({
-      status: "failed",
-      result_summary: "The harness executor lost its durable lease",
+      status: "running",
+      result_summary: null,
     });
 
     await recordInferenceAttempt(sqlite.runs, {
@@ -1184,8 +1184,8 @@ describe("durable harness attempt runtime", () => {
     expect(sqlite.database.prepare(
       "SELECT status, result_summary FROM automation_runs WHERE id = ?",
     ).get(automationRunId)).toEqual({
-      status: "failed",
-      result_summary: "The harness executor lost its durable lease",
+      status: "running",
+      result_summary: null,
     });
     expect(settlementCalls).toBe(2);
   });

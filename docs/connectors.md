@@ -824,6 +824,20 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-08-28 — One event engine serves automations and watched work streams
+
+**What changed:** Connector adapters normalize manifest-declared events once.
+WorkspaceDO accepts the canonical regional event, evaluates typed automation
+rules and exact watched-resource registrations, stores destination receipts,
+and emits identifiers-and-hashes-only wakes. Each destination then rechecks its
+own lifecycle, generation, watch, and audience before consuming the payload.
+
+**Why:** Direct watch scans and a separate automation evaluator would duplicate
+events and disagree about retries, deduplication, and privacy.
+
+**Consequences:** A new connector extends its manifest and evaluator fixtures;
+it does not add another routing engine. False predicates never invoke inference.
+
 ### 2026-08-28 — Resource re-fetch follows the adapter capability
 
 **What changed:** Resource API, work-stream detail, and live origin-attachment
@@ -863,7 +877,6 @@ asked about.
 for the watch-routed arm, where a resource was actually matched. The text
 carries titles because the transcript renders text and no surface reads the
 structured field yet. Nothing in this path performs a re-fetch.
-
 ### 2026-08-26 — Connector-event processing uses native Queue retry
 
 **What changed:** After canonical WorkspaceDO ingress, new connector events send

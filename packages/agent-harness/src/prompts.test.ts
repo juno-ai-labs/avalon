@@ -89,7 +89,7 @@ describe("prompt renderers", () => {
           defaultTimezones: { personal: "America/New_York", workspace: "Europe/London" },
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "8c529f0bee5af348a6007593844745e145865dc8c09f1e2d0f7b94cea37bac0f",
+        hash: "43aa55c2e2f5a0c6aa1069673b91bb22fc6c3a7700cf295da09695bf510ed5c5",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -101,7 +101,7 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "26c1ec809d38b8c9a7922172f8613fb656dd21117ec19a74c24c758f9c024189",
+        hash: "4063c56bc245556a1d94ec4518b4ca82c9c7a7e6eed2ca5820bba0c826e3e8d2",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({

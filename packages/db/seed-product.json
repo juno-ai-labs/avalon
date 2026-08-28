@@ -70,55 +70,6 @@
         "created_at": "2026-07-31T18:03:00.000Z"
       }
     ],
-    "automation_subscriptions": [
-      {
-        "id": "00000000-0000-7000-8000-000000000012",
-        "workspace_id": "00000000-0000-7000-8000-000000000002",
-        "template_id": "00000000-0000-7000-8000-000000000010",
-        "template_version_id": "00000000-0000-7000-8000-000000000011",
-        "scope": "workspace",
-        "owner_user_id": null,
-        "execution_principal_json": "{\"type\":\"workspace\",\"workspaceId\":\"00000000-0000-7000-8000-000000000002\"}",
-        "connector_bindings_json": "{}",
-        "overrides_json": "{}",
-        "status": "active",
-        "last_run_at": null,
-        "next_run_at": "2026-08-07T21:00:00.000Z",
-        "created_at": "2026-07-31T18:02:00.000Z",
-        "updated_at": "2026-07-31T18:02:00.000Z"
-      },
-      {
-        "id": "00000000-0000-7000-8000-000000000016",
-        "workspace_id": "00000000-0000-7000-8000-000000000002",
-        "template_id": "00000000-0000-7000-8000-000000000014",
-        "template_version_id": "00000000-0000-7000-8000-000000000015",
-        "scope": "personal",
-        "owner_user_id": "00000000-0000-7000-8000-000000000001",
-        "execution_principal_json": "{\"type\":\"user\",\"userId\":\"00000000-0000-7000-8000-000000000001\"}",
-        "connector_bindings_json": "{}",
-        "overrides_json": "{}",
-        "status": "paused",
-        "last_run_at": null,
-        "next_run_at": null,
-        "created_at": "2026-07-31T18:03:00.000Z",
-        "updated_at": "2026-07-31T18:03:00.000Z"
-      }
-    ],
-    "schedules": [
-      {
-        "id": "00000000-0000-7000-8000-000000000013",
-        "workspace_id": "00000000-0000-7000-8000-000000000002",
-        "automation_subscription_id": "00000000-0000-7000-8000-000000000012",
-        "schedule_type": "calendar",
-        "rrule": "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0",
-        "timezone": "America/Los_Angeles",
-        "next_run_at": "2026-08-07T21:00:00.000Z",
-        "enabled": 1,
-        "version": 1,
-        "created_at": "2026-07-31T18:02:00.000Z",
-        "updated_at": "2026-07-31T18:02:00.000Z"
-      }
-    ],
     "resources": [
       {
         "id": "00000000-0000-7000-8000-000000000041",
@@ -140,6 +91,87 @@
       }
     ]
   },
+  "automations": [
+    {
+      "id": "00000000-0000-7000-8000-000000000012",
+      "authorUserId": "00000000-0000-7000-8000-000000000001",
+      "source": {
+        "definition": {
+          "name": "Weekly changelog",
+          "description": "Prepare a concise changelog from completed work every Friday.",
+          "overview": "Review completed work and publish a concise weekly changelog.",
+          "instructions": "Review work completed this week and prepare a readable changelog.",
+          "triggers": [{ "type": "calendar", "rrule": "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0", "timezone": "America/Los_Angeles", "summary": "Every Friday at 2:00 PM" }],
+          "requiredCapabilities": [],
+          "expectedOutputs": ["changelog"],
+          "requestedDelivery": [],
+          "defaultBehavior": {},
+          "recommendedPlugins": [],
+          "memoryTables": [],
+          "suggestedScope": "workspace",
+          "followUpQuestion": null,
+          "elicitation": null,
+          "ready": true
+        },
+        "status": "active",
+        "scope": "workspace",
+        "unsupportedTrigger": false,
+        "defaultPluginIds": [],
+        "activitySourcePluginIds": {},
+        "connectorBindings": {},
+        "deliveryTargets": [],
+        "emailAddress": null,
+        "modelOverride": null,
+        "createdAt": 1785520920000,
+        "updatedAt": 1785520920000,
+        "schedules": [{
+          "scheduleId": "00000000-0000-7000-8000-000000000013",
+          "kind": "calendar",
+          "definition": { "rrule": "FREQ=WEEKLY;BYDAY=FR;BYHOUR=14;BYMINUTE=0", "timezone": "America/Los_Angeles", "acceptedAt": 1785520920000 },
+          "nextDueAt": 1786136400000
+        }],
+        "runs": [],
+        "memoryRecords": []
+      }
+    },
+    {
+      "id": "00000000-0000-7000-8000-000000000016",
+      "authorUserId": "00000000-0000-7000-8000-000000000001",
+      "source": {
+        "definition": {
+          "name": "Former-client monitor",
+          "description": "Watch a public page for meaningful changes.",
+          "overview": "Check the configured page daily and report meaningful changes.",
+          "instructions": "Fetch the configured page and report only meaningful changes.",
+          "triggers": [{ "type": "interval", "intervalSeconds": 86400, "summary": "Every 24 hours" }],
+          "requiredCapabilities": ["web.read"],
+          "expectedOutputs": ["change summary"],
+          "requestedDelivery": [],
+          "defaultBehavior": {},
+          "recommendedPlugins": [],
+          "memoryTables": [],
+          "suggestedScope": "personal",
+          "followUpQuestion": null,
+          "elicitation": null,
+          "ready": true
+        },
+        "status": "paused",
+        "scope": "personal",
+        "unsupportedTrigger": false,
+        "defaultPluginIds": [],
+        "activitySourcePluginIds": {},
+        "connectorBindings": {},
+        "deliveryTargets": [],
+        "emailAddress": null,
+        "modelOverride": null,
+        "createdAt": 1785520980000,
+        "updatedAt": 1785520980000,
+        "schedules": [],
+        "runs": [],
+        "memoryRecords": []
+      }
+    }
+  ],
   "workstreams": [
     {
       "id": "00000000-0000-7000-8000-000000000020",

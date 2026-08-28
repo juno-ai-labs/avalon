@@ -255,6 +255,48 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 10. Create a work stream with a model pinned and confirm the pill on the work-stream screen it opens onto already reads that model, without a **Default** frame in between as the screens change hands.
 11. Repeat in **New automation**: choose a model and create the automation. Exercise all three run paths — **Run now**, a scheduled run fired by the workspace scheduler, and a run triggered by matching connector activity — and confirm each one's work stream carries the override and each run uses it. Only the first goes through `AutomationService.createRun`; the other two build the work stream themselves. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
 
+## Durable automation lifecycle acceptance
+
+Use a disposable workspace and inspect both the global work-stream sidebar and
+the Automation home page.
+
+1. Select **New automation**, type without sending, navigate away, and return.
+   Confirm there is no sidebar draft or automation ID. Send one prompt, then
+   confirm the same screen adopts `/automations/<id>` and one draft row appears.
+2. Close and reopen Rally while the architect is researching a connector.
+   Confirm the ordered feed, active checkpoint, streaming response, attachments,
+   and composer state recover. Open the same draft in another window and confirm
+   simultaneous sends admit only one compiler run while preserving the refused
+   window's text.
+3. Build and accept a weekday 09:00 Pacific timer automation. Confirm review
+   names the resolved schedule and delivery, acceptance keeps the same ID, and
+   pause/resume does not create missed catch-up runs.
+4. Build one external-event automation that matches an exact resource and a
+   case-sensitive substring. Confirm the architect stages rules with
+   `automation_set_evaluator_rules` before submission. Send matching,
+   nonmatching, wrong-case, duplicate, and reordered connector events; only the
+   matching canonical event creates one occurrence.
+5. Watch the same resource from two work streams and trigger the automation from
+   one update. Confirm WorkspaceDO creates three destination receipts and each
+   destination receives exactly one update. Disable one watch before delivery
+   and confirm that destination refuses safely.
+6. Run the active automation manually. Confirm its generated work stream is
+   absent from the global sidebar, appears once in the automation's paged run
+   list, opens only after current child-audience authorization, and survives a
+   retry without creating another child.
+7. Delete the automation and accept the confirmation that generated runs are
+   deleted. Confirm its parent, children, route, attention item, automation-home
+   row, and email/evaluator registrations no longer resolve.
+8. In a real Electron window, compare settled, streaming, failed, elicitation,
+   attachment, follow, and **Jump to latest** behavior with a work stream. Confirm
+   work-stream-only participant/resource/unread controls and automation-only
+   review/template controls do not leak across adapters.
+
+Pass evidence: one stable automation ID, one accepted authority, strict event
+matching with one occurrence per canonical event, private generated runs shown
+only on the automation home, recovered draft/compiler state, and no legacy
+subscription/run table reads.
+
 ## PRD flow 1 — ad hoc collaboration
 
 Use a test workspace with two members, Adam and Samantha.
