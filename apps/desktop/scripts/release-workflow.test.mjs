@@ -241,7 +241,7 @@ test('the release tag is pushed after publication and before anything that can s
   const published = stepIndex('Publish immutable payloads and promote the release manifest');
   const pushedTag = stepIndex('Publish the release tag');
   const recordedConfig = stepIndex('Record the published release config on the default branch');
-  const site = stepIndex('Deploy the landing site with the verified release');
+  const site = stepIndex('Deploy the landing site from the tip of main');
 
   for (const [name, index] of Object.entries({ createdLocally, published, pushedTag, recordedConfig, site })) {
     assert.notEqual(index, -1, `Release workflow must keep the ${name} step`);
@@ -258,6 +258,94 @@ test('the release tag is pushed after publication and before anything that can s
   // that can still fail happens after the tag exists.
   assert.ok(pushedTag < recordedConfig, 'The tag must be pushed before the release config is recorded');
   assert.ok(pushedTag < site, 'The tag must be pushed before the site deploy, which can fail on its own');
+  // The site builds from main's tip, so the tip has to carry the freshly
+  // recorded config by then, or the deployed site advertises the previous
+  // version.
+  assert.ok(recordedConfig < site, 'The release config must be recorded on main before the site builds from it');
+});
+
+test('the landing site deploys from the tip of main, never from the stale release checkout', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+  const keychainRemoved = workflow.indexOf('- name: Remove the temporary signing keychain');
+  const siteStart = workflow.indexOf('- name: Deploy the landing site from the tip of main');
+  assert.notEqual(keychainRemoved, -1, 'Release workflow must keep the keychain removal step');
+  assert.notEqual(siteStart, -1, 'Release workflow must keep the site deploy step');
+  // The step executes code from main's tip — commits this job never built —
+  // so the signing identity must be gone before any of it runs.
+  assert.ok(keychainRemoved < siteStart, 'The signing keychain must be removed before tip code runs');
+  // Bounded at the next step so a step appended after this one is not
+  // silently policed by the site step's own negative assertions.
+  const nextStep = workflow.indexOf('\n      - name: ', siteStart);
+  const siteStep = workflow.slice(siteStart, nextStep === -1 ? workflow.length : nextStep);
+
+  // Each command is looked up as a complete run-block line — anchored by the
+  // newline and the block's indent, so a comment quoting it cannot satisfy
+  // the assertion — and captured as an index, so the order is pinned too.
+  const line = (command) => {
+    const index = siteStep.indexOf(`\n          ${command}\n`);
+    assert.notEqual(index, -1, `The site step must run: ${command}`);
+    return index;
+  };
+
+  // The job checked out the release commit before a build that takes up to
+  // ninety minutes, so by deploy time that checkout can be older than a site
+  // change deploy-site.yml has already shipped — on 2026-08-27 deploying it
+  // reverted a live site fix. Every push-triggered deploy-site.yml run
+  // deploys a commit on main (a manual dispatch on another branch sits
+  // outside the guarantee), so a build from main's freshly fetched tip is
+  // never older than one of those.
+  const fetched = line('git fetch origin main');
+  const added = line('git worktree add --detach "$site" origin/main');
+  // Its own frozen install, filtered to the site's dependency closure so
+  // Electron and the desktop toolchain stay out of the release's final step
+  // (wrangler is a site dependency, so workerd and esbuild remain) — and
+  // failing loudly when the filter stops matching, because an unmatched
+  // pnpm filter exits 0 and a green run would deploy no site at all.
+  const installed = line('pnpm -C "$site" install --frozen-lockfile --filter "@rally/site..." --fail-if-no-match');
+  const typechecked = line('pnpm -C "$site" --filter @rally/site --fail-if-no-match typecheck');
+  const tested = line('pnpm -C "$site" --filter @rally/site --fail-if-no-match test');
+  // The same live-channel guard the standalone deployment runs, invoked from
+  // the worktree so it reads the committed config it is about to deploy.
+  const guarded = line('node "$site/scripts/check-site-release-config.mjs"');
+  const deployed = line('pnpm -C "$site" --filter @rally/site --fail-if-no-match run deploy');
+
+  // Presence is not enough: a deploy hoisted above the checks would pass a
+  // pure-presence test and ship a site build nothing verified.
+  assert.ok(fetched < added, 'The tip must be fetched before the worktree is created from it');
+  assert.ok(added < installed, 'The worktree must exist before it is installed into');
+  assert.ok(installed < typechecked, 'The install must precede the site typecheck');
+  assert.ok(typechecked < deployed, 'The site must typecheck before it ships');
+  assert.ok(tested < deployed, 'The site tests must pass before it ships');
+  assert.ok(guarded < deployed, 'The live-channel guard must run before the publish');
+
+  // The shell stays in the job workspace: every git and pnpm call addresses
+  // the worktree explicitly, so the EXIT trap never removes its own cwd.
+  assert.doesNotMatch(siteStep, /^ +cd\b/mu, 'The site step must not change directory');
+  // Scanned per line rather than anchored on the first token, so an env-var
+  // prefix or a command substitution cannot slip an invocation of the job
+  // checkout past the assertion.
+  for (const invocation of siteStep.split('\n')) {
+    if (/^\s*#/u.test(invocation) || !/(^|[\s(`])pnpm\s/u.test(invocation)) continue;
+    assert.match(invocation, /pnpm -C "\$site" /u,
+      `Every pnpm invocation in the site step must address the worktree: ${invocation.trim()}`);
+  }
+});
+
+test('nothing deploys the site from the release checkout', async () => {
+  const workflow = await readFile(workflowPath, 'utf8');
+
+  // The pre-2026-08-27 failure was a site deploy running from the job's own
+  // working tree — the release commit, up to a build stale — which reverted
+  // a live site fix. Any spelling of a site deploy that does not address the
+  // tip worktree is that failure coming back, so this scans every
+  // non-comment line naming a site deploy rather than pinning one exact
+  // command form.
+  for (const invocation of workflow.split('\n')) {
+    if (/^\s*#/u.test(invocation)) continue;
+    if (!(invocation.includes('pnpm') && invocation.includes('@rally/site') && invocation.includes('deploy'))) continue;
+    assert.match(invocation, /-C "\$site"/u,
+      `A site deploy must run from the tip worktree, never the release checkout: ${invocation.trim()}`);
+  }
 });
 
 test('the release records its site config back on the default branch', async () => {
@@ -275,10 +363,12 @@ test('the release records its site config back on the default branch', async () 
 
 test('the release-config retry never runs from the disposable sync worktree', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
-  const recordStep = workflow.slice(
-    workflow.indexOf('- name: Record the published release config'),
-    workflow.indexOf('- name: Deploy the landing site with the verified release'),
-  );
+  const recordStart = workflow.indexOf('- name: Record the published release config');
+  const recordEnd = workflow.indexOf('- name: Remove the temporary signing keychain');
+  assert.notEqual(recordStart, -1, 'Release workflow must keep the record step');
+  assert.notEqual(recordEnd, -1, 'Release workflow must keep the keychain removal step');
+  assert.ok(recordStart < recordEnd, 'The keychain removal that bounds this slice must follow the record step');
+  const recordStep = workflow.slice(recordStart, recordEnd);
 
   // A rejected push removes and recreates this worktree on the next attempt.
   // Keeping the shell inside it makes that retry fail before it can refetch.
