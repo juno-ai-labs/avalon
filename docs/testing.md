@@ -263,10 +263,15 @@ beforeEach(async () => {
   is called again — so between an automatic fire and the handler's own
   re-arm the helper finds no alarm, returns `false`, and runs nothing — while
   the auto-fired drain is still in flight for the next assertion to interleave
-  with. A test that arms an overdue alarm and must prove its work ran should
-  not force delivery at all: `expect.poll` a read of the state the drain
-  settles, and let the timeout be the failure, as the semantic-recovery test
-  in `durable-object-runtime.test.ts` does. A probe may well run while the
+  with. A test that arms an overdue alarm and must prove work that *moves
+  durable state* ran should not force delivery at all: `expect.poll` a read
+  of the state the drain settles, and let the timeout be the failure, as the
+  semantic-recovery test in `durable-object-runtime.test.ts` does. Polling
+  proves nothing about a handler whose success leaves the rows as they were —
+  a hold, a deferral, a no-op — because a poll cannot tell "never fired" from
+  "fired and held"; there, assert a side effect only the handler writes, or
+  drive the handler's work directly, knowing what a concurrent auto-fire
+  converges with. A probe may well run while the
   drain is still in flight — reads interleave at the handler's awaits like
   any other invocation, and a probe can observe the unsettled row — but the
   poll tolerates that intermediate answer and retries, a read-only probe can
