@@ -62,6 +62,11 @@ export const ATTACHMENT_LIST_RESOURCES_DESCRIPTION = [
   ...ATTACHMENT_KIND_ENTRIES.map((entry) => `- ${entry.kind} — ${entry.description}`),
   "Omit attachmentKind to list every kind. Do not use or guess MIME types.",
   "Use nextCursor by itself to continue until it is null when complete coverage is required.",
+  // Two identifiers arrive per item and only one is an argument. Without this
+  // the model is left to choose, and the wrong choice is rejected by every
+  // other resource tool's schema — a wasted turn each time.
+  "Each item carries resourceId and slug. Pass resourceId to every tool; slug is a short alias for"
+    + " writing about the resource, and is sometimes null.",
 ].join("\n");
 
 const GENERIC_MIME_TYPES = new Set([
@@ -301,8 +306,23 @@ export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
   summarizeResource: AttachmentSummarizeResourceArgumentsSchema,
 } as const;
 
+/**
+ * A resource's short alias: four lowercase words, or null while the resource
+ * still only has its UUID. Every internal reference is the UUID regardless.
+ *
+ * Defined here rather than beside `ResourceSchema` because the model-facing
+ * listing below needs it and `index.ts` imports this module, not the reverse.
+ */
+export const ResourceSlugSchema = z.string().min(3).max(80);
+
 const ResourceListItemSchema = z.object({
   resourceId: CanonicalUuidSchema,
+  /**
+   * The resource's short alias, cheaper for a model to read back and to write
+   * into a citation than the UUID beside it. Null until one is allocated; the
+   * UUID above is what every tool argument and internal reference uses.
+   */
+  slug: ResourceSlugSchema.nullable(),
   title: z.string(),
   resourceType: z.string(),
   provider: z.string(),

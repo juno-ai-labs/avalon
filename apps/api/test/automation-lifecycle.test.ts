@@ -11,7 +11,7 @@ import {
 } from "../src/services/workspace-schedule-execution";
 import { AutomationService } from "../src/services/automation-service";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
+import { applyWorkspaceResourceSchema, createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
@@ -560,6 +560,7 @@ function seededDatabase(): DatabaseSync {
   createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
   createWorkspaceObjectTable(database, "workspace_workstream_directory");
   createWorkspaceObjectTable(database, "workspace_workstream_viewers");
+  applyWorkspaceResourceSchema(database, "00000000-0000-7000-8000-000000000001");
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('00000000-0000-7000-8000-000000000002', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01');

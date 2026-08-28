@@ -78,7 +78,9 @@ const LOCAL_TABLE_PATTERNS = LOCAL_TABLES.map((table) =>
 const LOCAL_TABLE_SET = new Set<string>(LOCAL_TABLES);
 
 function mutationTarget(sql: string): string | null {
-  return /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
+  // The conflict clause belongs to the verb on UPDATE too; reading it as the
+  // table name misroutes the statement. See the workspace router's twin.
+  return /^\s*(?:(?:INSERT|REPLACE)(?:\s+OR\s+\w+)?\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
     .exec(sql)?.[1]?.toLowerCase() ?? null;
 }
 

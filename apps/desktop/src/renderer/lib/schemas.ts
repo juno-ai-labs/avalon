@@ -69,6 +69,7 @@ export const resourceSchema = z
     provider: z.string().optional(),
     mimeType: z.string().optional(),
     canonicalUrl: z.string().optional(),
+    refreshSupported: z.boolean().default(false),
     watchEnabled: z.boolean().default(false),
     watchStatus: z.enum(['watching', 'paused', 'unsupported', 'error']).default('paused'),
     updatedAt: z.string().optional(),

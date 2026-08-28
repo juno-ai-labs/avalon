@@ -1,11 +1,22 @@
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
-import { classifyAttachmentKind, type ConnectorManifest, type ResourceRevision } from "@rally/contracts";
+import {
+  classifyAttachmentKind,
+  IdSchema,
+  ResourceVersionCauseSchema,
+  type ConnectorManifest,
+  type ResourceRevision,
+  type ResourceVersionAuthor,
+} from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createResourceObjectPort } from "../runtime/resource-port";
-import { connectorRegistryForEnv } from "../lib/connector-registry";
+import { allocateResourceSlugBesideCreation } from "./resource-slug";
+import {
+  connectorRegistryForEnv,
+  connectorSupportsResourceHydration,
+} from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
@@ -72,6 +83,7 @@ const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note' OR EXISTS (
 ))`;
 
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
+    c.connector_type AS connector_type,
     CASE WHEN EXISTS (
       SELECT 1 FROM resource_watches rw
        WHERE rw.resource_id = r.id AND rw.workspace_id = r.workspace_id AND rw.enabled = 1
@@ -128,6 +140,7 @@ export class ResourceService {
 
     const result = await this.env.DB.prepare(
       `SELECT r.*,
+        c.connector_type AS connector_type,
         CASE WHEN EXISTS (
           SELECT 1 FROM resource_watches rw
           WHERE rw.resource_id = r.id
@@ -149,7 +162,7 @@ export class ResourceService {
       if (await this.canReadInboundEmailResource(row)) rows.push(row);
     }
     const hasMore = result.results.length > limit;
-    const items = rows.map(toResource);
+    const items = rows.map((row) => this.toResource(row));
     const last = consumed.at(-1);
     return {
       items,
@@ -186,8 +199,10 @@ export class ResourceService {
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
           content_sha256, model_content_status, metadata_json, last_hydrated_at,
-          uploaded_by_user_id, attachment_status, created_at, updated_at)
-         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?)`,
+          uploaded_by_user_id, attachment_status, created_at, updated_at,
+          revision_author_kind, revision_author_user_id, revision_cause)
+         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?,
+                 'member', ?, 'created')`,
       ).bind(
         id,
         this.auth.workspaceId,
@@ -205,11 +220,13 @@ export class ResourceService {
         this.auth.userId,
         at,
         at,
+        this.auth.userId,
       ).run();
     } catch (error) {
       await this.env.PAYLOADS.delete(key).catch(() => undefined);
       throw error;
     }
+    await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, id);
     return this.get(id);
   }
 
@@ -245,21 +262,23 @@ export class ResourceService {
     await this.env.DB.prepare(
       `INSERT INTO resources
        (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
-        title, canonical_url, metadata_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)
+        title, canonical_url, metadata_json, created_at, updated_at,
+        revision_author_kind, revision_author_connection_id, revision_cause)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, 'connector', ?, 'created')
        ON CONFLICT DO NOTHING`,
-    ).bind(id, this.auth.workspaceId, input.connectionId, input.resourceType, input.provider, input.providerResourceId, input.title, input.canonicalUrl ?? null, at, at).run();
+    ).bind(id, this.auth.workspaceId, input.connectionId, input.resourceType, input.provider, input.providerResourceId, input.title, input.canonicalUrl ?? null, at, at, input.connectionId).run();
     const canonical = await this.env.DB.prepare(
       `SELECT id FROM resources
        WHERE workspace_id = ? AND connection_id = ? AND provider = ? AND provider_resource_id = ?`,
     ).bind(this.auth.workspaceId, input.connectionId, input.provider, input.providerResourceId).first<{ id: string }>();
     if (!canonical) throw new ApiError(500, "resource_write_failed", "The resource could not be stored");
+    await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, canonical.id);
     return this.get(canonical.id);
   }
 
   async get(id: string) {
     const row = await this.loadResource(id);
-    return toResource(row);
+    return this.toResource(row);
   }
 
   async content(id: string): Promise<Response> {
@@ -353,7 +372,7 @@ export class ResourceService {
 
   async hydrate(id: string) {
     const resource = await this.loadResource(id);
-    if (resource.connection_id == null) return toResource(resource);
+    if (resource.connection_id == null) return this.toResource(resource);
     const connection = await this.loadConnection(String(resource.connection_id));
     const context = await this.connectionContext(connection);
     const adapter = this.registry().get(String(connection.connector_type));
@@ -391,11 +410,16 @@ export class ResourceService {
     const at = nowIso();
     if (resource.content_sha256 === contentSha256) {
       await this.env.DB.prepare(
-        `UPDATE resources SET last_hydrated_at = ?, updated_at = ?
+        `UPDATE resources
+         SET last_hydrated_at = ?, updated_at = ?,
+             revision_author_kind = 'connector', revision_author_run_id = NULL,
+             revision_author_user_id = NULL, revision_author_connection_id = ?,
+             revision_cause = 'refetched'
          WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
       ).bind(
         at,
         at,
+        connection.id,
         id,
         this.auth.workspaceId,
         resource.content_ref,
@@ -421,13 +445,17 @@ export class ResourceService {
                model_content_status = 'pending', model_content_extractor_version = NULL,
                model_content_character_count = NULL, model_content_extracted_at = NULL,
                model_content_claimed_at = NULL, model_content_claim_id = NULL,
-               model_content_error_code = NULL
+               model_content_error_code = NULL,
+               revision_author_kind = 'connector', revision_author_run_id = NULL,
+               revision_author_user_id = NULL, revision_author_connection_id = ?,
+               revision_cause = 'refetched'
            WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
         ).bind(
           idKey,
           contentSha256,
           at,
           at,
+          connection.id,
           id,
           this.auth.workspaceId,
           resource.content_ref,
@@ -660,15 +688,27 @@ export class ResourceService {
     return this.connectorRegistry;
   }
 
+  private toResource(row: Record<string, unknown>) {
+    const refreshSupported = row.connector_type == null
+      ? false
+      : connectorSupportsResourceHydration(this.registry(), row.connector_type);
+    return toResource(row, refreshSupported);
+  }
+
   private async refreshScheduler(): Promise<void> {
     await refreshWorkspaceSchedule(this.env, this.auth.workspaceId);
   }
 }
 
-function toResource(row: Record<string, unknown>) {
+function toResource(row: Record<string, unknown>, refreshSupported: boolean) {
   const watchEnabled = Number(row.watch_enabled ?? 0) === 1;
   return {
-    id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
+    id: String(row.id),
+    // Bounded like `title` below and for the same reason: the column carries no
+    // length constraint, and one long row would fail `GET /resources` for the
+    // whole workspace rather than for itself.
+    slug: row.slug == null ? null : truncateUtf16Safe(String(row.slug), 80),
+    workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
     resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
     // Truncated to `ResourceSchema`'s bounds rather than passed through: the
     // columns have no length constraint, and a row past the bound would fail
@@ -676,6 +716,7 @@ function toResource(row: Record<string, unknown>) {
     title: truncateUtf16Safe(String(row.title), 300),
     mimeType: row.mime_type == null ? null : truncateUtf16Safe(String(row.mime_type), 160),
     canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+    refreshSupported,
     watchEnabled, watchStatus: row.connection_id == null ? "unsupported" : watchEnabled ? "watching" : "paused",
     lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     contentAvailable: row.content_ref != null,
@@ -684,10 +725,48 @@ function toResource(row: Record<string, unknown>) {
   };
 }
 
+/**
+ * The author a version row names, or null when it names none.
+ *
+ * A row whose identity does not parse as an id is reported unattributed
+ * rather than thrown: the route parses this list against the contract, so one
+ * malformed identity would otherwise fail the whole version history for the
+ * resource, which is a worse answer than "we do not know who".
+ */
+function toVersionAuthor(row: Record<string, unknown>): ResourceVersionAuthor | null {
+  const identity = (column: string): string | null => {
+    const value = nullableString(row[column]);
+    return value !== null && IdSchema.safeParse(value).success ? value : null;
+  };
+  switch (row.author_kind) {
+    case "agent": {
+      const runId = identity("author_run_id");
+      return runId === null ? null : { kind: "agent", runId };
+    }
+    case "member": {
+      const userId = identity("author_user_id");
+      return userId === null ? null : { kind: "member", userId };
+    }
+    case "connector": {
+      const connectionId = identity("author_connection_id");
+      return connectionId === null ? null : { kind: "connector", connectionId };
+    }
+    case "system": return { kind: "system" };
+    default: return null;
+  }
+}
+
 function toResourceRevision(row: Record<string, unknown>): ResourceRevision {
+  const cause = ResourceVersionCauseSchema.safeParse(row.cause);
   return {
     resourceId: String(row.resource_id),
     version: Math.max(1, Number(row.version)),
+    author: toVersionAuthor(row),
+    cause: cause.success ? cause.data : null,
+    // Every row written so far is an ordinary bucket object, and a row that
+    // predates the column was backfilled as one. Bounded because the column
+    // deliberately has no CHECK, so its value is a writer's choice.
+    storageKind: truncateUtf16Safe(nullableString(row.storage_kind) ?? "object", 40),
     title: truncateUtf16Safe(String(row.title), 300),
     resourceType: String(row.resource_type),
     provider: String(row.provider),

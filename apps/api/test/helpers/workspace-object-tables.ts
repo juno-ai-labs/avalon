@@ -1,5 +1,6 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 
+import type { DurableObjectSqliteMigration } from "../../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../../src/durable-objects/workspace-do";
 
 /**
@@ -19,4 +20,78 @@ export function createWorkspaceObjectTable(database: DatabaseSync, table: string
     .filter((statement) => definition.test(statement) || new RegExp(`^\\s*CREATE TABLE ${table}\\b`, "u").test(statement));
   if (statements.length === 0) throw new Error(`workspace_object_table_unknown:${table}`);
   for (const statement of statements) database.exec(statement);
+}
+
+/**
+ * A Node database holding the WorkspaceDO's whole schema, from its ledger.
+ *
+ * The resource services run against `env.DB`, which in production is the
+ * D1-shaped adapter over this object — so a fixture that hand-writes
+ * `CREATE TABLE resources` is asserting against its own idea of the schema.
+ * Version capture in particular lives entirely in the object's triggers, and a
+ * fixture without them cannot tell a swap that records history from one that
+ * silently does not.
+ *
+ * Foreign keys are on because workerd enforces them and `node:sqlite` does
+ * not; `resource_versions` cascades from `resources`, and a fixture that left
+ * them off would show a delete leaving history behind that production reaps.
+ */
+export function workspaceObjectSqliteDatabase(workspaceId: string): DatabaseSync {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys = ON");
+  for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
+    for (const statement of migration.statements) database.exec(statement);
+  }
+  // Every fenced table checks its `workspace_id` against this singleton, so a
+  // fixture without it can write no product row at all.
+  database.prepare(
+    `INSERT INTO workspace_identity
+       (id, workspace_id, region, placement_affinity, created_at, updated_at)
+     VALUES (1, ?, 'global', 'wnam', 0, 0)`,
+  ).run(workspaceId);
+  return database;
+}
+
+/**
+ * The ledger versions that grew `resources` past what D1 left it, derived.
+ *
+ * A hand-written list would go stale silently: the migration that forgot to
+ * register itself is exactly the one whose shape the fixtures would then stop
+ * applying, and every test over them would keep passing against a schema
+ * production no longer has. Reading the ledger means a new resource migration
+ * is picked up by the fixtures the day it lands.
+ */
+const RESOURCE_TABLE = /\b(?:resources|resource_versions)\b/u;
+
+function resourceSchemaMigrations(): readonly DurableObjectSqliteMigration[] {
+  return WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) =>
+    // Version 1 creates the whole object; a snapshot already has `resources`
+    // from D1, so what the fixtures need is everything the object added after.
+    migration.version > 1 && migration.statements.some((statement) => RESOURCE_TABLE.test(statement)));
+}
+
+/**
+ * Give a database that already holds `resources` the shape WorkspaceDO grew on
+ * it, from the ledger.
+ *
+ * A fixture built from the regional snapshot has the resource table as D1 left
+ * it, which is the table WorkspaceDO imported and then added history and
+ * aliases to. Capture is the whole subject of a publish or re-fetch test, so
+ * its triggers come from the migrations that ship them rather than a copy.
+ */
+export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId: string): void {
+  const identity = WORKSPACE_DO_SCHEMA_MIGRATIONS
+    .flatMap((migration) => migration.statements)
+    .filter((statement) => /^\s*CREATE TABLE workspace_identity\b/u.test(statement));
+  // The capture triggers sit beside the identity fences, which read this
+  // singleton on every insert; without it no resource row can be written.
+  for (const statement of identity) database.exec(statement);
+  database.prepare(
+    `INSERT INTO workspace_identity
+       (id, workspace_id, region, placement_affinity, created_at, updated_at)
+     VALUES (1, ?, 'global', 'wnam', 0, 0)`,
+  ).run(workspaceId);
+  for (const migration of resourceSchemaMigrations()) {
+    for (const statement of migration.statements) database.exec(statement);
+  }
 }

@@ -217,6 +217,15 @@ The array order below is part of the v1 protocol. **Do not reorder, replace, or
 remove entries.** Future vocabulary changes require a new generation version and do
 not alter existing addresses.
 
+**The generator has a second consumer.** A resource's short alias
+([`agent-attachments.md`](agent-attachments.md)) is minted by the same function
+over that resource's own coordinates, under a key domain-separated from this
+one — one vocabulary, one set of collision odds, one place to change either. So
+the array below is frozen for aliases too, and a reorder would rewrite the
+mapping for both. The two *value spaces* are deliberately not disjoint: an
+alias may equal some work stream's local part, which is harmless only because
+nothing routes mail on an alias and nothing resolves a resource by one.
+
 #### Frozen v1 adjectives (128)
 
 ```text
@@ -389,6 +398,7 @@ registry, and what happens to mail addressed to one. It does not own:
 | The Global/EU bridge this registry is reached through | [`regionalization.md`](regionalization.md) |
 | Untrusted-input handling and the spoofing threat model | [`security.md`](security.md) |
 | The `automation_delivery_targets` columns | [`data-model.md`](data-model.md) |
+| The resource aliases this generator also mints | [`agent-attachments.md`](agent-attachments.md) |
 | The Resend receiving domain and its secrets | [`runbook.md`](runbook.md) |
 
 ## Failure modes and limits
@@ -451,6 +461,25 @@ Deepening or flattening the nesting is therefore safe as long as at least two
 hashes remain; changing the words after them is not.
 
 ## Changelog
+
+### 2026-08-28 — The address generator gains a second consumer
+
+**What changed:** Resource aliases are minted by this module's generator, over
+a resource's coordinates and under a domain-separated key. Nothing about
+addresses changed; what changed is who else depends on the frozen vocabulary.
+
+**Why:** A second four-word namespace would have been a second vocabulary, a
+second set of collision odds, and a second place to get the reservation loop
+wrong — for a value that wants exactly the properties this one already has.
+
+**Considered and rejected:** Sharing the key as well. Separate keys make the
+two mappings independent, so an alias reveals nothing about a work stream's
+address; sharing one would have made them derivable from each other for no
+benefit.
+
+**Consequences:** The frozen array is now frozen on behalf of two features. The
+value spaces overlap by design — an alias may equal some work stream's local
+part — which stays safe only while nothing routes on an alias.
 
 ### 2026-08-25 — Automation detail is regional and runs inherit automation scope
 

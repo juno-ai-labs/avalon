@@ -19,6 +19,7 @@ import {
   workspaceConnectorEventQueueMessage,
 } from "../src/services/workspace-connector-event-ingress";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { uuidV7 } from "../src/lib/uuid-v7";
 
@@ -306,6 +307,8 @@ function envFor(database: DatabaseSync, overrides: Partial<Record<string, unknow
 
 function seededDatabase(): DatabaseSync {
   const database = preRetirementProductSqliteDatabase();
+  // Watch routing reads the alias WorkspaceDO keeps beside each resource.
+  applyWorkspaceResourceSchema(database, WORKSPACE);
   databases.push(database);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)

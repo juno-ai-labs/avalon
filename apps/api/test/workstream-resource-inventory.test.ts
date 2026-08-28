@@ -35,6 +35,7 @@ function resource(
 ): VisibleWorkstreamResourceRow {
   return {
     id,
+    slug: null,
     workspace_id: "1629dee4-8cc4-4531-81f9-b2be8614e062",
     resource_type: "file",
     provider: "avalon_upload",

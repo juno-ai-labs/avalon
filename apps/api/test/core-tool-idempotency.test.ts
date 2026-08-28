@@ -18,6 +18,7 @@ import {
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
@@ -62,6 +63,8 @@ afterEach(() => {
 function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv: Env; env: Env } {
   const database = legacyProductSqliteDatabase();
   openDatabases.push(database);
+  // The resource tools project the alias WorkspaceDO keeps beside each UUID.
+  applyWorkspaceResourceSchema(database, WORKSPACE_ID);
   database.exec(`
     INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at)

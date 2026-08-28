@@ -591,6 +591,15 @@ Repeating the same accept or dismissal reports the state the suggestion already
 reached; only a contradictory resolution is refused with
 `409 suggestion_already_resolved`.
 
+A routed watch activity names the resources it matched. Their titles are in the
+message text a participant reads, so the person who sees the notification can
+tell which attached document went stale; their ids and aliases ride in the same
+message's structured content for a surface that wants to link them, which
+nothing does yet. The re-fetch that turns a stale snapshot into history is the
+right rail's own action on the resource, not something this message performs:
+the notification marks staleness and nothing more, which is the line between a
+watch and continuous synchronization.
+
 An explicit resource watch may move content only into an audience no broader
 than the activity's. Workspace-visible activity may enter any watched work
 stream. Restricted activity requires a private target whose complete
@@ -814,6 +823,46 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-28 — Resource re-fetch follows the adapter capability
+
+**What changed:** Resource API, work-stream detail, and live origin-attachment
+projections now expose `refreshSupported`, derived from whether the deployed
+connector adapter implements `hydrateResource`. The desktop uses that field to
+decide whether to offer **Refresh from source**.
+
+**Why:** A connection and its watch state do not imply hydration support. Slack
+can own a connected source resource without implementing `hydrateResource`, so
+the previous UI gate offered a request the hydrate endpoint could only refuse.
+
+**Considered and rejected:** Maintaining a provider allowlist in the desktop or
+deriving the answer from `watchStatus`. Both duplicate the adapter's own
+declaration and can drift independently from the route that executes refresh.
+
+**What a future change has to respect:** `hydrateResource` remains the source of
+truth. Every person-facing resource projection must carry the server-computed
+capability, and compatibility parsing must fail closed when an older server
+omits it.
+
+### 2026-08-28 — A routed watch activity names what went stale
+
+**What changed:** The watch-routed arm now names the resources an activity
+matched — in the message text by title, and in its structured content by id and
+alias.
+
+**Why:** The message said that something changed at the provider, not which of
+a work stream's attached documents did — and a re-fetch, which is what makes a
+stale snapshot into history rather than a loss, cannot be asked for by someone
+who cannot identify the resource.
+
+**Considered and rejected:** Re-fetching on the notification. That is
+synchronization by another name, and it spends provider quota on changes nobody
+asked about.
+
+**Consequences:** Both the added line and the structured field are present only
+for the watch-routed arm, where a resource was actually matched. The text
+carries titles because the transcript renders text and no surface reads the
+structured field yet. Nothing in this path performs a re-fetch.
 
 ### 2026-08-26 — Connector-event processing uses native Queue retry
 

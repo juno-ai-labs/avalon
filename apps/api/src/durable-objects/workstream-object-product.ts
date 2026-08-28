@@ -41,6 +41,10 @@ import { z } from "zod";
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import {
+  connectorRegistryForEnv,
+  connectorSupportsResourceHydration,
+} from "../lib/connector-registry";
 import { logWarn } from "../observability/logger";
 import {
   ContentAudienceSchema,
@@ -1660,8 +1664,10 @@ export class WorkstreamObjectProductService {
     const placeholders = links.map(() => "?").join(",");
     const rows = await this.workspaceDatabase(this.root().parent_workspace_key).prepare(
       `SELECT resource.*,
+              connection.connector_type AS connector_type,
               CASE WHEN watch.id IS NULL THEN 0 ELSE 1 END AS active_watch
          FROM resources resource
+         LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
          LEFT JOIN resource_watches watch
            ON watch.resource_id = resource.id AND watch.enabled = 1
         WHERE resource.workspace_id = ? AND resource.id IN (${placeholders})
@@ -1676,6 +1682,7 @@ export class WorkstreamObjectProductService {
       viewerUserId,
     ).all<Record<string, unknown>>();
     const byId = new Map((rows.results ?? []).map((row) => [String(row.id), row]));
+    let connectorRegistry: ReturnType<typeof connectorRegistryForEnv> | undefined;
     return links.flatMap((link) => {
       const row = byId.get(link.resource_id);
       if (!row) return [];
@@ -1683,6 +1690,7 @@ export class WorkstreamObjectProductService {
       const metadata = parseJson<Record<string, unknown>>(String(row.metadata_json ?? "{}"), {});
       return [{
         id: String(row.id),
+        slug: row.slug == null ? null : String(row.slug),
         workspaceId: String(row.workspace_id),
         connectionId: row.connection_id == null ? null : String(row.connection_id),
         resourceType: String(row.resource_type),
@@ -1691,6 +1699,12 @@ export class WorkstreamObjectProductService {
         title: truncateUtf16Safe(String(row.title), 300),
         mimeType: row.mime_type == null ? null : truncateUtf16Safe(String(row.mime_type), 160),
         canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+        refreshSupported: row.connector_type == null
+          ? false
+          : connectorSupportsResourceHydration(
+              connectorRegistry ??= connectorRegistryForEnv(this.env),
+              row.connector_type,
+            ),
         watchEnabled: link.watch_enabled === 1,
         watchStatus: row.connection_id == null ? "unsupported"
           : Number(row.active_watch) === 1 ? "watching" : "paused",

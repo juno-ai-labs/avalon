@@ -10,7 +10,10 @@ import { ConnectorOriginResourceSchema } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../env";
-import { connectorRegistryForEnv } from "../lib/connector-registry";
+import {
+  connectorRegistryForEnv,
+  connectorSupportsResourceHydration,
+} from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { logWarn } from "../observability/logger";
 import { publishWorkstreamEvent } from "./integrations";
@@ -59,7 +62,10 @@ const BACKFILL_ORIGIN_RESOURCE_SQL = `UPDATE resources
   WHERE id = ? AND workspace_id = ?
     AND ((canonical_url IS NULL AND ? IS NOT NULL) OR (content_ref IS NULL AND ? IS NOT NULL))`;
 
-const ATTACHED_ORIGIN_RESOURCE_SQL = `SELECT * FROM resources WHERE id = ? AND workspace_id = ?`;
+const ATTACHED_ORIGIN_RESOURCE_SQL = `SELECT resource.*, connection.connector_type AS connector_type
+  FROM resources resource
+  LEFT JOIN connector_connections connection ON connection.id = resource.connection_id
+  WHERE resource.id = ? AND resource.workspace_id = ?`;
 
 /**
  * Ask a connector where a work stream is being started from.
@@ -224,7 +230,7 @@ export async function attachWorkstreamOriginResource(env: Env, input: {
     if (row) {
       await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
         type: "resource_attached",
-        resource: originResourceEvent(row),
+        resource: originResourceEvent(env, row),
       });
     }
     return resourceId;
@@ -317,7 +323,7 @@ export async function resolveOriginResource(
  * somebody makes afterwards — so the broadcast state is the resting state a
  * freshly attached connector resource has.
  */
-function originResourceEvent(row: Record<string, unknown>) {
+function originResourceEvent(env: Env, row: Record<string, unknown>) {
   return {
     id: String(row.id),
     workspaceId: String(row.workspace_id),
@@ -328,6 +334,10 @@ function originResourceEvent(row: Record<string, unknown>) {
     title: String(row.title),
     mimeType: row.mime_type == null ? null : String(row.mime_type),
     canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+    refreshSupported: connectorSupportsResourceHydration(
+      connectorRegistryForEnv(env),
+      row.connector_type,
+    ),
     watchEnabled: false,
     watchStatus: row.connection_id == null ? "unsupported" as const : "paused" as const,
     lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at),

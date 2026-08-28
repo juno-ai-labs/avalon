@@ -10,6 +10,17 @@ export interface AttachmentPreview {
   src?: string;
   loadContent?: (signal?: AbortSignal) => Promise<Blob>;
   returnFocus?: HTMLElement;
+  /**
+   * Set when what is being shown is a superseded version of a resource: the
+   * notice, and the one action such a preview offers.
+   *
+   * A prior version renders in the same surface as the current one, so without
+   * this nothing tells a reader which they are looking at — and reading a
+   * stale draft as current is the failure this whole layer exists to make
+   * impossible. The two travel together because a label with no way back, and
+   * a way back with no label, are each half a feature.
+   */
+  superseded?: { label: string; onReturnToCurrent: () => void };
 }
 
 function extension(fileName: string): string {

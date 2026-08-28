@@ -18,6 +18,8 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000000a1");
 const SCHEDULE_ALARM_VERSION = 4;
 const BOOTSTRAP_VERSION = 5;
 const RESOURCE_VERSIONING_VERSION = 13;
+const VERSION_PROVENANCE_VERSION = 18;
+const RESOURCE_SLUG_VERSION = 19;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -168,5 +170,208 @@ describe("the WorkspaceDO resource-version migration", () => {
       { object_ref: "r2/original-1" },
       { object_ref: "r2/original-2" },
     ]);
+  });
+});
+
+describe("the WorkspaceDO version-provenance migration", () => {
+  it("leaves pre-provenance history unattributed and attributes every capture after it", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, VERSION_PROVENANCE_VERSION - 1);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+          metadata_json, created_at, updated_at)
+       VALUES ('resource-1', ?, 'generated_file', 'avalon_generated', 'Draft', 'text/markdown',
+               'r2/original-1', '{}', '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z')`,
+    ).run(WORKSPACE_ID);
+    database.exec(
+      `UPDATE resources SET content_ref = 'r2/original-2', updated_at = '2026-08-28T02:00:00.000Z'
+        WHERE id = 'resource-1'`,
+    );
+
+    apply(database, VERSION_PROVENANCE_VERSION, VERSION_PROVENANCE_VERSION - 1);
+    // History captured before provenance existed says so rather than claiming
+    // an author the migration would have to invent. Its objects are ordinary
+    // bucket objects, which the migration does know.
+    expect(database.prepare(
+      `SELECT version, author_kind, author_run_id, cause, storage_kind
+         FROM resource_versions WHERE resource_id = 'resource-1' ORDER BY version`,
+    ).all()).toEqual([
+      { version: 1, author_kind: null, author_run_id: null, cause: null, storage_kind: "object" },
+      { version: 2, author_kind: null, author_run_id: null, cause: null, storage_kind: "object" },
+    ]);
+
+    database.exec(
+      `UPDATE resources
+          SET content_ref = 'r2/original-3', updated_at = '2026-08-28T03:00:00.000Z',
+              revision_author_kind = 'agent', revision_author_run_id = 'run-7',
+              revision_cause = 'published'
+        WHERE id = 'resource-1'`,
+    );
+    expect(database.prepare(
+      `SELECT version, author_kind, author_run_id, author_user_id, author_connection_id,
+              cause, storage_kind
+         FROM resource_versions WHERE resource_id = 'resource-1' AND version = 3`,
+    ).get()).toEqual({
+      version: 3,
+      author_kind: "agent",
+      author_run_id: "run-7",
+      author_user_id: null,
+      author_connection_id: null,
+      cause: "published",
+      storage_kind: "object",
+    });
+
+    // The seam is staged, not assumed: a producer whose refs are a different
+    // shape says so on the swap, and capture records what it said rather than
+    // the only value that exists today.
+    database.exec(
+      `UPDATE resources
+          SET content_ref = 'editor/snapshot-1', updated_at = '2026-08-28T04:00:00.000Z',
+              revision_storage_kind = 'editor_snapshot'
+        WHERE id = 'resource-1'`,
+    );
+    expect(database.prepare(
+      "SELECT storage_kind FROM resource_versions WHERE resource_id = 'resource-1' AND version = 4",
+    ).get()).toEqual({ storage_kind: "editor_snapshot" });
+    // And it is released with the rest, so the next capture is an object again
+    // rather than inheriting a shape nobody claimed.
+    database.exec(
+      `UPDATE resources SET content_ref = 'r2/original-5',
+              updated_at = '2026-08-28T05:00:00.000Z' WHERE id = 'resource-1'`,
+    );
+    expect(database.prepare(
+      "SELECT storage_kind FROM resource_versions WHERE resource_id = 'resource-1' AND version = 5",
+    ).get()).toEqual({ storage_kind: "object" });
+  });
+
+  it("attributes a resource's first version from the row that created it", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, VERSION_PROVENANCE_VERSION);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, connection_id, resource_type, provider, title, content_ref,
+          metadata_json, created_at, updated_at,
+          revision_author_kind, revision_author_connection_id, revision_cause)
+       VALUES ('resource-2', ?, 'connection-1', 'document', 'notion', 'Spec', 'r2/original-1',
+               '{}', '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z',
+               'connector', 'connection-1', 'created')`,
+    ).run(WORKSPACE_ID);
+    expect(database.prepare(
+      `SELECT version, author_kind, author_connection_id, cause
+         FROM resource_versions WHERE resource_id = 'resource-2'`,
+    ).all()).toEqual([
+      { version: 1, author_kind: "connector", author_connection_id: "connection-1", cause: "created" },
+    ]);
+  });
+
+  it("attributes only the swap that staged an author, never the writes after it", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, VERSION_PROVENANCE_VERSION);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, connection_id, resource_type, provider, title, content_ref,
+          metadata_json, created_at, updated_at,
+          revision_author_kind, revision_author_connection_id, revision_cause)
+       VALUES ('resource-4', ?, 'connection-1', 'document', 'notion', 'Spec', 'r2/original-1',
+               '{}', '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z',
+               'connector', 'connection-1', 'created')`,
+    ).run(WORKSPACE_ID);
+
+    // A writer that stages nothing: the derivative service healing a hash, a
+    // provider webhook renaming a page, the origin backfill. Each of these
+    // captures a version, and none of them knows an author.
+    database.exec(
+      `UPDATE resources SET canonical_url = 'https://notion.test/spec',
+              updated_at = '2026-08-28T02:00:00.000Z'
+        WHERE id = 'resource-4'`,
+    );
+
+    expect(database.prepare(
+      `SELECT version, author_kind, author_connection_id, cause
+         FROM resource_versions WHERE resource_id = 'resource-4' ORDER BY version`,
+    ).all()).toEqual([
+      { version: 1, author_kind: "connector", author_connection_id: "connection-1", cause: "created" },
+      // Not the connector, and not "created": nothing recorded who did this,
+      // and saying so is the whole point of recording provenance at all.
+      { version: 2, author_kind: null, author_connection_id: null, cause: null },
+    ]);
+    // The row itself stops claiming an author once its capture has read one.
+    expect(database.prepare(
+      "SELECT revision_author_kind, revision_cause FROM resources WHERE id = 'resource-4'",
+    ).get()).toEqual({ revision_author_kind: null, revision_cause: null });
+  });
+
+  it("refuses a capture whose author identity does not match its kind", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, VERSION_PROVENANCE_VERSION);
+    seedIdentity(database);
+    const insert = (kind: string, column: string, value: string): void => {
+      database.prepare(
+        `INSERT INTO resources
+           (id, workspace_id, resource_type, provider, title, metadata_json,
+            created_at, updated_at, revision_author_kind, ${column}, revision_cause)
+         VALUES ('resource-3', ?, 'document', 'notion', 'Spec', '{}',
+                 '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z', ?, ?, 'created')`,
+      ).run(WORKSPACE_ID, kind, value);
+    };
+    // An agent author identified by a user, a connector author identified by a
+    // run: each names an identity its kind cannot have, and attribution the
+    // rail would render as fact is not somewhere to discover that later.
+    expect(() => insert("agent", "revision_author_user_id", "user-1"))
+      .toThrow(/resource_version_provenance_mismatch/u);
+    expect(() => insert("connector", "revision_author_run_id", "run-1"))
+      .toThrow(/resource_version_provenance_mismatch/u);
+    expect(() => insert("system", "revision_author_user_id", "user-1"))
+      .toThrow(/resource_version_provenance_mismatch/u);
+  });
+});
+
+describe("the WorkspaceDO resource-slug migration", () => {
+  it("holds one slug per resource without making an alias a new version", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, RESOURCE_SLUG_VERSION - 1);
+    seedIdentity(database);
+    const insert = database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, content_ref, metadata_json,
+          created_at, updated_at)
+       VALUES (?, ?, 'document', 'notion', 'Spec', 'r2/original-1', '{}',
+               '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z')`,
+    );
+    insert.run("resource-1", WORKSPACE_ID);
+    insert.run("resource-2", WORKSPACE_ID);
+
+    apply(database, RESOURCE_SLUG_VERSION, RESOURCE_SLUG_VERSION - 1);
+    // Rows that predate the alias have none; nothing in SQL can mint one,
+    // so the column says so and a bounded pass fills them in.
+    expect(database.prepare("SELECT id, slug FROM resources ORDER BY id").all()).toEqual([
+      { id: "resource-1", slug: null },
+      { id: "resource-2", slug: null },
+    ]);
+
+    database.exec("UPDATE resources SET slug = 'amber-crisp-lucid-lantern' WHERE id = 'resource-1'");
+    // Two resources without an alias are not two resources with the same one:
+    // the partial index leaves the nulls alone and still refuses a duplicate.
+    expect(() => database.exec(
+      "UPDATE resources SET slug = 'amber-crisp-lucid-lantern' WHERE id = 'resource-2'",
+    )).toThrow(/UNIQUE constraint failed/u);
+
+    // Naming a resource is not a new state of its content, so allocating one
+    // must not push a version into the history the rail lists.
+    expect(database.prepare(
+      "SELECT current_version FROM resources WHERE id = 'resource-1'",
+    ).get()).toEqual({ current_version: 1 });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = 'resource-1'",
+    ).get()).toEqual({ count: 1 });
   });
 });
