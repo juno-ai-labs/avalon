@@ -12,6 +12,27 @@ import { sqliteD1 } from "./helpers/sqlite-d1";
 const WORKSPACE_ID = "00000000-0000-7000-8000-000000000501";
 
 describe("workspace runtime database routing", () => {
+  it("reads the conflict clause as part of the verb, not as the table", () => {
+    // The resource-alias allocator's statement. Reading `OR` as the table made
+    // the router refuse it as cross-authority, so allocation threw at prepare
+    // time on every path and the maintenance pass that owns the backfill was
+    // due forever without ever naming a row.
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      `UPDATE OR IGNORE resources SET slug = ?
+        WHERE id = ? AND workspace_id = ? AND slug IS NULL
+        RETURNING slug`,
+    )).toBe(true);
+    // The same reading on the other verbs, and the refusal it must not lose:
+    // a conflict clause is not a licence to write a table the object lacks.
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      "INSERT OR IGNORE INTO resources (id, workspace_id) VALUES (?, ?)",
+    )).toBe(true);
+    expect(() => __workspaceRuntimeDatabaseTesting.localStatement(
+      `UPDATE OR REPLACE workspace_members SET role = ?
+        WHERE user_id IN (SELECT uploaded_by_user_id FROM resources)`,
+    )).toThrow("workspace_runtime_cross_authority_statement:workspace_members");
+  });
+
   it("rejects a read that joins a local table to one only the region has", () => {
     // The statement `slackUserIsLinked` used to run. It named a local table, so
     // this router claimed it, and executed it inside an object with no

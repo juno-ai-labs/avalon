@@ -182,7 +182,11 @@ function localStatement(sql: string): boolean {
   // A regional mutation must never be routed into WorkspaceDO merely because
   // its SELECT/subquery happens to name a local table. That SQL is a cross-
   // authority join and cannot execute correctly in either database.
-  const writeTarget = /^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+([\w"]+)/iu
+  // `OR IGNORE` and its siblings are part of the verb, on UPDATE as well as on
+  // INSERT. Reading them as the table name is not a near miss: the router then
+  // refuses every conflict-tolerant update as a cross-authority statement, and
+  // the error names `or` rather than anything a reader could act on.
+  const writeTarget = /^\s*(?:(?:INSERT|REPLACE)(?:\s+OR\s+\w+)?\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+([\w"]+)/iu
     .exec(sql)?.[1]?.replaceAll('"', "").toLowerCase();
   if (writeTarget && !WORKSPACE_LOCAL_TABLES.some((table) => table === writeTarget)) {
     throw new Error(`workspace_runtime_cross_authority_statement:${writeTarget}`);

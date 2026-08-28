@@ -1294,8 +1294,16 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
   statements: [
     // Provenance is staged on the resource row rather than passed to capture,
     // because capture is a trigger: a swap that sets these columns in the same
-    // UPDATE gives the version row an author without a second statement that a
-    // crash could separate from the swap it describes.
+    // UPDATE gives its version an author with nothing in between to go wrong.
+    //
+    // Staging is *consumed*: both capture triggers null these columns after
+    // reading them, so they hold an author only for the one capture that swap
+    // causes. Without that, every later writer of a captured column — the
+    // derivative service healing a hash, a provider webhook renaming a page,
+    // the origin backfill — mints a version wearing the previous swapper's
+    // name, which is a confident lie where the honest answer is "not
+    // recorded". None of these columns is in either trigger's `UPDATE OF`
+    // list, so releasing them cannot re-enter capture.
     `ALTER TABLE resources ADD COLUMN revision_author_kind TEXT
        CHECK (revision_author_kind IS NULL
          OR revision_author_kind IN ('agent', 'member', 'connector', 'system'))`,
@@ -1360,6 +1368,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             NEW.model_content_extracted_at, NEW.model_content_error_code, NEW.updated_at,
             NEW.revision_author_kind, NEW.revision_author_run_id, NEW.revision_author_user_id,
             NEW.revision_author_connection_id, NEW.revision_cause);
+         UPDATE resources
+            SET revision_author_kind = NULL, revision_author_run_id = NULL,
+                revision_author_user_id = NULL, revision_author_connection_id = NULL,
+                revision_cause = NULL
+          WHERE id = NEW.id;
        END`,
     `DROP TRIGGER resources_create_semantic_version`,
     `CREATE TRIGGER resources_create_semantic_version
@@ -1385,6 +1398,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
                 revision_author_kind, revision_author_run_id, revision_author_user_id,
                 revision_author_connection_id, revision_cause
            FROM resources WHERE id = NEW.id;
+         UPDATE resources
+            SET revision_author_kind = NULL, revision_author_run_id = NULL,
+                revision_author_user_id = NULL, revision_author_connection_id = NULL,
+                revision_cause = NULL
+          WHERE id = NEW.id;
        END`,
   ],
 }, {
