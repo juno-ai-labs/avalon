@@ -13,7 +13,7 @@ const workflowPath = join(
 // them — the first test asserts the job headings match this order exactly.
 const reviewerModels = new Map([
 	['review-deepseek-cline', 'DeepSeek-V4-Pro'],
-	['review-grok-43-azure-cline', 'grok-4.3'],
+	['review-grok-46-azure-cline', 'grok-4.6'],
 	['review-kimi-cline', 'Kimi-K2.6'],
 	['review-gpt-56-sol-cline', 'gpt-5.6-sol'],
 	['review-gpt-56-terra-cline', 'gpt-5.6-terra'],

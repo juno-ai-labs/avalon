@@ -107,7 +107,7 @@ jobs:
         # Fail before installing Cline when this Azure-backed reviewer cannot
         # authenticate or the endpoint is malformed.
         #
-        # `review-kimi-cline` and `review-grok-43-azure-cline` carry
+        # `review-kimi-cline` and `review-grok-46-azure-cline` carry
         # equivalent copies of this step. The endpoint contract is duplicated
         # deliberately, but that means a change here (a new accepted host suffix,
         # say) must be made in all three jobs or the Azure reviewers disagree.
@@ -453,8 +453,8 @@ jobs:
           done
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPO" --body-file "$REVIEW_FILE"
 
-  review-grok-43-azure-cline:
-    # Grok 4.3, served from our Azure AI Foundry resource and driven by the same
+  review-grok-46-azure-cline:
+    # Grok 4.6, served from our Azure AI Foundry resource and driven by the same
     # lean Cline harness as the DeepSeek and Kimi Azure reviewers.
     # Draft PRs are excluded from the automatic path: `opened`/`reopened` fire
     # for drafts too, and a draft is unfinished work, so reviewing it spends
@@ -472,7 +472,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     concurrency:
-      group: review-grok-43-azure-cline-${{ github.event.pull_request.number || github.event.issue.number }}
+      group: review-grok-46-azure-cline-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
     permissions:
       contents: read
@@ -606,7 +606,7 @@ jobs:
         run: npm install -g cline@3.0.47
       - name: Verify Cline CLI
         run: cline --version
-      - name: Configure Cline authentication (Grok 4.3 on Azure AI Foundry)
+      - name: Configure Cline authentication (Grok 4.6 on Azure AI Foundry)
         env:
           AZURE_API_KEY: ${{ secrets.AZURE_AI_API_KEY }}
         run: |
@@ -615,7 +615,7 @@ jobs:
           # `api-version` query parameter that this route rejects.
           cline auth --provider openai \
             --apikey "$AZURE_API_KEY" \
-            --modelid grok-4.3 \
+            --modelid grok-4.6 \
             --baseurl "$AZURE_INFERENCE_BASE_URL"
       - name: Check out the PR head
         # Gives the reviewer the source the diff came from. Deliberately the last
@@ -707,7 +707,7 @@ jobs:
           checked. Be precise and avoid false positives — verify claims against
           the actual code before reporting.
 
-          Mention you used the Grok 4.3 model (via Cline, on Azure AI) to review this PR.
+          Mention you used the Grok 4.6 model (via Cline, on Azure AI) to review this PR.
           EOF
           )
           # Filter only Cline's repeated compatibility-key deprecation; keep
