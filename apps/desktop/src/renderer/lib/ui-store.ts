@@ -48,6 +48,8 @@ export const MAX_RAIL_WIDTH = 560;
 export const DEFAULT_RAIL_WIDTH = 360;
 export const MIN_SIDEBAR_WIDTH = 260;
 export const MAX_SIDEBAR_WIDTH = 480;
+/** One arrow-key press moves either resize handle by this much, in px. */
+export const KEYBOARD_RESIZE_STEP = 16;
 export const DEFAULT_SIDEBAR_WIDTH = 300;
 const SIDEBAR_WIDTH_STORAGE_KEY = 'rally.sidebar-width';
 const RAIL_WIDTH_STORAGE_PREFIX = 'rally.rail-width';
@@ -115,8 +117,19 @@ function saveSidebarWidth(width: number): void {
  * `set({ width })` still runs on every call — only the localStorage write
  * scheduled here is deferred, so the live value a drag tracks is never
  * delayed; only the copy that survives to the next launch is.
+ *
+ * At a delay of 0 the guard is inert per
+ * docs/adding-security-defensive-and-other-limits.md: `schedule` persists
+ * synchronously and no timer is ever created, so the open value behaves
+ * exactly as the code did before the debounce existed. Exported so the
+ * enforcement can be proved against a finite delay while the constant below
+ * stays open.
+ *
+ * `persist` must not throw: at a non-zero delay it runs inside a timer
+ * callback where a throw surfaces as an uncaught error pointing at the timer,
+ * not the scheduler. The width savers below swallow their own storage errors.
  */
-function debouncePersist<Args extends unknown[]>(
+export function debouncePersist<Args extends unknown[]>(
   persist: (...args: Args) => void,
   delayMs: number,
 ): { schedule: (...args: Args) => void; flush: () => void } {
@@ -131,6 +144,10 @@ function debouncePersist<Args extends unknown[]>(
     if (args) persist(...args);
   };
   const schedule = (...args: Args): void => {
+    if (delayMs <= 0) {
+      persist(...args);
+      return;
+    }
     pending = args;
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(flush, delayMs);
@@ -139,33 +156,72 @@ function debouncePersist<Args extends unknown[]>(
 }
 
 /**
- * LIMIT UNSET — open, enforcing no delay: every scheduled width write reaches
- * localStorage on its own turn of the event loop, matching the previously-
- * synchronous behavior as closely as a deferred write can. Awaiting a value
- * from the team; see docs/adding-security-defensive-and-other-limits.md.
+ * LIMIT UNSET — open and inert: at 0, `schedule` persists synchronously and
+ * creates no timer, so the code behaves exactly as it did before the debounce
+ * existed. Awaiting a value from the team; see
+ * docs/adding-security-defensive-and-other-limits.md.
  *
  * Bounds: milliseconds a sidebar/rail/HyperSight width write to localStorage
  *   is held after the caller's last update, before it is flushed.
  * Without it: setSidebarWidth, setRailWidth, and setBlockDashboardWidth each
- *   ran a synchronous localStorage.setItem on every call, and a resize drag
- *   drives the pointermove path that calls them at 60-120/s — a blocking
- *   main-thread write on every frame of the drag.
+ *   run a synchronous localStorage.setItem on every call, and a resize drag
+ *   drives the pointermove path that calls them at 60-120/s — a storage write
+ *   on every frame of the drag. Chromium serves localStorage from an
+ *   in-renderer cache with an async commit, so each write is cheap; the same
+ *   calls also run a zustand set and a React render, which bound the path
+ *   regardless. The debounce removes the one per-frame cost that buys nothing
+ *   (only the last width of a drag matters at next launch) — a tuning
+ *   trade-off, not containment.
+ * Who can cause it: only our own resize handlers, driven by the local
+ *   pointer or keyboard — no untrusted caller, provider, or fan-out reaches
+ *   these setters. Per the limits doc that means the team may reasonably
+ *   answer by deleting this constant (fixing a first-party cost needs no
+ *   runtime guard); the mechanism is kept behind it either way.
  * Direction: a wait; the open value is 0.
- * Trips: nothing is rejected or truncated. The deferred write still lands —
- *   after the caller has been quiet for this many ms, or immediately if
- *   something needs to read the value back first (setRailScope flushes
- *   before it reads) — while the live width in the store updates on every
- *   call regardless of this constant.
- * Derive from: how much of a gap between the pointer settling and the write
- *   landing is acceptable against how often a drag calls the setter, since a
- *   longer wait coalesces more writes per drag at the cost of a wider window
- *   in which a killed process loses the latest width.
+ * Trips: nothing is rejected or truncated. At a non-zero value the deferred
+ *   write still lands: after the caller has been quiet for this many ms, or
+ *   immediately when something needs it sooner — setRailScope flushes before
+ *   it reads a scope-keyed width back, the sidebar and rail handles flush
+ *   when a drag ends so the released width is durable at once, and a
+ *   `pagehide` flush backstops quit and reload. The live width in the store
+ *   updates on every call regardless of this constant.
+ * Derive from: pointermove rate (60-120/s) × the window = writes coalesced
+ *   per drag, against the drag-end and pagehide flushes bounding what a
+ *   killed process can lose to the window itself. With those flushes wired,
+ *   any value in the 100-250ms range coalesces a burst without observable
+ *   cost; the in-tree precedent is SAVE_DEBOUNCE_MS = 250 in
+ *   use-draft-text.ts.
  */
 export const WIDTH_PERSIST_DEBOUNCE_MS = 0;
 
+// Two debouncers deliberately wrap the same saver: the storage prefix arrives
+// per call through `schedule(...)`, and the rail and HyperSight widths must
+// not share a pending slot — one would swallow the other's trailing write.
 const sidebarWidthPersist = debouncePersist(saveSidebarWidth, WIDTH_PERSIST_DEBOUNCE_MS);
 const railWidthPersist = debouncePersist(saveRailWidth, WIDTH_PERSIST_DEBOUNCE_MS);
 const blockDashboardWidthPersist = debouncePersist(saveRailWidth, WIDTH_PERSIST_DEBOUNCE_MS);
+
+/**
+ * Lands every pending width write now. Called when a resize drag ends — the
+ * released width is final and must not sit in the persistence window — and on
+ * `pagehide`, so a quit or reload inside that window cannot lose the last
+ * width. Both are no-ops while the limit above is open (writes are already
+ * synchronous); once the team sets a number, these two flushes are what keep
+ * it free to choose — the window only ever trades away writes *within* a
+ * burst, never the one that has to survive.
+ */
+export function flushWidthPersistence(): void {
+  sidebarWidthPersist.flush();
+  railWidthPersist.flush();
+  blockDashboardWidthPersist.flush();
+}
+
+// Registered beside the store singleton it guards rather than in the shell:
+// the renderer has one window, and `pagehide` is the last event a closing
+// document reliably sees.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushWidthPersistence);
+}
 
 export const useUiStore = create<UiState>((set, get) => ({
   sidebarOpen: false,
@@ -208,6 +264,8 @@ export const useUiStore = create<UiState>((set, get) => ({
     // the scope being left that is still sitting in the debounce window has
     // to land before the read or switching away and back inside that window
     // would find the value the drag was replacing rather than the one it left.
+    // A no-op while the limit above is open (writes are synchronous); the
+    // flush semantics are proved at a finite delay in ui-store.test.ts.
     railWidthPersist.flush();
     blockDashboardWidthPersist.flush();
     set({

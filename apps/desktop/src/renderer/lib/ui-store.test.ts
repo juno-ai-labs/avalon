@@ -1,5 +1,67 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useUiStore, WIDTH_PERSIST_DEBOUNCE_MS } from './ui-store';
+import { debouncePersist, useUiStore, WIDTH_PERSIST_DEBOUNCE_MS } from './ui-store';
+
+/**
+ * The enforcement tests docs/adding-security-defensive-and-other-limits.md
+ * requires: they pass a finite delay into the guard directly, so the
+ * coalescing behavior the open WIDTH_PERSIST_DEBOUNCE_MS will one day enable
+ * is proved while the constant itself stays inert at 0. The flush test here
+ * is also the proof behind setRailScope's flush-before-read and the resize
+ * handles' flush-on-drag-end: at the open value those calls are no-ops by
+ * construction, so their behavior can only be observed at a finite delay.
+ */
+describe('debouncePersist enforcement at a finite delay', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  });
+
+  it('coalesces a burst into one trailing write carrying the last value', () => {
+    const persist = vi.fn();
+    const { schedule } = debouncePersist(persist, 250);
+    // The calls are spread in time, the way a drag's pointermoves are: only
+    // reset-on-reschedule keeps the earlier calls' timers from landing while
+    // the burst is still going.
+    schedule('a');
+    vi.advanceTimersByTime(200);
+    schedule('b');
+    vi.advanceTimersByTime(200);
+    schedule('c');
+
+    // The window is measured from the last call, not the first, so nothing
+    // may land one tick before it closes.
+    vi.advanceTimersByTime(249);
+    expect(persist).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith('c');
+  });
+
+  it('flushes the pending write immediately on demand, and is a no-op when nothing is pending', () => {
+    const persist = vi.fn();
+    const { flush, schedule } = debouncePersist(persist, 250);
+    schedule('a');
+    flush();
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist).toHaveBeenCalledWith('a');
+
+    // The flush consumed the pending write and cancelled its timer: nothing
+    // further lands, and a second flush has nothing to do.
+    flush();
+    vi.advanceTimersByTime(1_000);
+    expect(persist).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists synchronously with no timer at the open value', () => {
+    const persist = vi.fn();
+    const { schedule } = debouncePersist(persist, WIDTH_PERSIST_DEBOUNCE_MS);
+    schedule('a');
+
+    expect(persist).toHaveBeenCalledWith('a');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
 
 describe('context rail state', () => {
   beforeEach(() => {
@@ -43,6 +105,10 @@ describe('context rail state', () => {
 
     useUiStore.getState().setRailWidth(420);
     useUiStore.getState().setBlockDashboardWidth(520);
+    // Pins the exact storage keys `railWidthKey` produces, not only the
+    // round trip through the store.
+    expect(window.localStorage.getItem('rally.rail-width:workstream-one')).toBe('420');
+    expect(window.localStorage.getItem('rally.block-dashboard-width:workstream-one')).toBe('520');
 
     // A work stream that has never opened either panel starts at the default.
     useUiStore.getState().setRailScope('workstream-two');
@@ -59,30 +125,27 @@ describe('context rail state', () => {
   it('clamps and persists sidebar resizing', () => {
     useUiStore.getState().setSidebarWidth(120);
     expect(useUiStore.getState().sidebarWidth).toBe(260);
-    vi.advanceTimersByTime(WIDTH_PERSIST_DEBOUNCE_MS);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('260');
 
     useUiStore.getState().setSidebarWidth(900);
     expect(useUiStore.getState().sidebarWidth).toBe(480);
-    vi.advanceTimersByTime(WIDTH_PERSIST_DEBOUNCE_MS);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('480');
   });
 
-  it('debounces the persisted write behind rapid width updates, but never the live value', () => {
+  // The open-value test docs/adding-security-defensive-and-other-limits.md
+  // requires: at the constant's current value nothing is delayed. When the
+  // team sets WIDTH_PERSIST_DEBOUNCE_MS, this is the test their change flips
+  // to assert coalescing through the store instead.
+  it('writes through synchronously while the persistence limit is open', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
     useUiStore.getState().setSidebarWidth(310);
     useUiStore.getState().setSidebarWidth(320);
     useUiStore.getState().setSidebarWidth(330);
 
-    // The pointermove path this stands in for updates the live value on every
-    // call, whatever becomes of the write behind it.
     expect(useUiStore.getState().sidebarWidth).toBe(330);
-    // Nothing has been written yet — three rapid calls are still one pending
-    // write, not three.
-    expect(window.localStorage.getItem('rally.sidebar-width')).toBeNull();
-
-    vi.advanceTimersByTime(WIDTH_PERSIST_DEBOUNCE_MS);
-
-    // The write that lands is the last width, not the first or a stale one.
+    // No timer advance: each write landed on its own call, exactly as the
+    // code behaved before the debounce existed, and no timer was created.
+    expect(setItem).toHaveBeenCalledTimes(3);
     expect(window.localStorage.getItem('rally.sidebar-width')).toBe('330');
   });
 
