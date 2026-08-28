@@ -253,8 +253,12 @@ beforeEach(async () => {
   re-arm the helper finds no alarm, returns `false`, and runs nothing — while
   the auto-fired drain is still in flight for the next assertion to interleave
   with. A test that arms an overdue alarm and must prove its work ran should
-  call `instance.alarm()` and assert in a single `runInDurableObject`, as the
-  semantic-recovery test in `durable-object-runtime.test.ts` does.
+  not force delivery at all: `expect.poll` a read of the state the drain
+  settles, and let the timeout be the failure, as the semantic-recovery test
+  in `durable-object-runtime.test.ts` does. The poll only reads, so it cannot
+  interleave with the work it is waiting for — and unlike a direct
+  `instance.alarm()` call, it still fails when construction stops arming the
+  alarm, which is half of what such a test exists to prove.
 
   **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
   object initializing itself, and calling it re-entrantly from inside
