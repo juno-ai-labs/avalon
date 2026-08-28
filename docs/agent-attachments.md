@@ -209,7 +209,7 @@ itself is documented in [`terminal-workspaces.md`](terminal-workspaces.md).
 Generated Terminal publications attach with relationship `generated`, so the
 work-stream contract exposes them as `direction: artifact`. A subsequent
 semantic update to an existing resource advances its WorkspaceDO version rather
-than replacing the only readable state.
+than replacing the only readable state, attributed to the run that published it.
 
 ### Regional lifecycle
 
@@ -421,7 +421,24 @@ bounded error code, fenced claim ID/time, and the current semantic version.
 WorkspaceDO `resource_versions` owns numbered snapshots and every historical
 original/model R2 ref. `GET /resources/:id/versions` lists them; the version and
 its original or model content remain addressable through the corresponding
-version endpoints after current content advances.
+version endpoints after current content advances. Each snapshot also carries
+provenance — an author kind (`agent`, `member`, `connector`, `system`) with the
+one identity that kind can have, and a cause (`created`, `published`,
+`refetched`, `replaced`) — plus a `storage_kind` naming what its refs point at.
+Provenance is staged on the resource row (`revision_author_*`, `revision_cause`)
+and copied into the version by the capture trigger, so a swap and the
+attribution of that swap are one statement. History captured before provenance
+existed reports no author rather than an invented one, and an insert whose
+identity does not match its kind is refused outright.
+
+Each resource also carries a `slug`: a short alias minted by the work-stream
+address generator over the resource's own coordinates, unique per workspace
+under a partial index, with a regenerate-on-conflict allocator. It appears in
+model-facing listings beside the UUID, which remains the primary key in every
+internal reference, storage key, receipt, and tool argument. A resource that
+predates the column, or whose creation path could not finish its allocation,
+has `slug IS NULL` — the durable record that the `resource_slugs` maintenance
+pass reads.
 WorkspaceDO `resource_object_deletion_outbox` owns failed, superseded, and deleted regional
 objects until bounded cleanup succeeds.
 SubstreamAgent `attachment_tool_receipts` maps completed read, search, view, and summary
@@ -518,6 +535,40 @@ version triggers capture the superseded original and derivative and the reaper
 keeps both — history beneath a republished document comes from the existing
 versioning layer with nothing added here. Resources published before the change
 keep their receipt-derived identities and are never rewritten in place.
+
+### 2026-08-28 — Versions say who moved the pointers, and the rail shows them
+
+**What changed:** Version rows gained provenance (author kind, its matching
+identity, a cause) and a `storage_kind`, staged on the resource row so capture
+carries them; resources gained a short `slug` alias for model-facing listings;
+the right rail's resource detail lists a resource's versions and opens a prior
+one read-only; and a watch-routed change notification names the resources it
+matched so the re-fetch it invites can be asked for.
+
+**Why:** History that cannot say who wrote a state is half a record — "what did
+we read last Tuesday" has an answer, "who changed it" did not. The alias is the
+other half of the same argument from the model's side: a UUID costs about
+thirteen tokens every time one is mentioned and is easy to copy wrong, which
+the citations work does constantly. And history had been accumulating
+invisibly since capture landed, which was harmless only for as long as nobody
+needed to read it.
+
+**Considered and rejected:** Passing provenance to capture rather than staging
+it on the row — capture is a trigger, so the alternative is a second statement
+that a crash can separate from the swap it describes. A `CHECK` on
+`storage_kind` — SQLite cannot alter one on a STRICT table, so the constraint
+would charge a table rebuild for the future editor snapshot the column exists
+to admit. Replacing the primary key with the alias — a cross-cutting identity
+migration for a benefit the alias delivers beside the UUID. Re-fetching
+automatically when a watch fires — synchronization by another name, spending
+provider quota on changes nobody asked about.
+
+**Consequences:** Every swap site sets provenance in the same statement as its
+swap, and a mismatched identity aborts the swap rather than storing a wrong
+attribution the rail would render as fact. A resource with one version shows no
+history section. Agent-decided re-fetch still has no path: `hydrate` is
+reachable only from its endpoint and a tool for it is a separate decision, so
+the loop closes today through the participant.
 
 ### 2026-08-27 — Resource versions retain prior originals and model derivatives
 
