@@ -1,5 +1,12 @@
 import { ConnectorError, type ConnectorConnectionContext } from "@rally/connectors";
-import { classifyAttachmentKind, type ConnectorManifest, type ResourceRevision } from "@rally/contracts";
+import {
+  classifyAttachmentKind,
+  IdSchema,
+  ResourceVersionCauseSchema,
+  type ConnectorManifest,
+  type ResourceRevision,
+  type ResourceVersionAuthor,
+} from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
@@ -186,8 +193,10 @@ export class ResourceService {
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
           content_sha256, model_content_status, metadata_json, last_hydrated_at,
-          uploaded_by_user_id, attachment_status, created_at, updated_at)
-         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?)`,
+          uploaded_by_user_id, attachment_status, created_at, updated_at,
+          revision_author_kind, revision_author_user_id, revision_cause)
+         VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?,
+                 'member', ?, 'created')`,
       ).bind(
         id,
         this.auth.workspaceId,
@@ -205,6 +214,7 @@ export class ResourceService {
         this.auth.userId,
         at,
         at,
+        this.auth.userId,
       ).run();
     } catch (error) {
       await this.env.PAYLOADS.delete(key).catch(() => undefined);
@@ -245,10 +255,11 @@ export class ResourceService {
     await this.env.DB.prepare(
       `INSERT INTO resources
        (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
-        title, canonical_url, metadata_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)
+        title, canonical_url, metadata_json, created_at, updated_at,
+        revision_author_kind, revision_author_connection_id, revision_cause)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, 'connector', ?, 'created')
        ON CONFLICT DO NOTHING`,
-    ).bind(id, this.auth.workspaceId, input.connectionId, input.resourceType, input.provider, input.providerResourceId, input.title, input.canonicalUrl ?? null, at, at).run();
+    ).bind(id, this.auth.workspaceId, input.connectionId, input.resourceType, input.provider, input.providerResourceId, input.title, input.canonicalUrl ?? null, at, at, input.connectionId).run();
     const canonical = await this.env.DB.prepare(
       `SELECT id FROM resources
        WHERE workspace_id = ? AND connection_id = ? AND provider = ? AND provider_resource_id = ?`,
@@ -391,11 +402,16 @@ export class ResourceService {
     const at = nowIso();
     if (resource.content_sha256 === contentSha256) {
       await this.env.DB.prepare(
-        `UPDATE resources SET last_hydrated_at = ?, updated_at = ?
+        `UPDATE resources
+         SET last_hydrated_at = ?, updated_at = ?,
+             revision_author_kind = 'connector', revision_author_run_id = NULL,
+             revision_author_user_id = NULL, revision_author_connection_id = ?,
+             revision_cause = 'refetched'
          WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
       ).bind(
         at,
         at,
+        connection.id,
         id,
         this.auth.workspaceId,
         resource.content_ref,
@@ -421,13 +437,17 @@ export class ResourceService {
                model_content_status = 'pending', model_content_extractor_version = NULL,
                model_content_character_count = NULL, model_content_extracted_at = NULL,
                model_content_claimed_at = NULL, model_content_claim_id = NULL,
-               model_content_error_code = NULL
+               model_content_error_code = NULL,
+               revision_author_kind = 'connector', revision_author_run_id = NULL,
+               revision_author_user_id = NULL, revision_author_connection_id = ?,
+               revision_cause = 'refetched'
            WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
         ).bind(
           idKey,
           contentSha256,
           at,
           at,
+          connection.id,
           id,
           this.auth.workspaceId,
           resource.content_ref,
@@ -684,10 +704,47 @@ function toResource(row: Record<string, unknown>) {
   };
 }
 
+/**
+ * The author a version row names, or null when it names none.
+ *
+ * A row whose identity does not parse as an id is reported unattributed
+ * rather than thrown: the route parses this list against the contract, so one
+ * malformed identity would otherwise fail the whole version history for the
+ * resource, which is a worse answer than "we do not know who".
+ */
+function toVersionAuthor(row: Record<string, unknown>): ResourceVersionAuthor | null {
+  const identity = (column: string): string | null => {
+    const value = nullableString(row[column]);
+    return value !== null && IdSchema.safeParse(value).success ? value : null;
+  };
+  switch (row.author_kind) {
+    case "agent": {
+      const runId = identity("author_run_id");
+      return runId === null ? null : { kind: "agent", runId };
+    }
+    case "member": {
+      const userId = identity("author_user_id");
+      return userId === null ? null : { kind: "member", userId };
+    }
+    case "connector": {
+      const connectionId = identity("author_connection_id");
+      return connectionId === null ? null : { kind: "connector", connectionId };
+    }
+    case "system": return { kind: "system" };
+    default: return null;
+  }
+}
+
 function toResourceRevision(row: Record<string, unknown>): ResourceRevision {
+  const cause = ResourceVersionCauseSchema.safeParse(row.cause);
   return {
     resourceId: String(row.resource_id),
     version: Math.max(1, Number(row.version)),
+    author: toVersionAuthor(row),
+    cause: cause.success ? cause.data : null,
+    // Every row written so far is an ordinary bucket object, and a row that
+    // predates the column was backfilled as one.
+    storageKind: nullableString(row.storage_kind) ?? "object",
     title: truncateUtf16Safe(String(row.title), 300),
     resourceType: String(row.resource_type),
     provider: String(row.provider),

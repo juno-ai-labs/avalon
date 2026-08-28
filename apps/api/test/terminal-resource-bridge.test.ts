@@ -18,6 +18,7 @@ import {
   seedToolReceipt,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { applyWorkspaceResourceVersioning } from "./helpers/workspace-object-tables";
 
 const W = "10000000-0000-4000-8000-000000000001";
 const S = "10000000-0000-4000-8000-000000000002";
@@ -57,6 +58,10 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
     VALUES ('${S}', '${W}', 'Resource', 'Resource', 'ad_hoc', '${U}', 'idle',
             '2026-08-13', '2026-08-13', '2026-08-13');
   `);
+  // The publish path's whole point is that a revision keeps its predecessor,
+  // and capture lives in WorkspaceDO's triggers — so the fixture takes them
+  // from the ledger rather than publishing into a table that has no history.
+  applyWorkspaceResourceVersioning(database, W);
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
@@ -354,6 +359,33 @@ describe("Terminal resource bridge", () => {
     // any other identity would create a second copy on every attempt.
     expect(put).not.toHaveBeenCalled();
     expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 0 });
+  });
+
+  it("attributes a published document and its revisions to the run that wrote them", async () => {
+    const { database, bridge } = fixture();
+    const first = await bridge.publishResource(
+      context,
+      { filePath: "plan.md", displayName: "Plan" },
+      new TextEncoder().encode("# Plan\n\nFirst draft.\n"),
+    );
+    await bridge.publishResource(
+      { ...context, effectIntentId: I2, toolCallId: "resource-recall" },
+      { filePath: "plan.md" },
+      new TextEncoder().encode("# Plan\n\nRevised.\n"),
+    );
+
+    // The rail lists these rows as history a participant reads, so each one
+    // says which run wrote it and whether it was the document's first state
+    // or a revision that superseded one.
+    expect(database.prepare(
+      `SELECT version, author_kind, author_run_id, author_user_id, cause, storage_kind
+         FROM resource_versions WHERE resource_id = ? ORDER BY version`,
+    ).all(String(first.resourceId))).toEqual([
+      { version: 1, author_kind: "agent", author_run_id: R, author_user_id: null,
+        cause: "created", storage_kind: "object" },
+      { version: 2, author_kind: "agent", author_run_id: R, author_user_id: null,
+        cause: "published", storage_kind: "object" },
+    ]);
   });
 
   it("republishes the same sandbox path onto the same resource instead of a sibling", async () => {
