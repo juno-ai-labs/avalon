@@ -424,6 +424,128 @@ describe("AutomationAgent", () => {
     });
   });
 
+  it("records a durable-table write instead of failing its own constraint", async () => {
+    const now = 1_800_000_000_000;
+    const runId = "00000000-0000-7000-8000-0000000000d1";
+    const harnessRunId = "00000000-0000-7000-8000-0000000000d2";
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      (instance as unknown as {
+        ensureIdentity(input: unknown): void;
+      }).ensureIdentity = () => {};
+      state.storage.sql.exec(
+        `INSERT INTO automation_identity
+           (id, automation_id, workspace_id, author_user_id, region, authority_generation,
+            created_at, updated_at)
+         VALUES (1, ?, ?, ?, 'global', 1, ?, ?)`,
+        AUTOMATION_ID, WORKSPACE_ID, AUTHOR_ID, now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_state
+           (id, lifecycle, title, definition_revision, accepted_definition_revision,
+            event_sequence, created_at, updated_at)
+         VALUES (1, 'active', 'Table owner', 1, 1, 0, ?, ?)`,
+        now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_runs
+           (run_id, occurrence_key, trigger_type, workstream_id, harness_run_id,
+            admission_state, execution_state, delivery_state, context_json,
+            source_version, created_at, updated_at)
+         VALUES (?, 'manual:table-test', 'manual', ?, ?, 'provisioned', 'running',
+                 'pending', '{}', 1, ?, ?)`,
+        runId, "00000000-0000-7000-8000-0000000000d3", harnessRunId, now, now,
+      );
+
+      // `table_create` — not `create`. The mutation ledger's own CHECK used to
+      // list the unprefixed names, so this write rolled its transaction back
+      // and took the table the model had just created with it.
+      const created = await instance.executeMemoryTool({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        runId,
+        harnessRunId,
+        authorityGeneration: 1,
+        operation: "table_create",
+        providerIdempotencyKey: "table-call-1",
+        args: {
+          scopeKind: "automation",
+          rationale: "Track what has shipped.",
+          name: "Releases",
+          description: "One row per shipped release.",
+          usageInstructions: "Look a release up by its tag.",
+          columns: [{ name: "tag", description: "The release tag.", type: "string", required: true, searchable: false }],
+          keyColumns: ["tag"],
+        },
+      });
+
+      expect(created).toBeTruthy();
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_memory_tables`,
+      ).one().count).toBe(1);
+      expect(state.storage.sql.exec<{ operation: string }>(
+        `SELECT operation FROM automation_memory_mutations ORDER BY settled_at DESC LIMIT 1`,
+      ).one().operation).toBe("table_create");
+    });
+  });
+
+  it("answers a follow-up question so the draft can still be accepted", async () => {
+    const now = 1_800_000_000_000;
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      (instance as unknown as { executeCompilerRun(runId: string): Promise<void> }).executeCompilerRun = async () => {};
+      const first = await instance.admitDraftTurn({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        clientMessageId: CLIENT_MESSAGE_ID,
+        content: "Watch the release channel",
+        attachmentIds: [],
+        inputMode: "typed",
+      });
+      // Stand in for a compiler run that asked a question rather than
+      // finishing: one revision, one pending elicitation against it.
+      state.storage.sql.exec(
+        `INSERT INTO automation_definition_revisions
+           (definition_revision, compiler_run_id, definition_json, definition_hash, ready, created_at)
+         VALUES (1, ?, '{}', 'sha256:draft', 0, ?)`,
+        first.compilerRunId, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_pending_elicitations
+           (elicitation_id, definition_revision, payload_json, state, created_at)
+         VALUES ('00000000-0000-7000-8000-0000000000e1', 1, '{"question":"Which channel?"}', 'pending', ?)`,
+        now,
+      );
+      state.storage.sql.exec(
+        `UPDATE automation_compiler_runs SET state = 'needs_input', settled_at = ? WHERE run_id = ?`,
+        now, first.compilerRunId,
+      );
+
+      await instance.admitDraftTurn({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        clientMessageId: "00000000-0000-7000-8000-0000000000e2",
+        content: "#shipping",
+        attachmentIds: [],
+        inputMode: "elicitation_response",
+      });
+
+      // The person answered, so nothing is outstanding — which is what
+      // `acceptDraft` reads before it will create the automation at all.
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_pending_elicitations WHERE state = 'pending'`,
+      ).one().count).toBe(0);
+      expect(state.storage.sql.exec<{ state: string }>(
+        `SELECT state FROM automation_pending_elicitations`,
+      ).one().state).toBe("answered");
+    });
+  });
+
   it("keeps a memory table's identity when a later revision adds one ahead of it", async () => {
     const table = (name: string) => ({
       name,

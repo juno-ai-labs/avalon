@@ -383,6 +383,46 @@ export async function cutoverWorkspaceAutomations(input: {
       schedules,
       runs,
       memoryRecords: legacyMemoryRecords(input.storage, request.workspaceId, automationId),
+      // The inbound-email ledger travels with the automation. Without it the
+      // new object starts with an empty dedupe table, so a Resend webhook
+      // retry that straddles the cutover — the same message, redelivered
+      // minutes later — finds no receipt, admits the email a second time, and
+      // runs the automation again with output a person receives twice. The
+      // rate window comes along for the same reason: dropping it hands every
+      // automation a fresh hourly allowance at exactly the moment the fleet is
+      // being restarted. Both tables were already hashed into the witness, so
+      // they were being protected from changing underneath the cutover without
+      // ever being carried through it.
+      inboundEmailReceipts: input.storage.sql.exec<Record<string, SqlStorageValue>>(
+        `SELECT resend_email_id, svix_id, payload_ref, workstream_id, automation_run_id,
+                received_at, processed_at, error_json
+           FROM automation_email_receipts
+          WHERE workspace_id = ? AND automation_subscription_id = ?
+          ORDER BY resend_email_id`,
+        request.workspaceId,
+        automationId,
+      ).toArray().map((receipt) => ({
+        resendEmailId: String(receipt.resend_email_id),
+        svixId: String(receipt.svix_id),
+        payloadRef: receipt.payload_ref === null ? null : String(receipt.payload_ref),
+        workstreamId: receipt.workstream_id === null ? null : String(receipt.workstream_id),
+        runId: receipt.automation_run_id === null ? null : String(receipt.automation_run_id),
+        receivedAt: epoch(String(receipt.received_at)) ?? createdAt,
+        // A legacy receipt records an attempt, not an outcome vocabulary this
+        // object shares. `error_json` is the one honest signal it carries.
+        refused: receipt.error_json !== null,
+      })),
+      inboundEmailRateWindows: input.storage.sql.exec<Record<string, SqlStorageValue>>(
+        `SELECT window_started_at, accepted_count
+           FROM automation_email_rate_windows
+          WHERE workspace_id = ? AND automation_subscription_id = ?
+          ORDER BY window_started_at`,
+        request.workspaceId,
+        automationId,
+      ).toArray().map((window) => ({
+        windowStartedAt: epoch(String(window.window_started_at)) ?? createdAt,
+        acceptedCount: Number(window.accepted_count),
+      })),
     };
     const automationSourceHash = await sha256(canonicalTranscriptJson(source));
     const agent = await durableObjectStubForWorkspace(

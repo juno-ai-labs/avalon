@@ -69,7 +69,7 @@ import {
 } from "../lib/durable-object-namespace";
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
-import { logInfo, logWarn } from "../observability/logger";
+import { diagnosticErrorCode, logInfo, logWarn } from "../observability/logger";
 import { identityAttributes, inFlowSpan } from "../observability/tracing";
 import {
   acceptsNewWorkstreamWork,
@@ -4970,20 +4970,38 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
         ...coordinate,
       })
     )));
-    await Promise.all([...automationRunProjections.values()].map(async (projection) => {
-      const automationId = asAutomationId(projection.automationId);
-      const agent = await durableObjectStubForWorkspace(
-        this.env,
-        this.env.AUTOMATION_AGENTS,
-        request.workspaceId,
-        automationAgentName(this.env.AVALON_REGION, asWorkspaceId(request.workspaceId), automationId),
-      );
-      await agent.applyRunProjection({
-        schemaVersion: 1,
-        workspaceId: request.workspaceId,
-        ...projection,
+    // One automation's refusal must not fail the batch. These envelopes are
+    // already accepted above — the directory rows are written, and this hop is
+    // the copy each automation keeps of its own run. Letting a rejection
+    // propagate out of the `Promise.all` fails every envelope in the batch,
+    // which is then redelivered with the same payload and fails the same way:
+    // one automation the agent cannot parse for stalls the directory for all
+    // of them, permanently. Each projection is carried on its own and its
+    // failure logged, so the automation that could not be reached is the only
+    // one that falls behind, and it catches up on its next projection.
+    const runProjections = await Promise.allSettled(
+      [...automationRunProjections.values()].map(async (projection) => {
+        const automationId = asAutomationId(projection.automationId);
+        const agent = await durableObjectStubForWorkspace(
+          this.env,
+          this.env.AUTOMATION_AGENTS,
+          request.workspaceId,
+          automationAgentName(this.env.AVALON_REGION, asWorkspaceId(request.workspaceId), automationId),
+        );
+        await agent.applyRunProjection({
+          schemaVersion: 1,
+          workspaceId: request.workspaceId,
+          ...projection,
+        });
+      }),
+    );
+    for (const settled of runProjections) {
+      if (settled.status !== "rejected") continue;
+      logWarn(this.env, "automation_run_projection_failed", {
+        workspace_id: request.workspaceId,
+        code: diagnosticErrorCode(settled.reason, "automation_run_projection_failed"),
       });
-    }));
+    }
     if (commonChanges.size > 0) {
       // A `directory_common` effect is the only writer of
       // `next_terminal_action_at`, and it arrives outside any alarm — off the

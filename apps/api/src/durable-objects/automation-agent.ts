@@ -82,6 +82,44 @@ import {
   readAutomationMemoryBootstrap,
 } from "./automation-agent-memory";
 
+/**
+ * Every work-stream state a run projection can carry, and what it says about
+ * the run.
+ *
+ * The keys are `workstreams.exact_state`'s own CHECK in `workstream-do.ts`,
+ * plus `error` and `stopped`, which this projection has always accepted. Keep
+ * them in step: a state WorkstreamDO can write and this map does not name is
+ * refused by the parse, and that refusal takes down the whole directory-effect
+ * batch rather than one run.
+ *
+ * `null` is deliberate and is not the same as "running". It marks a state that
+ * describes the work stream rather than the run inside it, where the honest
+ * answer is to leave the run's own execution state alone.
+ */
+const RUN_EXECUTION_STATE = {
+  completed: "completed",
+  failed: "failed",
+  error: "failed",
+  budget_exhausted: "failed",
+  needs_input: "needs_input",
+  stopped: "stopped",
+  cancelled: "stopped",
+  running: "running",
+  scheduled: "running",
+  preparing_context: "running",
+  waiting_capacity: "running",
+  interrupting: "running",
+  idle: "running",
+  archived: null,
+  deleting: null,
+  restoring: null,
+} as const satisfies Record<string, "completed" | "failed" | "needs_input" | "stopped" | "running" | null>;
+
+const RUN_PROJECTION_STATES = Object.keys(RUN_EXECUTION_STATE) as [
+  keyof typeof RUN_EXECUTION_STATE,
+  ...(keyof typeof RUN_EXECUTION_STATE)[],
+];
+
 const MIGRATION_COMPONENT = "automation_agent";
 const COMPILER_DISPATCH_ALARM_KIND = "compiler_dispatch";
 const AUTOMATION_SCHEDULE_ALARM_KIND = "automation_schedule";
@@ -200,6 +238,20 @@ const AutomationLegacyImportRequestSchema = z.object({
       recordId: z.string().min(1),
       payload: z.record(z.string(), z.unknown()),
     }).strict()),
+    /** The pre-cutover inbound-email dedupe ledger and its hourly windows. */
+    inboundEmailReceipts: z.array(z.object({
+      resendEmailId: z.string().min(1),
+      svixId: z.string().min(1),
+      payloadRef: z.string().min(1).nullable(),
+      workstreamId: z.string().uuid().nullable(),
+      runId: z.string().uuid().nullable(),
+      receivedAt: z.number().int().nonnegative(),
+      refused: z.boolean(),
+    }).strict()).optional(),
+    inboundEmailRateWindows: z.array(z.object({
+      windowStartedAt: z.number().int().nonnegative(),
+      acceptedCount: z.number().int().nonnegative(),
+    }).strict()).optional(),
   }).strict(),
 }).strict();
 
@@ -479,8 +531,16 @@ export const AUTOMATION_AGENT_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMig
       receipt_id TEXT NOT NULL UNIQUE,
       svix_id TEXT NOT NULL,
       sender_user_id TEXT,
-      payload_ref TEXT NOT NULL,
-      resource_id TEXT NOT NULL,
+      -- Nullable only for a receipt carried in by the cutover. This object
+      -- never stored the payload or the resource for mail the legacy runtime
+      -- admitted before it existed, and inventing a reference to either would
+      -- be worse than saying there is none: the row is here to answer "have we
+      -- already seen this Resend message", which is what stops a webhook retry
+      -- that straddles the cutover from admitting the same email twice and
+      -- running the automation again. Every receipt this object writes itself
+      -- has both.
+      payload_ref TEXT,
+      resource_id TEXT,
       run_id TEXT REFERENCES automation_runs(run_id),
       workstream_id TEXT,
       state TEXT NOT NULL CHECK (state IN ('admitted', 'refused')),
@@ -775,6 +835,22 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         runId,
         input.inputMode,
         projectionVersion,
+      );
+      // The author writing again is the answer to whatever the architect last
+      // asked. Without this the row inserted by `settleCompilerSuccess` stays
+      // `pending` forever, and two things follow on the ordinary authoring
+      // path: `acceptDraft` refuses with `automation_pending_elicitation` for
+      // the rest of the draft's life, and the next question the architect asks
+      // violates `automation_pending_elicitation_one_idx` from inside the
+      // settle transaction, rolling back the turn, the definition revision and
+      // the projection with it. The only other statement that cleared this
+      // table was `deleteDraftConversation`, which runs after acceptance
+      // succeeds — so the cleanup was gated behind the thing it would unblock.
+      this.state.storage.sql.exec(
+        `UPDATE automation_pending_elicitations
+            SET state = 'answered', settled_at = ?
+          WHERE state = 'pending'`,
+        Date.now(),
       );
       this.state.storage.sql.exec(
         `INSERT INTO automation_compiler_runs
@@ -1335,6 +1411,38 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
         source.memoryRecords,
         source.updatedAt,
       );
+      for (const receipt of source.inboundEmailReceipts ?? []) {
+        // `run_id` is deliberately not carried across. The legacy run ID
+        // referenced `automation_runs` rows in WorkspaceDO, and this object's
+        // own `automation_runs` foreign key would refuse an ID it never
+        // imported. What this row exists to answer is whether the Resend
+        // message has been seen, and that is `resend_email_id` alone.
+        this.state.storage.sql.exec(
+          `INSERT INTO automation_inbound_email_receipts
+             (resend_email_id, receipt_id, svix_id, sender_user_id, payload_ref,
+              resource_id, run_id, workstream_id, state, outcome_code, received_at, created_at)
+           VALUES (?, ?, ?, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?)
+           ON CONFLICT(resend_email_id) DO NOTHING`,
+          receipt.resendEmailId,
+          `imported:${receipt.resendEmailId}`,
+          receipt.svixId,
+          receipt.payloadRef,
+          receipt.workstreamId,
+          receipt.refused ? "refused" : "admitted",
+          receipt.refused ? "email_refused_before_cutover" : "email_admitted_before_cutover",
+          receipt.receivedAt,
+          source.updatedAt,
+        );
+      }
+      for (const window of source.inboundEmailRateWindows ?? []) {
+        this.state.storage.sql.exec(
+          `INSERT INTO automation_inbound_email_rate_windows (window_started_at, accepted_count)
+           VALUES (?, ?)
+           ON CONFLICT(window_started_at) DO UPDATE SET accepted_count = excluded.accepted_count`,
+          window.windowStartedAt,
+          window.acceptedCount,
+        );
+      }
       if (importedEmailRoute) {
         this.state.storage.sql.exec(
           `INSERT INTO automation_email_route (id, email_address, claimed_at) VALUES (1, ?, ?)`,
@@ -1930,9 +2038,16 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       // WorkspaceDO → here, so an older or newer deployment sending an
       // unrecognised state would otherwise be silently mapped to "running"
       // and leave a finished run running forever.
-      state: z.enum([
-        "completed", "failed", "error", "needs_input", "stopped", "cancelled", "running",
-      ]),
+      //
+      // The set has to be the *whole* vocabulary the sender can produce, which
+      // is `workstreams.exact_state`'s own CHECK in `workstream-do.ts`. An
+      // earlier version listed seven values and left out `scheduled` — the
+      // state of the very first envelope every automation-provisioned run
+      // sends. The parse threw inside `applyWorkstreamDirectoryEffects`'
+      // `Promise.all`, which failed the entire envelope batch and retried it
+      // forever with the same payload, so every automation's directory updates
+      // queued up behind one unparseable state.
+      state: z.enum([...RUN_PROJECTION_STATES]),
       completedAt: z.number().int().nonnegative().nullable(),
     }).strict().parse(input);
     const identity = this.identity();
@@ -1977,13 +2092,25 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       }
       return { applied: false, outcomeCode: "automation_run_projection_replayed" };
     }
-    const executionState = request.state === "completed"
-      ? "completed"
-      : ["failed", "error"].includes(request.state)
-        ? "failed"
-        : request.state === "needs_input"
-          ? "needs_input"
-          : ["stopped", "cancelled"].includes(request.state) ? "stopped" : "running";
+    const executionState = RUN_EXECUTION_STATE[request.state];
+    // `null` means the sender told us about the work stream rather than the
+    // run — archived, being deleted, being restored. None of those is a run
+    // outcome, and folding them into "running" would leave a finished run
+    // reading as in-flight, so the run's own state is left as it was. The
+    // source version still advances below, so this is a real acknowledgement
+    // and not a retry.
+    if (executionState === null) {
+      this.state.storage.sql.exec(
+        `UPDATE automation_runs
+            SET source_version = ?, source_hash = ?, updated_at = ?
+          WHERE run_id = ?`,
+        request.sourceVersion,
+        request.payloadHash,
+        Date.now(),
+        request.runId,
+      );
+      return { applied: true, outcomeCode: "automation_run_projection_applied" };
+    }
     this.state.storage.sql.exec(
       `UPDATE automation_runs
           SET execution_state = ?, source_version = ?, source_hash = ?, updated_at = ?
@@ -2537,6 +2664,18 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       );
       if (!durableDraft.ready && durableDraft.elicitation && revision > 0) {
         const elicitationId = uuidV7(now + 1);
+        // Supersede rather than collide. Admitting the answering turn already
+        // resolves the outstanding question, so this normally updates nothing;
+        // it exists because the alternative — one run asking twice with no turn
+        // between — trips the one-pending unique index from inside this
+        // transaction and rolls back the entire settle, and the person sees a
+        // generic compile failure instead of the question they were asked.
+        this.state.storage.sql.exec(
+          `UPDATE automation_pending_elicitations
+              SET state = 'cancelled', settled_at = ?
+            WHERE state = 'pending'`,
+          now,
+        );
         this.state.storage.sql.exec(
           `INSERT INTO automation_pending_elicitations
              (elicitation_id, definition_revision, payload_json, state, created_at)
@@ -2568,7 +2707,15 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
           workspaceId: identity.workspace_id,
           authorUserId: identity.author_user_id,
           authorityGeneration: identity.authority_generation,
-          projectionVersion: this.eventSequence(),
+          // The projection counter, never the realtime event sequence. They
+          // are different numbers on purpose: the event sequence advances on
+          // every appended realtime event — each compiler stream chunk, each
+          // transcript turn — and acceptance resets it so the draft
+          // conversation's cursor starts clean. Publishing it as a projection
+          // coordinate sets a high-water mark the real counter then has to
+          // climb past, so WorkspaceDO discards the activation projection that
+          // follows as stale and the directory describes a draft forever.
+          projectionVersion: this.nextProjectionVersion(),
           payloadHash: definitionHash,
           lifecycle: "draft",
           scope: "personal",
