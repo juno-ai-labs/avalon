@@ -547,9 +547,10 @@ function InspectorDetail({
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
 
   if (resource) {
-    // Only a resource an external system owns has anywhere to be re-fetched
-    // from; a generated document's source is the run that published it.
-    const refreshable = resource.direction === 'source' && resource.watchStatus !== 'unsupported';
+    // Direction says whether this work stream consumed or produced the
+    // resource; the server-computed adapter capability says whether its
+    // connector can actually fulfill a re-fetch.
+    const refreshable = resource.direction === 'source' && resource.refreshSupported;
     return (
       <div className="inspector-detail">
         <span className="inspector-hero-icon"><ResourceIcon type={resource.resourceType} /></span>

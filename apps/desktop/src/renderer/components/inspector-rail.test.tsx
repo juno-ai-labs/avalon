@@ -217,6 +217,7 @@ describe('InspectorRail details', () => {
     title: 'Linear issue create: AVA-9',
     resourceType: 'issue',
     provider: 'linear',
+    refreshSupported: true,
     watchEnabled: false,
     watchStatus: 'paused',
     currentVersion: 3,
@@ -448,7 +449,13 @@ describe('InspectorRail details', () => {
     }],
     ['nothing external owns it, so a re-fetch has no source', {
       title: 'Uploaded brief', provider: 'avalon_upload',
-      direction: 'source' as const, watchStatus: 'unsupported' as const,
+      direction: 'source' as const, refreshSupported: false,
+      watchStatus: 'unsupported' as const,
+    }],
+    ['its connector does not implement resource hydration', {
+      title: 'Slack channel', provider: 'slack',
+      direction: 'source' as const, refreshSupported: false,
+      watchStatus: 'paused' as const,
     }],
   ])('offers no re-fetch when %s', (_reason, overrides) => {
     render(
@@ -485,6 +492,7 @@ describe('resource detail content preview', () => {
     resourceType: 'document',
     mimeType: 'text/markdown',
     contentAvailable: true,
+    refreshSupported: false,
     watchEnabled: false,
     watchStatus: 'unsupported',
     currentVersion: 2,

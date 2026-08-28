@@ -824,6 +824,26 @@ fixture table instead, where it is reviewable.
 
 ## Changelog
 
+### 2026-08-28 — Resource re-fetch follows the adapter capability
+
+**What changed:** Resource API, work-stream detail, and live origin-attachment
+projections now expose `refreshSupported`, derived from whether the deployed
+connector adapter implements `hydrateResource`. The desktop uses that field to
+decide whether to offer **Refresh from source**.
+
+**Why:** A connection and its watch state do not imply hydration support. Slack
+can own a connected source resource without implementing `hydrateResource`, so
+the previous UI gate offered a request the hydrate endpoint could only refuse.
+
+**Considered and rejected:** Maintaining a provider allowlist in the desktop or
+deriving the answer from `watchStatus`. Both duplicate the adapter's own
+declaration and can drift independently from the route that executes refresh.
+
+**What a future change has to respect:** `hydrateResource` remains the source of
+truth. Every person-facing resource projection must carry the server-computed
+capability, and compatibility parsing must fail closed when an older server
+omits it.
+
 ### 2026-08-28 — A routed watch activity names what went stale
 
 **What changed:** The watch-routed arm now names the resources an activity

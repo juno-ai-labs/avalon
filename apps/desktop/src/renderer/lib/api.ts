@@ -367,6 +367,7 @@ export function mapResource(resource: WireResource | WireWorkstreamResource): Wo
     provider: resource.provider,
     ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
     ...(resource.canonicalUrl ? { canonicalUrl: resource.canonicalUrl } : {}),
+    refreshSupported: resource.refreshSupported,
     watchEnabled: resource.watchEnabled,
     watchStatus: resource.watchStatus,
     updatedAt: resource.updatedAt,

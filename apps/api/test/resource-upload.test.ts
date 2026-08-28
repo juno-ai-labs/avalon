@@ -67,6 +67,31 @@ describe('uploaded attachment drafts', () => {
     database.close();
   });
 
+  it('reports re-fetch support from the connector adapter rather than watch state', async () => {
+    const database = attachmentDatabase();
+    insertHydratedResource(database, 'existing-original', 'b'.repeat(64));
+    const environment = createTestEnv({ DB: sqliteD1(database) });
+
+    const refreshable = new ResourceService(environment, auth, fakeHydrationRegistry({ revision: 2 }));
+    await expect(refreshable.get('connector-resource')).resolves.toMatchObject({
+      refreshSupported: true,
+      watchEnabled: false,
+      watchStatus: 'paused',
+    });
+    await expect(refreshable.list({ limit: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: 'connector-resource', refreshSupported: true })],
+    });
+
+    const notRefreshable = new ResourceService(environment, auth, {
+      get() { return {}; },
+    } as never);
+    await expect(notRefreshable.get('connector-resource')).resolves.toMatchObject({
+      refreshSupported: false,
+      watchStatus: 'paused',
+    });
+    database.close();
+  });
+
   it("does not allow another member to delete a user's draft", async () => {
     const database = attachmentDatabase();
     const stored = new Set<string>();

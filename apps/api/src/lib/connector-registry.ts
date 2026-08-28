@@ -118,6 +118,26 @@ export function connectorRegistryForEnv(env: Env) {
   return registry;
 }
 
+/**
+ * Whether this deployed connector can re-fetch a resource from its provider.
+ *
+ * The adapter method is the capability: connection/watch state can change at
+ * runtime, while neither makes a connector able to hydrate a resource. Unknown
+ * or unconfigured connector types fail closed so an older regional deployment
+ * never advertises a control its hydrate route cannot fulfill.
+ */
+export function connectorSupportsResourceHydration(
+  registry: ReturnType<typeof connectorRegistryForEnv>,
+  connectorType: unknown,
+): boolean {
+  if (typeof connectorType !== "string") return false;
+  try {
+    return typeof registry.get(connectorType).hydrateResource === "function";
+  } catch {
+    return false;
+  }
+}
+
 function buildConnectorRegistry(env: Env) {
   const granola = granolaConnectorConfig(env);
   const github = githubConnectorConfig(env);

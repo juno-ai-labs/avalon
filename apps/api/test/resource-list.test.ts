@@ -123,7 +123,9 @@ describe("resource listing", () => {
   it("lists every authorized resource version newest first", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
-      CREATE TABLE connector_connections (id TEXT PRIMARY KEY, scope TEXT, owner_user_id TEXT);
+      CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, connector_type TEXT, scope TEXT, owner_user_id TEXT
+      );
       CREATE TABLE resources (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connection_id TEXT,
         resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
@@ -193,7 +195,7 @@ describe("resource listing", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE connector_connections (
-        id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT
+        id TEXT PRIMARY KEY, connector_type TEXT, scope TEXT NOT NULL, owner_user_id TEXT
       );
       CREATE TABLE resources (
         id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connection_id TEXT,

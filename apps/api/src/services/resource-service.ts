@@ -13,7 +13,10 @@ import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createResourceObjectPort } from "../runtime/resource-port";
 import { allocateResourceSlugBesideCreation } from "./resource-slug";
-import { connectorRegistryForEnv } from "../lib/connector-registry";
+import {
+  connectorRegistryForEnv,
+  connectorSupportsResourceHydration,
+} from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
@@ -80,6 +83,7 @@ const NOTE_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_note' OR EXISTS (
 ))`;
 
 const RESOURCE_WITH_WATCH_STATE_SQL = `SELECT r.*,
+    c.connector_type AS connector_type,
     CASE WHEN EXISTS (
       SELECT 1 FROM resource_watches rw
        WHERE rw.resource_id = r.id AND rw.workspace_id = r.workspace_id AND rw.enabled = 1
@@ -136,6 +140,7 @@ export class ResourceService {
 
     const result = await this.env.DB.prepare(
       `SELECT r.*,
+        c.connector_type AS connector_type,
         CASE WHEN EXISTS (
           SELECT 1 FROM resource_watches rw
           WHERE rw.resource_id = r.id
@@ -157,7 +162,7 @@ export class ResourceService {
       if (await this.canReadInboundEmailResource(row)) rows.push(row);
     }
     const hasMore = result.results.length > limit;
-    const items = rows.map(toResource);
+    const items = rows.map((row) => this.toResource(row));
     const last = consumed.at(-1);
     return {
       items,
@@ -273,7 +278,7 @@ export class ResourceService {
 
   async get(id: string) {
     const row = await this.loadResource(id);
-    return toResource(row);
+    return this.toResource(row);
   }
 
   async content(id: string): Promise<Response> {
@@ -367,7 +372,7 @@ export class ResourceService {
 
   async hydrate(id: string) {
     const resource = await this.loadResource(id);
-    if (resource.connection_id == null) return toResource(resource);
+    if (resource.connection_id == null) return this.toResource(resource);
     const connection = await this.loadConnection(String(resource.connection_id));
     const context = await this.connectionContext(connection);
     const adapter = this.registry().get(String(connection.connector_type));
@@ -683,12 +688,19 @@ export class ResourceService {
     return this.connectorRegistry;
   }
 
+  private toResource(row: Record<string, unknown>) {
+    const refreshSupported = row.connector_type == null
+      ? false
+      : connectorSupportsResourceHydration(this.registry(), row.connector_type);
+    return toResource(row, refreshSupported);
+  }
+
   private async refreshScheduler(): Promise<void> {
     await refreshWorkspaceSchedule(this.env, this.auth.workspaceId);
   }
 }
 
-function toResource(row: Record<string, unknown>) {
+function toResource(row: Record<string, unknown>, refreshSupported: boolean) {
   const watchEnabled = Number(row.watch_enabled ?? 0) === 1;
   return {
     id: String(row.id),
@@ -704,6 +716,7 @@ function toResource(row: Record<string, unknown>) {
     title: truncateUtf16Safe(String(row.title), 300),
     mimeType: row.mime_type == null ? null : truncateUtf16Safe(String(row.mime_type), 160),
     canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+    refreshSupported,
     watchEnabled, watchStatus: row.connection_id == null ? "unsupported" : watchEnabled ? "watching" : "paused",
     lastHydratedAt: row.last_hydrated_at == null ? null : String(row.last_hydrated_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     contentAvailable: row.content_ref != null,
