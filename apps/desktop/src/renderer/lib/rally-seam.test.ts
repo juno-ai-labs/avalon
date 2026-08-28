@@ -73,9 +73,12 @@ describe('the seam projection', () => {
     expect(Math.max(...mirrored)).toBeGreaterThan(1);
   });
 
-  it('draws a closed polyline of one point per segment plus the return', () => {
+  // One point per segment and no more: `Z` closes the polyline back onto the
+  // start, so emitting the start again as a final `L` would add a zero-length
+  // segment that only `stroke-linejoin: round` hides.
+  it('draws a closed polyline of exactly one point per segment', () => {
     const d = seamPath(SEAM_START_RADIANS, 0, 46, 24);
-    expect(points(d)).toHaveLength(25);
+    expect(points(d)).toHaveLength(24);
     expect(d.startsWith('M')).toBe(true);
     expect(d.endsWith('Z')).toBe(true);
   });

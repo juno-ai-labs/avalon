@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SEAM_SPIN_RATE, SEAM_START_RADIANS, seamPath } from '../lib/rally-seam';
+import { SEAM_RESTING_PATH, SEAM_SPIN_RATE, SEAM_START_RADIANS, seamPath } from '../lib/rally-seam';
 import { AvatarStack, RallyMark, RallySeam, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
 
 vi.mock('thinking-orbs', () => ({
@@ -41,12 +41,20 @@ function stubReducedMotion(reduced: boolean): void {
   }));
 }
 
-/** The frames the component asked for, so a test can play them itself. */
-function captureFrames(): FrameRequestCallback[] {
+/**
+ * The frames the component asked for, so a test can play them itself — and the
+ * handles it cancelled, which is the only evidence the cleanup ran.
+ *
+ * `requestAnimationFrame` returns `push`'s new length, so handles are 1, 2, 3…
+ * A stub returning nothing would make every handle `undefined` and the
+ * cancellation assertion below true whether or not the cleanup ran.
+ */
+function captureFrames(): { frames: FrameRequestCallback[]; cancelled: number[] } {
   const frames: FrameRequestCallback[] = [];
+  const cancelled: number[] = [];
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => frames.push(callback));
-  vi.stubGlobal('cancelAnimationFrame', () => {});
-  return frames;
+  vi.stubGlobal('cancelAnimationFrame', (handle: number) => cancelled.push(handle));
+  return { frames, cancelled };
 }
 
 function seamAttribute(container: HTMLElement): string {
@@ -58,7 +66,7 @@ function seamAttribute(container: HTMLElement): string {
 describe('RallySeam', () => {
   it('turns on both axes, so the crossings pass rather than the drawing rotating', () => {
     stubReducedMotion(false);
-    const frames = captureFrames();
+    const { frames } = captureFrames();
     const { container } = render(<RallySeam className="test-seam" />);
 
     act(() => frames.shift()?.(0));
@@ -75,20 +83,44 @@ describe('RallySeam', () => {
 
   it('holds the resting frame for a reader who asked for less motion', () => {
     stubReducedMotion(true);
-    const frames = captureFrames();
+    const { frames } = captureFrames();
     const { container } = render(<RallySeam />);
 
     expect(frames).toHaveLength(0);
-    expect(seamAttribute(container)).toEqual(seamPath(SEAM_START_RADIANS));
+    expect(seamAttribute(container)).toEqual(SEAM_RESTING_PATH);
   });
 
   // jsdom defines no `matchMedia`, and neither does an Electron window in some
   // startup states. Unreadable is not the same as "asked for less motion".
   it('still turns where the preference cannot be read', () => {
-    const frames = captureFrames();
+    const { frames } = captureFrames();
     render(<RallySeam />);
 
     expect(frames.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The home screen mounts and unmounts on every navigation, so a loop that
+   * outlived its component would keep re-solving 169 points a frame against a
+   * detached node for the rest of the session. Nothing else here can see that:
+   * the other cases never unmount, and a cancel that does nothing looks
+   * identical to a cancel that was never called.
+   */
+  it('stops its loop when the mark leaves the screen', () => {
+    stubReducedMotion(false);
+    const { frames, cancelled } = captureFrames();
+    const { unmount } = render(<RallySeam />);
+
+    act(() => frames.shift()?.(0));
+    const pending = frames.length;
+    expect(pending).toBeGreaterThan(0);
+
+    unmount();
+
+    // The pending handle specifically, not merely that something was cancelled:
+    // the first `sync` cancels handle 0 before it schedules anything, so
+    // asserting on a non-empty list would pass with no cleanup at all.
+    expect(cancelled).toContain(pending);
   });
 });
 

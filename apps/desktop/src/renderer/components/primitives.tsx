@@ -17,7 +17,8 @@ import {
 } from 'react';
 import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
-import { SEAM_SPIN_RATE, SEAM_START_RADIANS, SEAM_TILT_RATE, seamPath } from '../lib/rally-seam';
+import { SEAM_RESTING_PATH, SEAM_SPIN_RATE, SEAM_START_RADIANS, SEAM_TILT_RATE, seamPath } from '../lib/rally-seam';
+import { onReducedMotionChange, prefersReducedMotion } from '../lib/theme';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
@@ -26,9 +27,9 @@ export function RallyMark({ className }: { className?: string }): React.JSX.Elem
 }
 
 /**
- * The mark turning on two axes, for the two display-sized places it is the
- * subject rather than a label: the sign-in card and the home screen's welcome
- * heading.
+ * The mark turning on two axes, for the three display-sized places it is the
+ * subject rather than a label: the sign-in card, the home screen's welcome
+ * heading, and the new-automation intro.
  *
  * `RallyMark` above is the same mark as a masked still image and stays what
  * every other surface uses. This one re-solves the curve each frame instead,
@@ -37,9 +38,9 @@ export function RallyMark({ className }: { className?: string }): React.JSX.Elem
  * and a second drawing of the mark, so it is worth it only where the mark is
  * large enough to read as turning.
  *
- * The size and stroke weight are the caller's, set together in one CSS rule:
- * the curve fills the viewBox, so a size chosen without its stroke comes out
- * either spindly or clotted at the crossings.
+ * A host gives it a size. `stroke-width` lives on `.rally-seam` in user units,
+ * so it scales with the box and a host only names one to make a deliberate
+ * optical adjustment.
  */
 export function RallySeam({ className }: { className?: string }): React.JSX.Element {
   const path = useRef<SVGPathElement>(null);
@@ -48,10 +49,6 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
     const element = path.current;
     if (!element) return;
 
-    // jsdom defines no `matchMedia`, and neither does an Electron window in
-    // some startup states, so the preference is read optionally and its absence
-    // means "no preference" rather than "hold still".
-    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)');
     let frame = 0;
     let began: number | null = null;
 
@@ -70,8 +67,8 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
     // other one reads as a drawing that came out wrong.
     const sync = (): void => {
       cancelAnimationFrame(frame);
-      if (reduced?.matches) {
-        element.setAttribute('d', seamPath(SEAM_START_RADIANS));
+      if (prefersReducedMotion()) {
+        element.setAttribute('d', SEAM_RESTING_PATH);
         return;
       }
       began = null;
@@ -79,10 +76,10 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
     };
 
     sync();
-    reduced?.addEventListener?.('change', sync);
+    const unwatch = onReducedMotionChange(sync);
     return () => {
       cancelAnimationFrame(frame);
-      reduced?.removeEventListener?.('change', sync);
+      unwatch();
     };
   }, []);
 
@@ -90,7 +87,7 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
     <svg aria-hidden="true" className={clsx('rally-seam', className)} viewBox="0 0 100 100">
       {/* The resting frame is drawn by React so the first paint is the mark
           rather than an empty box the effect fills in a frame later. */}
-      <path ref={path} d={seamPath(SEAM_START_RADIANS)} />
+      <path ref={path} d={SEAM_RESTING_PATH} />
     </svg>
   );
 }

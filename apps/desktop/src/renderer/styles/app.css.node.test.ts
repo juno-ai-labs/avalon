@@ -106,36 +106,51 @@ describe('work-stream launch surface geometry', () => {
 });
 
 /**
- * The turning mark is solved into a square viewBox that the curve fills, so two
- * things travel with a host's size and neither is obvious from the markup.
- * A box that is not square stretches the drawing along one axis, which as it
- * turns reads as the mark being squashed rather than as the box being wrong.
- * And a stroke weight left behind by a size change closes the crossings shut as
- * the mark grows — both look like the drawing was always that way.
+ * `stroke-width` is in the viewBox's user units, so it scales with the box the
+ * way every other coordinate does: the same 6 units renders 3.4px at 56px and
+ * 10.8px at 180px. A host that changes only its height and width therefore
+ * cannot leave the weight behind, which means the weight belongs on the shared
+ * rule rather than being restated by each host.
  *
- * `.rally-seam` deliberately declares neither, so there is no default to fall
- * back on and every host has to say both.
+ * This block replaced an earlier contract built on the opposite belief — that a
+ * host had to name the stroke alongside its size, and that a non-square box
+ * would stretch the drawing. Both were checked in Chromium and neither is how
+ * SVG behaves: with no `preserveAspectRatio` the default `xMidYMid meet` scales
+ * uniformly and letterboxes. Three hosts were carrying one duplicated value and
+ * a test forbade the shared rule from holding it.
  */
 describe('the turning brand mark', () => {
+  it('keeps the stroke weight on the shared rule, where the box scales it', () => {
+    expect(rule('.rally-seam')).toMatch(/stroke-width:\s*\d/u);
+  });
+
+  // A host still has to say how big it is: an `<svg>` carrying a viewBox and no
+  // dimensions takes its size from the layout rather than from the drawing, so
+  // a host that names neither gets whatever its container happens to be.
   it.each([
     ['.new-workstream-welcome-mark'],
     ['.signin-mark'],
     ['.automation-builder-intro > .automation-builder-mark'],
-  ])(
-    'keeps %s square and names the stroke its size needs',
-    (selector) => {
-      const declarations = rule(selector) ?? '';
-      const height = /height:\s*(\d+)px/u.exec(declarations)?.[1];
-      const width = /width:\s*(\d+)px/u.exec(declarations)?.[1];
+  ])('gives %s a size of its own', (selector) => {
+    const declarations = rule(selector) ?? '';
 
-      expect(height).toBeDefined();
-      expect(width).toEqual(height);
-      expect(declarations).toMatch(/stroke-width:\s*\d/u);
-    },
-  );
+    expect(declarations).toMatch(/height:\s*\d+px/u);
+    expect(declarations).toMatch(/width:\s*\d+px/u);
+  });
 
-  it('leaves the shared rule sizeless, so no host inherits one it did not choose', () => {
-    expect(rule('.rally-seam')).not.toMatch(/(?:height|width|stroke-width)\s*:/u);
+  // Restating the shared weight unchanged is the duplication this block exists
+  // to prevent; a host may still override it for a deliberate optical
+  // adjustment, which is a different value rather than the same one again.
+  it.each([
+    ['.new-workstream-welcome-mark'],
+    ['.signin-mark'],
+    ['.automation-builder-intro > .automation-builder-mark'],
+  ])('does not restate the shared stroke weight in %s', (selector) => {
+    const shared = /stroke-width:\s*(\d+)/u.exec(rule('.rally-seam') ?? '')?.[1];
+    const host = /stroke-width:\s*(\d+)/u.exec(rule(selector) ?? '')?.[1];
+
+    expect(shared).toBeDefined();
+    expect(host).not.toEqual(shared);
   });
 });
 
