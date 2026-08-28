@@ -105,4 +105,24 @@ describe("a watched resource's change notification", () => {
     });
     void database;
   });
+
+  it("names the stale document in the text a participant actually reads", async () => {
+    const { database, objectStore, env } = fixture();
+    await ensureResourceSlug(env, WORKSPACE_ID, RESOURCE_ID);
+
+    await expect(__testing.routeDirectWatches(env, activity as never))
+      .resolves.toEqual(new Set([WORKSTREAM_ID]));
+
+    // The structured field is for a surface that reads it; no surface does
+    // today, and the transcript renders the text. A participant who cannot
+    // name the document from the message cannot ask for its re-fetch, which
+    // is the whole loop this notification exists to start.
+    const stored = workstreamObjectGet(
+      objectStore,
+      "SELECT text_content FROM messages WHERE message_type = 'system'",
+    ) as { text_content: string };
+    expect(stored.text_content).toContain("Launch plan changed");
+    expect(stored.text_content).toContain("Attached here and now out of date: Launch plan");
+    void database;
+  });
 });
