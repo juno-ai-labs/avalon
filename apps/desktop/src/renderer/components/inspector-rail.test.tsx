@@ -298,3 +298,115 @@ describe('InspectorRail details', () => {
   });
 
 });
+
+describe('resource detail content preview', () => {
+  const note: WorkstreamResource = {
+    id: 'resource-note',
+    title: 'Q3 board deck',
+    resourceType: 'document',
+    mimeType: 'text/markdown',
+    contentAvailable: true,
+    watchEnabled: false,
+    watchStatus: 'unsupported',
+    currentVersion: 2,
+    relationshipType: 'context',
+    direction: 'artifact',
+  };
+
+  function openDetail(resource: WorkstreamResource, loadResourceContent?: (id: string, signal?: AbortSignal) => Promise<Blob>) {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          {...(loadResourceContent ? { loadResourceContent } : {})}
+          workstream={{ ...workstream, resources: [resource] }}
+        />
+      </Tooltip.Provider>,
+    );
+    act(() => { useUiStore.getState().inspect({ type: 'resource', id: resource.id }); });
+  }
+
+  it('renders the resource content beneath its metadata, so a citation is not a dead end', async () => {
+    const loadResourceContent = vi.fn(async () => new Blob(['## Findings\n\nRevenue grew 40%.']));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Findings' })).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-note', expect.anything());
+    // Beneath the metadata, not instead of it.
+    expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  it('re-reads the content when the resource is revised in place', async () => {
+    // A watched source re-ingested keeps its id, and the metadata beside this
+    // preview shows the new version number — so keying the read on the id alone
+    // put version 3's number over version 2's text, which is a citation
+    // substantiating a claim with the wrong revision.
+    let revision = 2;
+    const loadResourceContent = vi.fn(async () => new Blob([`## Findings\n\nRevenue grew ${revision}0%.`]));
+    const { rerender } = render(
+      <Tooltip.Provider>
+        <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [note] }} />
+      </Tooltip.Provider>,
+    );
+    act(() => { useUiStore.getState().inspect({ type: 'resource', id: note.id }); });
+    await waitFor(() => expect(screen.getByText('Revenue grew 20%.')).toBeInTheDocument());
+
+    revision = 3;
+    const revised = { ...note, currentVersion: note.currentVersion + 1 };
+    rerender(
+      <Tooltip.Provider>
+        <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [revised] }} />
+      </Tooltip.Provider>,
+    );
+
+    await waitFor(() => expect(screen.getByText('Revenue grew 30%.')).toBeInTheDocument());
+  });
+
+  it('renders a document\'s bytes as written, never through the model-text repair', async () => {
+    // The repair rewrites what a *model* wrote. A stored document is a file, and
+    // rewriting its bytes on the way to a reader is not this app's business.
+    const loadResourceContent = vi.fn(async () => new Blob(['Cost is $\\rightarrow$ 40.']));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/Cost is/u)).toHaveTextContent('Cost is $\\rightarrow$ 40.'));
+  });
+
+  it('shows nothing but metadata for a resource with no stored content', () => {
+    const loadResourceContent = vi.fn();
+    openDetail({ ...note, contentAvailable: false }, loadResourceContent);
+
+    expect(loadResourceContent).not.toHaveBeenCalled();
+    expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  it('says the preview is unavailable rather than leaving the panel half-drawn', async () => {
+    const loadResourceContent = vi.fn(async () => { throw new Error('resource_content_unavailable'); });
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  it('does not try to render an image as text', () => {
+    const loadResourceContent = vi.fn();
+    openDetail({ ...note, mimeType: 'image/png', title: 'Screenshot.png' }, loadResourceContent);
+
+    expect(loadResourceContent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a Word document', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Plan.docx'],
+    ['a PDF', 'application/pdf', 'Contract.pdf'],
+    ['a resource with no declared type', null, 'Fetched page'],
+  ])('asks the preview route for %s rather than deciding locally that it is unreadable', async (_label, mimeType, title) => {
+    // The server owns what is previewable: it returns the bytes for text and
+    // an extracted-text derivative for everything else, and a clear 422 when it
+    // genuinely cannot. Deciding here instead meant a Word document rendered as
+    // the raw bytes of a zip, and a PDF — the most commonly attached document
+    // there is — showed nothing at all.
+    const loadResourceContent = vi.fn(async () => new Blob(['## Extracted\n\nReadable after all.']));
+    openDetail({ ...note, ...(mimeType ? { mimeType } : { mimeType: undefined }), title }, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith(note.id, expect.anything());
+  });
+});

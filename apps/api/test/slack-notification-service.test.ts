@@ -219,6 +219,36 @@ describe("workspace Slack mention delivery", () => {
     expect(posts[2]?.body).toMatchObject({ thread_ts: "1786060000.001" });
   });
 
+  it("reduces a citation, which Slack shows verbatim just like a mention's UUID", async () => {
+    const database = migratedDatabase();
+    const env = environment(database);
+    await seed(database, env, false);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    // An external source, deliberately: this text is Slack mrkdwn, which has no
+    // `[label](url)` and no `**bold**`, so the Markdown source list the digest
+    // gets would arrive here as literal syntax. A fixture whose only source is
+    // internal reduces to a bare title and never exercises that.
+    const messageText = "Revenue grew 40%.[^1] See [the deck](resource://board-deck).\n\n[^1]: [The memo](https://example.com/memo)";
+
+    await expect(sendWorkstreamMentionSlack(
+      env,
+      { ...mention(), messageText },
+      slackApiFixture(calls),
+      async () => undefined,
+    )).resolves.toBe("sent");
+
+    const posted = calls.filter((call) => call.method === "chat.postMessage")
+      .map((call) => String(call.body.text)).join("");
+    expect(posted).not.toContain("resource:");
+    expect(posted).not.toContain("[^1]");
+    expect(posted).toContain("See the deck.");
+    // The source reaches the channel as words and a bare URL, not as markup a
+    // reader has to decode.
+    expect(posted).not.toContain("**Sources**");
+    expect(posted).not.toContain("](https://example.com/memo)");
+    expect(posted).toContain("The memo — https://example.com/memo");
+  });
+
   it("paces and retries a rate-limited Slack chunk using Retry-After", async () => {
     const database = migratedDatabase();
     const env = environment(database);

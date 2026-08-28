@@ -356,6 +356,106 @@ ${syntax}
     padding: 0 7px;
   }
   .mention-chip-avatar { display: none; }
+  /* GFM titles its footnote section with a heading it expects the host to hide.
+     This document loads none of the application stylesheet, so without a rule
+     here the card printed a bare "Footnotes" above the list — a word out of the
+     renderer's plumbing, in the middle of a saved picture. Hidden outright
+     rather than clipped the way the app does it: nothing here is read aloud. */
+  .sr-only { display: none; }
+  /* Citations, drawn for a still card rather than an application.
+
+     What the card cannot have is the part that makes a citation useful: the
+     click. So the chip and the embed keep their shape — a reader recognises the
+     thing they clicked in the app — and lose everything that promises
+     interaction. The popover goes entirely: a hover affordance printed into a
+     PNG is a grey box over the text with no way to dismiss it, and the source it
+     would have named is on the pill's own line in the app, not here. The pill
+     stays a plain numbered superscript, which is what a citation degrades to
+     everywhere outside this renderer anyway. */
+  /* These three are buttons, and this document loads none of the application's
+     preflight — so without an explicit inherit they render in the UA's default
+     face: Arial beside Inter, invisible on a host where the two resolve alike
+     and obvious on a Mac. */
+  .citation-chip, .citation-card, .citation-pill { font: inherit; line-height: inherit; }
+  .citation-chip {
+    align-items: center;
+    background: #eceade;
+    border: 1px solid #dcd9c9;
+    border-radius: 999px;
+    color: #3d3f33;
+    display: inline-flex;
+    font-size: 0.92em;
+    font-weight: 560;
+    gap: 4px;
+    padding: 1px 8px 1px 6px;
+  }
+  .citation-chip-icon { color: #6b6d5e; display: inline-flex; }
+  .markdown-body .citation-chip-icon svg { height: 0.95em; width: 0.95em; }
+  .citation-chip-label { display: inline; }
+  .citation-card {
+    align-items: center;
+    background: #f1efe5;
+    border: 1px solid #dcd9c9;
+    border-radius: 10px;
+    color: #3d3f33;
+    display: flex;
+    gap: 10px;
+    margin: 16px 0;
+    padding: 11px 13px;
+    text-align: left;
+    width: 100%;
+  }
+  .citation-card-icon { color: #6b6d5e; display: inline-flex; }
+  .citation-card-text { display: flex; flex-direction: column; gap: 2px; }
+  .citation-card-title { font-size: 0.97em; font-weight: 640; }
+  /* No text-transform: the renderer already turns the system identifier into
+     words, and capitalizing each of them made the card say "Github Pull
+     Request" where the app says "Github pull request". */
+  .citation-card-kind { color: #6b6d5e; font-size: 0.82em; }
+  .citation-card-chevron { display: none; }
+  /* Sized and raised exactly as the app's is, and for the same reason: GFM's
+     sup wrapper applies its own smaller and its own super, and stacking the
+     pill's on top of those left a digit too small to read. The card is the
+     turn, saved — the marker has to be the same marker. */
+  .markdown-body sup:has(.citation-pill) { font-size: inherit; vertical-align: baseline; }
+  .citation-pill {
+    background: #e4e6c8;
+    border: 1px solid #ccd4a0;
+    border-radius: 999px;
+    color: #4a6a12;
+    display: inline-block;
+    font: inherit;
+    font-size: 0.72em;
+    font-weight: 680;
+    line-height: 1.5;
+    margin: 0 1px;
+    min-width: 1.5em;
+    padding: 0 0.35em;
+    text-align: center;
+    vertical-align: super;
+  }
+  /* The popover and its parts: a hover affordance printed into a still image is
+     a grey box over the text with no way to dismiss it, and the source it names
+     is already on the pill in the app. */
+  .citation-pill-popover,
+  .citation-pill-source,
+  .citation-pill-note,
+  .citation-pill-open { display: none; }
+  .citation-identity-label { font: inherit; }
+  /* A footnote that was not lifted still renders, and without a rule it reads as
+     an ordinary numbered list inside the answer. */
+  .markdown-body .footnotes { border-top: 1px solid #e2e0d3; color: #6b6d5e; font-size: 0.9em; margin-top: 22px; padding-top: 12px; }
+  .markdown-body .data-footnote-backref { display: none; }
+  .citation-identity-card {
+    background: #eceade;
+    border: 1px solid #dcd9c9;
+    border-radius: 6px;
+    color: #3d3f33;
+    display: inline-block;
+    font-size: 0.92em;
+    font-weight: 560;
+    padding: 3px 9px;
+  }
   .mention-text-fallback { color: #3d3f33; font-weight: 560; }
   /* Paged output only: a heading stranded at the foot of a page reads as a
      heading for nothing, and a table split across pages loses its header. */

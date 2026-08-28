@@ -459,6 +459,23 @@ a single tag is added, so an `href` can only ever be one it built itself — wit
 cannot match within the attribute. A table or a fenced block is kept verbatim in
 a `<pre>`; other unknown syntax degrades to visible text.
 
+**Citations are reduced before the renderer sees them.** A model's answer may
+carry `resource://` link and image targets and GFM footnotes
+([`markdown-rendering.md`](markdown-rendering.md)), none of which a mail client
+has heard of — so `markdownToEmailHtml`, `markdownToEmailText` and
+`markdownToEmailPreheader` each run `rewriteCitationsAsPlainText` first. Chips
+and embeds become the words the model wrote; footnotes become numbered markers
+over one trailing source list, with an internal source as its title and an
+external one as a real link, because a link is the only way a reader outside
+Rally can follow it. Without that pass all three leak: the HTML path links only
+`http(s)` targets, so a `resource://` link arrives as literal bracket syntax;
+the text path appends whatever target it is handed; and neither part has any
+footnote handling at all.
+
+**The order is load-bearing:** citations first, then `normalizeModelMarkdown`.
+The TeX repair escapes Markdown punctuation in what it unwraps, and a `\[` it
+manufactured would stop looking like the link the citation pass has to find.
+
 The brief names exactly that subset, so what the model writes and what the
 template styles are the same list. Each source group carries its canonical link,
 so the digest points at the real thing rather than describing it.
@@ -666,6 +683,92 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-28 — The reduction leaves indented code alone too
+
+**What changed:** The shared grammar's three passes read one `codeLines`
+classifier, which recognises indented code blocks as well as fenced ones. A
+destination may also carry one level of balanced parentheses.
+
+**Why:** An indented example is the other ordinary way a model shows this
+syntax, and the reduction was rewriting it — a taught `[the deck](resource://abc)`
+arrived here as `the deck`, editing the sample. The parenthesis half is narrower
+and just as visible: stopping at the first `)` truncated
+`…/Function_(mathematics)` in the delivered source list, naming a URL that goes
+nowhere.
+
+**What a future change has to respect:** What counts as code is `codeLines`'
+decision and nothing else's; a caller that grows its own fence tracking is how
+the transcript and the delivered copy start disagreeing about numbering again.
+
+### 2026-08-28 — The reduction is written for the surface that renders it
+
+**What changed:** `rewriteCitationsAsPlainText` takes a `sources` option:
+`markdown` (the default, for the HTML and text paths here, which render Markdown
+and reduce its marks), `plain`, and `none`. `markdownToEmailPreheader` uses
+`none`, and so does `mention-email-service.messageExcerpt`.
+
+**Why:** The reduction emits Markdown — a `**Sources**` heading and
+`[label](url)` for an external source — and two of the surfaces it was given
+render none. A mention excerpt is HTML-escaped into a table cell and quoted into
+the plain-text body, so the list arrived as literal syntax; it is also a single
+line, and `singleLine` flattened a bibliography into the quote, where it
+competed with the length budget and truncated mid-entry. The preheader is the
+160 characters an inbox shows beside the subject, and appending the source list
+before truncating spent them on `Sources 1. Q3 deck` for any answer short enough
+to reach it. Both call sites want the reduction and neither wants the list.
+
+**What a future change has to respect:** A new caller picks the shape its
+consumer can render, the way `normalizeModelMarkdown` and `normalizeModelText`
+are already two entry points for the same reason. The default is the Markdown
+one, so a caller that renders nothing has to say so.
+
+### 2026-08-28 — The reduction reads code and titled links the way the parser does
+
+**What changed:** Two corrections in `rewriteCitationsAsPlainText`, both in
+`@rally/contracts/citations` rather than here. A `[^1]` inside an inline code
+span no longer counts as a footnote reference, and the inline-link pattern now
+matches a label carrying balanced brackets, an angle-bracketed target, and a
+trailing title.
+
+**Why:** Both were silent leaks of the kind this reduction exists to close, and
+both are reachable from ordinary model output. A message explaining the citation
+syntax — an ordinary thing to ask Rally for — was delivered with a `Sources`
+list it never claimed, and any real footnote beside it was renumbered, so the
+delivered copy and the transcript disagreed about which source was `[1]`. And a
+link the desktop drew as a chip but this pattern did not match arrived with its
+raw `resource://` target in the text: `[the deck](resource://abc "Q3")` is a
+link to every Markdown parser in the path, including the one Rally renders with.
+
+**What a future change has to respect:** The pattern here is meant to be as wide
+as the renderer's parser, not as wide as the guidance's examples. Anything the
+desktop turns into a chip and this leaves alone becomes raw internal syntax in
+front of a recipient.
+
+### 2026-08-27 — Every email reduces a model's citations before rendering
+
+**What changed:** All three `email-markdown.ts` entry points run
+`rewriteCitationsAsPlainText` ahead of their existing work — before
+`normalizeModelMarkdown` on the two that call it. Chips and embeds reduce to
+their label text; footnotes reduce to numbered markers over one trailing source
+list.
+
+**Why:** Model answers began carrying `resource://` targets and GFM footnotes,
+and this renderer had no rule for any of it — the HTML path links only
+`http(s)`, so an internal link passed through as literal bracket syntax; the
+text path appends any target it is given; footnotes were unhandled in both. A
+reader would have got a raw internal URL and a page of `[^1]` markers above
+nothing. The rejected alternative was teaching this renderer to render
+citations: there is nothing for a mail client to render them *as*, and a
+trailing source list is the one place a source can live on a surface with no
+rail to open.
+
+**Consequences:** The ordering is a constraint, not an accident — widening what
+`normalizeModelMarkdown` escapes breaks citation rewriting in email, several
+modules from the cause. The reduction is idempotent, so a path that grows a
+second call does not double-renumber. Shipped in
+[#381](https://github.com/juno-ai-labs/avalon/pull/381). Design:
+[`docs/PRDs/2026-08-27_inline-resource-citations/prd.md`](PRDs/2026-08-27_inline-resource-citations/prd.md).
 
 ### 2026-08-25 — The Digest settings section hides when digests-enabled is off
 

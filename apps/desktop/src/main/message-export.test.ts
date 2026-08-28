@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { MessageExportRequest } from '../common/message-export';
 import { exportSyntaxPalette } from '../common/theme-assets';
@@ -130,6 +132,25 @@ describe('recognising an export URL', () => {
   });
 });
 
+/**
+ * Every `citation-*` class `markdown-citations.tsx` puts in the DOM.
+ *
+ * Read off the source with `node:fs`, the way the renderer's own guards read
+ * theirs — this file runs in the node project, so that is available here.
+ */
+function citationClassesTheRendererEmits(): string[] {
+  const source = readFileSync(
+    resolve(process.cwd(), 'src/renderer/components/markdown-citations.tsx'),
+    'utf8',
+  );
+  const classes = new Set<string>();
+  for (const [, value] of source.matchAll(/className="([^"]*)"/gu)) {
+    for (const name of value!.split(/\s+/u)) if (name.startsWith('citation-')) classes.add(name);
+  }
+  if (classes.size === 0) throw new Error('No citation classes found — has the renderer moved?');
+  return [...classes].sort();
+}
+
 describe('the exported document', () => {
   it('renders the message inside the card, signed, for a picture', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>Hello</p>', logoDataUrl: LOGO });
@@ -210,6 +231,48 @@ describe('the exported document', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
 
     expect(html).toMatch(/\.markdown-code-language\s*\{[^}]*\bdisplay:\s*block;/u);
+  });
+
+  /**
+   * The card shares `MarkdownBody`'s markup and none of its stylesheet, so a
+   * class introduced there has no rule here until somebody writes one — and the
+   * miss shows up as an unstyled element in the first card anybody looks at,
+   * not as a failure anywhere near the change that caused it. This is the guard
+   * that turns that into a test failure instead.
+   *
+   * The list is read off the renderer rather than typed here, which is the only
+   * version that closes the category: a hand-kept list cannot fail for a class
+   * added tomorrow, and the first hand-kept version was already missing four of
+   * the seventeen on the day it landed.
+   */
+  it.each(citationClassesTheRendererEmits())('styles .%s, which the renderer emits and this document would not', (className) => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    // `\b` matches between `p` and `-`, so `.citation-chip` was satisfied by
+    // `.citation-chip-icon {` — the three rules that matter most could each be
+    // deleted with this test still green.
+    expect(html).toMatch(new RegExp(`\\.${className}(?![\\w-])[^{]*\\{`, 'u'));
+  });
+
+  /**
+   * Caught in a real capture, not in a component test: GFM gives the footnote
+   * section a heading it expects the host to hide, and this document loads none
+   * of the application stylesheet. Without a rule of its own the card printed a
+   * bare "Footnotes" heading above the list — a word from the renderer's
+   * plumbing, in the middle of somebody's saved picture.
+   */
+  it('hides a visually-hidden element, which this document has no rule for otherwise', () => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    expect(html).toMatch(/\.sr-only\b[^{]*\{[^}]*(?:display:\s*none|clip-path)/u);
+  });
+
+  it('drops the popover and the chevron, which are affordances a still card cannot offer', () => {
+    const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
+
+    for (const className of ['citation-pill-popover', 'citation-card-chevron']) {
+      expect(html).toMatch(new RegExp(`\\.${className}\\b[^{]*\\{[^}]*display:\\s*none;`, 'u'));
+    }
   });
 
   it('splashes two different messages differently and the same message the same way', () => {
