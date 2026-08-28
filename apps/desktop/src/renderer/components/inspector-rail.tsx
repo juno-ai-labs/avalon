@@ -462,6 +462,13 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
  * Trips: the retry stops and the panel shows "This preview is not available.",
  *   which is what it already shows for every terminal rejection. The metadata
  *   above it is unaffected.
+ * Decided: the sum above is what the team chose on 2026-08-28, against 60
+ *   seconds, the lease alone, and no ceiling at all. What they were pricing is
+ *   the trip: an unchanging "Loading preview…" for up to five and a half
+ *   minutes, in exchange for never ending a wait that could still have
+ *   produced the document. The derivation is not a substitute for that
+ *   decision — it was the arithmetic put to them, and the value is one edit if
+ *   the trade reads differently later.
  */
 export const MAX_RESOURCE_PREVIEW_WAIT_MS = ATTACHMENT_PROCESSING_LEASE_MS + ATTACHMENT_CONVERTER_TIMEOUT_MS;
 
