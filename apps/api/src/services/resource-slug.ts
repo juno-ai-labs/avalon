@@ -16,6 +16,7 @@ import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import { allocateWorkstreamEmailAddressCandidate } from "../lib/workstream-email-address";
 import { logWarn } from "../observability/logger";
+import { MAXIMUM_CLEANUP_BATCH } from "./resource-object-cleanup";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
 /** What the generator's frozen vocabulary produces: four lowercase words. */
@@ -27,9 +28,6 @@ export const RESOURCE_SLUG_PATTERN = /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u;
  * At one in a billion, reaching a second attempt is already remarkable.
  */
 const MAXIMUM_SLUG_ALLOCATION_ATTEMPTS = 1_024;
-
-/** How many resources one maintenance pass names, matching its neighbours. */
-const MAXIMUM_SLUG_BACKFILL_BATCH = 100;
 
 /** The candidate for one attempt. Exported so a test can park it on a row. */
 export async function resourceSlugCandidate(
@@ -100,7 +98,8 @@ export async function backfillResourceSlugs(env: Env, workspaceId: string): Prom
       WHERE workspace_id = ? AND slug IS NULL
       ORDER BY created_at, id
       LIMIT ?`,
-  ).bind(workspaceId, MAXIMUM_SLUG_BACKFILL_BATCH).all<{ id: string }>();
+  // The batch bound of the reapers this pass runs beside, not a second one.
+  ).bind(workspaceId, MAXIMUM_CLEANUP_BATCH).all<{ id: string }>();
   let named = 0;
   for (const resource of pending.results) {
     if (await ensureResourceSlug(routed, workspaceId, resource.id) !== null) named += 1;
