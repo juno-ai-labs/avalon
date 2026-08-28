@@ -223,6 +223,28 @@ describe("the WorkspaceDO version-provenance migration", () => {
       cause: "published",
       storage_kind: "object",
     });
+
+    // The seam is staged, not assumed: a producer whose refs are a different
+    // shape says so on the swap, and capture records what it said rather than
+    // the only value that exists today.
+    database.exec(
+      `UPDATE resources
+          SET content_ref = 'editor/snapshot-1', updated_at = '2026-08-28T04:00:00.000Z',
+              revision_storage_kind = 'editor_snapshot'
+        WHERE id = 'resource-1'`,
+    );
+    expect(database.prepare(
+      "SELECT storage_kind FROM resource_versions WHERE resource_id = 'resource-1' AND version = 4",
+    ).get()).toEqual({ storage_kind: "editor_snapshot" });
+    // And it is released with the rest, so the next capture is an object again
+    // rather than inheriting a shape nobody claimed.
+    database.exec(
+      `UPDATE resources SET content_ref = 'r2/original-5',
+              updated_at = '2026-08-28T05:00:00.000Z' WHERE id = 'resource-1'`,
+    );
+    expect(database.prepare(
+      "SELECT storage_kind FROM resource_versions WHERE resource_id = 'resource-1' AND version = 5",
+    ).get()).toEqual({ storage_kind: "object" });
   });
 
   it("attributes a resource's first version from the row that created it", () => {

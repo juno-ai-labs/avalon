@@ -691,7 +691,11 @@ export class ResourceService {
 function toResource(row: Record<string, unknown>) {
   const watchEnabled = Number(row.watch_enabled ?? 0) === 1;
   return {
-    id: String(row.id), slug: nullableString(row.slug),
+    id: String(row.id),
+    // Bounded like `title` below and for the same reason: the column carries no
+    // length constraint, and one long row would fail `GET /resources` for the
+    // whole workspace rather than for itself.
+    slug: row.slug == null ? null : truncateUtf16Safe(String(row.slug), 80),
     workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
     resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
     // Truncated to `ResourceSchema`'s bounds rather than passed through: the
@@ -747,8 +751,9 @@ function toResourceRevision(row: Record<string, unknown>): ResourceRevision {
     author: toVersionAuthor(row),
     cause: cause.success ? cause.data : null,
     // Every row written so far is an ordinary bucket object, and a row that
-    // predates the column was backfilled as one.
-    storageKind: nullableString(row.storage_kind) ?? "object",
+    // predates the column was backfilled as one. Bounded because the column
+    // deliberately has no CHECK, so its value is a writer's choice.
+    storageKind: truncateUtf16Safe(nullableString(row.storage_kind) ?? "object", 40),
     title: truncateUtf16Safe(String(row.title), 300),
     resourceType: String(row.resource_type),
     provider: String(row.provider),

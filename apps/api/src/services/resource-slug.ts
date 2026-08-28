@@ -18,6 +18,7 @@ import { allocateWorkstreamEmailAddressCandidate } from "../lib/workstream-email
 import { logWarn } from "../observability/logger";
 import { MAXIMUM_CLEANUP_BATCH } from "./resource-object-cleanup";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
 
 /** What the generator's frozen vocabulary produces: four lowercase words. */
 export const RESOURCE_SLUG_PATTERN = /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u;
@@ -29,6 +30,33 @@ export const RESOURCE_SLUG_PATTERN = /^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u;
  */
 const MAXIMUM_SLUG_ALLOCATION_ATTEMPTS = 1_024;
 
+/**
+ * The allocator's key, domain-separated from the work-stream address key.
+ *
+ * Separation makes the two mappings independent — a resource's alias reveals
+ * nothing about a work stream's address and vice versa. It does not make the
+ * two *value spaces* disjoint: both draw the same four words from the same
+ * frozen vocabulary, so a slug can equal some work stream's local part. That
+ * is harmless while nothing routes on a slug, and the reason a slug must never
+ * become a routing key without changing its shape first.
+ */
+async function resourceSlugKey(env: Env): Promise<string> {
+  return sha256(`resource-slug:${env.SESSION_SIGNING_KEY}`);
+}
+
+async function slugCandidate(
+  secretKey: string,
+  workspaceId: string,
+  resourceId: string,
+  attempt: number,
+): Promise<string> {
+  return allocateWorkstreamEmailAddressCandidate({
+    secretKey,
+    workstreamId: `resource:${workspaceId}:${resourceId}`,
+    attempt,
+  });
+}
+
 /** The candidate for one attempt. Exported so a test can park it on a row. */
 export async function resourceSlugCandidate(
   env: Env,
@@ -36,11 +64,7 @@ export async function resourceSlugCandidate(
   resourceId: string,
   attempt: number,
 ): Promise<string> {
-  return allocateWorkstreamEmailAddressCandidate({
-    secretKey: await sha256(`resource-slug:${env.SESSION_SIGNING_KEY}`),
-    workstreamId: `resource:${workspaceId}:${resourceId}`,
-    attempt,
-  });
+  return slugCandidate(await resourceSlugKey(env), workspaceId, resourceId, attempt);
 }
 
 /**
@@ -62,8 +86,9 @@ export async function ensureResourceSlug(
   // the workspace-routed environment, and re-deriving one here would build a
   // second port over the object that is already answering.
   const database = env.DB;
+  const secretKey = await resourceSlugKey(env);
   for (let attempt = 0; attempt < MAXIMUM_SLUG_ALLOCATION_ATTEMPTS; attempt += 1) {
-    const candidate = await resourceSlugCandidate(env, workspaceId, resourceId, attempt);
+    const candidate = await slugCandidate(secretKey, workspaceId, resourceId, attempt);
     const allocated = await database.prepare(
       `UPDATE OR IGNORE resources SET slug = ?
         WHERE id = ? AND workspace_id = ? AND slug IS NULL
@@ -102,7 +127,17 @@ export async function backfillResourceSlugs(env: Env, workspaceId: string): Prom
   ).bind(workspaceId, MAXIMUM_CLEANUP_BATCH).all<{ id: string }>();
   let named = 0;
   for (const resource of pending.results) {
-    if (await ensureResourceSlug(routed, workspaceId, resource.id) !== null) named += 1;
+    try {
+      if (await ensureResourceSlug(routed, workspaceId, resource.id) !== null) named += 1;
+    } catch (error) {
+      // The batch is ordered oldest-first, so a row that cannot be named would
+      // otherwise sit at its head and block every row behind it on every pass.
+      // Skipping it keeps the pass making progress and leaves the row due.
+      logWarn(env, "resource_slug_allocation_deferred", {
+        resource_id: resource.id,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    }
   }
   return named;
 }
@@ -127,6 +162,11 @@ export async function allocateResourceSlugBesideCreation(
       resource_id: resourceId,
       reason: error instanceof Error ? error.message : "unknown",
     });
+    // `resources` is not an alarm source table, so nothing re-derives the
+    // workspace's due index when a row appears needing a name. Without this
+    // the pass waits for whatever else wakes the object next, which on a quiet
+    // workspace is activity-event retention — a quarter away.
+    await refreshWorkspaceSchedule(env, workspaceId).catch(() => undefined);
   }
 }
 
