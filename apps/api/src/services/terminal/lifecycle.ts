@@ -15,6 +15,7 @@ import {
 import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
+import { releaseStagedResourceObject } from "../resource-object-cleanup";
 
 const MAX_WORKSPACE_BACKUP_BYTES = 50 * 1_048_576;
 
@@ -343,13 +344,18 @@ export function createTerminalFinalDiffPreserver(
     const objectRef = `${env.AVALON_REGION}/${workspaceId}/resources/${resourceId}/terminal-final-diff/${digest}`;
     await workspace.prepare(
       `INSERT OR IGNORE INTO resource_object_deletion_outbox
-       (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, 'original', ?, ?)`,
+       (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES (?, ?, ?, 'original', 0, ?, ?)`,
     ).bind(objectRef, workspaceId, resourceId, timestamp, timestamp).run();
-    await env.PAYLOADS.put(objectRef, bytes, {
-      httpMetadata: { contentType: summaryOnly ? "text/plain" : "text/x-diff" },
-      customMetadata: { source: "terminal", sandboxGeneration: String(generation) },
-    });
+    try {
+      await env.PAYLOADS.put(objectRef, bytes, {
+        httpMetadata: { contentType: summaryOnly ? "text/plain" : "text/x-diff" },
+        customMetadata: { source: "terminal", sandboxGeneration: String(generation) },
+      });
+    } catch (error) {
+      await releaseStagedResourceObject(workspace, workspaceId, objectRef);
+      throw error;
+    }
     const resourceStatement = workspace.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
@@ -382,7 +388,7 @@ export function createTerminalFinalDiffPreserver(
     // runtime database was installed, which production requires before request
     // dispatch — so it has not run since the cutover, and it wrote
     // `workstream_resources` through a view this slice retires.
-    {
+    try {
       await resourceStatement.run();
       await attachWorkstreamRuntimeResource(env, {
         workspaceId,
@@ -391,7 +397,11 @@ export function createTerminalFinalDiffPreserver(
         attachedByUserId: null,
         relationshipType: "generated",
       });
-      await cleanupStatement.run();
+      await cleanupStatement.run().catch(() => undefined);
+    } catch (error) {
+      await releaseStagedResourceObject(workspace, workspaceId, objectRef)
+        .catch(() => undefined);
+      throw error;
     }
     await terminal.setFinalDiffResourceId(resourceId, Date.now());
   };
@@ -523,13 +533,18 @@ export function createTerminalWorkspaceBackup(
     const objectRef = `${env.AVALON_REGION}/${input.workspaceId}/resources/${resourceId}/terminal-workspace-backup/${actualSha256}`;
     await workspace.prepare(
       `INSERT OR IGNORE INTO resource_object_deletion_outbox
-       (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-       VALUES (?, ?, ?, 'original', ?, ?)`,
+       (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES (?, ?, ?, 'original', 0, ?, ?)`,
     ).bind(objectRef, input.workspaceId, resourceId, createdAt, createdAt).run();
-    await env.PAYLOADS.put(objectRef, bytes, {
-      httpMetadata: { contentType: "application/gzip" },
-      customMetadata: { source: "terminal_repository_replacement", sandboxGeneration: String(input.generation) },
-    });
+    try {
+      await env.PAYLOADS.put(objectRef, bytes, {
+        httpMetadata: { contentType: "application/gzip" },
+        customMetadata: { source: "terminal_repository_replacement", sandboxGeneration: String(input.generation) },
+      });
+    } catch (error) {
+      await releaseStagedResourceObject(workspace, input.workspaceId, objectRef);
+      throw error;
+    }
     const resourceStatement = workspace.prepare(
         `INSERT INTO resources
          (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
@@ -560,7 +575,7 @@ export function createTerminalWorkspaceBackup(
       ).bind(input.workspaceId, objectRef);
     // Same two authorities and ordering as the final-diff preserver: resource
     // and outbox via WorkspaceDO, followed by the WorkstreamDO link.
-    {
+    try {
       await resourceStatement.run();
       await (inObjectResourceAttacher ?? ((attachment) =>
         attachWorkstreamRuntimeResource(env, attachment)))({
@@ -570,7 +585,11 @@ export function createTerminalWorkspaceBackup(
         attachedByUserId: null,
         relationshipType: "generated",
       });
-      await cleanupStatement.run();
+      await cleanupStatement.run().catch(() => undefined);
+    } catch (error) {
+      await releaseStagedResourceObject(workspace, input.workspaceId, objectRef)
+        .catch(() => undefined);
+      throw error;
     }
     return {
       resourceId,

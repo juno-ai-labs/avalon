@@ -237,13 +237,18 @@ original bytes becomes pending on first authorized use, while a missing original
 is failed rather than an empty success.
 
 Writers pre-register each generation-unique object in
-`resource_object_deletion_outbox` before its R2 write. A successful pointer
-compare-and-swap cancels the new object's pending deletion and enqueues the former
-pointer. `resource_versions` retains the original and derivative refs selected by
-every semantic version; cleanup treats those historical refs as active. Deleting
-a resource—not merely detaching one relationship—enqueues every retained original
-and derivative. Scheduled cleanup reaps at most 100 references per pass; a failed
-R2 deletion increments bounded retry metadata and remains queued.
+`resource_object_deletion_outbox` before its R2 write, with cleanup fenced while
+publication is staged. A successful pointer compare-and-swap removes that staging
+row and enqueues the former pointer; a known failed publication releases its row
+to cleanup. An ambiguous pointer response stays staged because preserving an
+orphan is recoverable while deleting bytes a committed pointer may name is not.
+Maintenance clears a staged row once it observes an active pointer and never
+deletes an inactive staged object. `resource_versions` retains the original and
+derivative refs selected by every semantic version; cleanup treats those
+historical refs as active. Deleting a resource—not merely detaching one
+relationship—enqueues every retained original and derivative. Scheduled cleanup
+reaps at most 100 eligible references per pass; a failed R2 deletion increments
+bounded retry metadata and remains queued.
 
 ### Reusable derivatives
 
@@ -589,6 +594,31 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-28 — Publication staging closes the R2 cleanup race
+
+**What changed:** Resource-object cleanup rows now distinguish an in-flight
+publication from an object eligible for deletion. Terminal publications,
+connector refreshes, and derivative writers stage their generation before the
+R2 put. A committed pointer clears the row; a known failed or losing write
+releases it. The reaper clears staged rows only after finding an active current
+or historical pointer and never deletes an inactive staged object.
+
+**Why:** The WorkspaceDO cleanup alarm could run after R2 accepted a generated
+file but before the following resource-pointer commit. It saw no pointer yet,
+deleted the new object, and then the publisher committed metadata that claimed
+content was available. That produced a working citation and version rail whose
+preview and download both returned 404.
+
+**Considered and rejected:** Delaying cleanup by an invented grace period, and
+deleting new bytes whenever a WorkspaceDO response failed. A timer makes safety
+depend on a number the system cannot derive; a failed response cannot prove the
+transaction failed and can therefore delete a successfully committed document.
+
+**Consequences:** A crash before pointer publication can leave a staged object
+and a maintenance alarm requiring reconciliation, which is the visible and
+recoverable failure. Writers must release staging only when they know no pointer
+committed. Future cleanup paths must preserve that distinction.
 
 ### 2026-08-28 — Message attachments ride the persistent-loop cutover
 
