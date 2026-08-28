@@ -1313,6 +1313,11 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE resources ADD COLUMN revision_cause TEXT
        CHECK (revision_cause IS NULL
          OR revision_cause IN ('created', 'published', 'refetched', 'replaced'))`,
+    // Staged like the rest, so the shape a version records is chosen by the
+    // swap that creates it. Without this, capture could only ever write the
+    // default, and the seam below would be reachable solely by updating a
+    // version row after the fact — the second statement this design avoids.
+    `ALTER TABLE resources ADD COLUMN revision_storage_kind TEXT NOT NULL DEFAULT 'object'`,
     // NULL is the honest answer for history captured before this version: the
     // rows record which pointers a state held, and nothing recorded who moved
     // them. Every capture after this migration carries an author or none
@@ -1326,12 +1331,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
     `ALTER TABLE resource_versions ADD COLUMN cause TEXT
        CHECK (cause IS NULL
          OR cause IN ('created', 'published', 'refetched', 'replaced'))`,
-    // What kind of thing the refs name. Every row today names an immutable
-    // object in the region's bucket, which is what the backfilled default
-    // says. It carries no CHECK on purpose: a later storage shape — the
-    // collaborative editor's materialized snapshots — is meant to join this
-    // history by writing a new value, not by rebuilding a STRICT table that
-    // SQLite cannot alter a constraint on.
+    // What kind of thing the refs name. Every row says an immutable object in
+    // the region's bucket, because every capture today is one — the value is
+    // staged rather than assumed, so a later storage shape (the collaborative
+    // editor's materialized snapshots) sets it the way an author is set. No
+    // CHECK, so a new kind is a value its writer chooses rather than a
+    // constraint SQLite would need the table rebuilt to alter.
     `ALTER TABLE resource_versions ADD COLUMN storage_kind TEXT NOT NULL DEFAULT 'object'`,
     // An identity that its kind cannot have is attribution the rail would
     // render as fact, so capture refuses it rather than storing it.
@@ -1358,7 +1363,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
             model_content_status, model_content_extractor_version, model_content_character_count,
             model_content_extracted_at, model_content_error_code, captured_at,
-            author_kind, author_run_id, author_user_id, author_connection_id, cause)
+            author_kind, author_run_id, author_user_id, author_connection_id, cause,
+            storage_kind)
          VALUES
            (NEW.id, NEW.workspace_id, NEW.current_version, NEW.connection_id, NEW.resource_type, NEW.provider,
             NEW.provider_resource_id, NEW.title, NEW.mime_type, NEW.content_ref, NEW.canonical_url, NEW.metadata_json,
@@ -1367,11 +1373,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             NEW.model_content_status, NEW.model_content_extractor_version, NEW.model_content_character_count,
             NEW.model_content_extracted_at, NEW.model_content_error_code, NEW.updated_at,
             NEW.revision_author_kind, NEW.revision_author_run_id, NEW.revision_author_user_id,
-            NEW.revision_author_connection_id, NEW.revision_cause);
+            NEW.revision_author_connection_id, NEW.revision_cause,
+            NEW.revision_storage_kind);
          UPDATE resources
             SET revision_author_kind = NULL, revision_author_run_id = NULL,
                 revision_author_user_id = NULL, revision_author_connection_id = NULL,
-                revision_cause = NULL
+                revision_cause = NULL, revision_storage_kind = 'object'
           WHERE id = NEW.id;
        END`,
     `DROP TRIGGER resources_create_semantic_version`,
@@ -1388,7 +1395,8 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
             model_mime_type, model_content_sha256, model_metadata_json, content_sha256,
             model_content_status, model_content_extractor_version, model_content_character_count,
             model_content_extracted_at, model_content_error_code, captured_at,
-            author_kind, author_run_id, author_user_id, author_connection_id, cause)
+            author_kind, author_run_id, author_user_id, author_connection_id, cause,
+            storage_kind)
          SELECT id, workspace_id, current_version, connection_id, resource_type, provider,
                 provider_resource_id, title, mime_type, content_ref, canonical_url, metadata_json,
                 last_hydrated_at, uploaded_by_user_id, attachment_status, model_content_ref,
@@ -1396,12 +1404,12 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
                 model_content_status, model_content_extractor_version, model_content_character_count,
                 model_content_extracted_at, model_content_error_code, updated_at,
                 revision_author_kind, revision_author_run_id, revision_author_user_id,
-                revision_author_connection_id, revision_cause
+                revision_author_connection_id, revision_cause, revision_storage_kind
            FROM resources WHERE id = NEW.id;
          UPDATE resources
             SET revision_author_kind = NULL, revision_author_run_id = NULL,
                 revision_author_user_id = NULL, revision_author_connection_id = NULL,
-                revision_cause = NULL
+                revision_cause = NULL, revision_storage_kind = 'object'
           WHERE id = NEW.id;
        END`,
   ],
