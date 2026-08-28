@@ -42,6 +42,34 @@ function stubReducedMotion(reduced: boolean): void {
 }
 
 /**
+ * A `matchMedia` whose reduced-motion answer can change after the component
+ * has mounted, with the `change` listener `onReducedMotionChange` registers
+ * captured so a test can fire it directly — standing in for the OS actually
+ * toggling the preference, which jsdom cannot do for us.
+ *
+ * `prefersReducedMotion` calls `window.matchMedia` fresh each time rather than
+ * holding onto one `MediaQueryList`, so `matches` has to be a getter reading a
+ * shared `reduced` variable rather than a value captured once per call.
+ */
+function stubMutableReducedMotion(initial: boolean): { setReduced: (value: boolean) => void; fireChange: () => void } {
+  let reduced = initial;
+  const listeners: Array<() => void> = [];
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    get matches() {
+      return reduced && query.includes('prefers-reduced-motion');
+    },
+    addEventListener: (event: string, listener: () => void) => {
+      if (event === 'change' && query.includes('prefers-reduced-motion')) listeners.push(listener);
+    },
+    removeEventListener: () => {},
+  }));
+  return {
+    setReduced: (value: boolean) => { reduced = value; },
+    fireChange: () => listeners.forEach((listener) => listener()),
+  };
+}
+
+/**
  * The frames the component asked for, so a test can play them itself — and the
  * handles it cancelled, which is the only evidence the cleanup ran.
  *
@@ -94,6 +122,41 @@ describe('RallySeam', () => {
     expect(frames).toHaveLength(0);
     // The held frame is not just *a* stopping point — it is the exact angle
     // the still master is drawn at, the same one reduced motion below holds.
+    expect(seamAttribute(container)).toEqual(SEAM_RESTING_PATH);
+  });
+
+  /**
+   * The turn is one-shot *per mount*, not one-shot *per preference state*: a
+   * `change` event firing after the turn already settled must not schedule it
+   * again, or "spin once" would only hold as long as nobody touched the OS
+   * setting.
+   */
+  it('does not replay the turn when the preference toggles off, on, and off again after it has settled', () => {
+    const { setReduced, fireChange } = stubMutableReducedMotion(false);
+    const { frames, cancelled } = captureFrames();
+    const { container } = render(<RallySeam />);
+
+    act(() => frames.shift()?.(0));
+    const pending = frames.length;
+    act(() => frames.shift()?.(SEAM_SPIN_DURATION_MS));
+
+    // The turn has already settled: nothing left queued, and the last
+    // in-progress frame was actually cancelled rather than merely abandoned —
+    // the same evidence the unmount test below relies on.
+    expect(frames).toHaveLength(0);
+    expect(cancelled).toContain(pending);
+    expect(seamAttribute(container)).toEqual(SEAM_RESTING_PATH);
+
+    act(() => {
+      setReduced(true);
+      fireChange();
+      setReduced(false);
+      fireChange();
+    });
+
+    // If the turn had replayed, a fresh frame would now be queued to draw the
+    // next angle of a new rotation instead of holding still.
+    expect(frames).toHaveLength(0);
     expect(seamAttribute(container)).toEqual(SEAM_RESTING_PATH);
   });
 

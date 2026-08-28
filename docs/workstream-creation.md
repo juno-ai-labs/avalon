@@ -103,7 +103,7 @@ master's own angle rather than turning for as long as the screen is up.
 `RallySeam` and the reasoning are in
 [`brand-mark-motion.md`](brand-mark-motion.md); what belongs to this screen is
 that its host rule names the size and the stroke weight together, and that the
-loop stops when the launch unmounts the home layer.
+loop stops after one turn, or when the launch unmounts the home layer.
 
 ### What the optimistic surface shows
 
@@ -425,8 +425,6 @@ describe — both now read 25px rather than 38px for this heading. If the headin
 is intentionally enlarged again in the future, do that as its own decision
 rather than as a side effect of a change to the mark next to it.
 
-Shipped in TBD.
-
 ### 2026-08-27 — The welcome mark turns, and grew to a size that can carry it
 
 **What changed:** The mark beside "Welcome back" is drawn by `RallySeam` rather
@@ -445,8 +443,11 @@ this decision, and the sign-in card and new-automation intro made the same one.
 **Consequences:** This screen now runs a `requestAnimationFrame` loop for as
 long as the home layer is mounted, and the launch hand-off is what stops it —
 the loop is cancelled on unmount, and the home layer is only unmounted after
-`HOME_HAND_OFF_MS`. It also draws a visibly different rendering of the mark from
-the one the sidebar beside it shows.
+`HOME_HAND_OFF_MS`. (Superseded by the 2026-08-28 entry in
+[`brand-mark-motion.md`](brand-mark-motion.md): the loop now also stops on its
+own after one turn, rather than running for as long as the home layer stays
+mounted.) It also draws a visibly different rendering of the mark from the one
+the sidebar beside it shows.
 
 Shipped in TBD.
 
