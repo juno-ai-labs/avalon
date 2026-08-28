@@ -10,7 +10,9 @@ import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AutomationAgent } from "../src/durable-objects/automation-agent";
 import { materializeAutomationMemoryDefinitions } from "../src/durable-objects/automation-agent-memory";
+import { canonicalTranscriptJson } from "../src/durable-objects/ordered-transcript-sqlite/canonical-payload-store";
 import { automationAgentName } from "../src/durable-objects/names";
+import { sha256 } from "../src/lib/crypto";
 import type { Env } from "../src/env";
 import { AutomationAgentService } from "../src/services/automation-agent-service";
 
@@ -335,6 +337,89 @@ describe("AutomationAgent", () => {
     await expect(service.detail(AUTOMATION_ID)).rejects.toMatchObject({
       status: 404,
       code: "automation_identity_missing",
+    });
+  });
+
+  it("tells a reader why an imported automation with an unrunnable trigger is stopped", async () => {
+    // The one thing a person has to be told after the cutover: this automation
+    // is not waiting for its next run, it has none. The reason travels on the
+    // detail the screen reads and on every projection the sidebar reads, or the
+    // person is left with a red dot and no sentence.
+    const source = {
+      definition: {
+        name: "Release watcher",
+        description: "Summarizes a watched release document when it changes",
+        overview: "Watches one document",
+        instructions: "Summarize what changed.",
+        triggers: [{ type: "resource_watch" as const, resourceId: "00000000-0000-7000-8000-0000000000d1" }],
+        requiredCapabilities: [],
+        expectedOutputs: [],
+        requestedDelivery: [],
+        defaultBehavior: {},
+        recommendedPlugins: [],
+        memoryTables: [],
+        suggestedScope: "personal" as const,
+        followUpQuestion: null,
+        elicitation: null,
+        ready: true,
+      },
+      status: "active" as const,
+      scope: "personal" as const,
+      unsupportedTrigger: true,
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      connectorBindings: {},
+      deliveryTargets: [],
+      emailAddress: null,
+      modelOverride: null,
+      createdAt: 1_800_000_000_000,
+      updatedAt: 1_800_000_000_001,
+      schedules: [],
+      runs: [],
+      memoryRecords: [],
+    };
+    const sourceHash = await sha256(canonicalTranscriptJson(source));
+
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      (instance as unknown as { workspace(): unknown }).workspace = async () => ({
+        applyExternalEventRegistrations: async () => ({ applied: true, effectiveAfterEventSequence: 0 }),
+        applyAutomationProjection: async () => ({ applied: true }),
+      });
+
+      await instance.importAcceptedAutomation({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        authorUserId: AUTHOR_ID,
+        region: "global",
+        sourceHash,
+        source,
+      });
+
+      const detail = await instance.readDetail({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: AUTHOR_ID,
+      });
+      expect(detail).toMatchObject({ status: "paused", attention: "unsupported_trigger" });
+
+      // Resuming does not make the trigger expressible, and it is the moment
+      // the directory's copy of the reason used to be overwritten with "nothing
+      // is wrong" — leaving the sidebar marker to disappear off a button press
+      // while this object still says the automation cannot run.
+      await instance.resume({
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        userId: AUTHOR_ID,
+      });
+      const projected = state.storage.sql.exec<{ payload_json: string }>(
+        `SELECT payload_json FROM automation_outbox
+          WHERE effect_kind = 'workspace_projection' ORDER BY created_at DESC LIMIT 1`,
+      ).one();
+      expect(JSON.parse(projected.payload_json)).toMatchObject({
+        lifecycle: "active",
+        attentionCode: "unsupported_trigger",
+      });
     });
   });
 

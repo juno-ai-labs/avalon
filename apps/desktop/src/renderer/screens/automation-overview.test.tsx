@@ -341,6 +341,26 @@ describe('Automation template updates', () => {
     expect(screen.getByText('Last 2')).toBeVisible();
   });
 
+  it('says in words why a carried-over automation stopped, and that it will not run again', async () => {
+    api.getAutomation.mockResolvedValue({ ...detail, status: 'paused', attention: 'unsupported_trigger' });
+    renderScreen();
+
+    // Before this, the whole account of what happened was the word "Paused"
+    // beside a dot — for an automation that is not waiting for anything.
+    expect(await screen.findByText('This automation will not run')).toBeVisible();
+    expect(screen.getByText(
+      'Rally was upgraded, and the trigger that used to start this automation did not survive the move. '
+      + 'It will not run again on its own. Create it again with a trigger Rally supports to bring it back.',
+    )).toBeVisible();
+  });
+
+  it('says nothing extra about an automation nothing is wrong with', async () => {
+    renderScreen();
+
+    await screen.findByRole('heading', { name: 'Weekly brief' });
+    expect(screen.queryByLabelText('Automation needs attention')).not.toBeInTheDocument();
+  });
+
   it('explains that workspace automation mail must come from a workspace member', async () => {
     api.getAutomation.mockResolvedValue({ ...detail, scope: 'workspace' });
     renderScreen();

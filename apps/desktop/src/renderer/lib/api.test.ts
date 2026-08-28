@@ -365,6 +365,22 @@ describe('Rally API wire adapter', () => {
     }));
   });
 
+  it('carries an automation’s attention reason from the wire to the screen', async () => {
+    // The reason is what the screen turns into a sentence. Dropped here it is a
+    // status dot with nothing behind it, which is the state this fixed.
+    vi.stubGlobal('fetch', vi.fn(async () => json({
+      ...wireAutomationDetail,
+      status: 'paused',
+      attention: 'unsupported_trigger',
+    })));
+    const api = new RallyApi('https://api.rally.test', session);
+
+    await expect(api.getAutomation(automationId)).resolves.toMatchObject({
+      status: 'paused',
+      attention: 'unsupported_trigger',
+    });
+  });
+
   it('tells the person to restart Rally when a plain response does not match its schema', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ items: [{ notAnAutomation: true }] })));
     const api = new RallyApi('https://api.rally.test', session);

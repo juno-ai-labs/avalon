@@ -822,6 +822,37 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
+  it('marks an automation that cannot run instead of promising it a next run', async () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[
+              { ...automation, status: 'paused', attention: 'unsupported_trigger' },
+              { ...automation, id: 'automation-9', name: 'Weekly digest' },
+            ]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const stopped = screen.getByRole('link', { name: /Daily product brief/u });
+    // A schedule it will never keep is worse than no hint at all, which is
+    // what the row said before: "Next in a few hours".
+    expect(within(stopped).getByText('Will not run')).toBeVisible();
+    expect(within(stopped).queryByText(/^Next /u)).not.toBeInTheDocument();
+    expect(stopped.querySelector('.sidebar-row-icon.is-attention')).not.toBeNull();
+
+    // Inert for the automations nothing is wrong with.
+    const healthy = screen.getByRole('link', { name: /Weekly digest/u });
+    expect(within(healthy).getByText(/^Next /u)).toBeVisible();
+    expect(healthy.querySelector('.sidebar-row-icon.is-attention')).toBeNull();
+  });
+
   it('shows the requested automation actions on right click and runs the automation', async () => {
     const onRunAutomation = vi.fn(async () => undefined);
     render(
