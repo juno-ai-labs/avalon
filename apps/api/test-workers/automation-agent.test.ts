@@ -9,7 +9,10 @@ import {
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AutomationAgent } from "../src/durable-objects/automation-agent";
-import { materializeAutomationMemoryDefinitions } from "../src/durable-objects/automation-agent-memory";
+import {
+  importLegacyAutomationMemory,
+  materializeAutomationMemoryDefinitions,
+} from "../src/durable-objects/automation-agent-memory";
 import { canonicalTranscriptJson } from "../src/durable-objects/ordered-transcript-sqlite/canonical-payload-store";
 import { automationAgentName } from "../src/durable-objects/names";
 import { sha256 } from "../src/lib/crypto";
@@ -543,6 +546,111 @@ describe("AutomationAgent", () => {
       expect(state.storage.sql.exec<{ state: string }>(
         `SELECT state FROM automation_pending_elicitations`,
       ).one().state).toBe("answered");
+    });
+  });
+
+  it("recognises a memory row carried through the cutover instead of duplicating it", async () => {
+    const now = 1_800_000_000_000;
+    const runId = "00000000-0000-7000-8000-0000000000f1";
+    const harnessRunId = "00000000-0000-7000-8000-0000000000f2";
+    const legacyTableId = "00000000-0000-7000-8000-0000000000f4";
+    const legacyColumnId = "00000000-0000-7000-8000-0000000000f5";
+    // What the legacy memory-table service stored: `[name, value]` pairs.
+    const naturalKeyHash = await sha256(canonicalTranscriptJson([["tag", "v1.0.0"]]));
+
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_identity
+           (id, automation_id, workspace_id, author_user_id, region, authority_generation,
+            created_at, updated_at)
+         VALUES (1, ?, ?, ?, 'global', 1, ?, ?)`,
+        AUTOMATION_ID, WORKSPACE_ID, AUTHOR_ID, now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_state
+           (id, lifecycle, title, definition_revision, accepted_definition_revision,
+            event_sequence, created_at, updated_at)
+         VALUES (1, 'active', 'Imported memory', 1, 1, 0, ?, ?)`,
+        now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_runs
+           (run_id, occurrence_key, trigger_type, workstream_id, harness_run_id,
+            admission_state, execution_state, delivery_state, context_json,
+            source_version, created_at, updated_at)
+         VALUES (?, 'manual:import', 'manual', ?, ?, 'provisioned', 'running',
+                 'pending', '{}', 1, ?, ?)`,
+        runId, "00000000-0000-7000-8000-0000000000f3", harnessRunId, now, now,
+      );
+
+      importLegacyAutomationMemory(state.storage, AUTOMATION_ID, [], [
+        {
+          kind: "table",
+          recordId: legacyTableId,
+          payload: {
+            memory_table_id: legacyTableId,
+            name: "Releases",
+            description: "One row per shipped release.",
+            usage_instructions: "Look a release up by its tag.",
+            key_column_ids_json: JSON.stringify([legacyColumnId]),
+            schema_revision: 1,
+            data_revision: 1,
+          },
+        },
+        {
+          kind: "table_column",
+          recordId: legacyColumnId,
+          payload: {
+            memory_table_column_id: legacyColumnId,
+            memory_table_id: legacyTableId,
+            name: "tag",
+            description: "The release tag.",
+            value_type: "string",
+            is_required: 1,
+            is_searchable: 0,
+            position: 0,
+          },
+        },
+        {
+          kind: "table_row",
+          recordId: "00000000-0000-7000-8000-0000000000f6",
+          payload: {
+            memory_table_row_id: "00000000-0000-7000-8000-0000000000f6",
+            memory_table_id: legacyTableId,
+            natural_key_hash: naturalKeyHash,
+            data_json: JSON.stringify({ tag: "v1.0.0" }),
+            revision: 1,
+          },
+        },
+      ], now);
+
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_memory_rows`,
+      ).one().count).toBe(1);
+
+      // The same natural key the legacy runtime already recorded. Before the
+      // imported row carried its natural-key identity this wrote a second row,
+      // because the write path looks for `${table}:row:${hash}` and the import
+      // had kept the legacy UUID.
+      await instance.executeMemoryTool({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        runId,
+        harnessRunId,
+        authorityGeneration: 1,
+        operation: "table_insert_rows",
+        providerIdempotencyKey: "insert-call-1",
+        args: {
+          rationale: "Record the release again.",
+          memoryTableId: legacyTableId,
+          rows: [{ tag: "v1.0.0" }],
+        },
+      });
+
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM automation_memory_rows`,
+      ).one().count).toBe(1);
     });
   });
 
