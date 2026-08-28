@@ -324,7 +324,8 @@ describe("AutomationAgent", () => {
     // proxy as its receiver, and an RPC's return value is a pipelining thenable
     // rather than a native `Promise`, so the branch attaching the mapping never
     // ran. Only a real stub can tell those apart.
-    const service = new AutomationAgentService(env as unknown as Env, {
+    const testEnv: Env = env;
+    const service = new AutomationAgentService(testEnv, {
       sessionId: "session-1",
       userId: AUTHOR_ID,
       workspaceId: WORKSPACE_ID,
