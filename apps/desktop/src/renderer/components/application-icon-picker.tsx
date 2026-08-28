@@ -4,25 +4,23 @@ import {
   type ApplicationIconId,
   type DesktopApplicationIconState,
 } from '../../common/application-icons';
-import blueprintIcon from '../assets/app-icons/blueprint.png';
+import ballFeltIcon from '../assets/app-icons/ball-felt.png';
+import clayCourtIcon from '../assets/app-icons/clay-court.png';
 import darkIcon from '../assets/app-icons/dark.png';
-import holographicIcon from '../assets/app-icons/holographic.png';
-import leatherIcon from '../assets/app-icons/leather.png';
+import grassCourtIcon from '../assets/app-icons/grass-court.png';
+import hardCourtIcon from '../assets/app-icons/hard-court.png';
 import lightIcon from '../assets/app-icons/light.png';
-import ludicrousSpeedIcon from '../assets/app-icons/ludicrous-speed.png';
-import rubyIcon from '../assets/app-icons/ruby.png';
-import sunsetSherbetIcon from '../assets/app-icons/sunset-sherbet.png';
+import nightMatchIcon from '../assets/app-icons/night-match.png';
 import { desktopBridge } from '../lib/platform';
 
 const applicationIconArtwork: Record<ApplicationIconId, string> = {
   light: lightIcon,
   dark: darkIcon,
-  'sunset-sherbet': sunsetSherbetIcon,
-  'ludicrous-speed': ludicrousSpeedIcon,
-  ruby: rubyIcon,
-  holographic: holographicIcon,
-  leather: leatherIcon,
-  blueprint: blueprintIcon,
+  'grass-court': grassCourtIcon,
+  'clay-court': clayCourtIcon,
+  'hard-court': hardCourtIcon,
+  'ball-felt': ballFeltIcon,
+  'night-match': nightMatchIcon,
 };
 
 export function ApplicationIconPicker(): React.JSX.Element {

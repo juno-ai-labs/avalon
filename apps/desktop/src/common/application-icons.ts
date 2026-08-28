@@ -6,12 +6,11 @@ import {
 const applicationIconLabels: Record<TelemetryApplicationIconId, string> = {
   light: 'Light',
   dark: 'Dark',
-  'sunset-sherbet': 'Sunset sherbet',
-  'ludicrous-speed': 'Ludicrous speed',
-  ruby: 'Ruby',
-  holographic: 'Holographic',
-  leather: 'Leather',
-  blueprint: 'Blueprint',
+  'grass-court': 'Grass court',
+  'clay-court': 'Clay court',
+  'hard-court': 'Hard court',
+  'ball-felt': 'Ball felt',
+  'night-match': 'Night match',
 };
 
 export const applicationIconChoices = TELEMETRY_APPLICATION_ICON_IDS.map((id) => ({
