@@ -568,7 +568,14 @@ has described. What it covers is the unnamed one: a conversion killed without
 recording anything leaves the row claimed with nobody converting, and a panel left
 open would re-ask until the reader closed the rail. That is why the number is the
 largest one that still lets a converging wait finish, rather than the smallest one
-that would end a doomed loop quickly.
+that would end a doomed loop quickly. That value was put to the team with the
+arithmetic and the alternatives — 60 seconds, the lease alone, and no ceiling —
+and confirmed on 2026-08-28. It is a decision rather than only a derivation,
+which is what
+[`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md#when-to-ask-before-you-finish)
+asks of a change that introduces the loop it bounds. What was priced is the
+trip: an unchanging "Loading preview…" for up to five and a half minutes,
+against never ending a wait that could still have produced the document.
 
 **Consequences:** `retryAfterMs` is part of the preview endpoint's contract with
 a client now, not diagnostic detail, and a `resource_processing` that arrives
