@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ATTACHMENT_CONVERTER_TIMEOUT_MS, ATTACHMENT_PROCESSING_LEASE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
-import { InspectorRail } from './inspector-rail';
+import { ApiError } from '../lib/api';
+import { InspectorRail, MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './inspector-rail';
 
 const copyText = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
@@ -300,6 +302,18 @@ describe('InspectorRail details', () => {
 });
 
 describe('resource detail content preview', () => {
+  // This block used to inherit `railOpen` from the suite above it, which held
+  // only in source order: shuffled, the rail rendered nothing and every test
+  // here failed against an empty document (7 of 12 runs under
+  // `--sequence.shuffle`). A describe block owns its own store state.
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
+  });
+
   const note: WorkstreamResource = {
     id: 'resource-note',
     title: 'Q3 board deck',
@@ -384,6 +398,194 @@ describe('resource detail content preview', () => {
 
     await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
     expect(screen.getByText('Version')).toBeInTheDocument();
+  });
+
+  /** What `/resources/:id/preview` answers while a derivative is materializing. */
+  function stillProcessing(retryAfterMs = 5): ApiError {
+    return new ApiError('The attachment preview is still being prepared', 409, 'resource_processing', { retryAfterMs });
+  }
+
+  it('waits out a preview the server says it is still preparing, and renders it', async () => {
+    // A PDF or an Office file attached moments ago has no text derivative yet,
+    // and the route says so with a 409 and a delay rather than a verdict.
+    // Collapsing that into the failed state left the reader on "not available"
+    // for the life of the mount, seconds after the derivative was ready.
+    const loadResourceContent = vi.fn()
+      .mockRejectedValueOnce(stillProcessing())
+      .mockRejectedValueOnce(stillProcessing())
+      .mockResolvedValueOnce(new Blob(['## Extracted\n\nRevenue grew 40%.']));
+    openDetail({ ...note, mimeType: 'application/pdf', title: 'Contract.pdf' }, loadResourceContent);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Loading preview');
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Extracted' })).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(3);
+    expect(screen.queryByText(/preview is not available/iu)).not.toBeInTheDocument();
+  });
+
+  it('waits the delay the response named, not a schedule of its own', async () => {
+    // The route knows whether it is waiting on a claim, a hash write or a
+    // conversion and answers 250ms or 1s accordingly. Fake timers because the
+    // assertion is the exact number: a schedule invented here would satisfy any
+    // lower bound a real-timer test could safely assert.
+    vi.useFakeTimers();
+    try {
+      const loadResourceContent = vi.fn()
+        .mockRejectedValueOnce(stillProcessing(1_000))
+        .mockResolvedValueOnce(new Blob(['Ready.']));
+      const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_WAIT_MS);
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(loadResourceContent).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(read).resolves.toBe('Ready.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives up on a processing answer that names no delay, rather than spinning on a number of its own', async () => {
+    const loadResourceContent = vi.fn()
+      .mockRejectedValue(new ApiError('The attachment preview is still being prepared', 409, 'resource_processing'));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-ask a rejection that is final, however it is decorated', async () => {
+    // 422 is an answer. A `retryAfterMs` riding along on one does not make it a
+    // wait, and reading it as one would turn this into a general retry layer
+    // over responses that are already settled — which is what the code check,
+    // not just the `instanceof`, is here to prevent.
+    const loadResourceContent = vi.fn()
+      .mockRejectedValue(new ApiError('This attachment format cannot be previewed', 422, 'resource_preview_unsupported', { retryAfterMs: 5 }));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a zero delay as no delay, rather than asking as fast as the network allows', async () => {
+    // The budget bounds how long the loop runs, not how many requests it makes:
+    // `wait(0)` resolves on the next tick, so a route answering 0 would be asked
+    // again immediately, for the whole budget. Clamping to a floor instead would
+    // mean inventing the floor.
+    const loadResourceContent = vi.fn().mockRejectedValue(stillProcessing(0));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops retrying once the panel that asked for it is gone', async () => {
+    let attempts = 0;
+    const loadResourceContent = vi.fn(async (_id: string, signal?: AbortSignal) => {
+      attempts += 1;
+      if (signal?.aborted) throw new Error('aborted');
+      throw stillProcessing(10);
+    });
+    const { unmount } = render(
+      <Tooltip.Provider>
+        <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [note] }} />
+      </Tooltip.Provider>,
+    );
+    act(() => { useUiStore.getState().inspect({ type: 'resource', id: note.id }); });
+    await waitFor(() => expect(attempts).toBeGreaterThan(1));
+
+    unmount();
+    const afterUnmount = attempts;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(attempts).toBe(afterUnmount);
+  });
+
+  it('drops a pending retry when the resource is revised out from under it', async () => {
+    // The wait armed for version 2 belongs to a read that is over. Letting it
+    // fire would put a request for the superseded revision behind the one the
+    // metadata beside it now describes. Unmounting is not the only way a read
+    // ends, and the effect keys on `currentVersion` as well as the id.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loadResourceContent = vi.fn()
+        .mockRejectedValueOnce(stillProcessing(30_000))
+        .mockResolvedValue(new Blob(['## Findings\n\nRevenue grew 30%.']));
+      const { rerender } = render(
+        <Tooltip.Provider>
+          <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [note] }} />
+        </Tooltip.Provider>,
+      );
+      act(() => { useUiStore.getState().inspect({ type: 'resource', id: note.id }); });
+      await waitFor(() => expect(loadResourceContent).toHaveBeenCalledOnce());
+
+      rerender(
+        <Tooltip.Provider>
+          <InspectorRail
+            loadResourceContent={loadResourceContent}
+            workstream={{ ...workstream, resources: [{ ...note, currentVersion: note.currentVersion + 1 }] }}
+          />
+        </Tooltip.Provider>,
+      );
+      await waitFor(() => expect(screen.getByText('Revenue grew 30%.')).toBeInTheDocument());
+
+      // Long past the delay the abandoned read was waiting out.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+
+      expect(loadResourceContent).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe('the wait deadline', () => {
+    // The budget is the server's arithmetic, not a number this file chose, and
+    // the only way that stays true is if it is still being computed from the
+    // two constants it was derived from. A literal typed in here would drift
+    // silently the day either server number moves — which is the failure the
+    // shared constants exist to prevent, so it is asserted rather than trusted.
+    it('is the server\'s own lease plus its converter timeout, not a copy of their sum', () => {
+      expect(MAX_RESOURCE_PREVIEW_WAIT_MS).toBe(ATTACHMENT_PROCESSING_LEASE_MS + ATTACHMENT_CONVERTER_TIMEOUT_MS);
+    });
+
+    // Enforcement takes the budget as an argument, so the trip is provable
+    // against a deadline a test does not have to spend in real time. Never
+    // assert on the constant's literal value: that test would fail the day the
+    // sum behind it changes.
+    it('stops asking once the budget would be overspent, and surfaces the last rejection', async () => {
+      vi.useFakeTimers();
+      try {
+        const loadResourceContent = vi.fn().mockRejectedValue(stillProcessing(1_000));
+        const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, 2_500);
+        const settled = expect(read).rejects.toThrow(/still being prepared/iu);
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        await settled;
+        // Attempts at 0s and 1s are inside the budget; the one at 2s would have
+        // to wait until 3s to try again, which is past it, so it gives up there
+        // rather than one whole delay late.
+        expect(loadResourceContent).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('still resolves a preview that converges well inside the budget', async () => {
+      vi.useFakeTimers();
+      try {
+        let attempts = 0;
+        const loadResourceContent = vi.fn(async () => {
+          attempts += 1;
+          if (attempts <= 20) throw stillProcessing(1_000);
+          return new Blob(['Ready at last.']);
+        });
+        const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_WAIT_MS);
+
+        await vi.advanceTimersByTimeAsync(25_000);
+        await expect(read).resolves.toBe('Ready at last.');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('does not try to render an image as text', () => {
