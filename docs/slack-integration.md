@@ -785,6 +785,28 @@ The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026
 
 ## Changelog
 
+### 2026-08-28 — The reduction reads code and titled links the way the parser does
+
+**What changed:** Two corrections in `rewriteCitationsAsPlainText`, both in
+`@rally/contracts/citations` rather than here. A `[^1]` inside an inline code
+span no longer counts as a footnote reference, and the inline-link pattern now
+matches a label carrying balanced brackets, an angle-bracketed target, and a
+trailing title.
+
+**Why:** Both were silent leaks of the kind this reduction exists to close, and
+both are reachable from ordinary model output. A message explaining the citation
+syntax — an ordinary thing to ask Rally for — was delivered with a `Sources`
+list it never claimed, and any real footnote beside it was renumbered, so the
+delivered copy and the transcript disagreed about which source was `[1]`. And a
+link the desktop drew as a chip but this pattern did not match arrived with its
+raw `resource://` target in the text: `[the deck](resource://abc "Q3")` is a
+link to every Markdown parser in the path, including the one Rally renders with.
+
+**What a future change has to respect:** The pattern here is meant to be as wide
+as the renderer's parser, not as wide as the guidance's examples. Anything the
+desktop turns into a chip and this leaves alone becomes raw internal syntax in
+front of a recipient.
+
 ### 2026-08-27 — Agent output reduces its citations before it reaches a channel
 
 **What changed:** `slackDeliveryMarkdown` reduces `resource://` chips and

@@ -77,6 +77,17 @@ export interface CitationRender {
   readonly prefix: string;
   /** The number GFM gives each defined footnote, by lowercased identifier. */
   readonly numbers: ReadonlyMap<string, number>;
+  /**
+   * This render will be looked at, not used — the saved card, today.
+   *
+   * Lifting a definition into its pill trades the trailing list for a popover,
+   * which is the right trade in a transcript and the wrong one in a picture: a
+   * still has no hover, and the export stylesheet hides the popover for the
+   * same reason. So a still keeps the pills *and* keeps the list, and the
+   * sources survive into the file somebody saves. Without this the card showed
+   * bare numbers over nothing, which is worse than either form on its own.
+   */
+  readonly still?: boolean;
 }
 
 export const CitationsProvider = CitationsContext.Provider;
@@ -386,6 +397,7 @@ export function CitationFootnoteSection({ children, section }: {
   section: React.ComponentPropsWithoutRef<'section'>;
 }): React.JSX.Element | null {
   const render = useCitationRender();
+  if (render.still) return <section {...section}>{children}</section>;
   const lifted = [...render.numbers.keys()].filter((identifier) => render.footnotes.has(identifier));
   if (lifted.length === render.numbers.size) return null;
   return <section {...section}>{children}</section>;
@@ -408,6 +420,6 @@ export function CitationFootnoteItem({ children, item }: {
   const marker = `${render.prefix}fn-`;
   const identifier = item.id?.startsWith(marker) ? item.id.slice(marker.length) : undefined;
   if (identifier === undefined) return <li {...item}>{children}</li>;
-  if (render.footnotes.has(identifier)) return null;
+  if (render.footnotes.has(identifier) && !render.still) return null;
   return <li {...item} value={render.numbers.get(identifier)}>{children}</li>;
 }

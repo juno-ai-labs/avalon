@@ -121,11 +121,20 @@ link, as an embed, and as a source. Two cells are worth knowing about:
   `mailto:`, `tel:` and relative targets live; rendering it as text would be a
   regression dressed as a degradation.
 
-Resolution is two-tier. A cited resource the loaded work stream already carries
-resolves synchronously, so the chip is on the first paint. Anything else falls
-back to the workspace-scoped `GET /resources/:id`, remembered per id — a failure
-and a denial are the same answer, label text, so a citation cannot become a way
-to learn that something exists.
+Resolution is the loaded work stream's resource set, and nothing wider. A cited
+resource it carries resolves synchronously, so the chip is on the first paint;
+anything else renders as its label text. That is a deliberate narrowing rather
+than a missing tier: the rail resolves an inspector target from the same set, so
+a chip dressed from a wider lookup opens a panel saying the resource "may have
+been removed" — of something that exists and that the reader may be entitled to
+see. Label text says less and says nothing false. The wider lookup returns with
+the rail's fetch-by-id detail, and the two have to land together.
+
+A citation rendered into a **still** — the saved card — keeps its pills *and*
+its trailing source list. Lifting a definition trades the list for a popover,
+which is the right trade on a surface that can be hovered and the wrong one in a
+picture: the export stylesheet hides the popover, so a lifted card showed bare
+numbers over nothing and the sources were gone from the file somebody kept.
 
 Two things here are structural rather than incidental:
 
@@ -254,6 +263,10 @@ cannot be written this way is a sign it is not a typography override.
   how a model-chosen destination reaches the DOM.
 - **The matrix has no fallthrough.** Every cell is written, or the compiler
   refuses the table. An `else` branch here is a silent gap by another name.
+- **A citation's sources are reachable on whatever surface it renders on.** In
+  the transcript that is the pill's popover, which is why the trailing list can
+  go; in a still it is the list, because a picture cannot be hovered. A surface
+  that has neither is a surface where the sources were lost.
 
 ## Boundary
 
@@ -379,6 +392,39 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-28 — A saved card keeps its sources, and the grammar reads what GFM reads
+
+**What changed:** `MarkdownBody` gained a `still` flag, set by the saved-card
+path alone: a still render keeps the footnote pills and stops dropping the
+trailing source list. In `@rally/contracts/citations`, the footnote reference
+scan now reads a line with its code spans removed, and the inline-link pattern
+matches what remark-gfm matches — a label carrying one level of balanced
+brackets, an angle-bracketed target, and a trailing title. The Citations section
+above also lost a paragraph describing a workspace-wide resolution tier that had
+already been removed from the code.
+
+**Why:** Three defects, each invisible from inside the surface that had it.
+The saved card is the artifact people keep, and it hides the popover on purpose
+— a hover box printed into a PNG has no way to dismiss it — so lifting every
+definition left a card whose claims carried numbers pointing at nothing. Keeping
+the list only in a still is the narrowest fix: the transcript's reclaimed
+vertical space is the whole point of the lift, and a picture has no scroll to
+spend it on. Separately, a `[^1]` inside a code span was counted as a reference,
+so a message *explaining* the syntax was delivered with an invented source list
+under it, and any real footnote alongside it was renumbered — the transcript said
+1 where the email said 2, which is precisely the disagreement the shared
+ordering exists to prevent. And a link the renderer drew as a chip but this
+pattern did not match reached an inbox as raw `resource://` syntax; the three
+forms it missed are ordinary CommonMark, so the pattern had to be as wide as the
+parser it describes rather than as wide as the examples in the guidance.
+
+**What a future change has to respect:** The reference scan and the rewrite must
+agree about what is code — they share `INLINE_CODE_SPAN` for that reason, and a
+second spelling of it is a numbering bug nobody will see until they compare an
+email to a transcript. Widening the link pattern further means widening what the
+delivery rewrite reduces, which is the safe direction; narrowing it is how a raw
+scheme leaks out of Rally.
 
 ### 2026-08-27 — Citations render as chips, cards and footnote pills
 

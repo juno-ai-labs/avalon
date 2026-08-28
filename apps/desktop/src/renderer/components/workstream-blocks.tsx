@@ -592,6 +592,7 @@ export function MarkdownBody({
   children,
   citations,
   mentions = NO_MENTIONS,
+  still = false,
   streaming = false,
   telemetry,
   verbatim = false,
@@ -605,6 +606,14 @@ export function MarkdownBody({
    */
   citations?: CitationContext;
   mentions?: MessageMention[];
+  /**
+   * This body is being rendered into a picture rather than onto the screen.
+   *
+   * The saved card is the only caller. A citation's sources live in a popover
+   * there, which a still image cannot open — so a still keeps the trailing
+   * source list that the transcript trades away for the space.
+   */
+  still?: boolean;
   /**
    * The message is still growing. Rendering switches to settled segments plus
    * an open tail so a per-frame commit does not re-parse the whole body; the
@@ -647,8 +656,8 @@ export function MarkdownBody({
     for (const identifier of referenced) {
       if (definitions.has(identifier)) numbers.set(identifier, numbers.size + 1);
     }
-    return { ...(citations ? { citations } : {}), footnotes: found, numbers, prefix };
-  }, [citations, footnoteSource, prefix]);
+    return { ...(citations ? { citations } : {}), footnotes: found, numbers, prefix, still };
+  }, [citations, footnoteSource, prefix, still]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
   // element below reuses the whole rendered body while they hold still.
@@ -794,8 +803,10 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
       await saveMessageExport({
         // The same context the turn above was rendered with: the card is the
         // turn, saved, and a chip that is a chip on screen must not be plain
-        // text in the file somebody keeps.
-        content: <MarkdownBody citations={citations} mentions={mentions}>{text}</MarkdownBody>,
+        // text in the file somebody keeps. `still` is what the card does not
+        // share with the turn — nothing in a picture can be hovered, so the
+        // sources a pill's popover holds are printed under it instead.
+        content: <MarkdownBody citations={citations} mentions={mentions} still>{text}</MarkdownBody>,
         // The file name slugs the first line the way the card *shows* it — a
         // saved image named `…-backlog-rightarrow-done` outlives the render
         // that repaired the text it pictures. Copy stays the stored bytes.

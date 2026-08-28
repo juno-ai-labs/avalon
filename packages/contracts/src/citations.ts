@@ -68,6 +68,9 @@ export function parseCitationHref(href: string | undefined): CitationTarget {
   if (/^person:/iu.test(href)) return { scheme: "person" };
   if (/^connector:/u.test(href)) return { scheme: "connector" };
   if (!RESOURCE_SCHEME.test(href)) return { scheme: "unknown" };
+  // Stripped before the alphabet test, not after, so the test sees only the
+  // opaque segment: `resource://abc?v=3` is a citation of `abc`, while
+  // `resource://a/b?v=3` is not a citation at all.
   const resourceId = href.replace(RESOURCE_SCHEME, "").split(/[?#]/u, 1)[0] ?? "";
   return CITATION_ID.test(resourceId) ? { scheme: "resource", resourceId } : { scheme: "unknown" };
 }
@@ -133,9 +136,30 @@ function normalizeFootnoteIdentifier(label: string): string {
 const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u;
 /** `[^label]` used in the body. Never at the head of a definition — checked first. */
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/gu;
-/** An inline link, whose target group is what decides the citation. */
-const INLINE_LINK = /!?\[([^\][]*)\]\(([^\s)]*)\)/gu;
+/**
+ * An inline link or image, whose target group is what decides the citation.
+ *
+ * Deliberately as wide as the renderer's own parser, because every form this
+ * misses is one the desktop draws as a chip and this module then leaves as raw
+ * `resource://` syntax in an inbox — the exact leak it exists to close. So a
+ * label may carry one level of balanced brackets (`[Q3 [draft] deck]`), a
+ * target may be angle-bracketed, and a title may follow it: all three are
+ * ordinary CommonMark that remark-gfm reads as a link, and all three used to
+ * pass through the rewrite untouched.
+ *
+ * The label alternation is unambiguous on its first character — a bracket or
+ * not — so it cannot backtrack over a long label.
+ */
+const INLINE_LINK = /!?\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?([^\s)<>]*)>?(?:\s+"[^"]*"|\s+'[^']*')?\s*\)/gu;
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/u;
+/**
+ * An inline code span, as every read in this module has to agree one looks.
+ *
+ * One constant rather than a pattern written twice: the reference scan and the
+ * rewrite disagreeing about what is code is not a visible bug in either, it is
+ * a number in an email that does not match the number in the transcript.
+ */
+const INLINE_CODE_SPAN = /`[^`\n]+`/gu;
 
 /**
  * Reads a message's footnotes, and decides which of them are citations.
@@ -195,7 +219,12 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
       }
       open = null;
     }
-    for (const match of line.matchAll(FOOTNOTE_REFERENCE)) {
+    // Read with the line's code spans taken out, for the same reason the
+    // rewrite skips them: a message *showing* somebody `[^1]` syntax is not
+    // citing anything. Counting one there appended a source list to a message
+    // that cites nothing — and, worse, took the number the first real footnote
+    // was owed, so the transcript said 1 where the delivered copy said 2.
+    for (const match of line.replace(INLINE_CODE_SPAN, " ").matchAll(FOOTNOTE_REFERENCE)) {
       const identifier = normalizeFootnoteIdentifier(match[1]!);
       if (!referenced.includes(identifier)) referenced.push(identifier);
     }
@@ -338,7 +367,14 @@ function plainInline(content: string): string {
     .trim();
 }
 
-/** The placeholder a parked code span leaves behind while the rewrite runs. */
+/**
+ * The placeholder a parked code span leaves behind while the rewrite runs.
+ *
+ * It is interpolated into a `RegExp` below, so whatever stands here has to be
+ * inert in a pattern as well as absent from the input. NUL is both; a character
+ * that means something in a regex would compile into a pattern matching more
+ * than the placeholder it stands in for.
+ */
 const SPAN_PLACEHOLDER = "\u0000";
 
 /**
@@ -368,7 +404,7 @@ function mapOutsideCode(markdown: string, rewrite: (segment: string) => string):
       return line;
     }
     const spans: string[] = [];
-    const parked = line.split(SPAN_PLACEHOLDER).join("").replace(/`[^`\n]+`/gu, (span) => {
+    const parked = line.split(SPAN_PLACEHOLDER).join("").replace(INLINE_CODE_SPAN, (span) => {
       spans.push(span);
       return `${SPAN_PLACEHOLDER}${spans.length - 1}${SPAN_PLACEHOLDER}`;
     });
