@@ -391,6 +391,10 @@ export function CitationImage({ alt, image, src }: {
  * In the common case — a grounded answer whose every footnote is a citation —
  * that is nothing, and the message spends no vertical space on a source footer
  * at all. That reclaimed space is the point of the feature.
+ *
+ * A still keeps everything. The lift is only a trade — the list for the pill's
+ * popover — and a picture cannot open a popover, so on that surface the trade
+ * has nothing on the other side of it and the sources would simply be gone.
  */
 export function CitationFootnoteSection({ children, section }: {
   children: React.ReactNode;
