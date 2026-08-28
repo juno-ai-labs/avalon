@@ -218,16 +218,16 @@ retired from the list without a migration: the work streams still naming it log
 is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
 about flags.
 
-**An automation's pin is the exception, and it is narrower than it was.**
+An automation's pin follows the same rule from a different place.
 `CreateAutomationRequestSchema` validates it on write, at acceptance, and it is
-then frozen into the run context every occurrence carries. Nothing re-validates
-it on read: `AutomationRunContextV1` types `modelOverride` as a plain nullable
-string, and `provisionNextRun` uses it as given. A model retired from
-`AGENT_MODEL_OVERRIDES` after an automation was accepted therefore keeps being
-requested by that automation's runs, silently — `automationModelOverride`, the
-helper written to log and drop exactly that case, is no longer called by
-anything. Retiring a model now means checking accepted automations as well as
-work streams.
+then frozen into the run context every occurrence carries — `AutomationRunContextV1`
+types `modelOverride` as a plain nullable string, because the context is a record
+of what was authorized rather than a second validator.
+`AutomationAgent.provisionNextRun` re-validates it through
+`automationModelOverride` on the way onto each run, so a model retired from
+`AGENT_MODEL_OVERRIDES` since acceptance drops back to the flag's choice and logs
+`workstream_model_override_unknown` rather than being handed to the provider as
+though it still existed. Retiring a model therefore still needs no migration.
 
 #### Reading it back inside the work stream
 
@@ -405,7 +405,8 @@ carve-out.
   before its harness run is admitted, when the authoritative shell still carries
   placeholder facts — which is not a valid targeting subject, so that resolver
   deliberately loads workspace attributes only. A pinned automation skips the
-  call entirely: `context.modelOverride ?? scheduledWorkstreamModel(...)`.
+  call, but only after `automationModelOverride` has accepted the pin; a pin it
+  drops falls through to the flag like an unpinned run.
 - A **failed read is held down for ten seconds**, keyed by entity and subject.
   That is the one case where retrying immediately helps nobody: while D1 is
   unhealthy, every agent path would otherwise re-issue its reads and warn again
@@ -641,9 +642,12 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
   pinned run is recovered by retrying that same model, never by widening the
   route — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 - **The set of pinnable ids is closed** (`AGENT_MODEL_OVERRIDES`), validated on
-  write *and* on read for a work stream, which is what lets a model be retired
-  without a migration. An automation's frozen pin is validated on write only, so
-  retiring a model does not reach the automations already pinned to it.
+  write *and* on read, which is what lets a model be retired without a migration.
+  A work stream's pin is re-validated by `resolveWorkstreamModelRouting`; an
+  automation's frozen pin by `automationModelOverride` as each run is
+  provisioned. A run path that reads `AutomationRunContextV1.modelOverride`
+  without that call reintroduces the gap — the context's type is deliberately
+  wide.
 - **Identity is spread over the loaded attributes, never under them**, so nothing
   read from D1 can redefine the id a percentage rollout buckets on.
 - **An attribute whose fact is unknown is omitted rather than sent empty**, so a
@@ -1091,37 +1095,36 @@ cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
 
-### 2026-08-28 — An automation's pin is frozen at acceptance, and read back unvalidated
+### 2026-08-28 — One producer copies an automation's pin, from a frozen run context
 
 **What changed:** The three producers that copied `model_override` onto an
 automation run's work stream are gone. Acceptance validates the pin against
 `AGENT_MODEL_OVERRIDES`, freezes it on the automation's acceptance row, and
 copies it into every occurrence's `AutomationRunContextV1`;
-`AutomationAgent.provisionNextRun` is the single reader. Nothing re-validates it
-afterwards, so a model retired from the closed list is still requested by the
-automations already pinned to it, and `automationModelOverride` — the helper that
-logged and dropped that case — has no caller.
+`AutomationAgent.provisionNextRun` is the single reader, and it re-validates the
+frozen value through `automationModelOverride` before admitting the harness run.
 
 **Why:** The three-producer arrangement is what let a pin reach **Run now** and
 silently miss every scheduled and activity-triggered run, and no shared helper
 had stopped it, because each producer still wrote the work-stream row itself. The
 durable automation lifecycle collapsed run creation to one path, which removes
-that whole class of drift. Freezing the pin in the run context follows from the
-same rule the rest of that context follows: a run executes what it was admitted
-with, not what the automation says now.
+that whole class of drift. Freezing the pin in the run context follows the rule
+the rest of that context follows: a run executes what it was admitted with, not
+what the automation says now.
 
-**Considered and rejected:** Re-resolving the pin per occurrence against the live
-acceptance row, which would let a rollout or an edit change the model of a run
-that was already claimed — the exact thing a pin exists to prevent.
+**Considered and rejected:** Re-resolving the *pin itself* per occurrence from
+the live acceptance row, which would let an edit change the model of a run that
+was already claimed — the thing a pin exists to prevent. Re-validating it against
+the closed catalog is the opposite question and is done: a frozen id and a
+retired model are different facts, and only the second may change a run.
 
 **Consequences:** Adding a field a run needs means adding it to
 `AutomationRunContextV1`, not to the work-stream row; a field added only to the
-row does not reach an automation run. And the read-side validation this document
-promised for pins now applies to work streams only: **retiring a model from
-`AGENT_MODEL_OVERRIDES` no longer reaches accepted automations**, and there is no
-log line that would surface one. Restoring it means validating
-`context.modelOverride` where `provisionNextRun` reads it, which is where
-`automationModelOverride` was meant to be called.
+row does not reach an automation run. `AutomationRunContextV1.modelOverride` is
+typed as a plain nullable string on purpose — the context records what was
+authorized, and the closed-catalog check belongs at the point of use. A future
+path that reads it without calling `automationModelOverride` hands a retired
+model to the provider with nothing in the logs naming the pin.
 
 Shipped in the pull request for this change. Design:
 [the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
