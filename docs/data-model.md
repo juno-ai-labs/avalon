@@ -117,6 +117,15 @@ latest conversation turns, unread attention anchors, sequence ranges, active
 activities, exact loop reconstruction, provider-boundary verification, and
 compaction lookup.
 
+A harness run's aggregate final message is a `workstream_message_records` row
+without a `participant_transcript_turns` entry: the closing assistant turn Bind
+accepted already holds that text at its own `transcript_sequence`, so a second
+turn would be one answer stored twice and ordered wrongly. The row is kept
+because the message feed, not the turn projection, is what `runs.final_part_id`
+and every aggregate reader join against. Where no accepted turn carries the text
+— a host-substituted notice, or a run cut short mid-stream — the aggregate keeps
+its turn, since it is then the only record of what the member has to read.
+
 `workstream_message_records` and its referenced content-addressed facts now own
 all message payloads. Canonical attachment and mention relations reference the
 message record directly. `transcript_compaction_checkpoints` references the
@@ -812,6 +821,31 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-28 — One answer, two records, one of them ordered
+
+**What changed:** A harness run's aggregate final message no longer takes a
+`transcript_sequence` or a `participant_transcript_turns` row when the closing
+accepted assistant turn is proved to carry the same text. It remains a
+`workstream_message_records` row and still consumes a sequence number and an
+attention ordinal.
+
+**Why:** Both records existed, and both were feed entries, so every run that
+produced text stored its answer twice in the ordered projection — the second
+copy sequenced at terminalization and therefore after the tool blocks and later
+turns the answer belonged among. Two owners for one semantic datum is the exact
+thing the canonical-fact rule above forbids; the aggregate was written before
+that rule and was never brought under it.
+
+**Considered and rejected:** Dropping the aggregate row, which several
+non-transcript readers and `runs.final_part_id` still join against; and
+suppressing it unconditionally, which loses the answer entirely in the two cases
+where no accepted turn holds the text.
+
+**Consequences:** A reader that needs the answer's position in the feed must use
+the turn projection; a reader that needs the run's output as one record uses the
+message feed. Neither is derivable from the other by counting rows, and a future
+writer of run-level output has to say which of the two it is adding.
 
 ### 2026-08-27 — Participant removal cannot empty a work stream
 

@@ -419,6 +419,7 @@ describe("durable harness attempt runtime", () => {
     await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), first.lease, {
       id: "message-final",
       text: "Done",
+      answeredByTurnId: null,
     }, { status: "completed" });
     // The activity clock is stamped by the authority at the instant it writes,
     // where the routed batch bound a timestamp the caller had taken moments
@@ -653,14 +654,17 @@ describe("durable harness attempt runtime", () => {
     await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), original.lease, {
       id: "message-recoverable",
       text: "Durable before terminalization",
+      answeredByTurnId: null,
     }, { status: "completed" });
     await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), original.lease, {
       id: "message-recoverable",
       text: "Durable before terminalization",
+      answeredByTurnId: null,
     }, { status: "completed" });
     await expect(persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), original.lease, {
       id: "message-recoverable",
       text: "Durable before terminalization",
+      answeredByTurnId: null,
     }, {
       status: "failed",
       error: { code: "changed_outcome", message: "Must not replace the durable outcome" },
@@ -679,6 +683,7 @@ describe("durable harness attempt runtime", () => {
     await expect(persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), original.lease, {
       id: "message-from-stale-owner",
       text: "Must not persist",
+      answeredByTurnId: null,
     }, { status: "completed" })).rejects.toThrow("durable attempt lease");
     expect(sqlite.object.prepare(
       `SELECT COUNT(*) AS count FROM messages WHERE id = 'message-from-stale-owner'`,
@@ -731,6 +736,7 @@ describe("durable harness attempt runtime", () => {
     await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), claim.lease, {
       id: messageId,
       text: `Partial durable output before ${status}`,
+      answeredByTurnId: null,
     }, {
       status,
       ...(error ? { error } : {}),
@@ -3193,6 +3199,7 @@ describe("durable harness attempt runtime", () => {
     await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), claim.lease, {
       id: "message-completed-residual",
       text: "Here is what those teams use",
+      answeredByTurnId: null,
     }, { status: "completed" });
 
     // The worst case of the two: Bind synthesizes a tool error for the call
@@ -3765,6 +3772,7 @@ describe("durable harness attempt runtime", () => {
     await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(RUN_ONE), claim.lease, {
       id: "message-realtime-outage",
       text: "Durable despite the realtime outage",
+      answeredByTurnId: null,
     }, { status: "completed" });
     await expect(terminalizeHarnessAttempt(sqlite.runs, sqlite.messages, input(RUN_ONE), claim.lease, {
       status: "completed",
@@ -3887,6 +3895,7 @@ describe("inline child-run durability", () => {
     await persistHarnessFinalMessage(sqlite.runs, sqlite.messages, input(continuationId), claim.lease, {
       id: "message-continuation-final",
       text: "Continuation complete",
+      answeredByTurnId: null,
     }, { status: "completed" });
     expect(await terminalizeHarnessAttempt(
       sqlite.runs,

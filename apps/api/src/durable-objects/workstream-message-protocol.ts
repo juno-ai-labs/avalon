@@ -40,6 +40,7 @@ export const UpsertToolMessageInputSchema = z.object({
 type LocalOnlyMessageOperation =
   | "prepareMessage"
   | "appendPreparedMessage"
+  | "appendPreparedRunAggregateMessage"
   | "prepareToolMessage"
   | "upsertPreparedToolMessage";
 export type MessageOperation = Exclude<keyof WorkstreamMessageStorage, LocalOnlyMessageOperation>;
