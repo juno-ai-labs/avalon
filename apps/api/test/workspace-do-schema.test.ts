@@ -247,6 +247,45 @@ describe("the WorkspaceDO version-provenance migration", () => {
     ]);
   });
 
+  it("attributes only the swap that staged an author, never the writes after it", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, VERSION_PROVENANCE_VERSION);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, connection_id, resource_type, provider, title, content_ref,
+          metadata_json, created_at, updated_at,
+          revision_author_kind, revision_author_connection_id, revision_cause)
+       VALUES ('resource-4', ?, 'connection-1', 'document', 'notion', 'Spec', 'r2/original-1',
+               '{}', '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z',
+               'connector', 'connection-1', 'created')`,
+    ).run(WORKSPACE_ID);
+
+    // A writer that stages nothing: the derivative service healing a hash, a
+    // provider webhook renaming a page, the origin backfill. Each of these
+    // captures a version, and none of them knows an author.
+    database.exec(
+      `UPDATE resources SET canonical_url = 'https://notion.test/spec',
+              updated_at = '2026-08-28T02:00:00.000Z'
+        WHERE id = 'resource-4'`,
+    );
+
+    expect(database.prepare(
+      `SELECT version, author_kind, author_connection_id, cause
+         FROM resource_versions WHERE resource_id = 'resource-4' ORDER BY version`,
+    ).all()).toEqual([
+      { version: 1, author_kind: "connector", author_connection_id: "connection-1", cause: "created" },
+      // Not the connector, and not "created": nothing recorded who did this,
+      // and saying so is the whole point of recording provenance at all.
+      { version: 2, author_kind: null, author_connection_id: null, cause: null },
+    ]);
+    // The row itself stops claiming an author once its capture has read one.
+    expect(database.prepare(
+      "SELECT revision_author_kind, revision_cause FROM resources WHERE id = 'resource-4'",
+    ).get()).toEqual({ revision_author_kind: null, revision_cause: null });
+  });
+
   it("refuses a capture whose author identity does not match its kind", () => {
     const database = new DatabaseSync(":memory:");
     database.exec("PRAGMA foreign_keys = ON");
