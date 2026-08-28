@@ -5122,6 +5122,19 @@ async function loadRunPromptContext(
     | undefined;
   if (input.automationSubscriptionId) {
     const frozen = input.automationRunContext;
+    // A workflow input serialized by the pre-cutover build names a
+    // subscription but cannot carry this context, so it lands here and stops.
+    // That is the intended outcome rather than a gap: the cutover drops the
+    // subscription, delivery-target, and resource rows such a run would need,
+    // so there is nothing left to finish it *as an automation run*, and
+    // finishing it as an ordinary one would drop its delivery silently.
+    //
+    // No drain step exists for these because the cutover is predicated on
+    // there being no customer automations to carry through a compatibility
+    // window — the product decision recorded in
+    // `docs/PRDs/2026-08-25_durable-automation-lifecycle/prd.md` and echoed in
+    // `docs/data-model.md`. If that premise is ever wrong, this is where it
+    // shows: the run fails by name instead of continuing on absent authority.
     if (
       !frozen
       || frozen.automationId !== input.automationSubscriptionId
