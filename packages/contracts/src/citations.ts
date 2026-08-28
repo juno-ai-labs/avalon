@@ -278,6 +278,9 @@ function asCitation(content: string): FootnoteCitation | null {
  */
 export function rewriteCitationsAsPlainText(markdown: string): string {
   const { citations, definitions, referenced } = citationFootnotes(markdown);
+  // GFM's own numbering contract: a number is earned by being *referenced*, in
+  // the order of first reference, and only by an identifier something defines.
+  // A reference whose definition never arrived earns none and stays literal.
   const numbers = new Map<string, number>();
   for (const identifier of referenced) {
     if (definitions.has(identifier)) numbers.set(identifier, numbers.size + 1);
@@ -374,6 +377,10 @@ function plainInline(content: string): string {
  * inert in a pattern as well as absent from the input. NUL is both; a character
  * that means something in a regex would compile into a pattern matching more
  * than the placeholder it stands in for.
+ *
+ * "Absent from the input" is enforced rather than assumed: `mapOutsideCode`
+ * strips any NUL the line already carried before it parks the first span, so a
+ * model writing one cannot forge a placeholder and splice in a span of its own.
  */
 const SPAN_PLACEHOLDER = "\u0000";
 
