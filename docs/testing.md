@@ -258,8 +258,11 @@ beforeEach(async () => {
   with. A test that arms an overdue alarm and must prove its work ran should
   not force delivery at all: `expect.poll` a read of the state the drain
   settles, and let the timeout be the failure, as the semantic-recovery test
-  in `durable-object-runtime.test.ts` does. The poll only reads, so it cannot
-  interleave with the work it is waiting for — and unlike a direct
+  in `durable-object-runtime.test.ts` does. A probe may well run while the
+  drain is still in flight — reads interleave at the handler's awaits like
+  any other invocation — but a read-only probe can neither advance nor
+  duplicate delivery, and it reports success only once the drain has
+  synchronously settled the state it asserts on. And unlike a direct
   `instance.alarm()` call, it still fails when construction stops arming the
   alarm, which is half of what such a test exists to prove.
 
