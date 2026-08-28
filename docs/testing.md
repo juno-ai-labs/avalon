@@ -247,6 +247,14 @@ beforeEach(async () => {
   `dispatchWithoutDraining` in `agent-run-lifecycle.test.ts` does by dispatching
   and parking the alarm in a single `runInDurableObject`.
 
+  **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
+  object initializing itself, and calling it re-entrantly from inside
+  `runInDurableObject` holds the very input gate `reset()` needs in order to
+  clear storage between tests. It was tried here: the guarded test passed, and
+  the *next* test in the file started finding a work stream the previous one had
+  left behind, failing with `workstream_create_replay_incomplete` — in CI only,
+  where the object is under enough load for it to matter.
+
   `runDurableObjectAlarm` introduces its own variant of the race when the alarm
   it is meant to force is already overdue: workerd clears the alarm slot for the
   entire duration of a firing invocation — the same platform behavior
@@ -266,14 +274,6 @@ beforeEach(async () => {
   the drain has synchronously settled the state it asserts on. And unlike a direct
   `instance.alarm()` call, it still fails when construction stops arming the
   alarm, which is half of what such a test exists to prove.
-
-  **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
-  object initializing itself, and calling it re-entrantly from inside
-  `runInDurableObject` holds the very input gate `reset()` needs in order to
-  clear storage between tests. It was tried here: the guarded test passed, and
-  the *next* test in the file started finding a work stream the previous one had
-  left behind, failing with `workstream_create_replay_incomplete` — in CI only,
-  where the object is under enough load for it to matter.
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
