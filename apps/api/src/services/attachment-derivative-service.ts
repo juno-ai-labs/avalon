@@ -1,5 +1,6 @@
 import { ATTACHMENT_CONVERTER_TIMEOUT_MS, ATTACHMENT_PROCESSING_LEASE_MS, classifyAttachmentKind } from "@rally/contracts";
 import { unzipSync } from "fflate";
+import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
 
 export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v2";
 
@@ -273,14 +274,19 @@ export async function materializeAttachmentDerivative(
   // write, stale publisher, or failed WorkspaceDO publication remains
   // recoverable by the regional cleanup worker; a successful active pointer
   // cancels the object-local outbox row.
-  await database.prepare(
-    `INSERT OR IGNORE INTO resource_object_deletion_outbox
-      (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
-     VALUES (?, ?, ?, 'derivative', ?, ?)`,
-  ).bind(contentRef, resource.workspaceId, resource.id, at, at).run();
-  await payloads.put(contentRef, exactArrayBuffer(contentBytes), {
-    httpMetadata: { contentType: `${converted.modelMimeType}; charset=utf-8` },
-    customMetadata: { originalResourceId: resource.id, sourceSha256, extractorVersion: converted.extractorVersion, sha256: derivativeSha256 },
+  await putStagedResourceObject({
+    database,
+    payloads,
+    objectRef: contentRef,
+    workspaceId: resource.workspaceId,
+    resourceId: resource.id,
+    objectKind: "derivative",
+    value: exactArrayBuffer(contentBytes),
+    options: {
+      httpMetadata: { contentType: `${converted.modelMimeType}; charset=utf-8` },
+      customMetadata: { originalResourceId: resource.id, sourceSha256, extractorVersion: converted.extractorVersion, sha256: derivativeSha256 },
+    },
+    at,
   });
   try {
     const result = await database.prepare(
@@ -300,12 +306,14 @@ export async function materializeAttachmentDerivative(
       sourceSha256, converted.extractorVersion, claimId,
     ).run();
     if ((result.meta.changes ?? 0) === 0) {
-      await payloads.delete(contentRef).catch(() => undefined);
+      await releaseStagedResourceObject(database, resource.workspaceId, contentRef)
+        .catch(() => undefined);
       emitDerivativePhase(options, publishStartedAt, "publish", "processing");
       return { status: "processing", retryAfterMs: 250 };
     }
   } catch (error) {
-    await payloads.delete(contentRef).catch(() => undefined);
+    // An RPC failure cannot say whether WorkspaceDO committed the pointer.
+    // Leave the object staged so a committed pointer never loses its bytes.
     emitDerivativePhase(options, publishStartedAt, "publish", "failed", "publication_failed");
     throw error;
   }
