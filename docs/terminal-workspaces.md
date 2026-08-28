@@ -132,7 +132,11 @@ resource untouched, which covers both a crash-replay of a settled call and a
 republish that changed nothing; a different hash swaps the content in place
 under a compare-and-swap against the pointer that was read, applying a title
 only when the call supplies one. WorkspaceDO's resource versions retain the
-superseded original, so a revision does not destroy its predecessor. Publications
+superseded original, so a revision does not destroy its predecessor, and the
+swap names the run that published it — author kind `agent`, cause `created` on
+the publish that mints the document and `published` on each revision of it — so
+the history a participant reads says which run wrote each state rather than
+only when it appeared. Publications
 recorded under the earlier per-call identity keep it, and a path-identity miss
 falls back to looking that identity up, so an attempt that already published a
 file cannot publish it twice across the change. A receipt is still required

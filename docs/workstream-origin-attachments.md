@@ -205,6 +205,19 @@ it.
   visible in a shared work stream should be able to take it out, and protecting
   the row would mean a contract field, a disabled control, and a refusal that
   nobody has asked for. Revisit it together with those three, not on its own.
+
+  The rail's resource detail now carries two more controls, and the same
+  contract gap puts both on an origin: **Refresh from source**, which is offered
+  for any `source` resource on a connection, and the version list, which is
+  offered for any resource with more than one version. Neither changes what an
+  origin *is* — the version list is empty because nothing swaps an origin's
+  pointers, and `POST /resources/:id/hydrate`, which the button calls, was
+  already reachable for an origin before there was a button. What the button
+  does change is that a participant can now reach it in one click, and a
+  connector whose `hydrateResource` returns channel content would store it on a
+  row this document says carries none. That is the same missing
+  `relationship_type` again, and it belongs in the same revisit rather than in a
+  second one-off guard.
 - **An origin carries no provider content.** It records where something is, not
   what it said. Slack Agent policy makes this explicit — durably storing provider
   content gathered for surrounding context is forbidden — and the rule is the
@@ -356,6 +369,28 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-28 — The rail's new resource controls reach origins too
+
+**What changed:** The inspector rail's resource detail gained **Refresh from
+source** and a version list. Both are gated on the resource contract alone, so
+both appear on an origin.
+
+**Why:** `WorkstreamDetail` still does not carry `relationship_type`, which is
+the same reason **Remove** has always been offered on an origin. Adding a guard
+for one control while the other two stay open would spend a contract field on a
+third of the problem.
+
+**Considered and rejected:** Gating the new controls by inferring an origin from
+its provider or its null `content_ref`. Both are guesses that a legitimate
+attachment can also satisfy, and a control that disappears for the wrong reason
+is worse than one that appears for a knowable one.
+
+**Consequences:** An origin's version list is empty, because nothing swaps its
+pointers. A refresh calls `hydrate`, which was already reachable for an origin
+before there was a button; a connector that returns content for one would now
+store it on a row this document says carries none. That is the missing
+`relationship_type`, and it is on the same revisit as **Remove**.
 
 ### 2026-08-27 — Origin relationships render as sources
 

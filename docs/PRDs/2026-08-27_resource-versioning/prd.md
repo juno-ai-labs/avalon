@@ -185,7 +185,32 @@ the agent may do, or what a participant may see. No clause moves.
 
 ## Decision log
 
-None yet.
+### 2026-08-28 — Goal 5 ships its participant-asked half; agent-decided re-fetch is cut
+
+**Decided:** A watch-routed change notification names the resources it matched
+— titles in the message text, ids and aliases in its structured content — and
+stops there. The re-fetch is the right rail's own action on the resource, taken
+by a person. No agent tool re-fetches, and `hydrate` stays reachable only from
+its authenticated endpoint.
+
+**Why:** The agent-decided half needs a tool, and a tool is a standing
+capability with its own authorization, provider quota, and prompt cost — which
+non-goal 7 rejects for this change, in the same PRD that asked for it in goal
+5. Nothing in the layer yet distinguishes a change worth spending a provider
+fetch on from one nobody asked about, and that judgement is exactly what the
+tool would have to make. The participant-asked path closes the loop end to end
+today: the notification says which attached document went stale, and the rail
+offers the re-fetch that turns the snapshot the participant had been reading
+into history.
+
+**Changes:** Goal 5 narrows to its participant-asked clause; the agent-decided
+clause is deferred, not delivered. Non-goal 7 stands. Open question 2 is
+untouched — this cut is about who *asks* for a re-fetch, not about whether the
+model may read history. Picking the cut half back up needs an attachment tool
+for re-fetch, a decided re-fetch cooldown (a limit this change deliberately
+does not guess, per non-goal 6), and a stated rule for when a model may spend a
+fetch. Shipped in
+[#387](https://github.com/juno-ai-labs/avalon/pull/387).
 
 ## Key design decisions
 
