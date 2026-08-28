@@ -467,6 +467,22 @@ describe('MessageBlock markdown', () => {
     });
   });
 
+  it('copies a resource citation as its label instead of its private target', async () => {
+    copyText.mockReset().mockResolvedValue(undefined);
+    const message: Message = {
+      ...baseMessage,
+      id: '00000000-0000-4000-8000-000000000303',
+      authorType: 'agent',
+      author: undefined,
+      text: 'Open [the generated report](resource://board-report).',
+    };
+
+    render(<MessageBlock {...actions} message={message} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Copy response' }));
+
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith('Open the generated report.'));
+  });
+
   it('renders person links as non-navigating chips resolved from mention metadata', () => {
     const personId = '00000000-0000-7000-8000-000000000042';
     const message: Message = {

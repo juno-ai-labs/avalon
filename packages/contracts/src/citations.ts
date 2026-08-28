@@ -264,9 +264,10 @@ function asCitation(content: string): FootnoteCitation | null {
 /**
  * The same answer, written for a surface that renders no citations at all.
  *
- * Outbound email and Slack delivery both take agent Markdown and hand it to
- * someone else's renderer — a mail client, Slack's `markdown` block — neither of
- * which has heard of `resource://` or of footnotes. Left alone, an announcement
+ * Outbound email, Slack delivery, and the desktop clipboard all take agent
+ * Markdown and hand it to somebody else's renderer — a mail client, Slack's
+ * `markdown` block, or wherever a person pastes it — none of which has heard of
+ * `resource://` or of footnotes. Left alone, an announcement
  * arrives as a broken image, a reference as literal bracket syntax, and a
  * grounded answer as a wall of `[^1]` markers above nothing.
  *
@@ -277,8 +278,8 @@ function asCitation(content: string): FootnoteCitation | null {
  * reader outside the app can follow it; an internal one is its title, since no
  * deep link into the desktop exists yet for it to become.
  *
- * The transcript copy of the same answer keeps its citations. Only what leaves
- * Rally is rewritten.
+ * The transcript keeps its interactive citations. Any text copied or delivered
+ * outside Rally is rewritten.
  */
 export interface CitationRewriteOptions {
   /**
