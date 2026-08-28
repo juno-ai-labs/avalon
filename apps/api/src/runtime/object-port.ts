@@ -85,7 +85,7 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
    * mid-operation — belongs in `test-workers/`, where this override is unused.
    */
   localStorage?: TStorage,
-): ObjectPortOf<TStorage> {
+): ObjectPortOf<TStorage, TOperation> {
   // The owning object installs its endpoint here, once, for every port built
   // below it — the endpoint and not the storage, because the endpoint is what
   // holds the authority fence, the projection commit, and the alarm re-arm.
@@ -147,5 +147,5 @@ export function createObjectPort<TStorage, TOperation extends keyof TStorage & s
       operation,
       (...args: unknown[]) => call(operation, args),
     ]),
-  ) as ObjectPortOf<TStorage>;
+  ) as ObjectPortOf<TStorage, TOperation>;
 }

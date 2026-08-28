@@ -3,8 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { PropsWithChildren } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { dismissedSuggestionIdsQueryKey } from './transcript';
-import type { Message, WorkstreamDetail } from './types';
+import { dismissedSuggestionIdsQueryKey, transcriptOverlaysQueryKey, type TranscriptOverlay } from './transcript';
+import type { WorkstreamDetail } from './types';
 import { type WorkstreamSocketApi, useWorkstreamSocket } from './use-workstream-socket';
 
 const createWorkspaceMessage = vi.hoisted(() => vi.fn());
@@ -108,7 +108,6 @@ describe('activity suggestions over the work-stream socket', () => {
       getWorkstreamControlSocketTicket: vi.fn(async () => {
         throw new Error('Workstream control socket is mocked in this test.');
       }),
-      getMessages: vi.fn(async () => []),
       messageMentionPayload: vi.fn(async () => []),
       getWorkstream: vi.fn(async () => ({
         ...detail(),
@@ -122,10 +121,8 @@ describe('activity suggestions over the work-stream socket', () => {
           ranges: [],
           activities: [],
           activeActivities: [],
-          activeTurns: [],
+          activeTurns: [], pendingInputs: [],
         },
-        messageFeed: { items: [], nextCursor: null, newerCursor: null },
-        resumeFeed: null,
         blockDashboardPreference: { visible: false, updatedAt: null },
       })),
     } satisfies WorkstreamSocketApi;
@@ -159,9 +156,9 @@ describe('activity suggestions over the work-stream socket', () => {
     }));
 
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((message) => ({
-      id: message.activitySuggestion?.id,
-      status: message.activitySuggestion?.status,
+    expect(queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId))?.map((overlay) => ({
+      id: overlay.message.activitySuggestion?.id,
+      status: overlay.message.activitySuggestion?.status,
     }))).toEqual([{ id: suggestionId, status: 'accepted' }]);
 
     act(() => socket.message({
@@ -183,9 +180,9 @@ describe('activity suggestions over the work-stream socket', () => {
     }));
 
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.suggestions).toEqual([]);
-    expect(queryClient.getQueryData<Message[]>(['messages', workstreamId])?.map((message) => ({
-      id: message.activitySuggestion?.id,
-      status: message.activitySuggestion?.status,
+    expect(queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId))?.map((overlay) => ({
+      id: overlay.message.activitySuggestion?.id,
+      status: overlay.message.activitySuggestion?.status,
     }))).toEqual([{ id: suggestionId, status: 'accepted' }]);
     expect(queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)))
       .toEqual([dismissedSuggestionId]);

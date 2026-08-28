@@ -5,6 +5,7 @@ import { z } from "zod";
 const TimestampSchema = z.string().datetime({ offset: true });
 const NullableTimestampSchema = TimestampSchema.nullable();
 const ShortTextSchema = z.string().max(500);
+export const WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT = 10_000;
 
 export const WorkstreamDirectoryCommonEffectSchema = z.object({
   kind: z.literal("directory_common"),
@@ -36,7 +37,11 @@ export const WorkstreamDirectoryCommonEffectSchema = z.object({
     resourceId: IdSchema,
     watchEnabled: z.boolean(),
     relationshipType: ResourceRelationshipTypeSchema,
-  }).strict()).max(10_000).optional(),
+  }).strict()).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
+  attachmentReservationReleases: z.array(z.object({
+    inputId: IdSchema,
+    resourceId: IdSchema,
+  }).strict()).max(WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT).optional(),
   createdAt: TimestampSchema.optional(),
   updatedAt: TimestampSchema.optional(),
 }).strict();

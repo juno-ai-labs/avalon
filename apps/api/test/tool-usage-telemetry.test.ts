@@ -4,11 +4,9 @@ import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
 } from '../src/telemetry/tool-usage';
-import { withWorkstreamRuntimeDatabase } from '../src/services/workstream-runtime-database';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { preRetirementProductSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 import {
-  executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
@@ -182,15 +180,20 @@ describe('agent tool usage telemetry', () => {
     }, Date.parse("2026-08-12T20:00:00.000Z"));
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json,
-          status, started_at, created_at)
-       VALUES (?, ?, ?, 'human_message', ?, 'running',
-               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:00.000Z')`,
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+          origin, execution_principal_json, chain_depth, created_at, updated_at)
+       VALUES (?, '0', 'running', '{}', 0, 0, '', 0, 0, ?,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               'human_message', ?, 0, ?, ?)`,
       harnessRunId,
-      workspaceId,
-      workstreamId,
+      Date.parse('2026-08-12T20:00:00.000Z'),
       JSON.stringify({ type: 'user', userId }),
+      Date.parse('2026-08-12T20:00:00.000Z'),
+      Date.parse('2026-08-12T20:00:00.000Z'),
     );
     seedToolReceipt(objectStore, {
       id: userInvocationId,
@@ -207,16 +210,11 @@ describe('agent tool usage telemetry', () => {
     objectStore.prepare(
       `UPDATE tool_effects SET error_json = ? WHERE effect_intent_id = ?`,
     ).run('{"code":"provider_timeout","message":"secret provider response"}', userInvocationId);
-    const routedEnv = withWorkstreamRuntimeDatabase(
+    const routedEnv =
       // The work stream's automation run was a third table in the receipt's
       // join; it is the identity authority's read now, answered by the real
       // storage class over the same object store this test seeds.
-      createTestEnv({ ...env, SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore) }),
-      workspaceId,
-      workstreamId,
-      '0',
-      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-    );
+      createTestEnv({ ...env, SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore) });
 
     await emitAgentToolTerminalTelemetry(routedEnv, {
       workspaceId,

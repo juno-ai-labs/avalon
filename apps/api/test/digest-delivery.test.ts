@@ -13,10 +13,10 @@ import {
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
-  workstreamObjectRun,
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 
@@ -244,10 +244,9 @@ describe("settling a digest run", () => {
     // and the sequence counter both live in the work stream's object.
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT workstream_id, text_content FROM messages WHERE client_message_id = ?",
+      "SELECT content AS text_content FROM canonical_conversation_turn_details WHERE client_message_id = ?",
       `digest-delivered:${DELIVERY}`,
     )).toEqual({
-      workstream_id: WORKSTREAM,
       text_content: "Delivered to 1 destination.",
     });
     expect(workstreamObjectRootRow(objectStore, "next_sequence_number"))
@@ -279,7 +278,7 @@ describe("settling a digest run", () => {
 
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT text_content FROM messages WHERE client_message_id = ?",
+      "SELECT content AS text_content FROM canonical_conversation_turn_details WHERE client_message_id = ?",
       `digest-delivered:${DELIVERY}`,
     )).toEqual({ text_content: "Delivered to 1 destination." });
   });
@@ -293,16 +292,8 @@ describe("settling a digest run", () => {
     // and cannot be joined from regional settlement, so the durable path
     // deliberately writes no note for such a delivery — the settlement itself
     // must still land rather than fail the whole run over a missing note.
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'scheduled_digest', ?, 'completed', '2026-08-11')`,
-      RUN,
-      WORKSPACE,
-      WORKSTREAM,
-      JSON.stringify({ type: "user", userId: OWNER }),
-    );
+    seedWorkstreamRun(objectStore, { id: RUN, status: "completed", origin: "scheduled_digest",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: OWNER }) });
     database.exec(`
       UPDATE digest_deliveries
          SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
@@ -313,7 +304,7 @@ describe("settling a digest run", () => {
     expect(deliveryStatus(database).status).toBe("delivered");
     expect(workstreamObjectGet(
       objectStore,
-      "SELECT COUNT(*) AS count FROM messages WHERE client_message_id = ?",
+      "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = ?",
       `digest-delivered:${DELIVERY}`,
     )).toEqual({ count: 0 });
   });

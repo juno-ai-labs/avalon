@@ -34,11 +34,10 @@ let database: DatabaseSync;
 /**
  * One object store per work stream, not one regional table for all of them.
  *
- * A work-stream fact is read through `workstreamExecutionEnvironment`, which
- * routes at the object unconditionally, and an object holds exactly one work
- * stream. Seeding these rows regionally left the read finding nothing, which
- * the loader reports as a suppressed subject rather than an error — so the
- * fixture, not the assertion, is what has to move.
+ * A work-stream fact is read through its typed object authority, and an object
+ * holds exactly one work stream. Seeding these rows regionally left the read
+ * finding nothing, which the loader reports as a suppressed subject rather
+ * than an error — so the fixture, not the assertion, is what has to move.
  */
 let workstreamStores: Map<string, DatabaseSync>;
 

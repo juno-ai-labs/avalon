@@ -33,11 +33,27 @@ export type BindLoopTransition =
       systemProjection: BindSystemProjection;
     }
   | BindLoopTransitionBase & {
+      kind: "assistant_reserved";
+      generation: number;
+      turnId: string;
+      modelTurnIndex: number;
+      transcriptSequence: number | null;
+    }
+  | BindLoopTransitionBase & {
       kind: "assistant_accepted";
       generation: number;
       message: BindLoopMessage;
       turnId: string;
       modelTurnIndex: number;
+      transcriptSequence: number | null;
+    }
+  | BindLoopTransitionBase & {
+      kind: "assistant_reservation_settled";
+      generation: number;
+      turnId: string;
+      modelTurnIndex: number;
+      transcriptSequence: number | null;
+      outcome: "failed" | "stopped";
     }
   | BindLoopTransitionBase & {
       kind: "tool_result_accepted";
@@ -45,26 +61,20 @@ export type BindLoopTransition =
       message: BindLoopMessage;
       turnId: string;
       toolCallId: string;
+      /** Original position in the assistant's tool_calls array. */
       callIndex: number;
+      /** Dense order in which durable tool results were accepted. */
+      resultOrdinal: number;
+      /** Host recovery provenance; ordinary Bind acceptance omits it. */
+      recoverySource?: "tool_receipt" | "not_run";
     }
   | BindLoopTransitionBase & {
       kind: "protocol_user_appended";
       generation: number;
       message: BindLoopMessage;
-      origin: "protocol" | "derived";
-      sourceId: string | null;
-    }
-  | BindLoopTransitionBase & {
-      /**
-       * Bind's validator is allowed to repair a provider transcript immediately
-       * before dispatch. Persist the repaired value as the provider-facing truth
-       * instead of pretending the pre-repair array was sent.
-       */
-      kind: "state_reconciled";
-      generation: number;
-      systemProjection: BindSystemProjection;
-      nonSystemMessages: readonly BindLoopMessage[];
-      reason: "provider_validation" | "resume_validation";
+      provenance: BindLoopMessageOrigin;
+      /** Stable logical admission identity; independent of executor/run ID. */
+      activationInputId: string | null;
     }
   | BindLoopTransitionBase & {
       kind: "state_replaced";
@@ -79,8 +89,47 @@ export interface BindLoopProjectionState {
   loopId: string;
   generation: number;
   stateRevision: number;
+  /** Last globally allocated model turn in this persistent loop. */
+  lastModelTurnIndex: number;
+  /** The last reservation and how it settled. */
+  lastAssistantReservation: {
+    turnId: string;
+    modelTurnIndex: number;
+    transcriptSequence: number | null;
+    status: "pending" | "accepted" | "failed" | "stopped";
+  } | null;
   systemProjection: BindSystemProjection;
-  nonSystemMessages: BindLoopMessage[];
+  /**
+   * Persistent immutable suffix chain. Ordinary transitions share the prior
+   * prefix and allocate at most one node; only provider projection and
+   * compaction materialize the complete ordered array.
+   */
+  nonSystemMessageTail: BindLoopMessageNode | null;
+}
+
+export interface BindLoopMessageNode {
+  readonly message: BindLoopMessage;
+  readonly previous: BindLoopMessageNode | null;
+  readonly length: number;
+}
+
+export interface PendingBindToolCall {
+  /** Provider protocol identity carried by the accepted assistant message. */
+  providerToolCallId: string;
+  /** Durable Rally receipt coordinate for this exact position in the loop. */
+  receiptToolCallId: string;
+  callIndex: number;
+  toolName: string;
+}
+
+export interface PendingBindToolBatch {
+  loopId: string;
+  turnId: string;
+  modelTurnIndex: number;
+  generation: number;
+  stateRevision: number;
+  acceptedResultCount: number;
+  calls: PendingBindToolCall[];
 }
 
 export interface BindProviderBoundary {
@@ -111,8 +160,10 @@ export function applyBindLoopTransition(
       loopId: transition.loopId,
       generation: 1,
       stateRevision: 1,
+      lastModelTurnIndex: 0,
+      lastAssistantReservation: null,
       systemProjection: cloneJson(transition.systemProjection),
-      nonSystemMessages: transition.nonSystemMessages.map(cloneJson),
+      nonSystemMessageTail: bindLoopMessageChain(transition.nonSystemMessages),
     };
   }
   if (previous === null || previous.loopId !== transition.loopId) {
@@ -129,44 +180,260 @@ export function applyBindLoopTransition(
     if (transition.nextGeneration !== previous.generation + 1) {
       throw new Error("bind_loop_replacement_generation_out_of_order");
     }
+    if (previous.lastAssistantReservation?.status === "pending"
+      || !lastAssistantStepIsSettled(previous)) {
+      throw new Error("bind_loop_replacement_step_unsettled");
+    }
     return {
       loopId: previous.loopId,
       generation: transition.nextGeneration,
       stateRevision: transition.stateRevision,
+      lastModelTurnIndex: previous.lastModelTurnIndex,
+      lastAssistantReservation: cloneJson(previous.lastAssistantReservation),
       systemProjection: cloneJson(transition.systemProjection),
-      nonSystemMessages: transition.nonSystemMessages.map(cloneJson),
-    };
-  }
-
-  if (transition.kind === "state_reconciled") {
-    return {
-      loopId: previous.loopId,
-      generation: previous.generation,
-      stateRevision: transition.stateRevision,
-      systemProjection: cloneJson(transition.systemProjection),
-      nonSystemMessages: transition.nonSystemMessages.map(cloneJson),
+      nonSystemMessageTail: bindLoopMessageChain(transition.nonSystemMessages),
     };
   }
 
   const next: BindLoopProjectionState = {
     ...previous,
     stateRevision: transition.stateRevision,
-    systemProjection: cloneJson(previous.systemProjection),
-    nonSystemMessages: previous.nonSystemMessages.map(cloneJson),
   };
   if (transition.kind === "system_projection_changed") {
     next.systemProjection = cloneJson(transition.systemProjection);
+  } else if (transition.kind === "assistant_reserved") {
+    if (previous.lastAssistantReservation?.status === "pending") {
+      throw new Error("bind_loop_assistant_reservation_pending");
+    }
+    if (transition.modelTurnIndex !== previous.lastModelTurnIndex + 1) {
+      throw new Error("bind_loop_model_turn_out_of_order");
+    }
+    if (!lastAssistantStepIsSettled(previous)) {
+      throw new Error("bind_loop_assistant_step_unsettled");
+    }
+    if (transition.turnId !== `${transition.loopId}:turn:${transition.modelTurnIndex}`) {
+      throw new Error("bind_loop_turn_id_invalid");
+    }
+    if (transition.transcriptSequence !== null
+      && (!Number.isSafeInteger(transition.transcriptSequence)
+        || transition.transcriptSequence < 1)) {
+      throw new Error("bind_loop_transcript_sequence_invalid");
+    }
+    next.lastModelTurnIndex = transition.modelTurnIndex;
+    next.lastAssistantReservation = {
+      turnId: transition.turnId,
+      modelTurnIndex: transition.modelTurnIndex,
+      transcriptSequence: transition.transcriptSequence,
+      status: "pending",
+    };
+  } else if (transition.kind === "assistant_reservation_settled") {
+    const reservation = previous.lastAssistantReservation;
+    if (!reservation
+      || reservation.status !== "pending"
+      || reservation.turnId !== transition.turnId
+      || reservation.modelTurnIndex !== transition.modelTurnIndex
+      || reservation.transcriptSequence !== transition.transcriptSequence) {
+      throw new Error("bind_loop_assistant_reservation_mismatch");
+    }
+    next.lastAssistantReservation = { ...reservation, status: transition.outcome };
+  } else if (transition.kind === "assistant_accepted") {
+    const reservation = previous.lastAssistantReservation;
+    if (!reservation
+      || reservation.status !== "pending"
+      || reservation.turnId !== transition.turnId
+      || reservation.modelTurnIndex !== transition.modelTurnIndex
+      || reservation.transcriptSequence !== transition.transcriptSequence) {
+      throw new Error("bind_loop_assistant_reservation_mismatch");
+    }
+    if (transition.message.role !== "assistant") {
+      throw new Error("bind_loop_assistant_message_invalid");
+    }
+    const toolCalls = transition.message.tool_calls;
+    if (toolCalls !== undefined && (!Array.isArray(toolCalls)
+      || toolCalls.some((call) => !toolCallId(call))
+      || new Set(toolCalls.map(toolCallId)).size !== toolCalls.length)) {
+      throw new Error("bind_loop_assistant_tool_calls_invalid");
+    }
+    next.nonSystemMessageTail = appendBindLoopMessage(previous, transition.message);
+    next.lastAssistantReservation = { ...reservation, status: "accepted" };
+  } else if (transition.kind === "tool_result_accepted") {
+    const progress = lastAssistantToolProgress(previous);
+    if (!progress
+      || previous.lastAssistantReservation?.status !== "accepted"
+      || transition.turnId !== previous.lastAssistantReservation.turnId
+      || transition.resultOrdinal !== progress.acceptedToolCallIds.length
+      || transition.callIndex >= progress.expectedToolCallIds.length
+      || transition.toolCallId !== progress.expectedToolCallIds[transition.callIndex]
+      || progress.acceptedToolCallIds.includes(transition.toolCallId)
+      || transition.message.role !== "tool"
+      || transition.message.tool_call_id !== transition.toolCallId) {
+      throw new Error("bind_loop_tool_result_out_of_order");
+    }
+    next.nonSystemMessageTail = appendBindLoopMessage(previous, transition.message);
   } else {
-    next.nonSystemMessages.push(cloneJson(transition.message));
+    if (transition.message.role !== "user"
+      || !validMessageOrigin(transition.provenance)
+      || (transition.activationInputId !== null
+        && (transition.activationInputId.length === 0
+          || transition.provenance.originKind !== "derived"))
+      || !lastAssistantStepIsSettled(previous)) {
+      throw new Error("bind_loop_protocol_user_invalid");
+    }
+    next.nonSystemMessageTail = appendBindLoopMessage(previous, transition.message);
   }
   return next;
+}
+
+function validMessageOrigin(origin: BindLoopMessageOrigin): boolean {
+  if (origin.originKind === "canonical" || origin.originKind === "protocol") {
+    return origin.sourceKind === null
+      && origin.sourceId === null
+      && origin.sourceRevision === null;
+  }
+  return origin.originKind === "derived"
+    && typeof origin.sourceKind === "string"
+    && origin.sourceKind.length > 0
+    && typeof origin.sourceId === "string"
+    && origin.sourceId.length > 0
+    && (origin.sourceRevision === null
+      || (Number.isSafeInteger(origin.sourceRevision) && origin.sourceRevision >= 0));
+}
+
+function toolCallId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const id = (value as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+function lastAssistantToolProgress(state: BindLoopProjectionState): {
+  expectedToolCallIds: string[];
+  acceptedToolCallIds: string[];
+} | null {
+  const messagesAfterAssistant: BindLoopMessage[] = [];
+  let cursor = state.nonSystemMessageTail;
+  while (cursor && cursor.message.role !== "assistant") {
+    messagesAfterAssistant.push(cursor.message);
+    cursor = cursor.previous;
+  }
+  if (!cursor) return null;
+  const assistant = cursor.message;
+  const rawCalls = assistant.tool_calls;
+  const expectedToolCallIds = Array.isArray(rawCalls)
+    ? rawCalls.map(toolCallId).filter((id): id is string => id !== null)
+    : [];
+  const acceptedToolCallIds: string[] = [];
+  for (const message of messagesAfterAssistant.reverse()) {
+    if (message.role !== "tool" || typeof message.tool_call_id !== "string") break;
+    acceptedToolCallIds.push(message.tool_call_id);
+  }
+  return { expectedToolCallIds, acceptedToolCallIds };
+}
+
+function lastAssistantStepIsSettled(state: BindLoopProjectionState): boolean {
+  const progress = lastAssistantToolProgress(state);
+  return progress === null
+    || progress.acceptedToolCallIds.length === progress.expectedToolCallIds.length;
+}
+
+/**
+ * The unfinished suffix of the last accepted assistant tool batch.
+ *
+ * Bind intentionally refuses to heal this protocol state. The durable host
+ * uses these two identities to reconcile Rally receipts without confusing the
+ * provider's call id with the receipt coordinate, then appends terminal tool
+ * messages in the original call order before any later provider boundary.
+ */
+export function pendingBindToolBatch(
+  state: BindLoopProjectionState,
+): PendingBindToolBatch | null {
+  const progress = lastAssistantToolProgress(state);
+  const reservation = state.lastAssistantReservation;
+  if (!progress || reservation?.status !== "accepted"
+    || progress.acceptedToolCallIds.length === progress.expectedToolCallIds.length) {
+    return null;
+  }
+  let cursor = state.nonSystemMessageTail;
+  while (cursor && cursor.message.role !== "assistant") cursor = cursor.previous;
+  const rawCalls = cursor?.message.tool_calls;
+  if (!Array.isArray(rawCalls)) throw new Error("bind_loop_assistant_tool_calls_invalid");
+  const accepted = new Set(progress.acceptedToolCallIds);
+  const calls = rawCalls.flatMap((rawCall, callIndex) => {
+    if (!rawCall || typeof rawCall !== "object") {
+      throw new Error("bind_loop_assistant_tool_calls_invalid");
+    }
+    const call = rawCall as {
+      id?: unknown;
+      function?: { name?: unknown };
+    };
+    const providerToolCallId = typeof call.id === "string" ? call.id : "";
+    const toolName = typeof call.function?.name === "string" ? call.function.name : "tool";
+    if (!providerToolCallId) throw new Error("bind_loop_assistant_tool_calls_invalid");
+    if (accepted.has(providerToolCallId)) return [];
+    return [{
+      providerToolCallId,
+      receiptToolCallId: `${state.loopId}:turn:${reservation.modelTurnIndex}:tool:${callIndex}`,
+      callIndex,
+      toolName,
+    }];
+  });
+  return {
+    loopId: state.loopId,
+    turnId: reservation.turnId,
+    modelTurnIndex: reservation.modelTurnIndex,
+    generation: state.generation,
+    stateRevision: state.stateRevision,
+    acceptedResultCount: progress.acceptedToolCallIds.length,
+    calls,
+  };
 }
 
 export function projectBindLoopMessages(state: BindLoopProjectionState): BindLoopMessage[] {
   return [
     cloneJson(state.systemProjection.message),
-    ...state.nonSystemMessages.map(cloneJson),
+    ...bindLoopNonSystemMessages(state).map(cloneJson),
   ];
+}
+
+export function bindLoopMessageChain(
+  messages: readonly BindLoopMessage[],
+): BindLoopMessageNode | null {
+  let tail: BindLoopMessageNode | null = null;
+  let length = 0;
+  for (const message of messages) {
+    const previous: BindLoopMessageNode | null = tail;
+    length += 1;
+    tail = {
+      message: cloneJson(message),
+      previous,
+      length,
+    };
+  }
+  return tail;
+}
+
+export function bindLoopNonSystemMessageCount(state: BindLoopProjectionState): number {
+  return state.nonSystemMessageTail?.length ?? 0;
+}
+
+export function bindLoopNonSystemMessages(state: BindLoopProjectionState): BindLoopMessage[] {
+  const messages = new Array<BindLoopMessage>(bindLoopNonSystemMessageCount(state));
+  let cursor = state.nonSystemMessageTail;
+  while (cursor) {
+    messages[cursor.length - 1] = cursor.message;
+    cursor = cursor.previous;
+  }
+  return messages;
+}
+
+function appendBindLoopMessage(
+  previous: BindLoopProjectionState,
+  message: BindLoopMessage,
+): BindLoopMessageNode {
+  return {
+    message: cloneJson(message),
+    previous: previous.nonSystemMessageTail,
+    length: bindLoopNonSystemMessageCount(previous) + 1,
+  };
 }
 
 export function canonicalizeBindLoop(value: unknown): string {
@@ -215,7 +482,10 @@ function canonicalJson(value: unknown): unknown {
   if (typeof value === "object") {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .filter(([, nested]) => nested !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
+      // Relational string comparison is specified in UTF-16 code-unit order;
+      // localeCompare delegates to runtime ICU data and is not a canonical
+      // byte ordering across machines or locale upgrades.
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
       .map(([key, nested]) => [key, canonicalJson(nested)]));
   }
   throw new Error("bind_loop_non_json_value");

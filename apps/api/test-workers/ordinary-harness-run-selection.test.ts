@@ -113,10 +113,9 @@ function seedRun(
   runId: string,
   input: { origin: string; parentToolCallId: string | null; createdAt: number },
 ): void {
-  // `completed`, so `runs_mutating_substream_uq` — one live non-block run per
-  // substream — stays out of the way. Which run a work stream *reports* does
-  // not turn on status, and a fixture that had to keep three live runs on one
-  // substream would be describing a state production forbids.
+  // These are historical candidates, so make them completed rather than
+  // introducing unrelated live executions into a selection test. Which run a
+  // work stream *reports* does not turn on status.
   state.storage.sql.exec(
     `INSERT INTO runs
        (run_id, substream_id, status, budget, attempt_epoch, model_iteration,

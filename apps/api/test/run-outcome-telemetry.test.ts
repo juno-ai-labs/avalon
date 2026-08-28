@@ -3,11 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IdentityAuthContext } from '../src/env';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from '../src/telemetry/api-emitter';
 import { emitCorrelatedRunOutcome } from '../src/telemetry/run-outcome';
-import { withWorkstreamRuntimeDatabase } from '../src/services/workstream-runtime-database';
 import { createTestEnv } from './helpers/cloudflare-test';
 import { preRetirementProductSqliteDatabase, sqliteD1 } from './helpers/sqlite-d1';
 import {
-  executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
@@ -89,32 +87,38 @@ describe('authoritative run outcome telemetry', () => {
 
     workstreamObjectRun(
       objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status,
-          started_at, completed_at, created_at, model, usage_json)
-       VALUES (?, ?, ?, 'human_message', ?, 'completed',
-               '2026-08-12T20:00:00.000Z', '2026-08-12T20:00:08.000Z',
-               '2026-08-12T20:00:00.000Z', 'openai/gpt-5', '{"run_stats":{"turns":2}}')`,
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+          terminal_reason, origin, execution_principal_json, chain_depth, model, usage_json,
+          completed_at, terminalized_at, created_at, updated_at)
+       VALUES (?, '0', 'completed', '{}', 0, 0, '', 0, 0, ?,
+               0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               'completed', 'human_message', ?, 0, 'openai/gpt-5',
+               '{"run_stats":{"turns":2}}', ?, ?, ?, ?)`,
       runId,
-      workspaceId,
-      workstreamId,
+      Date.parse('2026-08-12T20:00:00.000Z'),
       JSON.stringify({ type: 'user', userId }),
+      Date.parse('2026-08-12T20:00:08.000Z'),
+      Date.parse('2026-08-12T20:00:08.000Z'),
+      Date.parse('2026-08-12T20:00:00.000Z'),
+      Date.parse('2026-08-12T20:00:08.000Z'),
     );
     workstreamObjectRun(
       objectStore,
-      // routing_decision_json is NOT NULL in the object's ledger; the compat
-      // trigger's INSERT OR IGNORE silently drops a row that omits it.
       `INSERT INTO inference_attempts
-         (id, harness_run_id, workspace_id, workstream_id, attempt_id, turn_id,
+         (inference_attempt_id, run_id, attempt_id, turn_id,
           endpoint_attempt, fallback_attempt, provider, model, workspace_identity_hash,
           routing_decision_json, outcome, latency_ms, ttft_ms, started_at, completed_at, created_at)
-       VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d8', ?, ?, ?, 'attempt', 'turn-1',
+       VALUES ('018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d8', ?, 'attempt', 'turn-1',
                1, 1, 'openai', 'openai/gpt-5', 'workspace-hash', '{}', 'success', 4000, 1200,
-               '2026-08-12T20:00:01.000Z', '2026-08-12T20:00:05.000Z',
-               '2026-08-12T20:00:05.000Z')`,
+               ?, ?, ?)`,
       runId,
-      workspaceId,
-      workstreamId,
+      Date.parse('2026-08-12T20:00:01.000Z'),
+      Date.parse('2026-08-12T20:00:05.000Z'),
+      Date.parse('2026-08-12T20:00:05.000Z'),
     );
     // Two receipts, one of them a write. Nothing else in this suite covered the
     // outcome event's tool counts, so retargeting their subqueries at
@@ -122,13 +126,13 @@ describe('authoritative run outcome telemetry', () => {
     seedToolReceipt(objectStore, {
       id: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7901', runId, toolCallId: 'call-1',
       toolName: 'read_resource', status: 'completed', requestHash: 'hash-1',
-      executionPlanJson: '{"mode":"read"}',
+      mode: 'read', executionPlanJson: null,
     });
     seedToolReceipt(objectStore, {
       id: '018f3f4e-7b5a-7cc1-9a6f-2aa0324b7902', runId, toolCallId: 'call-2',
       toolName: 'publish_branch', mode: 'write', status: 'completed',
       requestHash: 'hash-2', position: 1,
-      executionPlanJson: '{"mode":"write"}',
+      executionPlanJson: null,
     });
     const env = createTestEnv({
       DB: sqliteD1(database),
@@ -158,13 +162,7 @@ describe('authoritative run outcome telemetry', () => {
       operationId,
     ));
 
-    const routedEnv = withWorkstreamRuntimeDatabase(
-      env,
-      workspaceId,
-      workstreamId,
-      '0',
-      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-    );
+    const routedEnv = env;
     const input = {
       workspaceId,
       workstreamId,

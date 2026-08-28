@@ -15,6 +15,7 @@ import {
   WORKSTREAM_DESCRIPTION_MAX_CHARACTERS,
   WorkstreamDetailSchema,
   WorkstreamSchema,
+  WorkstreamWorkflowInputSchema,
   type Elicitation,
   type ActivitySuggestion,
   type Message,
@@ -24,6 +25,7 @@ import {
   type WorkstreamBatchUpdate,
   type WorkstreamDetail,
   type WorkstreamWorkflowInput,
+  type WorkstreamMessageAdmissionReceipt,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   WORKSTREAM_NAMING_GRACE_MS,
@@ -45,6 +47,7 @@ import {
   connectorRegistryForEnv,
   connectorSupportsResourceHydration,
 } from "../lib/connector-registry";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import {
   ContentAudienceSchema,
@@ -62,16 +65,64 @@ import {
   resolveNewWorkstreamModelRouting,
 } from "../services/agent-model-flags";
 import { classifyWorkstreamMessage } from "../services/integrations";
+import {
+  canonicalModelMessageJson,
+  projectParticipantModelMessage,
+} from "../services/workstream-participant-model-message";
+import type { ModelAttachmentSource } from "../services/attachment-model-content";
 import { memberSafeHarnessError } from "../services/workstream-service";
 import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "../services/workspace-runtime-database";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
+import { substreamLoopId, workspaceDOName } from "./names";
+import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
+import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "./workstream-regional-effect";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
-import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
+import {
+  SubstreamLoopStorage,
+  type PendingInputPreparationKind,
+  type PendingInputPreparationRow,
+  type PendingLoopInputRow,
+} from "./substream-loop-storage";
+import {
+  WorkstreamTranscriptStorage,
+  type PendingInputDeliveryEffectInput,
+  type PreparedParticipantMessage,
+} from "./workstream-transcript-storage";
+import {
+  AdmitExternalMessageInputSchema,
+  AnswerExternalElicitationInputSchema,
+  type AdmitExternalMessageInput,
+  type AnswerExternalElicitationInput,
+  type ExternalMessageAdmissionResult,
+} from "./workstream-external-message-protocol";
 
 type SqlRow = Record<string, SqlStorageValue>;
+interface AttachmentResourceRow {
+  id: string;
+  connection_id: string | null;
+  resource_type: string;
+  provider: string;
+  provider_resource_id: string | null;
+  title: string;
+  mime_type: string | null;
+  content_ref: string | null;
+  content_sha256: string | null;
+  canonical_url: string | null;
+  metadata_json: string;
+  model_content_ref: string | null;
+  model_mime_type: string | null;
+  model_content_sha256: string | null;
+  model_metadata_json: string | null;
+  model_content_status: "pending" | "processing" | "ready" | "failed" | "unsupported" | null;
+  model_content_extractor_version: string | null;
+  model_content_error_code: string | null;
+  created_at: string;
+  updated_at: string;
+}
+const UNKNOWN_MEMBER_DISPLAY_NAME = "A workspace member";
 
 export const WorkstreamObjectCreateMessageInputSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
@@ -284,8 +335,50 @@ interface LocalMessageWrite {
   messageId: string;
   sequenceNumber: number;
   attentionOrdinal: number;
+  createdAt: number;
   inserted: boolean;
-  runId: HarnessRunId | null;
+}
+
+/** A durable-loop wakeup request for the SubstreamAgent that owns execution. */
+interface WorkstreamPendingInputActivationRequest {
+  kind: "activate_substream_loop";
+  loopId: string;
+  cause: "pending_input";
+  inputId: string;
+}
+
+interface WorkstreamManualRetryActivationRequest {
+  kind: "activate_substream_loop";
+  loopId: string;
+  cause: "manual_retry";
+  inputId: null;
+  receiptRunId: HarnessRunId;
+  workflowInput: WorkstreamWorkflowInput;
+}
+
+export type WorkstreamLoopActivationRequest =
+  | WorkstreamPendingInputActivationRequest
+  | WorkstreamManualRetryActivationRequest;
+
+export interface WorkstreamObjectCreateMessageResult extends WorkstreamMessageAdmissionReceipt {
+  activationRequest: WorkstreamLoopActivationRequest | null;
+  inserted: boolean;
+}
+
+export interface WorkstreamObjectAnswerElicitationResult {
+  elicitation: Elicitation | undefined;
+  responsePartId: string;
+  activationRequest: WorkstreamLoopActivationRequest | null;
+}
+
+export interface WorkstreamObjectRetryResult {
+  harnessRunId: HarnessRunId;
+  activationRequest: WorkstreamManualRetryActivationRequest;
+}
+
+export interface WorkstreamObjectExternalMessageResult extends ExternalMessageAdmissionResult {
+  activationRequest: WorkstreamLoopActivationRequest | null;
+  inserted: boolean;
 }
 
 function first<T extends SqlRow>(cursor: SqlStorageCursor<T>): T | null {
@@ -340,24 +433,277 @@ function userFromRow(row: UserRow) {
  * profiles, and other control-plane facts. Workspace-owned resources,
  * connectors, automation labels, and pins resolve through WorkspaceDO.
  */
-/**
- * How much transcript an open carries.
- *
- * Was 250, which is a scroll-back buffer being paid for on the frame a person
- * waits to see. A screen shows tens of messages; scrolling past these asks the
- * socket for the next page.
- */
-export const BOOT_LATEST_MESSAGES = 20;
-/** Ten either side of where the reader stopped, which `around` splits for us. */
-export const BOOT_RESUME_MESSAGES = 20;
-
 export class WorkstreamObjectProductService {
+  private readonly activeInputPreparations = new Map<string, number>();
+
   constructor(
     private readonly storage: DurableObjectStorage,
     private readonly objectStore: WorkstreamObjectStore,
     private readonly env: Env,
     private readonly transcript = new WorkstreamTranscriptStorage(storage),
+    private readonly loops = new SubstreamLoopStorage(storage),
   ) {}
+
+  private beginInputPreparation(inputId: string): void {
+    this.activeInputPreparations.set(
+      inputId,
+      (this.activeInputPreparations.get(inputId) ?? 0) + 1,
+    );
+  }
+
+  private endInputPreparation(inputId: string): void {
+    const active = this.activeInputPreparations.get(inputId) ?? 0;
+    if (active <= 1) this.activeInputPreparations.delete(inputId);
+    else this.activeInputPreparations.set(inputId, active - 1);
+  }
+
+  private preparationFailureCode(error: unknown): string {
+    if (error instanceof ApiError && /^[a-z0-9_]{1,160}$/.test(error.code)) return error.code;
+    if (error instanceof Error && /^[a-z0-9_]{1,160}$/.test(error.message)) return error.message;
+    return "pending_input_preparation_failed";
+  }
+
+  private async runInputPreparation<T>(
+    preparation: PendingInputPreparationRow,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    if (preparation.state === "failed") {
+      throw new ApiError(409, "pending_input_preparation_failed", "This message could not be prepared");
+    }
+    if (preparation.state !== "preparing") {
+      throw new Error(`pending_input_preparation_${preparation.state}`);
+    }
+    this.beginInputPreparation(preparation.input_id);
+    try {
+      return await work();
+    } catch (error) {
+      this.loops.failInputPreparation({
+        inputId: preparation.input_id,
+        terminalCode: this.preparationFailureCode(error),
+        now: Date.now(),
+      });
+      throw error;
+    } finally {
+      this.endInputPreparation(preparation.input_id);
+      // A settled earlier preparation can make later ready inputs runnable.
+      // The alarm is only a wake-up hint; the loop/mailbox rows remain truth.
+      if (this.loops.pendingInputs().length > 0
+        || this.nextRecoverableInputPreparationAt() !== null) {
+        await this.storage.setAlarm(Date.now() + 1);
+      }
+    }
+  }
+
+  private reserveInputPreparation(input: {
+    root: RootRow;
+    inputId: string;
+    clientMessageId: string;
+    preparationKind: PendingInputPreparationKind;
+    envelope: unknown;
+    now: number;
+  }): PendingInputPreparationRow {
+    const loop = this.ensureExternalMessageLoop(input.root, input.now);
+    return this.loops.reserveInputPreparation({
+      inputId: input.inputId,
+      loopId: loop.loop_id,
+      clientMessageId: input.clientMessageId,
+      preparationKind: input.preparationKind,
+      envelopeJson: JSON.stringify(input.envelope),
+      now: input.now,
+    }).preparation;
+  }
+
+  private workspaceDirectory(workspaceId: string) {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
+    );
+  }
+
+  private async reserveAttachmentDrafts(input: {
+    workspaceId: string;
+    workstreamId: string;
+    inputId: string;
+    userId: string;
+    resourceIds: string[];
+    now: number;
+  }): Promise<AttachmentResourceRow[]> {
+    if (input.resourceIds.length === 0) return [];
+    if (new Set(input.resourceIds).size !== input.resourceIds.length) {
+      throw new ApiError(
+        422,
+        "invalid_message_attachment",
+        "One or more attachments are unavailable or already sent",
+      );
+    }
+    // Record the recovery obligation before crossing the authority boundary.
+    // A crash before the RPC is harmless; replay reserves idempotently. A
+    // crash after the RPC leaves a durable row that can release the hold once
+    // this preparation has reached a terminal state.
+    this.storage.transactionSync(() => {
+      for (const resourceId of input.resourceIds) {
+        this.storage.sql.exec(
+          `INSERT INTO pending_attachment_reservation_recovery
+             (input_id, resource_id, workspace_id, workstream_id,
+              release_authority, created_at)
+           VALUES (?, ?, ?, ?, 'preparation', ?)
+           ON CONFLICT(input_id, resource_id) DO NOTHING`,
+          input.inputId,
+          resourceId,
+          input.workspaceId,
+          input.workstreamId,
+          input.now,
+        );
+      }
+      const tracked = this.storage.sql.exec<{
+        resource_id: string;
+        workspace_id: string;
+        workstream_id: string;
+      }>(
+        `SELECT resource_id, workspace_id, workstream_id
+           FROM pending_attachment_reservation_recovery WHERE input_id = ?`,
+        input.inputId,
+      ).toArray();
+      if (tracked.length !== input.resourceIds.length
+        || tracked.some((row) => row.workspace_id !== input.workspaceId
+          || row.workstream_id !== input.workstreamId)) {
+        throw new Error("pending_attachment_reservation_recovery_conflict");
+      }
+    });
+    const workspace = await this.workspaceDirectory(input.workspaceId);
+    const result = WorkspaceReserveDraftAttachmentsResultSchema.parse(
+      await workspace.reserveDraftAttachments({
+        workspaceId: asWorkspaceId(input.workspaceId),
+        workstreamId: asWorkstreamId(input.workstreamId),
+        inputId: input.inputId,
+        userId: asUserId(input.userId),
+        resourceIds: input.resourceIds,
+      }),
+    );
+    if (result.outcome === "unavailable") {
+      throw new ApiError(
+        422,
+        "invalid_message_attachment",
+        "One or more attachments are unavailable or already sent",
+      );
+    }
+    return result.resources.map((resource) => ({
+      id: resource.id,
+      connection_id: resource.connectionId,
+      resource_type: resource.resourceType,
+      provider: resource.provider,
+      provider_resource_id: resource.providerResourceId,
+      title: resource.title,
+      mime_type: resource.mimeType,
+      content_ref: resource.contentRef,
+      content_sha256: resource.contentSha256,
+      canonical_url: resource.canonicalUrl,
+      metadata_json: resource.metadataJson,
+      model_content_ref: resource.modelContentRef,
+      model_mime_type: resource.modelMimeType,
+      model_content_sha256: resource.modelContentSha256,
+      model_metadata_json: resource.modelMetadataJson,
+      model_content_status: resource.modelContentStatus,
+      model_content_extractor_version: resource.modelContentExtractorVersion,
+      model_content_error_code: resource.modelContentErrorCode,
+      created_at: resource.createdAt,
+      updated_at: resource.updatedAt,
+    }));
+  }
+
+  private markAttachmentReleaseOwnedByProjection(inputId: string): void {
+    this.storage.sql.exec(
+      `UPDATE pending_attachment_reservation_recovery
+          SET release_authority = 'projection' WHERE input_id = ?`,
+      inputId,
+    );
+  }
+
+  private terminalAttachmentReservation() {
+    return first(this.storage.sql.exec<{
+      input_id: string;
+      workspace_id: string;
+      workstream_id: string;
+      release_authority: "preparation" | "projection";
+      mailbox_state: "failed" | "discarded";
+    } & SqlRow>(
+      `SELECT recovery.input_id, recovery.workspace_id, recovery.workstream_id,
+              recovery.release_authority, mailbox.state AS mailbox_state
+         FROM pending_attachment_reservation_recovery recovery
+         JOIN pending_loop_input_mailbox mailbox ON mailbox.input_id = recovery.input_id
+        WHERE mailbox.state IN ('failed', 'discarded')
+        ORDER BY mailbox.input_sequence, recovery.input_id LIMIT 1`,
+    ));
+  }
+
+  private async recoverTerminalAttachmentReservation(): Promise<boolean> {
+    const recovery = this.terminalAttachmentReservation();
+    if (!recovery) return false;
+    if (recovery.release_authority === "preparation") {
+      const workspace = await this.workspaceDirectory(recovery.workspace_id);
+      await workspace.releaseDraftAttachments({
+        workspaceId: asWorkspaceId(recovery.workspace_id),
+        workstreamId: asWorkstreamId(recovery.workstream_id),
+        inputId: recovery.input_id,
+      });
+    }
+    // Projection-owned holds are released by WorkspaceDO with its canonical
+    // resource link. Successful delivery deletes this recovery row and its
+    // mailbox in the same local transaction that queues that common effect.
+    this.storage.sql.exec(
+      `DELETE FROM pending_attachment_reservation_recovery WHERE input_id = ?`,
+      recovery.input_id,
+    );
+    return true;
+  }
+
+  nextRecoverableInputPreparationAt(now: number = Date.now()): number | null {
+    if (this.terminalAttachmentReservation()) return now;
+    const preparation = this.loops.oldestPreparingInput();
+    if (!preparation || this.activeInputPreparations.has(preparation.input_id)) return null;
+    return now;
+  }
+
+  async resumeOldestInputPreparation(): Promise<"none" | "active" | "settled"> {
+    if (await this.recoverTerminalAttachmentReservation()) return "settled";
+    const preparation = this.loops.oldestPreparingInput();
+    if (!preparation) return "none";
+    if (this.activeInputPreparations.has(preparation.input_id)) return "active";
+    let envelope: Record<string, unknown>;
+    try {
+      envelope = JSON.parse(preparation.envelope_json ?? "null") as Record<string, unknown>;
+      if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+        throw new Error("pending_input_preparation_envelope_invalid");
+      }
+    } catch (error) {
+      this.loops.failInputPreparation({
+        inputId: preparation.input_id,
+        terminalCode: this.preparationFailureCode(error),
+        now: Date.now(),
+      });
+      return "settled";
+    }
+    try {
+      if (preparation.preparation_kind === "human_message") {
+        await this.createMessage(envelope.auth as AuthContext, envelope.input as WorkstreamObjectCreateMessageInput);
+      } else if (preparation.preparation_kind === "external_message") {
+        await this.admitExternalMessage(envelope.input as AdmitExternalMessageInput);
+      } else if (preparation.preparation_kind === "external_elicitation") {
+        await this.answerExternalElicitation(envelope.input as AnswerExternalElicitationInput);
+      } else {
+        await this.answerElicitation(
+          envelope.auth as AuthContext,
+          String(envelope.elicitationId),
+          envelope.input as WorkstreamObjectAnswerElicitationInput,
+        );
+      }
+    } catch {
+      // Admission methods terminalize preparation failures before returning.
+    }
+    return "settled";
+  }
 
   private workspaceDatabase(workspaceId: string): D1Database {
     return withWorkspaceRuntimeDatabase(this.env, workspaceId).DB;
@@ -466,7 +812,7 @@ export class WorkstreamObjectProductService {
     rawInput: InitializeWorkstreamObjectRequest,
   ): Promise<{
     workstream: Workstream;
-    messageId: string;
+    turnId: string;
     harnessRunId: string;
     workflowInput: WorkstreamWorkflowInput;
   }> {
@@ -492,7 +838,9 @@ export class WorkstreamObjectProductService {
     const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
     const attachments = input.attachmentIds.length === 0 ? [] : (await workspaceDatabase.prepare(
       `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
-              canonical_url, metadata_json, created_at, updated_at
+              content_sha256, canonical_url, metadata_json, model_content_ref, model_mime_type,
+              model_content_sha256, model_metadata_json, model_content_status,
+              model_content_extractor_version, model_content_error_code, created_at, updated_at
          FROM resources WHERE workspace_id = ? AND uploaded_by_user_id = ?
           AND attachment_status = 'draft'
           AND id IN (${input.attachmentIds.map(() => "?").join(",")})`,
@@ -503,7 +851,9 @@ export class WorkstreamObjectProductService {
     }
     const originResources = input.originResourceIds.length === 0 ? [] : (await workspaceDatabase.prepare(
       `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
-              canonical_url, metadata_json, created_at, updated_at
+              content_sha256, canonical_url, metadata_json, created_at, updated_at,
+              model_content_ref, model_mime_type, model_content_sha256, model_metadata_json,
+              model_content_status, model_content_extractor_version, model_content_error_code
          FROM resources WHERE workspace_id = ?
           AND id IN (${input.originResourceIds.map(() => "?").join(",")})`,
     ).bind(input.workspaceId, ...input.originResourceIds).all<Record<string, unknown>>()).results ?? [];
@@ -521,31 +871,47 @@ export class WorkstreamObjectProductService {
     const existingRoot = first(this.storage.sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
     if (existingRoot?.authority_mode === "authoritative") {
       const part = first(this.storage.sql.exec<{ id: string }>(
-        `SELECT id FROM workstream_message_details WHERE client_message_id = ?`, input.clientMessageId,
+        `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`, input.clientMessageId,
       ));
-      const run = first(this.storage.sql.exec<{ run_id: string }>(
-        `SELECT run_id FROM runs WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
+      const run = first(this.storage.sql.exec<{
+        run_id: string;
+        execution_context_json: string | null;
+      }>(
+        `SELECT run_id, execution_context_json FROM runs
+          WHERE trigger_part_id = ? ORDER BY created_at LIMIT 1`, part?.id ?? "",
       ));
-      if (!part || !run) throw new ApiError(409, "workstream_create_replay_incomplete", "The work stream is incomplete");
+      if (!part || !run || run.execution_context_json === null) {
+        throw new ApiError(409, "workstream_create_replay_incomplete", "The work stream is incomplete");
+      }
+      const workflowInput = WorkstreamWorkflowInputSchema.parse(
+        JSON.parse(run.execution_context_json),
+      );
+      const loopId = substreamLoopId(asWorkstreamId(existingRoot.workstream_key));
+      const bindHead = first(this.storage.sql.exec<{ state_revision: number }>(
+        `SELECT state_revision FROM bind_loop_heads WHERE loop_id = ?`, loopId,
+      ));
+      this.loops.ensureLoop({
+        loopId,
+        bindStateRevision: Number(bindHead?.state_revision ?? 0),
+        now: existingRoot.created_at,
+      });
       // The authoritative root and first run commit before projection effects
       // are built. A retry repairs an effect-construction failure; unchanged
       // snapshots are suppressed by projection_keys.
       await this.enqueueDirectorySnapshot();
       return {
         workstream: await this.summary(existingRoot, auth.userId),
-        messageId: part.id,
+        turnId: part.id,
         harnessRunId: run.run_id,
-        workflowInput: this.workflowInput(input, asHarnessRunId(run.run_id), part.id),
+        workflowInput,
       };
     }
     // Resolve from the authoritative workspace directory before accepting any
     // visible range. The client sends identity and offsets, not Markdown; the
     // object owns the durable spelling and target.
-    const needsNames = input.mentions.length > 0
-      || (input.notifyParticipants && candidateMemberIds.some((userId) => userId !== input.creatorUserId));
-    const names = needsNames
-      ? await this.messageUsers(candidateMemberIds)
-      : new Map<string, UserRow>();
+    // The opening human turn carries an immutable author snapshot. Participant
+    // membership is mutable and cannot be the historical display authority.
+    const names = await this.messageUsers(candidateMemberIds);
     const mentionPeople = new Map<string, MentionPerson>([...names].map(([userId, user]) => [userId, {
       id: user.id,
       name: user.name,
@@ -569,7 +935,7 @@ export class WorkstreamObjectProductService {
           userId !== input.creatorUserId && !mentionedPersonIds.includes(userId)
         ))
       : [];
-    const actorName = names.get(input.creatorUserId)?.name ?? "A workspace member";
+    const actorName = names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME;
     const now = Date.now();
     const messageId = uuidV7(now);
     const runId = asHarnessRunId(uuidV7(now));
@@ -583,6 +949,10 @@ export class WorkstreamObjectProductService {
       turnId: messageId,
       actor: "human",
       authorUserId: input.creatorUserId,
+      authorSnapshot: {
+        displayName: names.get(input.creatorUserId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
+        avatarUrl: names.get(input.creatorUserId)?.avatar_url ?? null,
+      },
       clientMessageId: input.clientMessageId,
       messageType: "text",
       text: prepared.text,
@@ -595,6 +965,7 @@ export class WorkstreamObjectProductService {
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: 1,
     });
+    const openingWorkflowInput = this.workflowInput(input, runId, messageId);
     this.storage.transactionSync(() => {
       this.storage.sql.exec(
         `UPDATE workstream SET authority_mode = 'authoritative', authority_generation = ?,
@@ -644,8 +1015,8 @@ export class WorkstreamObjectProductService {
       this.transcript.appendPreparedParticipantMessage(transcriptMessage);
       prepared.mentions.forEach((mention, index) => {
         this.storage.sql.exec(
-          `INSERT INTO workstream_message_mentions
-             (message_id, mention_index, mention_kind, target_user_id, connector_type,
+          `INSERT INTO participant_transcript_mentions
+             (turn_id, mention_index, mention_kind, target_user_id, connector_type,
               start_offset, end_offset, attention_ordinal)
            VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
           messageId, index, mention.type, mention.userId, mention.connectorType,
@@ -682,7 +1053,7 @@ export class WorkstreamObjectProductService {
           metadata: parseJson(String(resource.metadata_json ?? "{}"), {}),
         };
         this.storage.sql.exec(
-          `INSERT INTO workstream_message_attachments(message_id, resource_id, position, attachment_json)
+          `INSERT INTO participant_transcript_attachments(turn_id, resource_id, position, attachment_json)
            VALUES (?, ?, ?, ?)`,
           messageId, resourceId, position, JSON.stringify({ attachedAt: iso(now) }),
         );
@@ -723,11 +1094,20 @@ export class WorkstreamObjectProductService {
             active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
             tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
             terminal_reason, origin, execution_principal_json, chain_depth, model,
-            trigger_part_id, created_at, updated_at)
+            trigger_part_id, execution_context_json, created_at, updated_at)
          VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', 1, 0, ?,
-                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, 0, ?, ?, ?, ?)`,
-        runId, now, input.reason, JSON.stringify(input.executionPrincipal), model, messageId, now, now,
+                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, 0, ?, ?, ?, ?, ?)`,
+        runId, now, input.reason, JSON.stringify(input.executionPrincipal), model,
+        messageId, JSON.stringify(openingWorkflowInput), now, now,
       );
+      // Product identity, never an activation receipt, owns the singleton.
+      // Every later message, retry, and recovery therefore derives this exact
+      // same loop instead of minting a new logical conversation.
+      this.loops.ensureLoop({
+        loopId: substreamLoopId(input.workstreamId),
+        bindStateRevision: 0,
+        now,
+      });
     });
     await this.objectStore.commitWithRegionalEffects(
       () => undefined,
@@ -804,9 +1184,9 @@ export class WorkstreamObjectProductService {
     );
     return {
       workstream: await this.summary(this.root(), auth.userId),
-      messageId,
+      turnId: messageId,
       harnessRunId: runId,
-      workflowInput: this.workflowInput(input, runId, messageId),
+      workflowInput: openingWorkflowInput,
     };
   }
 
@@ -819,6 +1199,7 @@ export class WorkstreamObjectProductService {
       region: this.env.AVALON_REGION,
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
+      loopId: substreamLoopId(input.workstreamId),
       harnessRunId: runId,
       triggerMessageId: messageId,
       automationSubscriptionId: input.automationSubscriptionId,
@@ -839,6 +1220,17 @@ export class WorkstreamObjectProductService {
       `SELECT 1 AS one FROM participants WHERE user_id = ? AND status = 'active' LIMIT 1`,
       userId,
     )) !== null;
+  }
+
+  /** Freeze the participant epoch observed when a pending human input is admitted. */
+  private pendingParticipantEpochs(userIds: readonly string[]): Record<string, number | null> {
+    return Object.fromEntries([...new Set(userIds)].map((userId) => {
+      const row = first(this.storage.sql.exec<{ participant_epoch: number }>(
+        `SELECT participant_epoch FROM participants WHERE user_id = ?`,
+        userId,
+      ));
+      return [userId, row?.participant_epoch ?? null];
+    }));
   }
 
   /**
@@ -916,19 +1308,27 @@ export class WorkstreamObjectProductService {
     ).toArray().map((row) => row.user_id);
   }
 
-  async authorize(auth: AuthContext, includeArchived = false): Promise<RootRow> {
+  private locallyAuthorizedRoot(auth: AuthContext, includeArchived = false): RootRow {
     const root = this.root();
     if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "") {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
+    if (!participantVisible(root, this.isParticipant(auth.userId))) {
+      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    }
+    if (!includeArchived && root.archived_at !== null) {
+      throw new ApiError(404, "workstream_not_found", "Work stream not found");
+    }
+    return root;
+  }
+
+  async authorize(auth: AuthContext, includeArchived = false): Promise<RootRow> {
+    const root = this.locallyAuthorizedRoot(auth, includeArchived);
     const membership = await this.env.DB.prepare(
       `SELECT 1 AS one FROM workspace_members
         WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
     ).bind(auth.workspaceId, auth.userId).first<{ one: number }>();
-    if (!membership || !participantVisible(root, this.isParticipant(auth.userId))) {
-      throw new ApiError(404, "workstream_not_found", "Work stream not found");
-    }
-    if (!includeArchived && root.archived_at !== null) {
+    if (!membership) {
       throw new ApiError(404, "workstream_not_found", "Work stream not found");
     }
     return root;
@@ -1254,12 +1654,11 @@ export class WorkstreamObjectProductService {
           );
         } else if (before.archived_at === null) {
           sql.exec(
-            `UPDATE runs SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
-                    cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user'),
-                    revision = revision + 1, updated_at = ?
-              WHERE substream_id = '0' AND origin != 'block_dashboard_block'
-                AND status IN ('admitted', 'running', 'waiting', 'steering')
-                AND terminalized_at IS NULL`,
+            `UPDATE substream_loops
+                SET stop_requested_at = ?, stop_after_step_ordinal = step_ordinal,
+                    stop_reason = 'workstream_archived', revision = revision + 1,
+                    updated_at = ?
+              WHERE id = 1 AND status = 'executing' AND stop_requested_at IS NULL`,
             now,
             now,
           );
@@ -1301,44 +1700,11 @@ export class WorkstreamObjectProductService {
     return committed.result;
   }
 
-  /**
-   * Everything needed to paint this work stream, read in one pass.
-   *
-   * The single assembler behind both the `snapshot` socket frame and
-   * `GET /workstreams/:id`, so the two cannot answer differently. Opening ends
-   * one of two ways — the reader resumes where they stopped, or goes to the
-   * latest message — and the room cannot know which, so it sends both windows
-   * and lets the client pick.
-   */
+  /** Detail for the canonical transcript snapshot assembled by SubstreamAgent. */
   async boot(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<{
     workstream: WorkstreamDetail;
-    messageFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>>;
-    resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
   }> {
-    const workstream = await this.get(auth, viewers);
-    return { workstream, ...await this.bootFeeds(auth, workstream.firstUnreadSequenceNumber, true) };
-  }
-
-  /**
-   * The two transcript windows alone, for a caller that already holds the
-   * detail. The snapshot path does: it loads a detail carrying presence, which
-   * `boot` has no way to know about, so re-reading it there would be a second
-   * pass for a worse answer.
-   */
-  async bootFeeds(auth: AuthContext, resumeAt: number | null, authorizationAlreadyChecked = false): Promise<{
-    messageFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>>;
-    resumeFeed: Awaited<ReturnType<WorkstreamObjectProductService["messages"]>> | null;
-  }> {
-    if (!authorizationAlreadyChecked) await this.authorize(auth);
-    const messageFeed = await this.messagesAfterAdmission(auth, BOOT_LATEST_MESSAGES);
-    const oldestOnPage = messageFeed.items[0]?.sequenceNumber;
-    // Skipped when the reader's position is already on the newest page: a
-    // second copy of the same messages is not worth the frame.
-    const resumeFeed = resumeAt !== null
-      && (oldestOnPage === undefined || resumeAt < oldestOnPage)
-      ? await this.messagesAfterAdmission(auth, BOOT_RESUME_MESSAGES, undefined, undefined, resumeAt)
-      : null;
-    return { messageFeed, resumeFeed };
+    return { workstream: await this.get(auth, viewers) };
   }
 
   async get(auth: AuthContext, viewers: WorkstreamDetail["viewers"] = []): Promise<WorkstreamDetail> {
@@ -1367,6 +1733,7 @@ export class WorkstreamObjectProductService {
     ));
     return WorkstreamDetailSchema.parse({
       ...workstream,
+      stopRequested: this.loops.loop()?.stop_requested_at != null,
       participants,
       viewers,
       resources,
@@ -1476,7 +1843,7 @@ export class WorkstreamObjectProductService {
       `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
               message_type, content, structured_content_json, client_message_id,
               edited_at, created_at
-         FROM workstream_message_details
+         FROM canonical_conversation_turn_details
         WHERE substream_id = '0' AND visibility IN ('people', 'both')
           ${cursor === undefined ? "" : `AND sequence_number ${comparator} ?`}
         ORDER BY sequence_number ${order} LIMIT ?`,
@@ -1490,15 +1857,15 @@ export class WorkstreamObjectProductService {
     if (ordered.length === 0) return [];
     const partIds = ordered.map((row) => row.id);
     const mentionRows = chunks(partIds).flatMap((ids) => this.storage.sql.exec<PartMentionRow>(
-      `SELECT message_id AS part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
-         FROM workstream_message_mentions WHERE message_id IN (${ids.map(() => "?").join(",")})
-        ORDER BY message_id, mention_index`,
+      `SELECT turn_id AS part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
+         FROM participant_transcript_mentions WHERE turn_id IN (${ids.map(() => "?").join(",")})
+        ORDER BY turn_id, mention_index`,
       ...ids,
     ).toArray());
     const attachmentRows = chunks(partIds).flatMap((ids) => this.storage.sql.exec<PartAttachmentRow>(
-      `SELECT message_id AS part_id, resource_id, attachment_json
-         FROM workstream_message_attachments WHERE message_id IN (${ids.map(() => "?").join(",")})
-        ORDER BY message_id, position`,
+      `SELECT turn_id AS part_id, resource_id, attachment_json
+         FROM participant_transcript_attachments WHERE turn_id IN (${ids.map(() => "?").join(",")})
+        ORDER BY turn_id, position`,
       ...ids,
     ).toArray());
     const authorIds = [...new Set(ordered.flatMap((row) => row.author_user_id ? [row.author_user_id] : []))];
@@ -2440,12 +2807,15 @@ export class WorkstreamObjectProductService {
   private backgroundTasks(): WorkstreamDetail["backgroundTasks"] {
     const harness = this.storage.sql.exec<{
       run_id: string; origin: string; status: string; usage_json: string | null;
-      started_at: number; completed_at: number | null; created_at: number; final_part_id: string | null;
+      started_at: number; completed_at: number | null; created_at: number; final_turn_id: string | null;
     }>(
-      `SELECT run_id, origin, status, usage_json, started_at, completed_at, created_at, final_part_id
+      `SELECT run_id, origin, status, usage_json, started_at, completed_at, created_at, final_turn_id
          FROM runs WHERE origin != 'block_dashboard_block'
         ORDER BY started_at DESC LIMIT 250`,
     ).toArray().map((row) => {
+      if (row.status === "waiting" || row.status === "steering") {
+        throw new Error("retired_run_status");
+      }
       const usage = parseJson<Record<string, unknown>>(row.usage_json, {});
       const input = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
       const output = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
@@ -2455,7 +2825,7 @@ export class WorkstreamObjectProductService {
         title: row.origin.replaceAll("_", " "),
         taskType: "agent" as const,
         status: row.status === "cancelled" ? "failed" as const
-          : row.status === "admitted" || row.status === "waiting" || row.status === "steering"
+          : row.status === "admitted"
             ? "running" as const
             : row.status as "running" | "needs_input" | "completed" | "failed",
         startedAt: iso(row.started_at)!,
@@ -2464,7 +2834,7 @@ export class WorkstreamObjectProductService {
         toolUses: Number(first(this.storage.sql.exec<{ count: number }>(
           `SELECT COUNT(*) AS count FROM tool_effects WHERE run_id = ?`, row.run_id,
         ))?.count ?? 0),
-        transcriptMessageId: row.final_part_id,
+        transcriptTurnId: row.final_turn_id,
       };
     });
     const tools = this.storage.sql.exec<{
@@ -2484,7 +2854,7 @@ export class WorkstreamObjectProductService {
       completedAt: iso(row.settled_at),
       tokenCount: null,
       toolUses: null,
-      transcriptMessageId: null,
+      transcriptTurnId: null,
     }));
     return [...harness, ...tools].sort((left, right) => right.startedAt.localeCompare(left.startedAt));
   }
@@ -2531,12 +2901,35 @@ export class WorkstreamObjectProductService {
       relationship_type: ResourceRelationshipType;
     }>(
       `SELECT resource_id, watch_enabled, relationship_type
-         FROM workstream_resource_links
-        ORDER BY attached_at DESC, resource_id LIMIT 10000`,
+         FROM workstream_resource_links link
+        ORDER BY EXISTS (
+          SELECT 1
+            FROM pending_attachment_reservation_recovery recovery
+            JOIN participant_transcript_attachments attachment
+              ON attachment.turn_id = recovery.input_id
+             AND attachment.resource_id = recovery.resource_id
+           WHERE recovery.resource_id = link.resource_id
+        ) DESC, attached_at DESC, resource_id
+        LIMIT ${WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT}`,
     ).toArray().map((row) => ({
       resourceId: row.resource_id,
       watchEnabled: row.watch_enabled === 1,
       relationshipType: row.relationship_type,
+    }));
+    const attachmentReservationReleases = this.storage.sql.exec<{
+      input_id: string;
+      resource_id: string;
+    }>(
+      `SELECT recovery.input_id, recovery.resource_id
+         FROM pending_attachment_reservation_recovery recovery
+         JOIN participant_transcript_attachments attachment
+           ON attachment.turn_id = recovery.input_id
+          AND attachment.resource_id = recovery.resource_id
+        ORDER BY recovery.created_at, recovery.input_id, recovery.resource_id
+        LIMIT ${WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT}`,
+    ).toArray().map((row) => ({
+      inputId: row.input_id,
+      resourceId: row.resource_id,
     }));
     return {
       kind: "directory_common" as const,
@@ -2564,6 +2957,7 @@ export class WorkstreamObjectProductService {
         ? iso(Math.min(...terminalCandidates))
         : null,
       resourceLinks,
+      ...(attachmentReservationReleases.length > 0 ? { attachmentReservationReleases } : {}),
       createdAt: iso(root.created_at)!,
       updatedAt: iso(root.updated_at)!,
     };
@@ -2598,17 +2992,17 @@ export class WorkstreamObjectProductService {
     }).then((routing) => routing.model);
   }
 
-  private async recentAddressingMessages(beforeSequence: number): Promise<AddressingContextMessage[]> {
+  private async recentAddressingMessages(beforeTranscriptSequence: number): Promise<AddressingContextMessage[]> {
     const rows = this.storage.sql.exec<{
       author_type: "member" | "agent";
       author_user_id: string | null;
       content: string | null;
     }>(
-      `SELECT author_type, author_user_id, content FROM workstream_message_details
+      `SELECT author_type, author_user_id, content FROM canonical_conversation_turn_details
         WHERE substream_id = '0' AND sequence_number < ? AND message_type = 'text'
           AND author_type IN ('member', 'agent')
         ORDER BY sequence_number DESC LIMIT 10`,
-      beforeSequence,
+      beforeTranscriptSequence,
     ).toArray().reverse();
     const memberIds = [...new Set(rows.flatMap((row) =>
       row.author_type === "member" && row.author_user_id ? [row.author_user_id] : []))];
@@ -2628,33 +3022,560 @@ export class WorkstreamObjectProductService {
     }));
   }
 
-  async createMessage(
-    auth: AuthContext,
-    rawInput: WorkstreamObjectCreateMessageInput,
-  ): Promise<{
-    message: Message;
-    agentInvoked: boolean;
-    harnessRunId: string | null;
-    workflowInput: WorkstreamWorkflowInput | null;
-    inserted: boolean;
-  }> {
-    const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
-    const root = await this.authorize(auth);
-    const existing = first(this.storage.sql.exec<PartRow>(
-      `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
-              message_type, content, structured_content_json, client_message_id,
-              edited_at, created_at FROM workstream_message_details WHERE client_message_id = ?`,
+  /**
+   * Join transcript promotion's SQLite transaction so no acknowledged input
+   * can commit without its regional projections and notifications in outbox.
+   */
+  enqueueRegionalEffectsInTransaction(
+    deliveryEffects: readonly PendingInputDeliveryEffectInput[],
+  ): number {
+    if (deliveryEffects.length === 0) return 0;
+    const root = this.root();
+    const affectedUserIds = [...new Set(deliveryEffects.flatMap((delivery) =>
+      delivery.affectedUserIds))];
+    const commands: RegionalEffectCommand[] = [
+      { partitionKey: "common", effect: this.commonEffect(root) },
+      ...affectedUserIds.map((userId) => ({
+        partitionKey: `user:${userId}`,
+        effect: this.userEffect(root, userId),
+      })),
+    ];
+    const occurredAt = new Date(root.updated_at).toISOString();
+    const title = truncateUtf16Safe(root.title, 500);
+
+    for (const delivery of deliveryEffects) {
+      const messageType = first(this.storage.sql.exec<{ message_type: string }>(
+        `SELECT message_type FROM participant_transcript_turns WHERE turn_id = ?`,
+        delivery.turnId,
+      ))?.message_type;
+      // Elicitation answers historically advance the transcript/directory but
+      // do not create a blank digest activity or a notification. Their typed
+      // structured payload remains in the canonical turn itself.
+      if (messageType === "elicitation") continue;
+      const authorLabel = truncateUtf16Safe(
+        delivery.authorNameSnapshot
+          ?? (delivery.actor === "external" ? "External participant" : "Rally"),
+        300,
+      );
+      const actorType = delivery.actor === "human"
+        ? "user" as const
+        : delivery.actor === "external" ? "external" as const : "system" as const;
+      commands.push({
+        partitionKey: `activity:${delivery.turnId}`,
+        sourceVersion: 1,
+        dedupeKey: `message:${delivery.turnId}`,
+        effect: {
+          kind: "activity_event",
+          eventId: uuidV7(root.updated_at),
+          eventType: "workstream_message_created",
+          subjectSequenceNumber: delivery.transcriptSequence,
+          actorType,
+          actorUserId: delivery.authorUserId,
+          actorLabel: authorLabel,
+          title,
+          body: truncateUtf16Safe(delivery.text, 8_000),
+          canonicalUrl: null,
+          digestible: true,
+          occurredAt,
+          sourceKind: "workstream_message",
+          sourceId: delivery.turnId,
+          dedupeKey: `message:${delivery.turnId}`,
+          metadata: {},
+          targets: delivery.affectedUserIds.map((userId) => ({
+            userId,
+            relation: "participant" as const,
+          })),
+        },
+      });
+      if (delivery.authorUserId !== null) {
+        for (const userId of delivery.mentionedUserIds) {
+          if (userId === delivery.authorUserId) continue;
+          commands.push({
+            partitionKey: `notification:${delivery.turnId}:${userId}`,
+            sourceVersion: 1,
+            dedupeKey: `mention:${delivery.turnId}:${userId}`,
+            dependsOnProjectionKey: `user:${userId}`,
+            effect: {
+              kind: "mention_notification",
+              intentId: `mention:${delivery.turnId}:${userId}`,
+              messageId: delivery.turnId,
+              recipientUserId: userId,
+              authorUserId: delivery.authorUserId,
+              authorNameSnapshot: authorLabel,
+              workstreamTitleSnapshot: title,
+              messageText: truncateUtf16Safe(delivery.text, 8_000),
+              occurredAt,
+            },
+          });
+        }
+        const mentioned = new Set(delivery.mentionedUserIds);
+        for (const participant of delivery.activatedParticipants) {
+          // A confirmed mention already has the more specific notification;
+          // never tell one person both that they were added and mentioned by
+          // the same delivered message.
+          if (mentioned.has(participant.userId)) continue;
+          commands.push(...this.participantAddedEffects({
+            root,
+            userId: participant.userId,
+            actorUserId: delivery.authorUserId,
+            actorName: authorLabel,
+            recipientName: "a workspace member",
+            epoch: participant.participantEpoch,
+            now: root.updated_at,
+          }));
+        }
+      }
+    }
+    return this.objectStore.enqueueEffectsInCurrentTransaction(commands);
+  }
+
+  private pendingMessageResult(
+    input: PendingLoopInputRow,
+    inserted: boolean,
+  ): WorkstreamObjectCreateMessageResult {
+    const loop = this.loops.loop();
+    if (!loop || loop.loop_id !== input.loop_id) throw new Error("substream_loop_not_found");
+    return {
+      turn: {
+        turnId: input.prepared_turn_id,
+        clientMessageId: input.client_message_id ?? "",
+        createdAt: new Date(input.created_at).toISOString(),
+      },
+      deliveryState: "pending",
+      activationRequest: loop.status === "idle" ? {
+        kind: "activate_substream_loop",
+        loopId: loop.loop_id,
+        cause: "pending_input",
+        inputId: input.input_id,
+      } : null,
+      inserted,
+    };
+  }
+
+  private canonicalMessageReplay(
+    existing: { id: string; created_at: number },
+    clientMessageId: string,
+  ): WorkstreamObjectCreateMessageResult {
+    return {
+      turn: {
+        turnId: existing.id,
+        clientMessageId,
+        createdAt: new Date(existing.created_at).toISOString(),
+      },
+      deliveryState: "canonical",
+      activationRequest: null,
+      inserted: false,
+    };
+  }
+
+  private ensureExternalMessageLoop(root: RootRow, now: number) {
+    const loopId = substreamLoopId(asWorkstreamId(root.workstream_key));
+    const projection = this.transcript.readBindProjection(loopId);
+    return this.loops.ensureLoop({
+      loopId,
+      bindStateRevision: projection?.stateRevision ?? 0,
+      now,
+    });
+  }
+
+  private assertExternalMessageIdentity(input: {
+    workspaceId: WorkspaceId;
+    workstreamId: WorkstreamId;
+  }): RootRow {
+    const root = this.root();
+    if (root.parent_workspace_key !== input.workspaceId
+      || root.workstream_key !== input.workstreamId) {
+      throw new Error("external_message_identity_mismatch");
+    }
+    return root;
+  }
+
+  private externalMessageReplay(
+    messageId: string,
+    clientMessageId: string,
+    createdAt: number,
+  ): WorkstreamObjectExternalMessageResult {
+    return {
+      turn: { turnId: messageId, clientMessageId, createdAt: new Date(createdAt).toISOString() },
+      deliveryState: "canonical",
+      activationRequest: null,
+      inserted: false,
+    };
+  }
+
+  private externalPendingMessageResult(
+    input: PendingLoopInputRow,
+    inserted: boolean,
+  ): WorkstreamObjectExternalMessageResult {
+    const loop = this.loops.loop();
+    if (!loop || loop.loop_id !== input.loop_id) throw new Error("substream_loop_not_found");
+    return {
+      turn: {
+        turnId: input.prepared_turn_id,
+        clientMessageId: input.client_message_id ?? "",
+        createdAt: new Date(input.created_at).toISOString(),
+      },
+      deliveryState: "pending",
+      activationRequest: loop.status === "idle" ? {
+        kind: "activate_substream_loop",
+        loopId: loop.loop_id,
+        cause: "pending_input",
+        inputId: input.input_id,
+      } : null,
+      inserted,
+    };
+  }
+
+  private async prepareExternalMessage(
+    input: AdmitExternalMessageInput | AnswerExternalElicitationInput,
+  ) {
+    const participant = await this.transcript.prepareParticipantMessage({
+      turnId: input.messageId,
+      actor: "external",
+      authorUserId: null,
+      authorSnapshot: null,
+      clientMessageId: input.clientMessageId,
+      messageType: input.messageType,
+      text: input.text,
+      structuredContentJson: input.structuredContentJson,
+      externalActorJson: JSON.stringify(input.actor),
+      producedByRunId: null,
+      messageSequenceNumber: this.root().next_sequence_number,
+      createdAtUtc: new Date(input.now).toISOString(),
+      attentionOrdinal: null,
+    });
+    const bindMessage = await projectParticipantModelMessage(this.env, {
+      author: { type: "external", actor: input.actor },
+      messageType: input.messageType,
+      text: input.text,
+      structuredContent: input.structuredContentJson === null
+        ? null : JSON.parse(input.structuredContentJson),
+      mentions: [],
+      attachments: [],
+      includeAttachmentContents: true,
+    });
+    if (!bindMessage) throw new Error("pending_input_bind_payload_invalid");
+    return { participant, bindPayloadJson: canonicalModelMessageJson(bindMessage) };
+  }
+
+  private completePreparedExternalMessage(
+    input: AdmitExternalMessageInput | AnswerExternalElicitationInput,
+    prepared: { participant: PreparedParticipantMessage; bindPayloadJson: string },
+    expectedLoopId: string,
+  ) {
+    const currentLoop = this.loops.loop();
+    if (!currentLoop || currentLoop.loop_id !== expectedLoopId) {
+      throw new Error("substream_loop_identity_mismatch");
+    }
+    return this.loops.completeInputPreparation({
+      inputId: input.messageId,
+      preparedTurnId: input.messageId,
+      mode: input.runMode,
+      actor: "external",
+      authorUserId: null,
+      authorNameSnapshot: null,
+      authorAvatarUrlSnapshot: null,
+      clientMessageId: input.clientMessageId,
+      externalActorJson: JSON.stringify(input.actor),
+      messageType: input.messageType,
+      preparedPayloadId: prepared.participant.fact.payloadId,
+      preparedFactId: prepared.participant.fact.factId,
+      preparedPayloadAudience: prepared.participant.fact.audience,
+      preparedPayloadMediaType: "application/json",
+      preparedPayloadJson: prepared.participant.fact.canonical,
+      preparedPayloadSha256: prepared.participant.fact.hash,
+      preparedPayloadByteLength: new TextEncoder().encode(prepared.participant.fact.canonical).byteLength,
+      bindPayloadJson: prepared.bindPayloadJson,
+      provenanceJson: JSON.stringify({
+        factKind: prepared.participant.fact.factKind,
+        originKind: prepared.participant.fact.origin.originKind,
+        sourceKind: prepared.participant.fact.origin.sourceKind,
+        sourceId: prepared.participant.fact.origin.sourceId,
+        sourceRevision: prepared.participant.fact.origin.sourceRevision,
+        runId: prepared.participant.fact.runId,
+        toolCallId: prepared.participant.fact.toolCallId,
+      }),
+      authorizationJson: JSON.stringify({
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        executionPrincipal: input.executionPrincipal,
+        confirmedParticipantUserIds: [],
+        reason: input.origin,
+        parentHarnessRunId: input.parentHarnessRunId ?? null,
+        ...(input.messageType === "elicitation" ? { elicitationId: input.elicitationId } : {}),
+        slackOrigin: input.slackOrigin ?? null,
+        slackSearchAuthorization: input.slackSearchAuthorization ?? null,
+      }),
+      attachmentsJson: "[]",
+      mentionsJson: "[]",
+      now: input.now,
+    });
+  }
+
+  /**
+   * Admit an invoked connector message as immutable future loop input. No
+   * participant turn, attention ordinal, regional effect, or run exists until
+   * the loop promotes it at an eligible delivery boundary.
+   */
+  async admitExternalMessage(
+    rawInput: AdmitExternalMessageInput,
+  ): Promise<WorkstreamObjectExternalMessageResult> {
+    const input = AdmitExternalMessageInputSchema.parse(rawInput);
+    const root = this.assertExternalMessageIdentity(input);
+    const existing = first(this.storage.sql.exec<{ id: string; created_at: number }>(
+      `SELECT id, created_at FROM canonical_conversation_turn_details
+        WHERE client_message_id = ?`,
       input.clientMessageId,
     ));
     if (existing) {
-      return {
-        message: await this.hydrateMessageRow(auth, existing),
-        agentInvoked: false,
-        harnessRunId: null,
-        workflowInput: null,
-        inserted: false,
-      };
+      return this.externalMessageReplay(existing.id, input.clientMessageId, existing.created_at);
     }
+    const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
+    if (existingPending) return this.externalPendingMessageResult(existingPending, false);
+    const preparation = this.reserveInputPreparation({
+      root,
+      inputId: input.messageId,
+      clientMessageId: input.clientMessageId,
+      preparationKind: "external_message",
+      envelope: { input },
+      now: input.now,
+    });
+    return this.runInputPreparation(preparation, async () => {
+      const prepared = await this.prepareExternalMessage({
+        ...input,
+        messageId: preparation.input_id,
+        now: preparation.created_at,
+      });
+      const admitted = this.storage.transactionSync(() => {
+        const concurrentCanonical = first(this.storage.sql.exec<{ id: string; created_at: number }>(
+          `SELECT id, created_at FROM canonical_conversation_turn_details
+            WHERE client_message_id = ?`,
+          input.clientMessageId,
+        ));
+        if (concurrentCanonical) {
+          this.loops.discardInputPreparation({ inputId: preparation.input_id, now: input.now });
+          return { kind: "canonical" as const, existing: concurrentCanonical };
+        }
+        const concurrentPending = this.loops.inputByClientMessageId(input.clientMessageId);
+        if (concurrentPending) {
+          return { kind: "pending" as const, input: concurrentPending, inserted: false };
+        }
+        const completed = this.completePreparedExternalMessage({
+          ...input,
+          messageId: preparation.input_id,
+          now: preparation.created_at,
+        }, prepared, preparation.loop_id);
+        return {
+          kind: "pending" as const,
+          input: completed.input,
+          inserted: completed.outcome === "admitted",
+        };
+      });
+      if (admitted.kind === "canonical") {
+        return this.externalMessageReplay(
+          admitted.existing.id,
+          input.clientMessageId,
+          admitted.existing.created_at,
+        );
+      }
+      return this.externalPendingMessageResult(
+        admitted.input,
+        admitted.inserted,
+      );
+    });
+  }
+
+  /**
+   * Answer and publish one external elicitation response atomically. Only the
+   * answer that clears the final open elicitation is invoked; earlier answers
+   * remain immediate canonical transcript turns.
+   */
+  async answerExternalElicitation(
+    rawInput: AnswerExternalElicitationInput,
+  ): Promise<WorkstreamObjectExternalMessageResult> {
+    const input = AnswerExternalElicitationInputSchema.parse(rawInput);
+    const root = this.assertExternalMessageIdentity(input);
+    const canonicalReplay = first(this.storage.sql.exec<{ id: string; created_at: number }>(
+      `SELECT id, created_at FROM canonical_conversation_turn_details
+        WHERE client_message_id = ?`,
+      input.clientMessageId,
+    ));
+    if (canonicalReplay) {
+      return this.externalMessageReplay(
+        canonicalReplay.id,
+        input.clientMessageId,
+        canonicalReplay.created_at,
+      );
+    }
+    const pendingReplay = this.loops.inputByClientMessageId(input.clientMessageId);
+    if (pendingReplay) return this.externalPendingMessageResult(pendingReplay, false);
+    const preparation = this.reserveInputPreparation({
+      root,
+      inputId: input.messageId,
+      clientMessageId: input.clientMessageId,
+      preparationKind: "external_elicitation",
+      envelope: { input },
+      now: input.now,
+    });
+    return this.runInputPreparation(preparation, async () => {
+      const preparedInput = {
+        ...input,
+        messageId: preparation.input_id,
+        now: preparation.created_at,
+      };
+      const prepared = await this.prepareExternalMessage(preparedInput);
+      const committed = await this.objectStore.commitWithRegionalEffects(
+        () => {
+          const canonical = first(this.storage.sql.exec<{ id: string; created_at: number }>(
+            `SELECT id, created_at FROM canonical_conversation_turn_details
+              WHERE client_message_id = ?`,
+            input.clientMessageId,
+          ));
+          if (canonical) {
+            this.loops.discardInputPreparation({ inputId: preparation.input_id, now: input.now });
+            return { kind: "replayed_canonical" as const, canonical };
+          }
+          const pending = this.loops.inputByClientMessageId(input.clientMessageId);
+          if (pending) return { kind: "replayed_pending" as const, input: pending };
+          const answeringUserId = input.executionPrincipal.type === "user"
+            ? input.executionPrincipal.userId : null;
+          const open = first(this.storage.sql.exec<{ ok: number }>(
+            `SELECT 1 AS ok FROM elicitation_requests
+              WHERE elicitation_id = ? AND status = 'pending'
+                AND (target_user_id IS NULL OR target_user_id = ?)`,
+            input.elicitationId,
+            answeringUserId,
+          ));
+          if (!open) {
+            const stillPending = first(this.storage.sql.exec<{ ok: number }>(
+              `SELECT 1 AS ok FROM elicitation_requests
+                WHERE elicitation_id = ? AND status = 'pending'`,
+              input.elicitationId,
+            ));
+            if (stillPending) {
+              throw new ApiError(403, "elicitation_target_mismatch", "This question is targeted to another participant");
+            }
+            this.loops.discardInputPreparation({ inputId: preparation.input_id, now: input.now });
+            return { kind: "already_answered" as const };
+          }
+          const answered = this.storage.sql.exec<{ elicitation_id: string }>(
+            `UPDATE elicitation_requests
+                SET status = 'answered', answer_json = ?, answered_by_user_id = NULL,
+                    external_actor_json = ?, answered_at = ?
+              WHERE elicitation_id = ? AND status = 'pending'
+                AND (target_user_id IS NULL OR target_user_id = ?)
+            RETURNING elicitation_id`,
+            input.answerJson,
+            JSON.stringify(input.actor),
+            input.now,
+            input.elicitationId,
+            answeringUserId,
+          );
+          if (answered.toArray().length !== 1) {
+            throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
+          }
+          const remaining = Number(first(this.storage.sql.exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM elicitation_requests WHERE status = 'pending'`,
+          ))?.count ?? 0);
+          if (remaining === 0) {
+            return {
+              kind: "pending" as const,
+              input: this.completePreparedExternalMessage(
+                preparedInput,
+                prepared,
+                preparation.loop_id,
+              ).input,
+            };
+          }
+          const current = this.root();
+          prepared.participant.input.messageSequenceNumber = current.next_sequence_number;
+          prepared.participant.input.attentionOrdinal = current.next_attention_ordinal;
+          const sequenceNumber = this.transcript.appendPreparedParticipantMessage(prepared.participant);
+          this.storage.sql.exec(
+            `UPDATE workstream
+                SET next_sequence_number = next_sequence_number + 1,
+                    next_attention_ordinal = next_attention_ordinal + 1,
+                    last_people_activity_at = ?, updated_at = ?
+              WHERE id = 1`,
+            input.now,
+            input.now,
+          );
+          this.loops.discardInputPreparation({ inputId: preparation.input_id, now: input.now });
+          return { kind: "canonical" as const, sequenceNumber };
+        },
+        (_sql, result) => result.kind === "canonical"
+          ? [{ partitionKey: "common", effect: this.commonEffect(this.root()) }]
+          : [],
+      );
+      const result = committed.result;
+      if (result.kind === "replayed_canonical") {
+        return this.externalMessageReplay(
+          result.canonical.id,
+          input.clientMessageId,
+          result.canonical.created_at,
+        );
+      }
+      if (result.kind === "replayed_pending") {
+        return this.externalPendingMessageResult(result.input, false);
+      }
+      if (result.kind === "already_answered") {
+        throw new ApiError(
+          409,
+          "elicitation_already_answered",
+          "This question was answered by someone else",
+        );
+      }
+      if (result.kind === "pending") return this.externalPendingMessageResult(result.input, true);
+      return {
+        turn: {
+          turnId: preparation.input_id,
+          clientMessageId: input.clientMessageId,
+          createdAt: new Date(preparation.created_at).toISOString(),
+        },
+        deliveryState: "canonical",
+        activationRequest: null,
+        inserted: true,
+      };
+    });
+  }
+
+  async createMessage(
+    auth: AuthContext,
+    rawInput: WorkstreamObjectCreateMessageInput,
+  ): Promise<WorkstreamObjectCreateMessageResult> {
+    const input = WorkstreamObjectCreateMessageInputSchema.parse(rawInput);
+    const localRoot = this.locallyAuthorizedRoot(auth);
+    const existing = first(this.storage.sql.exec<{
+      id: string; created_at: number;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT id, created_at FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
+      input.clientMessageId,
+    ));
+    if (existing) {
+      await this.authorize(auth);
+      return this.canonicalMessageReplay(existing, input.clientMessageId);
+    }
+    const existingPending = this.loops.inputByClientMessageId(input.clientMessageId);
+    if (existingPending) {
+      const root = await this.authorize(auth);
+      const loop = this.loops.loop();
+      if (!loop || loop.loop_id !== existingPending.loop_id
+        || loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+        throw new Error("substream_loop_identity_mismatch");
+      }
+      return this.pendingMessageResult(existingPending, false);
+    }
+    const reservationNow = Date.now();
+    const preparation = this.reserveInputPreparation({
+      root: localRoot,
+      inputId: uuidV7(reservationNow),
+      clientMessageId: input.clientMessageId,
+      preparationKind: "human_message",
+      envelope: { auth, input },
+      now: reservationNow,
+    });
+    return this.runInputPreparation(preparation, async () => {
+    const root = await this.authorize(auth);
 
     const requestedPersonIds = [...new Set(input.mentions.flatMap((mention) =>
       mention.type === "person" && mention.userId ? [mention.userId] : []))];
@@ -2699,18 +3620,14 @@ export class WorkstreamObjectProductService {
         people: unconfirmed.map((userId) => ({ userId, name: people.get(userId)?.name ?? "Workspace member" })),
       });
     }
-    const attachmentRows = input.attachmentIds.length === 0 ? [] : (await this.workspaceDatabase(
-      auth.workspaceId,
-    ).prepare(
-      `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
-              canonical_url, metadata_json, created_at, updated_at
-         FROM resources
-        WHERE workspace_id = ? AND uploaded_by_user_id = ? AND attachment_status = 'draft'
-          AND id IN (${input.attachmentIds.map(() => "?").join(",")})`,
-    ).bind(auth.workspaceId, auth.userId, ...input.attachmentIds).all<Record<string, unknown>>()).results ?? [];
-    if (attachmentRows.length !== input.attachmentIds.length) {
-      throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
-    }
+    const attachmentRows = await this.reserveAttachmentDrafts({
+      workspaceId: auth.workspaceId,
+      workstreamId: root.workstream_key,
+      inputId: preparation.input_id,
+      userId: auth.userId,
+      resourceIds: input.attachmentIds,
+      now: preparation.created_at,
+    });
 
     const participantCount = Number(first(this.storage.sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM participants WHERE status = 'active'`,
@@ -2720,27 +3637,33 @@ export class WorkstreamObjectProductService {
         ? [mention.connectorType] : []);
     let shouldInvoke = Boolean(input.forcedHarnessOrigin) || participantCount <= 1 || attachmentRows.length > 0;
     if (!shouldInvoke) {
-      const activeTask = ["running", "needs_input", "interrupting"].includes(root.exact_state);
+      const activeTask = this.loops.loop()?.status === "executing";
       const classification = await classifyWorkstreamMessage(this.env, {
         workspaceId: auth.workspaceId,
         workstreamId: root.workstream_key,
         message: input.text,
         activeTask,
         connectorMentions,
-        recentMessages: await this.recentAddressingMessages(root.next_sequence_number),
+        recentMessages: await this.recentAddressingMessages(Number(this.storage.sql.exec<{
+          next_transcript_sequence: number;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
+        ).one().next_transcript_sequence)),
       });
       shouldInvoke = classification.classification === "agent_action"
         || classification.classification === "both"
         || (classification.classification === "uncertain" && (activeTask || connectorMentions.length > 0));
     }
-    const model = shouldInvoke ? await this.model(root) : null;
-    const now = Date.now();
-    const messageId = uuidV7(now);
-    const runId = shouldInvoke ? asHarnessRunId(uuidV7(now)) : null;
+    const now = preparation.created_at;
+    const messageId = preparation.input_id;
     const transcriptMessage = await this.transcript.prepareParticipantMessage({
       turnId: messageId,
       actor: "human",
       authorUserId: auth.userId,
+      authorSnapshot: {
+        displayName: people.get(auth.userId)?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
+        avatarUrl: people.get(auth.userId)?.avatarUrl ?? null,
+      },
       clientMessageId: input.clientMessageId,
       messageType: "text",
       text: prepared.text,
@@ -2751,27 +3674,199 @@ export class WorkstreamObjectProductService {
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: root.next_attention_ordinal,
     });
+    if (shouldInvoke) {
+      const modelAttachments: ModelAttachmentSource[] = attachmentRows.map((row) => ({
+        id: String(row.id),
+        workspaceId: auth.workspaceId,
+        fileName: String(row.title),
+        mimeType: row.mime_type == null ? "application/octet-stream" : String(row.mime_type),
+        sizeBytes: attachmentMetadataSize(row.metadata_json),
+        contentRef: row.content_ref == null ? null : String(row.content_ref),
+        contentSha256: row.content_sha256 == null ? null : String(row.content_sha256),
+        modelContentRef: row.model_content_ref == null ? null : String(row.model_content_ref),
+        modelMimeType: row.model_mime_type == null ? null : String(row.model_mime_type),
+        modelContentSha256: row.model_content_sha256 == null ? null : String(row.model_content_sha256),
+        modelMetadataJson: row.model_metadata_json == null ? null : String(row.model_metadata_json),
+        ...(row.model_content_status == null ? {} : {
+          modelContentStatus: String(row.model_content_status) as NonNullable<
+            ModelAttachmentSource["modelContentStatus"]
+          >,
+        }),
+        modelContentExtractorVersion: row.model_content_extractor_version == null
+          ? null : String(row.model_content_extractor_version),
+        modelContentErrorCode: row.model_content_error_code == null
+          ? null : String(row.model_content_error_code),
+      }));
+      const bindMessage = await projectParticipantModelMessage(this.env, {
+        author: { type: "human" },
+        messageType: "text",
+        text: prepared.text,
+        structuredContent: null,
+        mentions: prepared.mentions.map((mention) => ({
+          type: mention.type,
+          userId: mention.userId,
+          displayName: mention.userId ? people.get(mention.userId)?.name ?? null : null,
+        })),
+        attachments: modelAttachments,
+        includeAttachmentContents: true,
+      });
+      if (!bindMessage) throw new Error("pending_input_bind_payload_invalid");
+      const bindPayloadJson = canonicalModelMessageJson(bindMessage);
+      const loop = this.loops.loop();
+      if (!loop) throw new Error("substream_loop_not_initialized");
+      if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+        throw new Error("substream_loop_identity_mismatch");
+      }
+      const attachmentDescriptors = input.attachmentIds.map((resourceId, position) => {
+        const row = attachmentRows.find((candidate) => String(candidate.id) === resourceId)!;
+        return {
+          resourceId,
+          position,
+          attachmentJson: JSON.stringify({ attachedAt: new Date(now).toISOString() }),
+          attachedByUserId: auth.userId,
+          watchEnabled: false,
+          relationshipType: "message_attachment",
+          resourceJson: JSON.stringify({
+            id: resourceId,
+            connectionId: row.connection_id == null ? null : String(row.connection_id),
+            type: String(row.resource_type),
+            provider: String(row.provider),
+            providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
+            title: String(row.title),
+            mimeType: row.mime_type == null ? null : String(row.mime_type),
+            contentRef: row.content_ref == null ? null : String(row.content_ref),
+            canonicalUrl: row.canonical_url == null ? null : String(row.canonical_url),
+            metadata: parseJson(String(row.metadata_json ?? "{}"), {}),
+          }),
+          attachedAt: now,
+          updatedAt: now,
+        };
+      });
+      const mentions = prepared.mentions.map((mention, mentionIndex) => ({
+        mentionIndex,
+        mentionKind: mention.type,
+        targetUserId: mention.userId,
+        connectorType: mention.connectorType,
+        startOffset: mention.startOffset,
+        endOffset: mention.endOffset,
+      }));
+      const admitted = this.storage.transactionSync(() => {
+        const concurrentCanonical = first(this.storage.sql.exec<{
+          id: string;
+          created_at: number;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT id, created_at FROM canonical_conversation_turn_details
+            WHERE client_message_id = ?`,
+          input.clientMessageId,
+        ));
+        if (concurrentCanonical) {
+          this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
+          this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
+          return { kind: "canonical" as const, existing: concurrentCanonical };
+        }
+        const concurrentPending = this.loops.inputByClientMessageId(input.clientMessageId);
+        if (concurrentPending) {
+          return { kind: "pending" as const, input: concurrentPending, inserted: false };
+        }
+        const currentLoop = this.loops.loop();
+        if (!currentLoop || currentLoop.loop_id !== loop.loop_id) {
+          throw new Error("substream_loop_identity_mismatch");
+        }
+        if (input.expectedLatestHarnessRunId) {
+          const latest = first(this.storage.sql.exec<{ run_id: string }>(
+            `SELECT run_id FROM runs WHERE parent_tool_call_id IS NULL
+              AND origin != 'block_dashboard_block' ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+          ));
+          if (latest?.run_id !== input.expectedLatestHarnessRunId) {
+            throw new ApiError(409, "terminal_repository_request_stale", "The work stream changed before this message was admitted");
+          }
+        }
+        const result = this.loops.completeInputPreparation({
+          inputId: messageId,
+          preparedTurnId: messageId,
+          mode: input.runMode ?? "steer",
+          actor: "human",
+          authorUserId: auth.userId,
+          authorNameSnapshot: transcriptMessage.input.authorSnapshot?.displayName ?? null,
+          authorAvatarUrlSnapshot: transcriptMessage.input.authorSnapshot?.avatarUrl ?? null,
+          clientMessageId: input.clientMessageId,
+          externalActorJson: null,
+          messageType: "text",
+          preparedPayloadId: transcriptMessage.fact.payloadId,
+          preparedFactId: transcriptMessage.fact.factId,
+          preparedPayloadAudience: transcriptMessage.fact.audience,
+          preparedPayloadMediaType: "application/json",
+          preparedPayloadJson: transcriptMessage.fact.canonical,
+          preparedPayloadSha256: transcriptMessage.fact.hash,
+          preparedPayloadByteLength: new TextEncoder().encode(transcriptMessage.fact.canonical).byteLength,
+          bindPayloadJson,
+          provenanceJson: JSON.stringify({
+            factKind: transcriptMessage.fact.factKind,
+            originKind: transcriptMessage.fact.origin.originKind,
+            sourceKind: transcriptMessage.fact.origin.sourceKind,
+            sourceId: transcriptMessage.fact.origin.sourceId,
+            sourceRevision: transcriptMessage.fact.origin.sourceRevision,
+            runId: transcriptMessage.fact.runId,
+            toolCallId: transcriptMessage.fact.toolCallId,
+          }),
+          authorizationJson: JSON.stringify({
+            workspaceId: auth.workspaceId,
+            workstreamId: root.workstream_key,
+            executionPrincipal: { type: "user", userId: auth.userId },
+            sessionId: auth.sessionId,
+            principal: auth.principal ?? "session",
+            confirmedParticipantUserIds,
+            participantEpochs: this.pendingParticipantEpochs([
+              auth.userId,
+              ...confirmedParticipantUserIds,
+            ]),
+            reason: input.forcedHarnessOrigin ?? "human_message",
+            parentHarnessRunId: input.parentHarnessRunId ?? null,
+            expectedLatestHarnessRunId: input.expectedLatestHarnessRunId ?? null,
+            expectedToolInvocationId: input.expectedToolInvocationId ?? null,
+            telemetryOperationId: input.telemetryOperationId ?? null,
+            slackOrigin: input.slackOrigin ?? null,
+            slackSearchAuthorization: input.slackSearchAuthorization ?? null,
+          }),
+          attachmentsJson: JSON.stringify(attachmentDescriptors),
+          mentionsJson: JSON.stringify(mentions),
+          now,
+        });
+        return {
+          kind: "pending" as const,
+          input: result.input,
+          inserted: result.outcome === "admitted",
+        };
+      });
+      if (admitted.kind === "canonical") {
+        return this.canonicalMessageReplay(admitted.existing, input.clientMessageId);
+      }
+      return this.pendingMessageResult(admitted.input, admitted.inserted);
+    }
     const affectedUsers = [...new Set([auth.userId, ...personIds, ...confirmedParticipantUserIds])];
     const committed = await this.objectStore.commitWithRegionalEffects<LocalMessageWrite>(
       (sql) => {
         const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
         if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
-        const replay = first(sql.exec<PartRow>(
-          `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
-                  message_type, content, structured_content_json, client_message_id,
-                  edited_at, created_at FROM workstream_message_details WHERE client_message_id = ?`,
+        const replay = first(sql.exec<{
+          id: string; sequence_number: number; attention_ordinal: number | null; created_at: number;
+        } & Record<string, SqlStorageValue>>(
+          `SELECT id, sequence_number, attention_ordinal, created_at
+             FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
           input.clientMessageId,
         ));
         if (replay) {
           if (replay.attention_ordinal == null) {
             throw new Error("replayed_message_missing_attention_ordinal");
           }
+          this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
+          this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
           return {
             messageId: replay.id,
             sequenceNumber: replay.sequence_number,
             attentionOrdinal: replay.attention_ordinal,
+            createdAt: replay.created_at,
             inserted: false,
-            runId: null,
           };
         }
         const sequence = current.next_sequence_number;
@@ -2816,7 +3911,7 @@ export class WorkstreamObjectProductService {
         }
         transcriptMessage.input.attentionOrdinal = attention;
         transcriptMessage.input.messageSequenceNumber = sequence;
-        this.transcript.appendPreparedParticipantMessage(transcriptMessage);
+        const transcriptSequence = this.transcript.appendPreparedParticipantMessage(transcriptMessage);
         input.attachmentIds.forEach((resourceId, position) => {
           const row = attachmentRows.find((candidate) => String(candidate.id) === resourceId)!;
           const descriptor = {
@@ -2832,7 +3927,7 @@ export class WorkstreamObjectProductService {
             metadata: parseJson(String(row.metadata_json ?? "{}"), {}),
           };
           sql.exec(
-            `INSERT INTO workstream_message_attachments(message_id, resource_id, position, attachment_json)
+            `INSERT INTO participant_transcript_attachments(turn_id, resource_id, position, attachment_json)
              VALUES (?, ?, ?, ?)`,
             messageId, resourceId, position, JSON.stringify({ attachedAt: new Date(now).toISOString() }),
           );
@@ -2847,8 +3942,8 @@ export class WorkstreamObjectProductService {
         });
         prepared.mentions.forEach((mention, index) => {
           sql.exec(
-            `INSERT INTO workstream_message_mentions
-               (message_id, mention_index, mention_kind, target_user_id, connector_type,
+            `INSERT INTO participant_transcript_mentions
+               (turn_id, mention_index, mention_kind, target_user_id, connector_type,
                 start_offset, end_offset, attention_ordinal)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             messageId, index, mention.type, mention.userId, mention.connectorType,
@@ -2883,71 +3978,23 @@ export class WorkstreamObjectProductService {
              updated_at = excluded.updated_at`,
           auth.userId, current.unread_tracking_start_ordinal, attention, now, now,
         );
-        if (runId) {
-          if (input.expectedLatestHarnessRunId) {
-            const latest = first(sql.exec<{ run_id: string }>(
-              `SELECT run_id FROM runs WHERE parent_tool_call_id IS NULL
-                AND origin != 'block_dashboard_block' ORDER BY created_at DESC, run_id DESC LIMIT 1`,
-            ));
-            if (latest?.run_id !== input.expectedLatestHarnessRunId) {
-              throw new ApiError(409, "terminal_repository_request_stale", "The work stream changed before this message was admitted");
-            }
-          }
-          if ((input.runMode ?? "steer") === "steer") {
-            const inFlight = first(sql.exec<{ run_id: string }>(
-              `SELECT run_id FROM runs
-                WHERE substream_id = '0' AND origin != 'block_dashboard_block'
-                  AND status = 'running' AND terminalized_at IS NULL
-                ORDER BY started_at, run_id LIMIT 1`,
-            ));
-            if (inFlight) {
-              sql.exec(
-                `INSERT INTO run_steering
-                   (run_id, steering_message_id, requested_at, boundaries_observed,
-                    max_boundaries, consumed_at)
-                 VALUES (?, ?, ?, 0, 2, NULL)
-                 ON CONFLICT(run_id) DO UPDATE SET
-                   steering_message_id = excluded.steering_message_id,
-                   requested_at = excluded.requested_at,
-                   boundaries_observed = 0,
-                   max_boundaries = excluded.max_boundaries,
-                   consumed_at = NULL`,
-                inFlight.run_id,
-                messageId,
-                now,
-              );
-            }
-          }
-          sql.exec(
-            `INSERT INTO runs
-               (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
-                model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
-                active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
-                tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-                terminal_reason, origin, execution_principal_json, parent_run_id,
-                chain_depth, model,
-                trigger_part_id, created_at, updated_at)
-             VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', ?, 0, ?,
-                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, ?, 0, ?, ?, ?, ?)`,
-            runId, sequence, now, input.forcedHarnessOrigin ?? "human_message",
-            JSON.stringify({ type: "user", userId: auth.userId }),
-            input.parentHarnessRunId ?? null,
-            model, messageId, now, now,
-          );
-        }
         sql.exec(
           `UPDATE workstream
               SET next_sequence_number = next_sequence_number + 1,
                   next_attention_ordinal = next_attention_ordinal + 1,
-                  exact_state = CASE WHEN ? IS NULL THEN exact_state ELSE 'scheduled' END,
-                  state_reason_code = CASE WHEN ? IS NULL THEN state_reason_code ELSE 'user_message' END,
-                  last_people_activity_at = ?, state_changed_at = CASE WHEN ? IS NULL THEN state_changed_at ELSE ? END,
-                  run_revision = run_revision + CASE WHEN ? IS NULL THEN 0 ELSE 1 END,
-                  updated_at = ?
+                  last_people_activity_at = ?, updated_at = ?
             WHERE id = 1`,
-          runId, runId, now, runId, now, runId, now,
+          now, now,
         );
-        return { messageId, sequenceNumber: sequence, attentionOrdinal: attention, inserted: true, runId };
+        this.markAttachmentReleaseOwnedByProjection(preparation.input_id);
+        this.loops.discardInputPreparation({ inputId: preparation.input_id, now });
+        return {
+          messageId,
+          sequenceNumber: transcriptSequence,
+          attentionOrdinal: attention,
+          createdAt: now,
+          inserted: true,
+        };
       },
       (_sql, write) => {
         if (!write.inserted) return [];
@@ -3003,53 +4050,70 @@ export class WorkstreamObjectProductService {
         return [common, ...userEffects, activity, ...notifications];
       },
     );
-    const row = first(this.storage.sql.exec<PartRow>(
-      `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
-              message_type, content, structured_content_json, client_message_id,
-              edited_at, created_at FROM workstream_message_details WHERE id = ?`,
-      committed.result.messageId,
-    ));
-    if (!row) throw new ApiError(500, "message_write_failed", "The message could not be stored");
-    const message = await this.hydrateMessageRow(auth, row);
-    const workflowInput: WorkstreamWorkflowInput | null = committed.result.runId ? {
-      region: this.env.AVALON_REGION,
-      workspaceId: auth.workspaceId,
-      workstreamId: asWorkstreamId(root.workstream_key),
-      harnessRunId: committed.result.runId,
-      triggerMessageId: message.id,
-      automationSubscriptionId: null,
-      activityId: null,
-      executionPrincipal: { type: "user", userId: auth.userId },
-      ...(input.telemetryOperationId ? {
-        telemetryOperationId: input.telemetryOperationId,
-        telemetrySubjectUserId: auth.userId,
-      } : {}),
-      ...(input.slackOrigin ? { slackOrigin: input.slackOrigin as WorkstreamWorkflowInput["slackOrigin"] } : {}),
-      ...(input.slackSearchAuthorization ? {
-        slackSearchAuthorization: input.slackSearchAuthorization as WorkstreamWorkflowInput["slackSearchAuthorization"],
-      } : {}),
-      reason: input.forcedHarnessOrigin ?? "human_message",
-    } : null;
     return {
-      message,
-      agentInvoked: workflowInput !== null,
-      harnessRunId: committed.result.runId,
-      workflowInput,
+      turn: {
+        turnId: committed.result.messageId,
+        clientMessageId: input.clientMessageId,
+        createdAt: new Date(committed.result.createdAt).toISOString(),
+      },
+      deliveryState: "canonical",
+      activationRequest: null,
       inserted: committed.result.inserted,
     };
+    });
   }
 
   async answerElicitation(
     auth: AuthContext,
     elicitationId: string,
     rawInput: WorkstreamObjectAnswerElicitationInput,
-  ): Promise<{
-    elicitation: Elicitation | undefined;
-    harnessRunId: string | null;
-    workflowInput: WorkstreamWorkflowInput | null;
-    responsePartId: string;
-  }> {
+  ): Promise<WorkstreamObjectAnswerElicitationResult> {
     const input = AnswerElicitationRequestSchema.parse(rawInput);
+    const clientMessageId = `elicitation-response:${elicitationId}`;
+    const canonicalReplay = first(this.storage.sql.exec<{
+      id: string;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT id FROM canonical_conversation_turn_details WHERE client_message_id = ?`,
+      clientMessageId,
+    ));
+    if (canonicalReplay) {
+      await this.authorize(auth);
+      return {
+        elicitation: this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId),
+        responsePartId: canonicalReplay.id,
+        activationRequest: null,
+      };
+    }
+    const replay = this.loops.inputByClientMessageId(clientMessageId);
+    if (replay) {
+      const root = await this.authorize(auth);
+      const loop = this.loops.loop();
+      if (!loop || loop.loop_id !== replay.loop_id
+        || loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+        throw new Error("substream_loop_identity_mismatch");
+      }
+      return {
+        elicitation: this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId),
+        responsePartId: replay.prepared_turn_id,
+        activationRequest: loop.status === "idle" ? {
+          kind: "activate_substream_loop",
+          loopId: loop.loop_id,
+          cause: "pending_input",
+          inputId: replay.input_id,
+        } : null,
+      };
+    }
+    const localRoot = this.locallyAuthorizedRoot(auth);
+    const reservationNow = Date.now();
+    const preparation = this.reserveInputPreparation({
+      root: localRoot,
+      inputId: uuidV7(reservationNow),
+      clientMessageId,
+      preparationKind: "human_elicitation",
+      envelope: { auth, elicitationId, input },
+      now: reservationNow,
+    });
+    return this.runInputPreparation(preparation, async () => {
     const root = await this.authorize(auth);
     const row = first(this.storage.sql.exec<{
       elicitation_id: string; run_id: string; prompt: string; response_type: string;
@@ -3068,10 +4132,9 @@ export class WorkstreamObjectProductService {
     const skipped = "skipped" in input && input.skipped;
     const answer = skipped ? null : input.answer;
     if (!skipped) this.validateElicitationAnswer(row, input.answer, input.customResponse);
-    const now = Date.now();
-    const responsePartId = uuidV7(now);
-    const runId = asHarnessRunId(uuidV7(now));
-    const model = await this.model(root);
+    const now = preparation.created_at;
+    const responsePartId = preparation.input_id;
+    const author = (await this.messageUsers([auth.userId])).get(auth.userId);
     const persisted: Elicitation = {
       id: elicitationId,
       workstreamId: root.workstream_key,
@@ -3093,7 +4156,11 @@ export class WorkstreamObjectProductService {
       turnId: responsePartId,
       actor: "human",
       authorUserId: auth.userId,
-      clientMessageId: `elicitation-response:${elicitationId}`,
+      authorSnapshot: {
+        displayName: author?.name ?? UNKNOWN_MEMBER_DISPLAY_NAME,
+        avatarUrl: author?.avatar_url ?? null,
+      },
+      clientMessageId,
       messageType: "elicitation",
       text: "",
       structuredContentJson: structuredResponse,
@@ -3102,108 +4169,99 @@ export class WorkstreamObjectProductService {
       createdAtUtc: new Date(now).toISOString(),
       attentionOrdinal: null,
     });
-    let admittedRunId: HarnessRunId | null = null;
-    await this.objectStore.commitWithRegionalEffects(
-      (sql) => {
-        const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
-        if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
-        const changed = sql.exec<{ elicitation_id: string }>(
-          `UPDATE elicitation_requests SET status = 'answered', answer_json = ?,
-                  answered_by_user_id = ?, answered_at = ?
-            WHERE elicitation_id = ? AND status = 'pending'
-            RETURNING elicitation_id`,
-          answer === null ? null : JSON.stringify(answer), auth.userId, now, elicitationId,
-        );
-        if (changed.toArray().length !== 1) {
-          throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
-        }
-        const sequence = current.next_sequence_number;
-        const attention = current.next_attention_ordinal;
-        this.transcript.appendPreparedParticipantMessage({
-          ...transcriptMessage,
-          input: {
-            ...transcriptMessage.input,
-            messageSequenceNumber: sequence,
-            attentionOrdinal: attention,
-          },
-        });
-        sql.exec(
-          `INSERT INTO participants
-             (user_id, participation_reason, added_by_user_id, status, participant_epoch,
-              added_at, removed_at, first_opened_at, updated_at)
-           VALUES (?, 'elicitation', ?, 'active', 0, ?, NULL, ?, ?)
-           ON CONFLICT(user_id) DO UPDATE SET status = 'active', removed_at = NULL,
-             participant_epoch = CASE WHEN participants.status = 'removed'
-               THEN participants.participant_epoch + 1 ELSE participants.participant_epoch END,
-             first_opened_at = COALESCE(participants.first_opened_at, excluded.first_opened_at),
-             updated_at = excluded.updated_at`,
-          // Answering the agent is done from inside the work stream.
-          auth.userId, auth.userId, now, now, now,
-        );
-        sql.exec(
-          `INSERT INTO member_attention
-             (user_id, unread_tracking_start_ordinal, seen_attention_ordinal,
-              manual_unread_from_ordinal, latest_mention_attention_ordinal,
-              last_seen_at, version, updated_at)
-           VALUES (?, ?, ?, NULL, 0, ?, 0, ?)
-           ON CONFLICT(user_id) DO UPDATE SET
-             seen_attention_ordinal = MAX(member_attention.seen_attention_ordinal,
-                                          excluded.seen_attention_ordinal),
-             manual_unread_from_ordinal = NULL, last_seen_at = excluded.last_seen_at,
-             updated_at = excluded.updated_at`,
-          auth.userId, current.unread_tracking_start_ordinal, attention, now, now,
-        );
-        const remaining = Number(first(sql.exec<{ count: number }>(
-          `SELECT COUNT(*) AS count FROM elicitation_requests WHERE status = 'pending'`,
-        ))?.count ?? 0);
-        if (remaining === 0) {
-          sql.exec(
-            `INSERT INTO runs
-               (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
-                model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
-                active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
-                tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-                terminal_reason, origin, execution_principal_json, parent_run_id,
-                chain_depth, model, trigger_part_id, created_at, updated_at)
-             VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', ?, 0, ?,
-                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 'elicitation_answer', ?, ?,
-                     0, ?, ?, ?, ?)`,
-            runId, sequence, now, JSON.stringify({ type: "user", userId: auth.userId }),
-            row.run_id, model, responsePartId, now, now,
-          );
-          admittedRunId = runId;
-        }
-        sql.exec(
-          `UPDATE workstream SET next_sequence_number = next_sequence_number + 1,
-                  next_attention_ordinal = next_attention_ordinal + 1,
-                  exact_state = CASE WHEN ? IS NULL THEN exact_state ELSE 'scheduled' END,
-                  state_reason_code = CASE WHEN ? IS NULL THEN state_reason_code ELSE 'elicitation_answer' END,
-                  last_people_activity_at = ?, state_changed_at = ?, updated_at = ?
-            WHERE id = 1`,
-          admittedRunId, admittedRunId, now, now, now,
-        );
-      },
-      () => {
-        const current = this.root();
-        return [
-          { partitionKey: "common", effect: this.commonEffect(current) },
-          { partitionKey: `user:${auth.userId}`, effect: this.userEffect(current, auth.userId) },
-        ];
-      },
-    );
+    const bindMessage = await projectParticipantModelMessage(this.env, {
+      author: { type: "human" },
+      messageType: "elicitation",
+      text: "",
+      structuredContent: JSON.parse(structuredResponse),
+      mentions: [],
+      attachments: [],
+      includeAttachmentContents: true,
+    });
+    if (!bindMessage) throw new Error("pending_input_bind_payload_invalid");
+    const bindPayloadJson = canonicalModelMessageJson(bindMessage);
+    const loop = this.loops.loop();
+    if (!loop) throw new Error("substream_loop_not_initialized");
+    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+      throw new Error("substream_loop_identity_mismatch");
+    }
+    let remaining = 0;
+    const admitted = this.storage.transactionSync(() => {
+      const sql = this.storage.sql;
+      const current = first(sql.exec<RootRow>(`SELECT * FROM workstream WHERE id = 1`));
+      if (!current) throw new ApiError(404, "workstream_not_found", "Work stream not found");
+      const changed = sql.exec<{ elicitation_id: string }>(
+        `UPDATE elicitation_requests SET status = 'answered', answer_json = ?,
+                answered_by_user_id = ?, answered_at = ?
+          WHERE elicitation_id = ? AND status = 'pending'
+          RETURNING elicitation_id`,
+        answer === null ? null : JSON.stringify(answer), auth.userId, now, elicitationId,
+      );
+      if (changed.toArray().length !== 1) {
+        throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
+      }
+      remaining = Number(first(sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM elicitation_requests WHERE status = 'pending'`,
+      ))?.count ?? 0);
+      return this.loops.completeInputPreparation({
+        inputId: responsePartId,
+        preparedTurnId: responsePartId,
+        mode: "steer",
+        actor: "human",
+        authorUserId: auth.userId,
+        authorNameSnapshot: transcriptMessage.input.authorSnapshot?.displayName ?? null,
+        authorAvatarUrlSnapshot: transcriptMessage.input.authorSnapshot?.avatarUrl ?? null,
+        clientMessageId,
+        externalActorJson: null,
+        messageType: "elicitation",
+        preparedPayloadId: transcriptMessage.fact.payloadId,
+        preparedFactId: transcriptMessage.fact.factId,
+        preparedPayloadAudience: transcriptMessage.fact.audience,
+        preparedPayloadMediaType: "application/json",
+        preparedPayloadJson: transcriptMessage.fact.canonical,
+        preparedPayloadSha256: transcriptMessage.fact.hash,
+        preparedPayloadByteLength: new TextEncoder().encode(transcriptMessage.fact.canonical).byteLength,
+        bindPayloadJson,
+        provenanceJson: JSON.stringify({
+          factKind: transcriptMessage.fact.factKind,
+          originKind: transcriptMessage.fact.origin.originKind,
+          sourceKind: transcriptMessage.fact.origin.sourceKind,
+          sourceId: transcriptMessage.fact.origin.sourceId,
+          sourceRevision: transcriptMessage.fact.origin.sourceRevision,
+          runId: transcriptMessage.fact.runId,
+          toolCallId: transcriptMessage.fact.toolCallId,
+        }),
+        authorizationJson: JSON.stringify({
+          workspaceId: auth.workspaceId,
+          workstreamId: root.workstream_key,
+          executionPrincipal: { type: "user", userId: auth.userId },
+          sessionId: auth.sessionId,
+          principal: auth.principal ?? "session",
+          confirmedParticipantUserIds: [],
+          participantEpochs: this.pendingParticipantEpochs([auth.userId]),
+          reason: "elicitation_answer",
+          elicitationId,
+          parentHarnessRunId: row.run_id,
+        }),
+        attachmentsJson: "[]",
+        mentionsJson: "[]",
+        now,
+      });
+    });
     const answered = this.elicitationsIncludingResolved().find((entry) => entry.id === elicitationId);
-    const workflowInput: WorkstreamWorkflowInput | null = admittedRunId ? {
-      region: this.env.AVALON_REGION,
-      workspaceId: auth.workspaceId,
-      workstreamId: asWorkstreamId(root.workstream_key),
-      harnessRunId: admittedRunId,
-      triggerMessageId: responsePartId,
-      automationSubscriptionId: null,
-      activityId: null,
-      executionPrincipal: { type: "user", userId: auth.userId },
-      reason: "elicitation_answer",
-    } : null;
-    return { elicitation: answered, harnessRunId: admittedRunId, workflowInput, responsePartId };
+    const after = this.loops.loop();
+    if (!after) throw new Error("substream_loop_not_found");
+    return {
+      elicitation: answered,
+      responsePartId: admitted.input.prepared_turn_id,
+      activationRequest: remaining === 0 && after.status === "idle" ? {
+        kind: "activate_substream_loop",
+        loopId: after.loop_id,
+        cause: "pending_input",
+        inputId: admitted.input.input_id,
+      } : null,
+    };
+    });
   }
 
   private validateElicitationAnswer(
@@ -3244,46 +4302,92 @@ export class WorkstreamObjectProductService {
   }
 
   async stop(auth: AuthContext): Promise<void> {
-    await this.authorize(auth);
-    const now = Date.now();
-    this.storage.sql.exec(
-      `UPDATE runs SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?),
-              cancellation_reason = COALESCE(cancellation_reason, 'stopped_by_user'),
-              revision = revision + 1, updated_at = ?
-        WHERE substream_id = '0' AND origin != 'block_dashboard_block'
-          AND status IN ('admitted', 'running', 'waiting', 'steering')
-          AND terminalized_at IS NULL`,
-      now, now,
-    );
+    const root = await this.authorize(auth);
+    const loop = this.loops.loop();
+    if (!loop) throw new Error("substream_loop_not_initialized");
+    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+      throw new Error("substream_loop_identity_mismatch");
+    }
+    if (loop.status === "idle") return;
+    if (loop.active_execution_id === null || loop.active_execution_epoch === null
+      || loop.lease_owner === null) throw new Error("substream_loop_execution_fence_missing");
+    this.loops.requestStop({
+      executionId: loop.active_execution_id,
+      executionEpoch: loop.active_execution_epoch,
+      leaseOwner: loop.lease_owner,
+      expectedLoopRevision: loop.revision,
+      reason: "stopped_by_user",
+      now: Date.now(),
+    });
   }
 
-  async retry(auth: AuthContext): Promise<{
-    harnessRunId: string;
-    workflowInput: WorkstreamWorkflowInput;
-  }> {
+  async retry(auth: AuthContext): Promise<WorkstreamObjectRetryResult> {
     const root = await this.authorize(auth);
-    if (["scheduled", "running", "needs_input", "interrupting"].includes(root.exact_state)) {
+    const loop = this.loops.loop();
+    if (!loop) throw new Error("substream_loop_not_initialized");
+    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+      throw new Error("substream_loop_identity_mismatch");
+    }
+    if (loop.status === "executing") {
       throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
     }
     const latest = first(this.storage.sql.exec<{
-      status: string; trigger_part_id: string | null;
+      run_id: string;
+      status: string;
+      trigger_part_id: string | null;
+      model: string | null;
+      execution_context_json: string | null;
     }>(
-      `SELECT status, trigger_part_id FROM runs
+      `SELECT run_id, status, trigger_part_id, model, execution_context_json FROM runs
         WHERE substream_id = '0' AND parent_tool_call_id IS NULL AND origin != 'block_dashboard_block'
         ORDER BY created_at DESC LIMIT 1`,
     ));
     if (!latest || !["failed", "cancelled"].includes(latest.status)) {
       throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
     }
+    if (latest.execution_context_json === null) {
+      throw new ApiError(409, "harness_retry_context_missing", "The failed execution cannot be retried safely");
+    }
+    const previousContext = WorkstreamWorkflowInputSchema.parse(
+      JSON.parse(latest.execution_context_json),
+    );
     const newest = first(this.storage.sql.exec<{ id: string; sequence_number: number }>(
-      `SELECT id, sequence_number FROM workstream_message_details WHERE substream_id = '0'
-        ORDER BY sequence_number DESC LIMIT 1`,
+      `SELECT id, sequence_number FROM canonical_conversation_turn_details
+        WHERE substream_id = '0' ORDER BY sequence_number DESC LIMIT 1`,
     ));
     const now = Date.now();
     const runId = asHarnessRunId(uuidV7(now));
-    const model = await this.model(root);
+    const workflowInput = WorkstreamWorkflowInputSchema.parse({
+      ...previousContext,
+      region: this.env.AVALON_REGION,
+      workspaceId: auth.workspaceId,
+      workstreamId: asWorkstreamId(root.workstream_key),
+      substreamId: "0",
+      loopId: loop.loop_id,
+      harnessRunId: runId,
+      triggerMessageId: latest.trigger_part_id,
+      transcriptFenceMessageId: newest?.id ?? null,
+      executionPrincipal: { type: "user", userId: auth.userId },
+      reason: "manual_retry",
+    });
+    const model = latest.model ?? await this.model(root);
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
+        const currentLoop = this.loops.loop();
+        if (!currentLoop || currentLoop.loop_id !== loop.loop_id
+          || currentLoop.revision !== loop.revision || currentLoop.status !== "idle") {
+          throw new ApiError(409, "harness_already_running", "This work stream already has an active run");
+        }
+        const stillLatest = first(sql.exec<{ run_id: string; status: string }>(
+          `SELECT run_id, status FROM runs
+            WHERE substream_id = '0' AND parent_tool_call_id IS NULL
+              AND origin != 'block_dashboard_block'
+            ORDER BY created_at DESC, run_id DESC LIMIT 1`,
+        ));
+        if (!stillLatest || stillLatest.run_id !== latest.run_id
+          || !["failed", "cancelled"].includes(stillLatest.status)) {
+          throw new ApiError(409, "harness_not_retryable", "The latest run is not retryable");
+        }
         sql.exec(
           `INSERT INTO runs
              (run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
@@ -3291,15 +4395,16 @@ export class WorkstreamObjectProductService {
               active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
               tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
               terminal_reason, origin, execution_principal_json, chain_depth, model,
-              trigger_part_id, created_at, updated_at)
+              trigger_part_id, execution_context_json, created_at, updated_at)
            VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', ?, 0, ?,
-                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 'manual_retry', ?, 0, ?, ?, ?, ?)`,
+                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 'manual_retry', ?, 0, ?, ?, ?, ?, ?)`,
           runId,
           newest?.sequence_number ?? 0,
           now,
-          JSON.stringify({ type: "user", userId: auth.userId }),
+          JSON.stringify(workflowInput.executionPrincipal),
           model,
           latest.trigger_part_id,
+          JSON.stringify(workflowInput),
           now,
           now,
         );
@@ -3307,73 +4412,23 @@ export class WorkstreamObjectProductService {
           `UPDATE workstream SET exact_state = 'scheduled', state_reason_code = 'manual_retry',
                   state_changed_at = ?, run_revision = run_revision + 1, updated_at = ?
             WHERE id = 1`,
-          now, now,
+          now,
+          now,
         );
       },
       () => [{ partitionKey: "common", effect: this.commonEffect(this.root()) }],
     );
     return {
       harnessRunId: runId,
-      workflowInput: {
-        region: this.env.AVALON_REGION,
-        workspaceId: auth.workspaceId,
-        workstreamId: asWorkstreamId(root.workstream_key),
-        harnessRunId: runId,
-        triggerMessageId: latest.trigger_part_id,
-        automationSubscriptionId: null,
-        activityId: null,
-        executionPrincipal: { type: "user", userId: auth.userId },
-        reason: "manual_retry",
+      activationRequest: {
+        kind: "activate_substream_loop",
+        loopId: loop.loop_id,
+        cause: "manual_retry",
+        inputId: null,
+        receiptRunId: runId,
+        workflowInput,
       },
     };
-  }
-
-  /**
-   * Terminalizes runs that hold the substream open with nothing behind them.
-   *
-   * `runs_mutating_substream_uq` permits one mutating run per substream, so a
-   * run left `running` by an executor that no longer exists makes every later
-   * run fail at `recordWorkflowStarted` — and the failure is the *new* run's,
-   * which is why the work stream reads as permanently busy. The migration
-   * produced exactly this: runs imported mid-flight whose Workflow instance did
-   * not come with them.
-   *
-   * A run is abandoned when no dispatch row is prepared to execute it. That is
-   * the whole test, and it is decidable from the rows: the dispatch ledger is
-   * the execution intent, so a mutating run without one is not going to run
-   * again no matter how long it is left alone. Reaping it is therefore safe
-   * even while another run legitimately executes, because that run has a
-   * dispatch.
-   */
-  reapAbandonedSubstreamRuns(substreamId: string, now: number): string[] {
-    // `admitted` is included behind a grace period: the run row and its
-    // dispatch commit in the same invocation but not the same transaction, so
-    // a crash between them leaves an admitted run nothing will ever execute.
-    // The grace keeps this from racing a sibling invocation that has committed
-    // its run and not yet inserted its dispatch — that gap is milliseconds,
-    // the grace is a minute.
-    return this.storage.sql.exec<{ run_id: string }>(
-      `UPDATE runs
-          SET status = 'failed', terminal_reason = 'failed',
-              error_json = ?,
-              completed_at = COALESCE(completed_at, ?), terminalized_at = ?, updated_at = ?
-        WHERE substream_id = ?
-          AND terminalized_at IS NULL
-          AND (
-            status IN ('running', 'waiting', 'steering')
-            OR (status = 'admitted' AND updated_at < ? - 60000)
-          )
-          AND run_id NOT IN (
-            SELECT run_id FROM agent_run_dispatches
-             WHERE state IN ('queued', 'running')
-          )
-        RETURNING run_id`,
-      JSON.stringify({
-        code: "workstream_run_abandoned",
-        message: "This run's executor did not survive; it was ended so the work stream could continue",
-      }),
-      now, now, now, substreamId, now,
-    ).toArray().map((row) => row.run_id);
   }
 
   async recordWorkflowStarted(runId: string, instanceId: string): Promise<void> {
@@ -3401,7 +4456,12 @@ export class WorkstreamObjectProductService {
   async recordWorkflowFailed(
     runId: string,
     error: { code: string; message: string },
-    dispatchLeaseToken: string,
+    execution: {
+      loopId: string;
+      executionId: string;
+      executionEpoch: number;
+      leaseOwner: string;
+    },
   ): Promise<void> {
     await this.objectStore.commitWithRegionalEffects(
       (sql) => {
@@ -3410,14 +4470,49 @@ export class WorkstreamObjectProductService {
           `UPDATE runs SET status = 'failed', terminal_reason = 'failed', error_json = ?,
                   completed_at = ?, terminalized_at = ?, updated_at = ?
             WHERE run_id = ? AND status IN ('admitted', 'running')
+              AND substream_loop_id = ?
+              AND loop_execution_id = ? AND loop_execution_epoch = ?
               AND EXISTS (
-                SELECT 1 FROM agent_run_dispatches dispatch
-                 WHERE dispatch.run_id = ? AND dispatch.lease_token = ?
+                SELECT 1 FROM substream_loops loop
+                 WHERE loop.id = 1 AND loop.loop_id = ? AND loop.status = 'executing'
+                   AND loop.active_execution_id = ? AND loop.active_execution_epoch = ?
+                   AND loop.lease_owner = ?
               )
             RETURNING run_id`,
-          JSON.stringify(error), now, now, now, runId, runId, dispatchLeaseToken,
+          JSON.stringify(error), now, now, now, runId,
+          execution.loopId, execution.executionId, execution.executionEpoch,
+          execution.loopId, execution.executionId, execution.executionEpoch,
+          execution.leaseOwner,
         );
         if (changed.toArray().length === 0) throw new Error("workstream_run_failure_fenced");
+        const closedLoop = sql.exec<{
+          loop_id: string;
+        } & Record<string, SqlStorageValue>>(
+          `UPDATE substream_loops
+              SET status = 'idle', active_execution_id = NULL,
+                  active_execution_epoch = NULL, lease_owner = NULL,
+                  lease_expires_at = NULL, stop_requested_at = NULL,
+                  stop_after_step_ordinal = NULL, stop_reason = NULL,
+                  revision = revision + 1, updated_at = ?
+            WHERE id = 1 AND loop_id = ? AND status = 'executing'
+              AND active_execution_id = ? AND active_execution_epoch = ?
+              AND lease_owner = ?
+              AND NOT EXISTS (
+                SELECT 1 FROM assistant_turn_reservations reservation
+                 WHERE reservation.loop_id = substream_loops.loop_id
+                   AND reservation.cycle_ordinal = substream_loops.cycle_ordinal
+                   AND reservation.state IN ('reserved', 'streaming')
+              )
+            RETURNING loop_id`,
+          now,
+          execution.loopId,
+          execution.executionId,
+          execution.executionEpoch,
+          execution.leaseOwner,
+        ).toArray()[0];
+        if (closedLoop?.loop_id !== execution.loopId) {
+          throw new Error("workstream_run_failure_loop_fenced");
+        }
         sql.exec(
           `UPDATE workstream SET exact_state = 'failed', state_reason_code = ?,
                   state_changed_at = ?, updated_at = ? WHERE id = 1`,
@@ -3470,5 +4565,15 @@ export class WorkstreamObjectProductService {
         ];
       },
     );
+  }
+}
+
+function attachmentMetadataSize(metadataJson: unknown): number {
+  if (typeof metadataJson !== "string" || metadataJson.length === 0) return 0;
+  try {
+    const size = Number((JSON.parse(metadataJson) as { size?: unknown }).size ?? 0);
+    return Number.isSafeInteger(size) && size >= 0 ? size : 0;
+  } catch {
+    return 0;
   }
 }

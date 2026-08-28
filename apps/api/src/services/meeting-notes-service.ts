@@ -217,7 +217,11 @@ export class MeetingNotesService {
     private readonly runner: HarnessRunner = runHarness,
   ) {}
 
-  async generate(input: GenerateMeetingNotesRequest, requestId: string): Promise<MeetingNotesResponse> {
+  async generate(
+    input: GenerateMeetingNotesRequest,
+    requestId: string,
+    loopId = `meeting-notes-request:${requestId}:loop`,
+  ): Promise<MeetingNotesResponse> {
     const final = input.mode === "final";
     const inferenceLogger = createAgentInferenceLogger(this.env, {
       workspaceId: this.auth.workspaceId,
@@ -277,6 +281,7 @@ export class MeetingNotesService {
       },
       workspaceId: this.auth.workspaceId,
       workstreamId: "00000000-0000-7000-8000-000000000101",
+      loopId,
       harnessRunId: requestId,
       executionPrincipal: { type: "user", userId: this.auth.userId },
       systemPrompt: final ? FINAL_MEETING_SUMMARY_SYSTEM_PROMPT : CONTROL_TOWER_SYSTEM_PROMPT,

@@ -1,5 +1,5 @@
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
-import type { PreparedWorkstreamMessageRecord } from "./workstream-transcript-storage";
+import type { PreparedConversationTurn } from "./workstream-transcript-storage";
 
 /**
  * Object-local scheduling state for one work stream.
@@ -46,6 +46,7 @@ export interface WakeupRow extends Record<string, SqlStorageValue> {
 export interface ElicitationRow extends Record<string, SqlStorageValue> {
   elicitation_id: string;
   run_id: string;
+  tool_call_id: string;
   prompt: string;
   response_type: string;
   options_json: string;
@@ -63,6 +64,7 @@ export interface ElicitationRow extends Record<string, SqlStorageValue> {
 export interface OpenElicitationInput {
   elicitationId: string;
   runId: string;
+  toolCallId: string;
   prompt: string;
   responseType: string;
   optionsJson: string;
@@ -99,9 +101,9 @@ export class WorkstreamSchedulingStorage {
    * The transcript authority, over this same object storage.
    *
    * Composed for the reason `WorkstreamHarnessRunStorage` composes it: asking a
-   * question and answering one each write a transcript message in the same
-   * transaction as the row this class owns, and `workstream_message_records`
-   * has exactly one writer.
+   * question and answering one each write a canonical conversation turn in
+   * the same transaction as the elicitation row this class owns. Each fact has
+   * exactly one writer.
    * Both wrap the same `DurableObjectStorage`, so the nested `transactionSync`
    * is the same transaction rather than a second one.
    */
@@ -314,7 +316,7 @@ export class WorkstreamSchedulingStorage {
    */
   oldestOpenElicitation(): ElicitationRow | undefined {
     return first(this.sql.exec<ElicitationRow>(
-      `SELECT elicitation_id, run_id, prompt, response_type, options_json,
+      `SELECT elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
               minimum_selections, maximum_selections, target_user_id, status,
               answer_json, answered_by_user_id, external_actor_json, created_at, answered_at
          FROM elicitation_requests
@@ -373,7 +375,7 @@ export class WorkstreamSchedulingStorage {
    */
   async prepareOpenElicitationMessage(
     input: OpenElicitationInput,
-  ): Promise<PreparedWorkstreamMessageRecord> {
+  ): Promise<PreparedConversationTurn> {
     return this.messages.prepareMessage({
       messageId: input.messageId,
       clientMessageId: `elicitation:${input.elicitationId}`,
@@ -397,22 +399,29 @@ export class WorkstreamSchedulingStorage {
 
   openPreparedElicitation(
     input: OpenElicitationInput,
-    prepared: PreparedWorkstreamMessageRecord,
+    prepared: PreparedConversationTurn,
   ): { outcome: "opened" | "exists"; sequenceNumber: number | null } {
-      if (this.elicitationExistsForRun({
-        elicitationId: input.elicitationId,
-        runId: input.runId,
-      })) {
+      const replay = first(this.sql.exec<{
+        run_id: string; tool_call_id: string;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT run_id, tool_call_id FROM elicitation_requests WHERE elicitation_id = ?`,
+        input.elicitationId,
+      ));
+      if (replay) {
+        if (replay.run_id !== input.runId || replay.tool_call_id !== input.toolCallId) {
+          throw new Error("elicitation_replay_identity_mismatch");
+        }
         return { outcome: "exists" as const, sequenceNumber: null };
       }
       this.sql.exec(
         `INSERT INTO elicitation_requests
-           (elicitation_id, run_id, prompt, response_type, options_json, minimum_selections,
+           (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json, minimum_selections,
             maximum_selections, target_user_id, status, answer_json, answered_by_user_id,
             external_actor_json, created_at, answered_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, NULL)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, NULL, ?, NULL)`,
         input.elicitationId,
         input.runId,
+        input.toolCallId,
         input.prompt,
         input.responseType,
         input.optionsJson,
@@ -457,7 +466,7 @@ export class WorkstreamSchedulingStorage {
    */
   async prepareExternalElicitationAnswerMessage(
     input: AnswerElicitationExternallyInput,
-  ): Promise<PreparedWorkstreamMessageRecord> {
+  ): Promise<PreparedConversationTurn> {
     return this.messages.prepareMessage({
       messageId: input.messageId,
       clientMessageId: input.clientMessageId,
@@ -483,7 +492,7 @@ export class WorkstreamSchedulingStorage {
 
   answerPreparedElicitationExternally(
     input: AnswerElicitationExternallyInput,
-    prepared: PreparedWorkstreamMessageRecord,
+    prepared: PreparedConversationTurn,
   ): { outcome: "answered" | "already_answered"; sequenceNumber: number | null } {
       const pending = first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
         `SELECT 1 AS ok FROM elicitation_requests

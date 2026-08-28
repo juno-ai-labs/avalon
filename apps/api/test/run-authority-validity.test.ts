@@ -203,6 +203,7 @@ function input(activityId: string | null = null): WorkstreamWorkflowInput {
     region: "global",
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
+    loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: asHarnessRunId("00000000-0000-4000-8000-000000000007"),
     triggerMessageId: null,
     automationSubscriptionId: SUBSCRIPTION_ID,

@@ -13,7 +13,6 @@ import {
   IdSchema,
   BlockDashboardPreferenceSchema,
   BlockDashboardSchema,
-  MessageSchema,
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
@@ -24,6 +23,7 @@ import {
   WorkstreamBootSchema,
   WorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema,
+  WorkstreamMessageAdmissionReceiptSchema,
   WorkstreamSchema,
   WorkspaceWorkstreamCursorSchema,
 } from "@rally/contracts";
@@ -60,15 +60,6 @@ const listQuery = z.object({
   // see it: a system work stream still requires participation.
   includeSystem: z.enum(["true", "false"]).default("false"),
 });
-const messageQuery = z.object({
-  limit: z.coerce.number().int().min(1).max(250).default(100),
-  before: z.coerce.number().int().positive().optional(),
-  after: z.coerce.number().int().nonnegative().optional(),
-  around: z.coerce.number().int().positive().optional(),
-}).refine(
-  (query) => [query.before, query.after, query.around].filter((value) => value !== undefined).length <= 1,
-  "Use only one transcript cursor",
-);
 const resourceBody = z.object({ resourceId: IdSchema });
 const substreamSocketParam = idParam.extend({ substreamId: z.union([z.literal("0"), IdSchema]) });
 
@@ -81,25 +72,15 @@ const WorkstreamPageSchema = z.object({
   items: z.array(WorkstreamSchema),
   nextCursor: z.string().nullable(),
 });
-const MessagePageSchema = z.object({
-  items: z.array(MessageSchema),
-  nextCursor: z.string().nullable(),
-  newerCursor: z.string().nullable(),
-});
 const CreatedWorkstreamSchema = z.object({
   workstream: WorkstreamSchema,
-  messageId: IdSchema,
+  turnId: IdSchema,
   harnessRunId: IdSchema.nullable(),
-});
-const CreatedMessageSchema = z.object({
-  message: MessageSchema,
-  agentInvoked: z.boolean(),
-  harnessRunId: IdSchema.nullable(),
-});
+}).strict();
+const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.object({
   elicitation: ElicitationSchema.optional(),
-  harnessRunId: IdSchema.nullable(),
-});
+}).strict();
 const ResolvedSuggestionSchema = z.object({
   suggestion: ActivitySuggestionSchema.optional(),
   resourceId: IdSchema.nullable(),
@@ -200,15 +181,14 @@ workstreamRoutes.post("/", requireSendableMessageLength("openingMessage"),
       "rally.workstream.participant_count": body.participantUserIds?.length ?? 0,
       ...(operationId ? { "rally.operation.id": operationId } : {}),
     });
-    const created = CreatedWorkstreamSchema.parse(
-      await recordFailure(span, "workstream_create_failed", () =>
-        new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
+    const result = await recordFailure(span, "workstream_create_failed", () =>
+      new WorkstreamObjectCreationService(c.env, auth, requestDeferral(c)).create({
           ...body,
           descriptionSource: body.objective ? "authored" : "derived",
           // The one caller whose `participantUserIds` is people somebody picked
           // by hand, which is what makes telling them the right thing to do.
-        }, { span, notifyParticipants: true }))
-    );
+        }, { span, notifyParticipants: true }));
+    const created = CreatedWorkstreamSchema.parse(result);
     span.setAttributes({
       "rally.workstream.id": created.workstream.id,
       "rally.harness_run.id": created.harnessRunId,
@@ -284,9 +264,7 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
   }, async (span) => {
     const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
     // This route is the socket-first reader's explicit recovery twin. The room
-    // answers detail and both transcript windows in one call. HyperSight's
-    // optional preference belongs to the independently-started WorkstreamDO
-    // control socket and must never extend recovery latency either.
+    // answers detail and its one canonical ordered transcript snapshot.
     const boot = await span.step(
       "workstream.detail.load",
       () => client.boot(),
@@ -295,14 +273,14 @@ workstreamRoutes.get("/:id", zValidator("param", idParam), async (c) => {
       "rally.workstream.participant_count": boot.workstream.participants.length,
       "rally.workstream.resource_count": boot.workstream.resources.length,
       "rally.workstream.harness_status": boot.workstream.harnessStatus,
-      "rally.boot.message_count": boot.messageFeed.items.length,
-      "rally.boot.resumed": boot.resumeFeed !== null,
+      "rally.boot.turn_count": boot.transcript.ranges.reduce(
+        (count, range) => count + range.turns.length,
+        boot.transcript.activeTurns.length,
+      ),
     });
     return c.json(WorkstreamBootSchema.parse({
       ...boot.workstream,
       transcript: boot.transcript,
-      messageFeed: boot.messageFeed,
-      resumeFeed: boot.resumeFeed,
     }));
   });
 });
@@ -317,24 +295,6 @@ workstreamRoutes.patch("/:id/read-state", zValidator("param", idParam), zValidat
 workstreamRoutes.post("/:id/read-state/mark-unread", zValidator("param", idParam), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(WorkstreamSchema.parse(await client.markUnread()));
-});
-workstreamRoutes.get("/:id/messages", zValidator("param", idParam), zValidator("query", messageQuery), async (c) => {
-  const query = c.req.valid("query");
-  const id = c.req.valid("param").id;
-  return requestFlowSpan(c, "workstream.transcript.read", {
-    flow: "workstream_open",
-    identity: { workstreamId: id },
-  }, async (span) => {
-    const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_open" });
-    const page = await span.step("workstream.transcript.load", () =>
-      client.messages(query.limit, query.before, query.after, query.around));
-    span.setAttributes({
-      "rally.transcript.requested_limit": query.limit,
-      "rally.transcript.message_count": page.items.length,
-      "rally.transcript.cursor": query.before !== undefined ? "before" : query.after !== undefined ? "after" : query.around !== undefined ? "around" : "latest",
-    });
-    return c.json(MessagePageSchema.parse(page));
-  });
 });
 workstreamRoutes.post("/:id/messages", zValidator("param", idParam), requireSendableMessageLength("text"),
   zValidator("json", CreateMessageRequestSchema), async (c) => {
@@ -353,10 +313,6 @@ workstreamRoutes.post("/:id/messages", zValidator("param", idParam), requireSend
   }, async (span) => {
     const client = await authoritativeWorkstreamClient(c, id, { span, flow: "workstream_message_send" });
     const result = await span.step("workstream.message.write", () => client.createMessage(body));
-    span.setAttributes({
-      "rally.agent.invoked": result.agentInvoked,
-      "rally.harness_run.id": result.harnessRunId,
-    });
     return c.json(CreatedMessageSchema.parse(result), 201);
   });
 });

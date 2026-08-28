@@ -4,8 +4,6 @@ import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { readMessage } from "../runtime/message-projection";
-import { publishWorkstreamEvent } from "./integrations";
 
 interface PrivacyTransitionRow extends Record<string, unknown> {
   id: string;
@@ -83,11 +81,14 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
   const text = `${transition.note_title} is now private and no longer accessible`;
   for (const workstream of affectedRows) {
     const messages = createMessageObjectPort(env, transition.workspace_id, workstream.id);
-    const appended = await messages.appendMessage({
+    await messages.appendMessage({
       messageId: newId(),
       clientMessageId,
-      authorType: "human",
-      authorUserId: transition.actor_user_id,
+      // This is a product-generated access notice, not a statement authored by
+      // the person who changed the note. Treating it as human also bypassed the
+      // immutable profile snapshot required for real participant messages.
+      authorType: "system",
+      authorUserId: null,
       externalActorJson: null,
       messageType: "text",
       text,
@@ -95,21 +96,6 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
       producedByRunId: null,
       now: Date.now(),
     });
-    // One notice per work stream per transition. The client message id is the
-    // transition's, so a redelivered queue message finds the row it already
-    // wrote and must not publish a second `message_created` for it.
-    if (appended.outcome === "replayed") continue;
-    const message = await readMessage(
-      messages,
-      { workspaceId: transition.workspace_id, workstreamId: workstream.id },
-      clientMessageId,
-    );
-    if (message) {
-      await publishWorkstreamEvent(env, transition.workspace_id, workstream.id, {
-        type: "message_created",
-        message,
-      });
-    }
   }
 
   await env.DB.prepare(

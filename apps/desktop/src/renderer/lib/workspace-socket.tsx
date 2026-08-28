@@ -12,6 +12,7 @@ import {
   WorkstreamIdSchema,
   WorkstreamSocketCommandResultSchema,
   type WorkstreamId,
+  type WorkstreamMessageAdmissionReceipt,
   type WorkspaceSidebar,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -28,11 +29,11 @@ import {
   useState,
   type PropsWithChildren,
 } from 'react';
-import { ApiError, mapAutomationSummary, mapMessage, mapWorkstreamSummary, type RallyApi } from './api';
+import { ApiError, mapAutomationSummary, mapWorkstreamSummary, type RallyApi } from './api';
 import { uuidV7 } from './telemetry';
 import { desktopBridge } from './platform';
 import { CLIENT_FEATURE_FLAGS_QUERY_KEY } from './use-client-feature-flags';
-import type { Message, WorkstreamSummary } from './types';
+import type { WorkstreamSummary } from './types';
 import {
   applyVersionedWorkstreamState,
   applyWorkspaceWorkstreamFields,
@@ -68,10 +69,13 @@ export interface SidebarConnect {
 
 interface PendingCommand {
   command: CreateMessageCommand;
-  resolve: (message: Message) => void;
+  resolve: (turn: AcceptedWorkstreamTurn) => void;
   reject: (error: Error) => void;
-  timeout: number;
+  timeout: number | null;
 }
+
+export type AcceptedWorkstreamTurn = WorkstreamMessageAdmissionReceipt['turn']
+  & Pick<WorkstreamMessageAdmissionReceipt, 'deliveryState'>;
 
 /**
  * A correlated directory page awaiting its answer.
@@ -92,7 +96,7 @@ interface WorkspaceSocketContextValue {
   topicWaterlines: Readonly<Partial<Record<WorkspaceSyncTopic, number>>>;
   presenceUserIdsByWorkstream: Readonly<Record<string, readonly string[]>>;
   setForegroundWorkstreamId(workstreamId: string | null): void;
-  createMessage(command: CreateMessageCommand): Promise<Message>;
+  createMessage(command: CreateMessageCommand): Promise<AcceptedWorkstreamTurn>;
   listWorkstreams(input: {
     limit: number;
     before?: string;
@@ -193,7 +197,7 @@ export function WorkspaceSocketProvider({
   const [presenceUserIdsByWorkstream, setPresenceUserIdsByWorkstream] = useState<Record<string, readonly string[]>>({});
   const foregroundWorkstreamIdRef = useRef<WorkstreamId | null>(null);
   const reportPresenceRef = useRef<() => void>(() => undefined);
-  const createMessageRef = useRef<(command: CreateMessageCommand) => Promise<Message>>(
+  const createMessageRef = useRef<(command: CreateMessageCommand) => Promise<AcceptedWorkstreamTurn>>(
     () => Promise.reject(new ApiError(
       'The workspace is not connected.',
       409,
@@ -342,7 +346,7 @@ export function WorkspaceSocketProvider({
     };
     const rejectPending = (error: Error): void => {
       for (const entry of pending.values()) {
-        window.clearTimeout(entry.timeout);
+        if (entry.timeout !== null) window.clearTimeout(entry.timeout);
         entry.reject(error);
       }
       pending.clear();
@@ -532,9 +536,9 @@ export function WorkspaceSocketProvider({
           const entry = pending.get(result.data.clientMessageId);
           if (!entry) return;
           pending.delete(result.data.clientMessageId);
-          window.clearTimeout(entry.timeout);
+          if (entry.timeout !== null) window.clearTimeout(entry.timeout);
           if (result.data.type === 'client_command_succeeded') {
-            entry.resolve(mapMessage(result.data.message));
+            entry.resolve({ ...result.data.turn, deliveryState: result.data.deliveryState });
           } else {
             entry.reject(new ApiError(
               result.data.error.message,
@@ -611,17 +615,12 @@ export function WorkspaceSocketProvider({
       }
     };
 
-    createMessageRef.current = (command): Promise<Message> => new Promise((resolve, reject) => {
+    createMessageRef.current = (command): Promise<AcceptedWorkstreamTurn> => new Promise((resolve, reject) => {
       const clientMessageId = command.payload.clientMessageId;
-      const timeout = window.setTimeout(() => {
-        pending.delete(clientMessageId);
-        reject(new ApiError(
-          'The message could not be confirmed. Try sending it again.',
-          0,
-          'workspace_socket_command_timeout',
-        ));
-      }, COMMAND_TIMEOUT_MS);
-      pending.set(clientMessageId, { command, resolve, reject, timeout });
+      // The command is idempotent by clientMessageId and remains owned by this
+      // queue across reconnects. Timing it out would turn an ambiguous accepted
+      // send into a new client identity on retry and duplicate the message.
+      pending.set(clientMessageId, { command, resolve, reject, timeout: null });
       sendPending();
       void connect();
     });
@@ -699,7 +698,7 @@ export function WorkspaceSocketProvider({
   }, [api, queryClient, workspaceId]);
 
   const createMessage = useCallback(
-    (command: CreateMessageCommand): Promise<Message> => createMessageRef.current(command),
+    (command: CreateMessageCommand): Promise<AcceptedWorkstreamTurn> => createMessageRef.current(command),
     [],
   );
   const listWorkstreams = useCallback<WorkspaceSocketContextValue['listWorkstreams']>(

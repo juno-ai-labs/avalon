@@ -40,7 +40,8 @@ export function renderPromptPluginCatalog(input: RenderPromptPluginCatalogInput)
   for (const plugin of input.plugins) {
     if (!unique.has(plugin.pluginId)) unique.set(plugin.pluginId, plugin);
   }
-  const plugins = [...unique.values()].sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+  const plugins = [...unique.values()].sort((left, right) =>
+    left.pluginId < right.pluginId ? -1 : left.pluginId > right.pluginId ? 1 : 0);
   if (!plugins.length) return "";
 
   const active = plugins.filter((plugin) => input.activePluginIds.has(plugin.pluginId));

@@ -17,15 +17,13 @@ import {
   createMemoryTableTools,
   loadAutomationMemoryTableContext,
 } from "../src/services/memory-table-service";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import {
-  executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testHarnessRunPort,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
   applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
@@ -151,20 +149,13 @@ afterEach(() => {
 });
 
 /**
- * The routed execution environment the harness hands a run's tools: run and
- * workstream authority statements travel the runtime SQL port into the run's
- * own object database, workspace memory tables stay regional.
+ * The execution environment the harness hands a run's tools. Run facts travel
+ * through typed object ports while workspace memory tables stay regional.
  */
 function routedEnv(env: Env, runInput: WorkstreamWorkflowInput): Env {
   const store = objectStores.get(runInput.workstreamId);
   if (!store) throw new Error(`no object store for ${runInput.workstreamId}`);
-  return withWorkstreamRuntimeDatabase(
-    env,
-    runInput.workspaceId,
-    runInput.workstreamId,
-    "0",
-    async (statements) => executeWorkstreamObjectSql(store, statements),
-  );
+  return env;
 }
 
 function fixture(): {
@@ -263,19 +254,10 @@ function fixture(): {
       automationSubscriptionId: directory.automation_subscription_id,
       exactState: "running",
     });
-    workstreamObjectRun(
-      store,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status,
-         attempt_id, attempt_number, lease_owner, lease_expires_at, heartbeat_at, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'running', ?, 1, ?, '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01')`,
-      runId,
-      WORKSPACE_ID,
-      workstreamId,
-      principalJson,
-      attemptId,
-      leaseOwner,
-    );
+    seedWorkstreamRun(store, { id: runId, executionPrincipalJson: principalJson,
+      attemptId, attemptEpoch: 1, leaseOwner,
+      leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z"),
+      heartbeatAt: Date.parse("2026-01-01") });
     objectStores.set(workstreamId, store);
   }
   const ai = new FakeAi();
@@ -307,6 +289,7 @@ function input(
       region: "global",
       workspaceId: WORKSPACE_ID,
       workstreamId: automationRun === 1 ? AUTOMATION_WORKSTREAM_ONE : AUTOMATION_WORKSTREAM_TWO,
+      loopId: `workstream:${automationRun === 1 ? AUTOMATION_WORKSTREAM_ONE : AUTOMATION_WORKSTREAM_TWO}:substream:0:loop`,
       harnessRunId: automationRun === 1 ? AUTOMATION_RUN_ONE : AUTOMATION_RUN_TWO,
       triggerMessageId: null,
       automationSubscriptionId: AUTOMATION_SUBSCRIPTION_ID,
@@ -320,6 +303,7 @@ function input(
     region: "global",
     workspaceId: WORKSPACE_ID,
     workstreamId: owner ? WORKSTREAM_ONE : WORKSTREAM_TWO,
+    loopId: `workstream:${owner ? WORKSTREAM_ONE : WORKSTREAM_TWO}:substream:0:loop`,
     harnessRunId: owner ? RUN_ONE : RUN_TWO,
     triggerMessageId: null,
     automationSubscriptionId: null,
@@ -487,22 +471,18 @@ describe("scoped agent memory", () => {
     objectStores.get(AUTOMATION_WORKSTREAM_TWO)!.prepare(
       "UPDATE runs SET status = 'completed' WHERE run_id = ?",
     ).run(AUTOMATION_RUN_TWO);
-    workstreamObjectRun(
-      objectStores.get(AUTOMATION_WORKSTREAM_TWO)!,
-      `INSERT INTO harness_runs
-        (id, workspace_id, workstream_id, origin, execution_principal_json, status,
-         attempt_id, attempt_number, lease_owner, lease_expires_at, heartbeat_at, created_at)
-       VALUES (?, ?, ?, 'human_message', ?, 'running', 'attempt-follow-up', 1,
-               'lease-follow-up', '2099-01-01T00:00:00.000Z', '2026-01-01', '2026-01-01')`,
-      AUTOMATION_FOLLOW_UP_RUN,
-      WORKSPACE_ID,
-      AUTOMATION_WORKSTREAM_TWO,
-      JSON.stringify({ type: "user", userId: MEMBER_ID }),
-    );
+    seedWorkstreamRun(objectStores.get(AUTOMATION_WORKSTREAM_TWO)!, {
+      id: AUTOMATION_FOLLOW_UP_RUN, origin: "human_message",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: MEMBER_ID }),
+      attemptId: "attempt-follow-up", attemptEpoch: 1, leaseOwner: "lease-follow-up",
+      leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z"),
+      heartbeatAt: Date.parse("2026-01-01"),
+    });
     const reply: WorkstreamWorkflowInput = {
       region: "global",
       workspaceId: WORKSPACE_ID,
       workstreamId: AUTOMATION_WORKSTREAM_TWO,
+      loopId: `workstream:${AUTOMATION_WORKSTREAM_TWO}:substream:0:loop`,
       harnessRunId: AUTOMATION_FOLLOW_UP_RUN,
       triggerMessageId: null,
       automationSubscriptionId: null,

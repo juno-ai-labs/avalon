@@ -86,8 +86,7 @@ describe("harness liveness-monitor lifetime", () => {
       "await persistInitialPluginActivations(",
       "await liveness.pulse(\"inference_start\", true);",
       "const livenessMonitor = liveness.startMonitor(5_000);",
-      "try {",
-      "outcome = await runHarness({",
+      "try {\n    outcome = await runHarness({",
       "} finally {",
       "await livenessMonitor.stop();",
     ]);

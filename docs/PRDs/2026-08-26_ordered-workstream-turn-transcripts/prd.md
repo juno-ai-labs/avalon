@@ -775,7 +775,110 @@ see. It makes the order shown to a participant match the order the agent used.
 
 ## Decision log
 
-None yet.
+### 2026-08-28 — The test contract proves the product being shipped
+
+**Decided:** The release contract covers the persistent substream loop,
+reserve-before-await ordering, safe steer/queue/stop boundaries, exact
+tool/elicitation settlement, failure after observable work, immutable canonical
+history, conservative receipt recovery, atomic realtime delivery, bounded
+ranges with indivisible manifest hydration, authority/locality, and renderer
+convergence. It does not require compatibility migration or fleet operations,
+provider-specific thinking matrices, a generic adapter program, synthetic
+Electron percentile gates, or exhaustive generated/fault catalogs.
+
+**Why:** Rally has no users to migrate and this is an authorized forward-only
+cutover. The earlier 94-case catalog expanded acceptance into systems the
+product does not need and obscured the incident being fixed: asynchronous work
+could claim transcript order before the authority reserved it. Useful tests
+must prove that product behavior across the real boundaries, not maximize the
+number of theoretical combinations or require operational evidence for a fleet
+that does not exist.
+
+**Changes:** The former `T1`–`T14`, `H01`–`H38`, and `E01`–`E56` catalog is
+replaced by ten architectural objectives and twelve behavior scenarios mapped
+to actual suites. The original semantic-ordering and observable-failure gaps
+remain explicit scenarios; their named tests are now implemented and await
+exact-head CI. Shipped in #378.
+
+### 2026-08-28 — Pending inputs are immutable ordered facts
+
+**Decided:** A server-admitted pending input cannot be edited or cancelled. A
+changed or withdrawn request is admitted as a new ordered input; delivery never
+rewrites the earlier input's identity, payload, provenance, or arrival order.
+
+**Why:** Edit and cancellation would add mutable lifecycle states and race them
+against safe-boundary promotion. Immutable pending facts make replay,
+server-authoritative overlays, and FIFO delivery converge on one answer without
+another revision protocol.
+
+**Changes:** This supersedes the earlier definition that allowed editing or
+cancelling before promotion. Canonical-message immutability is unchanged.
+Shipped in #378.
+
+### 2026-08-28 — One persistent loop owns every substream activation
+
+**Decided:** A substream-derived `loop_id` survives messages, idle intervals,
+execution receipts, retries, and isolate replacement. A step ends only after one
+accepted provider response and its already-declared tools settle. Steer input is
+eligible there; queue input waits for terminalization to make the loop idle.
+Stop prevents the next step but does not cancel provider or tool work already in
+flight. Provider retry and fallback stop permanently after output or an effect
+becomes observable.
+
+**Why:** Per-message run identity let independent activations compete for
+conversation order and made a safe step able to release the singleton while its
+receipt was still running. Observable fallback could likewise produce two
+semantic answers for one reserved position.
+
+**Changes:** This supersedes the per-run loop identity, retry-reset, and
+safe-step-idle requirements below. Execution receipts remain durable evidence,
+failed partial output becomes a typed status pill, and the breaking cutover
+retains valid canonical message history without a compatibility reader. Shipped
+in #378.
+
+### 2026-08-28 — The agreed sections stand; changes live here
+
+**Decided:** An earlier revision of this change edited the agreed sections in
+place — narrowing the substrate to `SubstreamAgent`, dropping the legacy
+backfill and cleanup-receipt definitions that shipped with v27–v29, and
+rewriting the deployment section around the forward-only cutover. Those edits
+are reverted; the agreed text stands as written, and the entries above are the
+record of what actually moved.
+
+**Why:** The house rule for PRDs is append-only: sections 1–6 are the proposal
+as it was agreed, and a reader needs both the original and the log to see what
+happened. The in-place rewrite also erased definitions of receipts that had
+already shipped, which made the document disagree with deployed history.
+
+**Changes:** Nothing beyond restoring the text; the substantive supersessions
+are the three entries above. Shipped in #378.
+
+### 2026-08-28 — Oversized indivisible turns ship as payload-free envelopes
+
+**Decided:** The "Oversized indivisible turns" mechanism in the agreed spec —
+immutable per-revision turn manifests, participant-safe payload refs, a
+chunked `load_transcript_blob` socket operation, and client-side byte-resume
+hydration with hash verification — is not built. An indivisible turn that
+exceeds the shared realtime-frame limit keeps its exact transcript sequence as
+an envelope carrying `blocksOmitted: true` and the true block count, and the
+desktop renders a "too large to display" placeholder in its canonical
+position. `E45` and the manifest rows in the test-layer tables are superseded
+accordingly: the shipping proof is that an oversized turn advances coverage as
+a sequence-owning placeholder, on real workerd and in the renderer.
+
+**Why:** Nothing in the product can produce an indivisible oversized turn
+today — provider output is chunked well below the frame limit and pending
+inputs are bounded at admission. The hydration protocol was roughly eight
+hundred lines of transport, two schema tables, and a client engine serving a
+row no code writes, in a seed-stage codebase whose rule is to build for the
+product that exists. What the ordering bug actually requires is that an
+oversized turn can never corrupt sequence coverage; the envelope alone proves
+that.
+
+**Changes:** The two manifest tables leave the v33 schema; the blob socket
+operations leave the contracts; the desktop hydration engine is removed. The
+`blocksOmitted` envelope is the entire contract a future delivery mechanism
+would build behind, if a producer of such turns ever exists. Shipped in #378.
 
 ## Key design decisions
 

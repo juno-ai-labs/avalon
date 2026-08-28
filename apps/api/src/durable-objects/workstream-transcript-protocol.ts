@@ -9,9 +9,30 @@ import type { z } from "zod";
 
 type LocalOnlyTranscriptOperation =
   | "prepareParticipantMessage"
+  // Authenticated product operations resolve immutable human provenance and
+  // join the object transaction locally; no generic RPC may impersonate one.
+  | "appendParticipantMessage"
   | "appendPreparedParticipantMessage"
+  | "prepareToolLifecycle"
+  | "upsertPreparedToolLifecycle"
+  | "finalizePreparedAssistantTurn"
+  | "commitAssistantReservationError"
+  | "settleActiveAssistantReservation"
+  | "commitRecoveredToolResult"
+  | "commitActivationInputs"
+  | "settlePendingSteersAtStep"
+  | "activatePendingInput"
+  | "appendPreparedParticipantMessageAtSequence"
+  | "pendingTranscriptInputs"
+  | "pendingTranscriptInput"
   | "participantTurn"
   | "participantTurnForTool"
+  | "transcriptActivity"
+  | "transcriptThrough"
+  // The in-memory Bind projection uses an immutable suffix chain. It is a
+  // same-isolate harness input, never an RPC/JSON response.
+  | "readBindProjection"
+  | "omittedTurnEnvelope"
   | "range";
 export type TranscriptOperation = Exclude<keyof WorkstreamTranscriptStorage, LocalOnlyTranscriptOperation>;
 export type TranscriptObjectPort = ObjectPortOf<Pick<WorkstreamTranscriptStorage, TranscriptOperation>>;
@@ -21,13 +42,12 @@ const DISPATCHED_OPERATIONS = [
   "commitBindCompaction",
   "compactionCheckpoint",
   "recordProviderBoundary",
-  "appendParticipantMessage",
   "upsertToolLifecycle",
   "upsertActivity",
   "createOpeningSnapshot",
-  "readBindProjection",
   "reserveCompactionStatus",
   "setParticipantTurnAttentionOrdinal",
+  "seedDevelopmentConversationTurn",
 ] as const satisfies readonly TranscriptOperation[];
 
 export const TRANSCRIPT_OPERATIONS:

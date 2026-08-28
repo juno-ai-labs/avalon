@@ -52,6 +52,16 @@ export interface WorkspaceMember {
   status?: 'active' | 'invited' | 'suspended';
 }
 
+export interface MessageAuthor {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  email?: string;
+  timezone?: string;
+  role?: string;
+  status?: 'active' | 'invited' | 'suspended';
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -263,6 +273,7 @@ export interface ThoughtEventData {
   /** Client receipt time for the currently streaming inference attempt. */
   startedAt?: number;
   monotonicStartedAt?: number;
+  timingAccuracy?: 'observed' | 'upper_bound';
   activeVerb?: string;
   completedVerb?: string;
 }
@@ -342,6 +353,8 @@ export interface ExternalActor {
 
 export interface Message {
   id: string;
+  /** Ordered-transcript sequence. Present only on canonical transcript rows. */
+  transcriptSequence?: number;
   /** Canonical Bind turn identity used to replace its transient stream overlay. */
   transcriptTurnId?: string;
   /**
@@ -355,7 +368,7 @@ export interface Message {
   /** Main-substream people-visible ordinal used only for unread attention. */
   attentionSequenceNumber?: number | null;
   authorType: 'human' | 'external' | 'agent' | 'system';
-  author?: WorkspaceMember;
+  author?: MessageAuthor;
   externalActor?: ExternalActor;
   messageType:
     | 'text'
@@ -370,7 +383,16 @@ export interface Message {
   attachments?: MessageAttachment[];
   createdAt: string;
   streaming?: boolean;
-  deliveryState?: 'sending';
+  deliveryState?: 'sending' | 'steer_pending' | 'queue_pending';
+  /**
+   * Sequence-owning placeholder for a canonical turn whose blocks exceed the
+   * realtime frame budget and are deliberately not delivered.
+   */
+  blocksOmittedPlaceholder?: boolean;
+  statusEvent?: {
+    kind: 'assistant_turn_failed' | 'assistant_turn_stopped';
+    code: string;
+  };
   /**
    * Durable Object events and D1 transcript rows have independent sequence
    * counters. Realtime-only blocks use this anchor so their observed order can
@@ -388,12 +410,6 @@ export interface Message {
   activitySuggestion?: ActivitySuggestionData;
 }
 
-export interface MessagePage {
-  items: Message[];
-  nextCursor: string | null;
-  newerCursor: string | null;
-}
-
 export interface BackgroundTask {
   id: string;
   harnessRunId?: string;
@@ -405,7 +421,7 @@ export interface BackgroundTask {
   durationMs?: number;
   tokenCount?: number;
   toolUses?: number;
-  transcriptMessageId?: string;
+  transcriptTurnId?: string;
 }
 
 export interface AutomationRunSummary {
@@ -461,6 +477,8 @@ export interface WorkstreamAutomationSubscription {
 
 export interface WorkstreamDetail extends WorkstreamSummary {
   createdAt: string;
+  /** The server has durably recorded a stop for the next safe boundary. */
+  stopRequested?: boolean;
   /**
    * The model this work stream is pinned to, or absent for the unpinned case
    * the flag decides. Read by the composer's model pill as the answer of last
@@ -485,18 +503,8 @@ export interface WorkstreamDetail extends WorkstreamSummary {
   suggestions?: ActivitySuggestionData[];
 }
 
-/**
- * The REST recovery twin of the socket snapshot.
- *
- * `resumeFeed` is the window around where this viewer stopped reading, and is
- * null when that is already inside `messageFeed`. Render one of the two; they
- * are not contiguous, and the transcript is a single ordered run.
- */
 export interface WorkstreamBoot extends WorkstreamDetail {
   transcript: WorkstreamTranscriptSnapshot;
-  /** Undefined from a Worker that predates the field; absent is not empty. */
-  messageFeed?: MessagePage;
-  resumeFeed: MessagePage | null;
 }
 
 export interface WorkstreamDeferredContext {
@@ -507,11 +515,12 @@ export interface WorkstreamDeferredContext {
 
 export interface CreatedWorkstream {
   workstream: WorkstreamSummary;
-  messageId: string;
+  /** Canonical identity of the opening conversation turn. */
+  turnId: string;
   clientMessageId: string;
   createdAt: string;
   /**
-   * The run the opening message started. Seeded into the work stream's detail so
+   * The run the opening turn started. Seeded into the work stream's detail so
    * the work timer the launch surface started keeps counting across the
    * navigation instead of disappearing until the first refetch answers.
    */
@@ -634,36 +643,6 @@ export interface SocketTicket {
    */
   ticketId?: string;
 }
-
-export type WorkstreamSocketEvent =
-  | { type: 'snapshot'; workstream: WorkstreamDetail; messages: Message[]; sequence: number }
-  | { type: 'presence_changed'; viewers: Participant[]; sequence: number }
-  | { type: 'message_created'; message: Message; sequence: number }
-  | {
-      type: 'stream_started';
-      messageId: string;
-      harnessRunId: string;
-      turnId: string;
-      epoch: number;
-      streamSeq: number;
-      reset: false;
-      sequence: number;
-    }
-  | {
-      type: 'stream_delta';
-      messageId: string;
-      delta: string;
-      turnId: string;
-      epoch: number;
-      streamSeq: number;
-      reset: boolean;
-      sequence: number;
-    }
-  | { type: 'stream_completed'; message: Message; sequence: number }
-  | { type: 'harness_status_changed'; status: HarnessStatus; sequence: number }
-  | { type: 'resource_updated'; resource: WorkstreamResource; sequence: number }
-  | { type: 'resync_required'; reason: 'history_unavailable' | 'sequence_ahead'; latestSequence: number; sequence: number }
-  | { type: 'error'; message: string; sequence?: number };
 
 /** One person's scheduled digest: which days, what times, and where it goes. */
 export interface DigestSchedule {

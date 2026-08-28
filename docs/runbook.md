@@ -1025,7 +1025,7 @@ Both regional Workers must use `PUBLIC_WEB_BASE_URL=https://rallywith.ai` so ide
 - Verify foreground message ingress on the workspace socket: drop
   the connection after `create_message` but before its private receipt, confirm
   reconnect resends the same `clientMessageId`, and confirm exactly one
-  sequenced `message_created` row/event exists. A socket attachment from before
+  sequenced `transcript_turn_upserted` event and canonical turn exist. A socket attachment from before
   the session-claim deployment should receive `socket_reconnect_required` and a
   1012 close on its first attempted write.
 - Verify workspace convergence by mutating timezone, Terminal policy,

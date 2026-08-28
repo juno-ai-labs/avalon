@@ -464,7 +464,6 @@ describe("automation lifecycle", () => {
     });
     storesFor(database).set("00000000-0000-7000-8000-00000000000a", objectStore);
 
-
     await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
 
     expect(database.prepare(
@@ -516,7 +515,6 @@ describe("automation lifecycle", () => {
     });
     storesFor(database).set("00000000-0000-7000-8000-00000000001a", objectStore);
 
-
     await serviceFor(database).deleteAutomation("00000000-0000-7000-8000-000000000007");
 
     expect(workstreamObjectRootRow(objectStore, "archived_at, exact_state"))
@@ -558,6 +556,7 @@ function seededDatabase(): DatabaseSync {
   // The alarm's draft arm reads the object's links table, which no regional
   // snapshot has ever carried.
   createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
+
   createWorkspaceObjectTable(database, "workspace_workstream_directory");
   createWorkspaceObjectTable(database, "workspace_workstream_viewers");
   applyWorkspaceResourceSchema(database, "00000000-0000-7000-8000-000000000001");

@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({
   addParticipant: vi.fn(),
   clientFeatureFlags: vi.fn(),
-  getMessagePage: vi.fn(),
   getWorkstreamContext: vi.fn(),
   getWorkspaceMembers: vi.fn(),
   getWorkstream: vi.fn(),
@@ -63,12 +62,8 @@ vi.mock('../lib/use-block-dashboard-sockets', () => ({
 }));
 
 import { WorkstreamScreen } from './workstream';
-import {
-  workstreamFeedSourceQueryKey,
-  workstreamRecoveryFeedQueryKey,
-  workstreamSocketSnapshotGenerationQueryKey,
-} from '../lib/telemetry';
-import type { Message, WorkstreamBoot, WorkstreamDetail } from '../lib/types';
+import { workstreamFeedSourceQueryKey, workstreamSocketSnapshotGenerationQueryKey } from '../lib/telemetry';
+import type { WorkstreamBoot, WorkstreamDetail } from '../lib/types';
 
 const workstreamId = '00000000-0000-7000-8000-000000000650';
 
@@ -110,8 +105,6 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
       activeActivities: [],
       activeTurns: [],
     },
-    messageFeed: { items: [], nextCursor: null, newerCursor: null },
-    resumeFeed: null,
     ...overrides,
   } as WorkstreamBoot;
 }
@@ -151,7 +144,6 @@ describe('socket-first work-stream open', () => {
     retainedSocket.mockReturnValue({
       activeCompaction: null,
       createMessage: vi.fn(),
-      loadMessagePage: vi.fn(),
       requestSnapshot: vi.fn(),
       sendReady: false,
       state: 'connecting',
@@ -165,7 +157,6 @@ describe('socket-first work-stream open', () => {
     expect(screen.getByText('Opening work stream…')).toBeInTheDocument();
     await waitFor(() => expect(retainedSocket).toHaveBeenCalledWith(api, workstreamId, true));
     expect(api.getWorkstream).not.toHaveBeenCalled();
-    expect(api.getMessagePage).not.toHaveBeenCalled();
   });
 
   it('requests a replacement snapshot when a retained socket outlives its base caches', async () => {
@@ -173,7 +164,6 @@ describe('socket-first work-stream open', () => {
     retainedSocket.mockReturnValue({
       activeCompaction: null,
       createMessage: vi.fn(),
-      loadMessagePage: vi.fn(),
       requestSnapshot,
       sendReady: true,
       state: 'connected',
@@ -184,21 +174,15 @@ describe('socket-first work-stream open', () => {
 
     await waitFor(() => expect(requestSnapshot).toHaveBeenCalledTimes(1));
     expect(api.getWorkstream).not.toHaveBeenCalled();
-    expect(api.getMessagePage).not.toHaveBeenCalled();
   });
 
   it('does not run payload effects until detail and transcript both belong to the route', async () => {
     const staleWorkstreamId = '00000000-0000-7000-8000-000000000649';
     const staleBoot = recoveryBoot({ id: staleWorkstreamId, title: 'Stale work stream' });
-    const { messageFeed: _staleFeed, resumeFeed: _staleResume, ...staleDetail } = staleBoot;
-    void _staleFeed;
-    void _staleResume;
+    const { transcript: staleTranscript, ...staleDetail } = staleBoot;
     const queryClient = renderScreen((client) => {
       client.setQueryData<WorkstreamDetail>(['workstream', workstreamId], staleDetail);
-      client.setQueryData<Message[]>(['messages', workstreamId], [{
-        id: 'stale-message',
-        workstreamId: staleWorkstreamId,
-      } as Message]);
+      client.setQueryData(['ordered-transcript', workstreamId], staleTranscript);
     });
 
     expect(screen.getByText('Opening work stream…')).toBeInTheDocument();
@@ -207,12 +191,10 @@ describe('socket-first work-stream open', () => {
     expect(scrollTranscriptToEnd).not.toHaveBeenCalled();
 
     const currentBoot = recoveryBoot();
-    const { messageFeed: _currentFeed, resumeFeed: _currentResume, ...currentDetail } = currentBoot;
-    void _currentFeed;
-    void _currentResume;
+    const { transcript: currentTranscript, ...currentDetail } = currentBoot;
     act(() => {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], currentDetail);
-      queryClient.setQueryData<Message[]>(['messages', workstreamId], []);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], currentTranscript);
     });
 
     await waitFor(() => expect(api.getWorkstreamContext).toHaveBeenCalledTimes(1));
@@ -221,13 +203,11 @@ describe('socket-first work-stream open', () => {
 
   it('does not flash the empty invitation while a new run is scheduled', async () => {
     const boot = recoveryBoot({ harnessStatus: 'scheduled' });
-    const { messageFeed: _messageFeed, resumeFeed: _resumeFeed, ...detail } = boot;
-    void _messageFeed;
-    void _resumeFeed;
+    const { transcript, ...detail } = boot;
 
     renderScreen((queryClient) => {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
-      queryClient.setQueryData<Message[]>(['messages', workstreamId], []);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], transcript);
     });
 
     expect(screen.queryByText('Ready to begin')).not.toBeInTheDocument();
@@ -254,17 +234,14 @@ describe('socket-first work-stream open', () => {
       timezone: 'America/Los_Angeles',
       status: 'active' as const,
     };
-    const boot = recoveryBoot({ participants: [adam, katherine] });
-    const { messageFeed: _messageFeed, resumeFeed: _resumeFeed, ...detail } = boot;
-    void _messageFeed;
-    void _resumeFeed;
+    const detail = recoveryBoot({ participants: [adam, katherine] });
     api.getWorkspaceMembers.mockResolvedValue([adam, katherine, jordan]);
     api.addParticipant.mockRejectedValue(new Error('Adam cannot add Jordan'));
     api.removeParticipant.mockRejectedValue(new Error('Adam cannot remove Katherine'));
 
     renderScreen((queryClient) => {
       queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
-      queryClient.setQueryData<Message[]>(['messages', workstreamId], []);
+      queryClient.setQueryData(['ordered-transcript', workstreamId], detail.transcript);
     });
 
     fireEvent.click(await screen.findByRole('button', { name: /Add participant/u }));
@@ -285,7 +262,6 @@ describe('socket-first work-stream open', () => {
     retainedSocket.mockReturnValue({
       activeCompaction: null,
       createMessage: vi.fn(),
-      loadMessagePage: vi.fn(),
       requestSnapshot: vi.fn(),
       sendReady: false,
       state: 'reconnecting',
@@ -300,41 +276,12 @@ describe('socket-first work-stream open', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 
     await waitFor(() => expect(api.getWorkstream).toHaveBeenCalledTimes(1));
-    expect(api.getMessagePage).not.toHaveBeenCalled();
-  });
-
-  it('keeps legacy page recovery distinct from socket snapshots', async () => {
-    retainedSocket.mockReturnValue({
-      activeCompaction: null,
-      createMessage: vi.fn(),
-      loadMessagePage: vi.fn(),
-      requestSnapshot: vi.fn(),
-      sendReady: false,
-      state: 'reconnecting',
-      workspaceSocketState: 'connecting',
-    });
-    api.getWorkstream.mockResolvedValue(recoveryBoot({
-      messageFeed: undefined,
-      resumeFeed: null,
-    }));
-    api.getMessagePage.mockResolvedValue({ items: [], nextCursor: null, newerCursor: null });
-    const queryClient = renderScreen();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-
-    await waitFor(() => expect(api.getMessagePage).toHaveBeenCalledTimes(1));
-    expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('legacy_page');
-    expect(queryClient.getQueryData(workstreamRecoveryFeedQueryKey(workstreamId))).toBeUndefined();
-    expect(queryClient.getQueryData(['workstream', workstreamId])).not.toHaveProperty('messageFeed');
-    expect(queryClient.getQueryData(['workstream', workstreamId])).not.toHaveProperty('resumeFeed');
-    await waitFor(() => expect(api.getWorkstreamContext).toHaveBeenCalledTimes(1));
   });
 
   it('keeps a newer socket snapshot when REST recovery resolves late', async () => {
     retainedSocket.mockReturnValue({
       activeCompaction: null,
       createMessage: vi.fn(),
-      loadMessagePage: vi.fn(),
       requestSnapshot: vi.fn(),
       sendReady: true,
       state: 'reconnecting',
@@ -348,16 +295,12 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(api.getWorkstream).toHaveBeenCalledTimes(1));
 
     const socketDetail = recoveryBoot({ title: 'Canonical socket title' });
-    const { messageFeed: _messageFeed, resumeFeed: _resumeFeed, ...detail } = socketDetail;
-    void _messageFeed;
-    void _resumeFeed;
+    const { transcript: socketTranscript, ...detail } = socketDetail;
     act(() => {
       queryClient.setQueryData(workstreamSocketSnapshotGenerationQueryKey(workstreamId), 1);
       queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
       queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], detail);
-      queryClient.setQueryData(['messages', workstreamId], []);
-      queryClient.setQueryData(['messages-cursor', workstreamId], 'socket-older');
-      queryClient.setQueryData(['messages-newer-cursor', workstreamId], 'socket-newer');
+      queryClient.setQueryData(['ordered-transcript', workstreamId], socketTranscript);
     });
     await act(async () => {
       recovery.resolve(recoveryBoot({ title: 'Stale REST title' }));
@@ -367,10 +310,7 @@ describe('socket-first work-stream open', () => {
     await waitFor(() => expect(api.getWorkstreamContext).toHaveBeenCalledTimes(1));
     expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId])?.title)
       .toBe('Canonical socket title');
-    expect(queryClient.getQueryData(['messages', workstreamId])).toEqual([]);
-    expect(queryClient.getQueryData(['messages-cursor', workstreamId])).toBe('socket-older');
-    expect(queryClient.getQueryData(['messages-newer-cursor', workstreamId])).toBe('socket-newer');
+    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toEqual(socketTranscript);
     expect(queryClient.getQueryData(workstreamFeedSourceQueryKey(workstreamId))).toBe('socket_snapshot');
-    expect(api.getMessagePage).not.toHaveBeenCalled();
   });
 });

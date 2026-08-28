@@ -95,25 +95,14 @@ export class WorkstreamBlockDashboardStorage {
    * decision and the write cannot be interleaved, so a lease that lapses
    * mid-operation is no longer a state a caller can observe.
    *
-   * The three statuses are the ones the retired view called `running`: it read
-   * `_runtime_harness_runs`, whose projection mapped `waiting` and `steering`
-   * onto `running`, so the subquery this replaces accepted a run in any of
-   * them. Nothing writes `waiting` or `steering` today — the `runs` CHECK
-   * constraint admits them and several readers tolerate them, but no code path
-   * produces one — so fencing on `running` alone would also pass. It is spelled
-   * out anyway because the two are not equally safe to be wrong about: a
-   * narrower fence answers a lease it does not recognise by writing nothing,
-   * which is indistinguishable from a genuinely lost lease, so the first writer
-   * of either status would silently drop block-dashboard writes rather than
-   * fail somewhere anyone would look. Retiring a compatibility view should not
-   * quietly narrow what the product accepts. The receipt storage's `#fence`
-   * carries the same set for the same reason.
+   * Forward receipts hold a lease only while `running`. The pre-v35
+   * compatibility phases were terminalized by the cutover and have no writer.
    */
   #holdsLease(fence: BlockRunFence, now: number): boolean {
     return first(this.sql.exec<{ ok: number } & Record<string, SqlStorageValue>>(
       `SELECT 1 AS ok FROM runs
         WHERE run_id = ? AND legacy_attempt_id = ? AND lease_owner = ?
-          AND status IN ('running', 'waiting', 'steering')
+          AND status = 'running'
           AND terminalized_at IS NULL AND lease_expires_at > ?`,
       fence.harnessRunId,
       fence.attemptId,

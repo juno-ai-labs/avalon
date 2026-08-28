@@ -5,7 +5,6 @@ import { rpcResultBody } from "../durable-objects/rpc-result";
 import type { WorkspaceRuntimeSqlResult } from "../durable-objects/workspace-runtime-sql";
 import { asWorkspaceId } from "@rally/contracts";
 import type { Env } from "../env";
-import { referencesWorkstreamAuthorityTable } from "./workstream-runtime-database";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { splitSqlStatements } from "../lib/sql-statements";
 import { uuidV7 } from "../lib/uuid-v7";
@@ -92,6 +91,7 @@ export const WORKSPACE_LOCAL_TABLES = [
   "note_privacy_change_outbox",
   "note_resource_deletion_outbox",
   "resource_object_deletion_outbox",
+  "pending_attachment_reservations",
   "memory_scopes",
   "memory_items",
   "memory_items_fts",
@@ -165,15 +165,6 @@ const WORKSPACE_REGIONAL_ONLY_TABLE_PATTERNS = WORKSPACE_REGIONAL_ONLY_TABLES.ma
 }));
 
 function localStatement(sql: string): boolean {
-  // Work-stream authority outranks this layer. The harness wraps the
-  // workspace router outside the work-stream router, so this matcher sees
-  // every statement first — and a transcript read like `FROM messages …
-  // JOIN resources` names a workspace table without belonging here. Claiming
-  // it executed it in WorkspaceDO, where `messages` does not exist, and every
-  // harness run since the cutover died on exactly that. The work-stream
-  // object carries compat views for the workspace-owned halves of such joins;
-  // this object carries none for the work-stream halves.
-  if (referencesWorkstreamAuthorityTable(sql)) return false;
   const localTables = WORKSPACE_LOCAL_TABLE_PATTERNS
     .filter(({ pattern }) => pattern.test(sql))
     .map(({ table }) => table);
@@ -387,12 +378,9 @@ export function withWorkspaceRuntimeDatabase(
 /**
  * Escape hatch for explicitly global/regional control-plane SQL.
  *
- * Strictly, this peels off *this* port rather than every port: it answers with
- * whatever `DB` was before `withWorkspaceRuntimeDatabase` replaced it. Where the
- * two environments are nested — `runWorkstreamHarness` layers this over an
- * agent's work-stream port — that is the work-stream database, not regional D1,
- * and `loadHarnessTools` depends on exactly that to reach `workstream_resources`.
- * Said here because the name reads like an unconditional route to D1 and is not.
+ * This peels off the WorkspaceDO compatibility port and returns the regional
+ * binding it wrapped. Work-stream product authority is no longer represented
+ * as a database overlay, so there is no second SQL router to unwrap or bypass.
  */
 export function workspaceRegionalDatabase(env: Env): D1Database {
   return (env as Env & { [REGIONAL_DATABASE]?: D1Database })[REGIONAL_DATABASE] ?? env.DB;

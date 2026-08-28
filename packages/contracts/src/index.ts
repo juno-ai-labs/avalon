@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   TranscriptActivitySchema,
+  PendingTranscriptInputSchema,
   TranscriptRangeResultSchema,
   TranscriptTurnSchema,
   WorkstreamTranscriptRangeRequestSchema,
@@ -1019,7 +1020,7 @@ export const BackgroundTaskSchema = z.object({
   completedAt: TimestampSchema.nullable(),
   tokenCount: z.number().int().nonnegative().nullable(),
   toolUses: z.number().int().nonnegative().nullable(),
-  transcriptMessageId: IdSchema.nullable()
+  transcriptTurnId: z.string().min(1).max(180).nullable()
 });
 
 export const ElicitationOptionSchema = z.object({
@@ -1115,6 +1116,8 @@ export const UpdateBlockDashboardRequestSchema = z.object({
 });
 
 export const WorkstreamDetailSchema = WorkstreamSchema.extend({
+  /** Durable safe-boundary stop request for the one substream-owned loop. */
+  stopRequested: z.boolean().optional(),
   participants: z.array(ParticipantSchema),
   viewers: z.array(ViewerSchema),
   resources: z.array(WorkstreamResourceSchema),
@@ -1782,12 +1785,6 @@ export const CreateWebhookConnectionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(120).optional()
 });
 
-export const MessageFeedPageSchema = z.object({
-  items: z.array(MessageSchema).max(250),
-  nextCursor: z.string().nullable(),
-  newerCursor: z.string().nullable(),
-}).strict();
-
 /**
  * The REST recovery twin of the SubstreamAgent `snapshot` frame.
  *
@@ -1801,27 +1798,7 @@ export const MessageFeedPageSchema = z.object({
  */
 export const WorkstreamBootSchema = WorkstreamDetailSchema.extend({
   transcript: WorkstreamTranscriptSnapshotSchema,
-  /**
-   * Newest page. Bounded: a screen shows tens of messages, not hundreds.
-   *
-   * Optional, and absent is not empty. A Worker that predates this field still
-   * answers this route, and EU deploys before Global, so one region serves the
-   * old shape for part of every rollout — the same skew `WorkstreamContextSchema`
-   * documents at length. Requiring it would fail the whole response there, and
-   * the failure is not a missing transcript but a work stream that will not
-   * open. The client falls back to `GET /:id/messages` when it is undefined,
-   * which is exactly what it did before this existed.
-   */
-  messageFeed: MessageFeedPageSchema.optional(),
-  /** The window around where this viewer stopped, or null if that is this page. */
-  resumeFeed: MessageFeedPageSchema.nullable().default(null),
 });
-
-
-const MessageFeedCursorSchema = z.string().regex(/^\d+$/u).max(16).refine((value) =>
-  Number.isSafeInteger(Number(value)), "Cursor must be a safe integer");
-const PositiveMessageFeedCursorSchema = MessageFeedCursorSchema.refine((value) =>
-  Number(value) > 0, "Cursor must be positive");
 
 export const WORKSTREAM_REALTIME_MAX_FRAME_BYTES = 1_000_000;
 
@@ -1847,15 +1824,6 @@ export const ClientSocketEventSchema = z.discriminatedUnion("type", [
     type: z.literal("load_transcript_range"),
     requestId: IdSchema,
     request: WorkstreamTranscriptRangeRequestSchema,
-  }).strict(),
-  z.object({
-    type: z.literal("load_message_page"),
-    requestId: IdSchema,
-    limit: z.number().int().min(1).max(250).default(200),
-    cursor: z.discriminatedUnion("direction", [
-      z.object({ direction: z.literal("before"), value: PositiveMessageFeedCursorSchema }).strict(),
-      z.object({ direction: z.literal("after"), value: MessageFeedCursorSchema }).strict(),
-    ]),
   }).strict(),
   z.object({
     type: z.literal("create_message"),
@@ -2292,19 +2260,27 @@ export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocke
 
 /**
  * A direct response to one client command. It is deliberately outside the room
- * event sequence: the canonical `message_created` event is replayable and
+ * event sequence: the canonical transcript-turn upsert is replayable and
  * broadcast, while this receipt is private to the socket that submitted it.
  * Reconnecting clients resend the same `clientMessageId` and receive the same
- * canonical message through the idempotent write path.
+ * accepted turn through the idempotent write path.
  */
+export const WorkstreamMessageDeliveryStateSchema = z.enum(["canonical", "pending"]);
+export const WorkstreamMessageAdmissionReceiptSchema = z.object({
+  turn: z.object({
+    turnId: IdSchema,
+    clientMessageId: z.string().min(1).max(120),
+    createdAt: TimestampSchema,
+  }).strict(),
+  deliveryState: WorkstreamMessageDeliveryStateSchema,
+}).strict();
+
 export const WorkstreamSocketCommandResultSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("client_command_succeeded"),
     command: z.literal("create_message"),
     clientMessageId: z.string().min(1).max(120),
-    message: MessageSchema,
-    agentInvoked: z.boolean(),
-    harnessRunId: IdSchema.nullable(),
+    ...WorkstreamMessageAdmissionReceiptSchema.shape,
   }).strict(),
   z.object({
     type: z.literal("client_command_failed"),
@@ -2326,6 +2302,8 @@ const ServerEventBaseSchema = z.object({
 const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   /** Stable identity for one model turn, across retries and route fallbacks. */
   turnId: z.string().min(1).max(180),
+  /** Canonical position reserved before the provider request begins. */
+  transcriptSequence: z.number().int().positive(),
   /** Increments whenever a turn restarts on the same or a fallback route. */
   epoch: z.number().int().nonnegative(),
   /** Monotonic within one turn epoch; distinct from the room event sequence. */
@@ -2336,8 +2314,9 @@ const StreamEventBaseSchema = ServerEventBaseSchema.extend({
  * after the stream began. `turnStartOffset` identifies the prefix that survives
  * a retry without storing that prefix twice in Durable Object storage.
  */
-export const ActiveStreamCheckpointSchema = z.object({
-  messageId: IdSchema,
+const ActiveStreamCheckpointBaseSchema = z.object({
+  /** Transient identity for one run's streamed output; never a transcript turn. */
+  streamId: IdSchema,
   harnessRunId: IdSchema,
   turnId: z.string().min(1).max(180),
   epoch: z.number().int().nonnegative(),
@@ -2351,7 +2330,14 @@ export const ActiveStreamCheckpointSchema = z.object({
   message: "Turn start must fall within the accumulated stream text",
   path: ["turnStartOffset"],
 });
+/** Workstream streams always occupy a pre-reserved canonical position. */
+export const ActiveStreamCheckpointSchema = ActiveStreamCheckpointBaseSchema.and(z.object({
+  transcriptSequence: z.number().int().positive(),
+}));
 export const ActiveStreamCheckpointsSchema = z.array(ActiveStreamCheckpointSchema).max(1);
+
+/** HyperSight blocks are not participant transcript turns and have no position. */
+export const BlockDashboardStreamCheckpointSchema = ActiveStreamCheckpointBaseSchema;
 
 /** The one context-compaction operation currently owned by an agent DO. */
 export const AgentCompactionStateSchema = z.object({
@@ -2363,23 +2349,6 @@ export const AgentCompactionStateSchema = z.object({
 }).strict();
 export type AgentCompactionState = z.infer<typeof AgentCompactionStateSchema>;
 
-/** Correlated, viewer-specific reads that never consume the shared room cursor. */
-export const SubstreamDirectSocketEventSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("message_page"),
-    requestId: IdSchema,
-    occurredAt: TimestampSchema,
-    page: MessageFeedPageSchema,
-  }).strict(),
-  z.object({
-    type: z.literal("message_page_error"),
-    requestId: IdSchema,
-    occurredAt: TimestampSchema,
-    code: z.string().min(1).max(160),
-    message: z.string().min(1).max(1_000),
-  }).strict(),
-]);
-export type SubstreamDirectSocketEvent = z.infer<typeof SubstreamDirectSocketEventSchema>;
 /**
  * Each HyperSight block is an independent agent authority, so its live run
  * state is delivered by that block's own hibernating socket rather than being
@@ -2397,7 +2366,7 @@ export const BlockDashboardBlockSocketEventSchema = z.discriminatedUnion("type",
     occurredAt: TimestampSchema,
     blockId: IdSchema,
     run: BlockDashboardBlockRunSchema.nullable(),
-    streamCheckpoint: ActiveStreamCheckpointSchema.nullable(),
+    streamCheckpoint: BlockDashboardStreamCheckpointSchema.nullable(),
   }).strict(),
   z.object({
     type: z.literal("block_dashboard_block_run_updated"),
@@ -2410,7 +2379,7 @@ export const BlockDashboardBlockSocketEventSchema = z.discriminatedUnion("type",
     occurredAt: TimestampSchema,
     blockId: IdSchema,
     blockRunId: IdSchema,
-    streamCheckpoint: ActiveStreamCheckpointSchema.nullable(),
+    streamCheckpoint: BlockDashboardStreamCheckpointSchema.nullable(),
   }).strict(),
 ]);
 
@@ -2445,38 +2414,38 @@ export const WORKSPACE_SOCKET_SESSION_INACTIVE_CODE = 4401;
 export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   ServerEventBaseSchema.extend({
     type: z.literal("snapshot"),
+    reason: z.enum(["initial", "reconciliation", "history_unavailable"]),
     workstream: WorkstreamDetailSchema,
     transcript: WorkstreamTranscriptSnapshotSchema,
-    /** Newest canonical transcript page, downloaded over the SubstreamAgent socket. */
-    messageFeed: MessageFeedPageSchema.default({ items: [], nextCursor: null, newerCursor: null }),
     /**
-     * The window around where this viewer stopped reading, when that is
-     * somewhere other than the newest page.
-     *
-     * An initial open ends one of two ways: the reader picks up where
-     * they left off, or they go to the latest message. The snapshot used to
-     * carry only the second, so a reader with unread messages — the case the
-     * screen actually opens on, since it scrolls to `firstUnreadSequenceNumber`
-     * — had to fetch their own window separately while holding a page they were
-     * not going to look at. Both are sent because both are cheap and the room
-     * cannot know which the reader wants.
-     *
-     * Null for a replay-loss repair, when the viewer has nothing unread, or
-     * when their position already falls inside `messageFeed`; a repair must
-     * install the newest canonical page rather than move a resumed reader back
-     * to their older unread window. The sequence an initial resume window is
-     * centred on is `workstream.firstUnreadSequenceNumber`, which this frame
-     * already carries.
+     * Pending overlays are split into follow-up frames only when their complete
+     * server-authoritative set would exceed one WebSocket frame. Zero means the
+     * transcript snapshot already carries the complete set.
      */
-    resumeFeed: MessageFeedPageSchema.nullable().default(null),
+    pendingInputChunkCount: z.number().int().nonnegative(),
     activeStreams: ActiveStreamCheckpointsSchema.default([]),
     activeCompaction: AgentCompactionStateSchema.nullable().default(null),
-  }),
+  }).strict(),
+  ServerEventBaseSchema.extend({
+    type: z.literal("pending_inputs_snapshot_chunk"),
+    snapshotId: z.string().min(1),
+    chunkIndex: z.number().int().nonnegative(),
+    chunkCount: z.number().int().positive(),
+    inputs: z.array(PendingTranscriptInputSchema).min(1),
+  }).strict(),
   ServerEventBaseSchema.extend({ type: z.literal("presence_changed"), viewers: z.array(ViewerSchema) }),
-  ServerEventBaseSchema.extend({ type: z.literal("message_created"), message: MessageSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("transcript_turn_upserted"),
     turn: TranscriptTurnSchema,
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("loop_input_upserted"),
+    input: PendingTranscriptInputSchema,
+  }),
+  ServerEventBaseSchema.extend({
+    type: z.literal("loop_input_removed"),
+    inputId: z.string().min(1),
+    outcome: z.enum(["delivered", "cancelled"]),
   }),
   ServerEventBaseSchema.extend({
     type: z.literal("transcript_activity_upserted"),
@@ -2507,20 +2476,20 @@ export const ServerSocketEventSchema = z.discriminatedUnion("type", [
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_started"),
-    messageId: IdSchema,
+    streamId: IdSchema,
     harnessRunId: IdSchema,
     reset: z.literal(false)
   }),
   StreamEventBaseSchema.extend({
     type: z.literal("stream_delta"),
-    messageId: IdSchema,
+    streamId: IdSchema,
     /** Present on new publishers; optional while older regional Workers drain. */
     harnessRunId: IdSchema.optional(),
     delta: z.string(),
     /** Replaces text from the prior attempt instead of concatenating it. */
     reset: z.boolean()
   }),
-  ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), message: MessageSchema }),
+  ServerEventBaseSchema.extend({ type: z.literal("stream_completed"), streamId: IdSchema }),
   ServerEventBaseSchema.extend({ type: z.literal("harness_status_changed"), status: HarnessStatusSchema }),
   ServerEventBaseSchema.extend({
     type: z.literal("compaction_started"),
@@ -2739,6 +2708,9 @@ export const WorkstreamWorkflowInputSchema = z.object({
   workstreamId: WorkstreamIdSchema,
   /** External child identity. Existing producers and the main feed use `0`. */
   substreamId: SubstreamIdSchema.optional(),
+  /** Stable identity of the one persistent loop owned by this substream. */
+  loopId: z.string().min(1).max(300),
+  /** Subordinate execution receipt. A message never owns or creates a loop. */
   harnessRunId: HarnessRunIdSchema,
   triggerMessageId: IdSchema.nullable(),
   /**
@@ -3245,7 +3217,10 @@ export type ConnectorOAuthStart = z.infer<typeof ConnectorOAuthStartSchema>;
 export type ConnectorOAuthAttempt = z.infer<typeof ConnectorOAuthAttemptSchema>;
 export type ClientSocketEvent = z.infer<typeof ClientSocketEventSchema>;
 export type WorkstreamSocketCommandResult = z.infer<typeof WorkstreamSocketCommandResultSchema>;
+export type WorkstreamMessageDeliveryState = z.infer<typeof WorkstreamMessageDeliveryStateSchema>;
+export type WorkstreamMessageAdmissionReceipt = z.infer<typeof WorkstreamMessageAdmissionReceiptSchema>;
 export type ActiveStreamCheckpoint = z.infer<typeof ActiveStreamCheckpointSchema>;
+export type BlockDashboardStreamCheckpoint = z.infer<typeof BlockDashboardStreamCheckpointSchema>;
 export type ServerSocketEvent = z.infer<typeof ServerSocketEventSchema>;
 export type PersonalSocketEvent = z.infer<typeof PersonalSocketEventSchema>;
 export type GenerateMeetingNotesRequest = z.infer<typeof GenerateMeetingNotesRequestSchema>;

@@ -14,11 +14,16 @@ import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-data
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { createTranscriptObjectPort } from "../runtime/transcript-port";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { createToolReceiptObjectPort } from "../runtime/tool-receipt-port";
+import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
+import type { PersistedRunStatus } from "../durable-objects/workstream-harness-run-storage";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
 /**
- * Seed tool receipts into `tool_effects` directly.
+ * Seed tool receipts through the work stream's typed receipt authority.
  *
  * The fixture is written in the vocabulary a reader of this repository knows —
  * `harness_run_id`, `input_hash`, ISO-8601 timestamps — and it stays that way,
@@ -33,7 +38,7 @@ const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
  * receipt is deleted — the defect object schema migration 16 repaired.
  */
 async function insertToolReceipts(
-  database: D1Database,
+  receiptsPort: ToolReceiptObjectPort,
   receipts: z.infer<typeof row>[],
   copied: Record<string, number>,
 ): Promise<void> {
@@ -42,34 +47,28 @@ async function insertToolReceipts(
     const plan = typeof receipt.execution_plan_json === "string" ? receipt.execution_plan_json : null;
     const at = (value: unknown): number | null =>
       typeof value === "string" ? Date.parse(value) : null;
-    await database.prepare(
-      `INSERT INTO tool_effects
-         (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name,
-          mode, request_hash, authority_revision, status, tool_call_id, connection_id,
-          input_json, output_ref, output_summary, execution_plan_json, started_at, settled_at)
-       VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'runtime', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      id,
-      String(receipt.harness_run_id),
-      position,
-      `runtime:${id}`,
-      String(receipt.tool_name),
-      plan?.includes('"mode":"write"') ? "write" : "read",
-      String(receipt.input_hash ?? "seed"),
-      // The object's own statuses. The retired view spelled the first two
-      // `pending` and `started`, and the fixture still does.
-      receipt.status === "pending" ? "admitted"
-        : receipt.status === "started" ? "executing"
-          : String(receipt.status),
-      String(receipt.tool_call_id),
-      receipt.connection_id ?? null,
-      typeof receipt.input_json === "string" ? receipt.input_json : "{}",
-      receipt.output_ref ?? null,
-      receipt.output_summary ?? null,
-      plan,
-      at(receipt.started_at),
-      at(receipt.completed_at),
-    ).run();
+    const status = receipt.status === "pending" ? "admitted"
+      : receipt.status === "started" ? "executing"
+        : String(receipt.status);
+    if (!["admitted", "executing", "completed", "failed", "ambiguous"].includes(status)) {
+      throw new Error("seed_tool_receipt_status_invalid");
+    }
+    await receiptsPort.seedDevelopmentReceipt({
+      effectIntentId: id,
+      runId: String(receipt.harness_run_id),
+      toolPosition: position,
+      toolCallId: String(receipt.tool_call_id),
+      toolName: String(receipt.tool_name),
+      mode: plan?.includes('"mode":"write"') ? "write" : "read",
+      requestHash: String(receipt.input_hash ?? "seed"),
+      status: status as "admitted" | "executing" | "completed" | "failed" | "ambiguous",
+      connectionId: typeof receipt.connection_id === "string" ? receipt.connection_id : null,
+      inputJson: typeof receipt.input_json === "string" ? receipt.input_json : "{}",
+      outputSummary: typeof receipt.output_summary === "string" ? receipt.output_summary : null,
+      executionPlanJson: plan,
+      startedAt: at(receipt.started_at),
+      settledAt: at(receipt.completed_at),
+    });
   }
   copied.tool_effects = receipts.length;
 }
@@ -129,8 +128,8 @@ function storedWorkstreamState(harnessStatus: string): string {
 export const devRoutes = new Hono<{ Bindings: Env }>();
 
 /**
- * Seeds product-authority fixtures into the Durable Objects, through the same
- * runtime SQL ports every post-cutover producer writes through.
+ * Seeds product-authority fixtures into the Durable Objects through the same
+ * typed object operations every post-cutover producer writes through.
  *
  * Local development only. `packages/db/seed.sql` owns the regional control
  * plane; the product content a member sees — transcripts, tool events,
@@ -214,22 +213,6 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
       now: Date.now(),
     });
 
-    const insert = async (
-      table: string,
-      rows: z.infer<typeof row>[],
-      extra: Record<string, string> = {},
-    ) => {
-      for (const record of rows) {
-        const complete: Record<string, string | number | null> = { ...record, ...extra };
-        const columns = Object.keys(complete);
-        await routed.DB.prepare(
-          `INSERT INTO ${table} (${columns.join(", ")})
-           VALUES (${columns.map(() => "?").join(", ")})`,
-        ).bind(...columns.map((column) => complete[column] ?? null)).run();
-      }
-      copied[table] = rows.length;
-    };
-    const scope = { workspace_id: workspaceId, workstream_id: workstream.id };
     // Seated through the identity authority rather than inserted: the
     // participant view is retired, and the fixture's `joined_at` is the ISO
     // rendering that view produced.
@@ -242,9 +225,91 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
       });
     }
     copied.workstream_participants = workstream.participants.length;
-    await insert("harness_runs", workstream.harnessRuns, scope);
-    await insertToolReceipts(routed.DB, workstream.toolInvocations, copied);
-    await insert("messages", workstream.messages, scope);
+    const runs = createHarnessRunObjectPort(routed, workspaceId, workstream.id);
+    for (const fixtureRun of workstream.harnessRuns) {
+      const status = fixtureRun.status === "scheduled" ? "admitted"
+        : fixtureRun.status === "stopped" ? "cancelled"
+          : String(fixtureRun.status);
+      if (!["admitted", "running", "needs_input", "completed", "failed", "cancelled"].includes(status)) {
+        throw new Error("seed_harness_run_status_invalid");
+      }
+      const at = (value: unknown): number | null =>
+        typeof value === "string" ? Date.parse(value) : null;
+      const createdAt = at(fixtureRun.created_at);
+      const startedAt = at(fixtureRun.started_at) ?? createdAt;
+      if (createdAt === null || startedAt === null) throw new Error("seed_harness_run_timestamp_invalid");
+      await runs.seedDevelopmentRun({
+        runId: String(fixtureRun.id),
+        origin: String(fixtureRun.origin),
+        executionPrincipalJson: typeof fixtureRun.execution_principal_json === "string"
+          ? fixtureRun.execution_principal_json : "{}",
+        status: status as PersistedRunStatus,
+        startedAt,
+        completedAt: at(fixtureRun.completed_at),
+        terminalizedAt: at(fixtureRun.terminalized_at),
+        createdAt,
+      });
+    }
+    copied.harness_runs = workstream.harnessRuns.length;
+    await insertToolReceipts(
+      createToolReceiptObjectPort(routed, workspaceId, workstream.id),
+      workstream.toolInvocations,
+      copied,
+    );
+    const transcript = createTranscriptObjectPort(routed, workspaceId, workstream.id);
+    for (const message of workstream.messages) {
+      const authorType = String(message.author_type);
+      const actor = authorType === "agent" ? "assistant" : authorType;
+      if (actor !== "human" && actor !== "assistant"
+        && actor !== "external" && actor !== "system") {
+        throw new Error("seed_conversation_actor_invalid");
+      }
+      const messageType = String(message.message_type);
+      if (messageType !== "text" && messageType !== "system"
+        && messageType !== "elicitation" && messageType !== "tool") {
+        throw new Error("seed_conversation_type_invalid");
+      }
+      const fixtureHasAuthorSnapshot = (message.author_name_snapshot !== null
+        && message.author_name_snapshot !== undefined)
+        || (message.author_avatar_url_snapshot !== null
+          && message.author_avatar_url_snapshot !== undefined);
+      await transcript.seedDevelopmentConversationTurn({
+        turnId: String(message.id),
+        clientMessageId: message.client_message_id === null
+          || message.client_message_id === undefined
+          ? null
+          : String(message.client_message_id),
+        actor,
+        authorUserId: message.author_user_id === null || message.author_user_id === undefined
+          ? null
+          : String(message.author_user_id),
+        authorSnapshot: actor === "human" || fixtureHasAuthorSnapshot
+          ? {
+            displayName: String(message.author_name_snapshot ?? ""),
+            avatarUrl: message.author_avatar_url_snapshot === null
+              || message.author_avatar_url_snapshot === undefined
+              ? null
+              : String(message.author_avatar_url_snapshot),
+          }
+          : null,
+        externalActorJson: message.external_actor_json === null
+          || message.external_actor_json === undefined
+          ? null
+          : String(message.external_actor_json),
+        messageType,
+        text: String(message.text_content ?? ""),
+        structuredContentJson: message.structured_content_json === null
+          || message.structured_content_json === undefined
+          ? null
+          : String(message.structured_content_json),
+        producedByRunId: message.harness_run_id === null || message.harness_run_id === undefined
+          ? null
+          : String(message.harness_run_id),
+        expectedTranscriptSequence: Number(message.sequence_number),
+        createdAtUtc: String(message.created_at),
+      });
+    }
+    copied.participant_transcript_turns = workstream.messages.length;
 
     if (workstream.resourceIds.length > 0) {
       const creator = String(workstream.participants[0]?.user_id ?? "");

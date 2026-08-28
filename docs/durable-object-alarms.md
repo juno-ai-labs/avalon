@@ -42,7 +42,8 @@ takes the earliest of both:
   object's own tables. Use these when due times already live in tables with
   their own writers and no separate identity is needed: each outbox's
   `MIN(not_before)`, the oldest activity event plus its retention, an in-memory
-  keep-alive lease. Every independent lane is returned so an overdue one cannot
+  keep-alive lease. SubstreamAgent includes both regional-effect delivery and
+  semantic-realtime publication outboxes independently. Every independent lane is returned so an overdue one cannot
   hide a real future deadline during the pre-work recovery arm.
 
 The rule of thumb: if it can fail in a way that should hold *it* back without
@@ -115,9 +116,10 @@ before a full re-arm.
 
 The first arm defaults to the bounded recovery re-derivation and the second to
 the exact post-work answer. Both are hooks for one case: an object whose alarm
-*is* the worker for a reason it derives. `SubstreamAgent` is the one — an agent
-run is claimed from a dispatch row whose due time is a wake reason, so
-re-deriving off that row while the run is still in flight hands the same run
+*is* the worker for a reason it derives. `SubstreamAgent` is the one — its run
+lane is derived from the persistent-loop singleton, immutable pending inputs,
+and subordinate execution receipts. While the alarm is servicing that lane,
+re-deriving the executing singleton's lease would hand the same activation
 straight back. Its
 `armAlarmDuringRunDrain` leaves the run lane out and floors the alarm at one
 keep-alive heartbeat instead, which bounds recovery from a cancelled
@@ -231,13 +233,14 @@ that a particular target was interrupted.
   of "the earliest thing" will disagree with the base's, and the disagreement
   shows up as work that silently never runs. `SubstreamAgent.armAlarmDuringRunDrain`
   uses the base with an explicit candidate override described under *Firing*:
-  the run lane is the one derived reason whose worker is this alarm. Two call
-  sites do still arm directly, and both are deliberate. `enqueueAgentRun` and
-  `WorkstreamObjectStore.enqueueRegionalEffect` each set an *immediate* alarm
-  the instant they commit durable work, so an isolate that dies before the full
-  re-arm cannot strand it. Both can only pull the alarm in, never push it out,
-  and the next `armNextAlarm` corrects the instant. Anything that would arm for
-  a *future* time belongs in the base.
+  the run lane is the one derived reason whose worker is this alarm. Two kinds
+  of call site still arm directly, and both are deliberate. A SubstreamAgent
+  arms immediately after committing a pending loop input or an unlinked
+  execution receipt, and `WorkstreamObjectStore.enqueueRegionalEffect` does the
+  same after committing an effect. An isolate that dies before the full re-arm
+  therefore cannot strand either durable row. Both paths can only pull the alarm
+  in, never push it out, and the next `armNextAlarm` corrects the instant.
+  Anything that would arm for a *future* time belongs in the base.
 - **Whatever ran, re-derive before the alarm ends.** A handler that advances its
   own source row has invalidated the index, and the settle that follows it
   deletes the only entry pointing at that row. `WorkspaceDO.runDueAlarmWork`
@@ -433,12 +436,13 @@ a failing target a free immediate attempt.
   top of it — which re-enters `alarm()` and drains entries the first pass had
   not settled yet, something that cannot happen in production. Drive the drain
   directly, or park the alarm first.
-- Trap: an alarm armed for `now + 1` — which `enqueueAgentRun` does on purpose —
-  fires while the test is still setting up, and the work it drains can settle
-  the very rows the next assertion reads. Park it in the *same* invocation that
-  arms it (`runInDurableObject`, call `fetch`, then `setAlarm` before the
-  callback returns); two separate calls leave a window the drain can win, which
-  is how `agent-run-lifecycle.test.ts` became intermittent.
+- Trap: an alarm armed for `now + 1` after pending-input or execution-receipt
+  admission can fire while the test is still setting up, and the loop it drains
+  can settle the very rows the next assertion reads. Park it in the *same*
+  invocation that admits the work (`runInDurableObject`, call `fetch`, then
+  `setAlarm` before the callback returns); two separate calls leave a window
+  the drain can win, which is how the old dispatch-lifecycle test became
+  intermittent.
 
 ## Operations
 
@@ -480,6 +484,58 @@ which is exactly the resource a model is about to be handed.
 **Consequences:** The pass shares the reap batch bound of its neighbours in the
 same module, and an allocation failure at creation costs a delay rather than
 the row.
+
+### 2026-08-28 — Alarm lanes follow persistent-loop authority
+
+**What changed:** The persistent substream loop cutover moved alarm-driven
+work onto loop and receipt state: semantic transcript publication became a
+derived alarm lane and the run alarm re-derives from loop authority. The
+facets below are the decisions this change is made of — each carries its own
+rejected alternative and its own invariant.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+#### Semantic transcript publication is a derived alarm lane
+
+**What changed:** `SubstreamAgent` includes the earliest object-local semantic
+realtime outbox row in normal derivation, during-run recovery arms, due-work
+checks, and alarm draining.
+
+**Why:** A transcript mutation and its realtime reference now commit together,
+but the isolate can still disappear before its best-effort post-commit drain or
+alarm arm. Constructor derivation and the shared alarm make that durable row
+discoverable without a second scheduling ledger.
+
+**Considered and rejected:** A stored `_internal_durable_alarms` entry per room
+event duplicates identity and retry state already carried by `durable_outbox`.
+
+**Consequences:** A failed publication stays in sequence and is retried by the
+same object; later ephemeral frames do not overtake it.
+
+#### The run alarm follows persistent-loop authority
+
+**What changed:** SubstreamAgent derives its run lane from the
+`substream_loops` singleton, pending inputs, and unlinked or terminal-unsettled
+execution receipts. The retired SubstreamAgent `agent_run_dispatches` table is no
+longer an alarm source. The during-drain override still excludes that one lane
+while preserving regional effects, HyperSight refresh, stored timers, and the
+keep-alive recovery horizon.
+
+**Why:** Dispatch was a second activation ledger that could disagree with the
+persistent loop and its receipt. Removing the table without changing the alarm
+explanation made the old architecture look required and invited a future writer
+to recreate it.
+
+**Considered and rejected:** Keeping a dispatch row solely as an alarm index.
+The singleton and receipt already contain every due/recovery instant, so an
+index with its own lifecycle would restore split authority without reducing a
+query or wake.
+
+**Consequences:** Immediate post-admission arming protects pending inputs and
+unlinked receipts from isolate loss; later exact derivation comes only from
+their owning rows. In-memory drain state remains deduplication, never scheduling
+authority.
 
 ### 2026-08-25 — Phase timing distinguishes slow work from a cancelled queued alarm
 

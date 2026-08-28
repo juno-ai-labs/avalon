@@ -96,7 +96,9 @@ describe("message authority on real workerd", () => {
     expect(result.status).toBe(200);
     expect(result.value).toMatchObject({ outcome: "appended", sequenceNumber: 1 });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(1);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE entry_kind = 'conversation'`,
+      ).one().count).toBe(1);
       const transcript = new WorkstreamTranscriptStorage(state.storage)
         .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
       expect(transcript.ranges[0]!.turns[0]).toMatchObject({
@@ -116,31 +118,28 @@ describe("message authority on real workerd", () => {
     });
   });
 
-  it("prepares a tool payload before atomically committing its card and projection", async () => {
+  it("rejects the retired compatibility tool-message operation without writing", async () => {
     const stub = agent();
     await boot(stub);
     await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
-    const createdAt = 1_787_000_010_000;
-
     const result = await messages(stub, "upsertToolMessage", {
       messageId: "tool-1",
       clientMessageId: "tool:tool-1",
       structuredContentJson: JSON.stringify({
         invocation: { toolName: "search", status: "pending" },
       }),
-      createdAt,
+      createdAt: 1_787_000_010_000,
       editedAt: null,
     });
 
-    expect(result.value).toEqual({ outcome: "appended", sequenceNumber: 1 });
+    expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
-        `SELECT tool_status FROM workstream_message_records WHERE id = 'tool-1'`,
-      ).one().tool_status).toBe("pending");
-      const envelope = JSON.parse(state.storage.sql.exec<{ payload_json: string }>(
-        `SELECT payload_json FROM durable_outbox WHERE partition_key = 'common'`,
-      ).one().payload_json) as { effect: { updatedAt: string } };
-      expect(envelope.effect.updatedAt).toBe(new Date(createdAt).toISOString());
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
+      ).one().count).toBe(0);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM durable_outbox`,
+      ).one().count).toBe(0);
     });
   });
 
@@ -185,7 +184,9 @@ describe("message authority on real workerd", () => {
       sequenceNumber: 1,
     });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(1);
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE entry_kind = 'conversation'`,
+      ).one().count).toBe(1);
       expect(state.storage.sql.exec(
         `SELECT next_sequence_number FROM workstream`,
       ).one().next_sequence_number).toBe(2);
@@ -210,7 +211,7 @@ describe("message authority on real workerd", () => {
     expect(status).toBe(409);
     expect(body).toMatchObject({ error: "workstream_message_identity_mismatch" });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
     });
   });
 
@@ -227,7 +228,7 @@ describe("message authority on real workerd", () => {
     expect(result.status).toBe(409);
     expect(result.error).toBe("workstream_runtime_authority_fenced");
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
     });
   });
 
@@ -270,8 +271,8 @@ describe("message authority on real workerd", () => {
           now: 1,
         });
         state.storage.sql.exec(
-          `INSERT INTO workstream_message_mentions
-             (message_id, mention_index, mention_kind, target_user_id, connector_type,
+          `INSERT INTO participant_transcript_mentions
+             (turn_id, mention_index, mention_kind, target_user_id, connector_type,
               start_offset, end_offset, attention_ordinal)
            VALUES (?, 0, 'person', ?, NULL, 0, 1, 1)`,
           id,
@@ -293,7 +294,7 @@ describe("message authority on real workerd", () => {
           `r${index}`,
         );
         state.storage.sql.exec(
-          `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+          `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
            VALUES (?, ?, 0, '{}')`,
           id,
           `r${index}`,
@@ -343,7 +344,28 @@ describe("message authority on real workerd", () => {
 
     expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
+    });
+  });
+
+  it("refuses human authors on the unauthenticated runtime-writer port", async () => {
+    const stub = agent();
+    await boot(stub);
+    await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+
+    const result = await messages(stub, "appendMessage", {
+      ...append(),
+      authorType: "human",
+      authorUserId: "user-1",
+      messageType: "text",
+      text: "This must use the authenticated participant path.",
+    });
+
+    expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
+      ).one().count).toBe(0);
     });
   });
 
@@ -359,7 +381,7 @@ describe("message authority on real workerd", () => {
 
     expect(result).toMatchObject({ status: 400, error: "invalid_message_operation" });
     await runInDurableObject(stub, (_instance, state) => {
-      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM workstream_message_records`).one().count).toBe(0);
+      expect(state.storage.sql.exec(`SELECT COUNT(*) AS count FROM participant_transcript_turns`).one().count).toBe(0);
       expect(state.storage.sql.exec(
         `SELECT next_sequence_number FROM workstream`,
       ).one().next_sequence_number).toBe(1);

@@ -161,24 +161,24 @@ describe("automation model override", () => {
        WHERE id = '${PINNED_SUBSCRIPTION_ID}'
     `);
 
-    const run = await serviceFor(fixture).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
+    await serviceFor(fixture).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
 
     expect(workstreamObjectRootRow(fixture.objectStore, "model_override, scope"))
       .toEqual({ model_override: "openai/gpt-5.6-terra", scope: "workspace" });
     // The run's expected model is recorded at schedule time, so the pin has to
-    // reach `harness_runs` in the same batch that writes the work stream.
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
+    // reach the subordinate run receipt in the same object transaction.
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 
   it("leaves an unpinned automation's runs to the flag and its Worker-variable default", async () => {
     const fixture = seededDatabase();
 
-    const run = await serviceFor(fixture).runNow(UNPINNED_SUBSCRIPTION_ID, "idempotency-key-2");
+    await serviceFor(fixture).runNow(UNPINNED_SUBSCRIPTION_ID, "idempotency-key-2");
 
     expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
       .toEqual({ model_override: null });
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
       .toEqual({ model: "x-ai/grok-4.3" });
   });
 
@@ -198,11 +198,11 @@ describe("automation model override", () => {
       warnings.push(entry as Record<string, unknown>);
     });
 
-    const run = await serviceFor(fixture, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
+    await serviceFor(fixture, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
 
     expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
       .toEqual({ model_override: null });
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", run.workstreamId))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
       .toEqual({ model: "x-ai/grok-4.3" });
     expect(warnings).toContainEqual(expect.objectContaining({
       event: "workstream_model_override_unknown",
@@ -239,7 +239,7 @@ describe("automation model override", () => {
     });
     // The scheduler creates the harness run after the work stream exists, so
     // it resolves the model from the row rather than being handed the value.
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", workstream.id))
+    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 
@@ -307,7 +307,7 @@ describe("automation model override", () => {
       created_by_user_id: USER_ID,
       participant_user_id: USER_ID,
     });
-    expect(workstreamObjectGet(objectStore, "SELECT model FROM harness_runs WHERE workstream_id = ?", workstream.id))
+    expect(workstreamObjectGet(objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
       .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 });
@@ -325,9 +325,11 @@ function seededDatabase(): Fixture {
   // authority; open it before any product rows exist, as a fresh stack does.
   openWorkstreamAuthorityForTest(database);
   // The alarm's draft arm reads the object's links table, which no regional
-  // snapshot has ever carried.
+  // snapshot has ever carried, and excludes drafts still reserved by an
+  // input preparation in the same WorkspaceDO authority.
   createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
   applyWorkspaceResourceSchema(database, WORKSPACE_ID);
+
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
   database.exec(`
