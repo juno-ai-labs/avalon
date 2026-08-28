@@ -543,6 +543,17 @@ At each run Rally ranks actionable inbox items, sends up to three (fewer if fewe
   have to call `slackDeliveryMarkdown` too. Folding it into the chunker instead
   looks tidier and is wrong: the footnote pass would renumber a chunk against
   definitions it could not see.
+- **The chunker's fence tracking is its own, and closes only on a bare run.**
+  Every rewriter in the repository reads
+  [`markdown-code.md`](markdown-code.md), whose close rule is deliberately
+  looser — any run of the opener's character at least as long, info string or
+  not. `nextFenceState` is not a reader of it, for two reasons: it keeps the
+  whole opening *line* rather than the marker, because it has to replay it at
+  the top of the next chunk; and a fence it wrongly believes closed severs a
+  code block in a message that has already been delivered, where nothing heals
+  it. The desktop's streaming splitter made the opposite trade because its
+  equivalent artifact lasts only until the turn completes. Converging this one
+  is a delivery change, not a tidy-up.
 
 ## Boundary
 
@@ -784,6 +795,39 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-08-28 — The shared code classifier landed, and the chunker deliberately stayed out of it
+
+**What changed:** nothing in `slack-markdown.ts`. `rewriteCitationsAsPlainText`,
+which `slackDeliveryMarkdown` calls on both delivery paths, now gets its answer
+about which lines are code from `@rally/contracts/markdown-code` instead of the
+classifier private to `citations.ts`. Its output is byte-identical over the
+15,625-document differential recorded in
+[`markdown-code.md`](markdown-code.md), and the block rendering, the split rules
+and the reopened fence are untouched.
+
+**Why:** five rewriters each had their own answer to that question, and
+[`markdown-code.md`](markdown-code.md) records collapsing them. The chunker's
+`nextFenceState` is the sixth and is deliberately not among them — recorded
+here, and as an invariant above, so that the next person to find it knows it was
+considered rather than missed.
+
+Two things make it a different question from the one the shared module answers.
+It stores the opening *line*, info string and all, because a chunk boundary
+inside a block has to close the block and reopen it at the top of the next
+chunk. And it closes only on a **bare** run, where the shared rule accepts
+trailing text: the shared rule errs toward reading a line as code because its
+readers' worst case is a line left un-rewritten, while this one's worst case is
+a code block severed across two messages already posted to a channel, which no
+later render repairs. The desktop's streaming splitter gave up the same strict
+closer in this change, because its artifact lasts only until the turn completes;
+this one's would not.
+
+**Consequences:** one private copy of the fence machine still exists, on
+purpose, and the cost is that a change to what closes a fence has to be made in
+two places if it is meant to apply everywhere. That is the accepted price of the
+two rules having genuinely different failure costs; the alternative was trading
+a transient rendering artifact for a delivery defect.
 
 ### 2026-08-28 — The reduction leaves indented code alone too
 

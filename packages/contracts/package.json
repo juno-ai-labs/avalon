@@ -14,6 +14,7 @@
     "./workstream-links": "./src/workstream-links.ts",
     "./url-schemas": "./src/url-schemas.ts",
     "./text": "./src/text.ts",
+    "./markdown-code": "./src/markdown-code.ts",
     "./model-markdown": "./src/model-markdown.ts",
     "./citations": "./src/citations.ts"
   },

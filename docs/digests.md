@@ -22,6 +22,7 @@ mention, or changing what a connector can deliver to a person.
 | Destination dispatch | `apps/api/src/services/digest-delivery-service.ts` |
 | Email HTML | `apps/api/src/services/digest-email-content.ts` |
 | Markdown → email HTML | `apps/api/src/services/email-markdown.ts`, shared with automation results |
+| Which lines are code, for both of the above | `packages/contracts/src/markdown-code.ts` — see [`markdown-code.md`](markdown-code.md) |
 | Rendering the email for real people, to look at | `scripts/preview-digest-email.mjs`; the automation result's equivalent is `scripts/preview-automation-email.mjs` |
 | Settings screen | `apps/desktop/src/renderer/components/digest-settings.tsx` |
 | The work-stream list every renderer surface shares | `apps/desktop/src/renderer/lib/use-workstreams-query.ts`, served by `WorkspaceDO` |
@@ -683,6 +684,45 @@ visible change to the email template is looked at through
 preview does *not* reproduce on its own.
 
 ## Changelog
+
+### 2026-08-28 — Both email passes read one shared answer for where a fence ends
+
+**What changed:** `email-markdown.ts` no longer tracks fenced blocks itself.
+`blocksFromMarkdown` — which keeps a fenced block whole in a `<pre>` rather than
+flattening it into a paragraph — and `markdownToEmailText` — which drops the
+delimiters and indents the body four columns — both read `markdownLineKinds`
+from `@rally/contracts/markdown-code`. No output changed for any input the
+suite covers.
+
+**Why:** the two passes here were two of five copies of the same question, and
+they did not agree with each other, let alone with the citation reduction and
+the TeX repair that run immediately before them on the same string.
+`markdownToEmailText`'s copy was the loosest of the lot — a bare toggle, so any
+fence line flipped the state regardless of its character or length — and
+`blocksFromMarkdown` recorded only the first three characters of an opener, so a
+```` ``` ```` line closed a ```` ````` ````-opened block.
+[`markdown-code.md`](markdown-code.md) records the extraction and why the shared
+rule is the citation copy's.
+
+Measured against a vendored copy of the old renderer over 5,832 documents, 2,109
+differ and every one is a fence-rule convergence: a closer must now repeat the
+opener's character and reach its length, and a delimiter indented four or more
+columns, or by a tab, is an indented block rather than a fence. The first two
+leave a block whole where the old rules ended it early — `blocksFromMarkdown`
+used to accept a closer whose leading whitespace it had trimmed away. None of
+them is an input any test pinned.
+
+Both passes read the *fence* kinds only, not the classifier's indented-code
+answer. This is a renderer rather than a rewriter: an indented chunk is not a
+block boundary in its model, and the rules below it already give one a
+paragraph. Reading the extra kind would change what an indented block renders
+as, which is a separate decision from where a fence ends.
+
+**Consequences:** the citation reduction, the TeX repair and this renderer can
+no longer disagree about which lines of the same email are code, which was the
+failure worth removing — all three run over one string in sequence, and a
+disagreement between them shows up as a rewritten code sample in somebody's
+inbox with nothing failing anywhere.
 
 ### 2026-08-28 — The reduction leaves indented code alone too
 

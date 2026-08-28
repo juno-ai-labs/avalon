@@ -29,6 +29,7 @@ import {
 import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
 import { citationFootnotes, citationScheme } from '@rally/contracts/citations';
+import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { ExtraProps } from 'react-markdown';
@@ -455,9 +456,6 @@ type MarkdownRehypeOptions = NonNullable<React.ComponentProps<typeof ReactMarkdo
 
 /** A blank line: the classic boundary between markdown blocks. */
 const BLANK_LINE = /^\s*$/u;
-/** A code-fence opener; group 1 is the fence run, whose char and length the closer must match. */
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/u;
-const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/u;
 /**
  * A top-level list-item line. Indent is capped at one space — CommonMark
  * allows three, but a nested item sits at two or more and must never be cut
@@ -504,13 +502,22 @@ const CONTINUES_ACROSS_BLANK = /^( {0,3}([-*+]|\d{1,9}[.)])(\s|$)| {2,}|\t| {0,3
  * streams. What segmentation cannot preserve — a reference link or a footnote
  * whose definition arrives in a later segment — renders literally until the
  * turn completes and the settled message re-renders whole.
+ *
+ * Where a fenced block ends is `@rally/contracts/markdown-code`'s answer, not
+ * this function's, so the splitter and the two delivery rewrites cannot
+ * disagree about it. That rule closes a block on any run of the opener's
+ * character at least as long, info string or not, where this splitter used to
+ * demand a bare closer — so a same-length fence nested inside another now cuts
+ * the outer block in two while it streams. Transient by construction: the
+ * commit that ends the stream re-renders the source whole. Only the fence kinds
+ * are read; an indented block is not a cut boundary, and
+ * `CONTINUES_ACROSS_BLANK` already refuses to cut before an indented line.
  */
 export function splitStreamingMarkdown(source: string): { settled: string[]; tail: string } {
   const settled: string[] = [];
   let segmentStart = 0;
   let offset = 0;
   let previousBlank = false;
-  let fence: { marker: string; length: number } | null = null;
   /**
    * The marker character of the top-level list the current segment run is in
    * (`-`, `*`, `+`, `.`, `)`), or null outside one. Blank lines keep it (a
@@ -518,6 +525,7 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
    */
   let listMarker: string | null = null;
   const lines = source.split('\n');
+  const kinds = markdownLineKinds(lines);
   const cut = (): void => {
     settled.push(source.slice(segmentStart, offset));
     segmentStart = offset;
@@ -527,14 +535,17 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
   for (let index = 0; index < lines.length - 1; index += 1) {
     const line = lines[index]!;
     const blank = BLANK_LINE.test(line);
-    if (fence === null) {
-      const opens = FENCE_OPEN.exec(line);
+    const kind = kinds[index]!;
+    // Only the fence kinds matter here: a fenced block is a boundary this
+    // function must not cut inside, while an indented one is ordinary
+    // continuation that `CONTINUES_ACROSS_BLANK` already refuses to cut before.
+    const fenced = kind === 'fence-open' || kind === 'fence-content' || kind === 'fence-close';
+    if (kind === 'fence-open') {
+      if (previousBlank && offset > segmentStart) cut();
+      listMarker = null;
+    } else if (!fenced) {
       const item = TOP_LEVEL_LIST_ITEM.exec(line);
-      if (opens?.[1]) {
-        if (previousBlank && offset > segmentStart) cut();
-        fence = { marker: opens[1][0]!, length: opens[1].length };
-        listMarker = null;
-      } else if (!blank && item) {
+      if (!blank && item) {
         const marker = item[2] ?? item[1]!;
         if (offset > segmentStart && (
           marker === listMarker
@@ -547,11 +558,9 @@ export function splitStreamingMarkdown(source: string): { settled: string[]; tai
           listMarker = null;
         }
       }
-    } else {
-      const closes = FENCE_CLOSE.exec(line)?.[1];
-      if (closes && closes[0] === fence.marker && closes.length >= fence.length) fence = null;
     }
-    previousBlank = blank && fence === null;
+    // A blank line inside a fence is code, not a paragraph seam.
+    previousBlank = blank && !fenced;
     offset += line.length + 1;
   }
   return { settled, tail: source.slice(segmentStart) };
