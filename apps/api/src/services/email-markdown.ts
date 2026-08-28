@@ -1,4 +1,5 @@
 import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
+import { markdownLineKinds } from "@rally/contracts/markdown-code";
 import { normalizeModelMarkdown, normalizeModelText } from "@rally/contracts/model-markdown";
 
 import { escapeHtml } from "./resend";
@@ -120,13 +121,18 @@ export function markdownToEmailText(markdown: string): string {
   // footnote marker it did not remove would reach the reader as `[^1]`.
   markdown = normalizeModelText(rewriteCitationsAsPlainText(markdown));
   const lines: string[] = [];
-  let fenced = false;
-  for (const raw of markdown.replace(/\r\n/gu, "\n").split("\n")) {
-    if (/^\s{0,3}(?:```|~~~)/u.test(raw)) {
-      fenced = !fenced;
-      continue;
-    }
-    if (fenced) {
+  const source = markdown.replace(/\r\n/gu, "\n").split("\n");
+  // Fenced blocks come from `@rally/contracts/markdown-code`, so this pass and
+  // the rewrites that ran over the same string above cannot disagree about
+  // where one ends. Only the fence kinds are read here: an indented block is
+  // already four columns in, which is exactly what this pass would give it.
+  const kinds = markdownLineKinds(source);
+  for (const [index, raw] of source.entries()) {
+    const kind = kinds[index]!;
+    // The delimiters are dropped and the body is indented instead: four columns
+    // is what a plain-text reader has for "this was code".
+    if (kind === "fence-open" || kind === "fence-close") continue;
+    if (kind === "fence-content") {
       lines.push(`    ${raw.trimEnd()}`);
       continue;
     }
@@ -204,32 +210,35 @@ function stripInlineMarks(value: string, keepLinkTargets = false): string {
 function blocksFromMarkdown(markdown: string): Block[] {
   const blocks: Block[] = [];
   let current: Block | null = null;
-  let fence: string | null = null;
   const flush = (): void => {
     if (current) blocks.push(current);
     current = null;
   };
 
-  for (const raw of markdown.replace(/\r\n/gu, "\n").split("\n")) {
+  const source = markdown.replace(/\r\n/gu, "\n").split("\n");
+  // Shared with every rewriter that ran over this string on the way here — see
+  // `@rally/contracts/markdown-code`. Only the fence kinds are read: an
+  // indented block is not a block boundary in this renderer's model, and the
+  // rules below already give it a paragraph.
+  const kinds = markdownLineKinds(source);
+  for (const [index, raw] of source.entries()) {
     const line = raw.trimEnd();
     // A fenced block is kept exactly as written. Flattening it into a paragraph
     // let the inline-code pass match across the fences, which emitted one
     // mangled span and two stray backticks — and a result carrying JSON is
     // ordinary now that this renderer serves automations rather than only
     // digests.
-    const fenceMark = /^\s{0,3}(```|~~~)/u.exec(line);
-    if (fence) {
-      if (fenceMark && line.trim().startsWith(fence)) {
-        flush();
-        fence = null;
-      } else {
-        current?.lines.push(raw);
-      }
+    const kind = kinds[index]!;
+    if (kind === "fence-close") {
+      flush();
       continue;
     }
-    if (fenceMark) {
+    if (kind === "fence-content") {
+      current?.lines.push(raw);
+      continue;
+    }
+    if (kind === "fence-open") {
       flush();
-      fence = fenceMark[1]!;
       current = { kind: "preformatted", lines: [] };
       continue;
     }

@@ -29,6 +29,8 @@
  * text valid, which they would not be if this ran before they were resolved.
  */
 
+import { mapMarkdownProse } from "./markdown-code";
+
 /**
  * Commands worth mapping: the arrows, comparisons and operators that turn up in
  * a status update or a metric. Anything outside this list is left as the model
@@ -279,12 +281,31 @@ function texToPlainText(body: string): string {
 const MATH_SPAN = /\$\$([^$]+?)\$\$|\$([^$\n]+?)\$|\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/gu;
 
 /**
- * A fenced code block, an inline code span, or a stretch of neither. Splitting
- * on this is what keeps the rewriter out of code — the alternative, a rule
- * clever enough to recognise code mid-replacement, is the kind that fails on
- * the first sample containing a dollar sign.
+ * An inline code span: a run of backticks closed by a run of the same length.
+ *
+ * Whole lines of code — fenced and indented blocks alike — are
+ * [`markdown-code.ts`](markdown-code.md)'s answer, shared with every other
+ * rewriter here so none of them can disagree about where a block ends. Spans
+ * are this module's own, because the other rewriter that skips them parks one
+ * inside a line rather than splitting prose at it. Splitting on both is what
+ * keeps the rewriter out of code — the alternative, a rule clever enough to
+ * recognise code mid-replacement, is the kind that fails on the first sample
+ * containing a dollar sign.
  */
-const CODE_OR_TEXT = /(^|\n)([ \t]*(?:```|~~~)[\s\S]*?(?:\n[ \t]*(?:```|~~~)[^\n]*(?=\n|$)|$))|(`+)([\s\S]*?)\3/gu;
+const CODE_SPAN = /(`+)([\s\S]*?)\1/gu;
+
+/** A run of prose with its code spans stepped over, and everything else repaired. */
+function normalizeOutsideCodeSpans(value: string, escape: (plain: string) => string): string {
+  let result = "";
+  let cursor = 0;
+  CODE_SPAN.lastIndex = 0;
+  for (let match = CODE_SPAN.exec(value); match !== null; match = CODE_SPAN.exec(value)) {
+    result += normalizeProse(value.slice(cursor, match.index), escape);
+    result += match[0];
+    cursor = match.index + match[0].length;
+  }
+  return result + normalizeProse(value.slice(cursor), escape);
+}
 
 /**
  * A run of prose with its TeX turned back into the characters it stood for.
@@ -337,17 +358,7 @@ function normalizeProse(value: string, escape: (plain: string) => string): strin
  */
 export function normalizeModelMarkdown(value: string): string {
   if (!value.includes("\\") && !value.includes("$")) return value;
-  let result = "";
-  let cursor = 0;
-  CODE_OR_TEXT.lastIndex = 0;
-  for (let match = CODE_OR_TEXT.exec(value); match !== null; match = CODE_OR_TEXT.exec(value)) {
-    result += normalizeProse(value.slice(cursor, match.index), escapeForMarkdown);
-    // A fenced block keeps its leading newline, which the pattern had to
-    // capture to prove the fence started a line.
-    result += match[0];
-    cursor = match.index + match[0].length;
-  }
-  return result + normalizeProse(value.slice(cursor), escapeForMarkdown);
+  return mapMarkdownProse(value, (prose) => normalizeOutsideCodeSpans(prose, escapeForMarkdown));
 }
 
 /**
