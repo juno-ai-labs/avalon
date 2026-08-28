@@ -18,7 +18,7 @@ import {
   seedToolReceipt,
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { applyWorkspaceResourceVersioning } from "./helpers/workspace-object-tables";
+import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
 
 const W = "10000000-0000-4000-8000-000000000001";
 const S = "10000000-0000-4000-8000-000000000002";
@@ -61,7 +61,7 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
   // The publish path's whole point is that a revision keeps its predecessor,
   // and capture lives in WorkspaceDO's triggers — so the fixture takes them
   // from the ledger rather than publishing into a table that has no history.
-  applyWorkspaceResourceVersioning(database, W);
+  applyWorkspaceResourceSchema(database, W);
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });

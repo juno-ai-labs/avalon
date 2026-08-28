@@ -615,8 +615,15 @@ export const MessageSchema = z.object({
   editedAt: TimestampSchema.nullable()
 });
 
+/**
+ * A resource's short alias: four lowercase words, or null while the resource
+ * still only has its UUID. Every internal reference is the UUID regardless.
+ */
+export const ResourceSlugSchema = z.string().min(3).max(80);
+
 export const ResourceSchema = z.object({
   id: IdSchema,
+  slug: ResourceSlugSchema.nullable().default(null),
   workspaceId: IdSchema,
   connectionId: IdSchema.nullable(),
   resourceType: z.string().min(1).max(80),

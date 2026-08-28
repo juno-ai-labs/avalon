@@ -52,24 +52,25 @@ export function workspaceObjectSqliteDatabase(workspaceId: string): DatabaseSync
 }
 
 /**
- * The WorkspaceDO ledger versions that build resource history, newest last.
+ * The WorkspaceDO ledger versions that grew `resources` past what D1 left it.
  *
- * A migration that adds to `resource_versions`, its triggers, or the
- * provenance staged on `resources` belongs here, or a fixture below will apply
- * the shape before it and pass over behaviour production no longer has.
+ * A migration that adds to `resource_versions`, its capture triggers, the
+ * provenance staged on `resources`, or the alias beside its UUID belongs here,
+ * or a fixture below applies the shape before it and passes over behaviour
+ * production no longer has.
  */
-const RESOURCE_VERSIONING_MIGRATIONS = new Set([13, 18]);
+const RESOURCE_SCHEMA_MIGRATIONS = new Set([13, 18, 19]);
 
 /**
- * Give a database that already holds `resources` the object's version-capture
- * shape, from the ledger.
+ * Give a database that already holds `resources` the shape WorkspaceDO grew on
+ * it, from the ledger.
  *
  * A fixture built from the regional snapshot has the resource table as D1 left
- * it, which is the table WorkspaceDO imported and then grew history on. The
- * capture triggers are the whole subject of a publish or re-fetch test, so
- * they come from the migrations that ship them rather than from a copy here.
+ * it, which is the table WorkspaceDO imported and then added history and
+ * aliases to. Capture is the whole subject of a publish or re-fetch test, so
+ * its triggers come from the migrations that ship them rather than a copy.
  */
-export function applyWorkspaceResourceVersioning(database: DatabaseSync, workspaceId: string): void {
+export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId: string): void {
   const identity = WORKSPACE_DO_SCHEMA_MIGRATIONS
     .flatMap((migration) => migration.statements)
     .filter((statement) => /^\s*CREATE TABLE workspace_identity\b/u.test(statement));
@@ -82,7 +83,7 @@ export function applyWorkspaceResourceVersioning(database: DatabaseSync, workspa
      VALUES (1, ?, 'global', 'wnam', 0, 0)`,
   ).run(workspaceId);
   for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
-    if (!RESOURCE_VERSIONING_MIGRATIONS.has(migration.version)) continue;
+    if (!RESOURCE_SCHEMA_MIGRATIONS.has(migration.version)) continue;
     for (const statement of migration.statements) database.exec(statement);
   }
 }

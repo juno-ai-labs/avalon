@@ -1683,6 +1683,7 @@ export class WorkstreamObjectProductService {
       const metadata = parseJson<Record<string, unknown>>(String(row.metadata_json ?? "{}"), {});
       return [{
         id: String(row.id),
+        slug: row.slug == null ? null : String(row.slug),
         workspaceId: String(row.workspace_id),
         connectionId: row.connection_id == null ? null : String(row.connection_id),
         resourceType: String(row.resource_type),

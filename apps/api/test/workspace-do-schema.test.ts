@@ -19,6 +19,7 @@ const SCHEDULE_ALARM_VERSION = 4;
 const BOOTSTRAP_VERSION = 5;
 const RESOURCE_VERSIONING_VERSION = 13;
 const VERSION_PROVENANCE_VERSION = 18;
+const RESOURCE_SLUG_VERSION = 19;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -269,5 +270,47 @@ describe("the WorkspaceDO version-provenance migration", () => {
       .toThrow(/resource_version_provenance_mismatch/u);
     expect(() => insert("system", "revision_author_user_id", "user-1"))
       .toThrow(/resource_version_provenance_mismatch/u);
+  });
+});
+
+describe("the WorkspaceDO resource-slug migration", () => {
+  it("holds one slug per resource without making an alias a new version", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, RESOURCE_SLUG_VERSION - 1);
+    seedIdentity(database);
+    const insert = database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, content_ref, metadata_json,
+          created_at, updated_at)
+       VALUES (?, ?, 'document', 'notion', 'Spec', 'r2/original-1', '{}',
+               '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z')`,
+    );
+    insert.run("resource-1", WORKSPACE_ID);
+    insert.run("resource-2", WORKSPACE_ID);
+
+    apply(database, RESOURCE_SLUG_VERSION, RESOURCE_SLUG_VERSION - 1);
+    // Rows that predate the alias have none; nothing in SQL can mint one,
+    // so the column says so and a bounded pass fills them in.
+    expect(database.prepare("SELECT id, slug FROM resources ORDER BY id").all()).toEqual([
+      { id: "resource-1", slug: null },
+      { id: "resource-2", slug: null },
+    ]);
+
+    database.exec("UPDATE resources SET slug = 'amber-crisp-lucid-lantern' WHERE id = 'resource-1'");
+    // Two resources without an alias are not two resources with the same one:
+    // the partial index leaves the nulls alone and still refuses a duplicate.
+    expect(() => database.exec(
+      "UPDATE resources SET slug = 'amber-crisp-lucid-lantern' WHERE id = 'resource-2'",
+    )).toThrow(/UNIQUE constraint failed/u);
+
+    // Naming a resource is not a new state of its content, so allocating one
+    // must not push a version into the history the rail lists.
+    expect(database.prepare(
+      "SELECT current_version FROM resources WHERE id = 'resource-1'",
+    ).get()).toEqual({ current_version: 1 });
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = 'resource-1'",
+    ).get()).toEqual({ count: 1 });
   });
 });

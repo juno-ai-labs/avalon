@@ -12,6 +12,7 @@ import type { AuthContext, Env } from "../env";
 import { numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { createResourceObjectPort } from "../runtime/resource-port";
+import { allocateResourceSlugBesideCreation } from "./resource-slug";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { truncateUtf16Safe } from "../lib/text";
 import { withAuthorizedConnection } from "./connector-connection-access";
@@ -220,6 +221,7 @@ export class ResourceService {
       await this.env.PAYLOADS.delete(key).catch(() => undefined);
       throw error;
     }
+    await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, id);
     return this.get(id);
   }
 
@@ -265,6 +267,7 @@ export class ResourceService {
        WHERE workspace_id = ? AND connection_id = ? AND provider = ? AND provider_resource_id = ?`,
     ).bind(this.auth.workspaceId, input.connectionId, input.provider, input.providerResourceId).first<{ id: string }>();
     if (!canonical) throw new ApiError(500, "resource_write_failed", "The resource could not be stored");
+    await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, canonical.id);
     return this.get(canonical.id);
   }
 
@@ -688,7 +691,8 @@ export class ResourceService {
 function toResource(row: Record<string, unknown>) {
   const watchEnabled = Number(row.watch_enabled ?? 0) === 1;
   return {
-    id: String(row.id), workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
+    id: String(row.id), slug: nullableString(row.slug),
+    workspaceId: String(row.workspace_id), connectionId: row.connection_id == null ? null : String(row.connection_id),
     resourceType: String(row.resource_type), provider: String(row.provider), providerResourceId: row.provider_resource_id == null ? null : String(row.provider_resource_id),
     // Truncated to `ResourceSchema`'s bounds rather than passed through: the
     // columns have no length constraint, and a row past the bound would fail

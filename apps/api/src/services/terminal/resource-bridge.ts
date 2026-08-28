@@ -10,6 +10,7 @@ import {
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
 import { createResourceObjectPort } from "../../runtime/resource-port";
+import { allocateResourceSlugBesideCreation } from "../resource-slug";
 import { loadVisibleWorkstreamResourcesByIds } from "../workstream-resource-visibility";
 import type { TerminalPortFactory } from "./object-port";
 import type { TerminalSandboxProvider } from "./daytona-provider";
@@ -576,6 +577,10 @@ export function createTerminalResourceBridge(
           { reason: "Retry the same publish_resource call so Rally can reconcile its stable resource identity." },
         );
       }
+      // Outside the block that unwinds a failed publication: the document is
+      // recorded and addressable by UUID now, and its alias is owed rather
+      // than required — a reason to keep the row, never to drop it.
+      await allocateResourceSlugBesideCreation(env, context.workspaceId, resourceId);
       return {
         resourceId,
         title,
