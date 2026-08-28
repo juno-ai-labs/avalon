@@ -27,8 +27,8 @@ import {
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testWorkstreamObjectStore,
-  testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
   testResourcePortFactory,
@@ -77,13 +77,9 @@ function fixture(
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-     VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
-    R, W, S, JSON.stringify({ type: "user", userId: U }),
-  );
+  seedWorkstreamRun(objectStore, { id: R,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: U }),
+    createdAt: Date.parse("2026-08-13") });
   seedToolReceipt(objectStore, {
     id: I, runId: R, toolCallId: 'call-runtime', toolName: 'terminal_run_command',
   });
@@ -184,7 +180,7 @@ function fixture(
       pullRequest: { number: 1, url: "https://github.com/o/r/pull/1", title: "Ship", state: "open" },
     })),
   };
-  const db = testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S });
+  const db = sqliteD1(database);
   const coordinator = new TerminalSandboxCoordinator(
     db,
     testTerminalPortFactory(objectStore),
@@ -358,16 +354,8 @@ describe("Daytona Terminal runtime", () => {
       Date.now(),
       R,
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      R2,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     await expect(runtime.readFile(
       { ...context, harnessRunId: R2, toolCallId: "call-admission-successor" },
       "src/file.txt",
@@ -432,16 +420,8 @@ describe("Daytona Terminal runtime", () => {
       Date.now(),
       R,
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      R2,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
     const linkedContext = {
       ...context,
@@ -633,21 +613,10 @@ describe("Daytona Terminal runtime", () => {
       clockNow,
       R,
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13'),
-              (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      R2,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-      R3,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
+    seedWorkstreamRun(objectStore, { id: R3, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     const linkedContext = { ...context, harnessRunId: R2, toolCallId: "call-linked" };
     let finishStop!: () => void;
     vi.mocked(provider.stopSandbox).mockImplementationOnce(async () => (
@@ -707,16 +676,8 @@ describe("Daytona Terminal runtime", () => {
       Date.now(),
       R,
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      R2,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
     await expect(runtime.readFile(
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },
@@ -755,16 +716,8 @@ describe("Daytona Terminal runtime", () => {
       Date.now(),
       R,
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      R2,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
     await expect(runtime.readFile(
       { ...context, harnessRunId: R2, toolCallId: "call-missing-sandbox-successor" },
@@ -819,16 +772,8 @@ describe("Daytona Terminal runtime", () => {
       Date.now(),
       R,
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      R2,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     const linked = { ...context, harnessRunId: R2, toolCallId: "call-abort-successor" };
     await expect(runtime.readFile(linked, "src/file.txt"))
       .rejects.toMatchObject({ code: "sandbox_busy" });
@@ -874,16 +819,8 @@ describe("Daytona Terminal runtime", () => {
       Date.now(),
       R,
     );
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-         (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      R2,
-      W,
-      S,
-      JSON.stringify({ type: "user", userId: U }),
-    );
+    seedWorkstreamRun(objectStore, { id: R2, status: "admitted",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
 
     await expect(runtime.readFile(
       { ...context, harnessRunId: R2, toolCallId: "call-linked" },

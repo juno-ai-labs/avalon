@@ -31,8 +31,12 @@ import {
   repairRootUnionForProviders,
   runHarness,
   type AddressingContextMessage,
+  type BindLoopProjectionState,
+  type BindLoopTransition,
+  type BindCompactionCommit,
   type AutomationCompilerStreamEvent,
   type AutomationCreatorPluginCatalogEntry,
+  type HarnessActivationInput,
   type HarnessEvent,
   type HarnessPlugin,
   type HarnessToolContext,
@@ -49,7 +53,6 @@ import {
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
-  ElicitationSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
   WorkstreamViewResourceOutputSchema,
@@ -89,12 +92,13 @@ import {
 } from "@rally/connectors";
 import { z } from "zod";
 import { substreamAgentName, workspaceDOName } from "../durable-objects/names";
+import type { TranscriptCompactionContinuation } from "../durable-objects/workstream-transcript-storage";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { WorkspaceConnectorEventSchema } from "../durable-objects/workspace-connector-event-protocol";
 import type { Env } from "../env";
 import { countEnv, numericEnv } from "../env";
 import { sha256 } from "../lib/crypto";
-import { markWorkflowInstanceCreated } from "../lib/workflow-launch-signal";
+import { markLoopActivationRecorded } from "../lib/loop-activation-signal";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createChildDeadline, withDeadline } from "../lib/deadline";
@@ -138,9 +142,6 @@ import {
 } from "../telemetry/product-usage";
 import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
 import {
-  workstreamExecutionEnvironment,
-} from "./workstream-runtime-database";
-import {
   withWorkspaceRuntimeDatabase,
 } from "./workspace-runtime-database";
 import {
@@ -150,10 +151,15 @@ import {
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { persistNormalizedActivity } from "./normalized-activity-service";
 import {
-  buildAttachmentManifestPart,
   buildAttachmentModelParts,
   type ModelAttachmentSource,
 } from "./attachment-model-content";
+import {
+  participantModelMessageContent,
+  projectElicitationResponseMessage,
+  projectParticipantModelMessage,
+  renderElicitationResponseMessage,
+} from "./workstream-participant-model-message";
 import {
   createWorkstreamAttachmentTools,
   rehydrateWorkstreamViewReceipt,
@@ -207,9 +213,9 @@ import {
   finalizeToolInvocationFailure,
   InlineChildRunLiveness,
   loadInlineChildResult,
-  loadPersistedHarnessFinalOutcome,
+  loadPersistedHarnessHostOutcome,
   persistImmutableRunScope,
-  persistHarnessFinalMessage,
+  persistHarnessHostOutcome,
   persistInlineChildScope,
   persistRunPluginActivation,
   persistToolExecutionPlan,
@@ -336,7 +342,7 @@ function blockDashboardSubmissionPlugin(
 
 export type WorkstreamHarnessResult = {
   status: "completed" | "needs_input" | "failed" | "stopped";
-  messageId?: string;
+  finalTurnId?: string;
   error?: { code: string; message: string };
   metrics?: HarnessRunMetrics;
 };
@@ -459,12 +465,12 @@ async function publishRuntimeEventBestEffort(
 function workstreamHarnessTerminalResult(input: {
   outcome: Pick<Awaited<ReturnType<typeof runHarness>>, "status" | "failure">;
   streamedText: string;
-  messageId: string;
+  finalTurnId: string | null;
   ambiguousToolOutcome: boolean;
   stoppedByUser: boolean;
 }): WorkstreamHarnessResult {
-  const { outcome, streamedText, messageId, ambiguousToolOutcome, stoppedByUser } = input;
-  const durableMessage = streamedText ? { messageId } : {};
+  const { outcome, streamedText, finalTurnId, ambiguousToolOutcome, stoppedByUser } = input;
+  const durableTurn = streamedText && finalTurnId ? { finalTurnId } : {};
   // Carrying the reason: an ambiguity that halts a run may leave nothing else
   // behind — no elicitation to answer and, when the receipt it collided with
   // had already settled, no failed tool row either. The run itself then has to
@@ -472,32 +478,84 @@ function workstreamHarnessTerminalResult(input: {
   if (ambiguousToolOutcome) {
     return {
       status: "needs_input",
-      ...durableMessage,
+      ...durableTurn,
       error: {
         code: "ambiguous_external_write",
         message: "An external action's outcome could not be confirmed, so Rally stopped instead of repeating it",
       },
     };
   }
-  if (stoppedByUser) return { status: "stopped", ...durableMessage };
-  if (outcome.status === "completed" && streamedText) return { status: "completed", messageId };
+  if (stoppedByUser) return { status: "stopped", ...durableTurn };
+  if (outcome.status === "completed" && streamedText && finalTurnId) return { status: "completed", finalTurnId };
   if (outcome.status === "completed") {
     return {
       status: "failed",
       error: { code: "empty_completion", message: "The model returned no durable final response" },
     };
   }
-  if (outcome.status === "needs_input") return { status: "needs_input", ...durableMessage };
-  if (outcome.status === "stopped") return { status: "stopped", ...durableMessage };
+  if (outcome.status === "needs_input") return { status: "needs_input", ...durableTurn };
+  if (outcome.status === "stopped") return { status: "stopped", ...durableTurn };
   return {
     status: "failed",
-    ...durableMessage,
+    ...durableTurn,
     error: {
       code: outcome.failure?.code ?? "harness_execution_failed",
       message: outcome.failure
         ? memberSafeHarnessFailureMessage(outcome.failure.code)
         : "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
     },
+  };
+}
+
+function resolveHarnessFinalTurnId(
+  streamedText: string,
+  streamedTurnId: string | null,
+): string | null {
+  if (!streamedText) return null;
+  if (!streamedTurnId) throw new Error("harness_final_turn_identity_missing");
+  return streamedTurnId;
+}
+
+function applyHarnessAttachmentBoundary(
+  current: { text: string; turnId: string | null },
+  boundary: string | null,
+  acceptedTurnIds: ReadonlySet<string>,
+): {
+  finalTurn: { text: string; turnId: string | null };
+  participantNotice: string | null;
+} {
+  if (!boundary) return { finalTurn: current, participantNotice: null };
+  if (current.turnId && acceptedTurnIds.has(current.turnId)) {
+    return {
+      finalTurn: current,
+      participantNotice: current.text === boundary ? null : boundary,
+    };
+  }
+  // The provider's stream identity does not make host-authored safety text an
+  // assistant turn. Drop any unaccepted preview and publish the boundary with
+  // explicit system provenance instead.
+  return {
+    finalTurn: { text: "", turnId: null },
+    participantNotice: boundary,
+  };
+}
+
+function advanceHarnessStreamText(
+  current: { text: string; turnId: string | null },
+  event:
+    | { type: "stream_started"; turnId: string }
+    | { type: "stream_delta"; turnId: string; delta: string; reset: boolean },
+): { text: string; turnId: string | null } {
+  if (event.type === "stream_started") {
+    return {
+      turnId: event.turnId,
+      text: current.turnId === event.turnId ? current.text : "",
+    };
+  }
+  const text = current.turnId === event.turnId ? current.text : "";
+  return {
+    turnId: event.turnId,
+    text: event.reset ? event.delta : text + event.delta,
   };
 }
 
@@ -512,6 +570,7 @@ class AttachmentGroundingGuard {
   private readonly started = new Map<string, { resourceIds: string[]; toolName: string }>();
   private readonly unresolved = new Map<string, FailedAttachmentAccess>();
   private nudgeSent = false;
+  private terminalBoundaryApplied = false;
 
   onStarted(event: Extract<HarnessEvent, { type: "tool_started" }>): void {
     if (!isAttachmentContentCapability(event.policy.capability)) return;
@@ -574,6 +633,36 @@ class AttachmentGroundingGuard {
     for (const key of keys) this.unresolved.set(key, failure);
   }
 
+  /** Rebuild safety state from durable receipts before a resumed run emits. */
+  restoreReceipts(receipts: readonly ToolReceiptRecord[]): void {
+    for (const receipt of receipts) {
+      const plan = parseJson<{ capability?: unknown }>(receipt.executionPlanJson ?? "null", {});
+      if (typeof plan.capability !== "string" || !isAttachmentContentCapability(plan.capability)) continue;
+      const resourceIds = attachmentResourceIds(parseJson(receipt.inputJson, {}));
+      if (receipt.status === "completed") {
+        for (const resourceId of resourceIds) this.unresolved.delete(`resource:${resourceId}`);
+        this.started.delete(receipt.toolCallId);
+        continue;
+      }
+      if (receipt.status === "admitted" || receipt.status === "executing") {
+        this.started.set(receipt.toolCallId, { resourceIds, toolName: receipt.toolName });
+        continue;
+      }
+      const error = parseJson<{ code?: unknown }>(receipt.errorJson ?? "null", {});
+      this.started.delete(receipt.toolCallId);
+      const failure: FailedAttachmentAccess = {
+        resourceIds,
+        toolCallId: receipt.toolCallId,
+        toolName: receipt.toolName,
+        errorCode: typeof error.code === "string" ? error.code : "attachment_receipt_failed",
+      };
+      const keys = resourceIds.length > 0
+        ? resourceIds.map((resourceId) => `resource:${resourceId}`)
+        : [`tool_call:${receipt.toolCallId}`];
+      for (const key of keys) this.unresolved.set(key, failure);
+    }
+  }
+
   nudge(): string | null {
     if (this.unresolved.size === 0 || this.nudgeSent) return null;
     this.nudgeSent = true;
@@ -587,15 +676,38 @@ class AttachmentGroundingGuard {
   boundary(): string | null {
     if (this.unresolved.size === 0) return null;
     const failures = [...new Set(this.unresolved.values())]
-      .sort((left, right) => left.toolCallId.localeCompare(right.toolCallId));
+      .sort((left, right) => left.toolCallId < right.toolCallId
+        ? -1 : left.toolCallId > right.toolCallId ? 1 : 0);
     return [
       "## Attachment content unverified",
-      "Rally could not verify the attachment content needed for this answer. No values from the affected attachments are included or inferred.",
+      "At the time of this response, I could not verify the attachment content needed for an evidence-based answer. I have not included or inferred values from the affected attachments.",
       ...failures.map((failure) => failure.resourceIds.length > 0
         ? `- Resource ${failure.resourceIds.join(", ")} via ${failure.toolName} failed (${failure.errorCode}; tool call ${failure.toolCallId}).`
         : `- Attachment tool call ${failure.toolCallId} via ${failure.toolName} failed (${failure.errorCode}); its resource identity could not be recovered.`),
-      "Retry the attachment operation or provide the evidence in a supported readable format.",
+      "I cannot make claims from that attachment evidence unless a later verified read succeeds.",
     ].join("\n\n");
+  }
+
+  hasUnresolved(): boolean {
+    return this.unresolved.size > 0;
+  }
+
+  /**
+   * Replace ungrounded output before Bind or the canonical transcript accepts
+   * it. Tool-bearing turns may still recover through another attachment call;
+   * a tool-less replacement is terminal and suppresses the later nudge.
+   */
+  sanitizeAssistantContent(content: string, hasToolCalls: boolean): string {
+    const boundary = this.boundary();
+    if (!boundary) return content;
+    if (!hasToolCalls) this.terminalBoundaryApplied = true;
+    return boundary;
+  }
+
+  consumeTerminalBoundaryApplied(): boolean {
+    const applied = this.terminalBoundaryApplied;
+    this.terminalBoundaryApplied = false;
+    return applied;
   }
 
   diagnostic(): { count: number; errorCodes: string[]; toolNames: string[] } {
@@ -612,13 +724,25 @@ class AttachmentGroundingGuard {
   }
 }
 
+function acceptHarnessAssistantContent(
+  guard: AttachmentGroundingGuard,
+  turn: { turnId: string; content: string; hasToolCalls: boolean },
+): { text: string; turnId: string } {
+  return {
+    turnId: turn.turnId,
+    text: guard.sanitizeAssistantContent(turn.content, turn.hasToolCalls),
+  };
+}
+
+const ATTACHMENT_CONTENT_CAPABILITIES = [
+  "workstream.resources.read",
+  "workstream.resources.search",
+  "workstream.resources.view",
+  "workstream.resources.summarize",
+] as const;
+
 function isAttachmentContentCapability(capability: string): boolean {
-  return [
-    "workstream.resources.read",
-    "workstream.resources.search",
-    "workstream.resources.view",
-    "workstream.resources.summarize",
-  ].includes(capability);
+  return (ATTACHMENT_CONTENT_CAPABILITIES as readonly string[]).includes(capability);
 }
 
 function attachmentResourceIds(value: unknown): string[] {
@@ -744,17 +868,7 @@ function createConnectorToolContext(
 }
 
 function modelMessageContent(message: Message): string {
-  const people = message.mentions.flatMap((mention) =>
-    mention.type === "person" && mention.userId
-      ? [{
-          type: "person" as const,
-          person_id: mention.userId,
-          ...(mention.displayName ? { display_name: mention.displayName } : {}),
-        }]
-      : [],
-  );
-  if (people.length === 0) return message.textContent;
-  return `${message.textContent}\n\n<rally_mentions>${JSON.stringify(people)}</rally_mentions>`;
+  return participantModelMessageContent(message.textContent, message.mentions);
 }
 
 type ModelTranscriptProjectionIssue = {
@@ -788,6 +902,36 @@ function modelDerivative(
     sourceRevision,
   };
   return { ...message, provenance };
+}
+
+function workstreamActivationInput(message: ModelMessage): HarnessActivationInput {
+  const provenance = message.provenance;
+  if (message.role !== "user"
+    || provenance?.originKind !== "derived"
+    || !provenance.sourceKind
+    || !provenance.sourceId) {
+    throw new Error("workstream_activation_input_provenance_invalid");
+  }
+  return {
+    // Logical source identity, deliberately independent of the subordinate
+    // execution receipt. Recovery or lease takeover therefore reuses the same
+    // admission instead of duplicating it under a new executor.
+    activationInputId: `activation:${JSON.stringify([
+      provenance.sourceKind,
+      provenance.sourceId,
+      provenance.sourceRevision,
+    ])}`,
+    message: {
+      ...message,
+      role: "user",
+      provenance: {
+        ...provenance,
+        originKind: "derived",
+        sourceKind: provenance.sourceKind,
+        sourceId: provenance.sourceId,
+      },
+    },
+  };
 }
 
 type TranscriptMessageLister = (
@@ -1197,85 +1341,56 @@ async function projectModelProtocolTranscript(
       continue;
     }
 
-    if (message.messageType === "elicitation") {
-      const response = projectElicitationResponseMessage(message.structuredContent);
-      if (response) {
-        projected.push(modelDerivative(response, "participant_turn", message.id, message.sequenceNumber));
-      }
-      continue;
-    }
-
     // Suggestion and system rows are UI state. Their relevant durable content
     // is represented separately.
-    if (message.messageType !== "text") continue;
-    const content = modelMessageContent(message);
-    if (content.trim().length === 0 && message.attachments.length === 0) {
+    if (message.messageType !== "text" && message.messageType !== "elicitation") continue;
+    const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
+      id: attachment.id,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      contentRef: null,
+      modelContentStatus: "failed" as const,
+      modelContentErrorCode: "source_unavailable",
+    });
+    const participantMessage = message.author.type === "external"
+      ? await projectParticipantModelMessage(env, {
+          author: { type: "external", actor: message.author.actor },
+          messageType: message.messageType,
+          text: message.textContent,
+          structuredContent: message.structuredContent,
+          mentions: message.mentions,
+          attachments: sources,
+          includeAttachmentContents: message.id === input.triggerMessageId,
+        })
+      : message.author.type === "human"
+        ? await projectParticipantModelMessage(env, {
+            author: { type: "human" },
+            messageType: message.messageType,
+            text: message.textContent,
+            structuredContent: message.structuredContent,
+            mentions: message.mentions,
+            attachments: sources,
+            includeAttachmentContents: message.id === input.triggerMessageId,
+          })
+        : null;
+    if (!participantMessage && message.author.type !== "agent") {
       issues.push({ kind: "empty_ui_message_omitted", healed: true });
       continue;
     }
-    if (message.author.type === "external") {
-      const actor = message.author.actor;
-      projected.push(modelDerivative({
-        role: "user",
-        content: [
-          `EXTERNALLY ATTRIBUTED ${actor.provider.toLocaleUpperCase()} WORKSPACE MEMBER REQUEST`,
-          `Display name: ${actor.displayName}`,
-          `Provider member ID: ${actor.providerUserId}`,
-          content,
-        ].join("\n"),
-      }, "participant_turn", message.id, message.sequenceNumber));
-    }
-    else if (message.author.type === "human") {
-      if (message.attachments.length > 0 && message.id === input.triggerMessageId) {
-        const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
-          id: attachment.id,
-          fileName: attachment.fileName,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
-          contentRef: null,
-          modelContentStatus: "failed" as const,
-          modelContentErrorCode: "source_unavailable",
-        });
-        const parts = await buildAttachmentModelParts(env.PAYLOADS, sources, {
-          database: env.DB,
-          images: env.IMAGES,
-        });
-        projected.push(modelDerivative({
-          role: "user",
-          content: [
-            ...(content.trim().length > 0 ? [{ type: "text" as const, text: content }] : []),
-            ...parts,
-          ],
-        }, "participant_turn", message.id, message.sequenceNumber));
-      } else {
-        if (message.attachments.length === 0) {
-          projected.push(modelDerivative(
-            { role: "user", content },
-            "participant_turn",
-            message.id,
-            message.sequenceNumber,
-          ));
-        } else {
-          const sources = message.attachments.map((attachment) => attachmentSources.get(attachment.id) ?? {
-            id: attachment.id,
-            fileName: attachment.fileName,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes,
-            contentRef: null,
-            modelContentStatus: "failed" as const,
-            modelContentErrorCode: "source_unavailable",
-          });
-          projected.push(modelDerivative({
-            role: "user",
-            content: [
-              ...(content.trim().length > 0 ? [{ type: "text" as const, text: content }] : []),
-              buildAttachmentManifestPart(sources),
-            ],
-          }, "participant_turn", message.id, message.sequenceNumber));
-        }
+    if (participantMessage) {
+      projected.push(modelDerivative(
+        participantMessage,
+        "participant_turn",
+        message.id,
+        message.sequenceNumber,
+      ));
+    } else if (message.author.type === "agent") {
+      const content = modelMessageContent(message);
+      if (content.length === 0) {
+        issues.push({ kind: "empty_ui_message_omitted", healed: true });
+        continue;
       }
-    }
-    else if (message.author.type === "agent") {
       projected.push(modelDerivative(
         { role: "assistant", content },
         "participant_turn",
@@ -1520,6 +1635,7 @@ export async function compileAutomationDraft(
     return await compileAutomation({
       apiKey: env.OPENROUTER_API_KEY,
       model: routing.model,
+      loopId: `automation-draft:${input.draftId ?? input.userId}:loop`,
       workspaceId: input.workspaceId,
       userId: input.userId,
       fallbackModels: routing.fallbackModels,
@@ -1702,7 +1818,8 @@ async function loadAutomationCreatorPluginCatalog(
         })),
     });
   }
-  return catalog.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+  return catalog.sort((left, right) =>
+    left.pluginId < right.pluginId ? -1 : left.pluginId > right.pluginId ? 1 : 0);
 }
 
 async function executeAutomationCreatorConnectorTool(
@@ -1804,12 +1921,12 @@ async function assertAutomationCreatorConnectionAuthorized(
   return row;
 }
 
-export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
+export async function activateWorkstreamLoop(env: Env, input: WorkstreamWorkflowInput): Promise<string> {
   // Durable-Object dispatch is the only execution arm; a stack that has not
   // opened the authority is refused rather than routed to retired legacy code.
   await requireOpenWorkstreamAuthority(env);
   const substreamId = input.substreamId ?? asSubstreamId("0");
-  const instanceId = `substream-agent:${substreamId}:${input.harnessRunId}`;
+  const executionReceiptId = `substream-agent:${substreamId}:${input.harnessRunId}`;
   const agent = await durableObjectStubForWorkspace(
     env,
     env.SUBSTREAM_AGENTS,
@@ -1821,58 +1938,51 @@ export async function startWorkstreamWorkflow(env: Env, input: WorkstreamWorkflo
       substreamId,
     ),
   );
-  const response = await agent.dispatchRun({ ...input, substreamId });
+  const activatedAt = nowIso();
+  let response: Awaited<ReturnType<typeof agent.activateLoop>>;
+  try {
+    response = await agent.activateLoop({ ...input, substreamId });
+  } catch (error) {
+    // A transport failure cannot prove whether the object's activation
+    // transaction committed. Preserve the receipt so an exact replay can
+    // resolve that ambiguity.
+    throw markLoopActivationRecorded(error instanceof Error ? error : new Error("Loop activation failed"));
+  }
   if (response.status < 200 || response.status >= 300) {
+    // A typed response proves the object refused the activation before the
+    // receipt/context transaction committed. The caller may therefore fail
+    // the unlaunched root run instead of stranding it as ambiguous work.
     const body = rpcResultBody(response) as { error?: unknown } | null;
     throw new Error(typeof body?.error === "string"
       ? body.error
-      : `substream_agent_dispatch_failed:${response.status}`);
+      : `substream_agent_activation_failed:${response.status}`);
   }
-  const launchedAt = nowIso();
   try {
-    return await recordWorkflowLaunch(env, input, instanceId, launchedAt);
+    await projectLoopExecutionReceipt(env, input, executionReceiptId, activatedAt);
+    return executionReceiptId;
   } catch (error) {
-    // The instance is live and this failure is only about recording it, so the
-    // caller must not undo the work the run is already executing against. Said
-    // on the error rather than left to be inferred from a row: the run row is
-    // marked `failed` by the caller's own handler moments later, so its status
-    // cannot answer "is something still running here".
-    throw markWorkflowInstanceCreated(
-      new Error(
-        `Recording the workflow launch failed: ${error instanceof Error ? error.message : "unknown error"}`,
-        { cause: error },
-      ),
-    );
+    // Agent activation commits the subordinate receipt launch and its complete
+    // restart context together. A caller may replay that exact admission, but
+    // must not delete the work stream or mint another logical loop after any
+    // later projection boundary fails.
+    throw markLoopActivationRecorded(error instanceof Error ? error : new Error("Loop activation failed"));
   }
 }
 
-async function recordWorkflowLaunch(
+async function projectLoopExecutionReceipt(
   env: Env,
   input: WorkstreamWorkflowInput,
-  instanceId: string,
-  launchedAt: string,
-): Promise<string> {
-  const executionEnv = await workstreamExecutionEnvironment(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-  );
-  await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
-    .launchRun({
-      runId: input.harnessRunId,
-      workflowInstanceId: instanceId,
-      startedAt: Date.parse(launchedAt),
-      now: Date.parse(launchedAt),
-    });
-  await withWorkspaceRuntimeDatabase(executionEnv, input.workspaceId).DB.prepare(
+  executionReceiptId: string,
+  activatedAt: string,
+): Promise<void> {
+  await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
     `UPDATE automation_runs
      SET workflow_instance_id = ?,
          status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
          started_at = COALESCE(started_at, ?)
      WHERE workstream_id = ? AND workspace_id = ?
        AND ? != 'block_dashboard_block'`,
-  ).bind(instanceId, launchedAt, input.workstreamId, input.workspaceId, input.reason).run();
-  return instanceId;
+  ).bind(executionReceiptId, activatedAt, input.workstreamId, input.workspaceId, input.reason).run();
 }
 
 interface SequencedStreamDeltaBatcher {
@@ -1984,6 +2094,66 @@ export async function runWorkstreamHarness(
     lease: AttemptLease;
     publishRealtime?: boolean;
     runtimeResourceAttacher?: WorkstreamRuntimeResourceAttacher;
+    /** Object-local authority for the one persistent loop of this substream. */
+    persistentLoop?: {
+      projection: BindLoopProjectionState | null;
+      transcriptThrough: number;
+      /** Extends the singleton loop lease after its subordinate attempt heartbeat commits. */
+      heartbeat?(): void | Promise<void>;
+      commitActivationInputs(input: {
+        loopId: string;
+        executionId: string;
+        generation: number;
+        stateRevision: number;
+        inputs: readonly HarnessActivationInput[];
+      }): {
+        transitions: readonly Extract<BindLoopTransition, { kind: "protocol_user_appended" }>[];
+        replayedActivationInputIds: readonly string[];
+      } | Promise<{
+        transitions: readonly Extract<BindLoopTransition, { kind: "protocol_user_appended" }>[];
+        replayedActivationInputIds: readonly string[];
+      }>;
+      commitBindTransition(transition: BindLoopTransition): void | Promise<void>;
+      commitBindCompaction(input: {
+        commit: BindCompactionCommit;
+        continuation: TranscriptCompactionContinuation;
+      }): void | Promise<void>;
+      reserveAssistantTurn(input: {
+        loopId: string;
+        executionId: string;
+        turnId: string;
+        modelTurnIndex: number;
+        streamId: string;
+      }): { transcriptSequence: number } | Promise<{ transcriptSequence: number }>;
+      assistantOutputStarted(input: {
+        turnId: string;
+        transcriptSequence: number;
+      }): void | Promise<void>;
+      settleAssistantFailure(input: {
+        outcome: "failed" | "stopped";
+        code: string;
+      }): { turnId: string; transcriptSequence: number } | null
+        | Promise<{ turnId: string; transcriptSequence: number } | null>;
+      settleStep(input: {
+        loopId: string;
+        executionId: string;
+        assistantTurnId: string;
+        modelTurnIndex: number;
+        generation: number;
+        stateRevision: number;
+        wouldEnd: boolean;
+      }): {
+        transitions: readonly Extract<BindLoopTransition, {
+          kind: "tool_result_accepted" | "protocol_user_appended";
+        }>[];
+        stop: boolean;
+      } | Promise<{
+        transitions: readonly Extract<BindLoopTransition, {
+          kind: "tool_result_accepted" | "protocol_user_appended";
+        }>[];
+        stop: boolean;
+      }>;
+    };
   },
 ): Promise<WorkstreamHarnessResult> {
   // Layer WorkspaceDO product state over the work-stream/substream runtime
@@ -2020,14 +2190,21 @@ export async function runWorkstreamHarness(
       ...(error ? { error } : {}),
     };
   }
-  const messageId = input.harnessRunId;
+  const streamId = input.harnessRunId;
   if (!blockDashboardRun) {
-    const persistedHostOutcome = await loadPersistedHarnessFinalOutcome(
+    const persistedHostOutcome = await loadPersistedHarnessHostOutcome(
       createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId),
-      createMessageObjectPort(env, input.workspaceId, input.workstreamId),
       input,
     );
-    if (persistedHostOutcome) return persistedHostOutcome;
+    if (persistedHostOutcome) {
+      return {
+        status: persistedHostOutcome.status,
+        ...(persistedHostOutcome.finalTurnId
+          ? { finalTurnId: persistedHostOutcome.finalTurnId }
+          : {}),
+        ...(persistedHostOutcome.error ? { error: persistedHostOutcome.error } : {}),
+      };
+    }
   }
   const runAuthoritySnapshot = await assertRunAuthorityStillValid(env, input);
   if (!runtime?.lease) throw Object.assign(new Error("The durable Bind attempt lease was not supplied"), {
@@ -2038,41 +2215,54 @@ export async function runWorkstreamHarness(
   const liveness = new CoalescedRunLiveness(runs, input.harnessRunId, attemptLease, {
     leaseSeconds: 300,
     minimumIntervalMs: 5_000,
+    ...(runtime.persistentLoop?.heartbeat ? {
+      afterHeartbeat: () => runtime.persistentLoop!.heartbeat!(),
+    } : {}),
   });
   await liveness.pulse("run_start", true);
-  const priorCompaction = await loadWorkstreamContextCompaction(
-    env.DB,
-    createTranscriptObjectPort(env, input.workspaceId, input.workstreamId),
-    createResourceObjectPort(env, input.workspaceId, input.workstreamId),
-    input.workspaceId,
-    input.workstreamId,
-    input.executionPrincipal,
-    undefined,
-    input.compactionFence,
-  );
+  const requiresCanonicalBootstrap = !runtime.persistentLoop
+    || runtime.persistentLoop.projection === null;
+  const priorCompaction = requiresCanonicalBootstrap
+    ? await loadWorkstreamContextCompaction(
+        env.DB,
+        createTranscriptObjectPort(env, input.workspaceId, input.workstreamId),
+        createResourceObjectPort(env, input.workspaceId, input.workstreamId),
+        input.workspaceId,
+        input.workstreamId,
+        input.executionPrincipal,
+        undefined,
+        input.compactionFence,
+      )
+    : null;
   const transcript = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
-  const storedMessages = await loadTriggerFencedTranscriptMessages(
-    transcript,
-    input,
-    // The transcript comes from the object rather than from a routed reader
-    // whose four-table join was rewritten onto three compatibility views. The
-    // paging contract is unchanged, which is what lets this stay an injected
-    // lister: the loader's fence walk is the same walk.
-    transcriptLister(
+  const storedMessages = requiresCanonicalBootstrap
+    ? await loadTriggerFencedTranscriptMessages(
       transcript,
-      { workspaceId: input.workspaceId, workstreamId: input.workstreamId },
-    ),
-    priorCompaction?.compactedThroughSequence ?? -1,
-  );
-  const transcriptProjection = await projectModelProtocolTranscript(env, input, storedMessages);
+      input,
+      // The transcript comes from the object rather than from a routed reader
+      // whose four-table join was rewritten onto three compatibility views. The
+      // paging contract is unchanged, which is what lets this stay an injected
+      // lister: the loader's fence walk is the same walk.
+      transcriptLister(
+        transcript,
+        { workspaceId: input.workspaceId, workstreamId: input.workstreamId },
+      ),
+      priorCompaction?.compactedThroughSequence ?? -1,
+    )
+    : [];
+  const transcriptProjection = requiresCanonicalBootstrap
+    ? await projectModelProtocolTranscript(env, input, storedMessages)
+    : { messages: [], issues: [] };
   const rawModelMessages = [
     ...(priorCompaction?.messages ?? []),
     ...transcriptProjection.messages,
   ];
-  const compactedThroughSequence = storedMessages.reduce(
-    (highest, message) => Math.max(highest, message.sequenceNumber),
-    priorCompaction?.compactedThroughSequence ?? 0,
-  );
+  const compactedThroughSequence = requiresCanonicalBootstrap
+    ? storedMessages.reduce(
+        (highest, message) => Math.max(highest, message.sequenceNumber),
+        priorCompaction?.compactedThroughSequence ?? 0,
+      )
+    : runtime.persistentLoop!.transcriptThrough;
   if (transcriptProjection.issues.length > 0) {
     logStructuredEvent(env, "warn", "harness_model_transcript_projected", {
       request_id: input.harnessRunId,
@@ -2087,6 +2277,7 @@ export async function runWorkstreamHarness(
     attemptLease,
     { title: workstream.title, objective: workstream.objective },
   );
+  const activationInputs = promptContext.additionalMessages.map(workstreamActivationInput);
   // Preserve the complete protocol transcript. OpenRouter's returned usage is
   // the authoritative context measurement; Avalon does not estimate bytes or
   // silently drop older conversation units before inference.
@@ -2102,8 +2293,11 @@ export async function runWorkstreamHarness(
     }, "block_dashboard_run", blockDashboardRun.block_run_id)] : []),
   ];
   let streamedText = "";
+  let streamedTurnId: string | null = null;
+  const acceptedAssistantTurnIds = new Set<string>();
   let modelName: string | null = null;
   let streamStarted = false;
+  let suppressCurrentStreamPreview = false;
   const harnessTools = await loadHarnessTools(
     env,
     input,
@@ -2128,16 +2322,9 @@ export async function runWorkstreamHarness(
   const stopController = new AbortController();
   const harnessSignal = combineAbortSignals(stopController.signal, liveness.signal);
   const activeCredentialPluginIds = new Set<string>();
-  await installInlineChildAgentTool({
-    env,
-    input,
-    parentLease: () => liveness.lease,
-    parentSignal: harnessSignal,
-    runAuthoritySnapshot,
-    harnessTools,
-    activeCredentialPluginIds,
-  });
-  let lastStopCheck = 0;
+  // Inline child harnesses would create a second Bind loop inside this
+  // substream's one persistent state machine. Keep the tool off the production
+  // surface until delegation is routed to its own durable child SubstreamAgent.
   let ambiguousToolOutcome = false;
   let suppressInferenceRequestCapture = false;
   const toolEffectIntents = createToolEffectIntents();
@@ -2200,6 +2387,14 @@ export async function runWorkstreamHarness(
     });
   };
   const attachmentGrounding = new AttachmentGroundingGuard();
+  attachmentGrounding.restoreReceipts(await createToolReceiptObjectPort(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  ).receiptsForRun({
+    runId: input.harnessRunId,
+    capabilities: ATTACHMENT_CONTENT_CAPABILITIES,
+  }));
   const runLimits = workstreamRunLimits();
   const runScopeLimits = {
     ...runLimits,
@@ -2302,7 +2497,7 @@ export async function runWorkstreamHarness(
   };
   const streamDeltaBatcher = createSequencedStreamDeltaBatcher((event) => publishEvent({
     ...event,
-    messageId,
+    streamId,
     harnessRunId: input.harnessRunId,
   }));
   const emit = async (event: Record<string, unknown>) => {
@@ -2310,6 +2505,24 @@ export async function runWorkstreamHarness(
     // events without paying for a Durable Object request per model token.
     await streamDeltaBatcher.flush();
     await publishEvent(event);
+  };
+  const flushFailureStreamBoundary = async (): Promise<void> => {
+    // The provider retry boundary treats any emitted text as observable. Flush
+    // that same boundary to the member before the reserved canonical error turn
+    // replaces it; otherwise a short final batch can remain hidden in the
+    // batcher while still (correctly) disabling retry and fallback. Realtime is
+    // best-effort, so an unavailable publisher must not block durable failure
+    // settlement or permit the provider cycle to continue.
+    try {
+      await streamDeltaBatcher.flush();
+    } catch (streamError) {
+      logStructuredEvent(env, "warn", "harness_failure_stream_flush_dropped", {
+        request_id: input.harnessRunId,
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        reason: streamError instanceof Error ? streamError.name : "stream_flush_failed",
+      });
+    }
   };
 
   // A HyperSight block is configured with its own model and never inherits the
@@ -2324,7 +2537,9 @@ export async function runWorkstreamHarness(
       workstreamId: input.workstreamId,
     });
 
-  if (await isHarnessStopped(runs, input.harnessRunId)) stopController.abort("stopped_by_user");
+  if (!runtime?.persistentLoop && await isHarnessStopped(runs, input.harnessRunId)) {
+    stopController.abort("stopped_by_user");
+  }
 
   // Setup above runs under the freshly claimed five-minute lease. Start the
   // recurring monitor only once every setup step that can throw has finished,
@@ -2376,6 +2591,46 @@ export async function runWorkstreamHarness(
       (pendingAssistantTools.get(position.turnId) ?? 0) + 1,
     );
   };
+  const failTranscriptToolActivities = async (event: {
+    toolCallId: string;
+    pluginId: string;
+    toolName: string;
+  }): Promise<void> => {
+    const position = transcriptToolPosition(event.toolCallId);
+    const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
+    const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
+      .find((candidate) => candidate.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+    await orderedTranscript.upsertActivity({
+      activityId: `${event.toolCallId}:activity`,
+      parentActivityId: plugin.activityId,
+      scope: "tool_call",
+      subjectId: event.toolCallId,
+      callIndex: position.callIndex,
+      label: event.toolName,
+      action: "fail",
+      revision: 2,
+      occurredAtUtc: new Date().toISOString(),
+    });
+    failedPluginActivities.add(plugin.revisionKey);
+    const pending = Math.max(0, (pendingPluginTools.get(plugin.revisionKey) ?? 1) - 1);
+    pendingPluginTools.set(plugin.revisionKey, pending);
+    if (pending === 0) {
+      const pluginRevision = (pluginActivityRevisions.get(plugin.revisionKey) ?? 1) + 1;
+      pluginActivityRevisions.set(plugin.revisionKey, pluginRevision);
+      await orderedTranscript.upsertActivity({
+        activityId: plugin.activityId,
+        parentActivityId: plugin.parentActivityId,
+        scope: "plugin",
+        subjectId: event.pluginId,
+        callIndex: position.callIndex,
+        label: pluginLabel,
+        action: "fail",
+        revision: pluginRevision,
+        occurredAtUtc: new Date().toISOString(),
+      });
+    }
+    await settleTranscriptAssistantActivity(event.toolCallId, "fail");
+  };
   let preparedCompactionVisibilityFingerprint: string | null = null;
   let outcome: Awaited<ReturnType<typeof runHarness>>;
   if (!blockDashboardRun) {
@@ -2416,14 +2671,34 @@ export async function runWorkstreamHarness(
       },
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
+      loopId: input.loopId,
       harnessRunId: input.harnessRunId,
       executionPrincipal: input.executionPrincipal,
       systemPrompt: blockDashboardRun
         ? `${promptContext.systemPrompt}\n\n${BLOCK_DASHBOARD_SYSTEM_PROMPT}`
         : promptContext.systemPrompt,
-      messages: modelMessages,
+      // A persistent loop bootstraps from canonical transcript history once.
+      // Activation-only wrappers cross the separately fenced durable boundary
+      // below; a resumed execution must never replace the Bind head with a
+      // freshly assembled history array.
+      messages: !blockDashboardRun && runtime?.persistentLoop
+        ? rawModelMessages
+        : modelMessages,
+      ...(!blockDashboardRun && runtime?.persistentLoop ? {
+        bindLoopProjection: runtime.persistentLoop.projection,
+        activationInputs,
+        onActivationBoundary: (activation) =>
+          runtime.persistentLoop!.commitActivationInputs(activation),
+        onAssistantTurnReserved: (turn) => runtime.persistentLoop!.reserveAssistantTurn({
+          ...turn,
+          streamId,
+        }),
+        onStepSettled: (step) => runtime.persistentLoop!.settleStep(step),
+      } : {}),
       ...(!blockDashboardRun ? {
-        onBindLoopTransition: (transition) => orderedTranscript.commitBindTransition(transition),
+        onBindLoopTransition: (transition) => runtime?.persistentLoop
+          ? runtime.persistentLoop.commitBindTransition(transition)
+          : orderedTranscript.commitBindTransition(transition),
         onBindProviderBoundary: (boundary) => orderedTranscript.recordProviderBoundary(boundary),
         onBindCompaction: async (commit) => {
           await liveness.pulse("compaction_persist", true);
@@ -2438,7 +2713,7 @@ export async function runWorkstreamHarness(
           if (!Number.isSafeInteger(revision) || revision < 0) {
             throw new Error("invalid_resource_inventory_revision");
           }
-          await orderedTranscript.commitBindCompaction({
+          const compaction = {
             commit,
             continuation: {
               executionPrincipalKey: executionPrincipalKey(input.executionPrincipal),
@@ -2447,7 +2722,10 @@ export async function runWorkstreamHarness(
               compactedThroughSequence,
               expectedInventoryRevision: revision,
             },
-          });
+          };
+          await (runtime?.persistentLoop
+            ? runtime.persistentLoop.commitBindCompaction(compaction)
+            : orderedTranscript.commitBindCompaction(compaction));
           preparedCompactionVisibilityFingerprint = null;
         },
       } : {}),
@@ -2544,6 +2822,10 @@ export async function runWorkstreamHarness(
     },
     acceptEmptyCompletion: blockDashboardRun !== null,
     onTurnWouldEnd: () => {
+      // A tool-less boundary has already crossed Bind's acceptance boundary;
+      // asking the model to restate it would create a second answer and spend
+      // another turn without adding verified evidence.
+      if (attachmentGrounding.consumeTerminalBoundaryApplied()) return null;
       const attachmentNudge = attachmentGrounding.nudge();
       if (attachmentNudge) return attachmentNudge;
       if (blockDashboardRun) {
@@ -2715,28 +2997,6 @@ export async function runWorkstreamHarness(
     onLiveness: async (stage) => {
       await liveness.pulse(stage, stage === "before_model" || stage === "after_tool");
       await assertRunAuthorityStillValid(env, input, runAuthoritySnapshot);
-      if (stage === "iteration_boundary") {
-        const steering = await env.DB.prepare(
-          `UPDATE run_steering
-              SET boundaries_observed = boundaries_observed + 1,
-                  consumed_at = CASE
-                    WHEN boundaries_observed + 1 >= max_boundaries THEN ? ELSE consumed_at END
-            WHERE run_id = ? AND consumed_at IS NULL
-            RETURNING boundaries_observed, max_boundaries, consumed_at`,
-        ).bind(Date.now(), input.harnessRunId).first<{
-          boundaries_observed: number;
-          max_boundaries: number;
-          consumed_at: number | null;
-        }>();
-        if (steering?.consumed_at !== null && steering?.consumed_at !== undefined) {
-          await env.DB.prepare(
-            `UPDATE runs SET cancellation_reason = 'steered_by_follow_up',
-                    revision = revision + 1, updated_at = ?
-              WHERE run_id = ? AND status = 'running' AND terminalized_at IS NULL`,
-          ).bind(Date.now(), input.harnessRunId).run();
-          stopController.abort("steered_by_follow_up");
-        }
-      }
     },
     findCompletedToolResult: async (toolCallId, inputHash, policyIdentity) => {
       const expectedPolicy = resolveHarnessToolReceiptPolicy(policyIdentity, harnessTools);
@@ -2758,7 +3018,6 @@ export async function runWorkstreamHarness(
         if (attachmentReplay === null) return null;
         const invocation = await loadToolInvocation(env, input, toolCallId);
         if (invocation) {
-          if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
           await emit({ type: "tool_completed", invocation });
         }
         const replayedOutput = attachmentReplay?.output ?? (row.outputRef
@@ -2808,7 +3067,6 @@ export async function runWorkstreamHarness(
           });
           const invocation = await loadToolInvocation(env, input, toolCallId);
           if (invocation) {
-            if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_completed", invocation });
             await recordToolAudit(env, input, invocation.id, row.toolName, "write", "completed");
           }
@@ -2880,9 +3138,27 @@ export async function runWorkstreamHarness(
             memberSafePayload: { code: "ambiguous_external_write" },
           });
         }
+        if (!blockDashboardRun) {
+          await ensureTranscriptToolParents({
+            toolCallId,
+            pluginId: expectedPolicy.pluginId,
+          });
+          await orderedTranscript.upsertToolLifecycle({
+            toolCallId,
+            pluginId: expectedPolicy.pluginId,
+            toolName: row.toolName,
+            status: "ambiguous",
+            error: "Rally could not confirm whether this external action completed",
+            occurredAtUtc: new Date().toISOString(),
+          });
+          await failTranscriptToolActivities({
+            toolCallId,
+            pluginId: expectedPolicy.pluginId,
+            toolName: row.toolName,
+          });
+        }
         const invocation = await loadToolInvocation(env, input, toolCallId);
         if (invocation) {
-          if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
           await emit({ type: "tool_failed", invocation });
           if (newlyAmbiguous) {
             await recordToolAudit(env, input, invocation.id, row.toolName, mode, "ambiguous");
@@ -2898,8 +3174,7 @@ export async function runWorkstreamHarness(
     },
     resolveToolEffectIntentId: toolEffectIntents.resolve,
     onEvent: async (event: HarnessEvent) => {
-      if (Date.now() - lastStopCheck > 750) {
-        lastStopCheck = Date.now();
+      if (!runtime?.persistentLoop) {
         const state = await runs.run({ runId: input.harnessRunId });
         if (state?.status === "cancelled" || state?.cancellation_requested_at) {
           stopController.abort("stopped_by_user");
@@ -2965,31 +3240,61 @@ export async function runWorkstreamHarness(
         case "stream_started":
           modelName = event.model;
           streamStarted = true;
+          if (!blockDashboardRun && runtime?.persistentLoop) {
+            if (event.transcriptSequence === undefined) {
+              throw new Error("workstream_stream_missing_transcript_reservation");
+            }
+            await runtime.persistentLoop.assistantOutputStarted({
+              turnId: event.turnId,
+              transcriptSequence: event.transcriptSequence,
+            });
+          }
+          suppressCurrentStreamPreview = attachmentGrounding.hasUnresolved();
+          ({ text: streamedText, turnId: streamedTurnId } = advanceHarnessStreamText(
+            { text: streamedText, turnId: streamedTurnId },
+            event,
+          ));
           await emit({
             type: "stream_started",
-            messageId,
+            streamId,
             harnessRunId: input.harnessRunId,
             turnId: event.turnId,
+            ...(event.transcriptSequence === undefined
+              ? {}
+              : { transcriptSequence: event.transcriptSequence }),
             epoch: event.epoch,
             streamSeq: event.streamSeq,
             reset: event.reset,
           });
           break;
         case "stream_delta":
+          ({ text: streamedText, turnId: streamedTurnId } = advanceHarnessStreamText(
+            { text: streamedText, turnId: streamedTurnId },
+            event,
+          ));
           if (!streamStarted) {
             streamStarted = true;
+            suppressCurrentStreamPreview = attachmentGrounding.hasUnresolved();
             await emit({
               type: "stream_started",
-              messageId,
+              streamId,
               harnessRunId: input.harnessRunId,
               turnId: event.turnId,
+              ...(event.transcriptSequence === undefined
+                ? {}
+                : { transcriptSequence: event.transcriptSequence }),
               epoch: event.epoch,
               streamSeq: Math.max(0, event.streamSeq - 1),
               reset: false,
             });
           }
-          streamedText = event.reset ? event.delta : streamedText + event.delta;
-          await streamDeltaBatcher.push(event);
+          // Once any delta in a turn is unsafe, suppress that turn's remaining
+          // preview even if a later tool receipt clears the guard. Resuming the
+          // same sequence would concatenate a suffix onto a prefix with a
+          // participant-invisible hole. A later stream_started begins a new,
+          // independently safe turn.
+          if (attachmentGrounding.hasUnresolved()) suppressCurrentStreamPreview = true;
+          if (!suppressCurrentStreamPreview) await streamDeltaBatcher.push(event);
           break;
         case "tool_started": {
           attachmentGrounding.onStarted(event);
@@ -3029,9 +3334,20 @@ export async function runWorkstreamHarness(
           toolEffectIntents.record(event.toolCallId, receipt.invocationId);
           if (receipt.state === "ambiguous_external_write") {
             ambiguousToolOutcome = true;
+            if (!blockDashboardRun) {
+              await ensureTranscriptToolParents(event);
+              await orderedTranscript.upsertToolLifecycle({
+                toolCallId: event.toolCallId,
+                pluginId: event.pluginId,
+                toolName: event.toolName,
+                status: "ambiguous",
+                error: "Rally could not confirm whether this external action completed",
+                occurredAtUtc: new Date().toISOString(),
+              });
+              await failTranscriptToolActivities(event);
+            }
             const invocation = await loadToolInvocation(env, input, event.toolCallId);
             if (invocation) {
-              if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
               await emit({ type: "tool_failed", invocation });
               await emitAgentToolTerminalTelemetry(env, {
                 workspaceId: input.workspaceId,
@@ -3111,7 +3427,6 @@ export async function runWorkstreamHarness(
                     ? "system"
                     : "workstream",
             }).catch(() => undefined);
-            if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_started", invocation });
           }
           break;
@@ -3190,7 +3505,6 @@ export async function runWorkstreamHarness(
               }
               await settleTranscriptAssistantActivity(event.toolCallId, "complete");
             }
-            if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_completed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, "completed");
             await emitAgentToolTerminalTelemetry(env, {
@@ -3271,55 +3585,54 @@ export async function runWorkstreamHarness(
               },
             );
           }
+          if (!blockDashboardRun) {
+            const position = transcriptToolPosition(event.toolCallId);
+            const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
+            const pluginActivityId = plugin.activityId;
+            const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
+              .find((plugin) => plugin.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
+            await ensureTranscriptToolParents(event);
+            await orderedTranscript.upsertToolLifecycle({
+              toolCallId: event.toolCallId,
+              pluginId: event.pluginId,
+              toolName: event.toolName,
+              status: ambiguous || planAlreadyAmbiguous ? "ambiguous" : "failed",
+              error: event.error,
+              occurredAtUtc: new Date().toISOString(),
+            });
+            await orderedTranscript.upsertActivity({
+              activityId: `${event.toolCallId}:activity`,
+              parentActivityId: pluginActivityId,
+              scope: "tool_call",
+              subjectId: event.toolCallId,
+              callIndex: position.callIndex,
+              label: event.toolName,
+              action: "fail",
+              revision: 2,
+              occurredAtUtc: new Date().toISOString(),
+            });
+            failedPluginActivities.add(plugin.revisionKey);
+            const pending = Math.max(0, (pendingPluginTools.get(plugin.revisionKey) ?? 1) - 1);
+            pendingPluginTools.set(plugin.revisionKey, pending);
+            if (pending === 0) {
+              const pluginRevision = (pluginActivityRevisions.get(plugin.revisionKey) ?? 1) + 1;
+              pluginActivityRevisions.set(plugin.revisionKey, pluginRevision);
+              await orderedTranscript.upsertActivity({
+                activityId: pluginActivityId,
+                parentActivityId: plugin.parentActivityId,
+                scope: "plugin",
+                subjectId: event.pluginId,
+                callIndex: position.callIndex,
+                label: pluginLabel,
+                action: "fail",
+                revision: pluginRevision,
+                occurredAtUtc: new Date().toISOString(),
+              });
+            }
+            await settleTranscriptAssistantActivity(event.toolCallId, "fail");
+          }
           const invocation = await loadToolInvocation(env, input, event.toolCallId);
           if (invocation) {
-            if (!blockDashboardRun) {
-              const position = transcriptToolPosition(event.toolCallId);
-              const plugin = transcriptPluginActivity(event.toolCallId, event.pluginId);
-              const pluginActivityId = plugin.activityId;
-              const pluginLabel = [...harnessTools.corePlugins, ...harnessTools.plugins]
-                .find((plugin) => plugin.canonicalId === event.pluginId)?.displayName ?? event.pluginId;
-              await ensureTranscriptToolParents(event);
-              await orderedTranscript.upsertToolLifecycle({
-                toolCallId: event.toolCallId,
-                pluginId: event.pluginId,
-                toolName: event.toolName,
-                status: "failed",
-                error: event.error,
-                occurredAtUtc: new Date().toISOString(),
-              });
-              await orderedTranscript.upsertActivity({
-                activityId: `${event.toolCallId}:activity`,
-                parentActivityId: pluginActivityId,
-                scope: "tool_call",
-                subjectId: event.toolCallId,
-                callIndex: position.callIndex,
-                label: event.toolName,
-                action: "fail",
-                revision: 2,
-                occurredAtUtc: new Date().toISOString(),
-              });
-              failedPluginActivities.add(plugin.revisionKey);
-              const pending = Math.max(0, (pendingPluginTools.get(plugin.revisionKey) ?? 1) - 1);
-              pendingPluginTools.set(plugin.revisionKey, pending);
-              if (pending === 0) {
-                const pluginRevision = (pluginActivityRevisions.get(plugin.revisionKey) ?? 1) + 1;
-                pluginActivityRevisions.set(plugin.revisionKey, pluginRevision);
-                await orderedTranscript.upsertActivity({
-                  activityId: pluginActivityId,
-                  parentActivityId: plugin.parentActivityId,
-                  scope: "plugin",
-                  subjectId: event.pluginId,
-                  callIndex: position.callIndex,
-                  label: pluginLabel,
-                  action: "fail",
-                  revision: pluginRevision,
-                  occurredAtUtc: new Date().toISOString(),
-                });
-              }
-              await settleTranscriptAssistantActivity(event.toolCallId, "fail");
-            }
-            if (!blockDashboardRun) await persistToolTranscriptMessage(env, input, invocation);
             await emit({ type: "tool_failed", invocation });
             await recordToolAudit(env, input, invocation.id, event.toolName, receiptPolicy.definition.mode, ambiguous ? "ambiguous" : "failed");
             await emitAgentToolTerminalTelemetry(env, {
@@ -3336,11 +3649,40 @@ export async function runWorkstreamHarness(
           await emit({ type: "harness_status_changed", status: "needs_input" });
           break;
         case "stream_completed":
-          streamedText = event.content;
+          // Completion is a lifecycle event, not a second content authority.
+          // `transformAssistantMessageBeforeAcceptance` already copied Bind's
+          // exact accepted text and turn identity into the settlement state.
           break;
       }
     },
+      transformAssistantMessageBeforeAcceptance: ({ turnId, content, hasToolCalls }) => {
+      const accepted = acceptHarnessAssistantContent(
+        attachmentGrounding,
+        { turnId, content, hasToolCalls },
+      );
+      // Bind and terminal settlement must share one accepted-content authority.
+      // The streamed accumulator contains provider output, which can differ
+      // from the safety boundary accepted into Bind. A later successful tool
+      // may clear the grounding guard before settlement, so re-reading guard
+      // state at the end cannot reconstruct which text Bind actually accepted.
+      streamedTurnId = accepted.turnId;
+      streamedText = accepted.text;
+      acceptedAssistantTurnIds.add(accepted.turnId);
+      return accepted.text;
+    },
     });
+    if (!blockDashboardRun && runtime?.persistentLoop
+      && (outcome.status === "failed" || outcome.status === "stopped")) {
+      await flushFailureStreamBoundary();
+      const settled = await runtime.persistentLoop.settleAssistantFailure({
+        outcome: outcome.status,
+        code: outcome.failure?.code
+          ?? (outcome.status === "stopped" ? "run_cancelled" : "assistant_turn_failed"),
+      });
+      if (settled) {
+        await publishEvent({ type: "stream_completed", streamId });
+      }
+    }
     if (!blockDashboardRun) {
       await orderedTranscript.upsertActivity({
         activityId: `${input.harnessRunId}:activity`,
@@ -3357,6 +3699,7 @@ export async function runWorkstreamHarness(
       });
     }
   } catch (error) {
+    await flushFailureStreamBoundary();
     if (!blockDashboardRun) {
       await orderedTranscript.upsertActivity({
         activityId: `${input.harnessRunId}:activity`,
@@ -3369,6 +3712,18 @@ export async function runWorkstreamHarness(
         revision: 2,
         occurredAtUtc: new Date().toISOString(),
       }).catch(() => undefined);
+      if (runtime?.persistentLoop) {
+        const code = error instanceof Error && "code" in error && typeof error.code === "string"
+          ? error.code
+          : "assistant_turn_failed";
+        const settled = await runtime.persistentLoop.settleAssistantFailure({
+          outcome: code === "run_cancelled" ? "stopped" : "failed",
+          code,
+        });
+        if (settled) {
+          await publishEvent({ type: "stream_completed", streamId });
+        }
+      }
     }
     throw error;
   } finally {
@@ -3378,6 +3733,7 @@ export async function runWorkstreamHarness(
   await streamDeltaBatcher.flush();
 
   const attachmentBoundary = attachmentGrounding.boundary();
+  let participantNotice: string | null = null;
   if (attachmentBoundary) {
     const diagnostic = attachmentGrounding.diagnostic();
     logStructuredEvent(env, "warn", "attachment_grounding_guard_triggered", {
@@ -3388,10 +3744,18 @@ export async function runWorkstreamHarness(
       error_codes: diagnostic.errorCodes,
       tool_names: diagnostic.toolNames,
     });
-    streamedText = attachmentBoundary;
+    const attachmentSettlement = applyHarnessAttachmentBoundary(
+      { text: streamedText, turnId: streamedTurnId },
+      attachmentBoundary,
+      acceptedAssistantTurnIds,
+    );
+    ({ text: streamedText, turnId: streamedTurnId } = attachmentSettlement.finalTurn);
+    participantNotice = attachmentSettlement.participantNotice;
   }
 
-  const stoppedByUser = await isHarnessStopped(runs, input.harnessRunId);
+  const stoppedByUser = runtime?.persistentLoop
+    ? outcome.status === "stopped"
+    : await isHarnessStopped(runs, input.harnessRunId);
   if (outcome.status !== "completed" && !stoppedByUser) {
     // The member-safe terminal result deliberately strips this detail, so it
     // must be recorded here or nowhere: a Bind run that fails before its first
@@ -3406,10 +3770,20 @@ export async function runWorkstreamHarness(
       failure_message: outcome.failure?.message?.slice(0, 500) ?? null,
     });
   }
+  // Only bytes accepted by Bind may become the durable final turn. A failed
+  // partial stream has already been replaced at its reservation by a status
+  // pill, so adopting the preview here would resurrect ephemeral output under
+  // that same identity. Host-authored attachment guidance likewise never
+  // borrows a provider turn; it is committed below as a system notice.
+  const finalTurnId = resolveHarnessFinalTurnId(streamedText, streamedTurnId);
+  const acceptedFinalTurnId = finalTurnId && acceptedAssistantTurnIds.has(finalTurnId)
+    ? finalTurnId
+    : null;
+  const acceptedFinalText = acceptedFinalTurnId ? streamedText : "";
   const terminalResult = workstreamHarnessTerminalResult({
     outcome,
-    streamedText,
-    messageId,
+    streamedText: acceptedFinalText,
+    finalTurnId: acceptedFinalTurnId,
     ambiguousToolOutcome,
     stoppedByUser,
   });
@@ -3467,31 +3841,28 @@ export async function runWorkstreamHarness(
       operationId: input.harnessRunId,
       eventId: resourceTelemetryEventId(input.harnessRunId, 7),
     }).catch(() => undefined);
-  } else if (streamedText) {
-    const messagePort = createMessageObjectPort(env, input.workspaceId, input.workstreamId);
-    await persistHarnessFinalMessage(
+  } else {
+    await persistHarnessHostOutcome(
       runs,
-      messagePort,
       input,
       liveness.lease,
-      { id: messageId, text: streamedText },
+      acceptedFinalText && acceptedFinalTurnId
+        ? { turnId: acceptedFinalTurnId, text: acceptedFinalText }
+        : null,
+      participantNotice
+        ? {
+          turnId: `${input.harnessRunId}:attachment-boundary`,
+          text: participantNotice,
+        }
+        : null,
       {
         status: terminalResult.status,
         ...(terminalResult.error ? { error: terminalResult.error } : {}),
       },
     );
-    const terminalMessage = await messagePort.messageByClientId({
-      clientMessageId: `harness:${input.harnessRunId}`,
-    });
-    if (terminalMessage?.attention_ordinal != null && outcome.stats.turns > 0) {
-      await orderedTranscript.setParticipantTurnAttentionOrdinal({
-        turnId: `${input.harnessRunId}:turn:${outcome.stats.turns}`,
-        attentionOrdinal: terminalMessage.attention_ordinal,
-      });
-    }
   }
   // Workflow terminalization owns the monotonic state transition and publishes
-  // terminal realtime state only after the final message + lifecycle event are
+  // terminal realtime state only after the final turn + lifecycle event are
   // durable. This host may persist model/usage metadata while its lease is live,
   // but it must never mark the run completed directly.
   await runs.recordRunProgress({
@@ -3926,6 +4297,10 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
 
       const childInput: WorkstreamWorkflowInput = {
         ...options.input,
+        // This retired inline executor is absent from every production tool
+        // surface. Keep its test-only loop identity distinct while its tests
+        // are removed; production child loops must be separate SubstreamAgents.
+        loopId: `disabled-inline-child:${options.input.loopId}:${context.toolCallId}`,
         harnessRunId: admission.childInput.harnessRunId,
         reason: "sub_agent",
       };
@@ -4075,6 +4450,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           },
           workspaceId: childInput.workspaceId,
           workstreamId: childInput.workstreamId,
+          loopId: childInput.loopId,
           harnessRunId: childInput.harnessRunId,
           executionPrincipal: childInput.executionPrincipal,
           systemPrompt: INLINE_CHILD_SYSTEM_PROMPT,
@@ -4665,8 +5041,11 @@ async function loadAutomationResultDelivery(
       ? [{ channel: "slack_agent_dm" as const, destination: target.slack_user_id }]
       : [];
   });
-  return destinations.sort((left, right) =>
-    left.channel.localeCompare(right.channel) || left.destination.localeCompare(right.destination));
+  return destinations.sort((left, right) => {
+    const channelOrder = left.channel < right.channel ? -1 : left.channel > right.channel ? 1 : 0;
+    if (channelOrder !== 0) return channelOrder;
+    return left.destination < right.destination ? -1 : left.destination > right.destination ? 1 : 0;
+  });
 }
 
 /**
@@ -4774,7 +5153,13 @@ async function loadRunPromptContext(
     additionalMessages.push(modelDerivative(
       renderUntrustedSlackOriginMessage(input.slackOrigin),
       "run_context",
-      `${input.harnessRunId}:slack-origin`,
+      input.triggerMessageId ?? `slack-origin:${JSON.stringify([
+        input.slackOrigin.teamId,
+        input.slackOrigin.channelId,
+        input.slackOrigin.threadTs,
+        input.slackOrigin.invocationType,
+        input.slackOrigin.nearbyMessages.at(-1)?.timestamp ?? null,
+      ])}`,
     ));
   }
   const memoryQueryParts: string[] = [workstream.title, workstream.objective];
@@ -4898,58 +5283,6 @@ async function loadRunPromptContext(
     additionalMessages,
     memoryContextHash: frozenMemory.memoryContextHash,
   };
-}
-
-type ElicitationResponseRow = {
-  prompt: string;
-  response_type: "text" | "radio" | "single_select" | "multi_select";
-  options_json: string;
-  answer_json: string | null;
-};
-
-function renderElicitationResponseMessage(row: ElicitationResponseRow): ModelMessage {
-  const answer = parseJson<string | string[] | null>(row.answer_json, null);
-  const options = parseJson<Array<{ value: string; label: string; description?: string | null }>>(
-    row.options_json,
-    [],
-  );
-  const optionsByValue = new Map(options.map((option) => [option.value, option]));
-  const values = answer == null ? [] : Array.isArray(answer) ? answer : [answer];
-  const response = answer == null
-    ? { skipped: true }
-    : row.response_type === "text"
-      ? { skipped: false, text: String(answer) }
-      : {
-          skipped: false,
-          selections: values.map((value) => {
-            const option = optionsByValue.get(value);
-            return option
-              ? { value, label: option.label, ...(option.description ? { description: option.description } : {}) }
-              : { customResponse: value };
-          }),
-        };
-  return {
-    role: "user",
-    content: [
-      "The person responded to Rally's blocking question. Continue the original task using this response.",
-      JSON.stringify({ kind: "elicitation_response", question: row.prompt, response }),
-    ].join("\n"),
-  };
-}
-
-function projectElicitationResponseMessage(structuredContent: unknown): ModelMessage | null {
-  const parsed = z.object({
-    kind: z.literal("elicitation_response"),
-    elicitation: ElicitationSchema,
-  }).safeParse(structuredContent);
-  if (!parsed.success || parsed.data.elicitation.status !== "answered") return null;
-  const elicitation = parsed.data.elicitation;
-  return renderElicitationResponseMessage({
-    prompt: elicitation.prompt,
-    response_type: elicitation.responseType,
-    options_json: JSON.stringify(elicitation.options),
-    answer_json: elicitation.answer == null ? null : JSON.stringify(elicitation.answer),
-  });
 }
 
 function utf8Length(value: string): number {
@@ -5174,7 +5507,7 @@ async function awaitToolReplayRead<T>(
   }
 }
 
-async function loadToolReplayOutput(
+export async function loadToolReplayOutput(
   env: Env,
   outputRef: string,
   deadline = Date.now() + TOOL_REPLAY_READ_TIMEOUT_MS,
@@ -5547,7 +5880,8 @@ async function loadHarnessTools(
     coreTools,
     corePlugins,
     tools,
-    plugins: plugins.sort((left, right) => left.canonicalId.localeCompare(right.canonicalId)),
+    plugins: plugins.sort((left, right) => left.canonicalId < right.canonicalId
+      ? -1 : left.canonicalId > right.canonicalId ? 1 : 0),
     frozenConnections,
     pluginSurfaceHashes,
     legacyPluginSurfaceHashes,
@@ -6667,7 +7001,8 @@ async function stableRunToolSurfaceHash(
         tools: plugin.tools.map((tool) => tool.definition),
       })),
     ],
-    plugins: [...harnessTools.pluginSurfaceHashes.entries()].sort(([left], [right]) => left.localeCompare(right)),
+    plugins: [...harnessTools.pluginSurfaceHashes.entries()]
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
   }));
 }
 
@@ -7174,6 +7509,7 @@ function createAvalonTools(env: Env, input: WorkstreamWorkflowInput): HarnessToo
           .openElicitation({
             elicitationId: id,
             runId: input.harnessRunId,
+            toolCallId: context.toolCallId,
             prompt: args.prompt,
             responseType: args.responseType,
             optionsJson: JSON.stringify(args.options),
@@ -7687,39 +8023,6 @@ function summarize(value: unknown, maxLength: number): string {
 }
 
 /**
- * Store the observed tool block in the same sequence domain as transcript
- * messages. The invocation UUID is also the message UUID, which makes every
- * lifecycle update idempotent without adding another cross-table identifier.
- *
- * This was a two-statement `DB.batch`: an upsert that took the work stream's
- * next sequence number, and a follow-up increment guarded on the inserted row
- * having actually taken it, so a refresh did not advance the transcript. The
- * two were one fact split across a batch, which is exactly what a batch cannot
- * make atomic. The object does both inside one `transactionSync`, and decides
- * from the row it just read rather than from a guard on a second statement.
- */
-async function persistToolTranscriptMessage(
-  env: Env,
-  input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId">,
-  invocation: ToolInvocation,
-): Promise<void> {
-  // The wire carries ISO-8601 and the object stores unix milliseconds; the
-  // retired view converted between them in SQL, so the conversion moves here.
-  const settled = invocation.status !== "pending" && invocation.status !== "started";
-  const asMillis = (value: string | null): number => (
-    value === null ? Date.now() : Date.parse(value)
-  );
-  await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
-    .upsertToolMessage({
-      messageId: invocation.id,
-      clientMessageId: `tool:${invocation.id}`,
-      structuredContentJson: JSON.stringify({ invocation }),
-      createdAt: asMillis(invocation.startedAt ?? invocation.completedAt),
-      editedAt: settled ? asMillis(invocation.completedAt) : null,
-    });
-}
-
-/**
  * The connector that owns a tool call, shaped for the transcript row that
  * renders it. Avalon-owned tools carry no connection, so they resolve to null
  * and their row falls back to the generic tool icon.
@@ -7888,6 +8191,7 @@ export const __integrationTesting = {
   stableWireToolName,
   loadTriggerFencedTranscriptMessages,
   loadRunPromptContext,
+  workstreamActivationInput,
   projectModelProtocolTranscript,
   projectElicitationResponseMessage,
   renderElicitationResponseMessage,
@@ -7898,7 +8202,6 @@ export const __integrationTesting = {
   persistSuccessfulToolResult,
   settleRootHarnessToolCompletion,
   settleRootHarnessToolFailure,
-  persistToolTranscriptMessage,
   persistPolledActivity,
   withAuthorizedConnection,
   pluginAuthorizationFromHealth,
@@ -7913,6 +8216,10 @@ export const __integrationTesting = {
   eligibleConnectionCapabilityMap,
   persistInitialPluginActivations,
   publishRuntimeEventBestEffort,
+  advanceHarnessStreamText,
+  applyHarnessAttachmentBoundary,
+  resolveHarnessFinalTurnId,
   workstreamHarnessTerminalResult,
   AttachmentGroundingGuard,
+  acceptHarnessAssistantContent,
 };

@@ -84,7 +84,7 @@ export function createTerminalObjectPort(
    * Run operations against storage or a complete authority executor in this
    * isolate instead of dispatching to the object.
    *
-   * The same seam `workstreamRuntimeDatabase` takes for its local executor,
+   * The same local-authority seam the retired work-stream SQL router used,
    * and for the same reason: the Node suite runs the real schema and the real
    * statements over `node:sqlite`, which is honest coverage of everything
    * except the runtime itself. What the runtime decides — that the operation

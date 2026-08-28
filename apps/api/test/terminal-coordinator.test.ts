@@ -12,9 +12,9 @@ import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-p
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   seedToolReceipt,
+  seedWorkstreamRun,
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
-  testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
   testResourcePortFactory,
@@ -51,13 +51,11 @@ function fixture() {
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: WORKSTREAM_ID, workspaceId: WORKSPACE_ID });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-      (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-    VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
-    RUN_ID, WORKSPACE_ID, WORKSTREAM_ID, JSON.stringify({ type: "user", userId: USER_ID }),
-  );
+  seedWorkstreamRun(objectStore, {
+    id: RUN_ID,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+    createdAt: Date.parse("2026-08-13"),
+  });
   let now = new Date("2026-08-13T12:00:00.000Z");
   const clock: TerminalClock = { now: () => new Date(now) };
   const provider: TerminalSandboxProvider = {
@@ -89,10 +87,7 @@ function fixture() {
   return {
     database,
     objectStore,
-    db: testWorkstreamRuntimeD1(sqliteD1(database), objectStore, {
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-    }),
+    db: sqliteD1(database),
     provider,
     clock,
     advance(minutes: number) { now = new Date(now.getTime() + minutes * 60_000); },
@@ -225,13 +220,8 @@ describe("Terminal sandbox coordinator", () => {
     // Scheduled, not running: the object admits at most one mutating run per
     // substream (`runs_mutating_substream_uq`), so the contender waits in the
     // admitted state while the fixture run holds the lease.
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      otherRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
-    );
+    seedWorkstreamRun(objectStore, { id: otherRun, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
     const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
 
@@ -245,7 +235,7 @@ describe("Terminal sandbox coordinator", () => {
       });
     expect(provider.createSandbox).toHaveBeenCalledOnce();
 
-    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'completed' WHERE id = ?", RUN_ID);
+    workstreamObjectRun(objectStore, "UPDATE runs SET status = 'completed' WHERE run_id = ?", RUN_ID);
     await expect(coordinator.acquire({ ...context(), harnessRunId: otherRun, toolCallId: "other-call" }))
       .resolves.toMatchObject({ providerSandboxId: "sandbox-1" });
   });
@@ -261,14 +251,9 @@ describe("Terminal sandbox coordinator", () => {
       clock,
     );
     await coordinator.acquire(context());
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      otherRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
-    );
-    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    seedWorkstreamRun(objectStore, { id: otherRun, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    workstreamObjectRun(objectStore, "UPDATE runs SET status = 'failed' WHERE run_id = ?", RUN_ID);
     for (let index = 0; index < 21; index += 1) {
       const invocationId = `batch-invocation-${index}`;
       seedToolReceipt(objectStore, {
@@ -321,13 +306,8 @@ describe("Terminal sandbox coordinator", () => {
       clock,
     );
     await coordinator.acquire(context());
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
-    );
+    seedWorkstreamRun(objectStore, { id: linkedRun, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
     seedToolReceipt(objectStore, {
       id: effectId,
       runId: RUN_ID,
@@ -352,7 +332,7 @@ describe("Terminal sandbox coordinator", () => {
       objectStore,
       "UPDATE terminal_workspace SET final_diff_resource_id = 'planned-old-final-diff' WHERE id = 1",
     );
-    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    workstreamObjectRun(objectStore, "UPDATE runs SET status = 'failed' WHERE run_id = ?", RUN_ID);
 
     await expect(coordinator.acquire({
       ...context(),
@@ -385,13 +365,8 @@ describe("Terminal sandbox coordinator", () => {
       clock,
     );
     await coordinator.acquire(context());
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
-    );
+    seedWorkstreamRun(objectStore, { id: linkedRun, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
     for (const [effectId, callId, position] of [
       [runningEffect, "mixed-running-call", 0],
       [submittingEffect, "mixed-submitting-call", 1],
@@ -425,7 +400,7 @@ describe("Terminal sandbox coordinator", () => {
       clock.now().getTime() - 2,
       clock.now().getTime() - 2,
     );
-    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    workstreamObjectRun(objectStore, "UPDATE runs SET status = 'failed' WHERE run_id = ?", RUN_ID);
     let finishDelete!: () => void;
     vi.mocked(provider.deleteSandbox).mockImplementationOnce(async () => (
       new Promise<void>((resolve) => { finishDelete = resolve; })
@@ -496,14 +471,9 @@ describe("Terminal sandbox coordinator", () => {
       commandDeadlineAt: clock.now().getTime() + 60_000,
       now: clock.now().getTime(),
     })).resolves.toBe(true);
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
-    );
-    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    seedWorkstreamRun(objectStore, { id: linkedRun, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    workstreamObjectRun(objectStore, "UPDATE runs SET status = 'failed' WHERE run_id = ?", RUN_ID);
     vi.mocked(provider.stopSandbox).mockRejectedValueOnce(new Error("stop unavailable"));
     const linked = { ...context(), harnessRunId: linkedRun, toolCallId: "transient-recovery-linked" };
 
@@ -581,16 +551,11 @@ describe("Terminal sandbox coordinator", () => {
       commandDeadlineAt: clock.now().getTime() + 60_000,
       now: clock.now().getTime(),
     })).resolves.toBe(true);
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13'),
-              (?, ?, ?, 'test', ?, 'scheduled', '2026-08-13')`,
-      linkedRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
-      successorRun, WORKSPACE_ID, WORKSTREAM_ID, `{"type":"user","userId":"${USER_ID}"}`,
-    );
-    workstreamObjectRun(objectStore, "UPDATE harness_runs SET status = 'failed' WHERE id = ?", RUN_ID);
+    seedWorkstreamRun(objectStore, { id: linkedRun, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    seedWorkstreamRun(objectStore, { id: successorRun, status: "admitted",
+      executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
+    workstreamObjectRun(objectStore, "UPDATE runs SET status = 'failed' WHERE run_id = ?", RUN_ID);
 
     const staleAcquire = coordinator.acquire({
       ...context(),

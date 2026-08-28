@@ -24,7 +24,7 @@ vi.mock("../src/services/integrations", () => ({
     rationaleCode: "test",
   })),
   publishWorkstreamEvent: vi.fn(async () => undefined),
-  startWorkstreamWorkflow: vi.fn(async () => "workflow-instance"),
+  activateWorkstreamLoop: vi.fn(async () => "execution-receipt"),
 }));
 vi.mock("../src/services/workstream-naming-service", async (importOriginal) => ({
   ...await importOriginal<typeof NamingService>(),
@@ -589,7 +589,7 @@ function environment(database: DatabaseSync): Env {
               createdByUserId: input.creatorUserId,
               emailAddress: input.emailAddress,
             }),
-            messageId: crypto.randomUUID(),
+            turnId: crypto.randomUUID(),
             harnessRunId: crypto.randomUUID(),
           };
         },

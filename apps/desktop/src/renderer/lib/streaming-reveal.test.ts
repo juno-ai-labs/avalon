@@ -12,7 +12,7 @@ import type { StreamCursor } from './workstream-socket-resume';
 
 function cursor(overrides: Partial<StreamCursor> = {}): StreamCursor {
   return {
-    aggregateMessageId: 'message-one',
+    streamId: 'stream-one',
     turnId: 'turn-one',
     epoch: 0,
     streamSeq: 1,

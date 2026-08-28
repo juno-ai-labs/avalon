@@ -20,12 +20,11 @@ import {
   NoteDetailSchema as WireNoteDetailSchema,
   NoteSummarySchema as WireNoteSummarySchema,
   NoteTranscriptSegmentSchema as WireNoteTranscriptSegmentSchema,
-  MessageSchema as WireMessageSchema,
   ParticipantSchema as WireParticipantSchema,
   PendingWorkspaceInvitationSchema as WirePendingWorkspaceInvitationSchema,
   ResourceSchema as WireResourceSchema,
   WorkstreamResourceSchema as WireWorkstreamResourceSchema,
-  ToolInvocationSchema as WireToolInvocationSchema,
+  type ToolInvocationSchema as WireToolInvocationSchema,
   type ViewerSchema as WireViewerSchema,
   WorkspaceMemberSchema as WireWorkspaceMemberSchema,
   WorkspaceInvitationPreviewSchema as WireWorkspaceInvitationPreviewSchema,
@@ -46,7 +45,6 @@ import {
   type ConnectorOAuthAttempt,
   type ConnectorOAuthStart,
   type Elicitation as WireElicitation,
-  type Message as WireMessage,
   type Resource as WireResource,
   ResourceRevisionSchema as WireResourceRevisionSchema,
   type ResourceRevision as WireResourceRevision,
@@ -70,9 +68,8 @@ import { HttpUrlSchema } from '@rally/contracts/url-schemas';
 import type { ZodType } from 'zod';
 import { z } from 'zod';
 import type { DesktopAuthAttempt, DesktopSession } from '../../common/desktop';
-import { elicitationMessageId, normalizeElicitation } from './elicitation';
+import { normalizeElicitation } from './elicitation';
 import { resolveMentionPayload } from './mention-draft';
-import { createElicitationMessage, upsertTranscriptMessage, visibleTranscriptMessages } from './transcript';
 import { newRequestId } from './perf-trace';
 import { logDebug } from '../../common/logger';
 import { reportJavascriptError, reportTelemetryProductIntent, telemetryCountBucket, uuidV7 } from './telemetry';
@@ -93,8 +90,6 @@ import type {
   HarnessStatus,
   BlockDashboard,
   BlockDashboardPreference,
-  Message,
-  MessagePage,
   NoteDetail,
   NoteSummary,
   NoteTranscriptSegment,
@@ -263,9 +258,6 @@ export interface MentionIdentity {
 }
 
 const wirePinnedWorkstreamsSchema = z.object({ items: z.array(WireWorkstreamSchema) });
-const wireMessagePageSchema = CursorPageSchema(WireMessageSchema).extend({
-  newerCursor: z.string().nullable().default(null),
-});
 const wireResourcePageSchema = CursorPageSchema(WireResourceSchema);
 const wireNotePageSchema = z.object({ items: z.array(WireNoteSummarySchema) });
 const wireMemberPageSchema = z.object({ items: z.array(WireWorkspaceMemberSchema) });
@@ -290,14 +282,9 @@ const wireTemplatePageSchema = z.object({
 });
 const createWorkstreamResponseSchema = z.object({
   workstream: WireWorkstreamSchema,
-  messageId: z.string(),
+  turnId: z.string(),
   harnessRunId: z.string().nullable(),
-});
-const createMessageResponseSchema = z.object({
-  message: WireMessageSchema,
-  agentInvoked: z.boolean(),
-  harnessRunId: z.string().nullable(),
-});
+}).strict();
 const runNowResponseSchema = z.object({
   runId: z.string(),
   workstreamId: z.string(),
@@ -480,52 +467,7 @@ export function mapBackgroundTask(task: WireBackgroundTask): BackgroundTask {
     ...(Number.isFinite(started) && Number.isFinite(completed) ? { durationMs: Math.max(0, completed - started) } : {}),
     ...(task.tokenCount !== null ? { tokenCount: task.tokenCount } : {}),
     ...(task.toolUses !== null ? { toolUses: task.toolUses } : {}),
-    ...(task.transcriptMessageId ? { transcriptMessageId: task.transcriptMessageId } : {}),
-  };
-}
-
-export function mapMessage(message: WireMessage): Message {
-  const structured = message.structuredContent ?? {};
-  const invocation = WireToolInvocationSchema.safeParse('invocation' in structured ? structured['invocation'] : structured);
-  const elicitation = WireElicitationSchema.safeParse('elicitation' in structured ? structured['elicitation'] : structured);
-  const suggestion = WireActivitySuggestionSchema.safeParse('suggestion' in structured ? structured['suggestion'] : structured);
-  const messageType: Message['messageType'] = message.messageType === 'tool'
-    ? 'tool_event'
-    : message.messageType === 'suggestion'
-      ? 'activity_suggestion'
-      : message.messageType;
-  return {
-    // The durable open question and its later durable answer are separate
-    // transcript rows, while an unfetched open question can also be synthesized
-    // from detail.openElicitations. Give every representation one UI identity so
-    // messagesWithTransientBlocks can render only the current state.
-    id: elicitation.success ? elicitationMessageId(elicitation.data.id) : message.id,
-    ...(message.clientMessageId ? { clientMessageId: message.clientMessageId } : {}),
-    workstreamId: message.workstreamId,
-    sequenceNumber: message.sequenceNumber,
-    attentionSequenceNumber: message.attentionSequenceNumber ?? null,
-    authorType: message.author.type === 'human' ? 'human' : message.author.type,
-    ...(message.author.type === 'human' ? { author: mapUser(message.author.user) } : {}),
-    ...(message.author.type === 'external' ? { externalActor: { ...message.author.actor } } : {}),
-    messageType,
-    text: message.textContent,
-    ...(structured['kind'] === 'suggested_work_expansion' && typeof structured['label'] === 'string'
-      ? { contextLabel: structured['label'] }
-      : {}),
-    mentions: message.mentions.map((mention) => ({
-      type: mention.type,
-      ...(mention.userId ? { personId: mention.userId } : {}),
-      ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
-      ...(mention.displayName ? { displayName: mention.displayName } : {}),
-      ...(mention.avatarUrl ? { avatarUrl: mention.avatarUrl } : {}),
-      startOffset: mention.startOffset,
-      endOffset: mention.endOffset,
-    })),
-    attachments: message.attachments.map((attachment) => ({ ...attachment })),
-    createdAt: message.createdAt,
-    ...(invocation.success ? { toolEvent: mapToolInvocation(invocation.data) } : {}),
-    ...(elicitation.success ? { elicitation: mapElicitation(elicitation.data) } : {}),
-    ...(suggestion.success ? { activitySuggestion: mapSuggestion(suggestion.data) } : {}),
+    ...(task.transcriptTurnId ? { transcriptTurnId: task.transcriptTurnId } : {}),
   };
 }
 
@@ -534,6 +476,7 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
   return {
     ...mapWorkstreamSummary(workstream),
     createdAt: workstream.createdAt,
+    stopRequested: workstream.stopRequested ?? false,
     ...(workstream.createdByUserId
       ? { createdBy: participants.find((participant) => participant.id === workstream.createdByUserId) }
       : {}),
@@ -565,52 +508,6 @@ export function mapWorkstreamDetail(workstream: WireWorkstreamDetail): Workstrea
         }
       : {}),
   };
-}
-
-export function messagesWithTransientBlocks(
-  mapped: Message[],
-  detail: WorkstreamDetail,
-  dismissedSuggestionIds: readonly string[] = [],
-): Message[] {
-  // Both the question and its durable human response remain separate rows in
-  // the model transcript. mapMessage intentionally gives those rows one UI
-  // identity, so collapse the canonical page before React and the virtualizer
-  // see duplicate keys. The shared upsert keeps answered elicitations from
-  // regressing to open even when pages or realtime updates arrive out of order.
-  const canonicalMessages = mapped.reduce<Message[]>(
-    (messages, message) => upsertTranscriptMessage(messages, message),
-    [],
-  );
-  let sequence = canonicalMessages.reduce((maximum, message) => Math.max(maximum, message.sequenceNumber), 0);
-  const canonicalIds = new Set(canonicalMessages.map((message) => message.id));
-  const elicitationMessages = (detail.openElicitations ?? [])
-    .filter((elicitation) => !canonicalIds.has(elicitationMessageId(elicitation.id)))
-    .map((elicitation) => createElicitationMessage({
-    id: elicitationMessageId(elicitation.id),
-    workstreamId: detail.id,
-    sequenceNumber: ++sequence,
-    authorType: 'agent',
-    createdAt: elicitation.createdAt ?? detail.lastActivityAt,
-    elicitation,
-  }));
-  const canonicalSuggestionIds = new Set(canonicalMessages.flatMap((message) => (
-    message.activitySuggestion ? [message.activitySuggestion.id] : []
-  )));
-  const suggestionMessages = (detail.suggestions ?? [])
-    .filter((suggestion) => !canonicalSuggestionIds.has(suggestion.id))
-    .map<Message>((suggestion) => ({
-    id: `suggestion-${suggestion.id}`,
-    workstreamId: detail.id,
-    sequenceNumber: ++sequence,
-    authorType: 'system',
-    messageType: 'activity_suggestion',
-    createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
-    activitySuggestion: suggestion,
-    }));
-  return visibleTranscriptMessages(
-    [...canonicalMessages, ...elicitationMessages, ...suggestionMessages],
-    dismissedSuggestionIds,
-  );
 }
 
 function triggerSummary(trigger: WireAutomationDraft['triggers'][number]): string {
@@ -1169,7 +1066,7 @@ export class RallyApi {
     });
     return {
       workstream: mapWorkstreamSummary(response.workstream),
-      messageId: response.messageId,
+      turnId: response.turnId,
       clientMessageId: `opportunity:${id}:v${version}`,
       createdAt: response.workstream.createdAt,
       harnessRunId: response.harnessRunId,
@@ -1510,22 +1407,14 @@ export class RallyApi {
     });
     return {
       workstream: mapWorkstreamSummary(response.workstream),
-      messageId: response.messageId,
+      turnId: response.turnId,
       clientMessageId,
       createdAt: response.workstream.createdAt,
       harnessRunId: response.harnessRunId,
     };
   }
 
-  /**
-   * The REST recovery twin of the socket snapshot.
-   *
-   * Returns the detail plus both transcript windows in one request. The
-   * viewer-specific HyperSight preference belongs to the independently started
-   * WorkstreamDO control socket. The caller decides which window to render;
-   * `resumeFeed` is where this reader stopped and is null when that is already
-   * the newest page.
-   */
+  /** The REST recovery twin of the canonical socket snapshot. */
   async getWorkstream(id: string, signal?: AbortSignal, openAttemptId?: string): Promise<WorkstreamBoot> {
     const raw = await this.request(`/workstreams/${encodeURIComponent(id)}`, {
       schema: WireWorkstreamBootSchema,
@@ -1535,22 +1424,6 @@ export class RallyApi {
     return {
       ...mapWorkstreamDetail(raw),
       transcript: raw.transcript,
-      // Undefined, not empty, when the Worker predates this field — the caller
-      // falls back to fetching a page rather than showing an empty transcript.
-      messageFeed: raw.messageFeed
-        ? {
-          items: visibleTranscriptMessages(raw.messageFeed.items.map(mapMessage)),
-          nextCursor: raw.messageFeed.nextCursor,
-          newerCursor: raw.messageFeed.newerCursor,
-        }
-        : undefined,
-      resumeFeed: raw.resumeFeed
-        ? {
-          items: visibleTranscriptMessages(raw.resumeFeed.items.map(mapMessage)),
-          nextCursor: raw.resumeFeed.nextCursor,
-          newerCursor: raw.resumeFeed.newerCursor,
-        }
-        : null,
     };
   }
 
@@ -1613,31 +1486,6 @@ export class RallyApi {
     }
   }
 
-  async getMessagePage(id: string, options: {
-    before?: string;
-    after?: string;
-    around?: number;
-    signal?: AbortSignal;
-  } = {}): Promise<MessagePage> {
-    const query = new URLSearchParams({ limit: '200' });
-    if (options.before) query.set('before', options.before);
-    if (options.after) query.set('after', options.after);
-    if (options.around !== undefined) query.set('around', String(options.around));
-    const page = await this.request(`/workstreams/${encodeURIComponent(id)}/messages?${query.toString()}`, {
-      schema: wireMessagePageSchema,
-      ...(options.signal ? { signal: options.signal } : {}),
-    });
-    return {
-      items: visibleTranscriptMessages(page.items.map(mapMessage)),
-      nextCursor: page.nextCursor,
-      newerCursor: page.newerCursor,
-    };
-  }
-
-  async getMessages(id: string, signal?: AbortSignal): Promise<Message[]> {
-    return (await this.getMessagePage(id, { signal })).items;
-  }
-
   async messageMentionPayload(text: string, selected: MentionIdentity[] = []): Promise<Array<{
     type: 'person' | 'connector';
     userId: string | null;
@@ -1656,31 +1504,6 @@ export class RallyApi {
       .filter((member) => (member.status ?? 'active') === 'active')
       .map((member) => ({ type: 'person' as const, label: member.name, userId: member.id, connectorType: null }));
     return resolveMentionPayload(text, selected, discovered);
-  }
-
-  async createMessage(id: string, input: {
-    text: string;
-    clientId: string;
-    mentions?: MentionIdentity[];
-    confirmedParticipantUserIds?: string[];
-    attachmentIds?: string[];
-  }): Promise<Message> {
-    const mentions = await this.messageMentionPayload(input.text, input.mentions);
-    const operationId = uuidV7();
-    reportTelemetryProductIntent({ kind: 'run_requested', entrypoint: 'composer', operationId });
-    const response = await this.request(`/workstreams/${encodeURIComponent(id)}/messages`, {
-      method: 'POST',
-      headers: { [RALLY_HEADERS.OPERATION_ID]: operationId },
-      body: {
-        text: input.text,
-        clientMessageId: input.clientId,
-        mentions,
-        confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
-        attachmentIds: input.attachmentIds ?? [],
-      },
-      schema: createMessageResponseSchema,
-    });
-    return mapMessage(response.message);
   }
 
   async uploadResource(
@@ -1856,7 +1679,7 @@ export class RallyApi {
       body: answer == null
         ? { skipped: true }
         : { answer, ...(customResponse ? { customResponse } : {}) },
-      schema: z.object({ elicitation: WireElicitationSchema.optional(), harnessRunId: z.string().nullable() }),
+      schema: z.object({ elicitation: WireElicitationSchema.optional() }).strict(),
     });
   }
 

@@ -768,10 +768,9 @@ describe("regional Resend email ingestion", () => {
       });
   });
 
-  it("stores only safe untrusted text, attaches a resource, and publishes without launching an agent", async () => {
+  it("stores only safe untrusted text and attaches a resource without launching an agent", async () => {
     const database = new FakeDatabase();
     const bucket = new FakeBucket();
-    const publish = vi.fn(async () => undefined);
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       id: RESEND_EMAIL_ID,
       created_at: "2026-08-02T17:59:58.000Z",
@@ -788,7 +787,7 @@ describe("regional Resend email ingestion", () => {
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const service = new ResendRegionalEmailService(
       environment(database, "eu", bucket),
-      { fetch: fetcher, now: () => NOW, publish },
+      { fetch: fetcher, now: () => NOW },
     );
 
     await expect(service.ingest(regionalInput())).resolves.toEqual({
@@ -830,14 +829,9 @@ describe("regional Resend email ingestion", () => {
     expect(payload).toContain("Hello & welcome");
     expect(payload).not.toContain("evil");
     expect(payload).not.toContain('"html"');
-    expect(publish).toHaveBeenCalledWith(
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      expect.objectContaining({
-        type: "message_created",
-        message: expect.objectContaining({ author: { type: "system" } }),
-      }),
-    );
+    // The canonical append publishes its own turn upsert at the object
+    // boundary. Ingestion must not emit a second, differently identified feed
+    // event for the same durable turn.
 
     await expect(service.ingest(regionalInput())).resolves.toEqual({
       accepted: true,
@@ -907,7 +901,7 @@ describe("regional Resend email ingestion", () => {
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const service = new ResendRegionalEmailService(
       environment(database, "eu", new FakeBucket()),
-      { fetch: fetcher, now: () => NOW, publish: async () => undefined },
+      { fetch: fetcher, now: () => NOW },
     );
 
     await expect(service.ingest(regionalInput())).resolves.toMatchObject({
@@ -974,13 +968,13 @@ afterEach(() => {
  * this ingestion appends lands here too, which is why one store is shared by
  * both endpoints rather than made per call.
  */
-/** The transcript parts this ingestion wrote, in the legacy vocabulary. */
+/** The canonical conversation turns this ingestion wrote. */
 function storedMessages(database: FakeDatabase) {
   return workstreamObjectAll(
     database.objectStore,
-    `SELECT id, client_message_id, author_type, message_type, text_content,
+    `SELECT id, client_message_id, author_type, message_type, content AS text_content,
             structured_content_json, sequence_number
-       FROM messages ORDER BY sequence_number`,
+       FROM canonical_conversation_turn_details ORDER BY sequence_number`,
   );
 }
 

@@ -5,7 +5,6 @@ import type {
   TerminalWorkspaceSettings,
 } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
-import { workstreamExecutionEnvironment } from "../workstream-runtime-database";
 import { createTerminalPortFactory } from "./object-port";
 import type { z } from "zod";
 
@@ -212,11 +211,7 @@ export class TerminalSettingsService {
         // Still the routed environment: the preserver writes the resource and
         // its work-stream link, which are not Terminal tables.
         await createTerminalFinalDiffPreserver(
-          await workstreamExecutionEnvironment(
-            this.env,
-            this.auth.workspaceId,
-            sandbox.workstream_id,
-          ),
+          this.env,
           this.provider!,
           this.auth.workspaceId,
           sandbox.workstream_id,

@@ -3,6 +3,21 @@ export interface DurableObjectSqliteMigration {
   version: number;
   description: string;
   statements: readonly string[];
+  /**
+   * SQLite's documented table-rebuild procedure requires foreign keys to be
+   * disabled before its transaction begins. Use only for a released migration
+   * whose SQL depends on that legacy execution environment. New migrations
+   * must remain valid with foreign-key enforcement enabled and rebuild their
+   * dependency graph child-first.
+   */
+  foreignKeys?: "disabled_during_rebuild";
+  /**
+   * Preserve a receipt written before execution mode was part of the migration
+   * definition. Valid only when the released wrapper already supplied the same
+   * foreign-key mode, so this records execution truth without editing its
+   * immutable implementation fingerprint.
+   */
+  legacyHashWithoutExecutionMode?: true;
 }
 
 export interface ApplyDurableObjectSqliteMigrationsOptions {
@@ -33,7 +48,13 @@ const BOOTSTRAP_MIGRATIONS_TABLE = `
  * their applied SQL is exactly the published history.
  */
 export function durableObjectMigrationHash(migration: DurableObjectSqliteMigration): string {
-  const input = `${migration.version}\n${migration.statements.join(";\n")}`;
+  // The suffix is absent for every migration shipped before execution modes
+  // existed, so their persisted fingerprints remain byte-for-byte stable.
+  const executionMode = migration.foreignKeys === "disabled_during_rebuild"
+    && migration.legacyHashWithoutExecutionMode !== true
+    ? "\nforeign_keys=disabled_during_rebuild"
+    : "";
+  const input = `${migration.version}\n${migration.statements.join(";\n")}${executionMode}`;
   let hash = 0xcbf29ce484222325n;
   for (const byte of new TextEncoder().encode(input)) {
     hash ^= BigInt(byte);
@@ -54,6 +75,10 @@ function validateMigrations(
     if (migration.description.trim().length === 0 || migration.statements.length === 0) {
       throw new Error(`${component}_schema_migration_incomplete:${migration.version}`);
     }
+    if (migration.legacyHashWithoutExecutionMode === true
+      && migration.foreignKeys !== "disabled_during_rebuild") {
+      throw new Error(`${component}_schema_legacy_execution_mode_invalid:${migration.version}`);
+    }
     for (const statement of migration.statements) {
       if (/^\s*(?:BEGIN|COMMIT|ROLLBACK)\b/iu.test(statement)) {
         throw new Error(`${component}_schema_transaction_statement_forbidden:${migration.version}`);
@@ -66,9 +91,12 @@ function validateMigrations(
 /**
  * Apply an object's complete, append-only SQLite migration history.
  *
- * The migration SQL and its receipt share one synchronous SQLite transaction;
- * an isolate cannot observe a half-applied schema. This utility intentionally
- * never touches DurableObjectStorage's key-value API.
+ * Each migration group and its receipts share one synchronous SQLite
+ * transaction; an isolate cannot observe a half-applied migration. Groups are
+ * split only where SQLite requires foreign-key enforcement to change outside a
+ * transaction. A crash between groups leaves a complete, receipted schema that
+ * the next construction resumes. This utility intentionally never touches
+ * DurableObjectStorage's key-value API.
  */
 export function applyDurableObjectSqliteMigrations(
   options: ApplyDurableObjectSqliteMigrationsOptions,
@@ -77,10 +105,15 @@ export function applyDurableObjectSqliteMigrations(
   const appliedVersions: number[] = [];
   const latestKnownVersion = options.migrations.at(-1)?.version ?? 0;
   const now = options.now ?? Date.now();
+  const sql = options.storage.sql;
 
-  options.storage.transactionSync(() => {
-    const sql = options.storage.sql;
-    sql.exec(BOOTSTRAP_MIGRATIONS_TABLE);
+  const ledgerExists = sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+    `SELECT name FROM sqlite_schema
+      WHERE type = 'table' AND name = '_sql_schema_migrations'`,
+  ).toArray().length === 1;
+  let ledgerNeedsDescription = false;
+  const appliedByVersion = options.storage.transactionSync(() => {
+    if (!ledgerExists) return new Map<number, string>();
     const ledgerColumns = new Set(sql.exec<{ name: string }>(
       `PRAGMA table_info(_sql_schema_migrations)`,
     ).toArray().map((column) => column.name));
@@ -97,10 +130,7 @@ export function applyDurableObjectSqliteMigrations(
     // The pre-cutover WorkstreamRoom ledger has every correctness field but
     // predates the human-readable description. Adding it is metadata-only and
     // lets the renamed SubstreamAgent retain its existing receipts verbatim.
-    if (!ledgerColumns.has("description")) {
-      sql.exec(`ALTER TABLE _sql_schema_migrations
-        ADD COLUMN description TEXT NOT NULL DEFAULT 'legacy migration receipt'`);
-    }
+    ledgerNeedsDescription = !ledgerColumns.has("description");
     const applied = sql.exec<{
       version: number;
       implementation_hash: string;
@@ -108,39 +138,100 @@ export function applyDurableObjectSqliteMigrations(
       .toArray();
     const unknown = applied.find((row) => row.version > latestKnownVersion);
     if (unknown) throw new Error(`${options.component}_schema_ahead:${unknown.version}`);
-    const appliedByVersion = new Map(applied.map((row) => [row.version, row.implementation_hash]));
-
+    const byVersion = new Map(applied.map((row) => [row.version, row.implementation_hash]));
     for (const migration of options.migrations) {
-      const implementationHash = durableObjectMigrationHash(migration);
-      const existingHash = appliedByVersion.get(migration.version);
-      if (existingHash !== undefined) {
-        if (existingHash !== implementationHash) {
-          throw new Error(`${options.component}_schema_hash_mismatch:${migration.version}`);
-        }
-        continue;
+      const existingHash = byVersion.get(migration.version);
+      if (existingHash !== undefined && existingHash !== durableObjectMigrationHash(migration)) {
+        throw new Error(`${options.component}_schema_hash_mismatch:${migration.version}`);
       }
-      for (const statement of migration.statements) sql.exec(statement);
-      sql.exec(
-        `INSERT INTO _sql_schema_migrations
-           (version, implementation_hash, description, worker_version_id, applied_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        migration.version,
-        implementationHash,
-        migration.description,
-        options.workerVersionId,
-        now,
-      );
-      appliedVersions.push(migration.version);
     }
-
-    options.afterMigrations?.(sql, appliedVersions);
-    if (appliedVersions.length > 0) {
-      const violation = sql.exec<Record<string, SqlStorageValue>>(`PRAGMA foreign_key_check`)
-        .toArray()[0];
-      if (violation) throw new Error(`${options.component}_schema_foreign_key_violation`);
-      sql.exec(`PRAGMA optimize`);
-    }
+    return byVersion;
   });
+
+  const ensureLedger = (): void => {
+    sql.exec(BOOTSTRAP_MIGRATIONS_TABLE);
+    if (ledgerNeedsDescription) {
+      sql.exec(`ALTER TABLE _sql_schema_migrations
+        ADD COLUMN description TEXT NOT NULL DEFAULT 'legacy migration receipt'`);
+      ledgerNeedsDescription = false;
+    }
+  };
+
+  const groups: Array<{
+    foreignKeysDisabled: boolean;
+    migrations: DurableObjectSqliteMigration[];
+  }> = [];
+  for (const migration of options.migrations.filter(({ version }) => !appliedByVersion.has(version))) {
+    const foreignKeysDisabled = migration.foreignKeys === "disabled_during_rebuild";
+    const prior = groups.at(-1);
+    if (prior?.foreignKeysDisabled === foreignKeysDisabled) prior.migrations.push(migration);
+    else groups.push({ foreignKeysDisabled, migrations: [migration] });
+  }
+
+  if (groups.length === 0) {
+    options.storage.transactionSync(() => {
+      ensureLedger();
+      options.afterMigrations?.(sql, appliedVersions);
+    });
+    return appliedVersions;
+  }
+
+  for (const [groupIndex, group] of groups.entries()) {
+    if (group.foreignKeysDisabled) sql.exec(`PRAGMA foreign_keys = OFF`);
+    try {
+      options.storage.transactionSync(() => {
+        ensureLedger();
+        for (const migration of group.migrations) {
+          const implementationHash = durableObjectMigrationHash(migration);
+          for (const [statementIndex, statement] of migration.statements.entries()) {
+            try {
+              sql.exec(statement);
+            } catch (error) {
+              const droppedTable = /^DROP\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)$/iu
+                .exec(statement.trim())?.[1];
+              const dependents = droppedTable
+                ? sql.exec<{ name: string } & Record<string, SqlStorageValue>>(
+                    `SELECT name FROM sqlite_schema
+                      WHERE sql LIKE ? AND name != ? ORDER BY name`,
+                    `%${droppedTable}%`,
+                    droppedTable,
+                  ).toArray().map(({ name }) => name).join(",")
+                : "";
+              const causeMessage = error instanceof Error && error.message.trim().length > 0
+                ? `:${error.message.trim().replace(/\s+/gu, " ").slice(0, 160)}`
+                : "";
+              throw new Error(
+                `${options.component}_schema_migration_statement_failed:${migration.version}:${statementIndex}:`
+                  + statement.trim().replace(/\s+/gu, " ").slice(0, 96)
+                  + (dependents ? `:referenced_by=${dependents}` : "")
+                  + causeMessage,
+                { cause: error },
+              );
+            }
+          }
+          sql.exec(
+            `INSERT INTO _sql_schema_migrations
+               (version, implementation_hash, description, worker_version_id, applied_at)
+             VALUES (?, ?, ?, ?, ?)`,
+            migration.version,
+            implementationHash,
+            migration.description,
+            options.workerVersionId,
+            now,
+          );
+          appliedVersions.push(migration.version);
+        }
+
+        if (groupIndex === groups.length - 1) options.afterMigrations?.(sql, appliedVersions);
+        const violation = sql.exec<Record<string, SqlStorageValue>>(`PRAGMA foreign_key_check`)
+          .toArray()[0];
+        if (violation) throw new Error(`${options.component}_schema_foreign_key_violation`);
+        sql.exec(`PRAGMA optimize`);
+      });
+    } finally {
+      if (group.foreignKeysDisabled) sql.exec(`PRAGMA foreign_keys = ON`);
+    }
+  }
 
   return appliedVersions;
 }

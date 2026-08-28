@@ -114,13 +114,17 @@ describe("what a work stream has attached", () => {
     sql.exec(`INSERT INTO transcript_facts
       (fact_id, fact_kind, payload_id, origin_kind, turn_id, created_at)
       VALUES ('p1-fact', 'workstream_message', 'p1-payload', 'canonical', 'p1', ?)`, NOW);
-    sql.exec(`INSERT INTO workstream_message_records
-      (id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind, author_type,
-       author_user_id, client_message_id, visibility, pinned, message_type, created_at, updated_at)
-      VALUES ('p1','0',1,1,'p1-fact','user','text','member','u1','c1','both',0,'text',?,?)`,
+    sql.exec(`INSERT INTO participant_transcript_turns
+      (transcript_sequence, turn_id, entry_kind, actor, author_user_id, root_fact_id,
+       attention_ordinal, revision, created_at, updated_at, client_message_id,
+       author_name_snapshot, author_avatar_url_snapshot)
+      VALUES (1,'p1','conversation','human','u1','p1-fact',1,1,?,?,'c1','Test user',NULL)`,
       NOW, NOW);
+    sql.exec(`INSERT INTO participant_transcript_blocks
+      (turn_id, block_id, block_index, block_kind, fact_id, revision, updated_at)
+      VALUES ('p1','p1:text:0',0,'text','p1-fact',1,?)`, NOW);
     sql.exec(
-      `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+      `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
        VALUES ('p1','r-a',0,'{}')`,
     );
 

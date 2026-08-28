@@ -23,7 +23,6 @@ import {
 import { durableObjectSelfForId, withDurableObjectSelf } from "../src/lib/durable-object-self";
 import { publishWorkstreamEvent } from "../src/services/integrations";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import {
   createCloudflareTestBinding,
   createTestD1Database,
@@ -240,7 +239,7 @@ describe("a Durable Object addressing its own name", () => {
   });
 });
 
-describe("a local SQL executor carried on the environment", () => {
+describe("a local workspace SQL executor carried on the environment", () => {
   function executorEnv(): Env {
     return createTestEnv({
       APP_ENV: "test",
@@ -253,40 +252,6 @@ describe("a local SQL executor carried on the environment", () => {
       }),
     });
   }
-
-  it("survives a work-stream environment being derived a second time", async () => {
-    const executor = vi.fn(async () => [{ columns: ["one"], rows: [{ one: 1 }], changes: 0 }]);
-    const owned = withWorkstreamRuntimeDatabase(
-      executorEnv(),
-      WORKSPACE,
-      WORKSTREAM,
-      "0",
-      executor,
-    );
-
-    // What `launchWorkstreamHarness`, the flag-targeting loader, and digest
-    // settlement each do with an environment the agent handed them.
-    const rederived = withWorkstreamRuntimeDatabase(owned, WORKSPACE, WORKSTREAM);
-    await rederived.DB.prepare("SELECT one FROM messages").first();
-
-    expect(executor).toHaveBeenCalledOnce();
-  });
-
-  it("does not lend one work stream's executor to another", async () => {
-    const executor = vi.fn(async () => [{ columns: [], rows: [], changes: 0 }]);
-    const owned = withWorkstreamRuntimeDatabase(
-      executorEnv(),
-      WORKSPACE,
-      WORKSTREAM,
-      "0",
-      executor,
-    );
-
-    const other = withWorkstreamRuntimeDatabase(owned, WORKSPACE, OTHER_WORKSTREAM);
-    await other.DB.prepare("SELECT one FROM messages").first().catch(() => undefined);
-
-    expect(executor).not.toHaveBeenCalled();
-  });
 
   it("survives a workspace environment being derived a second time", async () => {
     const executor = vi.fn(async () => [{ columns: ["one"], rows: [{ one: 1 }], changes: 0 }]);

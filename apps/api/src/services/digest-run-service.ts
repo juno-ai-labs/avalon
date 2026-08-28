@@ -10,8 +10,7 @@ import {
   type ActivityEventRow,
 } from "./activity-event-service";
 import { resolveDigestsEnabled } from "./digest-flags";
-import { publishWorkstreamEvent } from "./integrations";
-import { workflowInstanceWasCreated } from "../lib/workflow-launch-signal";
+import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { readMessage } from "../runtime/message-projection";
 import { launchWorkstreamHarness } from "./workstream-service";
@@ -211,19 +210,13 @@ export async function fireDigestSchedule(
     // makes its own. Otherwise every launch outage would leave an empty
     // transcript behind, and those are never reaped.
     //
-    // An attempt that *did* start something undoes nothing. `launchWorkstreamHarness`
-    // inserts the run row, creates the Cloudflare Workflow instance, and only
-    // then records the instance id, so a failure in that last write throws with
-    // a live run already executing. Releasing the claim there would let a retry
-    // digest the same window twice with no uniqueness left to catch it, and
-    // deleting the work stream would cascade the transcript, run row and frozen
-    // memory context away beneath the run still reading them.
-    //
-    // Which of the two happened is asked of the error rather than inferred from
-    // a row: the launcher marks its own run `failed` in both cases, so neither
-    // `harness_runs.status` nor the row's existence can answer it. `harnessRunId`
-    // covers the failures that happen before the launcher is reached at all.
-    if (harnessRunId === null && !workflowInstanceWasCreated(error)) {
+    // An attempt whose durable execution receipt committed undoes nothing. The
+    // receipt is recorded before SubstreamAgent activation, so a lost response
+    // replays that same activation; deleting the work stream would remove the
+    // transcript and frozen context from beneath it. The error marker separates
+    // that boundary from a refusal before the receipt existed. `harnessRunId`
+    // covers failures before the launcher is reached at all.
+    if (harnessRunId === null && !loopActivationWasRecorded(error)) {
       await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
         .bind(deliveryId).run().catch(() => undefined);
       // Legacy D1 rows cascade. The DO path leaves a durable, unlistable
@@ -396,16 +389,12 @@ async function appendDigestBriefMessage(
     clientMessageId,
   );
   if (stored) {
-    await publishWorkstreamEvent(env, input.workspaceId, input.workstreamId, {
-      type: "message_created",
-      message: stored,
-    });
     return stored.id;
   }
   // Only reachable if the row went away between the append and the read, since
   // `readMessage` resolves by client message id and answers on a redelivery
-  // too. A redelivery publishes `message_created` again, which is what the
-  // routed path did — the reader it used had no way to know either.
+  // too. The object port already published the canonical turn for a winning
+  // append and deliberately publishes nothing for a replay.
   return appended.messageId;
 }
 

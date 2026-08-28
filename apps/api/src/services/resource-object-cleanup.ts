@@ -112,6 +112,10 @@ export async function reapExpiredDraftResources(env: Env, workspaceId: string): 
           SELECT 1 FROM workspace_workstream_resource_links link
            WHERE link.resource_id = resource.id
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM pending_attachment_reservations reservation
+           WHERE reservation.resource_id = resource.id
+        )
       ORDER BY resource.created_at, resource.id
       LIMIT ?`,
   ).bind(workspaceId, cutoff, MAXIMUM_CLEANUP_BATCH).all<{ id: string }>();
@@ -123,6 +127,10 @@ export async function reapExpiredDraftResources(env: Env, workspaceId: string): 
         AND NOT EXISTS (
           SELECT 1 FROM workspace_workstream_resource_links link
            WHERE link.resource_id = resources.id
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM pending_attachment_reservations reservation
+           WHERE reservation.resource_id = resources.id
         )
       RETURNING id`,
   ).bind(resource.id, workspaceId, cutoff)));

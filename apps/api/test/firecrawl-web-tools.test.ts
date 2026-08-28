@@ -19,6 +19,7 @@ const workflowInput = {
   region: "global",
   workspaceId: WORKSPACE_ID,
   workstreamId: WORKSTREAM_ID,
+  loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
   harnessRunId: HARNESS_RUN_ID,
   executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
 } as WorkstreamWorkflowInput;

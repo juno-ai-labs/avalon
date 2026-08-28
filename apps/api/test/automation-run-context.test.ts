@@ -10,12 +10,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
@@ -58,7 +58,7 @@ function envFor(database: DatabaseSync, appEnv: "production" | "test" = "product
     DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
     TERMINAL_EMERGENCY_DISABLED: "false",
   });
-  return withWorkstreamRuntimeDatabase(base, WORKSPACE, WORKSTREAM);
+  return base;
 }
 
 /**
@@ -141,19 +141,10 @@ function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
   });
   objectStores = new Map([[WORKSTREAM as string, objectStore]]);
 
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at,
-        attempt_id, lease_owner, lease_expires_at)
-     VALUES (?, ?, ?, 'automation', ?, 'running', '2026-08-22', ?, ?, '2099-01-01T00:00:00.000Z')`,
-    RUN,
-    WORKSPACE,
-    WORKSTREAM,
-    JSON.stringify({ type: "user", userId: OWNER }),
-    ATTEMPT,
-    LEASE_OWNER,
-  );
+  seedWorkstreamRun(objectStore, { id: RUN, origin: "automation",
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: OWNER }),
+    attemptId: ATTEMPT, leaseOwner: LEASE_OWNER,
+    leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z") });
   // The object's own table rather than the retired `harness_run_memory_contexts`
   // view: slice 6 dropped it, so this is the real column set — no `workspace_id`
   // or `workstream_id` the object already knows, and `created_at` in unix
@@ -175,6 +166,7 @@ const workflowInput: WorkstreamWorkflowInput = {
   region: "global",
   workspaceId: WORKSPACE,
   workstreamId: WORKSTREAM,
+  loopId: `workstream:${WORKSTREAM}:substream:0:loop`,
   harnessRunId: RUN,
   triggerMessageId: null,
   automationSubscriptionId: SUBSCRIPTION,

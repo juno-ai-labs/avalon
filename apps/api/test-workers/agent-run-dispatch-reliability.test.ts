@@ -1,92 +1,464 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
 /**
- * Behavioural proof that a dispatched agent run is never orphaned.
+ * Crash/retry behavior for the v35 singleton SubstreamAgent loop.
  *
- * These run on workerd through `@cloudflare/vitest-pool-workers`, so the
- * alarms, the SQLite storage, and the eviction below are the real ones rather
- * than doubles. That matters here more than usual: the defect these tests exist
- * for was invisible to every unit test because it lived in the interaction
- * between an in-memory flag, a real alarm being deleted, and a real invocation
- * being cancelled. Only the runtime can show that.
+ * Substream execution no longer has a dispatch table. Durable work is either
+ * an immutable subordinate `runs` receipt or an ordered pending loop input;
+ * one `substream_loops` row owns admission, execution, and recovery. These
+ * workerd tests assert those product invariants through real SQLite
+ * transactions, object eviction, and alarm restoration.
  *
- * The invariant under test is one sentence:
- *
- *   **If a dispatch row is non-terminal, an alarm is armed.**
- *
- * Everything else — leases, claims, sweep floors — is machinery in service of
- * it. Each test therefore ends by asserting the invariant directly rather than
- * asserting that some particular mechanism fired.
+ * BlockDashboardAgent intentionally retains its independent dispatch ledger.
+ * Its regression coverage remains at the bottom of this file.
  */
 
 import { env } from "cloudflare:workers";
-import {
-  evictDurableObject,
-  runDurableObjectAlarm,
-  runInDurableObject,
-} from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import {
-  asBlockId,
-  asHarnessRunId,
-  asSubstreamId,
-  asUserId,
-  asWorkspaceId,
-  asWorkstreamId,
-  type WorkstreamWorkflowInput,
-} from "@rally/contracts";
+import { asBlockId, asSubstreamId } from "@rally/contracts";
 
 import { blockDashboardAgentName, substreamAgentName } from "../src/durable-objects/names";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import {
-  PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX,
-} from "../src/durable-objects/workstream-harness-run-storage";
-import type { HarnessRunObjectPort } from "../src/durable-objects/workstream-harness-run-protocol";
-import { claimHarnessAttempt } from "../src/runtime/harness-run-runtime";
-import { seedOpenWorkstreamAuthority, seedWorkstreamRoot } from "./helpers/substream-fixture";
+  LOOP_ID,
+  WORKSPACE_ID,
+  WORKSTREAM_ID,
+  activateFixtureReceipt,
+  admitFixturePendingInput,
+  boot,
+  ensureFixtureLoop,
+  executionReceipts,
+  runInput,
+  seedExecutionReceipt,
+  seedOpenWorkstreamAuthority,
+  seedRun,
+  seedWorkstreamRoot,
+} from "./helpers/substream-fixture";
 
 beforeAll(async () => {
   await seedOpenWorkstreamAuthority(env.DB);
 });
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000002a1");
-const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000002a2");
-const USER_ID = asUserId("00000000-0000-7000-8000-0000000002a4");
+let unique = 100;
 
-interface DispatchRow extends Record<string, SqlStorageValue> {
-  run_id: string;
-  state: string;
-  attempt: number;
-  available_at: number;
-  started_at: number | null;
-  lease_token: string | null;
-  lease_expires_at: number | null;
-}
-
-let unique = 0;
-/**
- * A fresh object per test: this file never calls `reset()`, so a reused id would
- * carry the last test's dispatch rows. Both factories share one module-level
- * counter for that reason — one per `describe` would collide across blocks.
- */
 function substreamStub(): DurableObjectStub {
   unique += 1;
-  const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asSubstreamId(`00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`));
+  const substreamId = asSubstreamId(
+    `00000000-0000-7000-8000-${String(unique).padStart(12, "0")}`,
+  );
+  const name = substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, substreamId);
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(name));
 }
 
 function blockStub(): DurableObjectStub {
   unique += 1;
-  const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, asBlockId(`00000000-0000-7000-8000-${String(unique).padStart(11, "0")}1`));
+  const blockId = asBlockId(
+    `00000000-0000-7000-8000-${String(unique).padStart(11, "0")}1`,
+  );
+  const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, blockId);
   return env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(name));
 }
 
-async function boot(stub: DurableObjectStub, path: string): Promise<void> {
-  const response = await stub.fetch(path);
-  await response.clone().arrayBuffer();
+async function readySubstream(): Promise<DurableObjectStub> {
+  const stub = substreamStub();
+  await boot(stub);
+  await runInDurableObject(stub, (_instance, state) => seedWorkstreamRoot(state));
+  return stub;
 }
 
-async function activeDrainHeartbeatOutcome(
+async function bootBlock(stub: DurableObjectStub): Promise<void> {
+  const response = await stub.fetch("https://block-dashboard.test/health");
+  await response.arrayBuffer();
+}
+
+const RUN_A = "00000000-0000-7000-8000-0000000005a1";
+const RUN_B = "00000000-0000-7000-8000-0000000005a2";
+const INPUT_A = "00000000-0000-7000-8000-0000000005b1";
+const INPUT_B = "00000000-0000-7000-8000-0000000005b2";
+const INPUT_C = "00000000-0000-7000-8000-0000000005b3";
+
+describe("singleton loop durability", () => {
+  it("preserves a persisted non-main substream identity when a replacement isolate starts", async () => {
+    const stub = await readySubstream();
+    const childSubstreamId = "00000000-0000-7000-8000-0000000005c1";
+    await runInDurableObject(stub, async (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE substream_agent_identity
+            SET external_substream_id = ?, updated_at = 2
+          WHERE id = 1`,
+        childSubstreamId,
+      );
+      state.storage.sql.exec(`DELETE FROM substream_loops`);
+    });
+
+    await evictDurableObject(stub);
+    await boot(stub);
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(state.storage.sql.exec<{ external_substream_id: string }>(
+        `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+      ).one()).toEqual({ external_substream_id: childSubstreamId });
+      expect(state.storage.sql.exec<{ loop_id: string }>(
+        `SELECT loop_id FROM substream_loops WHERE id = 1`,
+      ).one().loop_id).toContain(`substream:${childSubstreamId}:loop`);
+    });
+  });
+
+  it("keeps one stable loop identity across activation retries and later receipts", async () => {
+    const stub = await readySubstream();
+
+    await runInDurableObject(stub, async (instance, state) => {
+      seedRun(state, RUN_A);
+      seedRun(state, RUN_B);
+      const resident = instance as unknown as {
+        activateLoop(input: ReturnType<typeof runInput>): Promise<{ status: number }>;
+      };
+
+      expect((await resident.activateLoop(runInput(RUN_A))).status).toBe(202);
+      expect((await resident.activateLoop(runInput(RUN_A))).status).toBe(202);
+      expect((await resident.activateLoop(runInput(RUN_B))).status).toBe(202);
+
+      expect(state.storage.sql.exec<{ loop_id: string }>(
+        `SELECT loop_id FROM substream_loops`,
+      ).toArray()).toEqual([{ loop_id: LOOP_ID }]);
+      expect(executionReceipts(state).map((receipt) => receipt.run_id))
+        .toEqual([RUN_A, RUN_B]);
+      expect(executionReceipts(state).every((receipt) =>
+        JSON.parse(receipt.execution_context_json!).loopId === LOOP_ID)).toBe(true);
+    });
+  });
+
+  it("reconstructs an alarm from an admitted receipt after eviction", async () => {
+    const stub = await readySubstream();
+    const dueAt = Date.now() + 60_000;
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), dueAt);
+      ensureFixtureLoop(state, 1);
+      await state.storage.deleteAlarm();
+    });
+
+    await evictDurableObject(stub);
+    await boot(stub);
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).toBe(dueAt);
+      expect(executionReceipts(state)).toHaveLength(1);
+      expect(executionReceipts(state)[0]!.substream_loop_id).toBeNull();
+    });
+  });
+
+  it("takes over an expired lease without creating or relinking a receipt", async () => {
+    const stub = await readySubstream();
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const now = Date.now();
+      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), now - 10_000);
+      activateFixtureReceipt(state, RUN_A, {
+        leaseOwner: "owner-that-vanished",
+        leaseExpiresAt: now - 1,
+        now: now - 10_000,
+      });
+
+      const recovered = await (instance as unknown as {
+        claimPersistentLoopExecution(): Promise<unknown>;
+      }).claimPersistentLoopExecution();
+
+      expect(recovered).toMatchObject({
+        input: { harnessRunId: RUN_A, loopId: LOOP_ID },
+        execution: { runId: RUN_A, executionEpoch: 2 },
+      });
+      expect(executionReceipts(state)).toHaveLength(1);
+      expect(executionReceipts(state)[0]).toMatchObject({
+        run_id: RUN_A,
+        substream_loop_id: LOOP_ID,
+        loop_execution_id: RUN_A,
+        loop_execution_sequence: 1,
+        loop_execution_epoch: 2,
+      });
+      const loop = new SubstreamLoopStorage(state.storage).loop()!;
+      expect(new SubstreamLoopStorage(state.storage).recoverExecution({
+        executionId: RUN_A,
+        newExecutionEpoch: 2,
+        leaseOwner: loop.lease_owner!,
+        leaseExpiresAt: loop.lease_expires_at!,
+        expectedLoopRevision: loop.revision,
+        now,
+      })).toMatchObject({ outcome: "reused", loop: { active_execution_epoch: 2 } });
+    });
+  });
+
+  it("expires the vanished isolate's live loop lease and recovers immediately after eviction", async () => {
+    const stub = await readySubstream();
+    const beforeEviction = Date.now();
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), beforeEviction - 1);
+      activateFixtureReceipt(state, RUN_A, {
+        leaseOwner: "loop-owner-that-vanished",
+        leaseExpiresAt: beforeEviction + 300_000,
+        now: beforeEviction,
+      });
+      state.storage.sql.exec(
+        `UPDATE runs
+            SET legacy_attempt_id = 'attempt-that-vanished',
+                lease_owner = 'attempt-owner-that-vanished',
+                lease_expires_at = ?
+          WHERE run_id = ?`,
+        beforeEviction + 300_000,
+        RUN_A,
+      );
+      await state.storage.deleteAlarm();
+    });
+
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance, state) => {
+      await state.storage.deleteAlarm();
+      const resident = instance as unknown as {
+        claimPersistentLoopExecution(): Promise<{
+          execution: { runId: string; executionEpoch: number };
+        } | null>;
+      };
+      const recovered = await resident.claimPersistentLoopExecution();
+
+      expect(recovered).toMatchObject({
+        execution: { runId: RUN_A, executionEpoch: 2 },
+      });
+      expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({
+        active_execution_id: RUN_A,
+        active_execution_epoch: 2,
+        status: "executing",
+      });
+      expect(executionReceipts(state)[0]).toMatchObject({
+        run_id: RUN_A,
+        loop_execution_epoch: 2,
+      });
+    });
+  });
+
+  it("expires a due singleton lease after eviction even when no provider attempt was acquired", async () => {
+    const stub = await readySubstream();
+    const beforeEviction = Date.now();
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), beforeEviction - 1);
+      activateFixtureReceipt(state, RUN_A, {
+        leaseOwner: "loop-owner-without-provider-attempt",
+        leaseExpiresAt: beforeEviction + 300_000,
+        now: beforeEviction,
+      });
+      expect(state.storage.sql.exec<{ legacy_attempt_id: string | null }>(
+        `SELECT legacy_attempt_id FROM runs WHERE run_id = ?`,
+        RUN_A,
+      ).one()).toEqual({ legacy_attempt_id: null });
+      await state.storage.deleteAlarm();
+    });
+
+    await evictDurableObject(stub);
+    await runInDurableObject(stub, async (instance, state) => {
+      await state.storage.deleteAlarm();
+      const recovered = await (instance as unknown as {
+        claimPersistentLoopExecution(): Promise<{
+          execution: { runId: string; executionEpoch: number };
+        } | null>;
+      }).claimPersistentLoopExecution();
+
+      expect(recovered).toMatchObject({
+        execution: { runId: RUN_A, executionEpoch: 2 },
+      });
+      expect(new SubstreamLoopStorage(state.storage).loop()).toMatchObject({
+        active_execution_id: RUN_A,
+        active_execution_epoch: 2,
+        status: "executing",
+      });
+    });
+  });
+
+  it("defers one active receipt without ending its cycle, then recovers it once", async () => {
+    const stub = await readySubstream();
+    const now = Date.now();
+    const availableAt = now + 30_000;
+
+    await runInDurableObject(stub, async (instance, state) => {
+      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), now - 1);
+      ensureFixtureLoop(state, now - 1);
+      const resident = instance as unknown as {
+        claimPersistentLoopExecution(): Promise<{
+          execution: { runId: string; leaseOwner: string; executionEpoch: number };
+        } | null>;
+      };
+      const claimed = await resident.claimPersistentLoopExecution();
+      expect(claimed).not.toBeNull();
+      const loops = new SubstreamLoopStorage(state.storage);
+      const before = loops.loop()!;
+      loops.deferExecution({
+        executionId: claimed!.execution.runId,
+        executionEpoch: claimed!.execution.executionEpoch,
+        leaseOwner: claimed!.execution.leaseOwner,
+        expectedLoopRevision: before.revision,
+        availableAt,
+        errorCode: "provider_unavailable",
+        now,
+      });
+
+      expect(await resident.claimPersistentLoopExecution()).toBeNull();
+      expect(loops.loop()).toMatchObject({
+        loop_id: LOOP_ID,
+        status: "executing",
+        cycle_ordinal: 1,
+        active_execution_id: RUN_A,
+        active_execution_epoch: 1,
+        lease_expires_at: availableAt,
+      });
+      expect(executionReceipts(state)[0]).toMatchObject({
+        run_id: RUN_A,
+        loop_cycle_ordinal: 1,
+        loop_execution_epoch: 1,
+        execution_available_at: availableAt,
+      });
+      await state.storage.deleteAlarm();
+    });
+
+    await evictDurableObject(stub);
+    await boot(stub);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const resident = instance as unknown as {
+        claimPersistentLoopExecution(): Promise<{
+          execution: { runId: string; leaseOwner: string; executionEpoch: number };
+        } | null>;
+        product: WorkstreamObjectProductService;
+      };
+      const loops = new SubstreamLoopStorage(state.storage);
+      expect(await state.storage.getAlarm()).toBe(availableAt);
+      expect(await resident.claimPersistentLoopExecution()).toBeNull();
+      expect(loops.loop()).toMatchObject({
+        loop_id: LOOP_ID,
+        status: "executing",
+        cycle_ordinal: 1,
+        active_execution_id: RUN_A,
+        active_execution_epoch: 1,
+        lease_expires_at: availableAt,
+      });
+
+      state.storage.sql.exec(
+        `UPDATE substream_loops SET lease_expires_at = ? WHERE id = 1`,
+        now - 1,
+      );
+      state.storage.sql.exec(
+        `UPDATE runs SET execution_available_at = ? WHERE run_id = ?`,
+        now - 1,
+        RUN_A,
+      );
+      const recovered = await resident.claimPersistentLoopExecution();
+      expect(recovered).toMatchObject({
+        execution: { runId: RUN_A, executionEpoch: 2 },
+      });
+      expect(executionReceipts(state)).toHaveLength(1);
+      expect(executionReceipts(state)[0]).toMatchObject({
+        run_id: RUN_A,
+        status: "running",
+        loop_cycle_ordinal: 1,
+        loop_execution_sequence: 1,
+        loop_execution_epoch: 2,
+        execution_available_at: null,
+      });
+
+      const recoveredLoop = loops.loop()!;
+      await resident.product.recordWorkflowFailed(
+        RUN_A,
+        { code: "provider_unavailable", message: "Provider remains unavailable" },
+        {
+          loopId: recoveredLoop.loop_id,
+          executionId: RUN_A,
+          executionEpoch: 2,
+          leaseOwner: recovered!.execution.leaseOwner,
+        },
+      );
+      expect(executionReceipts(state)[0]).toMatchObject({
+        run_id: RUN_A,
+        status: "failed",
+        loop_execution_epoch: 2,
+      });
+      expect(loops.loop()).toMatchObject({
+        status: "idle",
+        cycle_ordinal: 1,
+        active_execution_id: null,
+      });
+    });
+  });
+
+  it("preserves pending input FIFO and modes across eviction", async () => {
+    const stub = await readySubstream();
+    const admittedAt = Date.now();
+
+    await runInDurableObject(stub, async (_instance, state) => {
+      ensureFixtureLoop(state, admittedAt);
+      await admitFixturePendingInput(state, {
+        inputId: INPUT_A, text: "first", mode: "steer", now: admittedAt + 30,
+      });
+      await admitFixturePendingInput(state, {
+        inputId: INPUT_B, text: "second", mode: "queue", now: admittedAt + 10,
+      });
+      await admitFixturePendingInput(state, {
+        inputId: INPUT_C, text: "third", mode: "steer", now: admittedAt + 20,
+      });
+      await state.storage.deleteAlarm();
+    });
+
+    await evictDurableObject(stub);
+    // Re-enter through one held event so the replacement constructor can
+    // derive its alarm but the immediately-due drain cannot consume the rows
+    // before this durability assertion observes them. A separate health fetch
+    // opens the input gate before the read and turns this into an alarm race,
+    // which tests scheduler timing rather than persisted FIFO.
+    await runInDurableObject(stub, async (_instance, state) => {
+      const pending = new SubstreamLoopStorage(state.storage).pendingInputs();
+      expect(pending.map(({ input_id, input_sequence, mode }) => ({
+        input_id, input_sequence, mode,
+      }))).toEqual([
+        { input_id: INPUT_A, input_sequence: 1, mode: "steer" },
+        { input_id: INPUT_B, input_sequence: 2, mode: "queue" },
+        { input_id: INPUT_C, input_sequence: 3, mode: "steer" },
+      ]);
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+  });
+
+  it("claims an indexed receipt exactly once under workerd write accounting", async () => {
+    const stub = await readySubstream();
+
+    await runInDurableObject(stub, async (instance, state) => {
+      seedExecutionReceipt(state, RUN_A, runInput(RUN_A), 1);
+      ensureFixtureLoop(state, 1);
+      const resident = instance as unknown as {
+        claimPersistentLoopExecution(): Promise<unknown>;
+      };
+
+      const first = await resident.claimPersistentLoopExecution();
+      const duplicate = await resident.claimPersistentLoopExecution();
+
+      // `runs_execution_due_idx` and `runs_loop_recovery_idx` both change
+      // during this transition. Workerd counts those physical index writes;
+      // the product result must come from the returned receipt/loop identities,
+      // never from an assumed `rowsWritten === 1` logical-row count.
+      expect(first).toMatchObject({
+        input: { harnessRunId: RUN_A },
+        execution: { runId: RUN_A, executionEpoch: 1 },
+      });
+      expect(duplicate).toBeNull();
+      expect(executionReceipts(state)).toHaveLength(1);
+      expect(state.storage.sql.exec<{ next_execution_sequence: number }>(
+        `SELECT next_execution_sequence FROM substream_loops WHERE id = 1`,
+      ).one()).toEqual({ next_execution_sequence: 2 });
+    });
+  });
+});
+
+async function activeBlockDrainHeartbeatOutcome(
   stub: DurableObjectStub,
   release: () => void,
 ): Promise<"returned" | "joined"> {
@@ -96,8 +468,6 @@ async function activeDrainHeartbeatOutcome(
     }).drainRunsToCompletion();
     let returned = false;
     void heartbeatDrain.then(() => { returned = true; });
-    // Stay in one object event: provider scheduling latency cannot turn this
-    // behavior assertion into a machine-speed race.
     await Promise.resolve();
     await Promise.resolve();
     const joined = !returned;
@@ -106,545 +476,6 @@ async function activeDrainHeartbeatOutcome(
     return joined ? "joined" : "returned";
   });
 }
-
-/** Writes the rows a dispatch needs, without going through the product API. */
-function seedSubstreamDispatch(
-  state: DurableObjectState,
-  runId: string,
-  row: {
-    state?: string;
-    availableAt?: number;
-    startedAt?: number | null;
-    leaseToken?: string | null;
-    leaseExpiresAt?: number | null;
-  } = {},
-): void {
-  // Dispatch execution mutates the authoritative product row. Scheduling-only
-  // assertions used to pass without it, masking failures behind the exact
-  // production authority gate that this real-worker suite is meant to prove.
-  seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
-  state.storage.sql.exec(
-    `INSERT INTO substreams
-       (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
-     VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 1)
-     ON CONFLICT(id) DO NOTHING`,
-  );
-  state.storage.sql.exec(
-    `INSERT INTO runs (
-       run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
-       model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
-       active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
-       tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-       created_at, updated_at
-     ) VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', 0, 0, 1,
-               0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
-    runId,
-  );
-  state.storage.sql.exec(
-    `INSERT INTO agent_run_dispatches
-       (run_id, input_json, state, attempt, available_at, started_at,
-        lease_token, lease_expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, 0, ?, ?, ?, ?, 1, 1)`,
-    runId,
-    JSON.stringify(substreamWorkflowInput(runId)),
-    row.state ?? "queued",
-    row.availableAt ?? 1,
-    row.startedAt ?? null,
-    row.leaseToken ?? null,
-    row.leaseExpiresAt ?? null,
-  );
-}
-
-function substreamWorkflowInput(runId: string): WorkstreamWorkflowInput {
-  return {
-    workspaceId: WORKSPACE_ID,
-    workstreamId: WORKSTREAM_ID,
-    harnessRunId: asHarnessRunId(runId),
-    substreamId: asSubstreamId("0"),
-    region: "global",
-    triggerMessageId: null,
-    automationSubscriptionId: null,
-    activityId: null,
-    executionPrincipal: { type: "user", userId: USER_ID },
-    reason: "user_message",
-  };
-}
-
-function dispatchRow(state: DurableObjectState, runId: string): DispatchRow | undefined {
-  return state.storage.sql.exec<DispatchRow>(
-    `SELECT run_id, state, attempt, available_at, started_at, lease_token, lease_expires_at
-       FROM agent_run_dispatches WHERE run_id = ?`,
-    runId,
-  ).toArray()[0];
-}
-
-const RUN_ID = asHarnessRunId("00000000-0000-7000-8000-0000000002b1");
-
-/** The whole point: a non-terminal row implies a scheduled wake-up. */
-function assertInvariant(row: DispatchRow, alarm: number | null): boolean {
-  const outstanding = row.state === "queued" || row.state === "running";
-  return !outstanding || alarm !== null;
-}
-
-describe("a dispatched agent run is never orphaned", () => {
-  it("arms an alarm for a queued run and keeps one armed after the run is claimed", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID);
-      await state.storage.setAlarm(Date.now() + 600_000);
-    });
-
-    // The alarm handler claims the run and, whatever it then decides, must
-    // leave the object woken again while the row is non-terminal.
-    expect(await runDurableObjectAlarm(stub)).toBe(true);
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      const row = dispatchRow(state, RUN_ID)!;
-      expect(row.attempt).toBeGreaterThan(0);
-      expect(row.started_at).not.toBeNull();
-      expect(assertInvariant(row, await state.storage.getAlarm())).toBe(true);
-    });
-  });
-
-  // The production stall, reproduced through the runtime: a claim whose owner
-  // is gone. Nothing in the object knows the owner died; only the rows do.
-  it("recovers a run whose owner vanished mid-flight", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID, {
-        state: "running",
-        startedAt: 1,
-        // Held off the executor so the recovery *scheduling* is observable on
-        // its own; the reclaim itself is asserted below.
-        availableAt: Date.now() + 60 * 60_000,
-        leaseToken: "owner-that-died",
-        leaseExpiresAt: Date.now() + 10 * 60_000,
-      });
-      // The exact end state of the outage: work outstanding, nothing scheduled.
-      await state.storage.deleteAlarm();
-    });
-
-    await evictDurableObject(stub);
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      const row = dispatchRow(state, RUN_ID)!;
-      // A successor may not honour a lease issued by an isolate that is gone.
-      expect(row.lease_token).toBeNull();
-      const alarm = await state.storage.getAlarm();
-      expect(alarm).not.toBeNull();
-      expect(alarm!).toBeLessThanOrEqual(Date.now() + 60_000);
-      state.storage.sql.exec(
-        `UPDATE agent_run_dispatches SET available_at = 1 WHERE run_id = ?`,
-        RUN_ID,
-      );
-      await state.storage.setAlarm(Date.now() + 600_000);
-    });
-
-    expect(await runDurableObjectAlarm(stub)).toBe(true);
-
-    await runInDurableObject(stub, (_instance, state) => {
-      // Reclaimed and carried forward, not restarted: the member already saw
-      // this run begin, so `started_at` must survive.
-      const row = dispatchRow(state, RUN_ID)!;
-      expect(row.attempt).toBeGreaterThan(0);
-      expect(row.started_at).toBe(1);
-    });
-  });
-
-  it("makes the vanished instance's harness attempt immediately resumable", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-    const oldLeaseExpiresAt = Date.now() + 10 * 60_000;
-    let previousOwner = "";
-
-    await runInDurableObject(stub, async (instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID, {
-        state: "running",
-        startedAt: 1,
-        availableAt: Date.now() + 60 * 60_000,
-        leaseToken: "dispatch-owner-that-died",
-        leaseExpiresAt: oldLeaseExpiresAt,
-      });
-      previousOwner = (instance as unknown as {
-        harnessAttemptOwner(
-          input: { substreamId: string; harnessRunId: string },
-          attemptId: string,
-        ): string;
-      }).harnessAttemptOwner({ substreamId: "0", harnessRunId: RUN_ID }, "attempt-that-survived");
-      state.storage.sql.exec(
-        `UPDATE runs
-            SET status = 'running', legacy_attempt_id = 'attempt-that-survived',
-                attempt_epoch = 1, lease_owner = ?,
-                lease_expires_at = ?, heartbeat_at = ?, updated_at = ?
-          WHERE run_id = ?`,
-        previousOwner,
-        oldLeaseExpiresAt,
-        Date.now(),
-        Date.now(),
-        RUN_ID,
-      );
-      await state.storage.deleteAlarm();
-    });
-
-    await evictDurableObject(stub);
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (instance, state) => {
-      const run = state.storage.sql.exec<{
-        lease_owner: string | null;
-        lease_expires_at: number | null;
-        attempt_epoch: number;
-      }>(
-        `SELECT lease_owner, lease_expires_at, attempt_epoch FROM runs WHERE run_id = ?`,
-        RUN_ID,
-      ).one();
-      expect(run.lease_owner).toBe(
-        `${PREVIOUS_INSTANCE_RECOVERY_OWNER_PREFIX}attempt-that-survived`,
-      );
-      expect(run.lease_expires_at).not.toBeNull();
-      expect(run.lease_expires_at!).toBeLessThanOrEqual(Date.now());
-      expect(run.lease_expires_at).not.toBe(oldLeaseExpiresAt);
-      const resident = instance as unknown as {
-        recoverableHarnessAttempts: Map<string, string>;
-        harnessRuns: HarnessRunObjectPort;
-        harnessAttemptOwner(input: { substreamId: string; harnessRunId: string }, attemptId: string): string;
-      };
-      const recoverable = resident.recoverableHarnessAttempts;
-      expect(recoverable.get(RUN_ID)).toBe("attempt-that-survived");
-    });
-
-    // Evict the replacement before it can claim. The next constructor must
-    // rebuild recovery intent from durable state rather than stale-reap the
-    // deliberately expired attempt.
-    await evictDurableObject(stub);
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (instance, state) => {
-      const resident = instance as unknown as {
-        recoverableHarnessAttempts: Map<string, string>;
-        harnessRuns: HarnessRunObjectPort;
-        harnessAttemptOwner(input: { substreamId: string; harnessRunId: string }, attemptId: string): string;
-      };
-      expect(resident.recoverableHarnessAttempts.get(RUN_ID)).toBe("attempt-that-survived");
-      const replacementOwner = resident.harnessAttemptOwner(
-        { substreamId: "0", harnessRunId: RUN_ID },
-        "attempt-that-survived",
-      );
-      expect(replacementOwner).not.toBe(previousOwner);
-
-      const claim = await claimHarnessAttempt(
-        resident.harnessRuns,
-        { harnessRunId: RUN_ID },
-        { attemptId: "attempt-that-survived", owner: replacementOwner, leaseSeconds: 300 },
-      );
-      expect(claim).toMatchObject({
-        state: "claimed",
-        lease: { owner: replacementOwner, attemptNumber: 2 },
-      });
-      expect(state.storage.sql.exec(
-        `SELECT lease_owner, attempt_epoch FROM runs WHERE run_id = ?`,
-        RUN_ID,
-      ).one()).toEqual({ lease_owner: replacementOwner, attempt_epoch: 2 });
-    });
-  });
-
-  it("settles a cancellation requested before the attempt owner vanished", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-    const input = substreamWorkflowInput(RUN_ID);
-
-    await runInDurableObject(stub, (instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID, {
-        state: "running",
-        startedAt: 1,
-        availableAt: Date.now() + 60 * 60_000,
-        leaseToken: "dispatch-owner-that-died",
-        leaseExpiresAt: Date.now() + 10 * 60_000,
-      });
-      const previousOwner = (instance as unknown as {
-        harnessAttemptOwner(
-          input: { substreamId: string; harnessRunId: string },
-          attemptId: string,
-        ): string;
-      }).harnessAttemptOwner(
-        { substreamId: "0", harnessRunId: input.harnessRunId },
-        "cancelled-attempt-that-survived",
-      );
-      const now = Date.now();
-      state.storage.sql.exec(
-        `UPDATE runs
-            SET status = 'running', legacy_attempt_id = 'cancelled-attempt-that-survived',
-                attempt_epoch = 1, lease_owner = ?, lease_expires_at = ?,
-                cancellation_requested_at = ?, cancellation_reason = 'member_stop',
-                heartbeat_at = ?, updated_at = ?
-          WHERE run_id = ?`,
-        previousOwner,
-        now + 10 * 60_000,
-        now,
-        now,
-        now,
-        RUN_ID,
-      );
-    });
-
-    await evictDurableObject(stub);
-    await boot(stub, "https://object.test/health");
-
-    const outcome = await runInDurableObject(stub, async (instance) => (
-      (instance as unknown as {
-        runAgentExecution(input: WorkstreamWorkflowInput): Promise<{
-          status: string;
-          errorCode: string | null;
-          retryAt: number | null;
-        }>;
-      }).runAgentExecution(input)
-    ));
-    expect(outcome).toMatchObject({ status: "stopped" });
-
-    await runInDurableObject(stub, (instance, state) => {
-      expect(state.storage.sql.exec(
-        `SELECT status, terminalized_at, cancellation_reason, lease_owner, lease_expires_at
-           FROM runs WHERE run_id = ?`,
-        RUN_ID,
-      ).one()).toMatchObject({
-        status: "cancelled",
-        cancellation_reason: "member_stop",
-        lease_owner: null,
-        lease_expires_at: null,
-      });
-      expect((instance as unknown as {
-        recoverableHarnessAttempts: Map<string, string>;
-      }).recoverableHarnessAttempts.has(RUN_ID)).toBe(false);
-    });
-  });
-
-  it("keeps an alarm armed across an eviction while work is outstanding", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-    await runInDurableObject(stub, (_instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID, { availableAt: Date.now() + 60 * 60_000 });
-    });
-
-    await evictDurableObject(stub);
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      const alarm = await state.storage.getAlarm();
-      expect(alarm).not.toBeNull();
-      // Even a run that is not due for an hour is swept for, so a scheduling
-      // defect costs an interval rather than the run.
-      expect(alarm!).toBeLessThanOrEqual(Date.now() + 60_000);
-    });
-  });
-
-  it("stops waking once no dispatch is left to run", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID, { state: "completed", startedAt: 1 });
-      await state.storage.deleteAlarm();
-    });
-
-    await evictDurableObject(stub);
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      expect(await state.storage.getAlarm()).toBeNull();
-    });
-  });
-
-  // Repeated alarms are what the sweep floor produces. If each one re-claimed,
-  // a run would be replayed every interval for as long as it took.
-  it("does not re-claim a run it is already executing", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-    await runInDurableObject(stub, (_instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID);
-    });
-
-    await runDurableObjectAlarm(stub);
-    const first = await runInDurableObject(stub, (_instance, state) => dispatchRow(state, RUN_ID)!);
-    await runDurableObjectAlarm(stub);
-    const second = await runInDurableObject(stub, (_instance, state) => dispatchRow(state, RUN_ID)!);
-
-    // A second attempt is only legitimate once the first has been given back.
-    if (second.attempt > first.attempt) {
-      expect(first.lease_token).toBeNull();
-    }
-  });
-
-  it("returns without busy-looping when a heartbeat sees an active drain", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-
-    await runInDurableObject(stub, (instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID, {
-        state: "running",
-        startedAt: 1,
-        availableAt: 1,
-        leaseToken: "active-drain",
-        leaseExpiresAt: 1,
-      });
-      const drain = (instance as unknown as {
-        agentDrain: {
-          resume(operation: () => Promise<void>, settled: () => void): Promise<void>;
-        };
-      }).agentDrain;
-      void drain.resume(() => held, () => undefined);
-    });
-
-    const outcome = await activeDrainHeartbeatOutcome(stub, release);
-    if (outcome === "joined") {
-      expect(outcome).toBe("returned");
-      return;
-    }
-
-    const heartbeatStartedAt = Date.now();
-    await runInDurableObject(stub, async (instance) => {
-      await (instance as unknown as { alarm(): Promise<void> }).alarm();
-    });
-    const nextAlarm = await runInDurableObject(stub, (_instance, state) =>
-      state.storage.getAlarm());
-    release();
-
-    // An alarm is a distinct request context. Awaiting a drain promise that
-    // belongs to the request already executing the run can strand both events
-    // and invalidates any request-scoped I/O the run performs afterward.
-    expect(outcome).toBe("returned");
-    // A due dispatch cannot make progress while the other invocation owns the
-    // drain. Re-arming it at now + 1 turns that row into hundreds of alarms and
-    // authority reads per second; the active owner gets one heartbeat horizon.
-    expect(nextAlarm).not.toBeNull();
-    expect(nextAlarm!).toBeGreaterThanOrEqual(heartbeatStartedAt + 20_000);
-  });
-});
-
-// `runs_mutating_substream_uq` allows one mutating run per substream. A run
-// whose executor is gone keeps that slot forever, so every later run fails as
-// it starts — and because the failure belongs to the *new* run, the work stream
-// reads as permanently busy while nothing executes. This is what a migrated
-// mid-flight run leaves behind, and only a run clears it, which no run can
-// reach.
-describe("a run abandoned by a vanished executor does not wedge the substream", () => {
-  const PHANTOM = "00000000-0000-7000-8000-0000000002c1";
-
-  it("reaps the abandoned run and lets the next one start", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID);
-      // A run holding the slot with no dispatch behind it: it cannot execute
-      // again, and nothing in the object is watching for it.
-      state.storage.sql.exec(
-        `INSERT INTO runs (
-           run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
-           model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
-           active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
-           tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-           created_at, updated_at
-         ) VALUES (?, '0', NULL, 'running', '{}', 0, 0, '', 0, 0, 1,
-                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
-        PHANTOM,
-      );
-      await state.storage.setAlarm(Date.now() + 600_000);
-    });
-
-    expect(await runDurableObjectAlarm(stub)).toBe(true);
-
-    await runInDurableObject(stub, (_instance, state) => {
-      const phantom = state.storage.sql.exec<{ status: string; terminalized_at: number | null }>(
-        `SELECT status, terminalized_at FROM runs WHERE run_id = ?`,
-        PHANTOM,
-      ).toArray()[0]!;
-      expect(phantom.terminalized_at).not.toBeNull();
-      expect(phantom.status).toBe("failed");
-
-      // And the run that was waiting behind it actually started.
-      const next = state.storage.sql.exec<{ status: string }>(
-        `SELECT status FROM runs WHERE run_id = ?`,
-        RUN_ID,
-      ).toArray()[0]!;
-      expect(next.status).not.toBe("admitted");
-    });
-  });
-
-  it("leaves a run alone while a dispatch is still prepared to execute it", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      // Same shape, except this run has a dispatch: it is going to run, so
-      // reaping it would destroy live work.
-      seedSubstreamDispatch(state, PHANTOM, {
-        state: "running",
-        startedAt: 1,
-        availableAt: Date.now() + 60 * 60_000,
-      });
-      state.storage.sql.exec(
-        `UPDATE runs SET status = 'running' WHERE run_id = ?`,
-        PHANTOM,
-      );
-    });
-
-    await runInDurableObject(stub, (instance, state) => {
-      const product = (instance as unknown as {
-        product: { reapAbandonedSubstreamRuns(substreamId: string, now: number): string[] };
-      }).product;
-      expect(product.reapAbandonedSubstreamRuns("0", Date.now())).toEqual([]);
-      const row = state.storage.sql.exec<{ status: string }>(
-        `SELECT status FROM runs WHERE run_id = ?`,
-        PHANTOM,
-      ).toArray()[0]!;
-      expect(row.status).toBe("running");
-    });
-  });
-});
-
-// Found by running this suite against workerd rather than by reading the code:
-// the payload was parsed *outside* the drain's guard, so a dispatch this build
-// cannot decode threw straight out of the loop. The row stayed claimed and
-// settled nothing, the lease lapsed, the next alarm reclaimed it, and it threw
-// again — a poison pill that consumed the queue forever without one log line.
-describe("a dispatch that cannot be decoded does not consume the queue", () => {
-  it("fails the undecodable run and carries on to the next one", async () => {
-    const stub = substreamStub();
-    await boot(stub, "https://object.test/health");
-    const NEXT = "00000000-0000-7000-8000-0000000002d1";
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      seedSubstreamDispatch(state, RUN_ID);
-      state.storage.sql.exec(
-        `UPDATE agent_run_dispatches SET input_json = '{"not":"a valid run input"}'
-          WHERE run_id = ?`,
-        RUN_ID,
-      );
-      seedSubstreamDispatch(state, NEXT, { availableAt: 2 });
-      await state.storage.setAlarm(Date.now() + 600_000);
-    });
-
-    expect(await runDurableObjectAlarm(stub)).toBe(true);
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      const poison = dispatchRow(state, RUN_ID)!;
-      expect(poison.state).toBe("failed");
-      expect(poison.lease_token).toBeNull();
-
-      // The queue moved past it rather than stopping on it.
-      const next = dispatchRow(state, NEXT)!;
-      expect(next.attempt).toBeGreaterThan(0);
-      expect(assertInvariant(next, await state.storage.getAlarm())).toBe(true);
-    });
-  });
-});
 
 describe("the same guarantees hold for a HyperSight block run", () => {
   function seedBlockDispatch(
@@ -669,8 +500,7 @@ describe("the same guarantees hold for a HyperSight block run", () => {
 
   it("recovers a block run whose owner vanished mid-flight", async () => {
     const stub = blockStub();
-    await boot(stub, "https://block-dashboard.test/health");
-
+    await bootBlock(stub);
     await runInDurableObject(stub, async (_instance, state) => {
       seedBlockDispatch(state, {
         availableAt: Date.now() + 60 * 60_000,
@@ -681,8 +511,7 @@ describe("the same guarantees hold for a HyperSight block run", () => {
     });
 
     await evictDurableObject(stub);
-    await boot(stub, "https://block-dashboard.test/health");
-
+    await bootBlock(stub);
     await runInDurableObject(stub, async (_instance, state) => {
       const row = state.storage.sql.exec<{ lease_token: string | null }>(
         `SELECT lease_token FROM agent_run_dispatches WHERE block_run_id = 'block-run'`,
@@ -696,8 +525,7 @@ describe("the same guarantees hold for a HyperSight block run", () => {
 
   it("stops waking once no block dispatch is left to run", async () => {
     const stub = blockStub();
-    await boot(stub, "https://block-dashboard.test/health");
-
+    await bootBlock(stub);
     await runInDurableObject(stub, async (_instance, state) => {
       state.storage.sql.exec(
         `INSERT INTO agent_run_dispatches
@@ -710,8 +538,7 @@ describe("the same guarantees hold for a HyperSight block run", () => {
     });
 
     await evictDurableObject(stub);
-    await boot(stub, "https://block-dashboard.test/health");
-
+    await bootBlock(stub);
     await runInDurableObject(stub, async (_instance, state) => {
       expect(await state.storage.getAlarm()).toBeNull();
     });
@@ -719,7 +546,7 @@ describe("the same guarantees hold for a HyperSight block run", () => {
 
   it("returns without busy-looping when a block heartbeat sees an active drain", async () => {
     const stub = blockStub();
-    await boot(stub, "https://block-dashboard.test/health");
+    await bootBlock(stub);
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
 
@@ -737,7 +564,7 @@ describe("the same guarantees hold for a HyperSight block run", () => {
       void drain.resume(() => held, () => undefined);
     });
 
-    const outcome = await activeDrainHeartbeatOutcome(stub, release);
+    const outcome = await activeBlockDrainHeartbeatOutcome(stub, release);
     if (outcome === "joined") {
       expect(outcome).toBe("returned");
       return;

@@ -7,13 +7,19 @@ import {
   createTextMessage,
   createToolEventMessage,
   orderedTranscriptMessages,
+  composeTranscript,
+  mergeCanonicalTranscriptSnapshot,
   mergeRealtimeTranscriptActivity,
   mergeRealtimeTranscriptTurn,
   mergeTranscriptRange,
   transcriptCoverage,
+  transcriptCoverageAdvanced,
   transcriptGaps,
-  transientMessagesWithoutCanonicalMatch,
-  removeTranscriptMessage,
+  transcriptOverlaysWithoutCanonicalMatch,
+  reconcileAuthoritativeTranscriptOverlays,
+  upsertTranscriptOverlay,
+  mapTranscriptOverlayMessages,
+  setTranscriptElicitationState,
   upsertTranscriptMessage,
 } from './transcript';
 
@@ -26,6 +32,50 @@ const base = {
 };
 
 describe('transcript messages', () => {
+  it('keeps an oversized turn in sequence as a visible placeholder', () => {
+    const envelope = {
+      transcriptSequence: 1,
+      turnId: 'turn-large',
+      entryKind: 'conversation' as const,
+      actor: 'assistant' as const,
+      authorUserId: null,
+      authorSnapshot: null,
+      attentionOrdinal: null,
+      createdAtUtc: '2026-08-05T12:00:00.000Z',
+      revision: 2,
+      blocks: [],
+      blockCount: 1,
+      activityId: null,
+      blocksOmitted: true,
+    };
+    const snapshot = {
+      snapshotId: 'snapshot-large',
+      snapshotThrough: 1,
+      eventSequence: 1,
+      snapshotAtUtc: '2026-08-05T12:00:00.000Z',
+      unreadAnchorSequence: null,
+      unreadReason: 'no_unread' as const,
+      ranges: [{
+        purpose: 'latest' as const,
+        requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [envelope],
+        activities: [],
+      }],
+      activities: [],
+      activeActivities: [],
+      activeTurns: [],
+      pendingInputs: [],
+    };
+    expect(orderedTranscriptMessages(snapshot, 'workstream-one')).toEqual([
+      expect.objectContaining({
+        transcriptSequence: 1,
+        text: 'This message is too large to display.',
+        blocksOmittedPlaceholder: true,
+      }),
+    ]);
+  });
+
   it('creates text, tool, and elicitation messages from the same base shape', () => {
     expect(createTextMessage({ ...base, text: 'Hello' })).toMatchObject({ messageType: 'text', text: 'Hello' });
     expect(createToolEventMessage({
@@ -50,12 +100,194 @@ describe('transcript messages', () => {
     const persisted: Message = { ...optimistic, id: 'persisted-one', deliveryState: undefined };
 
     expect(upsertTranscriptMessage([optimistic, trailing], persisted)).toEqual([persisted, trailing]);
-    expect(removeTranscriptMessage([persisted, trailing], persisted.id)).toEqual([trailing]);
+  });
+});
+
+describe('canonical transcript and transient overlay composition', () => {
+  const canonicalText = (id: string, transcriptSequence: number, createdAt: string): Message => createTextMessage({
+    ...base,
+    id,
+    transcriptTurnId: id,
+    transcriptSequence,
+    createdAt,
+    text: id,
+  });
+  const assistantOverlay = (turnId: string, afterTranscriptSequence: number, eventSequence: number, text: string) => ({
+    identity: { type: 'assistant_turn' as const, turnId },
+    provenance: { source: 'socket_event' as const, eventType: 'stream_delta', eventSequence },
+    position: { afterTranscriptSequence, eventSequence },
+    message: createTextMessage({
+      ...base, id: turnId, transcriptTurnId: turnId, createdAt: '1999-01-01T00:00:00.000Z',
+      streaming: true, text,
+    }),
+  });
+
+  it('orders solely by canonical transcript position and explicit event position, never wall-clock time', () => {
+    const first = canonicalText('canonical-1', 1, '2099-01-01T00:00:00.000Z');
+    const second = canonicalText('canonical-2', 2, '2000-01-01T00:00:00.000Z');
+    const overlay = assistantOverlay('live-between', 1, 90, 'live');
+
+    expect(composeTranscript([first, second], [overlay]).map((message) => message.id))
+      .toEqual(['canonical-1', 'live-between', 'canonical-2']);
+  });
+
+  it('refuses canonical input whose durable positions are not already ordered', () => {
+    const first = canonicalText('canonical-1', 1, base.createdAt);
+    const second = canonicalText('canonical-2', 2, base.createdAt);
+
+    expect(() => composeTranscript([second, first], []))
+      .toThrow('Rally received an invalid transcript order. Reopen this work stream.');
+  });
+
+  it('refuses a canonical row with no durable transcript position', () => {
+    const unpositioned = createTextMessage({ ...base, id: 'unpositioned', text: 'Ambiguous' });
+
+    expect(() => composeTranscript([unpositioned], []))
+      .toThrow('Rally received an invalid transcript order. Reopen this work stream.');
+  });
+
+  it('preserves overlay and message identity when a reveal tick changes nothing', () => {
+    const overlay = assistantOverlay('turn-live', 4, 10, 'complete');
+    const overlays = [overlay];
+
+    expect(mapTranscriptOverlayMessages(overlays, (messages) => messages)).toBe(overlays);
+    expect(mapTranscriptOverlayMessages(overlays, (messages) => [...messages])).toBe(overlays);
+  });
+
+  it('keeps an overlay at its first observed position while content and provenance advance', () => {
+    const first = assistantOverlay('turn-live', 4, 10, 'a');
+    const later = assistantOverlay('turn-live', 99, 30, 'abc');
+    const updated = upsertTranscriptOverlay([first], later);
+
+    expect(updated).toMatchObject([{
+      position: { afterTranscriptSequence: 4, eventSequence: 10 },
+      provenance: { eventSequence: 30 },
+      message: { text: 'abc' },
+    }]);
+  });
+
+  it('reconciles by protocol identity and never by equal text or timestamps', () => {
+    const canonical = canonicalText('canonical-unrelated', 3, base.createdAt);
+    canonical.text = 'identical';
+    const unrelated = assistantOverlay('different-turn', 3, 1, 'identical');
+    expect(transcriptOverlaysWithoutCanonicalMatch([canonical], [unrelated])).toEqual([unrelated]);
+
+    const matching = assistantOverlay('canonical-unrelated', 3, 2, 'different content');
+    expect(transcriptOverlaysWithoutCanonicalMatch([canonical], [matching])).toEqual([]);
+  });
+
+  it('shows one live assistant block, then atomically yields to its final canonical block', () => {
+    const streamingCanonical = canonicalText('turn-stream', 8, base.createdAt);
+    streamingCanonical.streaming = true;
+    streamingCanonical.text = 'server checkpoint';
+    const overlay = assistantOverlay('turn-stream', 8, 11, 'smooth reveal');
+    expect(composeTranscript([streamingCanonical], [overlay]).map((message) => message.text))
+      .toEqual(['smooth reveal']);
+
+    const finalCanonical = { ...streamingCanonical, streaming: false, text: 'final answer' };
+    expect(composeTranscript([finalCanonical], [overlay]).map((message) => message.text))
+      .toEqual(['final answer']);
+  });
+
+  it('removes abandoned partial text when the reserved turn becomes a durable error pill', () => {
+    const overlay = assistantOverlay('turn-failed', 7, 11, 'partial provider bytes');
+    const status = canonicalText('turn-failed', 8, base.createdAt);
+    status.messageType = 'system';
+    status.text = 'Response could not be completed';
+    status.statusEvent = { kind: 'assistant_turn_failed', code: 'provider_failed' };
+
+    expect(transcriptOverlaysWithoutCanonicalMatch([status], [overlay])).toEqual([]);
+    expect(composeTranscript([status], [overlay])).toEqual([{ ...status, sequenceNumber: 1 }]);
+  });
+
+  it('lets a server-owned pending input replace the optimistic anchor without duplication', () => {
+    const optimistic = {
+      identity: { type: 'client_message' as const, clientMessageId: 'client-pending' },
+      provenance: { source: 'client_command' as const, phase: 'accepted' as const },
+      position: { afterTranscriptSequence: 9, eventSequence: 20 },
+      message: createTextMessage({
+        ...base, id: 'optimistic', clientMessageId: 'client-pending', authorType: 'human', text: 'pending',
+      }),
+    };
+    const authoritative = {
+      ...optimistic,
+      identity: {
+        type: 'client_message' as const,
+        clientMessageId: 'client-pending',
+        turnId: 'future-turn',
+      },
+      provenance: { source: 'socket_snapshot' as const, snapshotId: 'snapshot-2' },
+      position: { afterTranscriptSequence: 4, eventSequence: 2 },
+      message: { ...optimistic.message, id: 'future-turn', transcriptTurnId: 'future-turn' },
+    };
+
+    expect(reconcileAuthoritativeTranscriptOverlays([], [optimistic], [authoritative]))
+      .toEqual([authoritative]);
+  });
+
+  it('reconciles each overlay kind only with its own canonical identity', () => {
+    const client = createTextMessage({ ...base, id: 'client-row', clientMessageId: 'client-1', text: 'sent' });
+    const tool = createToolEventMessage({
+      ...base, id: 'tool-row', toolEvent: { id: 'tool-call-1', toolCallId: 'tool-call-1', name: 'Search', status: 'completed' },
+    });
+    const overlays = [
+      {
+        identity: { type: 'client_message' as const, clientMessageId: 'client-1' },
+        provenance: { source: 'client_command' as const, phase: 'accepted' as const },
+        position: { afterTranscriptSequence: 0, eventSequence: 1 }, message: client,
+      },
+      {
+        identity: { type: 'tool_call' as const, toolCallId: 'tool-call-1' },
+        provenance: { source: 'socket_event' as const, eventType: 'tool_event', eventSequence: 2 },
+        position: { afterTranscriptSequence: 0, eventSequence: 2 }, message: tool,
+      },
+    ];
+    expect(transcriptOverlaysWithoutCanonicalMatch([client], overlays).map((item) => item.identity.type))
+      .toEqual(['tool_call']);
+    expect(transcriptOverlaysWithoutCanonicalMatch([tool], overlays).map((item) => item.identity.type))
+      .toEqual(['client_message']);
+    expect(transcriptOverlaysWithoutCanonicalMatch([client, tool], overlays)).toEqual([]);
+  });
+
+  it('composes thousands of canonical blocks and overlays without losing or duplicating identities', () => {
+    const canonical = Array.from({ length: 2_000 }, (_, index) =>
+      canonicalText(`canonical-${index}`, index + 1, base.createdAt));
+    const overlays = Array.from({ length: 200 }, (_, index) =>
+      assistantOverlay(`live-${index}`, index * 10, index + 1, String(index)));
+    const composed = composeTranscript(canonical, overlays);
+    expect(composed).toHaveLength(2_200);
+    expect(new Set(composed.map((message) => message.id)).size).toBe(2_200);
+    expect(composed.map((message) => message.sequenceNumber))
+      .toEqual(Array.from({ length: 2_200 }, (_, index) => index + 1));
+  });
+
+  it('linearly merges unsorted overlays before, between, beside, and after canonical islands', () => {
+    const canonical = [
+      canonicalText('canonical-2', 2, base.createdAt),
+      canonicalText('canonical-8', 8, base.createdAt),
+    ];
+    const overlays = [
+      assistantOverlay('after-tail', 9, 7, 'after'),
+      assistantOverlay('same-anchor-later', 2, 5, 'later'),
+      assistantOverlay('before-first', 0, 3, 'before'),
+      assistantOverlay('same-anchor-first', 2, 4, 'first'),
+      assistantOverlay('in-gap', 5, 6, 'gap'),
+    ];
+
+    expect(composeTranscript(canonical, overlays).map((message) => message.id)).toEqual([
+      'before-first',
+      'canonical-2',
+      'same-anchor-first',
+      'same-anchor-later',
+      'in-gap',
+      'canonical-8',
+      'after-tail',
+    ]);
   });
 });
 
 describe('ordered turn rendering', () => {
-  it('keeps a routed opening turn until its canonical ordered turn exists', () => {
+  it('keeps an optimistic opening turn until its canonical ordered turn exists', () => {
     const routed = createTextMessage({
       ...base,
       id: 'persisted-opening',
@@ -63,9 +295,17 @@ describe('ordered turn rendering', () => {
       authorType: 'human',
       author: { id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'UTC' },
       text: 'Start this work stream',
+      deliveryState: 'sending',
+      realtimeOrder: { anchorSequenceNumber: 1, eventSequence: 1, placement: 'at_anchor' },
     });
 
-    expect(transientMessagesWithoutCanonicalMatch([], [routed])).toEqual([routed]);
+    const overlay = {
+      identity: { type: 'client_message' as const, clientMessageId: 'client-opening' },
+      provenance: { source: 'client_command' as const, phase: 'sending' as const },
+      position: { afterTranscriptSequence: 1, eventSequence: 1 },
+      message: routed,
+    };
+    expect(composeTranscript([], [overlay])).toEqual([{ ...routed, sequenceNumber: 1 }]);
 
     const canonical = createTextMessage({
       ...routed,
@@ -73,7 +313,27 @@ describe('ordered turn rendering', () => {
       transcriptTurnId: 'persisted-opening',
       text: routed.text ?? '',
     });
-    expect(transientMessagesWithoutCanonicalMatch([canonical], [routed])).toEqual([]);
+    expect(transcriptOverlaysWithoutCanonicalMatch([canonical], [overlay])).toEqual([]);
+  });
+
+  it('accepts only explicitly identified live overlays outside loaded ordered ranges', () => {
+    const live = createTextMessage({
+      ...base,
+      id: 'turn-live',
+      transcriptTurnId: 'turn-live',
+      sequenceNumber: 21,
+      text: 'Still streaming',
+      streaming: true,
+      realtimeOrder: { anchorSequenceNumber: 21, eventSequence: 7, placement: 'at_anchor' },
+    });
+
+    const overlay = {
+      identity: { type: 'assistant_turn' as const, turnId: 'turn-live' },
+      provenance: { source: 'socket_event' as const, eventType: 'stream_delta', eventSequence: 7 },
+      position: { afterTranscriptSequence: 21, eventSequence: 7 },
+      message: live,
+    };
+    expect(composeTranscript([], [overlay])).toEqual([{ ...live, sequenceNumber: 1 }]);
   });
 
   it('orders and collapses an open elicitation with its durable answer', () => {
@@ -93,6 +353,9 @@ describe('ordered turn rendering', () => {
     ) => ({
       transcriptSequence, turnId, entryKind: 'conversation' as const, actor,
       authorUserId: actor === 'human' ? 'user-adam' : null,
+      authorSnapshot: actor === 'human'
+        ? { userId: 'user-adam', displayName: 'Adam at posting time', avatarUrl: null }
+        : null,
       clientMessageId: `${status}:${turnId}`, externalActor: null,
       attentionOrdinal: transcriptSequence,
       createdAtUtc: `2026-08-26T12:00:0${transcriptSequence}.000Z`, revision: 1,
@@ -111,43 +374,57 @@ describe('ordered turn rendering', () => {
           },
         },
       }],
-      activityId: null, turnManifestRef: null, manifestByteLength: null, manifestSha256: null,
-    });
+      activityId: null,    });
+    const intervening = {
+      transcriptSequence: 3, turnId: 'intervening', entryKind: 'conversation' as const,
+      actor: 'assistant' as const, authorUserId: null, authorSnapshot: null,
+      attentionOrdinal: 3, createdAtUtc: '2026-08-26T12:00:03.000Z', revision: 1,
+      blocks: [{
+        type: 'text' as const, blockId: 'intervening:text:0', blockIndex: 0,
+        text: 'Work continued', streaming: false,
+      }],
+      activityId: null,    };
     const snapshot: WorkstreamTranscriptSnapshot = {
-      snapshotId: 'snapshot-elicitations', snapshotThrough: 3, eventSequence: 3,
+      snapshotId: 'snapshot-elicitations', snapshotThrough: 4, eventSequence: 4,
       snapshotAtUtc: '2026-08-26T12:00:04.000Z', unreadAnchorSequence: null,
       unreadReason: 'no_unread',
       ranges: [{
-        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 4 },
-        covered: { startInclusive: 1, endExclusive: 4 },
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 5 },
+        covered: { startInclusive: 1, endExclusive: 5 },
         turns: [
           {
             transcriptSequence: 1, turnId: 'opening', entryKind: 'conversation', actor: 'human',
-            authorUserId: 'user-adam', attentionOrdinal: 1,
+            authorUserId: 'user-adam',
+            authorSnapshot: { userId: 'user-adam', displayName: 'Adam at posting time', avatarUrl: null },
+            attentionOrdinal: 1,
             createdAtUtc: '2026-08-26T12:00:01.000Z', revision: 1,
             blocks: [{ type: 'text', blockId: 'opening:text:0', blockIndex: 0, text: 'Start', streaming: false }],
-            activityId: null, turnManifestRef: null, manifestByteLength: null, manifestSha256: null,
-          },
+            activityId: null,          },
           turn(2, 'question-open', 'open', 'assistant'),
-          turn(3, 'question-answer', 'answered', 'human'),
+          intervening,
+          turn(4, 'question-answer', 'answered', 'human'),
         ],
         activities: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [],
+      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
     };
 
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one', [{
       id: 'user-adam', name: 'Adam', email: 'adam@example.com', timezone: 'UTC',
     }]);
-    expect(messages).toHaveLength(2);
+    expect(messages).toHaveLength(3);
     expect(messages[1]).toMatchObject({
       id: 'elicitation-00000000-0000-7000-8000-000000000111',
       authorType: 'human',
+      transcriptSequence: 2,
+      transcriptTurnId: 'question-open',
       elicitation: { id: '00000000-0000-7000-8000-000000000111', status: 'answered', answer: 'one' },
     });
+    expect(messages[2]).toMatchObject({ transcriptSequence: 3, text: 'Work continued' });
+    expect(() => composeTranscript(messages, [])).not.toThrow();
   });
 
-  it('retains the posting member and mention identities from canonical transcript turns', () => {
+  it('retains the immutable posting identity after the member leaves the work stream', () => {
     const snapshot: WorkstreamTranscriptSnapshot = {
       snapshotId: 'snapshot-identity', snapshotThrough: 1, eventSequence: 1,
       snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
@@ -157,7 +434,12 @@ describe('ordered turn rendering', () => {
         covered: { startInclusive: 1, endExclusive: 2 },
         turns: [{
           transcriptSequence: 1, turnId: 'turn-human', entryKind: 'conversation',
-          actor: 'human', authorUserId: 'user-alex', attentionOrdinal: 1,
+          actor: 'human', authorUserId: 'user-alex',
+          authorSnapshot: {
+            userId: 'user-alex', displayName: 'Alex at posting time',
+            avatarUrl: 'https://example.com/alex-old.png',
+          },
+          attentionOrdinal: 1,
           clientMessageId: 'client-human', externalActor: null,
           createdAtUtc: '2026-08-26T12:00:01.000Z', revision: 1,
           blocks: [{
@@ -174,22 +456,21 @@ describe('ordered turn rendering', () => {
               contentAvailable: true, createdAt: '2026-08-26T12:00:00.000Z',
             }],
           }],
-          activityId: null, turnManifestRef: null, manifestByteLength: null,
-          manifestSha256: null,
-        }],
+          activityId: null,        }],
         activities: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [],
+      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
     };
     const members = [{
-      id: 'user-alex', name: 'Alex', email: 'alex@example.com', timezone: 'UTC',
-    }, {
       id: 'user-morgan', name: 'Morgan', email: 'morgan@example.com',
       avatarUrl: 'https://example.com/morgan.png', timezone: 'UTC',
     }];
 
     expect(orderedTranscriptMessages(snapshot, 'workstream-one', members)[0]).toMatchObject({
-      author: members[0],
+      author: {
+        id: 'user-alex', name: 'Alex at posting time',
+        avatarUrl: 'https://example.com/alex-old.png',
+      },
       clientMessageId: 'client-human',
       mentions: [{
         type: 'person', personId: 'user-morgan', displayName: 'Morgan',
@@ -201,6 +482,75 @@ describe('ordered turn rendering', () => {
         contentAvailable: true,
       }],
     });
+  });
+
+  it('fails closed instead of borrowing mutable membership for an invalid canonical human turn', () => {
+    const invalid = {
+      transcriptSequence: 1,
+      turnId: 'invalid-human',
+      entryKind: 'conversation' as const,
+      actor: 'human' as const,
+      authorUserId: 'user-alex',
+      authorSnapshot: null,
+      attentionOrdinal: 1,
+      createdAtUtc: '2026-08-26T12:00:01.000Z',
+      revision: 1,
+      blocks: [{
+        type: 'text' as const,
+        blockId: 'invalid-human:text:0',
+        blockIndex: 0,
+        text: 'Invalid canonical row',
+        streaming: false,
+      }],
+      activityId: null,
+    };
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'invalid-snapshot', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:02.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [invalid], activities: [],
+      }],
+      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    expect(() => orderedTranscriptMessages(snapshot, 'workstream-one', [{
+      id: 'user-alex', name: 'Mutable Alex', email: 'alex@example.com', timezone: 'UTC',
+    }])).toThrow('canonical_human_author_provenance_invalid');
+  });
+
+  it('preserves every canonical block when one submitted turn shares a client identity', () => {
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'snapshot-multi-block', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 'turn-multi-block', entryKind: 'conversation',
+          actor: 'human', authorUserId: 'user-alex',
+          authorSnapshot: { userId: 'user-alex', displayName: 'Alex at posting time', avatarUrl: null },
+          clientMessageId: 'one-submission',
+          attentionOrdinal: 1, createdAtUtc: '2026-08-26T12:00:01.000Z', revision: 1,
+          blocks: [
+            { type: 'text', blockId: 'block-first', blockIndex: 0, text: 'First', streaming: false },
+            { type: 'text', blockId: 'block-second', blockIndex: 1, text: 'Second', streaming: false },
+          ],
+          activityId: null,        }],
+        activities: [],
+      }],
+      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
+    expect(messages.map((message) => [message.id, message.text, message.clientMessageId]))
+      .toEqual([
+        ['block-first', 'First', 'one-submission'],
+        ['block-second', 'Second', 'one-submission'],
+      ]);
   });
 
   it('retains an external participant identity from a canonical transcript turn', () => {
@@ -217,18 +567,16 @@ describe('ordered turn rendering', () => {
         covered: { startInclusive: 1, endExclusive: 2 },
         turns: [{
           transcriptSequence: 1, turnId: 'turn-external', entryKind: 'conversation',
-          actor: 'external', authorUserId: null, clientMessageId: 'slack-event-1',
+          actor: 'external', authorUserId: null, authorSnapshot: null, clientMessageId: 'slack-event-1',
           externalActor, attentionOrdinal: 1, createdAtUtc: '2026-08-26T12:00:01.000Z',
           revision: 1, blocks: [{
             type: 'text', blockId: 'text-external', blockIndex: 0, text: 'From Slack',
             streaming: false, messageType: 'text', structuredContent: null,
           }],
-          activityId: null, turnManifestRef: null, manifestByteLength: null,
-          manifestSha256: null,
-        }],
+          activityId: null,        }],
         activities: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [],
+      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
     };
 
     expect(orderedTranscriptMessages(snapshot, 'workstream-one')[0]).toMatchObject({
@@ -255,7 +603,7 @@ describe('ordered turn rendering', () => {
             turnId: 'turn-1',
             entryKind: 'conversation',
             actor: 'assistant',
-            authorUserId: null,
+            authorUserId: null, authorSnapshot: null,
             attentionOrdinal: null,
             createdAtUtc: '2026-08-26T12:00:01.000Z',
             revision: 3,
@@ -268,61 +616,78 @@ describe('ordered turn rendering', () => {
               },
               {
                 type: 'tool', blockId: 'tool-b', blockIndex: 2, toolCallId: 'call-b',
-                pluginId: 'github', toolName: 'Search B', callIndex: 1, status: 'failed',
-                participantSafeInput: null, participantSafeResult: null, error: 'failed', activityId: null,
+                pluginId: 'github', toolName: 'Search B', callIndex: 1, status: 'ambiguous',
+                participantSafeInput: null, participantSafeResult: null, error: 'outcome unknown', activityId: null,
               },
             ],
             activityId: null,
-            turnManifestRef: null,
-            manifestByteLength: null,
-            manifestSha256: null,
           },
           {
             transcriptSequence: 2,
             turnId: 'turn-2',
             entryKind: 'conversation',
             actor: 'assistant',
-            authorUserId: null,
+            authorUserId: null, authorSnapshot: null,
             attentionOrdinal: null,
             createdAtUtc: '2026-08-26T12:00:03.000Z',
             revision: 1,
             blocks: [{ type: 'text', blockId: 'text-b', blockIndex: 0, text: 'Then', streaming: false }],
             activityId: null,
-            turnManifestRef: null,
-            manifestByteLength: null,
-            manifestSha256: null,
           },
         ],
         activities: [],
       }],
       activities: [],
       activeActivities: [],
-      activeTurns: [],
+      activeTurns: [], pendingInputs: [],
     };
 
     const canonical = orderedTranscriptMessages(snapshot, 'workstream-one');
     expect(canonical.map((message) => message.id)).toEqual(['text-a', 'tool-a', 'tool-b', 'text-b']);
     expect(canonical.map((message) => message.transcriptTurnId))
       .toEqual(['turn-1', 'turn-1', 'turn-1', 'turn-2']);
-    expect(transientMessagesWithoutCanonicalMatch(canonical, [
-      createTextMessage({
+    expect(canonical.find((message) => message.id === 'tool-b')?.toolEvent?.status).toBe('ambiguous');
+    const overlays = [
+      {
+        identity: { type: 'assistant_turn' as const, turnId: 'turn-1' },
+        provenance: { source: 'socket_event' as const, eventType: 'stream_delta', eventSequence: 1 },
+        position: { afterTranscriptSequence: 3, eventSequence: 1 },
+        message: createTextMessage({
         ...base, id: 'turn-1', transcriptTurnId: 'turn-1', text: 'First', streaming: true,
         realtimeOrder: { anchorSequenceNumber: 3, eventSequence: 1, placement: 'at_anchor' },
-      }),
-      createToolEventMessage({
+        }),
+      },
+      {
+        identity: { type: 'tool_call' as const, toolCallId: 'call-a' },
+        provenance: { source: 'socket_event' as const, eventType: 'tool_event', eventSequence: 2 },
+        position: { afterTranscriptSequence: 3, eventSequence: 2 },
+        message: createToolEventMessage({
         ...base, id: 'live-tool-a', transcriptTurnId: 'turn-1',
         toolEvent: { id: 'invocation-a', toolCallId: 'call-a', name: 'Search A', status: 'completed' },
         realtimeOrder: { anchorSequenceNumber: 3, eventSequence: 2, placement: 'after_anchor' },
-      }),
-      createTextMessage({
+        }),
+      },
+      {
+        identity: { type: 'assistant_turn' as const, turnId: 'turn-3' },
+        provenance: { source: 'socket_event' as const, eventType: 'stream_delta', eventSequence: 3 },
+        position: { afterTranscriptSequence: 4, eventSequence: 3 },
+        message: createTextMessage({
         ...base, id: 'turn-3', transcriptTurnId: 'turn-3', text: 'Still live', streaming: true,
         realtimeOrder: { anchorSequenceNumber: 4, eventSequence: 3, placement: 'at_anchor' },
-      }),
-      createTextMessage({
+        }),
+      },
+      {
+        identity: { type: 'assistant_turn' as const, turnId: 'turn-4' },
+        provenance: { source: 'socket_event' as const, eventType: 'stream_delta', eventSequence: 4 },
+        position: { afterTranscriptSequence: 5, eventSequence: 4 },
+        message: createTextMessage({
         ...base, id: 'turn-4', transcriptTurnId: 'turn-4', text: 'Awaiting commit', streaming: false,
         realtimeOrder: { anchorSequenceNumber: 5, eventSequence: 4, placement: 'at_anchor' },
-      }),
-    ]).map((message) => message.id)).toEqual(['turn-3', 'turn-4']);
+        }),
+      },
+    ];
+    expect(transcriptOverlaysWithoutCanonicalMatch(canonical, overlays)
+      .map((overlay) => overlay.message.id)).toEqual(['turn-3', 'turn-4']);
   });
 
   it('assigns collision-free render order without imposing a block count limit', () => {
@@ -342,11 +707,9 @@ describe('ordered turn rendering', () => {
         covered: { startInclusive: 1, endExclusive: 2 },
         turns: [{
           transcriptSequence: 1, turnId: 'turn-large', entryKind: 'conversation',
-          actor: 'assistant', authorUserId: null, attentionOrdinal: null,
+          actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
           createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1, blocks,
-          activityId: 'turn-large:activity', turnManifestRef: null,
-          manifestByteLength: null, manifestSha256: null,
-        }],
+          activityId: 'turn-large:activity',        }],
         activities: [],
       }],
       activities: [
@@ -361,7 +724,7 @@ describe('ordered turn rendering', () => {
           intervals: [], revision: 2,
         },
       ],
-      activeActivities: [], activeTurns: [],
+      activeActivities: [], activeTurns: [], pendingInputs: [],
     };
 
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
@@ -370,6 +733,75 @@ describe('ordered turn rendering', () => {
     expect(messages.slice(0, blocks.length).map((message) => message.id))
       .toEqual(blocks.map((block) => block.blockId));
     expect(messages.at(-1)?.id).toBe('run-large');
+    expect(composeTranscript(messages, []).at(-1)?.id).toBe('run-large');
+  });
+
+  it('keeps response and plugin activity rows beside their canonical turn through composition', () => {
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 'snapshot-activity-order', snapshotThrough: 3, eventSequence: 9,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 4 },
+        covered: { startInclusive: 1, endExclusive: 4 },
+        turns: [
+          {
+            transcriptSequence: 1, turnId: 'turn-before', entryKind: 'conversation',
+            actor: 'human', authorUserId: 'user-before',
+            authorSnapshot: { userId: 'user-before', displayName: 'Before author', avatarUrl: null },
+            attentionOrdinal: null,
+            createdAtUtc: '2026-08-26T12:00:01.000Z', revision: 1,
+            blocks: [{
+              type: 'text', blockId: 'before', blockIndex: 0, text: 'Before', streaming: false,
+            }],
+            activityId: null,          },
+          {
+            transcriptSequence: 2, turnId: 'turn-tool', entryKind: 'conversation',
+            actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+            createdAtUtc: '2026-08-26T12:00:02.000Z', revision: 1,
+            blocks: [{
+              type: 'tool', blockId: 'tool', blockIndex: 0, toolCallId: 'call',
+              pluginId: 'github', toolName: 'Search', callIndex: 0, status: 'completed',
+              participantSafeInput: null, participantSafeResult: 'Found', error: null,
+              activityId: null,
+            }],
+            activityId: 'turn-tool:activity',          },
+          {
+            transcriptSequence: 3, turnId: 'turn-after', entryKind: 'conversation',
+            actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+            createdAtUtc: '2026-08-26T12:00:03.000Z', revision: 1,
+            blocks: [{
+              type: 'text', blockId: 'after', blockIndex: 0, text: 'After', streaming: false,
+            }],
+            activityId: null,          },
+        ],
+        activities: [],
+      }],
+      activities: [
+        {
+          activityId: 'run', parentActivityId: null, scope: 'response', subjectId: 'run',
+          callIndex: null, label: 'Working', state: 'completed', intervals: [], revision: 1,
+        },
+        {
+          activityId: 'turn-tool:activity', parentActivityId: 'run', scope: 'assistant_turn',
+          subjectId: 'turn-tool', callIndex: 0, label: 'Assistant turn', state: 'completed',
+          intervals: [], revision: 1,
+        },
+        {
+          activityId: 'github', parentActivityId: 'turn-tool:activity', scope: 'plugin',
+          subjectId: 'github', callIndex: 0, label: 'GitHub', state: 'completed',
+          intervals: [], revision: 1,
+        },
+      ],
+      activeActivities: [], activeTurns: [], pendingInputs: [],
+    };
+
+    const composed = composeTranscript(orderedTranscriptMessages(snapshot, 'workstream-one'), []);
+    expect(composed.map((message) => message.id)).toEqual([
+      'before', 'tool', 'github', 'run', 'after',
+    ]);
+    expect(composed.filter((message) => message.messageType === 'thought')
+      .map((message) => message.transcriptSequence)).toEqual([2, 2]);
   });
 
   it('uses the server elapsed baseline and a local monotonic start for mid-stream opens', () => {
@@ -389,15 +821,12 @@ describe('ordered turn rendering', () => {
           turnId: 'turn-active',
           entryKind: 'conversation',
           actor: 'assistant',
-          authorUserId: null,
+          authorUserId: null, authorSnapshot: null,
           attentionOrdinal: null,
           createdAtUtc: '2026-08-26T12:00:00.000Z',
           revision: 1,
           blocks: [{ type: 'text', blockId: 'active-text', blockIndex: 0, text: 'Streaming', streaming: true }],
           activityId: 'turn-active:activity',
-          turnManifestRef: null,
-          manifestByteLength: null,
-          manifestSha256: null,
         }],
         activities: [],
       }],
@@ -416,6 +845,8 @@ describe('ordered turn rendering', () => {
             stoppedAtUtc: null,
             durationMs: null,
             elapsedMsAtSnapshot: 10_000,
+            boundarySource: 'rally',
+            timingAccuracy: 'observed',
             revision: 1,
           }],
           revision: 1,
@@ -433,7 +864,7 @@ describe('ordered turn rendering', () => {
         },
       ],
       activeActivities: [],
-      activeTurns: [],
+      activeTurns: [], pendingInputs: [],
     };
 
     const timing = orderedTranscriptMessages(snapshot, 'workstream-one')
@@ -443,6 +874,7 @@ describe('ordered turn rendering', () => {
       durationMs: 10_000,
       activeVerb: 'working',
       completedVerb: 'worked',
+      timingAccuracy: 'observed',
       monotonicStartedAt: expect.any(Number),
     });
     const unrelated = mergeRealtimeTranscriptActivity(snapshot, {
@@ -453,6 +885,91 @@ describe('ordered turn rendering', () => {
     expect(orderedTranscriptMessages(unrelated, 'workstream-one')
       .find((message) => message.id === 'run-active')?.thoughtEvent?.monotonicStartedAt)
       .toBe(timing?.thoughtEvent?.monotonicStartedAt);
+  });
+});
+
+describe('canonical elicitation presentation', () => {
+  const elicitationId = '00000000-0000-7000-8000-0000000000e1';
+  const turn = {
+    transcriptSequence: 4,
+    turnId: 'elicitation-turn',
+    entryKind: 'conversation' as const,
+    actor: 'assistant' as const,
+    authorUserId: null, authorSnapshot: null,
+    attentionOrdinal: null,
+    createdAtUtc: '2026-08-26T12:00:00.000Z',
+    revision: 1,
+    blocks: [{
+      type: 'text' as const,
+      blockId: 'elicitation-turn:text:0',
+      blockIndex: 0,
+      text: '',
+      streaming: false,
+      messageType: 'elicitation' as const,
+      structuredContent: {
+        kind: 'elicitation_request',
+        elicitation: {
+          id: elicitationId,
+          workstreamId: '00000000-0000-7000-8000-0000000000e2',
+          harnessRunId: '00000000-0000-7000-8000-0000000000e3',
+          prompt: 'Choose one',
+          responseType: 'single_select',
+          options: [{ value: 'yes', label: 'Yes', description: null }],
+          minimumSelections: 1,
+          maximumSelections: 1,
+          targetUserId: null,
+          status: 'open',
+          answer: null,
+          answeredByUserId: null,
+          createdAt: '2026-08-26T12:00:00.000Z',
+          answeredAt: null,
+        },
+      },
+    }],
+    activityId: null,
+  };
+  const snapshot = {
+    snapshotId: 'elicitation-snapshot',
+    snapshotThrough: 4,
+    eventSequence: 9,
+    snapshotAtUtc: '2026-08-26T12:00:01.000Z',
+    unreadAnchorSequence: null,
+    unreadReason: 'no_unread' as const,
+    ranges: [{
+      purpose: 'latest' as const,
+      requested: { startInclusive: 1, endExclusive: 5 },
+      covered: { startInclusive: 1, endExclusive: 5 },
+      turns: [turn],
+      activities: [],
+    }, {
+      purpose: 'requested' as const,
+      requested: { startInclusive: 4, endExclusive: 5 },
+      covered: { startInclusive: 4, endExclusive: 5 },
+      turns: [turn],
+      activities: [],
+    }],
+    activities: [],
+    activeActivities: [],
+    activeTurns: [turn], pendingInputs: [],
+  } satisfies WorkstreamTranscriptSnapshot;
+
+  it('closes and rolls back an open canonical card immediately across every cached copy', () => {
+    const answered = setTranscriptElicitationState(snapshot, elicitationId, {
+      status: 'answered',
+      answer: 'yes',
+    });
+    const answeredMessages = orderedTranscriptMessages(answered, 'workstream-one');
+    expect(answeredMessages).toHaveLength(1);
+    expect(answeredMessages[0]?.elicitation).toMatchObject({ status: 'answered', answer: 'yes' });
+    expect(answered.ranges.flatMap((range) => range.turns).every((candidate) =>
+      candidate.revision === 1)).toBe(true);
+
+    const rolledBack = setTranscriptElicitationState(answered, elicitationId, {
+      status: 'open',
+      answer: null,
+    });
+    expect(orderedTranscriptMessages(rolledBack, 'workstream-one')[0]?.elicitation)
+      .toMatchObject({ status: 'open', answer: null });
   });
 });
 
@@ -471,7 +988,7 @@ describe('explicit transcript range coverage', () => {
     ],
     activities: [],
     activeActivities: [],
-    activeTurns: [],
+    activeTurns: [], pendingInputs: [],
   } satisfies WorkstreamTranscriptSnapshot;
 
   it('unions overlap while retaining empty covered intervals and known gaps', () => {
@@ -485,9 +1002,72 @@ describe('explicit transcript range coverage', () => {
     ]);
   });
 
+  it('detects coverage progress even when range merge keeps the same range count', () => {
+    const advanced = {
+      ...snapshot,
+      ranges: snapshot.ranges.map((range, index) => index === 0 ? {
+        ...range,
+        covered: { startInclusive: 5, endExclusive: 20 },
+      } : range),
+    };
+    expect(advanced.ranges).toHaveLength(snapshot.ranges.length);
+    expect(transcriptCoverageAdvanced(snapshot, advanced)).toBe(true);
+    expect(transcriptCoverageAdvanced(snapshot, { ...snapshot })).toBe(false);
+  });
+
   it('requests only one adjacent block while the latest island remains instantly available', () => {
     expect(adjacentTranscriptRange(snapshot, 'older')).toEqual({ startInclusive: 1, endExclusive: 10 });
     expect(adjacentTranscriptRange(snapshot, 'newer')).toEqual({ startInclusive: 25, endExclusive: 45 });
+  });
+
+  it('keeps loaded history outside a refreshed opening window and replaces overlap authoritatively', () => {
+    const historicalTurn = {
+      transcriptSequence: 5,
+      turnId: 'turn-5',
+      entryKind: 'conversation' as const,
+      actor: 'assistant' as const,
+      authorUserId: null,
+      authorSnapshot: null,
+      attentionOrdinal: null,
+      createdAtUtc: '2026-08-26T12:00:00.000Z',
+      revision: 1,
+      blocks: [],
+      activityId: null,
+    };
+    const retractedTurn = { ...historicalTurn, transcriptSequence: 12, turnId: 'turn-12' };
+    const staleTurn = { ...historicalTurn, transcriptSequence: 15, turnId: 'turn-15' };
+    const authoritativeTurn = { ...staleTurn, revision: 2 };
+    const current = {
+      ...snapshot,
+      ranges: [{
+        purpose: 'requested' as const,
+        requested: { startInclusive: 1, endExclusive: 21 },
+        covered: { startInclusive: 1, endExclusive: 21 },
+        turns: [historicalTurn, retractedTurn, staleTurn],
+        activities: [],
+      }],
+    };
+    const incoming = {
+      ...snapshot,
+      snapshotId: 'snapshot-refresh',
+      eventSequence: 2,
+      ranges: [{
+        purpose: 'unread' as const,
+        requested: { startInclusive: 10, endExclusive: 20 },
+        covered: { startInclusive: 10, endExclusive: 20 },
+        turns: [authoritativeTurn],
+        activities: [],
+      }],
+    };
+
+    const merged = mergeCanonicalTranscriptSnapshot(current, incoming);
+
+    expect(merged.snapshotId).toBe('snapshot-refresh');
+    expect(transcriptCoverage(merged)).toEqual([{ startInclusive: 1, endExclusive: 21 }]);
+    expect(merged.ranges.flatMap((range) => range.turns)).toEqual([
+      historicalTurn,
+      authoritativeTurn,
+    ]);
   });
 
   it('adds only a realtime singleton and does not fill an older gap', () => {
@@ -496,18 +1076,15 @@ describe('explicit transcript range coverage', () => {
       turnId: 'turn-51',
       entryKind: 'conversation' as const,
       actor: 'assistant' as const,
-      authorUserId: null,
+      authorUserId: null, authorSnapshot: null,
       attentionOrdinal: null,
       createdAtUtc: '2026-08-26T12:00:01.000Z',
       revision: 1,
       blocks: [],
       activityId: null,
-      turnManifestRef: null,
-      manifestByteLength: null,
-      manifestSha256: null,
     };
     const merged = mergeRealtimeTranscriptTurn(snapshot, turn, 2);
-    expect(merged.snapshotThrough).toBe(50);
+    expect(merged.snapshotThrough).toBe(51);
     expect(transcriptCoverage(merged)).toEqual([
       { startInclusive: 10, endExclusive: 25 },
       { startInclusive: 46, endExclusive: 52 },
@@ -516,6 +1093,91 @@ describe('explicit transcript range coverage', () => {
       { startInclusive: 1, endExclusive: 10 },
       { startInclusive: 25, endExclusive: 46 },
     ]);
+  });
+
+  it('lets authoritative revision one replace a provisional local opening turn', () => {
+    const provisional = {
+      transcriptSequence: 51,
+      turnId: 'opening-turn',
+      entryKind: 'conversation' as const,
+      actor: 'human' as const,
+      authorUserId: 'user-one', authorSnapshot: null,
+      attentionOrdinal: 1,
+      createdAtUtc: '2026-08-26T12:00:01.000Z',
+      revision: 0,
+      blocks: [{
+        type: 'text' as const,
+        blockId: 'opening-turn:text:0',
+        blockIndex: 0,
+        text: 'local text without hydrated server fields',
+        streaming: false,
+      }],
+      activityId: null,
+    };
+    const seeded = {
+      ...snapshot,
+      ranges: [{
+        purpose: 'latest' as const,
+        requested: { startInclusive: 51, endExclusive: 52 },
+        covered: { startInclusive: 51, endExclusive: 52 },
+        turns: [provisional],
+        activities: [],
+      }],
+    };
+    const authoritative = {
+      ...provisional,
+      revision: 1,
+      blocks: [{
+        type: 'text' as const,
+        blockId: 'opening-turn:text:0',
+        blockIndex: 0,
+        text: 'server text',
+        streaming: false,
+        mentions: [{
+          type: 'person' as const,
+          userId: 'user-two',
+          connectorType: null,
+          startOffset: 0,
+          endOffset: 7,
+        }],
+      }],
+    };
+
+    const merged = mergeRealtimeTranscriptTurn(seeded, authoritative, 2);
+    expect(merged.ranges[0]?.turns).toEqual([authoritative]);
+  });
+
+  it('does not let a stale realtime revision evict a newer active turn', () => {
+    const activeTurn = {
+      transcriptSequence: 5,
+      turnId: 'turn-active',
+      entryKind: 'conversation' as const,
+      actor: 'assistant' as const,
+      authorUserId: null, authorSnapshot: null,
+      attentionOrdinal: null,
+      createdAtUtc: '2026-08-26T12:00:01.000Z',
+      revision: 4,
+      blocks: [{
+        type: 'text' as const,
+        blockId: 'turn-active:text:0',
+        blockIndex: 0,
+        text: 'Newest active text',
+        streaming: true,
+      }],
+      activityId: 'turn-active:activity',
+    };
+    const withActive = { ...snapshot, activeTurns: [activeTurn] };
+    const stale = mergeRealtimeTranscriptTurn(
+      withActive,
+      { ...activeTurn, revision: 3, blocks: [] },
+      2,
+    );
+
+    expect(stale.activeTurns).toEqual([activeTurn]);
+    expect(stale.ranges.flatMap((range) => range.turns)).not.toContainEqual(
+      expect.objectContaining({ turnId: activeTurn.turnId, revision: 3 }),
+    );
+    expect(stale.eventSequence).toBe(2);
   });
 
   it('rejects a stale activity revision and accepts a newer terminal duration', () => {

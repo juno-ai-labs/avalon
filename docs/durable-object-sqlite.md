@@ -68,6 +68,33 @@ objects today.
 The migration runner and fleet visibility are documented in
 [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md).
 
+Rally's shared object runner applies pending migrations in execution groups.
+Each group and every receipt for it commit in one `transactionSync`; a crash or
+invalid statement cannot leave a half-applied migration with a successful
+receipt. New table rebuilds remain valid with foreign-key enforcement enabled:
+they create replacements, copy children and parents, remove the old graph
+child-first, and then rename the replacements parent-first. The runner executes
+`foreign_key_check` before commit. The released v32 transcript migration retains
+its explicit legacy execution marker solely to preserve its shipped fingerprint;
+new migrations may not copy that mode. Earlier complete groups remain
+receipted if a later group fails, and the next construction resumes at the
+first unreceipted version.
+
+The ledger itself is created inside the first pending group. Migration hashes
+include execution mode because mode changes semantics; the one pre-mode
+published work-stream migration carries an explicit legacy marker only because
+its old wrapper already ran it under the identical mode. Tests cover rollback,
+resume, invalid legacy declarations, and exact hash matching. A populated-v27
+fixture exercises the earlier enforcement-on groups and resource-table rebuild;
+a separate populated-v32 fixture crosses the destructive transcript rebuild.
+Both upgrade through the real workerd Durable Object storage pipeline and prove
+retained rows plus `foreign_key_check`; the v32 case additionally proves
+canonical content and child foreign keys after the compatibility tables are
+removed. The historical fixture and its upgrade run in separate object events:
+the old schema must commit before the new worker wakes, both because that is the
+production lifecycle and because a forward migration must begin from the
+committed graph a deployed object actually contains.
+
 ## Transactions and object events
 
 Durable Object event ordering gives one object a natural serialization point,
@@ -287,6 +314,30 @@ mandatory review target. Do not silence the rule or cast a Promise-shaped result
 to make it pass—make the prepare/commit split explicit instead.
 
 ## Changelog
+
+### 2026-08-27 — Migration execution mode is receipted and runtime-tested
+
+**What changed:** The guide now specifies transactional migration groups,
+foreign-key rebuild mode, ledger bootstrap, partial-failure resume, and the
+real-workerd populated-schema test required for destructive object migrations.
+
+**Why:** Node SQLite proved the SQL but not workerd's Durable Object transaction
+and PRAGMA behavior. The ordered-transcript migration replaces referenced
+parents and deletes its compatibility tables, so a fresh-schema unit test could
+pass while an existing populated object lost relationships or failed during
+activation.
+
+**Considered and rejected:** One transaction for the entire history cannot
+change foreign-key enforcement where SQLite requires it outside the transaction.
+Running every migration independently creates more partial-upgrade boundaries
+than the execution modes require.
+
+**Consequences:** Migrations with the same mode are atomic as a group; completed
+groups are the only resumable boundaries. A referenced-table rebuild must opt in,
+must pass `foreign_key_check`, and must have a populated workerd upgrade test.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
 ### 2026-08-27 — Promise-returning callbacks cannot cross synchronous transactions
 

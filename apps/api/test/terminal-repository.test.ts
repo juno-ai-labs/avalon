@@ -17,8 +17,9 @@ import {
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
+  seedCanonicalConversationTurn,
   testWorkstreamObjectStore,
-  testWorkstreamRuntimeD1,
   workstreamObjectGet,
   workstreamObjectRun,
   testSubstreamAgentsBinding,
@@ -90,35 +91,25 @@ function fixture(message = "Please publish these changes and open a pull request
     Date.parse("2026-08-13T00:00:00.000Z"),
     Date.parse("2026-08-13T00:00:00.000Z"),
   );
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO messages
-       (id, workspace_id, workstream_id, author_type, author_user_id, message_type,
-        text_content, sequence_number, created_at)
-     VALUES (?, ?, ?, 'human', ?, 'text', ?, 1, '2026-08-13')`,
-    MESSAGE,
-    W,
-    S,
-    U,
-    message,
-  );
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at, trigger_message_id)
-     VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13', ?)`,
-    R,
-    W,
-    S,
-    JSON.stringify({ type: "user", userId: U }),
-    MESSAGE,
-  );
+  seedCanonicalConversationTurn(objectStore, {
+    turnId: MESSAGE,
+    clientMessageId: MESSAGE,
+    actor: "human",
+    authorUserId: U,
+    authorSnapshot: { displayName: "Terminal user", avatarUrl: null },
+    text: message,
+    transcriptSequence: 1,
+    createdAt: "2026-08-13",
+  });
+  seedWorkstreamRun(objectStore, { id: R,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: U }),
+    triggerPartId: MESSAGE });
   seedToolReceipt(objectStore, {
     id: I, runId: R, toolCallId: 'publish-call',
     toolName: 'terminal_publish_branch_and_pr', mode: 'write',
   });
   const env = createTestEnv({
-    DB: testWorkstreamRuntimeD1(sqliteD1(database), objectStore, { workspaceId: W, workstreamId: S }),
+    DB: sqliteD1(database),
     AVALON_REGION: "global",
     // Terminal repository and grant state is object-local, so these paths hold
     // the agent binding rather than only a database handle.

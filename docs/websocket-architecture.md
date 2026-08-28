@@ -398,6 +398,31 @@ explicit product states rather than speculative guesses.
 
 ## Changelog
 
+### 2026-08-27 — Snapshot rotation cannot swallow a requested transcript range
+
+**What changed:** Each pending Electron range request retains the snapshot ID it
+named. A reply merges and resolves only if both the request and current cache
+still name that snapshot; otherwise it rejects with
+`transcript_snapshot_changed`. Older/newer paging and Jump to latest recompute
+their next gap against the accepted replacement snapshot and continue.
+
+**Why:** Reconciliation may rotate a snapshot while a range is in flight. The
+old handler correctly refused to merge the stale range but still resolved the
+caller, converting “history was discarded” into “history loaded” and leaving
+the reader stranded until another manual trigger.
+
+**Considered and rejected:** Applying the old range to the new snapshot or
+silently resolving it. A range is authoritative only under its named fence, and
+success must mean its coverage entered the cache.
+
+**Consequences:** Snapshot churn may cause another socket round trip but never a
+busy retry loop: each retry waits for a correlated server reply. No guessed
+retry cap is introduced; the route and socket lifecycle remain the cancellation
+fences.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
 ### 2026-08-26 — Warm feeds are presence-free and broker limits are end-to-end
 
 **What changed:** Electron feed subscriptions now opt out of legacy

@@ -20,6 +20,7 @@ const BOOTSTRAP_VERSION = 5;
 const RESOURCE_VERSIONING_VERSION = 13;
 const VERSION_PROVENANCE_VERSION = 18;
 const RESOURCE_SLUG_VERSION = 19;
+const DRAFT_RESERVATION_VERSION = 20;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -373,5 +374,56 @@ describe("the WorkspaceDO resource-slug migration", () => {
     expect(database.prepare(
       "SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = 'resource-1'",
     ).get()).toEqual({ count: 1 });
+  });
+});
+
+describe("the WorkspaceDO pending attachment reservation migration", () => {
+  it("makes a pending reservation a database-level deletion fence", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, DRAFT_RESERVATION_VERSION);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, metadata_json,
+          uploaded_by_user_id, attachment_status, created_at, updated_at)
+       VALUES (?, ?, 'document', 'avalon_upload', 'Pending', '{}', ?, 'draft', ?, ?)`,
+    ).run(
+      "00000000-0000-7000-8000-0000000000b1",
+      WORKSPACE_ID,
+      "00000000-0000-7000-8000-0000000000b2",
+      "2026-08-28T00:00:00.000Z",
+      "2026-08-28T00:00:00.000Z",
+    );
+    database.prepare(
+      `INSERT INTO pending_attachment_reservations
+         (workspace_id, workstream_id, input_id, resource_id, user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, 1)`,
+    ).run(
+      WORKSPACE_ID,
+      "00000000-0000-7000-8000-0000000000b3",
+      "00000000-0000-7000-8000-0000000000b4",
+      "00000000-0000-7000-8000-0000000000b1",
+      "00000000-0000-7000-8000-0000000000b2",
+    );
+
+    expect(() => database.exec(
+      "DELETE FROM resources WHERE id = '00000000-0000-7000-8000-0000000000b1'",
+    )).toThrow();
+    expect(database.prepare(
+      `SELECT id FROM resources
+        WHERE attachment_status = 'draft'
+          AND NOT EXISTS (
+            SELECT 1 FROM pending_attachment_reservations reservation
+             WHERE reservation.resource_id = resources.id
+          )`,
+    ).all()).toEqual([]);
+
+    database.exec(
+      "DELETE FROM pending_attachment_reservations WHERE input_id = '00000000-0000-7000-8000-0000000000b4'",
+    );
+    database.exec("DELETE FROM resources WHERE id = '00000000-0000-7000-8000-0000000000b1'");
+    expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 0 });
+    database.close();
   });
 });

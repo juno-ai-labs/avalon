@@ -90,7 +90,7 @@ function envFor(database: DatabaseSync, objectStore: DatabaseSync): Env {
     AVALON_REGION: "global",
     APP_ENV: "test",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
-      extra: { dispatchRun: createWorkflow },
+      extra: { activateLoop: createWorkflow },
     }),
   });
 }

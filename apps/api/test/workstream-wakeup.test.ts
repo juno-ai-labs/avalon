@@ -14,7 +14,6 @@ import {
 } from "@rally/contracts";
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { fireWorkstreamWakeup } from "../src/services/workstream-service";
 import {
   MAXIMUM_PENDING_WAKEUPS_PER_WORKSTREAM,
@@ -29,12 +28,12 @@ import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testMessagePort,
   testSchedulingPort,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
-  workstreamObjectRun,
   type RecordedDispatch,
   applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
@@ -169,16 +168,8 @@ function fixture(): Fixture {
   // would block the very admission a fired wake-up performs. This run exists
   // as receipt context for the tools, the way a finished run precedes a
   // wake-up in production.
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-     VALUES (?, ?, ?, 'test', ?, 'completed', '2026-01-01')`,
-    HARNESS_RUN_ID,
-    WORKSPACE_ID,
-    WORKSTREAM_ID,
-    JSON.stringify({ type: "user", userId: USER_ID }),
-  );
+  seedWorkstreamRun(objectStore, { id: HARNESS_RUN_ID, status: "completed",
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }) });
 
   const timerRefreshes: string[] = [];
   const dispatches: RecordedDispatch[] = [];
@@ -233,6 +224,7 @@ function workflowInput(): WorkstreamWorkflowInput {
     region: "global",
     workspaceId: WORKSPACE_ID,
     workstreamId: WORKSTREAM_ID,
+    loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`,
     harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null,
     automationSubscriptionId: null,
@@ -255,10 +247,9 @@ function context(providerIdempotencyKey = "receipt-1") {
 }
 
 function wakeupTools(env: Env) {
-  // The harness hands its tools the routed execution environment; a tool's
-  // wake-up statements reach the work stream's object through it, never D1.
+  // A tool's wake-up operation reaches the work stream through its typed port.
   const tools = __integrationTesting.createAvalonTools(
-    withWorkstreamRuntimeDatabase(env, WORKSPACE_ID, WORKSTREAM_ID),
+    env,
     workflowInput(),
   );
   return {
@@ -275,7 +266,7 @@ function wakeupTools(env: Env) {
  * object while the directory reads stay regional.
  */
 function executionEnvironment(env: Env): Env {
-  return withWorkstreamRuntimeDatabase(env, WORKSPACE_ID, WORKSTREAM_ID);
+  return env;
 }
 
 function pendingRow(objectStore: DatabaseSync, wakeupId: string): WorkstreamWakeupRow {
@@ -847,8 +838,7 @@ describe("firing a due wake-up", () => {
 
     const message = workstreamObjectGet(
       objectStore,
-      "SELECT author_type, message_type, text_content FROM messages WHERE workstream_id = ?",
-      WORKSTREAM_ID,
+      "SELECT author_type, message_type, content AS text_content FROM canonical_conversation_turn_details",
     ) as { author_type: string; message_type: string; text_content: string };
     expect(message).toMatchObject({ author_type: "system", message_type: "system" });
     expect(message.text_content).toContain("Check the deploy");
@@ -874,8 +864,7 @@ describe("firing a due wake-up", () => {
 
     const message = workstreamObjectGet(
       objectStore,
-      "SELECT text_content FROM messages WHERE workstream_id = ?",
-      WORKSTREAM_ID,
+      "SELECT content AS text_content FROM canonical_conversation_turn_details",
     ) as { text_content: string };
     expect(message.text_content).toMatch(/…$/u);
     // The cut lands between words, never inside one.
@@ -983,8 +972,7 @@ describe("firing a due wake-up", () => {
 
     const messages = workstreamObjectGet(
       objectStore,
-      "SELECT COUNT(*) AS n FROM messages WHERE workstream_id = ? AND message_type = 'system'",
-      WORKSTREAM_ID,
+      "SELECT COUNT(*) AS n FROM canonical_conversation_turn_details WHERE message_type = 'system'",
     ) as { n: number };
     expect(messages.n).toBe(1);
   });

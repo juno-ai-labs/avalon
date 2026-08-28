@@ -1,104 +1,16 @@
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
-import type { ToolInvocation } from "@rally/contracts";
-import type { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
-
+import { asWorkspaceId, asWorkstreamId, type ToolInvocation } from "@rally/contracts";
+import { describe, expect, it } from "vitest";
+import { __integrationTesting } from "../src/services/integrations";
 import type { ToolReceiptObjectPort } from "../src/durable-objects/workstream-tool-receipt-protocol";
 import type { ToolReceiptRecord } from "../src/durable-objects/workstream-tool-receipt-storage";
-import { __integrationTesting } from "../src/services/integrations";
 import { createTestD1Database, createTestD1PreparedStatement, createTestEnv } from "./helpers/cloudflare-test";
-import {
-  seedWorkstreamObjectRoot,
-  testSubstreamAgentsBinding,
-  testWorkstreamObjectStore,
-} from "./helpers/durable-authority";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const workstreamId = asWorkstreamId("00000000-0000-7000-8000-000000000002");
 const harnessRunId = "00000000-0000-7000-8000-000000000003";
 const invocationId = "00000000-0000-7000-8000-000000000004";
 
-function invocation(status: "started" | "completed"): ToolInvocation {
-  return {
-    id: invocationId,
-    harnessRunId,
-    toolCallId: "tool-call-1",
-    toolName: "Search evidence",
-    activityName: "Search evidence",
-    connectionId: null,
-    plugin: null,
-    status,
-    inputSummary: '{"query":"invoice failures"}',
-    outputSummary: status === "completed" ? "Found the relevant failures." : null,
-    startedAt: "2026-08-01T12:00:01.000Z",
-    completedAt: status === "completed" ? "2026-08-01T12:00:04.000Z" : null,
-    error: null,
-  };
-}
-
-const openStores: DatabaseSync[] = [];
-
-afterEach(() => {
-  while (openStores.length > 0) openStores.pop()?.close();
-});
-
-/** An object store holding one work stream, with its sequence counter advanced. */
-function transcriptObjectStore(nextSequenceNumber: number): DatabaseSync {
-  const store = testWorkstreamObjectStore();
-  openStores.push(store);
-  seedWorkstreamObjectRoot(store, { workspaceId, workstreamId });
-  store.prepare(`UPDATE workstream SET next_sequence_number = ? WHERE id = 1`)
-    .run(nextSequenceNumber);
-  return store;
-}
-
-interface StoredToolPart extends Record<string, string | number | null> {
-  id: string;
-  client_message_id: string;
-  sequence_number: number;
-  message_type: string;
-  structured_content_json: string;
-  created_at: number;
-  edited_at: number | null;
-}
-
 describe("durable inline tool transcript", () => {
-  it("keeps one canonical sequence while lifecycle and replay updates refresh the same row", async () => {
-    const store = transcriptObjectStore(12);
-    const env = createTestEnv({
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(store),
-      AVALON_REGION: "global",
-    });
-    const scope = { workspaceId, workstreamId };
-
-    await __integrationTesting.persistToolTranscriptMessage(env, scope, invocation("started"));
-    await __integrationTesting.persistToolTranscriptMessage(env, scope, invocation("completed"));
-    await __integrationTesting.persistToolTranscriptMessage(env, scope, invocation("completed"));
-
-    // One row, one sequence position, and the counter moved exactly once — the
-    // two refreshes rewrote the card rather than taking a new position.
-    const parts = store.prepare(`SELECT * FROM workstream_message_details`).all() as StoredToolPart[];
-    expect(parts).toHaveLength(1);
-    expect(parts[0]).toMatchObject({
-      id: invocationId,
-      client_message_id: `tool:${invocationId}`,
-      sequence_number: 12,
-      message_type: "tool",
-      created_at: Date.parse("2026-08-01T12:00:01.000Z"),
-      edited_at: Date.parse("2026-08-01T12:00:04.000Z"),
-    });
-    expect(JSON.parse(parts[0]!.structured_content_json)).toEqual({
-      invocation: invocation("completed"),
-    });
-    const root = store.prepare(
-      `SELECT next_sequence_number, next_attention_ordinal FROM workstream WHERE id = 1`,
-    ).get() as { next_sequence_number: number; next_attention_ordinal: number };
-    expect(root.next_sequence_number).toBe(13);
-    // A tool card is machinery a member did not do, so it takes no attention
-    // ordinal — the retired insert trigger drew that line, and the object keeps it.
-    expect(root.next_attention_ordinal).toBe(1);
-  });
-
   it("keeps replay output exact regardless of serialized size", () => {
     const exactOutput = { body: "x".repeat(3_000), nested: [1, 2, 3] };
     expect(JSON.parse(__integrationTesting.serializeToolReplayOutput(exactOutput))).toEqual({

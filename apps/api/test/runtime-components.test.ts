@@ -2,7 +2,6 @@ import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ServerSocketEventSchema } from "@rally/contracts";
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
 
 import { scheduledAlarmRetryDelay } from "../src/durable-objects/scheduled-alarms";
 import {
@@ -19,6 +18,9 @@ import {
 } from "../src/durable-objects/substream-agent";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import { substreamLoopId } from "../src/durable-objects/names";
 import {
   assertDurableObjectJurisdiction,
   deriveWorkspacePlacementAffinity,
@@ -109,6 +111,20 @@ describe("runtime component invariants", () => {
       now,
       now,
     );
+    new SubstreamLoopStorage(storage).ensureLoop({
+      loopId: substreamLoopId(workstreamId),
+      bindStateRevision: 0,
+      now,
+    });
+    sql.exec(
+      `UPDATE substream_loops
+          SET status = 'executing', cycle_ordinal = 1,
+              active_execution_id = ?, active_execution_epoch = 1,
+              lease_owner = 'archive-test-owner', lease_expires_at = ?
+        WHERE id = 1`,
+      runId,
+      now + 60_000,
+    );
     const regional = new DatabaseSync(":memory:");
     regional.exec(`CREATE TABLE workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL, role TEXT NOT NULL
@@ -160,10 +176,16 @@ describe("runtime component invariants", () => {
     expect(sql.exec<{ archived_at: number | null; exact_state: string }>(
       `SELECT archived_at, exact_state FROM workstream WHERE id = 1`,
     ).one()).toMatchObject({ archived_at: expect.any(Number), exact_state: "archived" });
+    expect(new SubstreamLoopStorage(storage).loop()).toMatchObject({
+      status: "executing",
+      stop_requested_at: expect.any(Number),
+      stop_after_step_ordinal: 0,
+      stop_reason: "workstream_archived",
+    });
     expect(sql.exec<{ cancellation_requested_at: number | null }>(
       `SELECT cancellation_requested_at FROM runs WHERE run_id = ?`,
       runId,
-    ).one().cancellation_requested_at).toEqual(expect.any(Number));
+    ).one().cancellation_requested_at).toBeNull();
     expect(sql.exec<{ count: number }>(
       `SELECT COUNT(*) AS count FROM durable_inbox_receipts
         WHERE channel = 'workstream_batch_update'`,
@@ -289,19 +311,7 @@ describe("runtime component invariants", () => {
     database.close();
   });
 
-  it("rechecks drain identity after the pre-claim regional-effects await", () => {
-    const source = readFileSync(
-      new URL("../src/durable-objects/substream-agent.ts", import.meta.url),
-      "utf8",
-    );
-    const barrier = source.indexOf("await this.flushDueRegionalEffects();");
-    const claim = source.indexOf("const claim = claimAgentRunDispatch(", barrier);
-    expect(barrier).toBeGreaterThan(-1);
-    expect(claim).toBeGreaterThan(barrier);
-    expect(source.slice(barrier, claim)).toContain("if (!ownsDrain()) return;");
-  });
-
-  it("fences product failure on the dispatch token owned by the caller", async () => {
+  it("fences product failure on the singleton loop execution lease", async () => {
     const database = new DatabaseSync(":memory:");
     const sql = createTestSqlStorage(database);
     const storage = createCloudflareTestBinding<DurableObjectStorage>({
@@ -321,39 +331,40 @@ describe("runtime component invariants", () => {
         WHERE id = 1`,
     );
     const now = Date.now();
+    const loopId = substreamLoopId(workstreamId);
+    const leaseOwner = "successor-owner";
+    const loops = new SubstreamLoopStorage(storage);
+    loops.ensureLoop({ loopId, bindStateRevision: 0, now });
     sql.exec(
       `INSERT INTO runs (
          run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
          model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-         created_at, updated_at
-       ) VALUES (?, '0', NULL, 'running', '{}', 0, 0, '', 0, 0, ?,
-                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, ?)`,
+         execution_context_json, created_at, updated_at
+       ) VALUES (?, '0', NULL, 'admitted', '{}', 0, 0, '', 0, 0, ?,
+                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, '{}', ?, ?)`,
       runId,
       now,
       now,
       now,
     );
-    sql.exec(
-      `INSERT INTO agent_run_dispatches
-         (run_id, input_json, state, attempt, available_at, started_at,
-          completed_at, last_error_code, lease_token, lease_expires_at,
-          created_at, updated_at)
-       VALUES (?, '{}', 'running', 2, ?, ?, NULL, NULL, 'successor-token', ?, ?, ?)`,
+    loops.activateExecutionReceipt({
       runId,
+      loopId,
+      expectedLoopRevision: loops.loop()!.revision,
+      expectedBindStateRevision: 0,
+      executionEpoch: 1,
+      leaseOwner,
+      leaseExpiresAt: now + 60_000,
       now,
-      now,
-      now + 60_000,
-      now,
-      now,
-    );
+    });
     const product = new WorkstreamObjectProductService(storage, store, createTestEnv({}));
 
     await expect(product.recordWorkflowFailed(
       runId,
       { code: "provider_failed", message: "Provider failed" },
-      "stale-token",
+      { loopId, executionId: runId, executionEpoch: 1, leaseOwner: "stale-owner" },
     )).rejects.toThrow("workstream_run_failure_fenced");
     expect(sql.exec<{ status: string }>(
       `SELECT status FROM runs WHERE run_id = ?`, runId,
@@ -365,7 +376,7 @@ describe("runtime component invariants", () => {
     await expect(product.recordWorkflowFailed(
       runId,
       { code: "provider_failed", message: "Provider failed" },
-      "successor-token",
+      { loopId, executionId: runId, executionEpoch: 1, leaseOwner },
     )).resolves.toBeUndefined();
     expect(sql.exec<{ status: string }>(
       `SELECT status FROM runs WHERE run_id = ?`, runId,
@@ -400,6 +411,112 @@ describe("runtime component invariants", () => {
       affinity: expected,
       source: "missing_request_metadata",
     });
+  });
+
+  it("replays the canonical turn and discards a preparation the canonical write outran", async () => {
+    const database = new DatabaseSync(":memory:");
+    const sql = createTestSqlStorage(database);
+    // The admission transaction re-checks `client_message_id` because a
+    // canonical turn can land during the asynchronous preparation window.
+    // This hook commits exactly that interleaving deterministically: the
+    // canonical write happens after admission's outer replay checks ran, but
+    // before its commit transaction observes the world.
+    let commitCanonicalBeforeNextTransaction: (() => void) | null = null;
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (callback: () => unknown) => {
+        const inject = commitCanonicalBeforeNextTransaction;
+        commitCanonicalBeforeNextTransaction = null;
+        if (inject) inject();
+        return callback();
+      },
+      sql,
+    });
+    const store = new WorkstreamObjectStore(storage, "test", "global");
+    const workspaceId = asWorkspaceId("00000000-0000-7000-8000-0000000000b1");
+    const workstreamId = asWorkstreamId("00000000-0000-7000-8000-0000000000b2");
+    store.ensureIdentity({ workspaceId, workstreamId }, "global");
+    sql.exec(
+      `UPDATE workstream
+          SET authority_mode = 'authoritative', authority_generation = 1,
+              scope = 'workspace', exact_state = 'running'
+        WHERE id = 1`,
+    );
+    const product = new WorkstreamObjectProductService(storage, store, createTestEnv({}));
+    const transcript = new WorkstreamTranscriptStorage(storage);
+    const now = Date.now();
+    const clientMessageId = "external:duplicate-delivery:1";
+    const canonicalTurnId = "00000000-0000-7000-8000-0000000000b3";
+    const canonical = await transcript.prepareParticipantMessage({
+      turnId: canonicalTurnId,
+      actor: "external",
+      authorUserId: null,
+      authorSnapshot: null,
+      clientMessageId,
+      messageType: "text",
+      text: "Duplicate connector delivery",
+      structuredContentJson: null,
+      externalActorJson: JSON.stringify({
+        provider: "slack",
+        providerAccountId: "team-1",
+        providerUserId: "member-1",
+        displayName: "Slack Member",
+        avatarUrl: null,
+      }),
+      producedByRunId: null,
+      messageSequenceNumber: 1,
+      createdAtUtc: new Date(now).toISOString(),
+      attentionOrdinal: null,
+    });
+    commitCanonicalBeforeNextTransaction = () => {
+      transcript.appendPreparedParticipantMessage(canonical);
+    };
+
+    const inputId = "00000000-0000-7000-8000-0000000000b4";
+    const result = await product.admitExternalMessage({
+      workspaceId,
+      workstreamId,
+      messageId: inputId,
+      clientMessageId,
+      actor: {
+        provider: "slack",
+        providerAccountId: "team-1",
+        providerUserId: "member-1",
+        displayName: "Slack Member",
+        avatarUrl: null,
+      },
+      text: "Duplicate connector delivery",
+      structuredContentJson: null,
+      executionPrincipal: { type: "workspace", workspaceId },
+      origin: "slack_message",
+      messageType: "text",
+      runMode: "steer",
+      now,
+    });
+
+    // The canonical write actually raced (the hook fired), and the admission
+    // answered with the canonical turn instead of admitting a duplicate.
+    expect(commitCanonicalBeforeNextTransaction).toBeNull();
+    expect(result).toMatchObject({
+      deliveryState: "canonical",
+      inserted: false,
+      activationRequest: null,
+      turn: { turnId: canonicalTurnId, clientMessageId },
+    });
+    // The outran preparation is discarded, not left to deliver a second copy.
+    expect(sql.exec<{ state: string }>(
+      `SELECT state FROM pending_loop_input_mailbox WHERE input_id = ?`,
+      inputId,
+    ).one().state).toBe("discarded");
+    expect(new SubstreamLoopStorage(storage).inputByClientMessageId(clientMessageId)).toBeUndefined();
+    // Exactly one canonical turn owns the client message id.
+    expect(sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details
+        WHERE client_message_id = ?`,
+      clientMessageId,
+    ).one().count).toBe(1);
+    database.close();
   });
 
   it("uses a region/workspace/work-stream stable room name", () => {
@@ -568,9 +685,10 @@ describe("runtime component invariants", () => {
       type: "stream_delta",
       sequence: 9,
       occurredAt: at,
-      messageId,
+      streamId: messageId,
       harnessRunId,
       turnId: "turn-one",
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -580,9 +698,10 @@ describe("runtime component invariants", () => {
       type: "stream_started",
       sequence: 10,
       occurredAt: at,
-      messageId,
+      streamId: messageId,
       harnessRunId,
       turnId: "turn-one",
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -591,8 +710,9 @@ describe("runtime component invariants", () => {
       type: "stream_delta",
       sequence: 11,
       occurredAt: at,
-      messageId,
+      streamId: messageId,
       turnId: "turn-one",
+      transcriptSequence: 1,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -602,9 +722,10 @@ describe("runtime component invariants", () => {
       type: "stream_started",
       sequence: 12,
       occurredAt: at,
-      messageId,
+      streamId: messageId,
       harnessRunId,
       turnId: "turn-two",
+      transcriptSequence: 2,
       epoch: 0,
       streamSeq: 0,
       reset: false,
@@ -613,8 +734,9 @@ describe("runtime component invariants", () => {
       type: "stream_delta",
       sequence: 13,
       occurredAt: at,
-      messageId,
+      streamId: messageId,
       turnId: "turn-two",
+      transcriptSequence: 2,
       epoch: 0,
       streamSeq: 1,
       reset: false,
@@ -624,8 +746,9 @@ describe("runtime component invariants", () => {
       type: "stream_delta",
       sequence: 14,
       occurredAt: at,
-      messageId,
+      streamId: messageId,
       turnId: "turn-two",
+      transcriptSequence: 2,
       epoch: 1,
       streamSeq: 2,
       reset: true,
@@ -633,7 +756,7 @@ describe("runtime component invariants", () => {
     }));
 
     expect(checkpoints).toEqual([expect.objectContaining({
-      messageId,
+      streamId: messageId,
       harnessRunId,
       text: "First answer. Final continuation.",
       turnStartOffset: "First answer.".length,

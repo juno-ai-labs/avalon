@@ -8,7 +8,7 @@ import type { WorkstreamSummary } from './types';
 /**
  * The one cache entry every work-stream list reads and every producer writes.
  *
- * It deliberately carries no parameters. Realtime `message_created` handling,
+ * It deliberately carries no parameters. Realtime transcript-turn handling,
  * renames and read-state callbacks all patch this entry directly with
  * `setQueryData`, so a key that varied with the caller's options would leave
  * those writes updating something nobody observes — the sidebar would sit on

@@ -48,11 +48,9 @@ export function evictCachedWorkstream(
 ): void {
   const queryPrefixes = [
     ['workstream', workstreamId],
-    ['messages', workstreamId],
-    ['messages-cursor', workstreamId],
-    ['messages-newer-cursor', workstreamId],
+    ['ordered-transcript', workstreamId],
+    ['transcript-overlays', workstreamId],
     ['workstream-feed-source', workstreamId],
-    ['workstream-recovery-feed', workstreamId],
     ['workstream-socket-snapshot-generation', workstreamId],
     ['workstream-context', workstreamId],
     ['block-dashboard', workstreamId],

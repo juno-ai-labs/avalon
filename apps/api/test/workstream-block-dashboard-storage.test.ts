@@ -156,16 +156,11 @@ describe("the lease a block result is written under", () => {
     ]);
   });
 
-  /**
-   * The statuses the retired `_runtime_harness_runs` view projected as
-   * `running`. Nothing writes either one today, so these two cases stand on the
-   * `runs` CHECK constraint's vocabulary rather than on a path the product can
-   * reach. They are here because the fence is what would silently start
-   * dropping block results if a writer ever appeared: a status it does not
-   * recognise reads as a lost lease, which is a refusal nobody would look for.
-   */
+  // These statuses belong to the retired per-run loop. The schema retains the
+  // historical vocabulary, but a forward executor must not turn such an inert
+  // receipt into participant-visible block output.
   for (const status of ["waiting", "steering"] as const) {
-    it(`settles the block while the run is ${status}`, () => {
+    it(`refuses to settle a block from the retired ${status} receipt state`, () => {
       const { storage, sql } = open();
       storage.admitDispatch(dispatch());
       holdLease(sql);
@@ -178,9 +173,9 @@ describe("the lease a block result is written under", () => {
         errorJson: null,
         fence,
         now: NOW,
-      })).toBe("written");
+      })).toBe("ownership_lost");
       expect(sql.exec(`SELECT status, markdown FROM block_dashboard_block_runs`).toArray())
-        .toEqual([{ status: "completed", markdown: "still ours" }]);
+        .toEqual([{ status: "queued", markdown: null }]);
     });
   }
 

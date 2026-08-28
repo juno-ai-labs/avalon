@@ -112,6 +112,38 @@ describe('uploaded attachment drafts', () => {
     database.close();
   });
 
+  it("refuses to delete a draft reserved by a pending work-stream input", async () => {
+    const database = attachmentDatabase();
+    const environment = createTestEnv({
+      AVALON_REGION: "global",
+      MAX_ATTACHMENT_BYTES: "25000000",
+      DB: sqliteD1(database),
+      PAYLOADS: { async put() {}, async delete() {} },
+    });
+    const service = new ResourceService(environment, auth);
+    await service.upload(new File(["pending"], "pending.txt"), undefined, draftId);
+    database.prepare(
+      `INSERT INTO pending_attachment_reservations
+         (workspace_id, workstream_id, input_id, resource_id, user_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      workspaceId,
+      "00000000-0000-7000-8000-000000000005",
+      "00000000-0000-7000-8000-000000000006",
+      draftId,
+      userId,
+      Date.now(),
+    );
+
+    await expect(service.deleteDraft(draftId)).rejects.toMatchObject({
+      status: 404,
+      code: "attachment_draft_not_found",
+    });
+    expect(database.prepare("SELECT id FROM resources WHERE id = ?").get(draftId))
+      .toEqual({ id: draftId });
+    database.close();
+  });
+
   it('refreshes connector content with a fenced generation and invalidates every old derivative', async () => {
     const database = attachmentDatabase();
     insertHydratedResource(database, 'old-original', 'old-hash');

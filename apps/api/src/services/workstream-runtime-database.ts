@@ -1,329 +1,12 @@
-import { z } from "zod";
+import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
 import { substreamAgentName } from "../durable-objects/names";
 import { rpcResultBody } from "../durable-objects/rpc-result";
-import type { WorkstreamRuntimeSqlResult } from "../durable-objects/workstream-runtime-sql";
-import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import type { WorkstreamProvisionInput } from "../durable-objects/workstream-identity-storage";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { splitSqlStatements } from "../lib/sql-statements";
-import { uuidV7 } from "../lib/uuid-v7";
-import { readWorkstreamAuthorityControl } from "./workstream-authority";
 import { createIdentityObjectPort } from "../runtime/identity-port";
-import type { WorkstreamProvisionInput } from "../durable-objects/workstream-identity-storage";
-
-type RuntimeValue = string | number | null;
-
-const REGIONAL_DATABASE = Symbol("workstream-regional-database");
-/**
- * Local executors carried on the environment, keyed by substream.
- *
- * A `SubstreamAgent` hands its own storage in as an executor so its SQL never
- * leaves the object. Without this the very next helper to re-derive an
- * execution environment from that one — `launchWorkstreamHarness`, the flag
- * targeting loader, digest settlement — would build a port with no executor and
- * send every statement back through the namespace into the object that issued
- * it. See `lib/durable-object-self.ts` for the general defect.
- */
-const LOCAL_EXECUTORS = Symbol("workstream-local-executors");
-
-type LocalExecutorRegistry = ReadonlyMap<string, LocalStatementExecutor>;
-
-function executorKey(workspaceId: string, workstreamId: string, substreamId: string): string {
-  return `${workspaceId}:${workstreamId}:${substreamId}`;
-}
-
-function carriedExecutors(env: Env): LocalExecutorRegistry {
-  return (env as Env & { [LOCAL_EXECUTORS]?: LocalExecutorRegistry })[LOCAL_EXECUTORS]
-    ?? new Map();
-}
-
-interface BoundStatement {
-  sql: string;
-  params: RuntimeValue[];
-  local: boolean;
-}
-
-type LocalStatementExecutor = (
-  statements: Array<{ sql: string; params: RuntimeValue[] }>,
-) => Promise<WorkstreamRuntimeSqlResult[]>;
-
-const responseSchema = z.object({
-  results: z.array(z.object({
-    columns: z.array(z.string()),
-    rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.null()]))),
-    changes: z.number().int().nonnegative(),
-  })),
-});
-
-const LOCAL_TABLES = [
-  "harness_runs",
-  "runs",
-  "run_steering",
-  "inference_attempts",
-  "message_attachments",
-  "message_mentions",
-  "messages",
-  // The object's own receipt table, not a legacy name: when migration 17
-  // retired `tool_invocations` from this list, the dev seed moved to writing
-  // `tool_effects` directly — and a statement naming only that table fell
-  // through to regional D1, which has not held product tables since 0090.
-  // Production readers reach it by also naming `harness_runs`; the entry is
-  // what routes a statement that names it alone.
-  "tool_effects",
-] as const;
-
-const LOCAL_TABLE_PATTERNS = LOCAL_TABLES.map((table) =>
-  new RegExp(`\\b(?:FROM|JOIN|UPDATE|INTO)\\s+["\u0060\\[]?${table}\\b`, "iu"));
-const LOCAL_TABLE_SET = new Set<string>(LOCAL_TABLES);
-
-function mutationTarget(sql: string): string | null {
-  // The conflict clause belongs to the verb on UPDATE too; reading it as the
-  // table name misroutes the statement. See the workspace router's twin.
-  return /^\s*(?:(?:INSERT|REPLACE)(?:\s+OR\s+\w+)?\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+["`[]?([\w]+)["`\]]?/iu
-    .exec(sql)?.[1]?.toLowerCase() ?? null;
-}
-
-/**
- * True when the statement names a table the work-stream object owns, in FROM,
- * JOIN, or write position.
- *
- * Exported for the workspace router: a statement that touches work-stream
- * authority must reach this layer even when it also names workspace tables,
- * because only the work-stream object holds compat views (`_runtime_users`,
- * `_runtime_resources`) for the tables it does not own. The workspace object
- * holds no such views for work-stream tables, so the same statement there is
- * a guaranteed `no such table`.
- */
-export function referencesWorkstreamAuthorityTable(sql: string): boolean {
-  return LOCAL_TABLE_PATTERNS.some((pattern) => pattern.test(sql));
-}
-
-function localStatement(sql: string): boolean {
-  const mentionsLocalTable = referencesWorkstreamAuthorityTable(sql);
-  const target = mutationTarget(sql);
-  if (mentionsLocalTable && target && !LOCAL_TABLE_SET.has(target)) {
-    throw new Error("workstream_runtime_cross_authority_statement");
-  }
-  return mentionsLocalTable;
-}
-
-function d1Result<T>(result: WorkstreamRuntimeSqlResult): D1Result<T> {
-  return {
-    success: true,
-    results: result.rows as T[],
-    meta: {
-      changes: result.changes,
-      duration: 0,
-      last_row_id: 0,
-      rows_read: result.rows.length,
-      rows_written: result.changes,
-      changed_db: result.changes > 0,
-      size_after: 0,
-    },
-  } as D1Result<T>;
-}
-
-class WorkstreamRuntimePreparedStatement implements D1PreparedStatement {
-  constructor(
-    private readonly database: WorkstreamRuntimeDatabase,
-    readonly statement: BoundStatement,
-  ) {}
-
-  bind(...values: unknown[]): D1PreparedStatement {
-    const params = values.map((value) => {
-      if (value === null || typeof value === "string" || typeof value === "number") return value;
-      throw new Error("workstream_runtime_bind_value_unsupported");
-    });
-    return new WorkstreamRuntimePreparedStatement(
-      this.database,
-      { ...this.statement, params },
-    );
-  }
-
-  async first<T = Record<string, unknown>>(column?: string): Promise<T | null> {
-    const result = await this.database.execute(this.statement);
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    if (!row) return null;
-    return (column === undefined ? row : row[column]) as T;
-  }
-
-  async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
-    return d1Result<T>(await this.database.execute(this.statement));
-  }
-
-  async all<T = Record<string, unknown>>(): Promise<D1Result<T>> {
-    return d1Result<T>(await this.database.execute(this.statement));
-  }
-
-  raw<T = unknown[]>(options: { columnNames: true }): Promise<[string[], ...T[]]>;
-  raw<T = unknown[]>(options?: { columnNames?: false }): Promise<T[]>;
-  async raw<T = unknown[]>(options?: { columnNames?: boolean }): Promise<T[] | [string[], ...T[]]> {
-    const result = await this.database.execute(this.statement);
-    const values = result.rows.map((row) => result.columns.map((column) => row[column]));
-    return options?.columnNames
-      ? [result.columns, ...values as T[]]
-      : values as T[];
-  }
-}
-
-class WorkstreamRuntimeDatabase implements D1Database {
-  constructor(
-    private readonly env: Env,
-    private readonly workspaceId: string,
-    private readonly workstreamId: string,
-    private readonly substreamId = "0",
-    private readonly localExecutor?: LocalStatementExecutor,
-  ) {}
-
-  prepare(sql: string): D1PreparedStatement {
-    return new WorkstreamRuntimePreparedStatement(this, {
-      sql,
-      params: [],
-      local: localStatement(sql),
-    });
-  }
-
-  async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-    const bound = statements.map((statement) => {
-      if (!(statement instanceof WorkstreamRuntimePreparedStatement)) {
-        throw new Error("workstream_runtime_foreign_statement");
-      }
-      return statement.statement;
-    });
-    const localCount = bound.filter((statement) => statement.local).length;
-    if (localCount !== 0 && localCount !== bound.length) {
-      throw new Error("workstream_runtime_cross_authority_transaction");
-    }
-    if (localCount === 0) {
-      return this.env.DB.batch(bound.map((statement) =>
-        this.env.DB.prepare(statement.sql).bind(...statement.params))) as Promise<D1Result<T>[]>;
-    }
-    return (await this.executeLocal(bound)).map((result) => d1Result<T>(result));
-  }
-
-  async execute(statement: BoundStatement): Promise<WorkstreamRuntimeSqlResult> {
-    if (!statement.local) {
-      const result = await this.env.DB.prepare(statement.sql).bind(...statement.params).all();
-      return {
-        columns: result.results.length === 0 ? [] : Object.keys(result.results[0] as object),
-        rows: result.results as Array<Record<string, string | number | null>>,
-        changes: Number(result.meta.changes ?? 0),
-      };
-    }
-    const [result] = await this.executeLocal([statement]);
-    if (!result) throw new Error("workstream_runtime_result_missing");
-    return result;
-  }
-
-  private async executeLocal(statements: BoundStatement[]): Promise<WorkstreamRuntimeSqlResult[]> {
-    if (this.localExecutor) {
-      return this.localExecutor(statements.map(({ sql, params }) => ({ sql, params })));
-    }
-    const stub = await durableObjectStubForWorkspace(
-      this.env,
-      this.env.SUBSTREAM_AGENTS,
-      this.workspaceId,
-      substreamAgentName(
-        this.env.AVALON_REGION,
-        asWorkspaceId(this.workspaceId),
-        asWorkstreamId(this.workstreamId),
-        asSubstreamId(this.substreamId),
-      ),
-    );
-    const response = await stub.executeRuntimeSql({
-      workspaceId: this.workspaceId,
-      workstreamId: this.workstreamId,
-      requestId: uuidV7(),
-      statements: statements.map(({ sql, params }) => ({ sql, params })),
-    });
-    if (response.status < 200 || response.status >= 300) {
-      const body = rpcResultBody(response) as { error?: unknown } | null;
-      throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_sql_failed");
-    }
-    return responseSchema.parse(rpcResultBody(response)).results;
-  }
-
-  async exec(query: string): Promise<D1ExecResult> {
-    const statements = splitSqlStatements(query).map((sql) => ({
-      sql,
-      params: [] as RuntimeValue[],
-      local: localStatement(sql),
-    }));
-    const localCount = statements.filter((statement) => statement.local).length;
-    if (localCount !== 0 && localCount !== statements.length) {
-      throw new Error("workstream_runtime_cross_authority_transaction");
-    }
-    if (localCount === 0) return this.env.DB.exec(query);
-    await this.executeLocal(statements);
-    return { count: statements.length, duration: 0 } as D1ExecResult;
-  }
-
-  dump(): Promise<ArrayBuffer> {
-    return Promise.reject(new Error("workstream_runtime_dump_unsupported"));
-  }
-
-  withSession(): D1DatabaseSession {
-    throw new Error("workstream_runtime_sessions_unsupported");
-  }
-}
-
-/** D1-compatible router: local work-stream SQL goes to its DO, regional SQL stays in D1. */
-export function workstreamRuntimeDatabase(
-  env: Env,
-  workspaceId: string,
-  workstreamId: string,
-  substreamId = "0",
-  localExecutor?: LocalStatementExecutor,
-): D1Database {
-  return new WorkstreamRuntimeDatabase(env, workspaceId, workstreamId, substreamId, localExecutor);
-}
-
-/** Preserve every Worker binding while substituting the runtime database port. */
-export function withWorkstreamRuntimeDatabase(
-  env: Env,
-  workspaceId: string,
-  workstreamId: string,
-  substreamId = "0",
-  localExecutor?: LocalStatementExecutor,
-): Env {
-  const inherited = carriedExecutors(env);
-  const key = executorKey(workspaceId, workstreamId, substreamId);
-  const executor = localExecutor ?? inherited.get(key);
-  const database = workstreamRuntimeDatabase(
-    env,
-    workspaceId,
-    workstreamId,
-    substreamId,
-    executor,
-  );
-  const carried: LocalExecutorRegistry = localExecutor
-    ? new Map(inherited).set(key, localExecutor)
-    : inherited;
-  return new Proxy(env, {
-    get(target, property, receiver) {
-      if (property === "DB") return database;
-      if (property === REGIONAL_DATABASE) return target.DB;
-      if (property === LOCAL_EXECUTORS) return carried;
-      return Reflect.get(target, property, receiver) as unknown;
-    },
-  });
-}
-
-/**
- * Route this work stream's SQL at its own object.
- *
- * Still async, and still separate from `withWorkstreamRuntimeDatabase`: callers
- * await an execution environment, and the two are not interchangeable at a call
- * site that also bootstraps.
- */
-export async function workstreamExecutionEnvironment(
-  env: Env,
-  workspaceId: string,
-  workstreamId: string,
-): Promise<Env> {
-  return withWorkstreamRuntimeDatabase(env, workspaceId, workstreamId);
-}
+import { readWorkstreamAuthorityControl } from "./workstream-authority";
 
 /**
  * Build the regional work-stream identity insert for the schema currently
@@ -408,9 +91,7 @@ export async function writeRegionalWorkstreamAnchorBatch(
     const migrationRemovedLegacyColumns =
       /(?:no such column|has no column named).*title|title.*(?:no such column|has no column named)/iu
         .test(reason);
-    if (!anchor.legacyShape || !migrationRemovedLegacyColumns) {
-      throw error;
-    }
+    if (!anchor.legacyShape || !migrationRemovedLegacyColumns) throw error;
     await env.DB.batch([
       finalRegionalWorkstreamAnchorStatement(env, input.workspaceId, input.workstreamId),
       ...additionalStatements(),
@@ -418,11 +99,7 @@ export async function writeRegionalWorkstreamAnchorBatch(
   }
 }
 
-/**
- * Reserve the regional identity/routing anchor and open an empty normalized
- * object for a system producer that will populate it through the runtime SQL
- * compatibility port.
- */
+/** Reserve the regional route and open one empty authoritative work-stream object. */
 export async function bootstrapWorkstreamRuntimeEnvironment(
   env: Env,
   workspaceId: string,
@@ -464,7 +141,10 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
     const body = rpcResultBody(response) as { error?: unknown } | null;
     throw new Error(typeof body?.error === "string" ? body.error : "workstream_runtime_bootstrap_failed");
   }
-  return withWorkstreamRuntimeDatabase(env, workspaceId, workstreamId);
+  // Product operations now use typed object ports. The caller keeps its
+  // original environment instead of receiving a database-shaped authority
+  // overlay whose table-name matcher silently chose a destination.
+  return env;
 }
 
 /**
@@ -472,13 +152,8 @@ export async function bootstrapWorkstreamRuntimeEnvironment(
  *
  * The other half of {@link bootstrapWorkstreamRuntimeEnvironment}: that opens an
  * empty authoritative object, and this says what the work stream is and who can
- * see it. The four producers that create a work stream nobody typed into —
- * automation, a schedule, an activity, a digest — used to write those rows as a
- * routed batch against `_runtime_workstreams` and `_runtime_workstream_participants`.
- *
- * Not `WorkstreamObjectCreationService`, which is the member path: it requires
- * an opening message and produces a first run, and three of these four have
- * neither at creation time.
+ * see it. Automation, schedule, activity, and digest producers all use the same
+ * typed identity operation rather than D1-shaped compatibility views.
  */
 export async function provisionWorkstreamObject(
   env: Env,
@@ -486,10 +161,3 @@ export async function provisionWorkstreamObject(
 ): Promise<void> {
   await createIdentityObjectPort(env, input.workspaceId, input.workstreamId).provision(input);
 }
-
-/** Escape hatch for an explicitly regional half of a cross-authority operation. */
-export function regionalDatabase(env: Env): D1Database {
-  return (env as Env & { [REGIONAL_DATABASE]?: D1Database })[REGIONAL_DATABASE] ?? env.DB;
-}
-
-export const __workstreamRuntimeDatabaseTesting = { localStatement };
