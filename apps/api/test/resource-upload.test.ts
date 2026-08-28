@@ -67,6 +67,75 @@ describe('uploaded attachment drafts', () => {
     database.close();
   });
 
+  it('preserves uploaded bytes when the resource insert commits but its response is lost', async () => {
+    const database = attachmentDatabase();
+    const stored = new Set<string>();
+    const deleted: string[] = [];
+    const environment = createTestEnv({
+      AVALON_REGION: 'global',
+      MAX_ATTACHMENT_BYTES: '25000000',
+      DB: sqliteD1(database, (sql) => sql.includes('INSERT INTO resources') ? 'after' : false),
+      PAYLOADS: {
+        async put(key: string) { stored.add(key); },
+        async delete(key: string) { deleted.push(key); stored.delete(key); },
+      },
+    });
+
+    await expect(new ResourceService(environment, auth).upload(
+      new File(['durable'], 'durable.txt', { type: 'text/plain' }),
+      undefined,
+      draftId,
+    )).rejects.toThrow('forced_d1_failure');
+
+    const resource = database.prepare(
+      'SELECT content_ref FROM resources WHERE id = ?',
+    ).get(draftId) as { content_ref: string };
+    expect(deleted).toEqual([]);
+    expect(stored).toEqual(new Set([resource.content_ref]));
+    expect(database.prepare(
+      `SELECT object_ref, cleanup_eligible
+         FROM resource_object_deletion_outbox WHERE object_ref = ?`,
+    ).get(resource.content_ref)).toEqual({
+      object_ref: resource.content_ref,
+      cleanup_eligible: 0,
+    });
+    database.close();
+  });
+
+  it('preserves deletion cleanup ownership when a draft is removed before publisher cleanup', async () => {
+    const database = attachmentDatabase();
+    const stored = new Set<string>();
+    let interleaved = false;
+    const environment = createTestEnv({
+      AVALON_REGION: 'global',
+      MAX_ATTACHMENT_BYTES: '25000000',
+      DB: sqliteD1(database, undefined, (sql) => {
+        if (!interleaved && sql.includes('DELETE FROM resource_object_deletion_outbox')) {
+          interleaved = true;
+          database.prepare('DELETE FROM resources WHERE id = ?').run(draftId);
+        }
+      }),
+      PAYLOADS: {
+        async put(key: string) { stored.add(key); },
+        async delete(key: string) { stored.delete(key); },
+      },
+    });
+
+    await expect(new ResourceService(environment, auth).upload(
+      new File(['handoff'], 'handoff.txt', { type: 'text/plain' }),
+      undefined,
+      draftId,
+    )).rejects.toMatchObject({ status: 404, code: 'resource_not_found' });
+
+    expect(stored).toHaveLength(1);
+    expect(database.prepare(
+      'SELECT cleanup_eligible FROM resource_object_deletion_outbox',
+    ).get()).toEqual({ cleanup_eligible: 1 });
+    await reapDeletedResourceObjects(environment);
+    expect(stored).toHaveLength(0);
+    database.close();
+  });
+
   it('reports re-fetch support from the connector adapter rather than watch state', async () => {
     const database = attachmentDatabase();
     insertHydratedResource(database, 'existing-original', 'b'.repeat(64));
@@ -376,7 +445,11 @@ function attachmentDatabase(): DatabaseSync {
   return database;
 }
 
-function sqliteD1(database: DatabaseSync, failOnce?: (sql: string) => boolean): D1Database {
+function sqliteD1(
+  database: DatabaseSync,
+  failOnce?: (sql: string) => boolean | 'after',
+  beforeRun?: (sql: string) => void,
+): D1Database {
   let failed = false;
   const prepare = (sql: string): D1PreparedStatement => {
     let values: unknown[] = [];
@@ -387,8 +460,11 @@ function sqliteD1(database: DatabaseSync, failOnce?: (sql: string) => boolean): 
         return createTestD1Result<T>({ results: database.prepare(sql).all(...values as never[]) as T[], success: true, meta: {} });
       },
       async run<T>() {
-        if (!failed && failOnce?.(sql)) { failed = true; throw new Error('forced_d1_failure'); }
+        beforeRun?.(sql);
+        const failure = !failed ? failOnce?.(sql) : false;
+        if (failure && failure !== 'after') { failed = true; throw new Error('forced_d1_failure'); }
         const result = database.prepare(sql).run(...values as never[]);
+        if (failure === 'after') { failed = true; throw new Error('forced_d1_failure'); }
         return createTestD1Result<T>({ results: [], success: true, meta: { changes: Number(result.changes) } });
       },
     };

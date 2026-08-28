@@ -2038,6 +2038,43 @@ behind the split and the retry is
 
 Do not retry automatically. A tool invocation left in `ambiguous` means the provider may have accepted the write before Rally recorded confirmation. Inspect the provider using the stored operation metadata, then either reconcile the invocation or ask the user before another write.
 
+### Staged resource publication
+
+A `resource_object_deletion_outbox` row with `cleanup_eligible = 0` is owned by
+a publisher, not by R2 cleanup. It is intentionally absent from the maintenance
+due queue: a missing pointer alone cannot distinguish an in-flight writer from
+a Worker that stopped after uploading its bytes.
+
+Use the authorized object diagnostic/repair surface in the workspace's owning
+region. Inspect the exact row by workspace and resource ID, then check both
+`resources` and `resource_versions` for its object ref. If either names it, run
+the ordinary resource-object maintenance pass; that pass removes only the
+staging row. If neither names it, first prove from the owning run/receipt and
+publication state that no in-flight operation can still commit that generation.
+Only then release that exact row with the equivalent of:
+
+```sql
+UPDATE resource_object_deletion_outbox
+   SET cleanup_eligible = 1, updated_at = :now
+ WHERE workspace_id = :workspace_id
+   AND object_ref = :object_ref
+   AND cleanup_eligible = 0
+   AND NOT EXISTS (
+     SELECT 1 FROM resources
+      WHERE workspace_id = :workspace_id
+        AND (content_ref = :object_ref OR model_content_ref = :object_ref)
+   )
+   AND NOT EXISTS (
+     SELECT 1 FROM resource_versions
+      WHERE workspace_id = :workspace_id
+        AND (content_ref = :object_ref OR model_content_ref = :object_ref)
+   );
+```
+
+The next maintenance pass deletes the unreferenced regional R2 object and row.
+Do not use age alone, and do not copy the object ref into logs, tickets, or
+cross-region tooling.
+
 ### Queue backlog or dead letters
 
 Pause connector polling if ingestion exceeds safe capacity. Inspect receipts and activity dedupe keys, fix the deterministic consumer failure, and replay only opaque activity IDs. Unique constraints and processing leases remain the authoritative duplicate barrier.

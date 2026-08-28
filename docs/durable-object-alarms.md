@@ -267,10 +267,11 @@ that a particular target was interrupted.
   `expired_drafts` arm excludes the linked drafts the reap keeps; every derived
   instant is rounded up to the next whole second, because `strftime` drops the
   milliseconds the pass's own cutoff keeps and an alarm that fires early finds
-  nothing due; the `slack_unfurls` arm counts only links on a connection the
-  sweep would load. An arm that counts what its pass leaves behind is the stall
-  gate's steady customer — a drip and a report rather than a loop, but a
-  defect all the same.
+  nothing due; the `resource_objects` arm excludes inactive publication staging
+  while including eligible and current/historical referenced rows; the
+  `slack_unfurls` arm counts only links on a connection the sweep would load. An
+  arm that counts what its pass leaves behind is the stall gate's steady
+  customer — a drip and a report rather than a loop, but a defect all the same.
 - **A bounded pass reports the rows it took off its own due query.** Every
   maintenance pass that moves those rows answers the stall check with its
   count — whether it retires them, as the reaps do, or writes the column whose
@@ -414,8 +415,9 @@ a failing target a free immediate attempt.
   summary identifies work that crosses the recovery horizon.
 - `apps/api/test/workspace-schedule-targets.test.ts` runs the due-time queries
   against the object's own ledger, for the arms the Node snapshots cannot
-  exercise: the draft arm's exclusion of linked drafts, and the rounding of a
-  derived instant up to the next second.
+  exercise: the draft arm's exclusion of linked drafts, the resource-object
+  arm's exclusion of inactive staging, and the rounding of a derived instant up
+  to the next second.
 - `apps/api/test/runtime-components.test.ts` covers the pure arithmetic —
   recurrence and backoff — in the Node suite.
 - `apps/api/test/workspace-do-schema.test.ts` applies the WorkspaceDO ledger one
@@ -464,6 +466,28 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-08-28 — Resource cleanup schedules only actionable ownership
+
+**What changed:** The `resource_objects` due query now matches its maintenance
+pass: eligible deletion rows and staged rows already named by a current or
+historical pointer are due; inactive staging still owned by a publisher is not.
+
+**Why:** Publication staging deliberately makes an inactive row unsafe to
+delete. Counting that row anyway would keep one immutable due instant behind
+the stall gate forever, producing retries and operator alerts for a pass that
+could not make progress.
+
+**Considered and rejected:** Using the scheduler stall as implicit operator
+reconciliation. The alarm contract treats a source it cannot move as a defect,
+and a repeated wake supplies no new fact about whether an ambiguous writer can
+still commit.
+
+**Consequences:** Inactive staging remains durable for explicit reconciliation
+without blocking newly actionable cleanup. Any future cleanup state must update
+both the pass and its due predicate together.
+
+Shipped in [#395](https://github.com/juno-ai-labs/avalon/pull/395).
 
 ### 2026-08-28 — A maintenance pass names the resources that have no alias yet
 
