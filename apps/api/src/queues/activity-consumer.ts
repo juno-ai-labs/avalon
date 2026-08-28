@@ -895,29 +895,38 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
   if (!activity.provider_resource_id && entityKeys.length === 0) return new Set();
 
   const resources = await env.DB.prepare(
-    `SELECT id FROM resources
+    `SELECT id, slug, title FROM resources
       WHERE workspace_id = ?1 AND connection_id = ?2 AND provider = ?3
         AND (provider_resource_id = ?4 OR EXISTS (
           SELECT 1 FROM json_each(?5) WHERE json_each.value = provider_resource_id
-        ))`,
+        ))
+      ORDER BY id`,
   ).bind(
     activity.workspace_id,
     activity.connection_id,
     activity.provider,
     activity.provider_resource_id,
     JSON.stringify(entityKeys),
-  ).all<{ id: string }>();
+  ).all<{ id: string; slug: string | null; title: string }>();
   const workspace = await workspaceDirectory(env, asWorkspaceId(activity.workspace_id));
-  const resolvedWorkstreamIds = new Set<string>();
+  // Which resource went stale, per work stream that watches it. A message
+  // saying only that something changed at the provider leaves the participant
+  // reading it unable to tell which attached document a re-fetch would
+  // refresh — and the re-fetch is the whole point of watching one.
+  const staleByWorkstream = new Map<string, StaleWatchedResource[]>();
   for (const resource of resources.results ?? []) {
     const resolved = await workspace.workstreamsForResource({
       workspaceId: activity.workspace_id,
       resourceId: resource.id,
       watchedOnly: true,
     });
-    for (const workstreamId of resolved.workstreamIds) resolvedWorkstreamIds.add(workstreamId);
+    for (const workstreamId of resolved.workstreamIds) {
+      const stale = staleByWorkstream.get(workstreamId) ?? [];
+      stale.push({ resourceId: resource.id, slug: resource.slug, title: resource.title });
+      staleByWorkstream.set(workstreamId, stale);
+    }
   }
-  const directWorkstreamIds = [...resolvedWorkstreamIds];
+  const directWorkstreamIds = [...staleByWorkstream.keys()];
 
   const routed = new Set<string>();
   const sourceAudience = activityContentAudience(activity);
@@ -932,24 +941,35 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
       workstreamId,
     );
     if (!contentAudienceContainsWorkstream(sourceAudience, targetAudience)) continue;
-    if (await injectActivityMessage(env, activity, workstreamId)) {
+    if (await injectActivityMessage(env, activity, workstreamId, staleByWorkstream.get(workstreamId) ?? [])) {
       routed.add(workstreamId);
     }
   }
   return routed;
 }
 
+/** An attached resource this activity says the provider has moved on from. */
+interface StaleWatchedResource {
+  resourceId: string;
+  slug: string | null;
+  title: string;
+}
+
 async function injectActivityMessage(
   env: Env,
   activity: ActivityRow,
-  workstreamId: string
+  workstreamId: string,
+  staleResources: StaleWatchedResource[] = []
 ): Promise<boolean> {
   const clientMessageId = `activity:${activity.id}`;
   const structuredContent = {
     kind: "connected_activity",
     activityId: activity.id,
     provider: activity.provider,
-    eventType: activity.event_type
+    eventType: activity.event_type,
+    // Present only for the watch-routed arm, and only naming resources — the
+    // notification marks staleness and nothing here re-fetches anything.
+    ...(staleResources.length > 0 ? { staleResources } : {}),
   };
   const text = [activity.title, activity.summary].filter(Boolean).join(" — ");
   const now = Date.now();

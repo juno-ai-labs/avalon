@@ -101,11 +101,11 @@ describe("activity automation trigger matching", () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`CREATE TABLE resources (
       id TEXT PRIMARY KEY, workspace_id TEXT, connection_id TEXT, provider TEXT,
-      provider_resource_id TEXT
+      provider_resource_id TEXT, slug TEXT, title TEXT NOT NULL
     )`);
     database.prepare(
-      `INSERT INTO resources (id, workspace_id, connection_id, provider, provider_resource_id)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO resources (id, workspace_id, connection_id, provider, provider_resource_id, title)
+       VALUES (?, ?, ?, ?, ?, 'Pull request')`,
     ).run("resource-1", workspaceId, "connection-1", "github", "repo#1");
     const staleProjectionRead = vi.fn(async () => ({
       scope: "personal" as const,
