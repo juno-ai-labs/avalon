@@ -408,7 +408,10 @@ ${syntax}
   .citation-card-icon { color: #6b6d5e; display: inline-flex; }
   .citation-card-text { display: flex; flex-direction: column; gap: 2px; }
   .citation-card-title { font-size: 0.97em; font-weight: 640; }
-  .citation-card-kind { color: #6b6d5e; font-size: 0.82em; text-transform: capitalize; }
+  /* No text-transform: the renderer already turns the system identifier into
+     words, and capitalizing each of them made the card say "Github Pull
+     Request" where the app says "Github pull request". */
+  .citation-card-kind { color: #6b6d5e; font-size: 0.82em; }
   .citation-card-chevron { display: none; }
   /* Sized and raised exactly as the app's is, and for the same reason: GFM's
      sup wrapper applies its own smaller and its own super, and stacking the
