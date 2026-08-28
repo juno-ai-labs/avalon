@@ -22,8 +22,17 @@ export const automationMemorySchemaStatements = [
   ) STRICT`,
   `CREATE INDEX automation_memory_items_active_idx
     ON automation_memory_items(invalidated_at, updated_at DESC, memory_item_id)`,
+  // The names below are the ones `recordMutation` actually writes — the
+  // members of `OperationSchema` that reach it, which is every write operation
+  // and none of the four read ones. An earlier list said `create`,
+  // `insert_rows`, `update_rows`, and `invalidate_rows`, dropping the `table_`
+  // prefix the operations carry, so every durable-table write failed the
+  // constraint and rolled its own transaction back: the table the model had
+  // just created disappeared and the run saw a raw constraint error. Only the
+  // item operations matched, and only those were tested.
   `ALTER TABLE automation_memory_mutations ADD COLUMN operation TEXT NOT NULL DEFAULT 'legacy'
-    CHECK (operation IN ('legacy', 'add', 'update', 'invalidate', 'create', 'insert_rows', 'update_rows', 'invalidate_rows'))`,
+    CHECK (operation IN ('legacy', 'add', 'update', 'invalidate',
+      'table_create', 'table_insert_rows', 'table_update_rows', 'table_invalidate_rows'))`,
   `ALTER TABLE automation_memory_mutations ADD COLUMN receipt_id TEXT`,
   `CREATE UNIQUE INDEX automation_memory_mutations_receipt_idx
     ON automation_memory_mutations(run_id, receipt_id) WHERE receipt_id IS NOT NULL`,
