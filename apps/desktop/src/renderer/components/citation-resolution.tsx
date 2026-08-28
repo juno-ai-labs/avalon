@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import {
@@ -37,14 +37,19 @@ export function CitationResolutionProvider({ children }: { children: React.React
   const queryClient = useQueryClient();
   const [resolutions, setResolutions] = useState<ReadonlyMap<string, CitationResolution>>(new Map());
 
+  // What has already been asked for. A ref rather than the resolutions map,
+  // because the map is read during render and this has to be consulted *before*
+  // the fetch: a guard inside the state updater short-circuits the state write
+  // and nothing else, so the request still went out. That was invisible for a
+  // resource that resolves — `staleTime` makes the second fetch a no-op — and a
+  // steady trickle of 403s for one that does not, on any transcript that
+  // scrolls a chip in and out of view.
+  const requested = useRef<Set<string>>(new Set());
+
   const request = useCallback((resourceId: string) => {
-    if (!api) return;
-    setResolutions((current) => {
-      if (current.has(resourceId)) return current;
-      const next = new Map(current);
-      next.set(resourceId, { status: 'pending' });
-      return next;
-    });
+    if (!api || requested.current.has(resourceId)) return;
+    requested.current.add(resourceId);
+    setResolutions((current) => new Map(current).set(resourceId, { status: 'pending' }));
     void queryClient.fetchQuery({
       queryKey: ['resource', resourceId],
       queryFn: ({ signal }) => api.getResource(resourceId, signal),
