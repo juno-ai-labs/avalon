@@ -176,6 +176,7 @@ export interface WorkstreamResource {
   provider?: string;
   mimeType?: string;
   canonicalUrl?: string;
+  refreshSupported: boolean;
   watchEnabled: boolean;
   watchStatus: 'watching' | 'paused' | 'unsupported' | 'error';
   updatedAt?: string;

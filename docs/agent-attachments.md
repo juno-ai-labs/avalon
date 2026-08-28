@@ -554,9 +554,11 @@ cheap discovery and continuation paths.
 identity, a cause) and a `storage_kind`, staged on the resource row so capture
 carries them; resources gained a short `slug` alias for model-facing listings;
 the right rail's resource detail lists a resource's versions and opens a prior
-one read-only; and a watch-routed change notification names the resources it
-matched — in the text a participant reads and in the message's structured
-content — so the re-fetch it invites can be asked for.
+one read-only; re-fetch is offered only when the server reports that the
+resource's deployed connector implements hydration; and a watch-routed change
+notification names the resources it matched — in the text a participant reads
+and in the message's structured content — so the re-fetch it invites can be
+asked for.
 
 **Why:** History that cannot say who wrote a state is half a record — "what did
 we read last Tuesday" has an answer, "who changed it" did not. The alias is the
@@ -574,7 +576,9 @@ would charge a table rebuild for the future editor snapshot the column exists
 to admit. Replacing the primary key with the alias — a cross-cutting identity
 migration for a benefit the alias delivers beside the UUID. Re-fetching
 automatically when a watch fires — synchronization by another name, spending
-provider quota on changes nobody asked about.
+provider quota on changes nobody asked about. Inferring manual re-fetch support
+from watch state — watching for changes and retrieving content are independent
+adapter capabilities.
 
 **Consequences:** Every swap site sets provenance in the same statement as its
 swap, and a mismatched identity aborts the swap rather than storing a wrong

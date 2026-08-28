@@ -626,6 +626,7 @@ export const ResourceSchema = z.object({
   title: z.string().min(1).max(300),
   mimeType: z.string().max(160).nullable(),
   canonicalUrl: HttpUrlSchema.nullable(),
+  refreshSupported: z.boolean().default(false),
   watchEnabled: z.boolean(),
   watchStatus: z.enum(["watching", "paused", "unsupported", "error"]),
   lastHydratedAt: TimestampSchema.nullable(),

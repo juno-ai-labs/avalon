@@ -1287,11 +1287,11 @@ describe("resource version provenance", () => {
       .toMatchObject({ author: null, cause: null });
   });
 
-  it("keeps the alias optional on a resource and required on a listed one", () => {
+  it("defaults rollout-safe resource fields when an older response omits them", () => {
     // A resource row read before the backfill reaches it has no alias, and a
     // response written before the column existed has no key at all — neither
     // may fail the read. The model's listing always says, including with null.
-    expect(ResourceSchema.parse({
+    const resource = ResourceSchema.parse({
       id: "00000000-0000-7000-8000-0000000000a1",
       workspaceId: "00000000-0000-7000-8000-0000000000a3",
       connectionId: null,
@@ -1306,6 +1306,8 @@ describe("resource version provenance", () => {
       lastHydratedAt: null,
       createdAt: "2026-08-28T02:00:00.000Z",
       updatedAt: "2026-08-28T02:00:00.000Z",
-    }).slug).toBeNull();
+    });
+    expect(resource).toMatchObject({ slug: null, refreshSupported: false });
+    expect(ResourceSchema.parse({ ...resource, refreshSupported: true }).refreshSupported).toBe(true);
   });
 });

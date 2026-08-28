@@ -11,6 +11,7 @@ const DECK: WorkstreamResource = {
   id: 'board-deck',
   title: 'Q3 board deck',
   resourceType: 'document',
+  refreshSupported: false,
   watchEnabled: false,
   watchStatus: 'unsupported',
   currentVersion: 1,
