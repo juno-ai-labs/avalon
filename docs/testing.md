@@ -260,9 +260,10 @@ beforeEach(async () => {
   settles, and let the timeout be the failure, as the semantic-recovery test
   in `durable-object-runtime.test.ts` does. A probe may well run while the
   drain is still in flight — reads interleave at the handler's awaits like
-  any other invocation — but a read-only probe can neither advance nor
-  duplicate delivery, and it reports success only once the drain has
-  synchronously settled the state it asserts on. And unlike a direct
+  any other invocation, and a probe can observe the unsettled row — but the
+  poll tolerates that intermediate answer and retries, a read-only probe can
+  neither advance nor duplicate delivery, and it reports success only once
+  the drain has synchronously settled the state it asserts on. And unlike a direct
   `instance.alarm()` call, it still fails when construction stops arming the
   alarm, which is half of what such a test exists to prove.
 
