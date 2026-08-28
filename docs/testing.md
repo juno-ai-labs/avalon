@@ -247,15 +247,6 @@ beforeEach(async () => {
   `dispatchWithoutDraining` in `agent-run-lifecycle.test.ts` does by dispatching
   and parking the alarm in a single `runInDurableObject`.
 
-  `runDurableObjectAlarm` adds its own variant of the race when the alarm it is
-  meant to force is already overdue: workerd clears the alarm slot for the whole
-  of a firing invocation, so between an automatic fire and the handler's own
-  re-arm the helper finds no alarm, returns `false`, and runs nothing — while
-  the auto-fired drain is still in flight for the next assertion to interleave
-  with. A test that arms an overdue alarm and must prove its work ran should
-  call `instance.alarm()` and assert in a single `runInDurableObject`, as the
-  semantic-recovery test in `durable-object-runtime.test.ts` does.
-
   **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
   object initializing itself, and calling it re-entrantly from inside
   `runInDurableObject` holds the very input gate `reset()` needs in order to
@@ -263,6 +254,35 @@ beforeEach(async () => {
   the *next* test in the file started finding a work stream the previous one had
   left behind, failing with `workstream_create_replay_incomplete` — in CI only,
   where the object is under enough load for it to matter.
+
+  `runDurableObjectAlarm` introduces its own variant of the race when the alarm
+  it is meant to force is already overdue: workerd clears the alarm slot for the
+  entire duration of a firing invocation — the same platform behavior
+  [`durable-object-alarms.md`](durable-object-alarms.md) records as a trap,
+  where `getAlarm()` returns `null` inside a running handler until `setAlarm`
+  is called again — so between an automatic fire and the handler's own
+  re-arm the helper finds no alarm, returns `false`, and runs nothing — while
+  the auto-fired drain is still in flight for the next assertion to interleave
+  with. A test that arms an overdue alarm and must prove work that *moves
+  durable state* ran should not force delivery at all: `expect.poll` a read
+  of the state the drain settles, and let the timeout be the failure, as the
+  semantic-recovery test in `durable-object-runtime.test.ts` does. Polling
+  proves nothing about a handler whose success leaves the rows as they were —
+  a hold, a deferral, a no-op — because a poll cannot tell "never fired" from
+  "fired and held"; there, assert a side effect only the handler writes, or
+  drive the handler's work directly, knowing what a concurrent auto-fire
+  converges with. A probe may well run while the
+  drain is still in flight — reads interleave at the handler's awaits like
+  any other invocation, and a probe can observe the unsettled row — but the
+  poll tolerates that intermediate answer and retries, a read-only probe can
+  neither advance nor duplicate delivery, and it reports success only once
+  the drain has synchronously settled the state it asserts on. And unlike a direct
+  `instance.alarm()` call, it still fails when construction stops arming the
+  alarm, which is half of what such a test exists to prove. Letting the poll's
+  timeout be the failure requires that it actually gets to fire: the suite's
+  default `testTimeout` is 5 seconds and covers the test's setup too, so give
+  the `it()` its own wider timeout — otherwise a loaded machine turns the
+  poll's legible `expected 1 to be +0` into an opaque harness timeout.
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
