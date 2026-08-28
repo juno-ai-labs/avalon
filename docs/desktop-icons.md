@@ -2,12 +2,17 @@
 
 ## Current behavior
 
-Rally has a native adaptive default icon and eight user-selectable static icons:
+Rally has a native adaptive default icon and seven user-selectable static
+icons: the flat `light` and `dark` treatments, and five materials the mark is
+laid into — `grass-court`, `clay-court`, `hard-court`, `ball-felt`, and
+`night-match`. All seven draw the same mark from the same path, so the whole
+shelf moves together when the logo changes.
 
 | Asset | Purpose |
 | --- | --- |
 | `apps/desktop/resources/icon.icon` | Icon Composer source for the default icon. It provides Default, Dark, and generated Mono appearances. |
-| `apps/desktop/resources/app-icons/*.png` | Full-bleed 1024×1024 authoring sources for the two current treatments and six custom choices. They are not shipped as Dock icons. |
+| `apps/desktop/resources/app-icons/*.png` | Generated full-bleed 1024×1024 authoring sources, one per selectable icon. They are not shipped as Dock icons. |
+| `scripts/selectable_icon_artwork.py` | Renders the five textured treatments: the mark as a distance field taken from the canonical SVG, and the material composited around it. Needs Pillow and NumPy. |
 | `apps/desktop/src/renderer/assets/app-icons/*.png` | Generated 128×128 Retina previews; Vite never bundles the 1024px Dock sources. |
 | `apps/desktop/native/selectable-app-icon/icon.json` | Icon Composer template used to give each selectable source a system-owned enclosure and platform effects. |
 | `apps/desktop/.native-build/app-icons/*.icns` | Generated static renditions compiled by Apple's `actool` and shipped for Finder and the Dock plug-in. |
@@ -40,17 +45,28 @@ This follows the architecture described in Granola's [macOS app-icon implementat
 
 Keep both native and selectable source artwork unmasked:
 
+- Do not hand-edit a file under `apps/desktop/resources/app-icons`. Every one of
+  them is generator output; an edit is lost on the next run.
 - Do not bake a rounded rectangle, transparent corner mask, optical inset, or platform shadow into a selectable PNG.
 - Each selectable PNG must be square, full-bleed, and 1024×1024. The build stages it in an Icon Composer `.icon` package and macOS owns the final app-icon enclosure and rendering.
 - Keep the transparent Icon Composer mark source at 1024×1024. Default, Dark, and Mono remain appearance treatments within the one `.icon` asset.
 - The legacy `icon.icns` is the only asset that deliberately contains a baked silhouette, because it is used for the DMG volume.
 - The menu bar renditions are the one place colour is deliberately discarded: a macOS template image is an alpha mask, so `menu_bar_template_icon` renders the mark in pure black at 16 pt and 32 pt and lets AppKit paint it. Both the `Template` filename suffix and the `@2x` sibling are load-bearing; see [`menu-bar.md`](menu-bar.md).
 
+Every textured treatment places the mark's ink box across 700 of its 1024
+pixels, centred, which is the geometry the flat `light` and `dark` icons already
+had. Keep it: a shelf whose marks are not all one size reads as seven logos
+rather than one.
+
 The renderer preview uses generated 128×128 copies and CSS rounding only to represent the macOS tile. That rounding is not written into the 1024px source files.
 
 ## Change the current Rally icon
 
-1. Update `assets/brand/rally-mark-source.png` or the colors/composition in `scripts/generate-brand-assets.py`.
+1. Update `apps/site/public/brand/rally-mark.svg` and
+   `assets/brand/rally-mark-source.png` together — the textured icons take the
+   mark from the SVG path and every other asset takes it from the raster mask,
+   so the two have to agree. Colours and composition live in
+   `scripts/generate-brand-assets.py` and `scripts/selectable_icon_artwork.py`.
 2. Regenerate the derived assets from the repository root:
 
    ```text
@@ -60,14 +76,31 @@ The renderer preview uses generated 128×128 copies and CSS rounding only to rep
 3. Open `apps/desktop/resources/icon.icon` in Icon Composer and inspect Default, Dark, and Mono.
 4. Build the signed app and inspect the Dock, Finder, Spotlight, and Launchpad in light and dark system appearances.
 
-Do not hand-edit the generated light/dark copies or renderer previews. A later generator run must reproduce them without unrelated diffs. The six custom 1024px PNGs are committed artwork sources rather than output synthesized by this script.
+Do not hand-edit generated artwork or renderer previews. A later generator run
+must reproduce them without unrelated diffs, so review what the run rewrote and
+revert any file whose pixels did not actually change — PNG encoder output
+differs between Pillow releases, and that churn is not a change to the artwork.
+
+Two constraints on where the generator runs:
+
+- **The social card is skipped off macOS.** It is the only generated asset with
+  type in it, set in a system font that exists only there. The script says so
+  when it skips; regenerating it anywhere else would quietly substitute a
+  different typeface over the committed card.
+- **Every texture is seeded.** Each treatment draws from a fixed
+  `numpy.random.default_rng` seed, so grain, blades, and rain land in the same
+  places on every machine. Changing a seed redraws that icon, which is an
+  artwork change rather than a refactor.
 
 ## Add a selectable icon
 
-1. Add an opaque, full-bleed 1024×1024 PNG under `apps/desktop/resources/app-icons`. Do not pre-mask it; `build-macos-icon-components.mjs` compiles it through the checked-in `.icon` template.
+1. Write its renderer in `scripts/selectable_icon_artwork.py` and register it in
+   `TEXTURED_SELECTABLE_ICONS`. It returns an opaque, full-bleed 1024×1024
+   image; do not pre-mask it, because `build-macos-icon-components.mjs` compiles
+   it through the checked-in `.icon` template.
 2. Add its identifier to `TELEMETRY_APPLICATION_ICON_IDS` in `packages/contracts/src/telemetry.ts`, then add its label to `applicationIconLabels` in `apps/desktop/src/common/application-icons.ts`. The shared identifier allowlist drives the renderer, main IPC validation, filenames, and telemetry schema; IPC never accepts a filesystem path.
 3. Add the same identifier to the Dock plugin allowlist in `apps/desktop/native/dock-tile-plugin/RallyDockTilePlugin.m`.
-4. Add its identifier to `selectableIconNames` in `apps/desktop/scripts/build-macos-icon-components.mjs`, run `python3 scripts/generate-brand-assets.py` to produce the 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
+4. Add its identifier to `selectableIconNames` in `apps/desktop/scripts/build-macos-icon-components.mjs`, run `python3 scripts/generate-brand-assets.py` to produce the 1024px artwork and its 128px renderer preview, then import that preview in `apps/desktop/src/renderer/components/application-icon-picker.tsx`.
 5. Add the expected resource to `apps/desktop/scripts/verify-macos-app.mjs` and update focused tests.
 
 The Dock plugin is compiled for arm64 during guarded packaging by `apps/desktop/scripts/build-macos-icon-components.mjs`. Do not commit `.native-build` output.
@@ -100,7 +133,7 @@ The package verifier checks:
 
 - `Assets.car`, `CFBundleIconName`, and the ICNS fallback for the native default;
 - `NSDockTilePlugIn` and the signed plugin executable;
-- all eight selectable ICNS renditions generated by Apple's `actool`;
+- all seven selectable ICNS renditions generated by Apple's `actool`;
 - the AppKit bridge used for Finder and cache updates; and
 - both menu bar template renditions, whose names are resolved at runtime rather than referenced in code.
 
@@ -119,6 +152,45 @@ For a notarized release candidate, repeat the selected-icon test from an install
 - **Packaging rejects nested code:** rebuild with `pnpm --filter @rally/desktop build:macos-icons` and verify the plugin contains only an arm64 executable before electron-builder signs it.
 
 ## Changelog
+
+### 2026-08-27 — The selectable shelf is one mark in seven materials, generated
+
+**What changed:** The six hand-made selectable icons (`sunset-sherbet`,
+`ludicrous-speed`, `ruby`, `holographic`, `leather`, `blueprint`) were retired
+and replaced by five generated ones: `grass-court`, `clay-court`, `hard-court`,
+`ball-felt`, and `night-match`. `light` and `dark` are unchanged. The new
+artwork is produced by `scripts/selectable_icon_artwork.py`, which rasterizes
+the mark from `apps/site/public/brand/rally-mark.svg` as a distance field and
+composites a material around it, and the whole set is now output of
+`generate-brand-assets.py` rather than committed artwork.
+
+**Why:** The six custom icons still carried the *previous* woven-ring mark, so
+the shelf showed two different logos side by side — the same drift the entry
+below fixed for the generated assets, reappearing in the artwork that entry had
+deliberately left alone. Generating them closes it permanently: there is no
+longer any selectable icon that can fall behind the logo, because none of them
+holds a copy of it.
+
+**Considered and rejected:** Redrawing six PNGs by hand with the new mark. It
+fixes today's mismatch and rebuilds the same trap — the next mark change would
+need six more hand edits, which is exactly the failure that produced this one.
+Also rejected: deriving the textured marks from `rally-mark-source.png`, the
+raster mask everything else uses. Paint bleeding into grass, dust settling on a
+line, fibre overhanging a channel and a neon tube's falloff are all functions of
+distance to the stroke centre line, and an 8-bit alpha mask cannot supply it;
+the SVG path can.
+
+**Consequences:** Regenerating brand assets now needs Pillow *and* NumPy, and
+takes about 25 seconds rather than one. Texture seeds are fixed, so a rerun
+reproduces the artwork byte-for-byte on the same Pillow; changing a seed is an
+artwork change. A preference holding a retired identifier fails
+`parseApplicationIconId` and the app falls back to the automatic light/dark
+icon, which is the same path an unset preference takes — retired identifiers
+are gone from `TELEMETRY_APPLICATION_ICON_IDS`, so no client can emit one
+again, while events already recorded under the old names keep their values.
+`generate-brand-assets.py` also now skips the social card off macOS instead of
+overwriting it with a substitute typeface; that bug was found by running the
+generator in the sandbox for this change.
 
 ### 2026-08-27 — The mark artwork is the redesigned loop and brand primary is #CCFF00
 

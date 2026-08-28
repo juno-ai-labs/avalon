@@ -24,12 +24,11 @@ const selectableIconOutputDirectory = join(desktopDirectory, '.native-build', 'a
 const selectableIconNames = [
   'light',
   'dark',
-  'sunset-sherbet',
-  'ludicrous-speed',
-  'ruby',
-  'holographic',
-  'leather',
-  'blueprint',
+  'grass-court',
+  'clay-court',
+  'hard-court',
+  'ball-felt',
+  'night-match',
 ];
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64') {

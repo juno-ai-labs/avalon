@@ -1457,14 +1457,14 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Application');
 
-    const ruby = await screen.findByRole('button', { name: 'Ruby app icon' });
+    const clay = await screen.findByRole('button', { name: 'Clay court app icon' });
     expect(screen.getByRole('button', { name: 'Dark app icon' })).toHaveAttribute('aria-pressed', 'true');
-    fireEvent.click(ruby);
+    fireEvent.click(clay);
 
-    expect(ruby).toHaveClass('is-jumping');
-    expect(ruby).toHaveAttribute('aria-pressed', 'true');
-    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('ruby'));
-    expect(await screen.findByText('Ruby is selected.')).toBeVisible();
+    expect(clay).toHaveClass('is-jumping');
+    expect(clay).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(setApplicationIcon).toHaveBeenCalledWith('clay-court'));
+    expect(await screen.findByText('Clay court is selected.')).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Use the system icon' }));
     await waitFor(() => expect(resetApplicationIcon).toHaveBeenCalledTimes(1));
