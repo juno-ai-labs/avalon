@@ -407,32 +407,27 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
- * docs/adding-security-defensive-and-other-limits.md.
+ * How long one mounted preview keeps re-asking `/resources/:id/preview` while
+ * the route answers `409 resource_processing`.
  *
- * Bounds: times one mounted preview re-asks `/resources/:id/preview` after the
- *   route answered `409 resource_processing`.
- * Without it: a document whose conversion cannot finish inside the request it
- *   runs in aborts, releases its claim, and answers `processing` with
- *   `retryAfterMs: 250` again — so an open rail asks four times a second for as
- *   long as somebody leaves the panel on that resource, and every attempt that
- *   wins the claim re-runs the Workers AI OCR pass it is going to abort again.
- *   Checked 2026-08-28: nothing else closes that loop. The route's `ready`,
- *   `failed` and `unsupported` results are terminal and cached, which settles
- *   every conversion that converges, and this effect's `AbortSignal` ends the
- *   loop on a resource switch or an unmount — a panel left open on a document
- *   that never converts is the case neither covers.
- * Direction: upper bound; the open value is +Infinity.
+ * Bounds: wall clock from the first attempt, covering the requests and the
+ *   waits between them alike.
+ * Derived: `PROCESSING_LEASE_MS` (5 minutes) + `CONVERTER_TIMEOUT_MS`
+ *   (30 seconds), both in `apps/api/src/services/attachment-derivative-service.ts`.
+ *   The slowest *converging* case is another request's claim running out its
+ *   whole lease without publishing, then this client's next attempt taking the
+ *   claim and converting. Past that sum the preview is not being prepared, it is
+ *   stuck — a conversion that cannot finish inside its request aborts, releases
+ *   the claim, and answers `processing` again forever.
+ * Wall clock rather than an attempt count, because the route answers 250ms for a
+ *   lost race and 1s for a held claim, so the same count of attempts means
+ *   anywhere from 100 seconds to 6½ minutes depending on which it hits. The
+ *   thing worth bounding is how long a reader watches a spinner.
  * Trips: the retry stops and the panel shows "This preview is not available.",
  *   which is what it already shows for every terminal rejection. The metadata
  *   above it is unaffected.
- * Derive from: how long a reader is willing to watch a spinner, against the
- *   delays the route itself names — a live claim is stealable after five
- *   minutes and a conversion is capped at thirty seconds, so covering one full
- *   lease takeover and the conversion after it is arithmetic rather than taste.
- *   The sum is in the pull request.
  */
-export const MAX_RESOURCE_PREVIEW_RETRIES = Number.POSITIVE_INFINITY;
+export const MAX_RESOURCE_PREVIEW_WAIT_MS = 330_000;
 
 /**
  * Reads a resource's preview, waiting out the route's own "still preparing"
@@ -444,22 +439,31 @@ export const MAX_RESOURCE_PREVIEW_RETRIES = Number.POSITIVE_INFINITY;
  * of that mount, seconds after the derivative was ready. The reader had to
  * close the rail and reopen it to discover the preview existed.
  *
- * `maxRetries` is a parameter rather than a read of the constant so a test can
- * prove the trip against a finite bound while the shipped value is still open.
+ * The poll is not only how this learns the answer, it is what causes the work:
+ * `ResourceService.preview` materializes the derivative inside the request, so
+ * an attempt that wins the conversion claim is the one that converts. That is
+ * why this waits rather than subscribing — there is no background writer to
+ * subscribe to.
+ *
+ * `maxWaitMs` is a parameter rather than a read of the constant so a test can
+ * prove the deadline against a budget it does not have to spend in real time.
  */
 export async function readResourcePreviewText(
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>,
   resourceId: string,
   signal: AbortSignal,
-  maxRetries: number,
+  maxWaitMs: number,
 ): Promise<string> {
-  for (let retries = 0; ; retries += 1) {
+  const deadline = Date.now() + maxWaitMs;
+  for (;;) {
     try {
       const blob = await loadResourceContent(resourceId, signal);
       return await blob.text();
     } catch (error) {
       const retryAfterMs = processingRetryDelayMs(error);
-      if (retryAfterMs === null || signal.aborted || retries >= maxRetries) throw error;
+      // A wait that would end past the deadline is not started at all, so the
+      // panel gives up on time rather than one whole delay late.
+      if (retryAfterMs === null || signal.aborted || Date.now() + retryAfterMs > deadline) throw error;
       await wait(retryAfterMs, signal);
       if (signal.aborted) throw error;
     }
@@ -488,7 +492,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   useEffect(() => {
     const controller = new AbortController();
     setState({});
-    void readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_RETRIES)
+    void readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_WAIT_MS)
       .then((text) => {
         if (!controller.signal.aborted) setState({ text });
       })

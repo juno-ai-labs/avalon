@@ -278,8 +278,18 @@ cannot be written this way is a sign it is not a typography override.
   still being materialized, and it carries a `retryAfterMs`: the route knows
   whether it is waiting on a claim, a hash write or a conversion, and answers
   250ms or 1s accordingly. A backoff schedule written in the renderer would be a
-  second opinion about something only the server can see, and its numbers would
-  be a guess.
+  second opinion about something only the server can see. What the renderer does
+  own is *how long it keeps asking*, and that is a wall-clock budget rather than
+  a count of attempts, because the same count means 100 seconds or 6½ minutes
+  depending on which delay it meets.
+- **The preview poll is what performs the conversion, not just what observes
+  it.** `ResourceService.preview` calls `materializeAttachmentDerivative` inside
+  the request, and its only other caller is the agent's attachment tool — there
+  is no queue, workflow, or alarm doing this in the background. So a
+  `processing` answer means another in-flight request holds the claim, and the
+  attempt that wins the claim is the one that converts. Replacing the poll with
+  a subscription would deadlock the case where nobody else is asking; a push
+  model needs a durable owner of the conversion first.
 - **Every divergence between this grammar and remark-gfm degrades toward showing
   too much.** A definition this module does not recognise keeps classic GFM
   rendering; a footnote section it recognised nothing in still renders. The one
@@ -441,8 +451,9 @@ The traps, both of which have bitten:
 typed `ApiError` its `.catch` used to discard, and on `409 resource_processing`
 re-asks the preview route after the `retryAfterMs` the response named, under the
 effect's existing `AbortSignal`. Every other rejection lands where it always did.
-The read moved into `readResourcePreviewText`, which takes its retry ceiling as
-an argument; the ceiling ships open.
+The read moved into `readResourcePreviewText`, which gives up once a wall-clock
+budget derived from the server's own lease and converter timeouts would be
+overspent.
 
 **Why:** The preview route does not only fail terminally. A PDF or an Office file
 attached moments ago has no text derivative yet, and the route says so with a 409
@@ -459,12 +470,19 @@ schedule invented in the renderer would be a guess wearing a constant's name.
 **What a future change has to respect:** The `.catch` is the whole defect — a
 rejection collapsed to a boolean cannot tell a verdict from a "come back in
 250ms", and that is what made the failed state permanent. Anything added to this
-path keeps the typed error until it has been read. The retry ceiling is a
-`LIMIT UNSET` placeholder at `+Infinity`, and enforcement takes it as a parameter
-so the trip stays proved while it is open: setting it is a number for the team,
-per [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md),
-and whoever sets it appends the derivation here. Until then the only bounds on
-the loop are the server's terminal states and the panel's own lifetime.
+path keeps the typed error until it has been read. `MAX_RESOURCE_PREVIEW_WAIT_MS`
+is 330 seconds, derived as `PROCESSING_LEASE_MS` (5 minutes) +
+`CONVERTER_TIMEOUT_MS` (30 seconds) from
+`apps/api/src/services/attachment-derivative-service.ts`: the slowest converging
+case is another request's claim running out its whole lease, then this client's
+next attempt taking the claim and converting. It is wall clock rather than an
+attempt count deliberately — the route's two cadences differ fourfold, so a
+count bounds nothing a reader can feel. A change to either server constant
+changes this sum, and enforcement takes the budget as a parameter so the
+deadline stays provable without a test spending it. The tempting rewrite is a
+socket subscription in place of the poll; read the second invariant above before
+attempting it.
+
 ### 2026-08-28 — The streaming splitter stopped deciding where a fence ends
 
 **What changed:** `FENCE_OPEN` and `FENCE_CLOSE` are gone from

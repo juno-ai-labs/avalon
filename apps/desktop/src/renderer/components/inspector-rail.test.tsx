@@ -5,7 +5,7 @@ import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
-import { InspectorRail, MAX_RESOURCE_PREVIEW_RETRIES, readResourcePreviewText } from './inspector-rail';
+import { InspectorRail, MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './inspector-rail';
 
 const copyText = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
@@ -419,7 +419,7 @@ describe('resource detail content preview', () => {
       const loadResourceContent = vi.fn()
         .mockRejectedValueOnce(stillProcessing(1_000))
         .mockResolvedValueOnce(new Blob(['Ready.']));
-      const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_RETRIES);
+      const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_WAIT_MS);
 
       await vi.advanceTimersByTimeAsync(999);
       expect(loadResourceContent).toHaveBeenCalledTimes(1);
@@ -462,28 +462,45 @@ describe('resource detail content preview', () => {
     expect(attempts).toBe(afterUnmount);
   });
 
-  describe('the retry ceiling', () => {
-    // Enforcement takes the bound as an argument, so the trip is provable while
-    // the shipped constant is still open. Never assert on its literal value:
-    // that test would fail the day the team sets the number.
-    it('stops after the given number of retries and surfaces the last rejection', async () => {
-      const loadResourceContent = vi.fn().mockRejectedValue(stillProcessing(1));
+  describe('the wait deadline', () => {
+    // Enforcement takes the budget as an argument, so the trip is provable
+    // against a deadline a test does not have to spend in real time. Never
+    // assert on the constant's literal value: that test would fail the day the
+    // sum behind it changes.
+    it('stops asking once the budget would be overspent, and surfaces the last rejection', async () => {
+      vi.useFakeTimers();
+      try {
+        const loadResourceContent = vi.fn().mockRejectedValue(stillProcessing(1_000));
+        const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, 2_500);
+        const settled = expect(read).rejects.toThrow(/still being prepared/iu);
 
-      await expect(readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, 2))
-        .rejects.toThrow(/still being prepared/iu);
-      expect(loadResourceContent).toHaveBeenCalledTimes(3);
+        await vi.advanceTimersByTimeAsync(5_000);
+        await settled;
+        // Attempts at 0s and 1s are inside the budget; the one at 2s would have
+        // to wait until 3s to try again, which is past it, so it gives up there
+        // rather than one whole delay late.
+        expect(loadResourceContent).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('rejects nothing at the constant\'s current value', async () => {
-      let attempts = 0;
-      const loadResourceContent = vi.fn(async () => {
-        attempts += 1;
-        if (attempts <= 8) throw stillProcessing(0);
-        return new Blob(['Ready at last.']);
-      });
+    it('still resolves a preview that converges well inside the budget', async () => {
+      vi.useFakeTimers();
+      try {
+        let attempts = 0;
+        const loadResourceContent = vi.fn(async () => {
+          attempts += 1;
+          if (attempts <= 20) throw stillProcessing(1_000);
+          return new Blob(['Ready at last.']);
+        });
+        const read = readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_WAIT_MS);
 
-      await expect(readResourcePreviewText(loadResourceContent, note.id, new AbortController().signal, MAX_RESOURCE_PREVIEW_RETRIES))
-        .resolves.toBe('Ready at last.');
+        await vi.advanceTimersByTimeAsync(25_000);
+        await expect(read).resolves.toBe('Ready at last.');
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
