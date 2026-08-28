@@ -105,6 +105,55 @@ describe('work-stream launch surface geometry', () => {
   });
 });
 
+/**
+ * `stroke-width` is in the viewBox's user units, so it scales with the box the
+ * way every other coordinate does: the same 6 units renders 3.4px at 56px and
+ * 10.8px at 180px. A host that changes only its height and width therefore
+ * cannot leave the weight behind, which means the weight belongs on the shared
+ * rule rather than being restated by each host.
+ *
+ * This block replaced an earlier contract built on the opposite belief — that a
+ * host had to name the stroke alongside its size, and that a non-square box
+ * would stretch the drawing. Both were checked in Chromium and neither is how
+ * SVG behaves: with no `preserveAspectRatio` the default `xMidYMid meet` scales
+ * uniformly and letterboxes. Three hosts were carrying one duplicated value and
+ * a test forbade the shared rule from holding it.
+ */
+describe('the turning brand mark', () => {
+  it('keeps the stroke weight on the shared rule, where the box scales it', () => {
+    expect(rule('.rally-seam')).toMatch(/stroke-width:\s*\d/u);
+  });
+
+  // A host still has to say how big it is: an `<svg>` carrying a viewBox and no
+  // dimensions takes its size from the layout rather than from the drawing, so
+  // a host that names neither gets whatever its container happens to be.
+  it.each([
+    ['.new-workstream-welcome-mark'],
+    ['.signin-mark'],
+    ['.automation-builder-intro > .automation-builder-mark'],
+  ])('gives %s a size of its own', (selector) => {
+    const declarations = rule(selector) ?? '';
+
+    expect(declarations).toMatch(/height:\s*\d+px/u);
+    expect(declarations).toMatch(/width:\s*\d+px/u);
+  });
+
+  // Restating the shared weight unchanged is the duplication this block exists
+  // to prevent; a host may still override it for a deliberate optical
+  // adjustment, which is a different value rather than the same one again.
+  it.each([
+    ['.new-workstream-welcome-mark'],
+    ['.signin-mark'],
+    ['.automation-builder-intro > .automation-builder-mark'],
+  ])('does not restate the shared stroke weight in %s', (selector) => {
+    const shared = /stroke-width:\s*(\d+)/u.exec(rule('.rally-seam') ?? '')?.[1];
+    const host = /stroke-width:\s*(\d+)/u.exec(rule(selector) ?? '')?.[1];
+
+    expect(shared).toBeDefined();
+    expect(host).not.toEqual(shared);
+  });
+});
+
 describe('member picker controls', () => {
   it('keeps custom controls out of the flexible member-copy rule', () => {
     const copy = rule(

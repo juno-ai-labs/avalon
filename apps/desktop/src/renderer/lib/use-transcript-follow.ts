@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import { prefersReducedMotion } from './theme';
 
 /**
  * How close to the end the viewport counts as showing the newest message. It is
@@ -214,13 +215,14 @@ export function useTranscriptFollow(
     // An explicit `behavior` passed to `scrollTo` wins over the stylesheet's
     // global `scroll-behavior: auto !important` kill switch per spec, so the
     // reduced-motion preference has to be read here in script rather than left
-    // to CSS — the same read `sidebar.tsx` makes for its own jump. Unlike the
+    // to CSS — the same read `sidebar.tsx` and `RallySeam` make, through the
+    // shared helper that owns what an unreadable preference means. Unlike the
     // sidebar's reveal, where the motion is the information, this jump's
     // information is the destination, so reduced motion takes the instant path
     // below: it records its write and re-arms the follow synchronously, and
     // the settle-on-arrival machinery in the smooth branch exists only for an
     // animation's in-flight frames, which an instant jump does not have.
-    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+    const reduceMotion = prefersReducedMotion();
     if (options?.smooth && !reduceMotion && Math.abs(element.scrollTop - end) >= 1) {
       followWhenSettledRef.current = true;
       followingRef.current = false;

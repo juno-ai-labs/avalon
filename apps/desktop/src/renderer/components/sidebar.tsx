@@ -44,6 +44,7 @@ import {
 } from '../lib/format';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
+import { prefersReducedMotion } from '../lib/theme';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import {
   markSurfaceEntrypoint,
@@ -1506,8 +1507,9 @@ export function Sidebar({
       block: 'nearest',
       // Motion is the point, since it is what lets the reader follow the row to
       // its new section rather than hunt for it, so it is dropped only for
-      // someone who has asked for less of it.
-      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      // someone who has asked for less of it. `prefersReducedMotion` owns what
+      // an unreadable preference means; see `lib/theme.ts`.
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
     });
     // Focus is where a keyboard reader *is*, and the two sections are separate
     // subtrees, so the row is unmounted and remounted as it moves and Radix's

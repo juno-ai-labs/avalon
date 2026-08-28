@@ -28,7 +28,7 @@ import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
 import { ComposerInput } from '../components/composer-input';
-import { Avatar, AvatarStack, RallyMark, Badge, Button, EmptyState, LoadingState, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
+import { Avatar, AvatarStack, RallySeam, Badge, Button, EmptyState, LoadingState, Modal, StatusDot, TitleSkeleton } from '../components/primitives';
 import { withSuggestedPrompts } from '../components/suggested-prompts';
 import { MessageBlock } from '../components/workstream-blocks';
 import { ProjectIconPile } from '../components/project-sidebar-section';
@@ -739,7 +739,7 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
           <div className={clsx('launch-home-layer', launching && 'is-leaving')} inert={Boolean(launching)}>
             <div className="new-workstream-home">
               <header className="new-workstream-welcome">
-                <RallyMark className="new-workstream-welcome-mark" />
+                <RallySeam className="new-workstream-welcome-mark" />
                 <h1>{owningProjectId ? 'New project work stream' : `Welcome back, ${workspace.currentUser.name.split(/\s+/u)[0]}`}</h1>
               </header>
 
