@@ -35,6 +35,7 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
 | `packages/contracts/src/workstream-transcript.ts` | Defines the attachment descriptor carried by a participant transcript text block. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | Maps canonical transcript descriptors back into the existing attachment-tile view model. |
+| `apps/desktop/src/renderer/components/inspector-rail.tsx` | Consumes the person-facing preview route in the rail's resource detail, and holds the client half of the `resource_processing` retry contract below. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
@@ -265,6 +266,20 @@ a resource ID as authority and never creates a second display-only conversion.
 Presentation remains a desktop concern: Markdown derivatives go through the
 shared renderer, while plain source text stays literal monospace text.
 
+A preview is often asked for while its derivative is still being built — the
+route materializes on demand, so the first person to open a document attached
+moments ago routinely arrives mid-conversion. That answer is 409
+`resource_processing`, carrying the delay the derivative service named: 250 ms
+after a lost compare-and-set, one second while another caller holds a live
+claim. It is a *not yet*, not a *no*, and it terminates without anyone polling
+it into submission — the holder publishes, or its five-minute lease goes stale
+and the next caller converts. A surface showing a preview therefore waits out
+the delay the response carried and reads again, cancelling that wait when the
+reader moves on; it does not invent an interval of its own, and it does not
+extend the same treatment to a 404 or a 422, which are answers. The inspector
+rail's resource detail does this today; the message-feed lightbox still renders
+the processing message as a terminal one.
+
 Search derives UTF-16-safe ranges and section labels directly from the bounded
 versioned derivative, so it needs no second R2 object or lifecycle. Tool reads
 and searches check offsets against the same hash and extractor version. At the
@@ -310,6 +325,10 @@ character envelope.
   bounds, never authorization semantics.
 - `nextCursor: null` is the only evidence that a filtered listing is exhausted,
   while zero characters on both sides is the only whole-resource read.
+- `resource_processing` is the only preview rejection that is a *not yet*: it
+  names the delay to wait, the state behind it ends on its own, and a client
+  that renders it as permanent unavailability is wrong. Every other preview
+  rejection is final, and re-asking cannot change it.
 
 ## Boundary
 
@@ -404,6 +423,13 @@ generic tool execution/receipt loop is owned by
 - `apps/desktop/src/renderer/components/attachments.test.tsx` covers lazy
   message-feed opening plus image, Markdown, literal text, and converted-document
   presentation.
+- `apps/desktop/src/renderer/components/inspector-rail.test.tsx` covers the
+  rail's half of the processing contract: a `resource_processing` rejection is
+  re-read only once the delay the response carried has elapsed, a 404 stays
+  terminal and is never re-read, and a pending wait is dropped when the panel
+  unmounts or its resource is revised. Its fixture delay is deliberately unlike
+  the service's own 250 ms and one second, so a delay hard-coded in the rail
+  cannot pass.
 - `apps/api/test-workers/participant-notification.test.ts` proves a real object
   snapshot hydrates message-local attachment descriptors from the durable part
   relationship; `apps/desktop/src/renderer/lib/transcript.test.ts` proves those
@@ -479,6 +505,44 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-28 — A preview still being prepared is a wait, not a dead panel
+
+**What changed:** The desktop inspector rail's resource preview keeps the typed
+`ApiError` its loader rejects with instead of collapsing every rejection into one
+terminal state. A 409 `resource_processing` is re-read after the response's own
+`retryAfterMs`, on the effect's existing `AbortController`, so an unmount or a
+move to another resource — or another revision of the same one — cancels the
+pending wait. Every other rejection, 404 and 422 and a network failure alike,
+still ends on "This preview is not available."
+
+**Why:** Because the route materializes a PDF's or an Office file's text on
+demand, `processing` is the ordinary first answer for a freshly attached
+document, not an edge case. The rail mapped it to permanent unavailability and
+never read again, and nothing reset that state, so it lasted the life of the
+mount: the reader had to close and reopen the rail to discover the preview had
+been there all along. A citation chip now opens this panel, which is how a
+citation naming a document attached moments earlier came to land on a dead end —
+the exact failure the preview was added to remove.
+
+**Considered and rejected:** A client-side backoff schedule, a maximum attempt
+count, or a total timeout. The delay is the server's to name — it is the only
+party that knows whether it is waiting on a compare-and-set it just lost or on
+somebody else's OCR — and a ceiling invented here would end the wait on the same
+dead panel this change removes. Nothing bounds the number of waits and nothing
+needs to: the `processing` state is self-terminating, and the loop runs only
+while the panel is mounted. A visible **Retry** control was the fallback had that
+not held. Also rejected: making the rail's `.catch` retry on any rejection, which
+would turn a settled 404 into a request loop.
+
+**Consequences:** `retryAfterMs` is part of the preview endpoint's contract with
+a client now, not diagnostic detail, and a `resource_processing` that arrives
+without one is treated as terminal rather than retried on an interval the client
+invented. A second preview surface — the message-feed lightbox is the one that
+exists — should read the same field rather than grow its own delay. Widening the
+retry to another response code turns this into a general retry layer over
+answers that are already final, which is what the narrow check in
+`processingRetryDelayMs` exists to prevent.
 
 ### 2026-08-27 — Message attachments use the canonical transcript relationship
 
