@@ -91,17 +91,23 @@ function seedResourceLink(
      VALUES (?, 'workstream_message', ?, 'canonical', ?)`,
   ).run(`fact-${input.resourceId}`, `payload-${input.resourceId}`, Date.parse(AS_OF));
   store.prepare(
-    `INSERT INTO workstream_message_records
-       (id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind,
-        author_type, author_user_id, client_message_id, visibility, pinned, message_type,
-        created_at, updated_at)
-     VALUES (?, '0', 1, 1, ?, 'user', 'text', 'member',
-             '4b2a1529-867b-4d69-8685-b1722ccd0149', ?, 'both', 0, 'text', ?, ?)
-     ON CONFLICT(id) DO NOTHING`,
-  ).run(`part-${input.resourceId}`, `fact-${input.resourceId}`, `client-${input.resourceId}`,
-    Date.parse(AS_OF), Date.parse(AS_OF));
+    `INSERT OR IGNORE INTO participant_transcript_turns
+       (transcript_sequence, turn_id, entry_kind, actor, author_user_id, root_fact_id,
+        attention_ordinal, revision, created_at, updated_at, client_message_id,
+        author_name_snapshot, author_avatar_url_snapshot)
+     VALUES (1, ?, 'conversation', 'human',
+             '4b2a1529-867b-4d69-8685-b1722ccd0149', ?, 1, 1, ?, ?, ?,
+             'Test user', NULL)`,
+  ).run(`part-${input.resourceId}`, `fact-${input.resourceId}`,
+    Date.parse(AS_OF), Date.parse(AS_OF), `client-${input.resourceId}`);
   store.prepare(
-    `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+    `INSERT OR IGNORE INTO participant_transcript_blocks
+       (turn_id, block_id, block_index, block_kind, fact_id, revision, updated_at)
+     VALUES (?, ?, 0, 'text', ?, 1, ?)`,
+  ).run(`part-${input.resourceId}`, `part-${input.resourceId}:text:0`,
+    `fact-${input.resourceId}`, Date.parse(AS_OF));
+  store.prepare(
+    `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
      VALUES (?, ?, 0, '{}')`,
   ).run(`part-${input.resourceId}`, input.resourceId);
 }

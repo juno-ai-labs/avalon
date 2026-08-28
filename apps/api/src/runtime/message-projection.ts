@@ -120,10 +120,9 @@ function projectMessage(
 /**
  * The published spelling of a stored message type.
  *
- * `workstream_message_records.message_type` is constrained by the object's schema to this exact set,
- * so the fallback is unreachable — but it is a fallback rather than a cast,
- * because the alternative is asserting over the one column whose vocabulary the
- * retired trigger branched on.
+ * Canonical conversation turns currently write this exact vocabulary. Keep a
+ * fallback rather than casting storage input so an unexpected future value is
+ * rendered safely instead of escaping the protocol mapper.
  */
 function messageTypeOf(stored: string): Message["messageType"] {
   switch (stored) {

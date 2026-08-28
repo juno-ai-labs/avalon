@@ -10,6 +10,8 @@ export interface AgentWorkTimingProps {
   /** Start of the active segment. Omit it to keep the active total paused. */
   startedAt?: number;
   monotonicStartedAt?: number;
+  /** Recovered stops are known only by the later durable recovery boundary. */
+  timingAccuracy?: 'observed' | 'upper_bound';
   activeVerb?: string;
   completedVerb?: string;
 }
@@ -44,6 +46,7 @@ export function AgentWorkTiming({
   completedVerb = 'worked',
   durationMs,
   monotonicStartedAt,
+  timingAccuracy = 'observed',
   startedAt,
 }: AgentWorkTimingProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now());
@@ -62,7 +65,10 @@ export function AgentWorkTiming({
       : Math.max(0, now - startedAt!)
     : 0;
   const verb = active ? activeVerb : completedVerb;
-  const label = `${verb} for ${formatDuration(durationMs + activeDuration) ?? '0ms'}`;
+  const duration = formatDuration(durationMs + activeDuration) ?? '0ms';
+  const label = timingAccuracy === 'upper_bound' && !active
+    ? `${verb} for at most ${duration}`
+    : `${verb} for ${duration}`;
   const accessibleLabel = active ? 'Rally is working' : label;
 
   return (

@@ -325,7 +325,7 @@ describe('useWorkstreamControlSocket', () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const queryClient = new QueryClient();
     setCachedWorkstreams(queryClient, [summary()]);
-    queryClient.setQueryData(['messages', workstreamId], [{ sensitive: true }]);
+    queryClient.setQueryData(['ordered-transcript', workstreamId], { sensitive: true });
     queryClient.setQueryData(['block-dashboard', workstreamId], { blocks: [{ sensitive: true }] });
     queryClient.setQueryData(['block-dashboard-preference', workstreamId], { visible: true });
     const getWorkstreamControlSocketTicket = vi.fn(async () => ({
@@ -350,7 +350,7 @@ describe('useWorkstreamControlSocket', () => {
       cause: 'access_revoked',
       attempts: 'zero',
     }]);
-    expect(queryClient.getQueryData(['messages', workstreamId])).toBeUndefined();
+    expect(queryClient.getQueryData(['ordered-transcript', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(['block-dashboard', workstreamId])).toBeUndefined();
     expect(queryClient.getQueryData(['block-dashboard-preference', workstreamId])).toBeUndefined();
   });

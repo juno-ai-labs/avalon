@@ -1,3 +1,4 @@
+import { pendingBindToolBatch } from "@rally/agent-harness";
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -16,18 +17,22 @@ import {
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   asSubstreamId,
+  asHarnessRunId,
   asUserId,
+  asWorkstreamId,
   asWorkspaceId,
   ServerSocketEventSchema,
-  SubstreamDirectSocketEventSchema,
   UpdateWorkstreamRequestSchema,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkstreamWorkflowInputSchema,
   type PersonalSocketEvent,
   type ServerSocketEvent,
+  type TranscriptRangeResult,
+  type TranscriptTurn,
   type User,
   type WorkstreamDetail,
+  type WorkstreamTranscriptSnapshot,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -55,15 +60,6 @@ import {
 import { withDurableObjectSelf } from "../lib/durable-object-self";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
-  AGENT_RUN_DISPATCH_LEASE_MS,
-  SUBSTREAM_AGENT_RUN_DISPATCHES,
-  claimAgentRunDispatch,
-  deferAgentRunDispatch,
-  nextAgentRunDispatchWakeUpAt,
-  releaseAgentRunDispatchLeases,
-  settleAgentRunDispatch,
-} from "./agent-run-dispatch-queue";
-import {
   HarnessRunMetricsSchema,
   recordHarnessRunObservation,
 } from "../observability/harness-run-observability";
@@ -88,13 +84,16 @@ import {
   terminalizeQueuedHarnessRun,
 } from "../runtime/harness-run-runtime";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
-import { createMessageObjectPort } from "../runtime/message-port";
 import { createToolReceiptObjectPort, createToolReceiptPortFactory } from "../runtime/tool-receipt-port";
 import {
   createBlockDashboardObjectPort,
   createBlockDashboardPortFactory,
 } from "../runtime/block-dashboard-port";
-import { runWorkstreamHarness, type WorkstreamHarnessResult } from "../services/integrations";
+import {
+  loadToolReplayOutput,
+  runWorkstreamHarness,
+  type WorkstreamHarnessResult,
+} from "../services/integrations";
 import { deliverAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
@@ -105,7 +104,6 @@ import {
   withLocalWorkstreamAuthorities,
   type LocalAuthorityExecutor,
 } from "../runtime/local-authorities";
-import { withWorkstreamRuntimeDatabase } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { TerminalObjectPortError } from "../services/terminal/object-port";
 import { fireWorkstreamWakeup } from "../services/workstream-service";
@@ -125,7 +123,7 @@ import {
   WorkstreamRegionalEffectAckSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
-import { substreamAgentName, workstreamDOName } from "./names";
+import { substreamAgentName, substreamLoopId, workstreamDOName } from "./names";
 import {
   BlockDashboardSourceRefreshRequestSchema,
   type BlockDashboardContextFence,
@@ -134,6 +132,7 @@ import {
   WorkstreamObjectStore,
   type PendingBlockDashboardRefresh,
 } from "./workstream-object-storage";
+import type { SequencedSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 import { WorkstreamTerminalStorage } from "./workstream-terminal-storage";
 import { WorkstreamToolReceiptStorage } from "./workstream-tool-receipt-storage";
 import {
@@ -143,6 +142,7 @@ import {
 import { WorkstreamBlockDashboardStorage } from "./workstream-block-dashboard-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
 import { WorkstreamTranscriptStorage } from "./workstream-transcript-storage";
+import { SubstreamLoopStorage } from "./substream-loop-storage";
 import {
   TranscriptOperationRequestSchema,
   type TranscriptOperationRequest,
@@ -152,12 +152,11 @@ import {
   type MessageOperationRequest,
   MessageOperationRequestSchema,
   mutatesTranscript,
-  UpsertToolMessageInputSchema,
 } from "./workstream-message-protocol";
 import {
   expireLocalAttemptLeasesFromPreviousInstance,
   previousInstanceRecoveryOwner,
-  type PublishFinalMessageInput,
+  type PublishHostOutcomeInput,
   WorkstreamHarnessRunStorage,
 } from "./workstream-harness-run-storage";
 import {
@@ -208,11 +207,14 @@ import {
   WorkstreamObjectCreateMessageInputSchema,
   WorkstreamObjectCreateSuggestionInputSchema,
   WorkstreamObjectProductService,
+  type WorkstreamLoopActivationRequest,
 } from "./workstream-object-product";
 import {
-  executeWorkstreamRuntimeSql,
-  WorkstreamRuntimeSqlRequestSchema,
-} from "./workstream-runtime-sql";
+  AdmitExternalMessageInputSchema,
+  AnswerExternalElicitationInputSchema,
+  ExternalMessageAdmissionResultSchema,
+  type ExternalMessageAdmissionResult,
+} from "./workstream-external-message-protocol";
 import { emitCorrelatedRunOutcome } from "../telemetry/run-outcome";
 import { DurableAgentDrain, DurableAgentKeepAlive } from "./durable-agent-runtime";
 import {
@@ -293,7 +295,7 @@ const RuntimeBootstrapRequestSchema = z.object({
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
 const AgentTerminalOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
-  messageId: IdSchema.optional(),
+  finalTurnId: z.string().min(1).max(180).optional(),
   error: z.object({ code: z.string(), message: z.string() }).optional(),
   metrics: HarnessRunMetricsSchema.optional(),
   cancellationReason: z.string().nullable().optional(),
@@ -322,14 +324,6 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     input: InitializeWorkstreamObjectInputSchema }).strict(),
   z.object({ operation: z.literal("get"), auth: ProductAuthSchema }).strict(),
   z.object({ operation: z.literal("boot"), auth: ProductAuthSchema }).strict(),
-  z.object({
-    operation: z.literal("messages"),
-    auth: ProductAuthSchema,
-    limit: z.number().int().min(1).max(250),
-    before: z.number().int().positive().optional(),
-    after: z.number().int().nonnegative().optional(),
-    around: z.number().int().positive().optional(),
-  }).strict(),
   z.object({ operation: z.literal("update"), auth: ProductAuthSchema, input: UpdateWorkstreamRequestSchema }).strict(),
   z.object({ operation: z.literal("acknowledge_read"), auth: ProductAuthSchema, input: AcknowledgeWorkstreamReadRequestSchema }).strict(),
   z.object({ operation: z.literal("mark_unread"), auth: ProductAuthSchema }).strict(),
@@ -345,12 +339,7 @@ const ProductRequestSchema = z.discriminatedUnion("operation", [
     elicitationId: IdSchema, input: AnswerElicitationRequestSchema }).strict(),
   z.object({ operation: z.literal("stop"), auth: ProductAuthSchema }).strict(),
   z.object({ operation: z.literal("retry"), auth: ProductAuthSchema }).strict(),
-]).superRefine((value, context) => {
-  if (value.operation !== "messages") return;
-  if ([value.before, value.after, value.around].filter((entry) => entry !== undefined).length > 1) {
-    context.addIssue({ code: "custom", message: "Use only one transcript cursor" });
-  }
-});
+]);
 /**
  * The flow a product operation belongs to. An operation outside the three
  * traced flows returns null and opens no spans, rather than being counted under
@@ -360,8 +349,24 @@ function productRequestFlow(operation: SubstreamProductRequest["operation"]): Pe
   switch (operation) {
     case "initialize": return "workstream_create";
     case "create_message": return "workstream_message_send";
-    case "get": case "boot": case "messages": return "workstream_open";
+    case "get": case "boot": return "workstream_open";
     default: return null;
+  }
+}
+
+function recoveredToolReceiptError(value: string | null): {
+  code: string | null;
+  message: string | null;
+} {
+  if (!value) return { code: null, message: null };
+  try {
+    const parsed = JSON.parse(value) as { code?: unknown; message?: unknown };
+    return {
+      code: typeof parsed.code === "string" ? parsed.code : null,
+      message: typeof parsed.message === "string" ? parsed.message : null,
+    };
+  } catch {
+    return { code: null, message: null };
   }
 }
 
@@ -387,18 +392,118 @@ export type SubstreamPublishedEvent = z.infer<typeof RoomIdentitySchema> & {
 };
 const MAX_REPLAY_EVENTS = 256;
 const MAX_REPLAY_BYTES = 512_000;
-const MAX_SOCKET_SNAPSHOT_BYTES = 900_000;
 
-const MAX_SOCKET_MESSAGE_PAGE_BYTES = 900_000;
+/**
+ * Remove one whole canonical turn while narrowing coverage to exactly the
+ * bytes that remain. A socket frame is only an opening cache: omitted spans
+ * stay requestable through the transcript range protocol and are never
+ * represented as loaded. Unread context yields before the latest window.
+ */
+function narrowSocketTranscriptSnapshot(
+  snapshot: WorkstreamTranscriptSnapshot,
+): WorkstreamTranscriptSnapshot | null {
+  const ranked = snapshot.ranges
+    .map((range, index) => ({ range, index }))
+    .filter(({ range }) => range.turns.length > 0)
+    .sort((left, right) => {
+      const rank = (purpose: typeof left.range.purpose): number =>
+        purpose === "unread" ? 0 : purpose === "unread_and_latest" ? 1 : 2;
+      return rank(left.range.purpose) - rank(right.range.purpose)
+        || left.range.covered.startInclusive - right.range.covered.startInclusive;
+    });
+  const candidate = ranked[0];
+  if (candidate) {
+    const remainingTurns = candidate.range.turns.slice(1);
+    const nextStart = remainingTurns[0]?.transcriptSequence
+      ?? candidate.range.covered.endExclusive;
+    const ranges = snapshot.ranges.flatMap((range, index) => {
+      if (index !== candidate.index) return [range];
+      if (remainingTurns.length === 0) return [];
+      return [{
+        ...range,
+        covered: { ...range.covered, startInclusive: nextStart },
+        turns: remainingTurns,
+      }];
+    });
+    const unreadWasDropped = snapshot.unreadAnchorSequence !== null
+      && candidate.range.covered.startInclusive <= snapshot.unreadAnchorSequence
+      && nextStart > snapshot.unreadAnchorSequence;
+    return {
+      ...snapshot,
+      ranges,
+      ...(unreadWasDropped ? {
+        unreadAnchorSequence: null,
+        unreadReason: "anchor_unavailable" as const,
+      } : {}),
+    };
+  }
+  if (snapshot.activeTurns.length > 0) {
+    return { ...snapshot, activeTurns: snapshot.activeTurns.slice(1) };
+  }
+  return null;
+}
+
+/**
+ * Remove the newest whole turn from a direct range response. Coverage ends at
+ * the removed turn's sequence, rather than continuing to claim bytes the
+ * socket did not carry. The original requested interval remains unchanged so
+ * the client can distinguish the answer from the question and request the
+ * uncovered suffix.
+ */
+function narrowSocketTranscriptRange(
+  result: TranscriptRangeResult,
+): TranscriptRangeResult | null {
+  const removed = result.turns.at(-1);
+  if (!removed) return null;
+  const turns = result.turns.slice(0, -1);
+  return {
+    ...result,
+    covered: {
+      ...result.covered,
+      endExclusive: removed.transcriptSequence,
+    },
+    turns,
+    activities: activitiesForTranscriptTurns(result.activities, turns),
+  };
+}
+
+function activitiesForTranscriptTurns(
+  activities: TranscriptRangeResult["activities"],
+  turns: TranscriptRangeResult["turns"],
+): TranscriptRangeResult["activities"] {
+  const byId = new Map(activities.map((activity) => [activity.activityId, activity]));
+  const required = new Set(turns.flatMap((turn) => [
+    ...(turn.activityId ? [turn.activityId] : []),
+    ...turn.blocks.flatMap((block) => "activityId" in block && block.activityId
+      ? [block.activityId]
+      : []),
+  ]));
+  for (const activityId of required) {
+    let parentId = byId.get(activityId)?.parentActivityId;
+    while (parentId && !required.has(parentId)) {
+      required.add(parentId);
+      parentId = byId.get(parentId)?.parentActivityId;
+    }
+  }
+  return activities.filter((activity) => required.has(activity.activityId));
+}
+
 const BLOCK_DASHBOARD_DEBOUNCE_MS = 1_200;
 const BLOCK_DASHBOARD_MAX_DEBOUNCE_MS = 5_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
-// Generous by design — the 10 GB object ceiling is the only hard bound. Spent
-// dispatch and wake-up rows this old are consumed intents whose idempotency
-// windows closed with their runs; the runs table keeps the durable record.
-const OPERATIONAL_FENCE_RETENTION_MS = 180 * 24 * 60 * 60_000;
 /** Matches the Agents SDK default, while keeping Avalon independent of it. */
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
+/**
+ * Pacing for redelivering a committed realtime reference whose local socket
+ * delivery threw, following the alarm coordinator's precedent that retry
+ * pacing is a code-owned scheduling constant (`SCHEDULED_ALARM_RETRY_BASE_MS`).
+ * Short on purpose: the payload is object-local and the failure mode is a
+ * transient socket, and a reconnect snapshot repairs the reader regardless —
+ * this only bounds how hot a poisoned row can spin the alarm.
+ */
+const SEMANTIC_REALTIME_RETRY_MS = 5_000;
+/** The loop and harness attempt use the same five-minute recovery horizon. */
+const LOOP_EXECUTION_LEASE_MS = 5 * 60_000;
 /** `_internal_durable_alarms.kind` for a wake-up an agent run scheduled for itself. */
 const AGENT_TIMER_ALARM_KIND = "agent_timer";
 /**
@@ -410,7 +515,7 @@ const AGENT_TIMER_ALARM_KIND = "agent_timer";
  */
 const AGENT_TIMER_ALARM_LIMIT = 100;
 const BLOCK_DASHBOARD_REFRESH_EVENT_TYPES = new Set([
-  "message_created",
+  "transcript_turn_upserted",
   "stream_completed",
   "participant_added",
   "participant_removed",
@@ -603,6 +708,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private readonly recentEvents: ServerSocketEvent[] = [];
   private recentEventBytes = 0;
   private replayFloorSequence: number | null = null;
+  /** Avoid a durable-outbox point read on every high-frequency token frame. */
+  private semanticRealtimePending = false;
   /**
    * Not `readonly`, and not assigned in the constructor body: the store applies
    * this object's schema when it is constructed, and reporting a failed
@@ -623,6 +730,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private messages!: WorkstreamMessageStorage;
   private transcript!: WorkstreamTranscriptStorage;
+  private loop!: SubstreamLoopStorage;
   private resources!: WorkstreamResourceStorage;
   private identityRows!: WorkstreamIdentityStorage;
   private harnessRuns!: WorkstreamHarnessRunStorage;
@@ -636,11 +744,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * Whether the drain this alarm just ran left a run in someone else's hands.
    *
    * Read only by `armAlarmAfterDueWork`, and reset at the top of every alarm's
-   * work: a deferral means the dispatch row is still due and still owned, so
-   * re-deriving off it would arm for an instant already past.
+   * work: a deferral means the persistent loop's current execution is still
+   * due and still owned, so re-deriving from its receipt would arm for an
+   * instant already past.
    */
-  private runDrainDeferred = false;
-  private activeRunDispatch: { runId: string; leaseToken: string } | null = null;
+  private loopDrainDeferred = false;
+  private activeLoopExecution: {
+    runId: string;
+    leaseOwner: string;
+    executionEpoch: number;
+  } | null = null;
 
   private harnessAttemptOwner(
     input: Pick<WorkstreamWorkflowInput, "substreamId" | "harnessRunId">,
@@ -692,11 +805,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         () => this.state.getWebSockets().some((socket) =>
           this.readAttachment(socket)?.transcriptSnapshot != null),
       );
+      this.loop = new SubstreamLoopStorage(state.storage);
       this.product = new WorkstreamObjectProductService(
         state.storage,
         this.objectStore,
         env,
         this.transcript,
+        this.loop,
       );
       this.terminal = new WorkstreamTerminalStorage(state.storage);
       this.toolReceipts = new WorkstreamToolReceiptStorage(state.storage);
@@ -707,25 +822,65 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.identityRows = new WorkstreamIdentityStorage(state.storage);
       this.harnessRuns = new WorkstreamHarnessRunStorage(state.storage);
       await this.objectStore.waitUntilReady();
+      this.semanticRealtimePending = this.objectStore.nextSemanticRealtimeDueAt() !== null;
       // Existing one-room-per-workstream objects become the main child during
       // the maintenance cutover. A non-main child records its external id on
       // its first scoped request and may never change it afterward.
-      if (this.objectStore.identity()) this.ensureSubstreamIdentity("0");
+      if (this.objectStore.identity()) {
+        const persistedSubstream = this.state.storage.sql.exec<{
+          external_substream_id: string;
+        }>(
+          `SELECT external_substream_id FROM substream_agent_identity WHERE id = 1`,
+        ).toArray()[0];
+        if (!persistedSubstream) this.ensureSubstreamIdentity("0");
+        this.ensurePersistentLoop();
+      }
       // Still-live local leases belong to the isolate this one replaced, so
       // their runs are recoverable now. Already-expired rows stay with the
       // ordinary stale-run reaper.
       const recoveryStartedAt = Date.now();
-      for (const attempt of expireLocalAttemptLeasesFromPreviousInstance(
+      const recoverableAttempts = expireLocalAttemptLeasesFromPreviousInstance(
         state.storage,
         recoveryStartedAt,
-      )) {
+      );
+      for (const attempt of recoverableAttempts) {
         this.recoverableHarnessAttempts.set(attempt.runId, attempt.attemptId);
       }
-      releaseAgentRunDispatchLeases(
-        this.state.storage.sql,
-        SUBSTREAM_AGENT_RUN_DISPATCHES,
-        recoveryStartedAt,
-      );
+      // The singleton execution lease belongs to the same vanished isolate as
+      // its harness-attempt lease. Leaving it live would make a replacement
+      // wait out the full loop lease even though the constructor has already
+      // proved that the subordinate executor cannot write again. Deliberate
+      // A receipt due now is equally conclusive: its singleton owner vanished
+      // with this isolate even when the provider attempt never acquired its
+      // subordinate row. Only an explicit future execution_available_at is a
+      // deliberate deferral and keeps the lease alive.
+      const activeLoop = this.loop.loop();
+      const activeExecutionId = activeLoop?.active_execution_id ?? null;
+      const activeReceipt = activeExecutionId === null
+        ? undefined
+        : this.state.storage.sql.exec<{
+          terminalized_at: number | null;
+          execution_available_at: number | null;
+        }>(
+          `SELECT terminalized_at, execution_available_at FROM runs WHERE run_id = ?`,
+          activeExecutionId,
+        ).toArray()[0];
+      const activeReceiptIsDue = activeReceipt?.terminalized_at === null
+        && (activeReceipt.execution_available_at === null
+          || activeReceipt.execution_available_at <= recoveryStartedAt);
+      if (activeLoop?.status === "executing"
+        && activeLoop.active_execution_id !== null
+        && activeLoop.active_execution_epoch !== null
+        && activeLoop.lease_owner !== null
+        && (activeReceiptIsDue
+          || recoverableAttempts.some(({ runId }) => runId === activeLoop.active_execution_id))) {
+        this.loop.expireExecutionLeaseForEvictedOwner({
+          executionId: activeLoop.active_execution_id,
+          executionEpoch: activeLoop.active_execution_epoch,
+          leaseOwner: activeLoop.lease_owner,
+          now: recoveryStartedAt,
+        });
+      }
       // A run left behind by a previous isolate is rediscovered here, by
       // arming the alarm rather than by starting a drain this constructor
       // cannot stay alive to finish. The full derivation runs rather than an
@@ -757,6 +912,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       now,
       now,
     );
+  }
+
+  private ensurePersistentLoop() {
+    const identity = this.objectStore.identity();
+    if (!identity) throw new Error("substream_loop_identity_unavailable");
+    const substreamId = this.externalSubstreamId();
+    const loopId = substreamLoopId(asWorkstreamId(identity.workstreamId), substreamId);
+    const bindStateRevision = this.transcript.readBindProjection(loopId)?.stateRevision ?? 0;
+    return this.loop.ensureLoop({ loopId, bindStateRevision, now: Date.now() });
   }
 
   /**
@@ -864,10 +1028,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return this.acceptProductRequest(request);
     }
 
-    if (request.method === "POST" && url.pathname === "/internal/runtime-sql") {
-      return this.acceptRuntimeSql(request);
-    }
-
     if (request.method === "POST" && url.pathname === "/internal/tool-receipt") {
       return this.acceptToolReceiptOperation(request);
     }
@@ -903,10 +1063,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     if (request.method === "POST" && url.pathname === "/internal/runtime-bootstrap") {
       return this.acceptRuntimeBootstrap(request);
-    }
-
-    if (request.method === "POST" && url.pathname === "/internal/run-dispatch") {
-      return this.acceptRunDispatch(request);
     }
 
     if (request.method === "POST" && url.pathname === "/internal/block-dashboard-refresh-request") {
@@ -1019,13 +1175,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  async executeRuntimeSql(
-    input: z.input<typeof WorkstreamRuntimeSqlRequestSchema>,
-  ): Promise<DurableObjectRpcResult> {
-    await this.initialized;
-    return responseToRpcResult(await this.acceptRuntimeSql(this.rpcRequest(input)));
-  }
-
   async attachRuntimeResource(input: SubstreamRuntimeResourceRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeResource(this.rpcRequest(input)));
@@ -1106,9 +1255,71 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return objectPortRpcResult(await this.identityOperationOutcome(input));
   }
 
-  async dispatchRun(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
+  async activateLoop(input: WorkstreamWorkflowInput): Promise<DurableObjectRpcResult> {
     await this.initialized;
-    return responseToRpcResult(await this.acceptRunDispatch(this.rpcRequest(input)));
+    return responseToRpcResult(await this.acceptLoopActivation(this.rpcRequest(input)));
+  }
+
+  private async completeExternalMessageAdmission(
+    result: Awaited<ReturnType<WorkstreamObjectProductService["admitExternalMessage"]>>,
+  ): Promise<ExternalMessageAdmissionResult> {
+    if (result.activationRequest) {
+      await this.requestPersistentLoopActivation(result.activationRequest);
+    }
+    if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
+    return ExternalMessageAdmissionResultSchema.parse({
+      turn: result.turn,
+      deliveryState: result.deliveryState,
+    });
+  }
+
+  /** Host-authorized connector ingress for an invoked external message. */
+  async admitExternalMessage(input: unknown): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    const parsed = AdmitExternalMessageInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return responseToRpcResult(jsonResponse({ error: "invalid_external_message_admission" }, 400));
+    }
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return responseToRpcResult(jsonResponse({ error: "external_message_identity_mismatch" }, 409));
+    }
+    try {
+      const result = await this.product.admitExternalMessage(parsed.data);
+      return responseToRpcResult(jsonResponse(await this.completeExternalMessageAdmission(result)));
+    } catch (error) {
+      return responseToRpcResult(jsonResponse({
+        error: error instanceof Error ? error.message : "external_message_admission_failed",
+      }, 409));
+    }
+  }
+
+  /** Host-authorized Slack elicitation answer and message admission. */
+  async answerExternalElicitation(input: unknown): Promise<DurableObjectRpcResult> {
+    await this.initialized;
+    const parsed = AnswerExternalElicitationInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return responseToRpcResult(jsonResponse({ error: "invalid_external_elicitation_answer" }, 400));
+    }
+    const identity = this.objectStore.identity();
+    if (!identity || identity.workspaceId !== parsed.data.workspaceId
+      || identity.workstreamId !== parsed.data.workstreamId
+      || this.externalSubstreamId() !== "0") {
+      return responseToRpcResult(jsonResponse({ error: "external_message_identity_mismatch" }, 409));
+    }
+    try {
+      const result = await this.product.answerExternalElicitation(parsed.data);
+      return responseToRpcResult(jsonResponse(await this.completeExternalMessageAdmission(result)));
+    } catch (error) {
+      // The product's refusals carry their own status: an authorization
+      // refusal — this question is targeted to somebody else — is a 403 the
+      // Slack caller reports to the answerer, not a 409 it might retry.
+      return responseToRpcResult(jsonResponse({
+        error: error instanceof Error ? error.message : "external_elicitation_answer_failed",
+      }, error instanceof ApiError ? error.status : 409));
+    }
   }
 
   async publishEvent(input: SubstreamPublishedEvent): Promise<DurableObjectRpcResult> {
@@ -1167,63 +1378,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
-  private async acceptRuntimeSql(request: Request): Promise<Response> {
-    const parsed = WorkstreamRuntimeSqlRequestSchema.safeParse(
-      await request.json().catch(() => null),
-    );
-    if (!parsed.success) return jsonResponse({ error: "invalid_workstream_runtime_sql" }, 400);
-    let result: Awaited<ReturnType<typeof executeWorkstreamRuntimeSql>>;
-    try {
-      result = await executeWorkstreamRuntimeSql(
-        this.state.storage,
-        this.product,
-        parsed.data,
-      );
-    } catch (error) {
-      const cause = error instanceof Error && error.cause instanceof Error
-        ? error.cause
-        : error;
-      logError(this.env, "workstream_runtime_sql_commit_failed", {
-        workspace_id: parsed.data.workspaceId,
-        workstream_id: parsed.data.workstreamId,
-        harness_run_id: parsed.data.harnessRunId ?? null,
-        request_id: parsed.data.requestId,
-        statement_count: parsed.data.statements.length,
-        code: "workstream_runtime_sql_not_committed",
-        // `executeWorkstreamRuntimeSql` wraps a failed statement with its SQL
-        // for the internal caller. Logs retain only the underlying SQLite
-        // reason: statement text can contain tool input or participant data.
-        reason: cause instanceof Error ? cause.message : String(cause),
-        stack: cause instanceof Error ? cause.stack?.split("\n").slice(0, 6).join("\n") ?? null : null,
-      });
-      return jsonResponse({
-        error: "workstream_runtime_sql_not_committed",
-      }, 409);
-    }
-    // The SQL transaction is already durable. Returning an alarm failure would
-    // tell the harness to repeat a receipt write that did commit. The active
-    // run's dispatch sweep, a later request, and any committed directory effect
-    // are the recovery paths for re-deriving the object's next alarm.
-    try {
-      // Wake-ups no longer arrive here — `/internal/scheduling` re-derives the
-      // timer index off its own writes — so there is nothing to detect in this
-      // statement text. Arming still happens, because other routed writes can
-      // move an alarm this object owes.
-      await this.armNextAlarm();
-    } catch (error) {
-      logError(this.env, "workstream_runtime_sql_alarm_schedule_failed", {
-        workspace_id: parsed.data.workspaceId,
-        workstream_id: parsed.data.workstreamId,
-        harness_run_id: parsed.data.harnessRunId ?? null,
-        request_id: parsed.data.requestId,
-        statement_count: parsed.data.statements.length,
-        code: "workstream_runtime_sql_alarm_failed_after_commit",
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return jsonResponse(result);
-  }
-
   /**
    * Run one Terminal operation against this work stream's own tables.
    *
@@ -1267,8 +1421,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   /**
    * Refuse an object-port request the routed path would have refused.
    *
-   * `executeWorkstreamRuntimeSql` checked two things before running a
-   * statement: that this object is the one addressed, and that it is still the
+   * The retired routed-SQL endpoint checked two things before running a
+   * statement: that this object is the one addressed, and that it was still the
    * work stream's authority. The typed endpoints kept the first and dropped the
    * second, so a write against a `preparing` or `quarantined` object now
    * commits where the routed statement was refused — which is the window that
@@ -1304,7 +1458,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * and an object whose `authority_mode` is not `authoritative`. The last one
    * matters most here. `persistCompactionCheckpoint`, `recordPluginActivation`
    * and the two description-evaluation writes are the first writes moved off
-   * the routed path whose *only* fence was `executeWorkstreamRuntimeSql`
+   * the routed path whose *only* fence was the generic SQL endpoint
    * refusing every statement against a `preparing` or `quarantined` object —
    * the wake-up mutations keep an equivalent one through
    * `commitRuntimeMutation`, and these four would have had none.
@@ -1374,12 +1528,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       )
       : await method.apply(this.scheduling, parsed.data.args);
     if (parsedElicitationInput && isPersistedElicitationOutcome(value)) {
-      const turn = this.transcript.participantTurn(parsedElicitationInput.messageId);
-      if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
+      await this.flushSemanticRealtimeOutboxBestEffort();
     }
     if (mutates) {
       this.syncAgentTimerAlarms();
-      // Arming is best-effort, as it is in `acceptRuntimeSql` and
+      // Arming is best-effort, as it is for every typed mutation endpoint and
       // `runTerminalOperation`, and for the reason those two give: the
       // operation is already durable, so raising here would tell a caller its
       // committed write failed. The wake-up tool's own rollback would then
@@ -1443,27 +1596,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (appendInput && !appendInput.success) {
       return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
     }
-    const toolInput = parsed.data.operation === "upsertToolMessage"
-      ? UpsertToolMessageInputSchema.safeParse(parsed.data.args[0])
-      : null;
-    if (toolInput && !toolInput.success) {
-      return { status: 400, payload: { ok: false, error: "invalid_message_operation" } };
-    }
     const parsedAppendInput = appendInput?.data ?? null;
-    const parsedToolInput = toolInput?.data ?? null;
     const preparedMessage = parsedAppendInput
       ? await this.messages.prepareMessage(parsedAppendInput)
-      : parsedToolInput
-        ? await this.messages.prepareToolMessage(parsedToolInput)
-        : null;
+      : null;
     const value = mutates
       ? await this.product.commitRuntimeMutation(
         () => {
           if (preparedMessage && parsedAppendInput) {
             return this.messages.appendPreparedMessage(preparedMessage);
-          }
-          if (preparedMessage && parsedToolInput) {
-            return this.messages.upsertPreparedToolMessage(parsedToolInput, preparedMessage);
           }
           return method.apply(this.messages, parsed.data.args);
         },
@@ -1471,8 +1612,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       )
       : method.apply(this.messages, parsed.data.args);
     if (preparedMessage && isAppendedMessageOutcome(value)) {
-      const turn = this.transcript.participantTurn(value.messageId);
-      if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
+      await this.flushSemanticRealtimeOutboxBestEffort();
     }
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
@@ -1484,35 +1624,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
     const refusal = this.objectPortRefusal(parsed.data, "workstream_transcript_identity_mismatch");
     if (refusal) return refusal;
+    if (parsed.data.operation === "seedDevelopmentConversationTurn"
+      && this.env.APP_ENV !== "development") {
+      return { status: 404, payload: { ok: false, error: "development_operation_unavailable" } };
+    }
     const method = this.transcript[parsed.data.operation] as (...args: unknown[]) => unknown;
     const value = await method.apply(this.transcript, parsed.data.args);
-    if (parsed.data.operation === "upsertActivity" && value) {
-      await this.publishAgentRuntimeEvent({
-        type: "transcript_activity_upserted",
-        activity: value,
-        snapshotAtUtc: new Date().toISOString(),
-      });
-    }
-    const first = parsed.data.args[0] as Record<string, unknown> | undefined;
-    let turn = null;
-    if (parsed.data.operation === "commitBindTransition") {
-      turn = first?.kind === "assistant_accepted" && typeof first.turnId === "string"
-        ? this.transcript.participantTurn(first.turnId)
-        : null;
-    } else if (parsed.data.operation === "upsertToolLifecycle" && typeof first?.toolCallId === "string") {
-      turn = this.transcript.participantTurnForTool(first.toolCallId);
-    } else if (parsed.data.operation === "reserveCompactionStatus"
-      && typeof first?.compactionEventId === "string") {
-      turn = this.transcript.participantTurn(first.compactionEventId);
-    } else if (parsed.data.operation === "commitBindCompaction") {
-      const transition = (first?.commit as { transition?: { compactionEventId?: unknown } } | undefined)?.transition;
-      turn = typeof transition?.compactionEventId === "string"
-        ? this.transcript.participantTurn(transition.compactionEventId)
-        : null;
-    } else if (parsed.data.operation === "setParticipantTurnAttentionOrdinal") {
-      turn = value;
-    }
-    if (turn) await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn });
+    await this.flushSemanticRealtimeOutboxBestEffort();
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -1537,20 +1655,25 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const refusal = this.objectPortRefusal(parsed.data, "workstream_harness_run_identity_mismatch");
     if (refusal) return refusal;
     const method = this.harnessRuns[parsed.data.operation] as (...args: unknown[]) => unknown;
-    const finalMessageInput = parsed.data.operation === "publishFinalMessage"
-      ? parsed.data.args[0] as PublishFinalMessageInput
+    const hostOutcomeInput = parsed.data.operation === "publishHostOutcome"
+      ? parsed.data.args[0] as PublishHostOutcomeInput
       : null;
-    const preparedFinalMessage = finalMessageInput
-      ? await this.harnessRuns.prepareFinalMessage(finalMessageInput)
+    const preparedHostOutcome = hostOutcomeInput
+      ? await this.harnessRuns.prepareHostOutcome(hostOutcomeInput)
       : null;
     const value = mutatesRunState(parsed.data.operation)
       ? await this.product.commitRuntimeMutation(
-        () => preparedFinalMessage && finalMessageInput
-          ? this.harnessRuns.publishPreparedFinalMessage(finalMessageInput, preparedFinalMessage)
+        () => preparedHostOutcome && hostOutcomeInput
+          ? this.harnessRuns.publishPreparedHostOutcome(hostOutcomeInput, preparedHostOutcome)
           : method.apply(this.harnessRuns, parsed.data.args),
         true,
       )
       : method.apply(this.harnessRuns, parsed.data.args);
+    if (hostOutcomeInput && value && typeof value === "object"
+      && "outcome" in value
+      && (value.outcome === "published" || value.outcome === "replayed")) {
+      await this.flushSemanticRealtimeOutboxBestEffort();
+    }
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
@@ -1697,7 +1820,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     let value: unknown;
     try {
       // Through `commitRuntimeMutation`, not directly, for the same reason
-      // `acceptRuntimeSql` does: a write that moves a Terminal deadline has to
+      // Typed mutation endpoints do: a write that moves a Terminal deadline has to
       // enqueue the `directory_common` effect, because
       // `workspace_workstream_directory.next_terminal_action_at` is the only
       // thing the workspace's alarm reads to decide a sandbox is due, and that
@@ -1880,7 +2003,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return { status: 200, payload: { ok: true, value: value ?? null } };
   }
 
-  private async acceptRunDispatch(request: Request): Promise<Response> {
+  private async acceptLoopActivation(request: Request): Promise<Response> {
     const parsed = RuntimeDispatchRequestSchema.safeParse(await request.json().catch(() => null));
     if (!parsed.success) return jsonResponse({ error: "invalid_substream_run_dispatch" }, 400);
     if (parsed.data.reason === "block_dashboard_block") {
@@ -1895,10 +2018,30 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     const substreamId = parsed.data.substreamId ?? asSubstreamId("0");
     try {
       this.ensureSubstreamIdentity(substreamId);
-      await this.enqueueAgentRun(parsed.data.harnessRunId, {
+      const loop = this.ensurePersistentLoop();
+      const input = WorkstreamWorkflowInputSchema.parse({
         ...parsed.data,
         substreamId,
       });
+      if (input.loopId !== loop.loop_id) throw new Error("substream_loop_identity_mismatch");
+      const encoded = JSON.stringify(input);
+      const now = Date.now();
+      const executionReceiptId = `substream-agent:${substreamId}:${input.harnessRunId}`;
+      const launched = await this.product.commitRuntimeMutation(
+        () => this.harnessRuns.launchRun({
+          runId: input.harnessRunId,
+          workflowInstanceId: executionReceiptId,
+          executionContextJson: encoded,
+          executionAvailableAt: now,
+          startedAt: now,
+          now,
+        }),
+        true,
+      );
+      if (launched.outcome !== "launched") {
+        throw new Error("substream_loop_execution_receipt_not_found");
+      }
+      await this.state.storage.setAlarm(now + 1);
       return jsonResponse({ accepted: true }, 202);
     } catch (error) {
       return jsonResponse({
@@ -1976,30 +2119,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const input = request.input;
         const result = await span.step("workstream.room.product.initialize", () =>
           this.product.initialize(current, input));
-        const identity = { workspaceId: request.input.workspaceId, workstreamId: request.input.workstreamId };
         // The dispatch is durable state and must land before anything that can
         // fail for cosmetic reasons: a refused broadcast used to abort this
         // handler after the run was committed, leaving a run with no executor,
         // no alarm, and a member-facing 500 over a work stream that exists.
-        await span.step("workstream.room.run.dispatch", () =>
-          this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput));
-        const messages = await span.step("workstream.room.opening_message.read", () =>
-          this.product.messages(current, 1));
-        if (messages.items[0]) {
-          const opening = messages.items[0];
-          await span.step("workstream.room.event.publish_message_created", () =>
-            this.publishLocalProductEvent(identity, {
-              type: "message_created",
-              message: opening,
-            }));
-          const transcriptTurn = this.transcript.participantTurn(opening.id);
-          if (transcriptTurn) {
-            await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
-          }
-        }
+        await span.step("workstream.room.loop.activate", () =>
+          this.requestExecutionReceiptActivation(result.harnessRunId, result.workflowInput));
+        await this.flushSemanticRealtimeOutboxBestEffort();
         return jsonResponse({
           workstream: result.workstream,
-          messageId: result.messageId,
+          turnId: result.turnId,
           harnessRunId: result.harnessRunId,
         });
       }
@@ -2014,18 +2143,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
             unreadHighWaterAttentionOrdinal: boot.workstream.firstUnreadSequenceNumber,
           }),
         });
-      }
-      if (request.operation === "messages") {
-        const query = request;
-        const page = await span.step("workstream.room.product.messages", () => this.product.messages(
-          current,
-          query.limit,
-          query.before,
-          query.after,
-          query.around,
-        ));
-        span.setAttributes({ "rally.transcript.message_count": page.items.length });
-        return jsonResponse(page);
       }
       const identity = this.objectStore.identity();
       if (!identity) return jsonResponse({ error: "workstream_not_found" }, 404);
@@ -2044,25 +2161,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         const input = request.input;
         const result = await span.step("workstream.room.product.create_message", () =>
           this.product.createMessage(current, input));
-        await span.step("workstream.room.run.dispatch", () =>
-          this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput));
-        if (result.inserted) {
-          await span.step("workstream.room.event.publish_message_created", () =>
-            this.publishLocalProductEvent(identity, { type: "message_created", message: result.message }));
-          const transcriptTurn = this.transcript.participantTurn(result.message.id);
-          if (transcriptTurn) {
-            await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
-          }
+        if (result.activationRequest !== null) {
+          const activationRequest = result.activationRequest;
+          await span.step("workstream.room.loop.activate", () =>
+            this.requestPersistentLoopActivation(activationRequest));
         }
+        if (result.inserted) await this.flushSemanticRealtimeOutboxBestEffort();
         span.setAttributes({
-          "rally.agent.invoked": result.agentInvoked,
-          "rally.harness_run.id": result.harnessRunId,
           "rally.message.deduplicated": !result.inserted,
         });
         return jsonResponse({
-          message: result.message,
-          agentInvoked: result.agentInvoked,
-          harnessRunId: result.harnessRunId,
+          turn: result.turn,
+          deliveryState: result.deliveryState,
         });
       }
       if (request.operation === "add_participant") {
@@ -2113,25 +2223,24 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
           request.elicitationId,
           request.input,
         );
-        await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
+        if (result.activationRequest) {
+          await this.requestPersistentLoopActivation(result.activationRequest);
+        }
         if (result.elicitation) {
           await this.publishLocalProductEvent(identity, {
             type: "elicitation_answered",
             elicitation: result.elicitation,
           });
         }
-        const transcriptTurn = this.transcript.participantTurn(result.responsePartId);
-        if (transcriptTurn) {
-          await this.publishAgentRuntimeEvent({ type: "transcript_turn_upserted", turn: transcriptTurn });
-        }
-        return jsonResponse({ elicitation: result.elicitation, harnessRunId: result.harnessRunId });
+        await this.flushSemanticRealtimeOutboxBestEffort();
+        return jsonResponse({ elicitation: result.elicitation });
       }
       if (request.operation === "stop") {
         await this.product.stop(current);
         return jsonResponse({ ok: true });
       }
       const result = await this.product.retry(current);
-      await this.startProductWorkflow(identity, result.harnessRunId, result.workflowInput);
+      await this.requestPersistentLoopActivation(result.activationRequest);
       return jsonResponse({ harnessRunId: result.harnessRunId });
     } catch (error) {
       const safe = error instanceof ApiError
@@ -2154,8 +2263,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
   }
 
-  private async startProductWorkflow(
-    identity: { workspaceId: string; workstreamId: string },
+  private async requestExecutionReceiptActivation(
     runId: string | null,
     workflowInput: WorkstreamWorkflowInput | null,
   ): Promise<void> {
@@ -2164,96 +2272,60 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       ...workflowInput,
       substreamId: this.externalSubstreamId(),
     });
-    await this.enqueueAgentRun(runId, input);
+    if (input.harnessRunId !== runId) throw new Error("substream_loop_execution_receipt_mismatch");
+    const loop = this.ensurePersistentLoop();
+    if (input.loopId !== loop.loop_id) throw new Error("substream_loop_identity_mismatch");
+    this.state.storage.sql.exec(
+      `UPDATE runs SET execution_context_json = ?, execution_available_at = COALESCE(execution_available_at, ?),
+              updated_at = ? WHERE run_id = ? AND terminalized_at IS NULL`,
+      JSON.stringify(input), Date.now(), Date.now(), runId,
+    );
+    await this.state.storage.setAlarm(Date.now() + 1);
   }
 
-  private async enqueueAgentRun(runId: string, input: WorkstreamWorkflowInput): Promise<void> {
-    const now = Date.now();
-    this.state.storage.sql.exec(
-      `INSERT INTO agent_run_dispatches
-         (run_id, input_json, state, attempt, available_at, started_at,
-          completed_at, last_error_code, created_at, updated_at)
-       VALUES (?, ?, 'queued', 0, ?, NULL, NULL, NULL, ?, ?)
-       ON CONFLICT(run_id) DO NOTHING`,
-      runId,
-      JSON.stringify(input),
-      now,
-      now,
-      now,
-    );
-    // Generous operational-fence retention (the 10 GB object ceiling is the
-    // only hard bound): a terminal dispatch is a consumed execution intent —
-    // the run row itself is the durable record — and a fired or cancelled
-    // wake-up is a spent one-shot whose idempotency window has long closed.
-    this.state.storage.sql.exec(
-      `DELETE FROM agent_run_dispatches
-        WHERE run_id IN (
-          SELECT run_id FROM agent_run_dispatches
-           WHERE state IN ('completed', 'failed') AND updated_at < ?
-           ORDER BY updated_at LIMIT 100
-        )`,
-      now - OPERATIONAL_FENCE_RETENTION_MS,
-    );
-    this.state.storage.sql.exec(
-      `DELETE FROM workstream_wakeups
-        WHERE wakeup_id IN (
-          SELECT wakeup_id FROM workstream_wakeups
-           WHERE status IN ('fired', 'cancelled') AND updated_at < ?
-           ORDER BY updated_at LIMIT 100
-        )`,
-      now - OPERATIONAL_FENCE_RETENTION_MS,
-    );
-    // Armed unconditionally rather than through `ensureAlarmNoLaterThan`: that
-    // helper reads the current alarm first, and an invocation that died in the
-    // gap between the insert above and the write below would leave a queued row
-    // with nothing scheduled to reach it. Nothing can be sooner than now + 1,
-    // so there is no alarm worth preserving.
-    await this.state.storage.setAlarm(now + 1);
+  private async requestPersistentLoopActivation(
+    request: WorkstreamLoopActivationRequest,
+  ): Promise<void> {
+    const loop = this.ensurePersistentLoop();
+    if (request.loopId !== loop.loop_id) throw new Error("substream_loop_identity_mismatch");
+    if (request.inputId !== null) {
+      const pending = this.loop.input(request.inputId);
+      if (!pending || pending.loop_id !== loop.loop_id) {
+        throw new Error("substream_loop_activation_input_unavailable");
+      }
+    } else {
+      await this.requestExecutionReceiptActivation(
+        request.receiptRunId,
+        request.workflowInput,
+      );
+      return;
+    }
+    // Pending inputs and the singleton loop are the durable work. The alarm is
+    // only a wake-up hint; recovery derives it again from those rows.
+    await this.state.storage.setAlarm(Date.now() + 1);
   }
 
-  /**
-   * Runs the queue to completion in the caller's invocation.
-   *
-   * Durable work is never handed to a promise the caller then abandons. The
-   * previous implementation dropped the drain into `waitUntil` and returned,
-   * which invited the runtime to cancel it mid-run — and because cancellation
-   * is not a thrown error, it did so silently, with no failure logged anywhere.
-   */
-  private async drainRunsToCompletion(): Promise<"drained" | "deferred"> {
-    // A keep-alive heartbeat is a separate Durable Object event. It must not
-    // await a promise created by the run's request context. A healthy long run
-    // proves ownership through the object-local harness lease it renews every
-    // five seconds. If the previous continuation was cancelled, that lease and
-    // this drain's progress horizon both lapse; only then may a later alarm
-    // forget the stranded promise and reclaim the durably fenced dispatch.
+  /** Run the one persistent loop in the current invocation. Durable SQL, not
+   * the promise, is the restart authority if the isolate is evicted. */
+  private async drainLoopToCompletion(): Promise<"drained" | "deferred"> {
     if (this.agentDrain.active) {
       const now = Date.now();
-      const lastProgressAt = this.agentDrain.lastProgress;
-      const activeRun = this.activeRunDispatch;
-      const runLease = activeRun
-        ? this.state.storage.sql.exec<{ lease_expires_at: number | null }>(
-            `SELECT lease_expires_at FROM runs WHERE run_id = ?`,
-            activeRun.runId,
-          ).toArray()[0]?.lease_expires_at ?? null
-        : null;
-      const recentProgress = lastProgressAt !== null
-        && now - lastProgressAt < AGENT_RUN_DISPATCH_LEASE_MS;
-      if (recentProgress || (runLease !== null && runLease > now)) return "deferred";
+      const loop = this.loop.loop();
+      if (loop?.status === "executing" && loop.lease_expires_at !== null
+        && loop.lease_expires_at > now) return "deferred";
       if (this.agentDrain.abandonActive()) {
-        logWarn(this.env, "substream_agent_stale_drain_reclaimed", {
+        logWarn(this.env, "substream_loop_stale_drain_reclaimed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
           workstream_id: this.objectStore.identity()?.workstreamId,
           substream_id: this.externalSubstreamId(),
-          harness_run_id: activeRun?.runId ?? null,
-          last_progress_at: lastProgressAt,
-          harness_lease_expires_at: runLease,
+          execution_id: loop?.active_execution_id ?? null,
+          execution_epoch: loop?.active_execution_epoch ?? null,
         });
       }
     }
     await this.agentDrain.resume(
-      (ownsDrain) => this.drainRunQueue(ownsDrain)
-      .catch((error: unknown) => {
-        logWarn(this.env, "substream_agent_drain_failed", {
+      (ownsDrain) => this.drainPersistentLoop(ownsDrain).catch((error: unknown) => {
+        logWarn(this.env, "substream_loop_drain_failed", {
           workspace_id: this.objectStore.identity()?.workspaceId,
           workstream_id: this.objectStore.identity()?.workstreamId,
           substream_id: this.externalSubstreamId(),
@@ -2265,205 +2337,292 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     return "drained";
   }
 
-  private async drainRunQueue(ownsDrain: () => boolean): Promise<void> {
+  private async drainPersistentLoop(ownsDrain: () => boolean): Promise<void> {
     while (ownsDrain()) {
       this.agentDrain.touch();
-      // Only the alarm forwards regional effects, and this loop owns the alarm
-      // until it returns. Flushing between runs keeps a queue of runs from
-      // holding the parent's view of all of them; effects committed *during* a
-      // single long run still wait for it to finish.
       await this.flushDueRegionalEffects();
-      // `abandonActive()` cannot cancel the promise that is inside the await.
-      // Recheck before the synchronous claim or that obsolete continuation can
-      // still lease a row beside the replacement drain.
       if (!ownsDrain()) return;
-      const now = Date.now();
-      // The claim leases the row, so an invocation that dies mid-run leaves a
-      // deadline behind rather than an indefinite "running" that only a live
-      // process could explain.
-      const claim = claimAgentRunDispatch(
-        this.state.storage.sql,
-        SUBSTREAM_AGENT_RUN_DISPATCHES,
-        { now, leaseToken: uuidV7(now) },
-      );
-      if (!claim) return;
-      this.agentDrain.touch();
 
-      // Parsed inside the guard, not before it. A payload this build cannot
-      // validate — an older shape, a truncated write — used to throw straight
-      // out of the drain, leaving the row claimed and settling nothing: the
-      // lease lapses, the next alarm reclaims it, and it throws again forever.
-      // A dispatch nothing can decode is a failed run, not a reason to stop.
-      let input: WorkstreamWorkflowInput;
-      try {
-        input = WorkstreamWorkflowInputSchema.parse(JSON.parse(claim.payload));
-      } catch (error) {
-        logWarn(this.env, "agent_run_dispatch_undecodable", {
-          substream_id: this.externalSubstreamId(),
-          harness_run_id: claim.id,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-        settleAgentRunDispatch(
-          this.state.storage.sql,
-          SUBSTREAM_AGENT_RUN_DISPATCHES,
-          claim.id,
-          claim.leaseToken,
-          "failed",
-          "agent_run_dispatch_undecodable",
-          Date.now(),
+      const settlement = this.loop.loop()?.status === "idle"
+        ? this.nextUnsettledExecutionReceipt(Date.now())
+        : null;
+      if (settlement) {
+        const parsed = WorkstreamWorkflowInputSchema.safeParse(JSON.parse(settlement.execution_context_json));
+        if (!parsed.success) {
+          this.deferExecutionReceipt(settlement.run_id, Date.now() + MAINTENANCE_RECHECK_MS,
+            "substream_loop_execution_context_invalid");
+          return;
+        }
+        const executionEnv = this.localRuntimeEnvironment(
+          parsed.data.workspaceId,
+          parsed.data.workstreamId,
+          parsed.data.substreamId ?? "0",
         );
+        const outcome = await this.loadTerminalOutcome(executionEnv, parsed.data, settlement.status);
+        const result = await this.settleAgentRunWithRetry(executionEnv, parsed.data, outcome);
+        if (result.retryAt !== null) return;
         continue;
       }
-      const identity = { workspaceId: input.workspaceId, workstreamId: input.workstreamId };
-      this.activeRunDispatch = { runId: claim.id, leaseToken: claim.leaseToken };
+
+      const preparation = await this.product.resumeOldestInputPreparation();
+      if (preparation === "active") return;
+      if (preparation === "settled") continue;
+
+      const activation = await this.claimPersistentLoopExecution();
+      if (!activation) return;
+      if (!ownsDrain()) return;
+      this.activeLoopExecution = activation.execution;
       try {
-        if (claim.started) {
-          // A run whose executor is gone still holds the substream's single
-          // mutating slot, and the start below would fail against it — as the
-          // *new* run's failure, leaving the work stream permanently busy. Only
-          // a run reaches this code, so nothing else would ever clear it.
-          const abandoned = this.product.reapAbandonedSubstreamRuns(
-            input.substreamId ?? "0",
-            Date.now(),
-          );
-          if (abandoned.length > 0) {
-            logWarn(this.env, "workstream_abandoned_runs_reaped", {
-              workspace_id: input.workspaceId,
-              workstream_id: input.workstreamId,
-              substream_id: input.substreamId ?? "0",
-              harness_run_id: claim.id,
-              reaped_run_ids: abandoned,
-            });
-          }
-          await this.product.recordWorkflowStarted(claim.id, `substream-agent:${claim.id}`);
-          await this.publishLocalProductEvent(identity, {
-            type: "harness_status_changed",
-            status: "running",
-          });
-        }
-        const result = await this.keepAliveWhile(() => this.executeAgentRun(input));
-        if (result.retryAt !== null) {
-          deferAgentRunDispatch(
-            this.state.storage.sql,
-            SUBSTREAM_AGENT_RUN_DISPATCHES,
-            claim.id,
-            claim.leaseToken,
-            result.retryAt,
-            result.errorCode,
-            Date.now(),
-          );
-          return;
-        }
-        settleAgentRunDispatch(
-          this.state.storage.sql,
-          SUBSTREAM_AGENT_RUN_DISPATCHES,
-          claim.id,
-          claim.leaseToken,
-          result.status === "failed" ? "failed" : "completed",
-          result.errorCode,
-          Date.now(),
-        );
-      } catch (error) {
-        if (error instanceof RunOwnershipLostError) {
-          logWarn(this.env, "agent_run_executor_lost_ownership", {
-            workspace_id: input.workspaceId,
-            workstream_id: input.workstreamId,
-            substream_id: input.substreamId ?? "0",
-            harness_run_id: claim.id,
-            attempt: claim.attempt,
-          });
-          // The successor owns the authoritative outcome. Retrying this local
-          // dispatch lets it adopt that terminal result; marking the product
-          // failed here would be an unfenced stale-executor write.
-          deferAgentRunDispatch(
-            this.state.storage.sql,
-            SUBSTREAM_AGENT_RUN_DISPATCHES,
-            claim.id,
-            claim.leaseToken,
-            Date.now() + 1_000,
-            "run_ownership_lost",
-            Date.now(),
-          );
-          // This drain may itself have been abandoned and replaced after its
-          // keep-alive stranded. It must not claim another row alongside the
-          // successor drain after losing the authority that fenced this one.
-          return;
-        }
-        const safe = {
-          code: error instanceof Error && "code" in error && typeof error.code === "string"
-            ? error.code
-            : "agent_loop_failed",
-          message: "The Avalon harness could not complete this run",
-        };
-        // Every way a run can fail arrives here, and until now none of them
-        // said anything: the run was marked failed, the dispatch settled, and
-        // the only trace was a status the member could not act on. A run that
-        // dies for a reason nobody records is indistinguishable from one that
-        // was never dispatched, which is most of why this took so long to find.
-        logWarn(this.env, "agent_run_execution_failed", {
-          workspace_id: input.workspaceId,
-          workstream_id: input.workstreamId,
-          substream_id: input.substreamId ?? "0",
-          harness_run_id: claim.id,
-          attempt: claim.attempt,
-          error_code: safe.code,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-        if (!ownsDrain()) {
-          logWarn(this.env, "agent_run_failure_abandoned_before_product_settlement", {
-            workspace_id: input.workspaceId,
-            workstream_id: input.workstreamId,
-            substream_id: input.substreamId ?? "0",
-            harness_run_id: claim.id,
-            attempt: claim.attempt,
-          });
-          return;
-        }
-        try {
-          // Product failure and work-stream status change are atomically
-          // conditional on this dispatch's exact token. The check above avoids
-          // a known-obsolete call; this fence closes the await/interleaving race.
-          await this.product.recordWorkflowFailed(claim.id, safe, claim.leaseToken);
-        } catch (settlementError) {
-          deferAgentRunDispatch(
-            this.state.storage.sql,
-            SUBSTREAM_AGENT_RUN_DISPATCHES,
-            claim.id,
-            claim.leaseToken,
-            Date.now() + 1_000,
-            "run_failure_settlement_deferred",
-            Date.now(),
-          );
-          logWarn(this.env, "agent_run_failure_settlement_deferred", {
-            workspace_id: input.workspaceId,
-            workstream_id: input.workstreamId,
-            substream_id: input.substreamId ?? "0",
-            harness_run_id: claim.id,
-            attempt: claim.attempt,
-            reason: settlementError instanceof Error ? settlementError.message : "unknown",
-          });
-          return;
-        }
-        settleAgentRunDispatch(
-          this.state.storage.sql,
-          SUBSTREAM_AGENT_RUN_DISPATCHES,
-          claim.id,
-          claim.leaseToken,
-          "failed",
-          safe.code,
-          Date.now(),
+        const identity = { workspaceId: activation.input.workspaceId, workstreamId: activation.input.workstreamId };
+        await this.product.recordWorkflowStarted(
+          activation.input.harnessRunId,
+          `substream-loop:${activation.input.loopId}:${activation.execution.runId}`,
         );
         await this.publishLocalProductEvent(identity, {
           type: "harness_status_changed",
-          status: "failed",
+          status: "running",
         }).catch(() => undefined);
+        const result = await this.keepAliveWhile(() => this.executeAgentRun(activation.input));
+        if (result.retryAt !== null) {
+          const current = this.loop.loop();
+          if (!current || current.status !== "executing"
+            || current.active_execution_id !== activation.execution.runId
+            || current.active_execution_epoch !== activation.execution.executionEpoch
+            || current.lease_owner !== activation.execution.leaseOwner) {
+            throw new RunOwnershipLostError();
+          }
+          this.loop.deferExecution({
+            executionId: activation.execution.runId,
+            executionEpoch: activation.execution.executionEpoch,
+            leaseOwner: activation.execution.leaseOwner,
+            expectedLoopRevision: current.revision,
+            availableAt: result.retryAt,
+            errorCode: result.errorCode,
+            now: Date.now(),
+          });
+          return;
+        }
+      } catch (error) {
+        if (error instanceof RunOwnershipLostError) return;
+        const code = error instanceof Error && "code" in error && typeof error.code === "string"
+          ? error.code
+          : "agent_loop_failed";
+        const loop = this.loop.loop();
+        if (loop?.status === "executing"
+          && loop.active_execution_id === activation.execution.runId
+          && loop.active_execution_epoch === activation.execution.executionEpoch
+          && loop.lease_owner === activation.execution.leaseOwner) {
+          await this.product.recordWorkflowFailed(
+            activation.execution.runId,
+            { code, message: "Rally could not complete this execution" },
+            {
+              loopId: loop.loop_id,
+              executionId: activation.execution.runId,
+              executionEpoch: activation.execution.executionEpoch,
+              leaseOwner: activation.execution.leaseOwner,
+            },
+          );
+        }
+        logWarn(this.env, "substream_loop_execution_failed", {
+          workspace_id: activation.input.workspaceId,
+          workstream_id: activation.input.workstreamId,
+          substream_id: activation.input.substreamId ?? "0",
+          execution_id: activation.execution.runId,
+          execution_epoch: activation.execution.executionEpoch,
+          error_code: code,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
       } finally {
-        if (this.activeRunDispatch?.leaseToken === claim.leaseToken) {
-          this.activeRunDispatch = null;
+        if (this.activeLoopExecution?.leaseOwner === activation.execution.leaseOwner) {
+          this.activeLoopExecution = null;
         }
         if (ownsDrain()) this.agentDrain.touch();
       }
     }
+  }
+
+  private async claimPersistentLoopExecution(): Promise<{
+    input: WorkstreamWorkflowInput;
+    execution: { runId: string; leaseOwner: string; executionEpoch: number };
+  } | null> {
+    const now = Date.now();
+    let loop = this.ensurePersistentLoop();
+    if (loop.status === "executing") {
+      if (loop.lease_expires_at === null || loop.active_execution_id === null
+        || loop.active_execution_epoch === null || loop.lease_expires_at > now) return null;
+      const receipt = this.state.storage.sql.exec<{ execution_context_json: string | null }>(
+        `SELECT execution_context_json FROM runs WHERE run_id = ?`,
+        loop.active_execution_id,
+      ).toArray()[0];
+      if (!receipt?.execution_context_json) throw new Error("substream_loop_execution_context_missing");
+      const input = WorkstreamWorkflowInputSchema.parse(JSON.parse(receipt.execution_context_json));
+      const leaseOwner = uuidV7(now);
+      const recovered = this.loop.recoverExecution({
+        executionId: loop.active_execution_id,
+        newExecutionEpoch: loop.active_execution_epoch + 1,
+        leaseOwner,
+        leaseExpiresAt: now + LOOP_EXECUTION_LEASE_MS,
+        expectedLoopRevision: loop.revision,
+        now,
+      });
+      return {
+        input,
+        execution: {
+          runId: input.harnessRunId,
+          leaseOwner,
+          executionEpoch: recovered.loop.active_execution_epoch!,
+        },
+      };
+    }
+
+    const pending = this.loop.pendingInputs()[0];
+    if (pending) {
+      const identity = this.objectStore.identity();
+      const projection = this.transcript.readBindProjection(loop.loop_id);
+      if (!identity) throw new Error("substream_loop_identity_unavailable");
+      const authorization = z.object({
+        executionPrincipal: z.unknown(),
+        reason: z.string().min(1).max(500),
+        telemetryOperationId: z.string().nullable().optional(),
+        slackOrigin: z.unknown().nullable().optional(),
+        slackSearchAuthorization: z.unknown().nullable().optional(),
+      }).passthrough().parse(JSON.parse(pending.authorization_json));
+      const runId = asHarnessRunId(uuidV7(now));
+      const input = WorkstreamWorkflowInputSchema.parse({
+        region: this.env.AVALON_REGION,
+        workspaceId: asWorkspaceId(identity.workspaceId),
+        workstreamId: asWorkstreamId(identity.workstreamId),
+        substreamId: asSubstreamId(this.externalSubstreamId()),
+        loopId: loop.loop_id,
+        harnessRunId: runId,
+        triggerMessageId: pending.prepared_turn_id,
+        automationSubscriptionId: null,
+        activityId: null,
+        executionPrincipal: authorization.executionPrincipal,
+        ...(authorization.telemetryOperationId
+          ? {
+              telemetryOperationId: authorization.telemetryOperationId,
+              ...(typeof authorization.executionPrincipal === "object"
+                && authorization.executionPrincipal !== null
+                && "type" in authorization.executionPrincipal
+                && authorization.executionPrincipal.type === "user"
+                && "userId" in authorization.executionPrincipal
+                && typeof authorization.executionPrincipal.userId === "string"
+                ? { telemetrySubjectUserId: authorization.executionPrincipal.userId }
+                : {}),
+            }
+          : {}),
+        ...(authorization.slackOrigin ? { slackOrigin: authorization.slackOrigin } : {}),
+        ...(authorization.slackSearchAuthorization
+          ? { slackSearchAuthorization: authorization.slackSearchAuthorization }
+          : {}),
+        reason: authorization.reason,
+      });
+      const leaseOwner = uuidV7(now + 1);
+      const activated = await this.transcript.activatePendingInput({
+        loopId: loop.loop_id,
+        expectedInputId: pending.input_id,
+        expectedLoopRevision: loop.revision,
+        expectedBindGeneration: projection?.generation ?? null,
+        expectedBindStateRevision: projection?.stateRevision ?? 0,
+        receipt: {
+          runId,
+          substreamId: this.externalSubstreamId(),
+          executionEpoch: 1,
+          leaseOwner,
+          leaseExpiresAt: now + LOOP_EXECUTION_LEASE_MS,
+          executionContextJson: JSON.stringify(input),
+          executionPrincipalJson: JSON.stringify(input.executionPrincipal),
+          origin: input.reason,
+          model: null,
+        },
+        enqueueRegionalEffectsInTransaction: (effects) =>
+          this.product.enqueueRegionalEffectsInTransaction(effects),
+        now,
+      });
+      await this.flushSemanticRealtimeOutboxBestEffort();
+      return {
+        input,
+        execution: {
+          runId,
+          leaseOwner: activated.loop.lease_owner!,
+          executionEpoch: activated.loop.active_execution_epoch!,
+        },
+      };
+    }
+
+    const ready = this.state.storage.sql.exec<{
+      run_id: string;
+      execution_context_json: string;
+    }>(
+      `SELECT run_id, execution_context_json FROM runs
+        WHERE substream_loop_id IS NULL AND execution_context_json IS NOT NULL
+          AND terminalized_at IS NULL
+          AND status IN ('admitted', 'running')
+          AND (execution_available_at IS NULL OR execution_available_at <= ?)
+        ORDER BY COALESCE(execution_available_at, created_at), created_at, run_id LIMIT 1`,
+      now,
+    ).toArray()[0];
+    if (!ready) return null;
+    const input = WorkstreamWorkflowInputSchema.parse(JSON.parse(ready.execution_context_json));
+    if (input.loopId !== loop.loop_id || input.harnessRunId !== ready.run_id) {
+      throw new Error("substream_loop_execution_context_mismatch");
+    }
+    const leaseOwner = uuidV7(now);
+    loop = this.loop.activateExecutionReceipt({
+      runId: ready.run_id,
+      loopId: loop.loop_id,
+      expectedLoopRevision: loop.revision,
+      expectedBindStateRevision: loop.bind_state_revision,
+      executionEpoch: 1,
+      leaseOwner,
+      leaseExpiresAt: now + LOOP_EXECUTION_LEASE_MS,
+      now,
+    }).loop;
+    return {
+      input,
+      execution: {
+        runId: ready.run_id,
+        leaseOwner,
+        executionEpoch: loop.active_execution_epoch!,
+      },
+    };
+  }
+
+  private nextUnsettledExecutionReceipt(now: number): {
+    run_id: string;
+    execution_context_json: string;
+    status: "completed" | "needs_input" | "failed" | "stopped";
+  } | null {
+    const row = this.state.storage.sql.exec<{
+      run_id: string;
+      execution_context_json: string;
+      status: string;
+    }>(
+      `SELECT run_id, execution_context_json, status FROM runs
+        WHERE execution_context_json IS NOT NULL AND terminalized_at IS NOT NULL
+          AND external_settled_at IS NULL
+          AND (execution_available_at IS NULL OR execution_available_at <= ?)
+        ORDER BY COALESCE(execution_available_at, terminalized_at), run_id LIMIT 1`,
+      now,
+    ).toArray()[0];
+    if (!row) return null;
+    const status = row.status === "cancelled" ? "stopped" : row.status;
+    if (!["completed", "needs_input", "failed", "stopped"].includes(status)) {
+      throw new Error("substream_loop_terminal_receipt_invalid");
+    }
+    return { ...row, status: status as "completed" | "needs_input" | "failed" | "stopped" };
+  }
+
+  private deferExecutionReceipt(runId: string, availableAt: number, errorCode: string | null): void {
+    this.state.storage.sql.exec(
+      `UPDATE runs SET execution_available_at = ?, last_settlement_error_code = ?, updated_at = ?
+        WHERE run_id = ?`,
+      availableAt,
+      errorCode,
+      Date.now(),
+      runId,
+    );
   }
 
   /**
@@ -2519,28 +2678,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       input.workstreamId,
       input.substreamId ?? "0",
     );
-    const terminalReceipt = this.state.storage.sql.exec<{
-      terminal_outcome_json: string | null;
-      settled_at: number | null;
-    }>(
-      `SELECT terminal_outcome_json, settled_at
-         FROM agent_run_dispatches WHERE run_id = ?`,
-      input.harnessRunId,
-    ).toArray()[0];
-    if (terminalReceipt?.terminal_outcome_json) {
-      const terminalOutcome = AgentTerminalOutcomeSchema.parse(
-        JSON.parse(terminalReceipt.terminal_outcome_json),
-      );
-      if (terminalReceipt.settled_at !== null) {
-        return {
-          status: terminalOutcome.status,
-          errorCode: terminalOutcome.error?.code ?? null,
-          retryAt: null,
-        };
-      }
-      return this.settleAgentRunWithRetry(executionEnv, input, terminalOutcome);
-    }
     const runs = createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId);
+    const loopExecution = this.activeLoopExecution;
+    if (!loopExecution || loopExecution.runId !== input.harnessRunId) {
+      throw new Error("substream_loop_execution_context_missing");
+    }
+    const terminalLoopFence = {
+      loopId: input.loopId,
+      executionId: loopExecution.runId,
+      executionEpoch: loopExecution.executionEpoch,
+      leaseOwner: loopExecution.leaseOwner,
+    };
     const recoveryOptions: Parameters<typeof reapStaleHarnessRuns>[1] = {
       receipts: createToolReceiptPortFactory(executionEnv),
       blocks: createBlockDashboardPortFactory(executionEnv),
@@ -2646,12 +2794,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (recoverableAttemptId !== null) {
         await terminalizeHarnessAttempt(
           runs,
-          createMessageObjectPort(executionEnv, input.workspaceId, input.workstreamId),
           input,
           { attemptId, owner: previousInstanceRecoveryOwner(attemptId) },
           stopped,
           createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
           createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+          terminalLoopFence,
         );
         this.recoverableHarnessAttempts.delete(input.harnessRunId);
       } else {
@@ -2668,26 +2816,53 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
     let outcome: WorkstreamHarnessResult;
     try {
-      outcome = await runWorkstreamHarness(
-        executionEnv,
-        input,
-        (event) => this.publishAgentRuntimeEvent(event),
-        {
-          lease: claim.lease,
-          publishRealtime: false,
-          // Terminal reaches this object through the authorities installed on
-          // `executionEnv`, so it is not threaded here any more. The resource
-          // attacher still is, and deliberately: it carries a *scope* rather
-          // than a location — it refuses an attachment addressed to another
-          // work stream, which a port resolved by ids would happily deliver.
-          ...(this.externalSubstreamId() === "0" ? {
-            runtimeResourceAttacher: this.localRuntimeResourceAttacher(
-              input.workspaceId,
-              input.workstreamId,
-            ),
-          } : {}),
-        },
-      );
+      const interruptedReservation = await this.settleInterruptedAssistantReservation(input);
+      const recoveredToolBatch = interruptedReservation
+        ? null
+        : await this.recoverInterruptedToolBatch(executionEnv, input, claim.lease);
+      outcome = interruptedReservation
+        ? {
+            status: interruptedReservation,
+            error: {
+              code: interruptedReservation === "stopped"
+                ? "run_cancelled"
+                : "assistant_turn_interrupted",
+              message: interruptedReservation === "stopped"
+                ? "The run was stopped before its interrupted response could resume"
+                : "The interrupted response was closed without retrying provider output",
+            },
+          }
+        : recoveredToolBatch === "waiting_for_input"
+          ? { status: "needs_input" }
+        : recoveredToolBatch === "ambiguous"
+          ? {
+              status: "failed",
+              error: {
+                code: "ambiguous_external_write",
+                message: "Rally stopped this cycle because it could not confirm whether an interrupted external action completed",
+              },
+            }
+        : await runWorkstreamHarness(
+          executionEnv,
+          input,
+          (event) => this.publishAgentRuntimeEvent(event),
+          {
+            lease: claim.lease,
+            publishRealtime: false,
+            persistentLoop: this.persistentLoopRuntime(input),
+            // Terminal reaches this object through the authorities installed on
+            // `executionEnv`, so it is not threaded here any more. The resource
+            // attacher still is, and deliberately: it carries a *scope* rather
+            // than a location — it refuses an attachment addressed to another
+            // work stream, which a port resolved by ids would happily deliver.
+            ...(this.externalSubstreamId() === "0" ? {
+              runtimeResourceAttacher: this.localRuntimeResourceAttacher(
+                input.workspaceId,
+                input.workstreamId,
+              ),
+            } : {}),
+          },
+        );
     } catch (error) {
       const code = error instanceof Error && "code" in error && typeof error.code === "string"
         ? error.code
@@ -2710,46 +2885,414 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         error: { code, message: "The Avalon harness could not complete this run" },
       };
     }
-    const stopState = await executionEnv.DB.prepare(
-      `SELECT status, cancellation_requested_at, cancellation_reason
-         FROM harness_runs WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{
-      status: string;
-      cancellation_requested_at: string | null;
-      cancellation_reason: string | null;
-    }>();
-    const effectiveStatus = stopState?.status === "stopped" || stopState?.cancellation_requested_at
-      ? "stopped"
-      : outcome.status;
     await terminalizeHarnessAttempt(
       runs,
-      createMessageObjectPort(executionEnv, input.workspaceId, input.workstreamId),
       input,
       claim.lease,
       {
-        status: effectiveStatus,
-        ...(outcome.messageId ? { finalMessageId: outcome.messageId } : {}),
+        status: outcome.status,
+        ...(outcome.finalTurnId ? { finalTurnId: outcome.finalTurnId } : {}),
         ...(outcome.error ? { error: outcome.error } : {}),
         memberSafePayload: outcome.error ? { code: outcome.error.code } : {},
       },
       createToolReceiptObjectPort(executionEnv, input.workspaceId, input.workstreamId),
       createBlockDashboardObjectPort(executionEnv, input.workspaceId, input.workstreamId),
+      terminalLoopFence,
     );
-    if (outcome.messageId) {
-      const messages = await this.product.messagesForRuntime(250);
-      const message = messages.items.find((candidate) => candidate.id === outcome.messageId);
-      if (message) await this.publishAgentRuntimeEvent({ type: "stream_completed", message });
+    if (outcome.finalTurnId) {
+      await this.publishAgentRuntimeEvent({ type: "stream_completed", streamId: input.harnessRunId });
     }
     const root = this.product.runtimeStatus();
     await this.publishAgentRuntimeEvent({
       type: "harness_status_changed",
       status: root,
     });
-    return this.persistAndSettleAgentRun(executionEnv, input, {
-      ...outcome,
-      status: effectiveStatus,
-      cancellationReason: stopState?.cancellation_reason ?? null,
+    return this.persistAndSettleAgentRun(executionEnv, input, outcome);
+  }
+
+  /**
+   * Repair the provider protocol after an isolate dies between accepting an
+   * assistant tool batch and accepting all of its results. Bind is correct to
+   * refuse this shape: only the host can read the durable effect receipts and
+   * decide which missing calls completed, definitely did not run, or may have
+   * crossed an external write boundary.
+   */
+  private async recoverInterruptedToolBatch(
+    executionEnv: Env,
+    input: WorkstreamWorkflowInput,
+    lease: { attemptId: string; owner: string },
+  ): Promise<"recovered" | "ambiguous" | "waiting_for_input" | null> {
+    const projection = this.transcript.readBindProjection(input.loopId);
+    if (!projection) return null;
+    const batch = pendingBindToolBatch(projection);
+    if (!batch) return null;
+    const elicitationCallIds = new Set(this.state.storage.sql.exec<{
+      tool_call_id: string;
+    }>(
+      `SELECT tool_call_id FROM elicitation_requests
+        WHERE status IN ('pending', 'answered')`,
+    ).toArray().map((row) => row.tool_call_id));
+    // A completed core tool receipt is only evidence that the question was
+    // made visible. Its deliberately withheld protocol result is the future
+    // human answer, which pending-input promotion accepts atomically. Generic
+    // crash repair settles every *other* missing sibling first, but never
+    // substitutes the question-creation output for that answer.
+    const hasWithheldElicitation = batch.calls.some((call) =>
+      elicitationCallIds.has(call.receiptToolCallId));
+    const recoverableCalls = batch.calls.filter((call) =>
+      !elicitationCallIds.has(call.receiptToolCallId));
+    if (recoverableCalls.length === 0) return "waiting_for_input";
+    const execution = this.activeLoopExecution;
+    if (!execution || execution.runId !== input.harnessRunId) {
+      throw new Error("substream_loop_execution_unavailable");
+    }
+    let ambiguous = false;
+    for (let offset = 0; offset < recoverableCalls.length; offset += 1) {
+      const call = recoverableCalls[offset]!;
+      const now = Date.now();
+      let receipt = this.toolReceipts.receiptForCall({
+        runId: input.harnessRunId,
+        toolCallId: call.receiptToolCallId,
+      });
+      let classification: "completed" | "failed" | "ambiguous" | "not_run";
+      if (!receipt) {
+        classification = "not_run";
+      } else if (receipt.status === "admitted") {
+        classification = "not_run";
+      } else if (receipt.status === "executing") {
+        classification = receipt.mode === "write" ? "ambiguous" : "failed";
+      } else {
+        classification = receipt.status;
+      }
+      if (receipt && (receipt.status === "admitted" || receipt.status === "executing")) {
+        const status = classification === "ambiguous" ? "ambiguous" : "failed";
+        const code = classification === "not_run"
+          ? "tool_not_run_after_interruption"
+          : classification === "ambiguous"
+            ? "ambiguous_external_write"
+            : "tool_execution_interrupted";
+        const message = classification === "not_run"
+          ? "The interrupted tool call definitely did not start"
+          : classification === "ambiguous"
+            ? "Rally could not confirm whether the interrupted external write completed"
+            : "The interrupted tool call ended before Rally accepted a result";
+        const settlement = this.toolReceipts.fail({
+          effectIntentId: receipt.effectIntentId,
+          status,
+          phase: "host_recovery",
+          errorJson: JSON.stringify({ code, message }),
+          payloadJson: JSON.stringify({ code, recovery: classification }),
+          allowCancellationRequested: true,
+          fence: {
+            runId: input.harnessRunId,
+            attemptId: lease.attemptId,
+            owner: lease.owner,
+          },
+          now,
+        });
+        if (settlement !== "persisted" && settlement !== "already_persisted") {
+          throw new RunOwnershipLostError();
+        }
+        receipt = this.toolReceipts.receiptForCall({
+          runId: input.harnessRunId,
+          toolCallId: call.receiptToolCallId,
+        });
+        if (!receipt) throw new Error("recovered_tool_receipt_missing");
+      }
+
+      let result: Record<string, unknown>;
+      let participantSafeResult: unknown;
+      let participantError: string | null = null;
+      if (classification === "completed" && receipt) {
+        const exactOutput = receipt.outputRef
+          ? await loadToolReplayOutput(executionEnv, receipt.outputRef)
+          : null;
+        const data = exactOutput ?? {
+          summary: receipt.outputSummary ?? "The tool completed, but its detailed result is unavailable.",
+          resultAvailability: "summary_only",
+        };
+        result = { success: true, data };
+        participantSafeResult = receipt.outputSummary ?? "Completed";
+      } else {
+        const durableError = recoveredToolReceiptError(receipt?.errorJson ?? null);
+        const code = classification === "not_run"
+          ? "tool_not_run_after_interruption"
+          : classification === "ambiguous"
+            ? "ambiguous_external_write"
+            : durableError.code ?? "tool_execution_interrupted";
+        participantError = classification === "ambiguous"
+          ? "Rally could not confirm whether this external action completed"
+          : classification === "not_run"
+            ? "Rally did not run this tool after recovering the interrupted turn"
+            : durableError.message ?? "The interrupted tool did not produce an accepted result";
+        result = {
+          success: false,
+          kind: classification === "ambiguous" ? "ambiguous_external_write" : "external",
+          error: code,
+          data: { code, recovery: classification },
+        };
+        participantSafeResult = participantError;
+      }
+      ambiguous ||= classification === "ambiguous";
+      const current = this.transcript.readBindProjection(input.loopId);
+      const loop = this.loop.loop();
+      if (!current || !loop
+        || loop.loop_id !== input.loopId
+        || loop.status !== "executing"
+        || loop.active_execution_id !== execution.runId
+        || loop.active_execution_epoch !== execution.executionEpoch
+        || loop.lease_owner !== execution.leaseOwner
+        || loop.bind_state_revision !== current.stateRevision) {
+        throw new Error("substream_loop_execution_fence_mismatch");
+      }
+      await this.transcript.commitRecoveredToolResult({
+        transition: {
+          kind: "tool_result_accepted",
+          loopId: input.loopId,
+          generation: current.generation,
+          stateRevision: current.stateRevision + 1,
+          message: {
+            role: "tool",
+            tool_call_id: call.providerToolCallId,
+            content: JSON.stringify(result),
+          },
+          turnId: batch.turnId,
+          toolCallId: call.providerToolCallId,
+          callIndex: call.callIndex,
+          resultOrdinal: batch.acceptedResultCount + offset,
+          recoverySource: receipt ? "tool_receipt" : "not_run",
+        },
+        receiptToolCallId: call.receiptToolCallId,
+        lifecycle: {
+          toolName: receipt?.toolName ?? call.toolName,
+          status: classification === "completed"
+            ? "completed"
+            : classification === "ambiguous" ? "ambiguous" : "failed",
+          participantSafeResult,
+          error: participantError,
+        },
+        settlesBatch: !hasWithheldElicitation && offset === recoverableCalls.length - 1,
+        executionFence: {
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          expectedBindStateRevision: loop.bind_state_revision,
+        },
+        now,
+      });
+    }
+    await this.flushSemanticRealtimeOutboxBestEffort();
+    return ambiguous ? "ambiguous" : hasWithheldElicitation ? "waiting_for_input" : "recovered";
+  }
+
+  /**
+   * A provider request cannot survive Durable Object eviction. If Bind had
+   * already persisted the reservation, recovery closes that exact canonical
+   * slot before any new provider call. Partial bytes stay only in the active
+   * stream checkpoint and are removed by `stream_completed`; the immutable
+   * status turn explains why the preview disappeared.
+   */
+  private async settleInterruptedAssistantReservation(
+    input: WorkstreamWorkflowInput,
+  ): Promise<"failed" | "stopped" | null> {
+    const execution = this.activeLoopExecution;
+    const loop = this.loop.loop();
+    const reservation = this.loop.activeReservation();
+    if (!reservation) return null;
+    if (!execution || !loop
+      || loop.loop_id !== input.loopId
+      || loop.status !== "executing"
+      || loop.active_execution_id !== execution.runId
+      || loop.active_execution_epoch !== execution.executionEpoch
+      || loop.lease_owner !== execution.leaseOwner
+      || reservation.loop_id !== input.loopId) {
+      throw new Error("assistant_reservation_recovery_fence_mismatch");
+    }
+    const stopped = loop.stop_requested_at !== null;
+    const settled = await this.transcript.settleActiveAssistantReservation({
+      loopId: input.loopId,
+      executionId: execution.runId,
+      executionEpoch: execution.executionEpoch,
+      leaseOwner: execution.leaseOwner,
+      outcome: stopped ? "stopped" : "failed",
+      code: stopped ? "run_cancelled" : "assistant_turn_interrupted",
+      label: stopped
+        ? "Response stopped before it completed"
+        : "Response interrupted before it completed",
     });
+    if (!settled || settled.turnId !== reservation.turn_id
+      || settled.transcriptSequence !== reservation.transcript_sequence) {
+      throw new Error("assistant_reservation_recovery_fence_mismatch");
+    }
+    const turn = this.transcript.participantTurn(reservation.turn_id);
+    if (!turn) throw new Error("assistant_reservation_recovery_turn_missing");
+    await this.flushSemanticRealtimeOutboxBestEffort();
+    await this.publishAgentRuntimeEvent({
+      type: "stream_completed",
+      streamId: reservation.stream_id,
+    }).catch(() => undefined);
+    return stopped ? "stopped" : "failed";
+  }
+
+  private persistentLoopRuntime(
+    input: WorkstreamWorkflowInput,
+  ): NonNullable<NonNullable<Parameters<typeof runWorkstreamHarness>[3]>["persistentLoop"]> {
+    const execution = this.activeLoopExecution;
+    if (!execution || execution.runId !== input.harnessRunId) {
+      throw new Error("substream_loop_execution_unavailable");
+    }
+    const fence = () => {
+      const loop = this.loop.loop();
+      if (!loop
+        || loop.loop_id !== input.loopId
+        || loop.status !== "executing"
+        || loop.active_execution_id !== execution.runId
+        || loop.active_execution_epoch !== execution.executionEpoch
+        || loop.lease_owner !== execution.leaseOwner) {
+        throw new Error("substream_loop_execution_fence_mismatch");
+      }
+      return loop;
+    };
+    return {
+      projection: this.transcript.readBindProjection(input.loopId),
+      transcriptThrough: this.transcript.transcriptThrough(),
+      commitActivationInputs: async (boundary) => {
+        if (boundary.loopId !== input.loopId
+          || boundary.executionId !== execution.runId) {
+          throw new Error("substream_loop_activation_boundary_mismatch");
+        }
+        fence();
+        return this.transcript.commitActivationInputs({
+          loopId: boundary.loopId,
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          expectedBindGeneration: boundary.generation,
+          expectedBindStateRevision: boundary.stateRevision,
+          inputs: boundary.inputs,
+        });
+      },
+      commitBindTransition: async (transition) => {
+        const current = fence();
+        await this.transcript.commitBindTransition(transition, undefined, {
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          expectedBindStateRevision: current.bind_state_revision,
+        });
+        await this.flushSemanticRealtimeOutboxBestEffort();
+      },
+      commitBindCompaction: async (compaction) => {
+        const current = fence();
+        await this.transcript.commitBindCompaction(compaction, {
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          expectedBindStateRevision: current.bind_state_revision,
+        });
+        await this.flushSemanticRealtimeOutboxBestEffort();
+      },
+      reserveAssistantTurn: ({ turnId, modelTurnIndex, streamId }) => {
+        const loop = fence();
+        const result = this.loop.reserveAssistantTurn({
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          expectedLoopRevision: loop.revision,
+          receiptRunId: input.harnessRunId,
+          turnId,
+          modelTurnIndex,
+          streamId,
+          now: Date.now(),
+        });
+        if (result.outcome === "active_reservation" && result.reservation.turn_id !== turnId) {
+          throw new Error("substream_loop_has_unmaterialized_turn");
+        }
+        return { transcriptSequence: result.reservation.transcript_sequence };
+      },
+      assistantOutputStarted: ({ turnId, transcriptSequence }) => {
+        const reservation = this.loop.reservation(turnId);
+        if (!reservation || reservation.transcript_sequence !== transcriptSequence) {
+          throw new Error("workstream_stream_reservation_mismatch");
+        }
+        const current = fence();
+        this.loop.startAssistantTurn({
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          expectedLoopRevision: current.revision,
+          turnId,
+          now: Date.now(),
+        });
+      },
+      settleAssistantFailure: async ({ outcome, code }) => {
+        const settled = await this.transcript.settleActiveAssistantReservation({
+          loopId: input.loopId,
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          outcome,
+          code,
+          label: outcome === "stopped"
+            ? "Response stopped before it completed"
+            : "Response could not be completed",
+        });
+        if (settled) await this.flushSemanticRealtimeOutboxBestEffort();
+        return settled;
+      },
+      settleStep: (step) => this.settlePersistentLoopStep(input, execution, step),
+      heartbeat: () => {
+        const current = fence();
+        this.loop.heartbeatExecution({
+          executionId: execution.runId,
+          executionEpoch: execution.executionEpoch,
+          leaseOwner: execution.leaseOwner,
+          expectedLoopRevision: current.revision,
+          leaseExpiresAt: Date.now() + LOOP_EXECUTION_LEASE_MS,
+          now: Date.now(),
+        });
+      },
+    };
+  }
+
+  private async settlePersistentLoopStep(
+    input: WorkstreamWorkflowInput,
+    execution: { runId: string; leaseOwner: string; executionEpoch: number },
+    step: {
+      loopId: string;
+      executionId: string;
+      assistantTurnId: string;
+      modelTurnIndex: number;
+      generation: number;
+      stateRevision: number;
+    },
+  ) {
+    const loop = this.loop.loop();
+    if (!loop || loop.loop_id !== input.loopId || loop.loop_id !== step.loopId
+      || loop.status !== "executing"
+      || loop.active_execution_id !== execution.runId
+      || loop.active_execution_epoch !== execution.executionEpoch
+      || loop.lease_owner !== execution.leaseOwner
+      || loop.bind_state_revision !== step.stateRevision) {
+      throw new Error("substream_loop_step_fence_mismatch");
+    }
+    const settled = await this.transcript.settlePendingSteersAtStep({
+      loopId: loop.loop_id,
+      executionId: execution.runId,
+      executionEpoch: execution.executionEpoch,
+      leaseOwner: execution.leaseOwner,
+      expectedLoopRevision: loop.revision,
+      expectedStepOrdinal: loop.step_ordinal,
+      expectedBindGeneration: step.generation,
+      expectedBindStateRevision: step.stateRevision,
+      assistantTurnId: step.assistantTurnId,
+      modelTurnIndex: step.modelTurnIndex,
+      enqueueRegionalEffectsInTransaction: (effects) =>
+        this.product.enqueueRegionalEffectsInTransaction(effects),
+      now: Date.now(),
+    });
+    await this.flushSemanticRealtimeOutboxBestEffort();
+    return { transitions: settled.transitions, stop: settled.stop };
   }
 
   private async persistAndSettleAgentRun(
@@ -2763,11 +3306,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }> {
     const outcome = AgentTerminalOutcomeSchema.parse(rawOutcome);
     this.state.storage.sql.exec(
-      `UPDATE agent_run_dispatches
-          SET terminal_outcome_json = ?, settled_at = NULL,
+      `UPDATE runs SET execution_available_at = ?, external_settled_at = NULL,
               last_settlement_error_code = NULL, updated_at = ?
-        WHERE run_id = ?`,
-      JSON.stringify(outcome),
+        WHERE run_id = ? AND terminalized_at IS NOT NULL`,
+      Date.now(),
       Date.now(),
       input.harnessRunId,
     );
@@ -2786,9 +3328,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     try {
       await this.settleAgentRun(executionEnv, input, outcome);
       this.state.storage.sql.exec(
-        `UPDATE agent_run_dispatches
-            SET settled_at = ?, last_settlement_error_code = NULL, updated_at = ?
-          WHERE run_id = ? AND terminal_outcome_json IS NOT NULL`,
+        `UPDATE runs SET external_settled_at = ?, execution_available_at = NULL,
+                last_settlement_error_code = NULL, updated_at = ?
+          WHERE run_id = ? AND terminalized_at IS NOT NULL`,
         Date.now(),
         Date.now(),
         input.harnessRunId,
@@ -2802,14 +3344,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       const code = error instanceof Error && "code" in error && typeof error.code === "string"
         ? error.code
         : "agent_run_settlement_failed";
-      const attempt = this.state.storage.sql.exec<{ attempt: number }>(
-        `SELECT attempt FROM agent_run_dispatches WHERE run_id = ?`,
+      const attempt = this.state.storage.sql.exec<{ retry_count: number }>(
+        `SELECT retry_count FROM runs WHERE run_id = ?`,
         input.harnessRunId,
-      ).toArray()[0]?.attempt ?? 1;
+      ).toArray()[0]?.retry_count ?? 0;
       const delay = Math.min(5 * 60_000, 5_000 * 2 ** Math.min(Math.max(attempt - 1, 0), 6));
       this.state.storage.sql.exec(
-        `UPDATE agent_run_dispatches
-            SET last_settlement_error_code = ?, updated_at = ? WHERE run_id = ?`,
+        `UPDATE runs SET retry_count = retry_count + 1, execution_available_at = ?,
+                last_settlement_error_code = ?, updated_at = ? WHERE run_id = ?`,
+        Date.now() + delay,
         code,
         Date.now(),
         input.harnessRunId,
@@ -2830,18 +3373,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     input: WorkstreamWorkflowInput,
     status: WorkstreamHarnessResult["status"],
   ): Promise<AgentTerminalOutcome> {
-    const row = await executionEnv.DB.prepare(
-      `SELECT status, final_message_id, error_json, cancellation_reason
-         FROM harness_runs
-        WHERE id = ? AND workspace_id = ? AND workstream_id = ?
-          AND terminalized_at IS NOT NULL`,
-    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{
-      status: string;
-      final_message_id: string | null;
-      error_json: string | null;
-      cancellation_reason: string | null;
-    }>();
-    if (!row || row.status !== status) throw new Error("agent_terminal_outcome_missing");
+    const row = await createHarnessRunObjectPort(executionEnv, input.workspaceId, input.workstreamId)
+      .run({ runId: input.harnessRunId });
+    const publishedStatus = row?.status === "cancelled" ? "stopped" : row?.status;
+    if (!row || row.terminalized_at === null || publishedStatus !== status) {
+      throw new Error("agent_terminal_outcome_missing");
+    }
     let error: { code: string; message: string } | undefined;
     if (row.error_json) {
       try {
@@ -2850,15 +3387,18 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         );
         if (parsed.success) error = parsed.data;
       } catch {
-        // Old terminal rows may carry a different member-safe shape. Status and
-        // final message remain sufficient to resume idempotent settlement.
+        // A malformed diagnostic must not block idempotent settlement. Status
+        // and the canonical final turn remain authoritative.
       }
     }
     return AgentTerminalOutcomeSchema.parse({
       status,
-      ...(row.final_message_id ? { messageId: row.final_message_id } : {}),
+      ...(row.final_turn_id ? { finalTurnId: row.final_turn_id } : {}),
       ...(error ? { error } : {}),
-      cancellationReason: row.cancellation_reason,
+      // Receipt cancellation is provenance only. It can explain a terminal
+      // stopped outcome, but must not change delivery behavior for a loop that
+      // reached any other terminal state at its safe boundary.
+      ...(status === "stopped" ? { cancellationReason: row.cancellation_reason } : {}),
     });
   }
 
@@ -2899,11 +3439,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     outcome: AgentTerminalOutcome,
   ): Promise<void> {
     const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-    const messages = outcome.messageId
+    const messages = outcome.finalTurnId
       ? (await this.product.messagesForRuntime(250)).items
       : [];
-    const message = outcome.messageId
-      ? messages.find((candidate) => candidate.id === outcome.messageId)
+    const message = outcome.finalTurnId
+      ? messages.find((candidate) => candidate.id === outcome.finalTurnId)
       : undefined;
     const text = message?.textContent
       ?? (outcome.status === "stopped"
@@ -2966,12 +3506,15 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     outcome: AgentTerminalOutcome,
   ): Promise<void> {
     if (!input.automationSubscriptionId) return;
-    const owned = await executionEnv.DB.prepare(
-      `SELECT 1 AS owned FROM harness_runs
-        WHERE id = ? AND workspace_id = ? AND workstream_id = ?
-          AND terminalized_at IS NOT NULL`,
-    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<{ owned: number }>();
-    if (!owned) throw new Error("automation_run_terminal_fence_missing");
+    const receipt = await createHarnessRunObjectPort(
+      executionEnv,
+      input.workspaceId,
+      input.workstreamId,
+    ).run({ runId: input.harnessRunId });
+    const receiptStatus = receipt?.status === "cancelled" ? "stopped" : receipt?.status;
+    if (!receipt || receipt.terminalized_at === null || receiptStatus !== outcome.status) {
+      throw new Error("automation_run_terminal_fence_missing");
+    }
     const automationStatus = outcome.status === "stopped" ? "failed" : outcome.status;
     const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
     await workspaceEnv.DB.prepare(
@@ -2995,7 +3538,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     workstreamId: string,
     substreamId: string,
   ): Env {
-    const routed = this.routedRuntimeEnvironment(workspaceId, workstreamId, substreamId);
+    const routed = this.env;
     // Everything this object owns about this work stream, declared in one
     // place. A run executing here reaches each authority by holding it rather
     // than by resolving a name, and the next authority to move into an object
@@ -3035,45 +3578,22 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     });
   }
 
-  private routedRuntimeEnvironment(
-    workspaceId: string,
-    workstreamId: string,
-    substreamId: string,
-  ): Env {
-    return withWorkstreamRuntimeDatabase(
-      this.env,
-      workspaceId,
-      workstreamId,
-      substreamId,
-      async (statements) => {
-        const result = await executeWorkstreamRuntimeSql(
-          this.state.storage,
-          this.product,
-          WorkstreamRuntimeSqlRequestSchema.parse({
-            workspaceId,
-            workstreamId,
-            harnessRunId: this.activeRunDispatch?.runId ?? null,
-            requestId: uuidV7(),
-            statements,
-          }),
-        );
-        // Nothing here can move a wake-up any more: the local executor serves
-        // a run's own statements, and every wake-up write goes through
-        // `/internal/scheduling`, which re-derives the index itself. Re-deriving
-        // it for a transcript write would have put a `getAlarm` in the
-        // streaming path for no reason even when it could.
-        return result.results;
-      },
-    );
-  }
-
   private async publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void> {
+    // A lower canonical sequence must reach the room before a later ephemeral
+    // stream frame. If its durable drain is unavailable, omit the ephemeral
+    // optimization; reconnect/snapshot recovery still carries canonical state.
+    if (this.semanticRealtimePending
+      && !await this.flushSemanticRealtimeOutboxBestEffort()) return;
     const parsed = ServerSocketEventSchema.parse({
       ...event,
       sequence: 0,
       occurredAt: new Date().toISOString(),
     });
     const sequenced = await this.commitRealtimeEvent(parsed);
+    await this.deliverCommittedRealtimeEvent(sequenced);
+  }
+
+  private async deliverCommittedRealtimeEvent(sequenced: ServerSocketEvent): Promise<void> {
     const encodedBytes = textEncoder.encode(JSON.stringify(sequenced)).byteLength;
     if (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
       // The source row and canonical transcript turn are already durable by
@@ -3098,6 +3618,122 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (BLOCK_DASHBOARD_REFRESH_EVENT_TYPES.has(sequenced.type)) {
       await this.scheduleBlockDashboardRefresh(sequenced.sequence);
     }
+  }
+
+  private semanticRealtimeEvent(
+    pending: SequencedSemanticRealtimeReference,
+  ): ServerSocketEvent {
+    const base = {
+      sequence: pending.sequence,
+      occurredAt: pending.occurredAtUtc,
+    };
+    switch (pending.reference.kind) {
+      case "transcript_turn": {
+        const turn = this.transcript.participantTurn(pending.reference.turnId);
+        if (!turn) throw new Error("semantic_realtime_turn_missing");
+        return ServerSocketEventSchema.parse({
+          ...base,
+          type: "transcript_turn_upserted",
+          turn,
+        });
+      }
+      case "loop_input_upserted": {
+        const input = this.transcript.pendingTranscriptInput(pending.reference.inputId);
+        if (!input) {
+          // The upsert reference can precede an atomic promotion in the durable
+          // outbox. The minimal delivery receipt lets that stale reference
+          // converge the client by removal without retaining the full overlay.
+          const delivered = this.loop.deliveredInput(pending.reference.inputId);
+          if (!delivered) throw new Error("semantic_realtime_loop_input_missing");
+          return ServerSocketEventSchema.parse({
+            ...base,
+            type: "loop_input_removed",
+            inputId: delivered.input_id,
+            outcome: "delivered",
+          });
+        }
+        return ServerSocketEventSchema.parse({
+          ...base,
+          type: "loop_input_upserted",
+          input,
+        });
+      }
+      case "loop_input_removed":
+        return ServerSocketEventSchema.parse({
+          ...base,
+          type: "loop_input_removed",
+          inputId: pending.reference.inputId,
+          outcome: pending.reference.outcome,
+        });
+      case "transcript_activity": {
+        const activity = this.transcript.transcriptActivity(
+          pending.reference.activityId,
+          Date.parse(pending.reference.snapshotAtUtc),
+        );
+        if (!activity) throw new Error("semantic_realtime_activity_missing");
+        return ServerSocketEventSchema.parse({
+          ...base,
+          type: "transcript_activity_upserted",
+          activity,
+          snapshotAtUtc: pending.reference.snapshotAtUtc,
+        });
+      }
+    }
+  }
+
+  /**
+   * Deliver one ordered batch. An outbox row is acknowledged only after the
+   * semantic frame and its dashboard-refresh intent have both been accepted
+   * locally. Replaying the same sequence after a crash is harmless at the
+   * client cursor and is deduplicated in this isolate's replay cache.
+   */
+  private async drainSemanticRealtimeOutbox(): Promise<void> {
+    const pending = this.objectStore.dueSemanticRealtime();
+    for (const reference of pending) {
+      try {
+        const event = this.semanticRealtimeEvent(reference);
+        await this.deliverCommittedRealtimeEvent(event);
+        if (!this.objectStore.acknowledgeSemanticRealtime(reference.messageId, reference.sequence)) {
+          throw new Error("semantic_realtime_acknowledgement_lost");
+        }
+      } catch (error) {
+        this.objectStore.deferSemanticRealtime(
+          reference.messageId,
+          reference.sequence,
+          Date.now() + SEMANTIC_REALTIME_RETRY_MS,
+        );
+        throw error;
+      }
+    }
+  }
+
+  /** Accepted canonical state never reports failure because its room cache did. */
+  private async flushSemanticRealtimeOutboxBestEffort(): Promise<boolean> {
+    // Set before the first await so an interleaving token/presence request
+    // cannot allocate past a canonical predecessor this drain is discovering.
+    this.semanticRealtimePending = true;
+    try {
+      await this.drainSemanticRealtimeOutbox();
+    } catch (error) {
+      logWarn(this.env, "substream_semantic_realtime_deferred", {
+        substream_id: this.externalSubstreamId(),
+        reason: diagnosticErrorCode(error, "semantic_realtime_delivery_failed"),
+      });
+    }
+    const nextDueAt = this.objectStore.nextSemanticRealtimeDueAt();
+    this.semanticRealtimePending = nextDueAt !== null;
+    if (nextDueAt !== null) {
+      try {
+        await this.ensureAlarmNoLaterThan(nextDueAt);
+      } catch (error) {
+        logWarn(this.env, "substream_semantic_realtime_alarm_deferred", {
+          substream_id: this.externalSubstreamId(),
+          reason: diagnosticErrorCode(error, "semantic_realtime_alarm_failed"),
+        });
+      }
+      return false;
+    }
+    return true;
   }
 
   private async acceptRegionalEffectAck(request: Request): Promise<Response> {
@@ -3194,11 +3830,6 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       return;
     }
 
-    if (parsed.data.type === "load_message_page") {
-      await this.fulfillMessagePage(socket, attachment, parsed.data);
-      return;
-    }
-
     if (parsed.data.type === "load_transcript_range") {
       await this.fulfillTranscriptRange(socket, attachment, parsed.data);
       return;
@@ -3271,6 +3902,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         attachment.workspaceId,
         attachment.workstreamId,
         0,
+        noFlowSpan,
+        "reconciliation",
       );
       if (!subscribed) {
         const current = this.readAttachment(socket);
@@ -3332,89 +3965,66 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         this.sendResyncRequired(socket, sequence, "snapshot_expired");
         return;
       }
-      const result = this.transcript.range(fence, request.request.range);
-      socket.send(JSON.stringify(ServerSocketEventSchema.parse({
+      let result = this.transcript.range(fence, request.request.range);
+      const occurredAt = new Date().toISOString();
+      const encodedRange = (): string => JSON.stringify(ServerSocketEventSchema.parse({
         type: "transcript_range",
         sequence,
-        occurredAt: new Date().toISOString(),
+        occurredAt,
         requestId: request.requestId,
         snapshotId: request.request.snapshotId,
         result,
-      })));
-    } catch {
-      this.sendResyncRequired(socket, sequence, "history_unavailable");
-    }
-  }
-
-  private async fulfillMessagePage(
-    socket: WebSocket,
-    attachment: SocketAttachment,
-    request: Extract<z.infer<typeof ClientSocketEventSchema>, { type: "load_message_page" }>,
-  ): Promise<void> {
-    const sendFailure = (code: string, message: string): void => socket.send(JSON.stringify(
-      SubstreamDirectSocketEventSchema.parse({
-        type: "message_page_error",
-        requestId: request.requestId,
-        occurredAt: new Date().toISOString(),
-        code,
-        message,
-      }),
-    ));
-    if (!attachment.subscribed) {
-      sendFailure("subscription_required", "Subscribe to the message feed before loading a page.");
-      return;
-    }
-    const auth = await this.socketAuth(attachment);
-    if (!auth) {
-      sendFailure("socket_access_revoked", "The work stream is no longer available.");
-      disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "Work stream access revoked");
-      return;
-    }
-    const value = Number(request.cursor.value);
-    if (!Number.isSafeInteger(value)) {
-      sendFailure("invalid_message_cursor", "The message cursor is not valid.");
-      return;
-    }
-    try {
-      const loadedPage = await this.product.messages(
-        auth,
-        request.limit,
-        request.cursor.direction === "before" ? value : undefined,
-        request.cursor.direction === "after" ? value : undefined,
-      );
-      const page = { ...loadedPage, items: [...loadedPage.items] };
-      const buildEvent = () => SubstreamDirectSocketEventSchema.parse({
-          type: "message_page",
-          requestId: request.requestId,
-          occurredAt: new Date().toISOString(),
-          page,
-        });
-      let event = buildEvent();
-      let encoded = JSON.stringify(event);
-      while (textEncoder.encode(encoded).byteLength > MAX_SOCKET_MESSAGE_PAGE_BYTES
-        && page.items.length > 1) {
-        if (request.cursor.direction === "after") {
-          page.items.pop();
-          page.newerCursor = String(page.items.at(-1)!.sequenceNumber);
-        } else {
-          page.items.shift();
-          page.nextCursor = String(page.items[0]!.sequenceNumber);
+      }));
+      let encoded = encodedRange();
+      if (textEncoder.encode(encoded).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+        const envelopes = new Map<string, TranscriptTurn>();
+        for (const turn of result.turns) {
+          const single = JSON.stringify(ServerSocketEventSchema.parse({
+            type: "transcript_range",
+            sequence,
+            occurredAt,
+            requestId: request.requestId,
+            snapshotId: request.request.snapshotId,
+            result: {
+              ...result,
+              covered: {
+                startInclusive: turn.transcriptSequence,
+                endExclusive: turn.transcriptSequence + 1,
+              },
+              turns: [turn],
+              activities: activitiesForTranscriptTurns(result.activities, [turn]),
+            },
+          }));
+          if (textEncoder.encode(single).byteLength <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) continue;
+          // A turn whose serialized blocks alone exceed the frame budget keeps
+          // its exact sequence as a placeholder envelope with payloads
+          // omitted. Nothing in the product produces such a turn today, so
+          // this is logged loudly rather than served through a hydration
+          // protocol nobody has needed yet.
+          logWarn(this.env, "substream_transcript_turn_oversized", {
+            workspace_id: attachment.workspaceId,
+            workstream_id: attachment.workstreamId,
+            turn_id: turn.turnId,
+          });
+          envelopes.set(turn.turnId, this.transcript.omittedTurnEnvelope(turn));
         }
-        event = buildEvent();
-        encoded = JSON.stringify(event);
+        if (envelopes.size > 0) {
+          result = {
+            ...result,
+            turns: result.turns.map((turn) => envelopes.get(turn.turnId) ?? turn),
+          };
+          encoded = encodedRange();
+        }
       }
-      if (textEncoder.encode(encoded).byteLength > MAX_SOCKET_MESSAGE_PAGE_BYTES) {
-        sendFailure("message_page_too_large", "The next message is too large to load over the live feed.");
-        return;
+      while (textEncoder.encode(encoded).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+        const narrowed = narrowSocketTranscriptRange(result);
+        if (!narrowed) throw new Error("substream_transcript_range_frame_too_large");
+        result = narrowed;
+        encoded = encodedRange();
       }
       socket.send(encoded);
-    } catch (error) {
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404)) {
-        sendFailure("socket_access_revoked", "The work stream is no longer available.");
-        disconnect(socket, WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE, "Work stream access revoked");
-        return;
-      }
-      sendFailure("message_page_unavailable", "Messages could not be loaded.");
+    } catch {
+      this.sendResyncRequired(socket, sequence, "history_unavailable");
     }
   }
 
@@ -3628,7 +4238,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   private hasDueAlarmWork(now: number): boolean {
     return this.objectStore.pendingBlockDashboardRefresh() !== null
       || this.objectStore.nextRegionalEffectDueAt() !== null
-      || this.nextRunDispatchAt() !== null
+      || this.objectStore.nextSemanticRealtimeDueAt() !== null
+      || this.nextLoopWorkAt(now) !== null
       || this.scheduledAlarms.due(now, 1).length > 0;
   }
 
@@ -3699,14 +4310,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   protected override async runDueAlarmWork(): Promise<void> {
-    this.runDrainDeferred = false;
+    this.loopDrainDeferred = false;
     const pending = this.objectStore.pendingBlockDashboardRefresh();
     const nextBlockDashboardAt = this.objectStore.nextBlockDashboardDueAt();
     const nextEffectAt = this.objectStore.nextRegionalEffectDueAt();
-    const hasRunDispatch = this.nextRunDispatchAt() !== null;
+    const nextSemanticRealtimeAt = this.objectStore.nextSemanticRealtimeDueAt();
+    const hasLoopWork = this.nextLoopWorkAt() !== null;
     // A timer that fired above may have left the index behind the table.
     this.syncAgentTimerAlarms();
-    if (!pending && nextEffectAt === null && !hasRunDispatch) return;
+    if (!pending && nextEffectAt === null && nextSemanticRealtimeAt === null && !hasLoopWork) return;
+
+    if (nextSemanticRealtimeAt !== null && nextSemanticRealtimeAt <= Date.now()) {
+      await this.flushSemanticRealtimeOutboxBestEffort();
+    }
 
     if (nextEffectAt !== null && nextEffectAt <= Date.now()) {
       const effects = this.objectStore.dueRegionalEffects();
@@ -3751,7 +4367,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     if (!pending || nextBlockDashboardAt === null || nextBlockDashboardAt > Date.now()) {
-      this.runDrainDeferred = await this.drainRunsToCompletion() === "deferred";
+      this.loopDrainDeferred = await this.drainLoopToCompletion() === "deferred";
       return;
     }
     this.objectStore.deletePendingBlockDashboardRefresh();
@@ -3768,7 +4384,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       this.objectStore.failPendingBlockDashboardRefresh(pending, retryAt);
       await this.ensureAlarmNoLaterThan(retryAt);
     }
-    this.runDrainDeferred = await this.drainRunsToCompletion() === "deferred";
+    this.loopDrainDeferred = await this.drainLoopToCompletion() === "deferred";
   }
 
   /** Best-effort forward of due effects; the alarm retries whatever defers. */
@@ -4100,6 +4716,13 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         400
       );
     }
+    if (this.semanticRealtimePending
+      && !await this.flushSemanticRealtimeOutboxBestEffort()) {
+      // The canonical snapshot already contains both the deferred fact and
+      // this object's product state. Do not allocate a higher room sequence
+      // ahead of the durable canonical predecessor.
+      return jsonResponse({ accepted: true, deferredBehindCanonical: true }, 202);
+    }
     const event = await this.commitRealtimeEvent(unsequencedEvent.data, requestedSequence);
 
     this.recordRecentEvent(event);
@@ -4160,16 +4783,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    */
   private blockDashboardContextFence(workspaceId: string): BlockDashboardContextFence {
     const pendingTool = this.state.storage.sql.exec<{ sequence_number: number | null }>(
-      `SELECT MIN(sequence_number) AS sequence_number
-         FROM workstream_message_records
-        WHERE substream_id = '0' AND kind = 'tool_call' AND tool_status = 'pending'`,
+      `SELECT MIN(turn.transcript_sequence) AS sequence_number
+         FROM participant_transcript_blocks block
+         JOIN participant_transcript_turns turn ON turn.turn_id = block.turn_id
+        WHERE block.block_kind = 'tool'
+          AND block.lifecycle_state IN ('planned', 'started')`,
     ).toArray()[0]?.sequence_number ?? null;
     const throughSequence = this.state.storage.sql.exec<{ sequence_number: number | null }>(
-      `SELECT MAX(sequence_number) AS sequence_number
-         FROM workstream_message_records
-        WHERE substream_id = '0'
-          AND kind IN ('text', 'tool_call', 'tool_result', 'attachment', 'terminal')
-          AND (? IS NULL OR sequence_number < ?)`,
+      `SELECT MAX(transcript_sequence) AS sequence_number
+         FROM participant_transcript_turns
+        WHERE entry_kind = 'conversation'
+          AND (? IS NULL OR transcript_sequence < ?)`,
       pendingTool,
       pendingTool,
     ).toArray()[0]?.sequence_number ?? 0;
@@ -4227,11 +4851,11 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   protected override armAlarmAfterDueWork(): Promise<unknown> {
-    return this.runDrainDeferred ? this.armAlarmDuringRunDrain() : this.armNextAlarm();
+    return this.loopDrainDeferred ? this.armAlarmDuringRunDrain() : this.armNextAlarm();
   }
 
   /**
-   * Re-arm without redelivering the dispatch this invocation is responsible for.
+   * Re-arm without reclaiming the loop work this invocation is responsible for.
    *
    * Everything else this object waits on keeps its own deadline, so only the
    * run lane is held back, and only to one heartbeat horizon: that bounds
@@ -4246,6 +4870,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       overdueAt: now + KEEP_ALIVE_INTERVAL_MS,
       derivedCandidates: [
         this.objectStore.nextRegionalEffectDueAt(),
+        this.objectStore.nextSemanticRealtimeDueAt(),
         this.objectStore.nextBlockDashboardDueAt(),
         now + KEEP_ALIVE_INTERVAL_MS,
       ],
@@ -4253,7 +4878,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * Derived from the dispatch rows alone.
+   * Derived from the persistent loop and subordinate receipt rows alone.
    *
    * This deliberately does not consult `agentDrain.active`. It used to, and an
    * invocation cancelled between claiming a run and finishing it then left the
@@ -4262,12 +4887,27 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
    * In-memory knowledge that a drain is running belongs to deduplication, not
    * to scheduling.
    */
-  private nextRunDispatchAt(now: number = Date.now()): number | null {
-    return nextAgentRunDispatchWakeUpAt(
-      this.state.storage.sql,
-      SUBSTREAM_AGENT_RUN_DISPATCHES,
-      now,
-    );
+  private nextLoopWorkAt(now: number = Date.now()): number | null {
+    // The loop row is created by first admission, so a run receipt can exist
+    // before it does — a recovered pre-loop run, or one seeded across a
+    // migration. The receipt scan below must run either way: deriving the next
+    // alarm only when the singleton exists is how a claimed run stops
+    // contributing a due time and stalls with nothing left to rediscover it.
+    const loop = this.loop.loop();
+    if (loop?.status === "executing") return loop.lease_expires_at;
+    if (loop && this.loop.pendingInputs().length > 0) return now;
+    const preparation = this.product.nextRecoverableInputPreparationAt(now);
+    if (preparation !== null) return preparation;
+    const receipt = this.state.storage.sql.exec<{ due_at: number | null }>(
+      `SELECT MIN(COALESCE(execution_available_at, created_at)) AS due_at FROM runs
+        WHERE execution_context_json IS NOT NULL
+          AND (
+            (substream_loop_id IS NULL AND terminalized_at IS NULL
+              AND status IN ('admitted', 'running'))
+            OR (terminalized_at IS NOT NULL AND external_settled_at IS NULL)
+          )`,
+    ).toArray()[0]?.due_at ?? null;
+    return receipt === null ? null : Math.max(now, Number(receipt));
   }
 
   /**
@@ -4282,8 +4922,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   protected override nextDerivedAlarmCandidates(now: number): readonly number[] {
     const candidates: Array<number | null> = [
       this.objectStore.nextRegionalEffectDueAt(),
+      this.objectStore.nextSemanticRealtimeDueAt(),
       this.objectStore.nextBlockDashboardDueAt(),
-      this.nextRunDispatchAt(now),
+      this.nextLoopWorkAt(now),
     ];
     if (this.keepAliveLease.active) candidates.push(now + KEEP_ALIVE_INTERVAL_MS);
     return candidates.filter((candidate): candidate is number => candidate !== null);
@@ -4295,6 +4936,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     workstreamId: string,
     afterSequence: number,
     span: FlowSpan = noFlowSpan,
+    snapshotReasonOverride?: "reconciliation",
   ): Promise<boolean> {
     let deliveredThrough = await span.step("workstream.room.subscribe.current_sequence", () =>
       this.currentSequence());
@@ -4310,11 +4952,21 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     // fetch canonical state over HTTP instead.
     span.setAttributes({
       "rally.subscribe.replay_plan": plan.type,
-      ...(plan.type === "snapshot" ? { "rally.subscribe.snapshot_reason": plan.reason } : {}),
+      ...(plan.type === "snapshot" ? {
+        "rally.subscribe.snapshot_reason": snapshotReasonOverride ?? plan.reason,
+      } : {}),
       ...(plan.type === "replay" ? { "rally.subscribe.replay_event_count": plan.events.length } : {}),
     });
     const delivered = await span.step("workstream.room.subscribe.deliver", () =>
-      this.deliverReplayPlan(socket, workspaceId, workstreamId, deliveredThrough, plan, span));
+      this.deliverReplayPlan(
+        socket,
+        workspaceId,
+        workstreamId,
+        deliveredThrough,
+        plan,
+        span,
+        snapshotReasonOverride,
+      ));
     if (!delivered) return false;
 
     // Loading a snapshot awaits object storage and can yield to a concurrently
@@ -4360,13 +5012,14 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     currentSequence: number,
     plan: SocketReplayPlan,
     span: FlowSpan = noFlowSpan,
+    snapshotReasonOverride?: "reconciliation",
   ): Promise<boolean> {
     if (plan.type === "snapshot") {
       const delivered = await this.sendSnapshot(
         socket,
         workspaceId,
         workstreamId,
-        plan.reason,
+        snapshotReasonOverride ?? plan.reason,
         currentSequence,
         span,
       );
@@ -4405,7 +5058,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     socket: WebSocket,
     workspaceId: string,
     workstreamId: string,
-    reason: "initial" | "history_unavailable",
+    reason: "initial" | "reconciliation" | "history_unavailable",
     knownSequence?: number,
     span: FlowSpan = noFlowSpan,
   ): Promise<boolean> {
@@ -4414,26 +5067,12 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       if (!attachment) throw new Error("Missing connection identity while loading snapshot");
       const admitted = await span.step("workstream.room.snapshot.detail", () =>
         this.loadSnapshot(workspaceId, workstreamId, attachment.userId));
-      const { auth, workstream } = admitted;
-      // Both transcript windows, from the assembler `GET /workstreams/:id` also
-      // uses. The detail above already carries presence, which `boot` cannot
-      // know about, so its own copy is discarded rather than re-read here.
-      const boot = await span.step("workstream.room.snapshot.transcript", () =>
-        this.product.bootFeeds(
-          auth,
-          reason === "initial" ? workstream.firstUnreadSequenceNumber : null,
-          true,
-        ));
-      const transcript = this.transcript.createOpeningSnapshot({
+      const { workstream } = admitted;
+      let transcript = this.transcript.createOpeningSnapshot({
         unreadHighWaterAttentionOrdinal: reason === "initial"
           ? workstream.firstUnreadSequenceNumber
           : null,
       });
-      const messageFeed = { ...boot.messageFeed, items: [...boot.messageFeed.items] };
-      // Copied, not aliased: the cap below has to be able to shrink this one too.
-      const resumeFeed = boot.resumeFeed
-        ? { ...boot.resumeFeed, items: [...boot.resumeFeed.items] }
-        : null;
       const sequence = knownSequence ?? await this.currentSequence();
       const storedCheckpoints = this.objectStore.activeStreamCheckpoints();
       const activeStreams = workstream.harnessStatus === "running"
@@ -4445,65 +5084,93 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         && storedCompaction?.harnessRunId === workstream.latestHarnessRunId
         ? storedCompaction
         : null;
-      const buildEvent = () => ServerSocketEventSchema.parse({
+      const occurredAt = new Date().toISOString();
+      let pendingInputChunks: WorkstreamTranscriptSnapshot["pendingInputs"][] = [];
+      const snapshotEvent = (): ServerSocketEvent => ServerSocketEventSchema.parse({
           type: "snapshot",
+          reason,
           sequence,
-          occurredAt: new Date().toISOString(),
+          occurredAt,
           workstream,
           transcript,
-          messageFeed,
-          resumeFeed,
+          pendingInputChunkCount: pendingInputChunks.length,
           activeStreams,
           activeCompaction,
         });
-      let event = buildEvent();
-      let encoded = JSON.stringify(event);
-      // Carried rather than recomputed: the cap, the trim loop, and the
-      // reported size are all about UTF-8 bytes, and encoding once per
-      // iteration replaces the two full encodes the loop used to do per trim.
+      let encoded = JSON.stringify(snapshotEvent());
       let encodedBytes = textEncoder.encode(encoded).byteLength;
-      let trims = 0;
-      /**
-       * Drop the oldest message from one window, or report that it cannot.
-       *
-       * The cap covers the whole frame, so every window in it has to be
-       * reducible. When only the newest page could shrink, a large enough
-       * resume window put the frame over the limit with nothing left to trim
-       * and the open failed outright with `snapshot_unavailable`.
-       */
-      const trimOldest = (feed: typeof messageFeed): boolean => {
-        if (feed.items.length <= 1) return false;
-        feed.items.shift();
-        feed.nextCursor = String(feed.items[0]!.sequenceNumber);
-        return true;
-      };
-      while (
-        encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES
-        // Newest page first. When a resume window exists it is the one being
-        // rendered — the reader is at their unread mark, not at the end — so
-        // the page they are not looking at gives up its messages first.
-        && (trimOldest(messageFeed) || (resumeFeed !== null && trimOldest(resumeFeed)))
-      ) {
-        event = buildEvent();
-        encoded = JSON.stringify(event);
+      if (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES && transcript.pendingInputs.length > 0) {
+        // Pending inputs are server-authoritative and cannot be dropped merely
+        // to fit one WebSocket frame. Split them into ordered snapshot chunks;
+        // one admitted message is bounded far below the frame ceiling, while
+        // the complete queue is intentionally unbounded by transport size.
+        pendingInputChunks = transcript.pendingInputs.map((input) => [input]);
+        transcript = { ...transcript, pendingInputs: [] };
+        encoded = JSON.stringify(snapshotEvent());
         encodedBytes = textEncoder.encode(encoded).byteLength;
-        trims += 1;
       }
-      if (encodedBytes > MAX_SOCKET_SNAPSHOT_BYTES) {
-        throw new Error("substream_snapshot_frame_too_large");
+      while (encodedBytes > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+        const canonicalTurns = [
+          ...transcript.ranges.flatMap((range) => range.turns),
+          ...transcript.activeTurns,
+        ];
+        const uniqueTurns = new Map(canonicalTurns.map((turn) => [turn.turnId, turn]));
+        if (uniqueTurns.size === 1) {
+          const turn = [...uniqueTurns.values()][0]!;
+          if (turn.blocksOmitted !== true) {
+            logWarn(this.env, "substream_transcript_turn_oversized", {
+              workspace_id: workspaceId,
+              workstream_id: workstreamId,
+              turn_id: turn.turnId,
+            });
+            const envelope = this.transcript.omittedTurnEnvelope(turn);
+            transcript = {
+              ...transcript,
+              ranges: transcript.ranges.map((range) => ({
+                ...range,
+                turns: range.turns.map((candidate) =>
+                  candidate.turnId === turn.turnId ? envelope : candidate),
+              })),
+              activeTurns: transcript.activeTurns.map((candidate) =>
+                candidate.turnId === turn.turnId ? envelope : candidate),
+            };
+            encoded = JSON.stringify(snapshotEvent());
+            encodedBytes = textEncoder.encode(encoded).byteLength;
+            if (encodedBytes <= WORKSTREAM_REALTIME_MAX_FRAME_BYTES) break;
+          }
+        }
+        const narrowed = narrowSocketTranscriptSnapshot(transcript);
+        if (!narrowed) throw new Error("substream_snapshot_frame_too_large");
+        transcript = narrowed;
+        encoded = JSON.stringify(snapshotEvent());
+        encodedBytes = textEncoder.encode(encoded).byteLength;
       }
       span.mark("workstream.room.snapshot.encode");
-      // The trim loop re-serializes the whole frame per dropped message, so a
-      // transcript that overshoots the cap is a cost that only shows up as this
-      // count beside the byte size.
       span.setAttributes({
         // Bytes, not `encoded.length`: that counts UTF-16 code units, so any
         // non-ASCII transcript under-reported against a cap measured in UTF-8.
         "rally.snapshot.bytes": encodedBytes,
-        "rally.snapshot.message_count": messageFeed.items.length + (resumeFeed?.items.length ?? 0),
-        "rally.snapshot.trims": trims,
+        "rally.snapshot.turn_count": transcript.ranges.reduce(
+          (count, range) => count + range.turns.length,
+          transcript.activeTurns.length,
+        ),
       });
       socket.send(encoded);
+      for (const [chunkIndex, inputs] of pendingInputChunks.entries()) {
+        const chunk = JSON.stringify(ServerSocketEventSchema.parse({
+          type: "pending_inputs_snapshot_chunk",
+          sequence,
+          occurredAt,
+          snapshotId: transcript.snapshotId,
+          chunkIndex,
+          chunkCount: pendingInputChunks.length,
+          inputs,
+        }));
+        if (textEncoder.encode(chunk).byteLength > WORKSTREAM_REALTIME_MAX_FRAME_BYTES) {
+          throw new Error("substream_pending_input_snapshot_chunk_too_large");
+        }
+        socket.send(chunk);
+      }
       const currentAttachment = this.readAttachment(socket);
       if (currentAttachment) {
         socket.serializeAttachment({
@@ -4516,7 +5183,17 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         } satisfies SocketAttachment);
       }
       return true;
-    } catch {
+    } catch (error) {
+      // The caller converts this into a resync the client can act on, but a
+      // snapshot that cannot be assembled is an object defect, not a client
+      // state problem — swallowing the reason here once cost three tests a
+      // fifteen-second silent hang each. Name it before degrading.
+      logWarn(this.env, "substream_snapshot_assembly_failed", {
+        workspace_id: workspaceId,
+        workstream_id: workstreamId,
+        substream_id: this.externalSubstreamId(),
+        reason: error instanceof Error ? error.message : "unknown",
+      });
       span.setError("snapshot_unavailable");
       return false;
     }
@@ -4575,6 +5252,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     excluding?: WebSocket,
   ): Promise<void> {
     try {
+      if (this.semanticRealtimePending
+        && !await this.flushSemanticRealtimeOutboxBestEffort()) return;
       const viewers = await this.loadViewers(workspaceId, workstreamId, excluding);
       const sequence = await this.allocateSequence();
       const event = ServerSocketEventSchema.parse({
@@ -4617,6 +5296,20 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
 
   private recordRecentEvent(event: ServerSocketEvent): void {
     if (event.type === "snapshot" || event.type === "error" || event.type === "resync_required") return;
+    const replayedIndex = this.recentEvents.findIndex((candidate) => candidate.sequence === event.sequence);
+    if (replayedIndex >= 0) {
+      const previous = this.recentEvents[replayedIndex]!;
+      this.recentEventBytes -= textEncoder.encode(JSON.stringify(previous)).byteLength;
+      this.recentEvents[replayedIndex] = event;
+      this.recentEventBytes += textEncoder.encode(JSON.stringify(event)).byteLength;
+      while (this.recentEvents.length > MAX_REPLAY_EVENTS || this.recentEventBytes > MAX_REPLAY_BYTES) {
+        const removed = this.recentEvents.shift();
+        if (!removed) break;
+        this.recentEventBytes -= textEncoder.encode(JSON.stringify(removed)).byteLength;
+        this.replayFloorSequence = removed.sequence;
+      }
+      return;
+    }
     const bytes = textEncoder.encode(JSON.stringify(event)).byteLength;
     if (this.replayFloorSequence === null) this.replayFloorSequence = Math.max(0, event.sequence - 1);
     this.recentEvents.push(event);

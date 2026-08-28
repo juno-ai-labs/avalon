@@ -12,6 +12,7 @@ import type { WorkstreamSchedulingStorage } from "./workstream-scheduling-storag
 export const OpenElicitationInputSchema = z.object({
   elicitationId: z.string().min(1),
   runId: z.string().min(1),
+  toolCallId: z.string().min(1),
   prompt: z.string().max(MESSAGE_MAX_CHARACTERS),
   responseType: z.string().min(1),
   optionsJson: z.string(),
@@ -51,7 +52,7 @@ type LocalOnlySchedulingOperation =
   | "answerPreparedElicitationExternally";
 export type SchedulingOperation = Exclude<keyof WorkstreamSchedulingStorage, LocalOnlySchedulingOperation>;
 
-export type SchedulingObjectPort = ObjectPortOf<WorkstreamSchedulingStorage>;
+export type SchedulingObjectPort = ObjectPortOf<WorkstreamSchedulingStorage, SchedulingOperation>;
 
 const DISPATCHED_OPERATIONS = [
   "pendingWakeupCount",

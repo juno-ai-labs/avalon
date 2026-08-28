@@ -76,7 +76,7 @@ const workspace: Workspace = {
 };
 const createdWorkstream = {
   workstream: workstream('new-workstream', 'Prepare the launch brief', 'running'),
-  messageId: 'message-new-workstream',
+  turnId: 'message-new-workstream',
   clientMessageId: 'client-new-workstream',
   createdAt: '2026-07-31T20:00:00.000Z',
   harnessRunId: 'run-new-workstream',
@@ -436,17 +436,15 @@ describe('New work-stream home', () => {
         endOffset: 17,
       }],
     })));
-    await waitFor(() => expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([
-      expect.objectContaining({
+    await waitFor(() => expect(queryClient.getQueryData(['ordered-transcript', 'new-workstream']))
+      .toMatchObject({ ranges: [{ turns: [{ blocks: [{
         mentions: [{
           type: 'person',
-          personId: 'user-2',
-          displayName: 'Samantha Lee',
+          userId: 'user-2',
           startOffset: 4,
           endOffset: 17,
         }],
-      }),
-    ]));
+      }] }] }] }));
   });
 
   it('keeps a non-active membership out of both the mention list and the dialog', async () => {
@@ -754,13 +752,13 @@ describe('New work-stream home', () => {
       id: 'new-workstream',
       participants: [{ id: currentUser.id, role: 'creator' }],
     }));
-    expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([
-      expect.objectContaining({
-        id: createdWorkstream.messageId,
+    expect(queryClient.getQueryData(['ordered-transcript', 'new-workstream'])).toMatchObject({
+      ranges: [{ turns: [{
+        turnId: createdWorkstream.turnId,
         clientMessageId: createdWorkstream.clientMessageId,
-        text: 'Prepare the launch brief',
-      }),
-    ]);
+        blocks: [{ text: 'Prepare the launch brief' }],
+      }] }],
+    });
   });
 
   it('carries a pinned model onto the seeded run so the arrival does not read Default', async () => {
@@ -968,8 +966,8 @@ describe('New work-stream home', () => {
     );
     // Empty rather than invented: the opening turn belongs to the agent and
     // arrives with the refetch.
-    expect(queryClient.getQueryData(['messages', 'new-workstream'])).toEqual([]);
-    expect(queryClient.getQueryData(['messages-cursor', 'new-workstream'])).toBeNull();
+    expect(queryClient.getQueryData(['ordered-transcript', 'new-workstream']))
+      .toMatchObject({ snapshotThrough: 0, ranges: [] });
   });
 
   it('gives the draft back when suggested work fails to start', async () => {

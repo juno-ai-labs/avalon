@@ -91,14 +91,6 @@ The host also enforces that promise: if a read, search, view, or summary call
 fails or a completed multi-image view skips a requested resource, and no later
 successful content access resolves the same resource, the model receives one
 corrective turn and cannot publish attachment facts. Cursor reads attach their
-
-The person-facing ordered transcript uses the same durable relationship. The
-snapshot storage layer joins each participant text part to its ordered
-`workstream_message_attachments`, emits metadata only, and the desktop
-reconstructs attachment tiles from that descriptor. An optimistic tile may
-disappear only when a canonical turn with the same message identity has arrived;
-reconnect must not depend on the optimistic row or the resource rail to
-reconstruct ownership.
 resolved resource identity to structured failures so a successful restart by
 resource ID clears the same guard entry instead of leaving a tool-call-only
 false positive. A run
@@ -106,6 +98,30 @@ that still ends replaces its prose with a deterministic, content-free
 `Attachment content unverified` boundary carrying only resource/tool/error
 provenance. `attachment_grounding_guard_triggered` records the same bounded
 identities without content.
+
+The person-facing ordered transcript uses the same durable relationship. The
+snapshot storage layer joins each participant text turn to its ordered
+`participant_transcript_attachments`, emits metadata only, and the desktop
+reconstructs attachment tiles from that descriptor. An optimistic tile may
+disappear only when a canonical turn with the same message identity has arrived;
+reconnect must not depend on the optimistic row or the resource rail to
+reconstruct ownership.
+
+An upload draft named by a human message is reserved in WorkspaceDO before
+Product acknowledges that input as prepared or ready. The reservation RPC both
+freezes the workspace/user-owned draft descriptors and writes
+`pending_attachment_reservations`; explicit deletion and expiry cleanup exclude
+those rows. Product records the cross-object recovery obligation before the RPC,
+so an ambiguous response is replayed rather than guessed. A failed or genuinely
+discarded preparation releases the reservation idempotently. A delivered input
+deletes its local mailbox and recovery obligation in the same WorkstreamDO
+transaction that queues canonical projection; a direct canonical message has no
+pending recovery row. Neither path releases the workspace hold early: its
+durable common effect names the exact
+input/resource reservation, and WorkspaceDO releases only that hold in the same
+transaction that projects the canonical work-stream resource link and marks the
+upload `attached`. Historical resource versions and R2 references are retained
+throughout.
 
 ### Authorized work-stream discovery and text hydration
 
@@ -436,6 +452,10 @@ generic tool execution/receipt loop is owned by
   `apps/api/test/resource-object-cleanup.test.ts` cover lifecycle schema,
   exact-byte hashing, legacy interpretation, derivative-change and deletion
   receipt invalidation, cleanup retry, and convergence.
+- `apps/api/test-workers/workspace-draft-attachment-reservation.test.ts` uses a
+  real WorkspaceDO to prove owner-fenced idempotent reservation, exact
+  input/resource projection release, concurrent holds, explicit-deletion
+  exclusion, failure release, and retained resource history.
 - `apps/desktop/src/renderer/components/attachments.test.tsx` covers lazy
   message-feed opening plus image, Markdown, literal text, and converted-document
   presentation, and the paired superseded notice a prior version is previewed
@@ -570,6 +590,66 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-08-28 — Message attachments ride the persistent-loop cutover
+
+**What changed:** The persistent substream loop and canonical-transcript
+cutover reshaped how a pending message's attachments survive the trip to a
+canonical turn. The facets below are the decisions this change is made of —
+they landed together in one revision and are recorded per facet because each
+carries its own rejected alternative and its own invariant.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+#### Pending message attachments are deletion-fenced until canonical delivery
+
+**What changed:** WorkspaceDO reserves upload drafts for preparing and ready
+human inputs through a typed RPC, and Product persists a replayable recovery
+record before that RPC; explicit deletion and expiry cleanup skip held drafts.
+Delivery then deletes the mailbox and recovery rows in the same local
+transaction that writes the canonical turn and enqueues the common resource
+effect, so the hold lives exactly as long as the pending envelope it protects.
+
+**Why:** Input preparation crosses the WorkspaceDO boundary. Without a durable
+hold, a person or the TTL alarm could delete the resource after validation but
+before the pending message became canonical; and a hold that outlived canonical
+projection would duplicate lifecycle state the durable outbox already owns.
+
+**Considered and rejected:** Rechecking existence immediately before delivery,
+which still leaves an async race; releasing every mailbox row called
+`discarded`, which ends a directly-canonicalized preparation while its common
+projection is still in flight; and keeping a delivered mailbox state until
+WorkspaceDO acknowledges the effect, which adds a second local lifecycle
+needing reconciliation without protecting any additional failure window.
+
+**Consequences:** New draft-removal paths must honor the WorkspaceDO
+reservation table. Failure rollback restores the mailbox and recovery row with
+the pending input; preparation recovery releases only failure-owned holds.
+After commit, WorkspaceDO's idempotent common effect is the only owner of
+attachment/link projection and hold release.
+
+#### Late grounding boundaries retain explicit host provenance
+
+**What changed:** A grounding boundary accepted by Bind remains the exact
+assistant turn Bind projected. A boundary discovered only after an earlier turn
+was accepted is appended as a deterministic system notice; an unaccepted stream
+preview is discarded rather than relabelled as host text. The notice, optional
+accepted final turn, and recoverable host outcome commit atomically.
+
+**Why:** Failing closed on assistant-content mismatch is what prevents a
+host-generated boundary from masquerading as model output — but withholding
+the boundary entirely would leave a participant seeing neither the raw preview
+nor the reason it was withheld, and a crash before terminalization would have
+no durable host outcome when there is no final assistant turn.
+
+**Considered and rejected:** Reusing the current stream ID for the boundary and
+loosening final-turn equality. Stream identity proves which provider turn a
+delta belongs to; it does not prove the provider authored later host text.
+
+**Consequences:** Attachment safety text is always visible with truthful
+authorship. Recovery validates every identity named by the host-outcome
+checkpoint, while model projection continues to exclude system notices.
+
 ### 2026-08-28 — A preview still being prepared is a wait, not a dead panel
 
 **What changed:** The desktop inspector rail's resource preview keeps the typed
@@ -676,7 +756,7 @@ the loop closes today through the participant.
 ### 2026-08-27 — Message attachments use the canonical transcript relationship
 
 **What changed:** Participant transcript hydration now reads
-`workstream_message_attachments`, whose parent is the canonical message record;
+`participant_transcript_attachments`, whose parent is the canonical turn;
 the retired `part_attachments` table is no longer a runtime or payload owner.
 
 **Why:** After historical ownership transfer, retaining a second attachment

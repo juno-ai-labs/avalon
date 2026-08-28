@@ -1,13 +1,13 @@
 import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
-  SubstreamDirectSocketEventSchema,
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   type AgentCompactionState,
   type ActiveStreamCheckpoint,
   type WorkspaceSocketClientEvent,
   type PersonalSocketEvent,
   type ServerSocketEvent,
+  type PendingTranscriptInput,
   type WorkstreamTranscriptSnapshot,
   type TranscriptRange,
   type TranscriptRangeResult,
@@ -17,8 +17,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
   mapElicitation,
-  mapMessage,
-  messagesWithTransientBlocks,
   mapParticipant,
   mapResource,
   mapSuggestion,
@@ -45,7 +43,6 @@ import {
   uuidV7,
   workstreamFeedOpenAttemptId,
   workstreamFeedSourceQueryKey,
-  workstreamRecoveryFeedQueryKey,
   workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 import {
@@ -54,28 +51,39 @@ import {
   createTextMessage,
   createToolEventMessage,
   dismissedSuggestionIdsQueryKey,
-  isSameLogicalMessage,
   mergeRealtimeTranscriptActivity,
   mergeRealtimeTranscriptTurn,
+  mergeCanonicalTranscriptSnapshot,
   mergeTranscriptRange,
-  removeTranscriptMessage,
+  mapTranscriptOverlayMessages,
+  pendingTranscriptInputOverlay,
+  orderedTranscriptMessages,
+  reconcileAuthoritativeTranscriptOverlays,
+  removeTranscriptOverlay,
+  replaceTranscriptOverlay,
+  transcriptOverlaysQueryKey,
+  transcriptOverlaysWithoutCanonicalMatch,
+  type TranscriptOverlay,
+  type TranscriptOverlayIdentity,
+  upsertTranscriptOverlay,
   upsertTranscriptMessage,
-  visibleTranscriptMessages,
 } from './transcript';
-import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, WorkstreamDetail, WorkstreamSummary } from './types';
+import type { HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, WorkstreamDetail, WorkstreamSummary } from './types';
 import { evictCachedWorkstream, setCachedWorkstreams, WORKSTREAMS_QUERY_KEY } from './workstreams-cache';
 import { useWorkstreamSocketResumeState, type StreamCursor } from './workstream-socket-resume';
 import { useWorkspaceSocket } from './workspace-socket';
+import type { AcceptedWorkstreamTurn } from './workspace-socket';
 import { useWorkstreamControlSocket } from './use-workstream-control-socket';
 
 export type { StreamCursor } from './workstream-socket-resume';
 
 export type SocketState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+export type WorkstreamMessageDeliveryMode = 'steer' | 'queue';
 
 /** The exact API capability the realtime cache reconciler is allowed to use. */
 export type WorkstreamSocketApi = Pick<
   RallyApi,
-  'getMessages' | 'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'messageMentionPayload'
+  'getSocketTicket' | 'getWorkstreamControlSocketTicket' | 'getWorkstream' | 'messageMentionPayload'
 >;
 
 export interface CreateWorkstreamMessageInput {
@@ -84,6 +92,7 @@ export interface CreateWorkstreamMessageInput {
   mentions?: MentionIdentity[];
   confirmedParticipantUserIds?: string[];
   attachmentIds?: string[];
+  runMode?: WorkstreamMessageDeliveryMode;
 }
 
 export interface WorkstreamSocketConnection {
@@ -93,8 +102,7 @@ export interface WorkstreamSocketConnection {
   sendReady: boolean;
   workspaceSocketState: 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
   activeCompaction: AgentCompactionState | null;
-  createMessage(input: CreateWorkstreamMessageInput): Promise<Message>;
-  loadMessagePage(input: LoadWorkstreamMessagePageInput): Promise<MessagePage>;
+  createMessage(input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn>;
   loadTranscriptRange(input: {
     snapshotId: string;
     range: TranscriptRange;
@@ -104,16 +112,12 @@ export interface WorkstreamSocketConnection {
   requestSnapshot(): void;
 }
 
-export type LoadWorkstreamMessagePageInput =
-  | { before: string; limit?: number }
-  | { after: string; limit?: number };
-
 type CreateMessageSocketCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_message' }>;
 
 const HEARTBEAT_BASE_MS = 45_000;
 const HEARTBEAT_JITTER_MS = 10_000;
 const PONG_TIMEOUT_MS = 15_000;
-const MESSAGE_PAGE_TIMEOUT_MS = 15_000;
+const TRANSCRIPT_RANGE_TIMEOUT_MS = 15_000;
 export const SOCKET_STABLE_CONNECTION_MS = 30_000;
 
 export function socketHeartbeatDelay(random = Math.random): number {
@@ -146,9 +150,9 @@ function compareMessages(a: Message, b: Message): number {
     return aRealtimeSequence - bRealtimeSequence;
   }
   if (a.sequenceNumber !== b.sequenceNumber) return a.sequenceNumber - b.sequenceNumber;
-  const createdDifference = Date.parse(a.createdAt) - Date.parse(b.createdAt);
-  if (Number.isFinite(createdDifference) && createdDifference !== 0) return createdDifference;
-  return a.id.localeCompare(b.id);
+  // Wall clocks are metadata, never ordering authority. When two overlays
+  // share every explicit position, stable identity is the deterministic tie.
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 export function nextTranscriptSequence(messages: Message[] | undefined): number {
@@ -159,13 +163,6 @@ export function nextTranscriptSequence(messages: Message[] | undefined): number 
     ),
     0,
   ) + 1;
-}
-
-function activeStreamAnchor(messages: Message[] | undefined): number | undefined {
-  return [...(messages ?? [])]
-    .reverse()
-    .find((message) => message.streaming && message.authorType === 'agent')
-    ?.realtimeOrder?.anchorSequenceNumber;
 }
 
 export function orderTranscript(messages: Message[]): Message[] {
@@ -191,7 +188,7 @@ function streamingMessageId(event: StreamingSocketEvent): string {
  * de-duplication alone is insufficient: a newer epoch must replace only that
  * turn's prior attempt and repeated chunks must not be appended twice. Bind
  * assigns a new turn ID after tool execution; that is a new participant-visible
- * model turn and therefore a new row. Keeping the run's aggregate message ID
+ * model turn and therefore a new row. Keeping the run's stream ID
  * here was what moved later narration above tools that had already completed.
  *
  * With `paced` set, the frame's text lands in the cursor's `receivedText` and
@@ -213,7 +210,7 @@ export function applyStreamingSocketEvent(
   if (!cursor) {
     let closedPriorTurn = false;
     for (const [priorTurnId, prior] of cursors) {
-      if (priorTurnId === messageId || prior.aggregateMessageId !== event.messageId || prior.completed) continue;
+      if (priorTurnId === messageId || prior.streamId !== event.streamId || prior.completed) continue;
       cursors.set(priorTurnId, {
         ...prior,
         completed: true,
@@ -224,7 +221,7 @@ export function applyStreamingSocketEvent(
     if (closedPriorTurn) {
       messages = (messages ?? []).map((message) => {
         const prior = cursors.get(message.id);
-        return prior?.aggregateMessageId === event.messageId && prior.completed
+        return prior?.streamId === event.streamId && prior.completed
           ? { ...message, text: prior.receivedText, streaming: false }
           : message;
       });
@@ -269,7 +266,7 @@ export function applyStreamingSocketEvent(
   const seenTurnIds = new Set(cursor?.seenTurnIds);
   seenTurnIds.add(event.turnId);
   cursors.set(messageId, {
-    aggregateMessageId: event.messageId,
+    streamId: event.streamId,
     turnId: event.turnId,
     epoch: event.epoch,
     streamSeq: event.streamSeq,
@@ -371,7 +368,7 @@ export function applyActiveStreamCheckpoints(
     const cursor = cursors.get(messageId);
     if (cursor && cursor.roomSequence > checkpoint.roomSequence) continue;
     cursors.set(messageId, {
-      aggregateMessageId: checkpoint.messageId,
+      streamId: checkpoint.streamId,
       turnId: checkpoint.turnId,
       epoch: checkpoint.epoch,
       streamSeq: checkpoint.streamSeq,
@@ -427,149 +424,8 @@ export function applyActiveStreamCheckpoints(
   return nextMessages;
 }
 
-/**
- * A REST refresh replaces canonical transcript rows, but an active assistant
- * stream and realtime tool updates do not yet exist in D1. Retain both until
- * their canonical rows arrive. In particular, the streaming row must survive
- * the refresh a socket handoff triggers: removing and recreating it makes the
- * response visibly pop and loses the prefix that replayed deltas append to.
- */
-export function mergeCanonicalTranscript(previous: Message[] | undefined, canonical: Message[]): Message[] {
-  const canonicalIds = new Set(canonical.map((message) => message.id));
-  const canonicalTurnIds = new Set(canonical.flatMap((message) =>
-    message.transcriptTurnId ? [message.transcriptTurnId] : []));
-  const canonicalToolIds = new Set(canonical.flatMap((message) =>
-    message.toolEvent ? [message.toolEvent.toolCallId ?? message.toolEvent.id] : []));
-  const lowestCanonicalSequence = canonical.reduce(
-    (lowest, message) => Math.min(lowest, message.sequenceNumber),
-    Number.POSITIVE_INFINITY,
-  );
-  const olderPersistedMessages = (previous ?? []).filter((message) =>
-    Number.isFinite(lowestCanonicalSequence)
-    && message.realtimeOrder === undefined
-    && message.deliveryState !== 'sending'
-    && message.sequenceNumber < lowestCanonicalSequence
-    && !canonicalIds.has(message.id),
-  );
-  const realtimeTools = (previous ?? []).filter((message) =>
-    message.messageType === 'tool_event'
-    && message.realtimeOrder !== undefined
-    && !canonicalIds.has(message.id)
-      && (!message.toolEvent
-        || !canonicalToolIds.has(message.toolEvent.toolCallId ?? message.toolEvent.id)),
-  );
-  const streamingAgentMessages = (previous ?? []).filter((message) =>
-    message.authorType === 'agent'
-    && message.streaming === true
-    && !canonicalIds.has(message.id)
-    && (!message.transcriptTurnId || !canonicalTurnIds.has(message.transcriptTurnId)),
-  );
-  const pendingHumanMessages = (previous ?? []).filter((message) =>
-    message.authorType === 'human'
-    && message.deliveryState === 'sending'
-    && !canonicalIds.has(message.id)
-    && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
-  );
-  const realtimeMessages = [
-    ...realtimeTools,
-    ...streamingAgentMessages,
-    ...pendingHumanMessages,
-  ];
-  const canonicalById = new Map(canonical.map((message) => [message.id, message]));
-  const settledRealtimeAnchors = new Map<number, number>();
-  for (const message of previous ?? []) {
-    const canonicalMessage = canonicalById.get(message.id);
-    if (message.realtimeOrder && canonicalMessage) {
-      settledRealtimeAnchors.set(
-        message.realtimeOrder.anchorSequenceNumber,
-        canonicalMessage.sequenceNumber,
-      );
-    }
-  }
-  const anchorsThatMustFollowCanonical = new Set(
-    [...streamingAgentMessages, ...pendingHumanMessages]
-      .flatMap((message) => message.realtimeOrder ? [message.realtimeOrder.anchorSequenceNumber] : []),
-  );
-  const firstRealtimeAnchor = [...anchorsThatMustFollowCanonical].reduce(
-    (lowest, anchor) => Math.min(lowest, anchor),
-    Number.POSITIVE_INFINITY,
-  );
-  const canonicalBoundary = nextTranscriptSequence([...olderPersistedMessages, ...canonical]);
-  const anchorShift = Number.isFinite(firstRealtimeAnchor)
-    ? Math.max(0, canonicalBoundary - firstRealtimeAnchor)
-    : 0;
-  const reanchoredRealtimeMessages = anchorShift === 0 && settledRealtimeAnchors.size === 0
-    ? realtimeMessages
-    : realtimeMessages.map((message) => message.realtimeOrder
-      ? {
-          ...message,
-          realtimeOrder: {
-            ...message.realtimeOrder,
-            anchorSequenceNumber: settledRealtimeAnchors.get(message.realtimeOrder.anchorSequenceNumber)
-              ?? (anchorsThatMustFollowCanonical.has(message.realtimeOrder.anchorSequenceNumber)
-                ? message.realtimeOrder.anchorSequenceNumber + anchorShift
-                : message.realtimeOrder.anchorSequenceNumber),
-          },
-        }
-      : message);
-  return orderTranscript([
-    ...olderPersistedMessages,
-    ...canonical,
-    ...reanchoredRealtimeMessages,
-  ]);
-}
-
-/**
- * Once a run is terminal, D1 is the authoritative transcript. Realtime tool
- * rows are intentionally synthetic and can survive a reconnect after their
- * canonical counterparts have already been persisted. Retain only genuinely
- * newer persisted rows and local optimistic sends while replacing that
- * synthetic surface.
- */
-export function replaceWithCanonicalTranscript(previous: Message[] | undefined, canonical: Message[]): Message[] {
-  const canonicalIds = new Set(canonical.map((message) => message.id));
-  const lowestCanonicalSequence = canonical.reduce(
-    (lowest, message) => Math.min(lowest, message.sequenceNumber),
-    Number.POSITIVE_INFINITY,
-  );
-  const highestCanonicalSequence = canonical.reduce(
-    (highest, message) => Math.max(highest, message.sequenceNumber),
-    0,
-  );
-  const newerPersistedMessages = (previous ?? []).filter((message) =>
-    message.realtimeOrder === undefined
-    && message.sequenceNumber > highestCanonicalSequence
-    && !canonicalIds.has(message.id)
-    && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
-  );
-  const olderPersistedMessages = (previous ?? []).filter((message) =>
-    Number.isFinite(lowestCanonicalSequence)
-    && message.realtimeOrder === undefined
-    && message.deliveryState !== 'sending'
-    && message.sequenceNumber < lowestCanonicalSequence
-    && !canonicalIds.has(message.id),
-  );
-  const pendingHumanMessages = (previous ?? []).filter((message) =>
-    message.authorType === 'human'
-    && message.deliveryState === 'sending'
-    && !canonicalIds.has(message.id)
-    && !canonical.some((candidate) => isSameLogicalMessage(message, candidate)),
-  );
-  return orderTranscript([...olderPersistedMessages, ...canonical, ...newerPersistedMessages, ...pendingHumanMessages]);
-}
-
-export function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
+function runMayStillEmitRealtime(status: WorkstreamDetail['harnessStatus']): boolean {
   return status === 'running' || status === 'scheduled';
-}
-
-export function reconcileCanonicalTranscript(
-  previous: Message[] | undefined,
-  canonical: Message[],
-  harnessStatus: WorkstreamDetail['harnessStatus'],
-): Message[] {
-  return runMayStillEmitRealtime(harnessStatus)
-    ? mergeCanonicalTranscript(previous, canonical)
-    : replaceWithCanonicalTranscript(previous, canonical);
 }
 
 /**
@@ -621,6 +477,130 @@ function advanceWorkstreamAttention<T extends WorkstreamSummary>(
   };
 }
 
+function upsertSocketEventOverlay(
+  current: readonly TranscriptOverlay[] | undefined,
+  identity: TranscriptOverlayIdentity,
+  message: Message,
+  eventType: string,
+  eventSequence: number,
+  afterTranscriptSequence: number,
+): TranscriptOverlay[] {
+  return upsertTranscriptOverlay(current, {
+    identity,
+    provenance: { source: 'socket_event', eventType, eventSequence },
+    position: { afterTranscriptSequence, eventSequence },
+    message,
+  });
+}
+
+export function applyStreamingOverlayEvent(
+  overlays: TranscriptOverlay[] | undefined,
+  event: StreamingSocketEvent,
+  workstreamId: string,
+  afterTranscriptSequence: number,
+  cursors: Map<string, StreamCursor>,
+  options: { paced?: boolean } = {},
+): TranscriptOverlay[] {
+  const current = overlays ?? [];
+  const messages = applyStreamingSocketEvent(
+    current.map((overlay) => overlay.message),
+    event,
+    workstreamId,
+    cursors,
+    options,
+  );
+  let next = mapTranscriptOverlayMessages(current, () => messages);
+  const streamed = messages.find((message) => message.id === event.turnId);
+  if (!streamed) return next;
+  const existing = next.find((overlay) =>
+    overlay.identity.type === 'assistant_turn'
+    && overlay.identity.turnId === event.turnId);
+  if (next === current
+    && existing
+    && (existing.provenance.source === 'stream_event'
+      || existing.provenance.source === 'stream_snapshot')
+    && existing.provenance.streamId === event.streamId) {
+    return current;
+  }
+  next = upsertTranscriptOverlay(next, {
+    identity: { type: 'assistant_turn', turnId: event.turnId },
+    provenance: {
+      source: 'stream_event',
+      streamId: event.streamId,
+      eventType: event.type,
+      eventSequence: event.sequence,
+    },
+    position: { afterTranscriptSequence, eventSequence: event.sequence },
+    message: streamed,
+  });
+  return next;
+}
+
+export function activeStreamCheckpointOverlays(
+  checkpoints: readonly ActiveStreamCheckpoint[],
+  workstreamId: string,
+  snapshotId: string,
+  _afterTranscriptSequence: number,
+  cursors: Map<string, StreamCursor>,
+): TranscriptOverlay[] {
+  const messages = applyActiveStreamCheckpoints([], checkpoints, workstreamId, cursors);
+  return checkpoints.flatMap((checkpoint) => {
+    const message = messages.find((candidate) => candidate.id === checkpoint.turnId);
+    return message ? [{
+      identity: { type: 'assistant_turn' as const, turnId: checkpoint.turnId },
+      provenance: {
+        source: 'stream_snapshot' as const,
+        streamId: checkpoint.streamId,
+        snapshotId,
+      },
+      position: {
+        afterTranscriptSequence: checkpoint.transcriptSequence - 1,
+        eventSequence: checkpoint.roomSequence,
+      },
+      message,
+    }] : [];
+  });
+}
+
+export function detailTranscriptOverlays(
+  detail: WorkstreamDetail,
+  snapshotId: string,
+  afterTranscriptSequence: number,
+  eventSequence: number,
+  dismissedSuggestionIds: readonly string[] = [],
+): TranscriptOverlay[] {
+  const dismissed = new Set(dismissedSuggestionIds);
+  const elicitations = (detail.openElicitations ?? []).map((elicitation): TranscriptOverlay => ({
+    identity: { type: 'elicitation', elicitationId: elicitation.id },
+    provenance: { source: 'socket_snapshot', snapshotId },
+    position: { afterTranscriptSequence, eventSequence },
+    message: createElicitationMessage({
+      id: elicitationMessageId(elicitation.id),
+      workstreamId: detail.id,
+      sequenceNumber: 0,
+      authorType: 'agent',
+      createdAt: elicitation.createdAt ?? detail.lastActivityAt,
+      elicitation,
+    }),
+  }));
+  const suggestions = (detail.suggestions ?? []).flatMap((suggestion): TranscriptOverlay[] =>
+    suggestion.status === 'dismissed' || dismissed.has(suggestion.id) ? [] : [{
+      identity: { type: 'activity_suggestion', suggestionId: suggestion.id },
+      provenance: { source: 'socket_snapshot', snapshotId },
+      position: { afterTranscriptSequence, eventSequence },
+      message: {
+        id: `suggestion-${suggestion.id}`,
+        workstreamId: detail.id,
+        sequenceNumber: 0,
+        authorType: 'system',
+        messageType: 'activity_suggestion',
+        createdAt: suggestion.occurredAt ?? detail.lastActivityAt,
+        activitySuggestion: suggestion,
+      },
+    }]);
+  return [...elicitations, ...suggestions];
+}
+
 export function useWorkstreamSocket(
   api: WorkstreamSocketApi | null,
   workstreamId: string,
@@ -652,7 +632,7 @@ export function useWorkstreamSocket(
   const [sendReady, setSendReady] = useState(false);
   const [activeCompaction, setActiveCompaction] = useState<AgentCompactionState | null>(null);
   const attempts = useRef(0);
-  const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<Message>>(
+  const createMessageRef = useRef<(input: CreateWorkstreamMessageInput) => Promise<AcceptedWorkstreamTurn>>(
     () => Promise.reject(new ApiError(
       'The work stream is not ready to receive messages.',
       409,
@@ -660,18 +640,7 @@ export function useWorkstreamSocket(
     )),
   );
   const createMessage = useCallback(
-    (input: CreateWorkstreamMessageInput): Promise<Message> => createMessageRef.current(input),
-    [],
-  );
-  const loadMessagePageRef = useRef<(input: LoadWorkstreamMessagePageInput) => Promise<MessagePage>>(
-    () => Promise.reject(new ApiError(
-      'The work stream is not ready to load messages.',
-      409,
-      'workstream_socket_unavailable',
-    )),
-  );
-  const loadMessagePage = useCallback(
-    (input: LoadWorkstreamMessagePageInput): Promise<MessagePage> => loadMessagePageRef.current(input),
+    (input: CreateWorkstreamMessageInput): Promise<AcceptedWorkstreamTurn> => createMessageRef.current(input),
     [],
   );
   const loadTranscriptRangeRef = useRef<(input: {
@@ -700,11 +669,6 @@ export function useWorkstreamSocket(
       requestSnapshotRef.current = () => undefined;
       createMessageRef.current = () => Promise.reject(new ApiError(
         'The work stream is not ready to receive messages.',
-        409,
-        'workstream_socket_unavailable',
-      ));
-      loadMessagePageRef.current = () => Promise.reject(new ApiError(
-        'The work stream is not ready to load messages.',
         409,
         'workstream_socket_unavailable',
       ));
@@ -738,6 +702,12 @@ export function useWorkstreamSocket(
      * first will already carry.
      */
     let snapshotRequestInFlight = false;
+    let pendingInputSnapshot: {
+      snapshotId: string;
+      sequence: number;
+      chunkCount: number;
+      chunks: Map<number, readonly PendingTranscriptInput[]>;
+    } | null = null;
     /**
      * Whether this socket has yet applied a snapshot.
      *
@@ -745,17 +715,19 @@ export function useWorkstreamSocket(
      * resume window; a later snapshot is a repair, and a repair that moved the
      * transcript backwards would undo what the reader just watched.
      */
-    let initialSnapshotPending = true;
-    const pendingMessagePages = new Map<string, {
-      timeout: number;
-      resolve: (page: MessagePage) => void;
-      reject: (error: Error) => void;
-    }>();
     const pendingTranscriptRanges = new Map<string, {
+      snapshotId: string;
       timeout: number;
       resolve: (range: TranscriptRangeResult) => void;
       reject: (error: Error) => void;
     }>();
+    const rejectPendingTranscriptRanges = (message: string): void => {
+      for (const pending of pendingTranscriptRanges.values()) {
+        window.clearTimeout(pending.timeout);
+        pending.reject(new ApiError(message, 409, 'workstream_socket_unavailable'));
+      }
+      pendingTranscriptRanges.clear();
+    };
     const streamCursors = resumeState.streamCursors;
     /**
      * The paced-reveal loop — `docs/streaming-reveal.md`. Wire frames land in
@@ -772,8 +744,8 @@ export function useWorkstreamSocket(
         if (closedByEffect) return;
         const { changed, backlogRemains } = advanceStreamReveal(streamCursors, performance.now());
         if (changed) {
-          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-            applyRevealedText(current, streamCursors));
+          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+            mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
         }
         if (backlogRemains) scheduleReveal();
       });
@@ -787,8 +759,8 @@ export function useWorkstreamSocket(
     const handleVisibilityChange = (): void => {
       if (document.visibilityState !== 'hidden') return;
       if (flushStreamReveal(streamCursors)) {
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-          applyRevealedText(current, streamCursors));
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          mapTranscriptOverlayMessages(current, (messages) => applyRevealedText(messages, streamCursors)));
       }
     };
     /**
@@ -803,7 +775,7 @@ export function useWorkstreamSocket(
     /** The open in flight, so a superseded attempt still prints its line. */
     let openTrace: PerfTrace | null = null;
 
-    createMessageRef.current = async (input): Promise<Message> => {
+    createMessageRef.current = async (input): Promise<AcceptedWorkstreamTurn> => {
       // Keyed by the client message id, which WorkspaceDO records on its own
       // span as `rally.message.client_id`: the command travels over an
       // already-open socket the platform traces as its own invocation, so this
@@ -819,6 +791,7 @@ export function useWorkstreamSocket(
         textLength: input.text.length,
         attachmentCount: input.attachmentIds?.length ?? 0,
         mentionCount: input.mentions?.length ?? 0,
+        ...(input.runMode ? { runMode: input.runMode } : {}),
       });
       try {
         const mentions = await trace.step('resolve_mentions', () => api.messageMentionPayload(
@@ -844,6 +817,7 @@ export function useWorkstreamSocket(
             mentions,
             confirmedParticipantUserIds: input.confirmedParticipantUserIds ?? [],
             attachmentIds: input.attachmentIds ?? [],
+            ...(input.runMode ? { runMode: input.runMode } : {}),
           },
         };
         const message = await trace.step('command_round_trip', () => createWorkspaceMessage(command));
@@ -859,50 +833,6 @@ export function useWorkstreamSocket(
     // transport, so this intentionally does not wait for either socket to open.
     setSendReady(true);
 
-    const rejectPendingMessagePages = (error: Error): void => {
-      for (const pending of pendingMessagePages.values()) {
-        window.clearTimeout(pending.timeout);
-        pending.reject(error);
-      }
-      pendingMessagePages.clear();
-    };
-
-    loadMessagePageRef.current = (input): Promise<MessagePage> => {
-      if (closedByEffect || accessRevoked || socket?.readyState !== REALTIME_SOCKET_OPEN) {
-        return Promise.reject(new ApiError(
-          'The work stream connection is not ready to load messages.',
-          409,
-          'workstream_socket_unavailable',
-        ));
-      }
-      const requestId = uuidV7();
-      const cursor = 'before' in input
-        ? { direction: 'before' as const, value: input.before }
-        : { direction: 'after' as const, value: input.after };
-      return new Promise<MessagePage>((resolve, reject) => {
-        const timeout = window.setTimeout(() => {
-          pendingMessagePages.delete(requestId);
-          reject(new ApiError(
-            'The message page request timed out.',
-            503,
-            'message_page_timeout',
-          ));
-        }, MESSAGE_PAGE_TIMEOUT_MS);
-        pendingMessagePages.set(requestId, { timeout, resolve, reject });
-        try {
-          socket!.send(JSON.stringify({
-            type: 'load_message_page',
-            requestId,
-            limit: input.limit ?? 200,
-            cursor,
-          }));
-        } catch (error) {
-          window.clearTimeout(timeout);
-          pendingMessagePages.delete(requestId);
-          reject(error instanceof Error ? error : new Error('The message page request could not be sent.'));
-        }
-      });
-    };
     loadTranscriptRangeRef.current = (input): Promise<TranscriptRangeResult> => {
       if (closedByEffect || accessRevoked || socket?.readyState !== WebSocket.OPEN) {
         return Promise.reject(new ApiError(
@@ -916,8 +846,13 @@ export function useWorkstreamSocket(
         const timeout = window.setTimeout(() => {
           pendingTranscriptRanges.delete(requestId);
           reject(new ApiError('The transcript range request timed out.', 503, 'transcript_range_timeout'));
-        }, MESSAGE_PAGE_TIMEOUT_MS);
-        pendingTranscriptRanges.set(requestId, { timeout, resolve, reject });
+        }, TRANSCRIPT_RANGE_TIMEOUT_MS);
+        pendingTranscriptRanges.set(requestId, {
+          snapshotId: input.snapshotId,
+          timeout,
+          resolve,
+          reject,
+        });
         try {
           socket!.send(JSON.stringify({
             type: 'load_transcript_range',
@@ -927,7 +862,12 @@ export function useWorkstreamSocket(
         } catch (error) {
           window.clearTimeout(timeout);
           pendingTranscriptRanges.delete(requestId);
-          reject(error instanceof Error ? error : new Error('The transcript range request could not be sent.'));
+          reject(new ApiError(
+            'The work stream connection could not send the transcript range request.',
+            409,
+            'workstream_socket_unavailable',
+            error,
+          ));
         }
       });
     };
@@ -980,14 +920,88 @@ export function useWorkstreamSocket(
     };
 
     const applyEvent = (event: ServerSocketEvent): void => {
+      if (event.type === 'pending_inputs_snapshot_chunk') {
+        const assembly = pendingInputSnapshot;
+        if (!assembly
+          || assembly.snapshotId !== event.snapshotId
+          || assembly.sequence !== event.sequence
+          || assembly.chunkCount !== event.chunkCount
+          || event.chunkIndex >= event.chunkCount
+          || assembly.chunks.has(event.chunkIndex)) return;
+        assembly.chunks.set(event.chunkIndex, event.inputs);
+        if (assembly.chunks.size !== assembly.chunkCount) return;
+        const inputs = Array.from({ length: assembly.chunkCount }, (_, index) =>
+          assembly.chunks.get(index) ?? []).flat().sort((left, right) =>
+            left.inputSequence - right.inputSequence
+              || (left.inputId < right.inputId ? -1 : left.inputId > right.inputId ? 1 : 0));
+        const current = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+        );
+        if (!current || current.snapshotId !== assembly.snapshotId) {
+          pendingInputSnapshot = null;
+          return;
+        }
+        const complete = { ...current, pendingInputs: inputs };
+        queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+          complete,
+        );
+        const canonical = orderedTranscriptMessages(complete, workstreamId);
+        queryClient.setQueryData<TranscriptOverlay[]>(
+          transcriptOverlaysQueryKey(workstreamId),
+          (overlays) => reconcileAuthoritativeTranscriptOverlays(
+            canonical,
+            overlays,
+            [
+              ...(overlays ?? []).filter((overlay) =>
+                overlay.provenance.source !== 'client_command'
+                && overlay.identity.type !== 'client_message'
+                && overlay.identity.type !== 'loop_input'),
+              ...inputs.map((input) => pendingTranscriptInputOverlay(
+                input,
+                workstreamId,
+                { source: 'socket_snapshot', snapshotId: assembly.snapshotId },
+              )),
+            ],
+          ),
+        );
+        pendingInputSnapshot = null;
+        return;
+      }
       if (event.type === 'resync_required') {
+        pendingInputSnapshot = null;
+        // Range replies are correlated to this exact admitted socket and its
+        // snapshot fence. A reconnect cannot answer them, so release callers
+        // immediately into their existing retry-after-reconnect path.
+        rejectPendingTranscriptRanges(
+          'The work stream resynchronized while loading transcript ranges.',
+        );
         setActiveCompaction(event.activeCompaction);
         canonicalResyncActiveStreams = event.reason === 'history_unavailable'
           ? event.activeStreams
           : [];
         if (canonicalResyncActiveStreams.length > 0) {
-          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-            applyActiveStreamCheckpoints(current, canonicalResyncActiveStreams, workstreamId, streamCursors));
+          const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+            ['ordered-transcript', workstreamId],
+          );
+          const streamed = applyActiveStreamCheckpoints(
+            [],
+            canonicalResyncActiveStreams,
+            workstreamId,
+            streamCursors,
+          );
+          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+            canonicalResyncActiveStreams.reduce((next, checkpoint) => {
+              const message = streamed.find((candidate) => candidate.id === checkpoint.turnId);
+              return message ? upsertSocketEventOverlay(
+                next,
+                { type: 'assistant_turn', turnId: checkpoint.turnId },
+                message,
+                event.type,
+                event.sequence,
+                snapshot?.snapshotThrough ?? 0,
+              ) : next;
+            }, current ?? []));
         }
         canonicalResyncTarget = Math.max(canonicalResyncTarget ?? 0, event.latestSequence);
         clearHeartbeat();
@@ -1013,17 +1027,27 @@ export function useWorkstreamSocket(
       // snapshot succeeds, retaining the old cursor across failed attempts.
       if (canonicalResyncTarget !== null) return;
       if (event.type === 'transcript_range') {
-        queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
-          ['ordered-transcript', workstreamId],
-          (current) => current && current.snapshotId === event.snapshotId
-            ? mergeTranscriptRange(current, event.result)
-            : current,
-        );
         const pending = pendingTranscriptRanges.get(event.requestId);
         if (pending) {
           pendingTranscriptRanges.delete(event.requestId);
           window.clearTimeout(pending.timeout);
-          pending.resolve(event.result);
+        }
+        const current = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+        );
+        if (current?.snapshotId === event.snapshotId
+          && (!pending || pending.snapshotId === event.snapshotId)) {
+          queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+            ['ordered-transcript', workstreamId],
+            mergeTranscriptRange(current, event.result),
+          );
+          pending?.resolve(event.result);
+        } else {
+          pending?.reject(new ApiError(
+            'The transcript changed while this range was loading.',
+            409,
+            'transcript_snapshot_changed',
+          ));
         }
         return;
       }
@@ -1036,10 +1060,17 @@ export function useWorkstreamSocket(
       const answersSnapshotRequest = snapshotRequestInFlight
         && (event.type === 'snapshot' || event.type === 'error');
       if (answersSnapshotRequest) snapshotRequestInFlight = false;
+      const currentTranscript = event.type === 'snapshot'
+        ? queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', workstreamId])
+        : undefined;
       // Snapshots are valid at sequence zero and may intentionally replace
       // state at the same sequence after an explicit initial subscription.
       if (event.type === 'snapshot') {
         if (event.sequence < resumeState.lastSequence) return;
+        // The room sequence can be equal when a requested snapshot races the
+        // upsert that prompted it. Transcript event sequence is the canonical
+        // fence: an older snapshot must never roll the cache back.
+        if (currentTranscript && event.transcript.eventSequence < currentTranscript.eventSequence) return;
         resumeState.lastSequence = event.sequence;
         streamCursors.clear();
       } else {
@@ -1048,57 +1079,70 @@ export function useWorkstreamSocket(
       }
 
       if (event.type === 'snapshot') {
+        pendingInputSnapshot = event.pendingInputChunkCount === 0 ? null : {
+          snapshotId: event.transcript.snapshotId,
+          sequence: event.sequence,
+          chunkCount: event.pendingInputChunkCount,
+          chunks: new Map(),
+        };
         setActiveCompaction(event.activeCompaction);
         queryClient.setQueryData<number>(
           workstreamSocketSnapshotGenerationQueryKey(workstreamId),
           (current) => (current ?? 0) + 1,
         );
-        queryClient.removeQueries({
-          queryKey: workstreamRecoveryFeedQueryKey(workstreamId),
-          exact: true,
-        });
         queryClient.setQueryData(workstreamFeedSourceQueryKey(workstreamId), 'socket_snapshot');
-        queryClient.setQueryData(['workstream', workstreamId], mapWorkstreamDetail(event.workstream));
+        const detail = mapWorkstreamDetail(event.workstream);
+        queryClient.setQueryData(['workstream', workstreamId], detail);
+        // Only a reconciliation requested on this still-contiguous socket can
+        // carry previously loaded ranges across a new snapshot fence. Initial
+        // delivery and history-loss recovery have no proof that mutable turns
+        // outside the bounded opening ranges did not change, so relabelling an
+        // old range with the new snapshot id would make stale lifecycle state
+        // look authoritative.
+        const transcript = currentTranscript && event.reason === 'reconciliation'
+          ? mergeCanonicalTranscriptSnapshot(currentTranscript, event.transcript)
+          : event.transcript;
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
           ['ordered-transcript', workstreamId],
-          event.transcript,
+          transcript,
         );
-        // The resume window is for *arriving* at a work stream, and only then.
-        //
-        // Every snapshot carries it, including the ones answering a
-        // reconciliation or a reconnect, and this branch replaces the transcript
-        // wholesale. Read acknowledgement stops while the window is unfocused,
-        // so a reader who tabs away during a run keeps a stale first-unread —
-        // and the reconciliation that fires when the run completes would then
-        // throw away the messages they just watched arrive and put a 20-message
-        // window from far behind in their place. Worse, `activeStreams` below
-        // appends rows at the newest sequence, which would leave a hole in the
-        // middle of a transcript nothing models a hole in.
-        //
-        // So: resume only on the first snapshot this socket receives, which is
-        // the initial subscribe. After that the newest page is what continuity
-        // means, and paging back is how a reader reaches anything older.
-        const feed = initialSnapshotPending && event.resumeFeed
-          ? event.resumeFeed
-          : event.messageFeed;
-        initialSnapshotPending = false;
-        // Restores what the deleted REST reconciliation did and the initial
-        // subscribe never has: collapse an elicitation and its durable answer
-        // into one row, and synthesise a row for an open elicitation that has
-        // no canonical message yet. Without it a question the agent is waiting
-        // on vanishes from the transcript the moment the run goes idle.
-        const detail = mapWorkstreamDetail(event.workstream);
-        const downloaded = messagesWithTransientBlocks(
-          feed.items.map(mapMessage),
-          detail,
-          queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
+        const canonical = orderedTranscriptMessages(transcript, workstreamId);
+        const snapshotOverlays = [
+          ...event.transcript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
+            input,
+            workstreamId,
+            { source: 'socket_snapshot', snapshotId: event.transcript.snapshotId },
+          )),
+          ...activeStreamCheckpointOverlays(
+            event.activeStreams,
+            workstreamId,
+            event.transcript.snapshotId,
+            event.transcript.snapshotThrough,
+            streamCursors,
+          ),
+          ...detailTranscriptOverlays(
+            detail,
+            event.transcript.snapshotId,
+            event.transcript.snapshotThrough,
+            event.sequence,
+            queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
+          ),
+        ];
+        queryClient.setQueryData<TranscriptOverlay[]>(
+          transcriptOverlaysQueryKey(workstreamId),
+          (current) => reconcileAuthoritativeTranscriptOverlays(
+            canonical,
+            current,
+            event.pendingInputChunkCount === 0
+              ? snapshotOverlays
+              : [
+                  ...snapshotOverlays,
+                  ...(current ?? []).filter((overlay) =>
+                    overlay.identity.type === 'loop_input'
+                    || overlay.identity.type === 'client_message'),
+                ],
+          ),
         );
-        queryClient.setQueryData<Message[]>(['messages', workstreamId],
-          applyActiveStreamCheckpoints(downloaded, event.activeStreams, workstreamId, streamCursors));
-        queryClient.setQueryData(['messages-cursor', workstreamId], feed.nextCursor);
-        queryClient.setQueryData(['messages-newer-cursor', workstreamId], feed.newerCursor);
-        // The direct socket snapshot is canonical for the newest page. REST is
-        // now used only to page older history or recover after resync_required.
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
         void syncBlockDashboardQueries();
         // Only when this snapshot answers a reconciliation. The context query
@@ -1109,13 +1153,45 @@ export function useWorkstreamSocket(
         if (answersSnapshotRequest) {
           void queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] });
         }
+      } else if (event.type === 'loop_input_upserted') {
+        queryClient.setQueryData<TranscriptOverlay[]>(
+          transcriptOverlaysQueryKey(workstreamId),
+          (current) => replaceTranscriptOverlay(
+            current,
+            pendingTranscriptInputOverlay(event.input, workstreamId, {
+              source: 'socket_event',
+              eventType: event.type,
+              eventSequence: event.sequence,
+            }),
+          ),
+        );
+      } else if (event.type === 'loop_input_removed') {
+        queryClient.setQueryData<TranscriptOverlay[]>(
+          transcriptOverlaysQueryKey(workstreamId),
+          (current) => removeTranscriptOverlay(current, (overlay) =>
+            (overlay.identity.type === 'loop_input' && overlay.identity.inputId === event.inputId)
+            || (overlay.identity.type === 'client_message' && overlay.identity.turnId === event.inputId)),
+        );
       } else if (event.type === 'transcript_turn_upserted') {
-        queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
+        const next = queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
           ['ordered-transcript', workstreamId],
           (current) => current
             ? mergeRealtimeTranscriptTurn(current, event.turn, event.sequence)
             : current,
         );
+        if (next) {
+          const canonical = orderedTranscriptMessages(next, workstreamId);
+          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+            transcriptOverlaysWithoutCanonicalMatch(canonical, current ?? []));
+          const turnMessages = canonical.filter((message) =>
+            message.transcriptTurnId === event.turn.turnId);
+          queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
+            current ? turnMessages.reduce(advanceWorkstreamAttention, current) : current);
+          setCachedWorkstreams(queryClient, (current) => current?.map((workstream) =>
+            workstream.id === workstreamId
+              ? turnMessages.reduce(advanceWorkstreamAttention, workstream)
+              : workstream));
+        }
       } else if (event.type === 'transcript_activity_upserted') {
         queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
           ['ordered-transcript', workstreamId],
@@ -1131,15 +1207,6 @@ export function useWorkstreamSocket(
       } else if (event.type === 'presence_changed') {
         // Legacy feed subscribers represented viewers. Proactive feeds do not:
         // WorkspaceDO foreground presence is the sole current-client source.
-      } else if (event.type === 'message_created') {
-        const message = mapMessage(event.message);
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => insertMessage(current, message));
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
-          current ? advanceWorkstreamAttention(current, message) : current);
-        setCachedWorkstreams(queryClient, (current) =>
-          current?.map((workstream) => workstream.id === workstreamId
-            ? advanceWorkstreamAttention(workstream, message)
-            : workstream));
       } else if (event.type === 'workstream_renamed') {
         // Rally names a work stream a moment after it is created, and a
         // participant can rename one at any time. Both arrive here, and both
@@ -1168,25 +1235,39 @@ export function useWorkstreamSocket(
             ? { ...workstream, scope: event.scope }
             : workstream));
       } else if (event.type === 'stream_completed') {
-        for (const [turnId, cursor] of streamCursors) {
-          streamCursors.set(turnId, { ...cursor, roomSequence: event.sequence, completed: true });
-        }
-        const message = mapMessage(event.message);
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
-          const settled = (current ?? []).map((candidate) => candidate.streaming
-            ? { ...candidate, streaming: false }
-            : candidate);
-          return streamCursors.size === 0 ? insertMessage(settled, message) : settled;
+        const matchingCursors = new Map([...streamCursors].filter(([, cursor]) =>
+          cursor.streamId === event.streamId));
+        flushStreamReveal(matchingCursors);
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+          const streamIdByMessageId = new Map((current ?? []).flatMap((overlay) => (
+            overlay.provenance.source === 'stream_event'
+            || overlay.provenance.source === 'stream_snapshot'
+              ? [[overlay.message.id, overlay.provenance.streamId] as const]
+              : []
+          )));
+          return mapTranscriptOverlayMessages(current, (messages) => {
+            const revealed = applyRevealedText(messages, streamCursors);
+            let changed = false;
+            const completed = revealed.map((candidate) => {
+              const cursor = streamCursors.get(candidate.id);
+              if (!candidate.streaming
+                || (cursor?.streamId !== event.streamId
+                  && streamIdByMessageId.get(candidate.id) !== event.streamId)) return candidate;
+              changed = true;
+              return { ...candidate, streaming: false };
+            });
+            return changed ? completed : revealed;
+          });
         });
-        queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) =>
-          current ? advanceWorkstreamAttention(current, message) : current);
-        setCachedWorkstreams(queryClient, (current) =>
-          current?.map((workstream) => workstream.id === workstreamId
-            ? advanceWorkstreamAttention(workstream, message)
-            : workstream));
+        if (matchingCursors.size === 0) return;
+        for (const [turnId, cursor] of streamCursors) {
+          if (cursor.streamId === event.streamId) {
+            streamCursors.set(turnId, { ...cursor, roomSequence: event.sequence, completed: true });
+          }
+        }
       } else if (event.type === 'stream_started' || event.type === 'stream_delta') {
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) =>
-          applyStreamingSocketEvent(current, event, workstreamId, streamCursors, {
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) =>
+          applyStreamingOverlayEvent(current, event, workstreamId, event.transcriptSequence - 1, streamCursors, {
             paced: document.visibilityState !== 'hidden',
           }));
         scheduleReveal();
@@ -1213,47 +1294,61 @@ export function useWorkstreamSocket(
           ? null
           : current);
       } else if (event.type === 'tool_started' || event.type === 'tool_completed' || event.type === 'tool_failed') {
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
+        const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+        )?.snapshotThrough ?? 0;
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
           const messageId = `tool-${event.invocation.id}`;
-          const existing = (current ?? []).find((message) => message.id === messageId);
-          const declaredCallIndex = Number(
-            event.invocation.toolCallId.match(/:tool:(\d+)$/u)?.[1] ?? event.sequence,
-          );
-          const anchorSequenceNumber = existing?.realtimeOrder?.anchorSequenceNumber
-            ?? activeStreamAnchor(current)
-            ?? nextTranscriptSequence(current);
-          return insertMessage(current, createToolEventMessage({
+          const existing = (current ?? []).find((overlay) =>
+            overlay.identity.type === 'tool_call'
+            && overlay.identity.toolCallId === event.invocation.toolCallId);
+          const message = createToolEventMessage({
             id: messageId,
             transcriptTurnId: event.invocation.toolCallId.replace(/:tool:\d+$/u, ''),
             workstreamId,
-            sequenceNumber: anchorSequenceNumber,
+            sequenceNumber: 0,
             authorType: 'agent',
-            createdAt: existing?.createdAt ?? event.occurredAt,
-            realtimeOrder: {
-              anchorSequenceNumber,
-              // A completion update must not move the tool below tools that
-              // started later in the same turn.
-              eventSequence: existing?.realtimeOrder?.eventSequence ?? declaredCallIndex,
-              placement: 'after_anchor',
-            },
+            createdAt: existing?.message.createdAt ?? event.occurredAt,
             toolEvent: {
               ...mapToolInvocation(event.invocation),
               toolCallId: event.invocation.toolCallId,
             },
-          }));
+          });
+          return upsertSocketEventOverlay(
+            current,
+            { type: 'tool_call', toolCallId: event.invocation.toolCallId },
+            message,
+            event.type,
+            event.sequence,
+            afterTranscriptSequence,
+          );
         });
       } else if (event.type === 'elicitation_created' || event.type === 'elicitation_answered') {
         const messageId = elicitationMessageId(event.elicitation.id);
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
-          if (event.elicitation.status === 'cancelled') return removeTranscriptMessage(current, messageId);
-          return insertMessage(current, createElicitationMessage({
+        const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+        )?.snapshotThrough ?? 0;
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
+          if (event.elicitation.status === 'cancelled') {
+            return removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'elicitation'
+              && overlay.identity.elicitationId === event.elicitation.id);
+          }
+          const message = createElicitationMessage({
             id: messageId,
             workstreamId,
-            sequenceNumber: event.sequence,
+            sequenceNumber: 0,
             authorType: 'agent',
             createdAt: event.elicitation.createdAt,
             elicitation: mapElicitation(event.elicitation),
-          }));
+          });
+          return upsertSocketEventOverlay(
+            current,
+            { type: 'elicitation', elicitationId: event.elicitation.id },
+            message,
+            event.type,
+            event.sequence,
+            afterTranscriptSequence,
+          );
         });
       } else if (event.type === 'participant_added') {
         queryClient.setQueryData<WorkstreamDetail>(['workstream', workstreamId], (current) => {
@@ -1300,18 +1395,32 @@ export function useWorkstreamSocket(
           queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId), (dismissed) =>
             appendDismissedSuggestionId(dismissed, event.suggestion.id));
         }
-        queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
+        const afterTranscriptSequence = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', workstreamId],
+        )?.snapshotThrough ?? 0;
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(workstreamId), (current) => {
           const messageId = `suggestion-${event.suggestion.id}`;
-          if (event.suggestion.status === 'dismissed') return removeTranscriptMessage(current, messageId);
-          return insertMessage(current, {
+          if (event.suggestion.status === 'dismissed') {
+            return removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'activity_suggestion'
+              && overlay.identity.suggestionId === event.suggestion.id);
+          }
+          const message: Message = {
             id: messageId,
             workstreamId,
-            sequenceNumber: event.sequence,
+            sequenceNumber: 0,
             authorType: 'system',
             messageType: 'activity_suggestion',
             createdAt: event.suggestion.createdAt,
             activitySuggestion: mapSuggestion(event.suggestion),
-          });
+          };
+          return upsertSocketEventOverlay(
+            current,
+            { type: 'activity_suggestion', suggestionId: event.suggestion.id },
+            message,
+            event.type,
+            event.sequence,
+            afterTranscriptSequence,
+          );
         });
       } else if (event.type === 'block_dashboard_configuration_updated') {
         queryClient.setQueryData<BlockDashboard>(['block-dashboard', workstreamId], event.blockDashboard);
@@ -1393,11 +1502,6 @@ export function useWorkstreamSocket(
       streamCursors.clear();
       setActiveCompaction(null);
       clearReconnectTimer();
-      rejectPendingMessagePages(new ApiError(
-        'The work stream is no longer available.',
-        404,
-        'workstream_access_revoked',
-      ));
       setState('unavailable');
       evictCachedWorkstream(queryClient, workstreamId);
     };
@@ -1434,17 +1538,11 @@ export function useWorkstreamSocket(
         canonicalResyncInFlight = true;
         try {
           const targetSequence = canonicalResyncTarget;
-          const [canonicalWorkstream, canonicalMessagePage] = await Promise.all([
-            api.getWorkstream(workstreamId),
-            api.getMessages(workstreamId),
-          ]);
-          const canonicalMessages = messagesWithTransientBlocks(
-            canonicalMessagePage,
-            canonicalWorkstream,
-            queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
-          );
+          const canonicalWorkstream = await api.getWorkstream(workstreamId);
           if (closedByEffect) return;
-          queryClient.setQueryData(['workstream', workstreamId], canonicalWorkstream);
+          const { transcript: canonicalTranscript, ...detail } = canonicalWorkstream;
+          queryClient.setQueryData(['workstream', workstreamId], detail);
+          queryClient.setQueryData(['ordered-transcript', workstreamId], canonicalTranscript);
           const mayStillEmitRealtime = runMayStillEmitRealtime(canonicalWorkstream.harnessStatus);
           setActiveCompaction((current) => mayStillEmitRealtime
             && current?.harnessRunId === canonicalWorkstream.latestHarnessRunId
@@ -1454,16 +1552,37 @@ export function useWorkstreamSocket(
             ? canonicalResyncActiveStreams.filter((checkpoint) =>
                 checkpoint.harnessRunId === canonicalWorkstream.latestHarnessRunId)
             : [];
-          queryClient.setQueryData<Message[]>(['messages', workstreamId], (current) => {
-            const canonicalTranscript = replaceWithCanonicalTranscript(current, canonicalMessages);
-            streamCursors.clear();
-            return applyActiveStreamCheckpoints(
-              canonicalTranscript,
+          const canonicalMessages = orderedTranscriptMessages(canonicalTranscript, workstreamId);
+          streamCursors.clear();
+          const authoritativeOverlays = [
+            ...canonicalTranscript.pendingInputs.map((input) => pendingTranscriptInputOverlay(
+              input,
+              workstreamId,
+              { source: 'socket_snapshot', snapshotId: canonicalTranscript.snapshotId },
+            )),
+            ...activeStreamCheckpointOverlays(
               validatedActiveStreams,
               workstreamId,
+              canonicalTranscript.snapshotId,
+              canonicalTranscript.snapshotThrough,
               streamCursors,
-            );
-          });
+            ),
+            ...detailTranscriptOverlays(
+              detail,
+              canonicalTranscript.snapshotId,
+              canonicalTranscript.snapshotThrough,
+              canonicalTranscript.eventSequence,
+              queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(workstreamId)),
+            ),
+          ];
+          queryClient.setQueryData<TranscriptOverlay[]>(
+            transcriptOverlaysQueryKey(workstreamId),
+            (current) => reconcileAuthoritativeTranscriptOverlays(
+              canonicalMessages,
+              current,
+              authoritativeOverlays,
+            ),
+          );
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
             queryClient.invalidateQueries({ queryKey: ['workstream-context', workstreamId] }),
@@ -1575,27 +1694,6 @@ export function useWorkstreamSocket(
           }
           try {
             const parsed: unknown = JSON.parse(String(messageEvent.data));
-            const directEvent = SubstreamDirectSocketEventSchema.safeParse(parsed);
-            if (directEvent.success) {
-              const pending = pendingMessagePages.get(directEvent.data.requestId);
-              if (!pending) return;
-              pendingMessagePages.delete(directEvent.data.requestId);
-              window.clearTimeout(pending.timeout);
-              if (directEvent.data.type === 'message_page_error') {
-                pending.reject(new ApiError(
-                  directEvent.data.message,
-                  503,
-                  directEvent.data.code,
-                ));
-              } else {
-                pending.resolve({
-                  items: visibleTranscriptMessages(directEvent.data.page.items.map(mapMessage)),
-                  nextCursor: directEvent.data.page.nextCursor,
-                  newerCursor: directEvent.data.page.newerCursor,
-                });
-              }
-              return;
-            }
             const event = ServerSocketEventSchema.safeParse(parsed);
             if (event.success) {
               if (openTrace === trace) {
@@ -1606,9 +1704,12 @@ export function useWorkstreamSocket(
                 trace.mark('first_frame');
                 trace.end({
                   outcome: event.data.type,
-                  ...(event.data.type === 'snapshot'
-                    ? { messageCount: event.data.messageFeed.items.length }
-                    : {}),
+                  ...(event.data.type === 'snapshot' ? {
+                    messageCount: event.data.transcript.ranges.reduce(
+                      (count, range) => count + range.turns.length,
+                      event.data.transcript.activeTurns.length,
+                    ),
+                  } : {}),
                 });
                 openTrace = null;
               }
@@ -1633,11 +1734,10 @@ export function useWorkstreamSocket(
           }
           clearHeartbeat();
           clearStabilityTimer();
-          rejectPendingMessagePages(new ApiError(
-            'The work stream connection closed while loading messages.',
-            503,
-            'workstream_socket_closed',
-          ));
+          rejectPendingTranscriptRanges(
+            'The work stream connection closed while loading transcript ranges.',
+          );
+          pendingInputSnapshot = null;
           socket = null;
           if (closeEvent.code === WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE) {
             socketTelemetry.disconnected({
@@ -1666,6 +1766,10 @@ export function useWorkstreamSocket(
             nextSocket.close();
           } catch {
             if (socket === nextSocket) socket = null;
+            rejectPendingTranscriptRanges(
+              'The work stream connection failed while loading transcript ranges.',
+            );
+            pendingInputSnapshot = null;
             if (!closedByEffect) {
               // Named rather than inherited from the `willClose` two lines up:
               // no close event is coming to consume it, and a later reader
@@ -1737,30 +1841,12 @@ export function useWorkstreamSocket(
         409,
         'workstream_socket_unavailable',
       ));
-      loadMessagePageRef.current = () => Promise.reject(new ApiError(
-        'The work stream is no longer available.',
-        409,
-        'workstream_socket_unavailable',
-      ));
       loadTranscriptRangeRef.current = () => Promise.reject(new ApiError(
         'The work stream is no longer available.',
         409,
         'workstream_socket_unavailable',
       ));
-      rejectPendingMessagePages(new ApiError(
-        'The work stream changed while loading messages.',
-        409,
-        'workstream_socket_unavailable',
-      ));
-      for (const pending of pendingTranscriptRanges.values()) {
-        window.clearTimeout(pending.timeout);
-        pending.reject(new ApiError(
-          'The work stream changed while loading transcript ranges.',
-          409,
-          'workstream_socket_unavailable',
-        ));
-      }
-      pendingTranscriptRanges.clear();
+      rejectPendingTranscriptRanges('The work stream changed while loading transcript ranges.');
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -1782,10 +1868,17 @@ export function useWorkstreamSocket(
       workspaceSocketState,
       activeCompaction,
       createMessage,
-      loadMessagePage,
       loadTranscriptRange,
       requestSnapshot,
     }),
-    [activeCompaction, createMessage, loadMessagePage, loadTranscriptRange, requestSnapshot, sendReady, state, workspaceSocketState],
+    [
+      activeCompaction,
+      createMessage,
+      loadTranscriptRange,
+      requestSnapshot,
+      sendReady,
+      state,
+      workspaceSocketState,
+    ],
   );
 }

@@ -218,7 +218,7 @@ function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
       .join(",")}}`;
   }
@@ -290,12 +290,8 @@ export async function resolveMemoryAccess(
   input: WorkstreamWorkflowInput,
 ): Promise<MemoryScope[]> {
   const [run, workstream] = await Promise.all([
-    env.DB.prepare(
-      `SELECT parent_tool_call_id, execution_principal_json
-         FROM harness_runs
-        WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-    ).bind(input.harnessRunId, input.workspaceId, input.workstreamId)
-      .first<{ parent_tool_call_id: string | null; execution_principal_json: string }>(),
+    createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+      .run({ runId: input.harnessRunId }),
     createIdentityObjectPort(env, input.workspaceId, input.workstreamId).identity(),
   ]);
   if (!run || !workstream) throw new Error("memory_run_context_not_found");
@@ -578,7 +574,7 @@ async function hybridMemorySearch(
       const updated = canonicalById.get(rightId)!.updated_at.localeCompare(
         canonicalById.get(leftId)!.updated_at,
       );
-      return updated || leftId.localeCompare(rightId);
+      return updated || (leftId < rightId ? -1 : leftId > rightId ? 1 : 0);
     })
     .slice(0, SEARCH_RESULTS)
     .map(([memoryItemId]): MemorySearchItem => {

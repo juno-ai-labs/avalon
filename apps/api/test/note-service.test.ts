@@ -359,9 +359,9 @@ describe("NoteService", () => {
       .sort()
       .flatMap((messageWorkstreamId) => workstreamObjectAll(
         objectStores.get(messageWorkstreamId)!,
-        `SELECT workstream_id, author_type, author_user_id, message_type, text_content, sequence_number
-         FROM messages`,
-      ) as Array<Record<string, unknown>>);
+        `SELECT author_type, author_user_id, message_type, content AS text_content, sequence_number
+         FROM canonical_conversation_turn_details`,
+      ).map((turn) => ({ workstream_id: messageWorkstreamId, ...turn })) as Array<Record<string, unknown>>);
 
     await service.update(noteId, { scope: "personal" });
 
@@ -369,24 +369,24 @@ describe("NoteService", () => {
     expect(messages).toEqual([
       {
         workstream_id: otherAdHocId,
-        author_type: "human",
-        author_user_id: userId,
+        author_type: "system",
+        author_user_id: null,
         message_type: "text",
         text_content: "Shared research is now private and no longer accessible",
         sequence_number: 1,
       },
       {
         workstream_id: workspaceAutomationId,
-        author_type: "human",
-        author_user_id: userId,
+        author_type: "system",
+        author_user_id: null,
         message_type: "text",
         text_content: "Shared research is now private and no longer accessible",
         sequence_number: 1,
       },
       {
         workstream_id: otherAutomationId,
-        author_type: "human",
-        author_user_id: userId,
+        author_type: "system",
+        author_user_id: null,
         message_type: "text",
         text_content: "Shared research is now private and no longer accessible",
         sequence_number: 1,
@@ -409,7 +409,7 @@ describe("NoteService", () => {
     ]);
     for (const untouchedWorkstreamId of allWorkstreamIds) {
       const store = objectStores.get(untouchedWorkstreamId)!;
-      expect(workstreamObjectGet(store, "SELECT COUNT(*) AS count FROM harness_runs")).toEqual({ count: 0 });
+      expect(workstreamObjectGet(store, "SELECT COUNT(*) AS count FROM runs")).toEqual({ count: 0 });
       expect(workstreamObjectParticipantRows(store)).toEqual([]);
     }
     expect(database.prepare(

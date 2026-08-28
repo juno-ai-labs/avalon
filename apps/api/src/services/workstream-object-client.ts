@@ -1,15 +1,14 @@
 import {
   ActivitySuggestionSchema,
   ElicitationSchema,
-  MessageSchema,
   ParticipantSchema,
   WorkstreamResourceSchema,
   type ResourceRelationshipType,
   WorkstreamDetailSchema,
   WorkstreamTranscriptSnapshotSchema,
   WorkstreamSchema,
+  WorkstreamMessageAdmissionReceiptSchema,
   type Elicitation,
-  type Message,
   asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
@@ -17,6 +16,7 @@ import {
   type Workstream,
   type WorkstreamDetail,
   type WorkstreamTranscriptSnapshot,
+  type WorkstreamMessageAdmissionReceipt,
 } from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -44,27 +44,14 @@ import {
 } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
-const MessagePageSchema = z.object({
-  items: z.array(MessageSchema),
-  nextCursor: z.string().nullable(),
-  newerCursor: z.string().nullable(),
-});
 const BootPayloadSchema = z.object({
   workstream: WorkstreamDetailSchema,
   transcript: WorkstreamTranscriptSnapshotSchema,
-  messageFeed: MessagePageSchema,
-  resumeFeed: MessagePageSchema.nullable(),
 });
-type MessagePage = z.infer<typeof MessagePageSchema>;
-const CreatedMessageSchema = z.object({
-  message: MessageSchema,
-  agentInvoked: z.boolean(),
-  harnessRunId: z.string().uuid().nullable(),
-});
+const CreatedMessageSchema = WorkstreamMessageAdmissionReceiptSchema;
 const AnsweredElicitationSchema = z.object({
   elicitation: ElicitationSchema.optional(),
-  harnessRunId: z.string().uuid().nullable(),
-});
+}).strict();
 const RetriedRunSchema = z.object({ harnessRunId: z.string().uuid() });
 const CreatedSuggestionSchema = z.object({
   suggestion: ActivitySuggestionSchema,
@@ -76,9 +63,9 @@ const ResolvedSuggestionSchema = z.object({
 });
 const InitializedWorkstreamSchema = z.object({
   workstream: WorkstreamSchema,
-  messageId: z.string().uuid(),
+  turnId: z.string().uuid(),
   harnessRunId: z.string().uuid(),
-});
+}).strict();
 
 async function objectStub(
   env: Env,
@@ -232,19 +219,17 @@ export class WorkstreamObjectClient {
     return WorkstreamDetailSchema.parse(await this.request({ operation: "get" }));
   }
 
-  /** Detail plus both transcript windows, in one call to the room. */
+  /** Detail plus its canonical ordered transcript opening snapshot. */
   async boot(): Promise<{
     workstream: WorkstreamDetail;
     transcript: WorkstreamTranscriptSnapshot;
-    messageFeed: MessagePage;
-    resumeFeed: MessagePage | null;
   }> {
     return BootPayloadSchema.parse(await this.request({ operation: "boot" }));
   }
 
   async initialize(input: InitializeWorkstreamObjectRequest): Promise<{
     workstream: Workstream;
-    messageId: string;
+    turnId: string;
     harnessRunId: string;
   }> {
     return InitializedWorkstreamSchema.parse(await this.request({ operation: "initialize", input }));
@@ -265,11 +250,9 @@ export class WorkstreamObjectClient {
     return WorkstreamSchema.parse(await this.request({ operation: "mark_unread" }));
   }
 
-  async createMessage(input: WorkstreamObjectCreateMessageInput): Promise<{
-    message: Message;
-    agentInvoked: boolean;
-    harnessRunId: string | null;
-  }> {
+  async createMessage(
+    input: WorkstreamObjectCreateMessageInput,
+  ): Promise<WorkstreamMessageAdmissionReceipt> {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
   }
 
@@ -303,13 +286,13 @@ export class WorkstreamObjectClient {
   async answerElicitation(
     elicitationId: string,
     input: z.infer<typeof AnswerElicitationRequestSchema>,
-  ): Promise<{ elicitation: Elicitation | undefined; harnessRunId: string | null }> {
+  ): Promise<{ elicitation: Elicitation | undefined }> {
     const parsed = AnsweredElicitationSchema.parse(await this.request({
       operation: "answer_elicitation",
       elicitationId,
       input,
     }));
-    return { elicitation: parsed.elicitation, harnessRunId: parsed.harnessRunId };
+    return { elicitation: parsed.elicitation };
   }
 
   async stop(): Promise<void> {
@@ -320,18 +303,4 @@ export class WorkstreamObjectClient {
     return RetriedRunSchema.parse(await this.request({ operation: "retry" }));
   }
 
-  async messages(
-    limit: number,
-    before?: number,
-    after?: number,
-    around?: number,
-  ): Promise<{ items: Message[]; nextCursor: string | null; newerCursor: string | null }> {
-    return MessagePageSchema.parse(await this.request({
-      operation: "messages",
-      limit,
-      ...(before === undefined ? {} : { before }),
-      ...(after === undefined ? {} : { after }),
-      ...(around === undefined ? {} : { around }),
-    }));
-  }
 }

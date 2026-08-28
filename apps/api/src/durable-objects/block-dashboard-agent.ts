@@ -1,6 +1,6 @@
 import { RALLY_HEADERS, readRallyHeader } from "@rally/contracts/http-headers";
 import {
-  ActiveStreamCheckpointSchema,
+  BlockDashboardStreamCheckpointSchema,
   asBlockId,
   asWorkspaceId,
   asWorkstreamId,
@@ -13,10 +13,9 @@ import {
   WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
-  ServerSocketEventSchema,
   WorkstreamWorkflowInputSchema,
   type BlockDashboardBlockRun,
-  type ActiveStreamCheckpoint,
+  type BlockDashboardStreamCheckpoint,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { z } from "zod";
@@ -54,7 +53,6 @@ import {
   acceptsNewWorkstreamWork,
   readWorkstreamAuthorityControl,
 } from "../services/workstream-authority";
-import { workstreamExecutionEnvironment } from "../services/workstream-runtime-database";
 import {
   AGENT_RUN_DISPATCH_DUE_AT_SQL,
   AGENT_RUN_DISPATCH_LEASE_MS,
@@ -80,12 +78,11 @@ import {
 } from "./block-dashboard-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { blockDashboardAgentName, workstreamDOName } from "./names";
+import { blockDashboardAgentName, blockDashboardLoopId, workstreamDOName } from "./names";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
 } from "./sqlite-migrations";
-import { applyActiveStreamCheckpointEvent } from "./workstream-object-storage";
 
 const KEEP_ALIVE_INTERVAL_MS = 30_000;
 const MAINTENANCE_RECHECK_MS = 5 * 60_000;
@@ -108,6 +105,89 @@ const BlockDashboardSocketIdentitySchema = BlockDashboardBlockIdentityInputSchem
   ticketId: z.string().uuid(),
   ticketExpiresAt: z.coerce.number().int().positive(),
 }).strict();
+
+const BlockDashboardStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("stream_started"),
+    streamId: z.string().min(1),
+    harnessRunId: z.string().min(1),
+    turnId: z.string().min(1),
+    epoch: z.number().int().nonnegative(),
+    streamSeq: z.number().int().nonnegative(),
+    reset: z.literal(false),
+    sequence: z.number().int().positive(),
+    occurredAt: z.string().datetime({ offset: true }),
+  }).passthrough(),
+  z.object({
+    type: z.literal("stream_delta"),
+    streamId: z.string().min(1),
+    harnessRunId: z.string().min(1).optional(),
+    turnId: z.string().min(1),
+    epoch: z.number().int().nonnegative(),
+    streamSeq: z.number().int().nonnegative(),
+    delta: z.string(),
+    reset: z.boolean(),
+    sequence: z.number().int().positive(),
+    occurredAt: z.string().datetime({ offset: true }),
+  }).passthrough(),
+]);
+
+function applyBlockDashboardStreamEvent(
+  current: BlockDashboardStreamCheckpoint | null,
+  rawEvent: Record<string, unknown>,
+  sequence: number,
+  occurredAt: string,
+): BlockDashboardStreamCheckpoint | null {
+  if (rawEvent.type === "stream_completed") {
+    return rawEvent.streamId === current?.streamId ? null : current;
+  }
+  if (rawEvent.type === "harness_status_changed"
+    && ["needs_input", "completed", "failed", "stopped", "idle"].includes(String(rawEvent.status))) {
+    return null;
+  }
+  const parsed = BlockDashboardStreamEventSchema.safeParse({ ...rawEvent, sequence, occurredAt });
+  if (!parsed.success) return current;
+  const event = parsed.data;
+  const existing = event.type === "stream_started" && current?.harnessRunId !== event.harnessRunId
+    ? null
+    : current;
+  if (event.type === "stream_delta" && !existing) return current;
+  if (existing) {
+    if (event.sequence <= existing.roomSequence) return current;
+    if (event.turnId === existing.turnId) {
+      if (event.epoch < existing.epoch) return current;
+      if (event.epoch === existing.epoch && event.streamSeq <= existing.streamSeq) return current;
+    } else if (existing.seenTurnIds.includes(event.turnId)) {
+      return current;
+    }
+  }
+  const startsNewTurn = !existing || event.turnId !== existing.turnId;
+  const turnStartOffset = startsNewTurn ? existing?.text.length ?? 0 : existing.turnStartOffset;
+  const replacesAttempt = event.reset
+    || (existing !== null && !startsNewTurn && event.epoch > existing.epoch);
+  const text = event.type === "stream_started"
+    ? (replacesAttempt ? (existing?.text ?? "").slice(0, turnStartOffset) : existing?.text ?? "")
+    : replacesAttempt
+      ? `${(existing?.text ?? "").slice(0, turnStartOffset)}${event.delta}`
+      : `${existing?.text ?? ""}${event.delta}`;
+  const seenTurnIds = existing?.seenTurnIds.includes(event.turnId)
+    ? existing.seenTurnIds
+    : [...(existing?.seenTurnIds ?? []), event.turnId];
+  const harnessRunId = event.type === "stream_started" ? event.harnessRunId : existing?.harnessRunId;
+  if (!harnessRunId) return current;
+  return BlockDashboardStreamCheckpointSchema.parse({
+    streamId: event.streamId,
+    harnessRunId,
+    turnId: event.turnId,
+    epoch: event.epoch,
+    streamSeq: event.streamSeq,
+    seenTurnIds,
+    text,
+    turnStartOffset,
+    roomSequence: event.sequence,
+    createdAt: existing?.createdAt ?? event.occurredAt,
+  });
+}
 type BlockDashboardSocketIdentity = z.infer<typeof BlockDashboardSocketIdentitySchema>;
 const BlockDashboardSocketAttachmentSchema = BlockDashboardSocketIdentitySchema.extend({
   connectionId: z.string().uuid(),
@@ -631,12 +711,12 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     });
   }
 
-  private streamCheckpoint(expectedBlockRunId?: string): ActiveStreamCheckpoint | null {
+  private streamCheckpoint(expectedBlockRunId?: string): BlockDashboardStreamCheckpoint | null {
     const row = this.state.storage.sql.exec<{ block_run_id: string; checkpoint_json: string }>(
       `SELECT block_run_id, checkpoint_json FROM agent_stream_checkpoint WHERE id = 1`,
     ).toArray()[0];
     if (expectedBlockRunId && row?.block_run_id !== expectedBlockRunId) return null;
-    return row ? ActiveStreamCheckpointSchema.parse(JSON.parse(row.checkpoint_json)) : null;
+    return row ? BlockDashboardStreamCheckpointSchema.parse(JSON.parse(row.checkpoint_json)) : null;
   }
 
   private async recordStreamEvent(
@@ -645,15 +725,10 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
   ): Promise<void> {
     const current = this.streamCheckpoint(dispatch.blockRunId);
     const revision = (current?.roomSequence ?? 0) + 1;
-    const event = ServerSocketEventSchema.safeParse({
-      ...rawEvent,
-      sequence: revision,
-      occurredAt: typeof rawEvent.occurredAt === "string"
-        ? rawEvent.occurredAt
-        : new Date().toISOString(),
-    });
-    if (!event.success) return;
-    const next = applyActiveStreamCheckpointEvent(current ? [current] : [], event.data)[0] ?? null;
+    const occurredAt = typeof rawEvent.occurredAt === "string"
+      ? rawEvent.occurredAt
+      : new Date().toISOString();
+    const next = applyBlockDashboardStreamEvent(current, rawEvent, revision, occurredAt);
     if (next === current) return;
     this.state.storage.transactionSync(() => {
       if (!next) {
@@ -683,7 +758,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
 
   private async broadcastStreamCheckpoint(
     dispatch: BlockDashboardBlockDispatch,
-    checkpoint: ActiveStreamCheckpoint | null,
+    checkpoint: BlockDashboardStreamCheckpoint | null,
   ): Promise<void> {
     const payload = JSON.stringify(BlockDashboardBlockSocketEventSchema.parse({
       type: "block_dashboard_block_stream_checkpoint",
@@ -986,21 +1061,12 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       let harnessLeaseExpiresAt: number | null = null;
       if (activeRun) {
         try {
-          const executionEnv = await workstreamExecutionEnvironment(
+          const row = await createHarnessRunObjectPort(
             this.env,
             activeRun.dispatch.workspaceId,
             activeRun.dispatch.workstreamId,
-          );
-          const row = await executionEnv.DB.prepare(
-            `SELECT lease_expires_at FROM harness_runs
-              WHERE id = ? AND workspace_id = ? AND workstream_id = ?`,
-          ).bind(
-            activeRun.dispatch.harnessRunId,
-            activeRun.dispatch.workspaceId,
-            activeRun.dispatch.workstreamId,
-          ).first<{ lease_expires_at: string | null }>();
-          const parsed = row?.lease_expires_at ? Date.parse(row.lease_expires_at) : Number.NaN;
-          harnessLeaseExpiresAt = Number.isFinite(parsed) ? parsed : null;
+          ).run({ runId: activeRun.dispatch.harnessRunId });
+          harnessLeaseExpiresAt = row?.lease_expires_at ?? null;
         } catch (error) {
           // Losing the liveness read is not proof that the prior executor is
           // gone. Fail closed and try again at the next bounded heartbeat.
@@ -1184,11 +1250,7 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
     if (!acceptsNewWorkstreamWork(authority)) {
       return { failed: false, errorCode: null, retryAt: Date.now() + MAINTENANCE_RECHECK_MS };
     }
-    const executionEnv = await workstreamExecutionEnvironment(
-      this.env,
-      dispatch.workspaceId,
-      dispatch.workstreamId,
-    );
+    const executionEnv = this.env;
     const input = await this.initializeRuntimeRun(executionEnv, dispatch);
     const runs = createHarnessRunObjectPort(executionEnv, dispatch.workspaceId, dispatch.workstreamId);
     await reapStaleHarnessRuns(runs, {
@@ -1275,7 +1337,6 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       : undefined);
     await terminalizeHarnessAttempt(
       runs,
-      createMessageObjectPort(executionEnv, dispatch.workspaceId, dispatch.workstreamId),
       input,
       claim.lease,
       {
@@ -1305,6 +1366,9 @@ export class BlockDashboardAgent extends MigratableDurableObject<Env> {
       workspaceId: dispatch.workspaceId,
       workstreamId: dispatch.workstreamId,
       substreamId: "0",
+      // HyperSight blocks are separate generic Bind hosts, not the participant
+      // substream loop. Their execution remains intentionally self-contained.
+      loopId: blockDashboardLoopId(dispatch.blockId),
       harnessRunId: dispatch.harnessRunId,
       triggerMessageId: null,
       transcriptFenceMessageId: fence?.id ?? null,

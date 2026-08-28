@@ -10,9 +10,14 @@ import {
   WORKSTREAM_OBJECT_SCHEMA_VERSION,
 } from "../src/durable-objects/workstream-object-schema";
 import { WorkstreamIdentityStorage } from "../src/durable-objects/workstream-identity-storage";
+import { substreamLoopId } from "../src/durable-objects/names";
 import { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
-import { applyDurableObjectSqliteMigrations } from "../src/durable-objects/sqlite-migrations";
-import { rewriteWorkstreamRuntimeSql } from "../src/durable-objects/workstream-runtime-sql";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import { WorkstreamHarnessRunStorage } from "../src/durable-objects/workstream-harness-run-storage";
+import {
+  applyDurableObjectSqliteMigrations,
+  durableObjectMigrationHash,
+} from "../src/durable-objects/sqlite-migrations";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -26,23 +31,56 @@ const ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a8";
 const RECOVERED_ATTEMPT_ID = "00000000-0000-7000-8000-0000000000a9";
 const OUTSIDER_ID = "00000000-0000-7000-8000-0000000000aa";
 
+function activateRealtimeExecution(storage: DurableObjectStorage, now: number): void {
+  const runs = new WorkstreamHarnessRunStorage(storage);
+  expect(runs.admitRun({
+    runId: RUN_ID,
+    origin: "member_message",
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: AUTHOR_ID }),
+    status: "running",
+    startedAt: now,
+    model: "test/model",
+    triggerPartId: null,
+    parentRunId: null,
+    expectedLatestRunId: null,
+    now,
+  })).toEqual({ outcome: "admitted" });
+  storage.sql.exec(
+    `UPDATE runs SET execution_context_json = '{"kind":"realtime_test"}' WHERE run_id = ?`,
+    RUN_ID,
+  );
+  const loops = new SubstreamLoopStorage(storage);
+  const loopId = substreamLoopId(WORKSTREAM_ID);
+  loops.ensureLoop({ loopId, bindStateRevision: 0, now });
+  expect(loops.activateExecutionReceipt({
+    runId: RUN_ID,
+    loopId,
+    expectedLoopRevision: loops.loop()!.revision,
+    expectedBindStateRevision: 0,
+    executionEpoch: 1,
+    leaseOwner: "realtime-test-owner",
+    leaseExpiresAt: now + 60_000,
+    now,
+  }).outcome).toBe("activated");
+}
+
 const EXPECTED_TABLES = [
   "_internal_durable_alarms",
-  "_runtime_statement_changes",
   "_sql_schema_migrations",
   "active_agent_compaction",
   "active_output_chunks",
   "active_output_turns",
-  "agent_run_dispatches",
+  "assistant_turn_reservations",
   "attachment_tool_receipts",
+  "bind_activation_inputs",
   "bind_loop_heads",
   "bind_loop_state_messages",
-  "bind_loop_states",
   "bind_provider_boundaries",
   "block_dashboard_block_runs",
   "block_dashboard_configuration_versions",
   "block_dashboard_user_preferences",
   "content_refs",
+  "delivered_loop_inputs",
   "description_refresh_state",
   "due_work",
   "durable_inbox_receipts",
@@ -51,9 +89,14 @@ const EXPECTED_TABLES = [
   "inference_attempts",
   "member_attention",
   "object_versions",
+  "participant_transcript_attachments",
   "participant_transcript_blocks",
+  "participant_transcript_mentions",
   "participant_transcript_turns",
   "participants",
+  "pending_attachment_reservation_recovery",
+  "pending_loop_input_mailbox",
+  "pending_loop_inputs",
   "plugin_activation_hints",
   "projection_keys",
   "realtime_state",
@@ -63,9 +106,9 @@ const EXPECTED_TABLES = [
   "run_memory_contexts",
   "run_plugin_activations",
   "run_scopes",
-  "run_steering",
   "runs",
   "substream_agent_identity",
+  "substream_loops",
   "substreams",
   "suggested_actions",
   "terminal_imported_resources",
@@ -82,9 +125,6 @@ const EXPECTED_TABLES = [
   "transcript_facts",
   "transcript_payloads",
   "workstream",
-  "workstream_message_attachments",
-  "workstream_message_mentions",
-  "workstream_message_records",
   "workstream_resource_links",
   "workstream_wakeups",
 ] as const;
@@ -101,23 +141,44 @@ function objectStorage(
 }
 
 describe("the Workstream Durable Object relational schema", () => {
-  it("removes view UPSERT clauses without changing real-table UPSERTs or RETURNING", () => {
-    const compatibilityView = rewriteWorkstreamRuntimeSql(
-      `INSERT INTO messages (id, workspace_id, workstream_id, text_content)
-       VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text_content = excluded.text_content
-       RETURNING id`,
-    );
-    expect(compatibilityView).toContain("_runtime_messages");
-    expect(compatibilityView).not.toContain("ON CONFLICT");
-    expect(compatibilityView).toContain("RETURNING id");
-
-    const realTable = rewriteWorkstreamRuntimeSql(
-      `INSERT INTO attachment_tool_receipts (tool_call_id, resource_id)
-       VALUES (?, ?) ON CONFLICT(tool_call_id) DO UPDATE SET resource_id = excluded.resource_id
-       RETURNING resource_id`,
-    );
-    expect(realTable).toContain("ON CONFLICT(tool_call_id) DO UPDATE");
-    expect(realTable).toContain("RETURNING resource_id");
+  it("keeps every shipped migration fingerprint through v32 immutable", () => {
+    expect(WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS
+      .filter((migration) => migration.version <= 32)
+      .map((migration) => [migration.version, durableObjectMigrationHash(migration)]))
+      .toEqual([
+        [1, "fnv1a64:740b2c18aea9a94f"],
+        [2, "fnv1a64:6a3aedde16fb0edf"],
+        [3, "fnv1a64:ef09d286d0c92908"],
+        [4, "fnv1a64:227602ce51828cb1"],
+        [5, "fnv1a64:378ecfe08af01f41"],
+        [6, "fnv1a64:5d9aca5e03e7a8c5"],
+        [7, "fnv1a64:198c86c2a9187a36"],
+        [8, "fnv1a64:e4e8f878b8b1f833"],
+        [9, "fnv1a64:808df8fe2f1380b9"],
+        [10, "fnv1a64:9519a46d04c82c19"],
+        [11, "fnv1a64:dd2956457d3fdf4e"],
+        [12, "fnv1a64:1d5a0ac3e1429146"],
+        [13, "fnv1a64:3c5ac9beabf243f8"],
+        [14, "fnv1a64:79c8836a0814470f"],
+        [15, "fnv1a64:207530ec9f92e212"],
+        [16, "fnv1a64:50a0b23d1d77b44b"],
+        [17, "fnv1a64:907a81e47947c870"],
+        [18, "fnv1a64:eca60aaf68a8ff6a"],
+        [19, "fnv1a64:f57ab2addd8a0f82"],
+        [20, "fnv1a64:7d48e297c9270b77"],
+        [21, "fnv1a64:bbd0fe713205ead4"],
+        [22, "fnv1a64:5de04264bbcd5226"],
+        [23, "fnv1a64:0f9575673f4ae0d8"],
+        [24, "fnv1a64:5becac5f85d26473"],
+        [25, "fnv1a64:f6296520794d1119"],
+        [26, "fnv1a64:00e294b01e91be59"],
+        [27, "fnv1a64:c1cf2977a182c28f"],
+        [28, "fnv1a64:b204afcc6c942738"],
+        [29, "fnv1a64:dc704f71c381236c"],
+        [30, "fnv1a64:9e186cd27f9dcd6b"],
+        [31, "fnv1a64:4f82f4cf6d6c21d7"],
+        [32, "fnv1a64:d4f93bb5a60c035d"],
+      ]);
   });
 
   it("creates the complete workstream-down table contract idempotently", () => {
@@ -140,7 +201,88 @@ describe("the Workstream Durable Object relational schema", () => {
           WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
           ORDER BY name`,
       ).all().map((row) => String(row.name));
+      const retiredMessageForeignKeys = tables.flatMap((table) => (
+        database.prepare(`PRAGMA foreign_key_list("${table}")`).all()
+          .filter((foreignKey) => foreignKey.table === "workstream_message_records")
+          .map((foreignKey) => ({ table, from: foreignKey.from, to: foreignKey.to }))
+      ));
+      expect(retiredMessageForeignKeys).toEqual([]);
       expect(tables).toEqual(EXPECTED_TABLES);
+      expect(database.prepare(
+        `SELECT type, name FROM sqlite_schema
+          WHERE name IN (
+            '_runtime_harness_runs', '_runtime_inference_attempts', '_runtime_users',
+            '_runtime_harness_runs_insert', '_runtime_harness_runs_update',
+            '_runtime_inference_attempts_insert', '_runtime_statement_changes'
+          )`,
+      ).all()).toEqual([]);
+      expect(database.prepare(`PRAGMA table_info("active_output_turns")`).all()
+        .map((column) => column.name)).toContain("stream_id");
+      expect(database.prepare(`PRAGMA table_info("active_output_turns")`).all()
+        .map((column) => column.name)).toContain("transcript_sequence");
+      expect(database.prepare(`PRAGMA table_info("active_output_turns")`).all()
+        .map((column) => column.name)).not.toContain("message_id");
+      expect(database.prepare(`PRAGMA table_info("runs")`).all()
+        .map((column) => column.name)).toContain("final_turn_id");
+      expect(database.prepare(`PRAGMA table_info("runs")`).all()
+        .map((column) => column.name)).not.toContain("final_part_id");
+      expect(database.prepare(`PRAGMA table_info("runs")`).all()
+        .map((column) => column.name)).toEqual(expect.arrayContaining([
+          "substream_loop_id",
+          "loop_input_id",
+          "loop_cycle_ordinal",
+          "loop_execution_id",
+          "loop_execution_epoch",
+          "loop_execution_sequence",
+          "execution_context_json",
+          "execution_available_at",
+          "external_settled_at",
+          "last_settlement_error_code",
+        ]));
+      const pendingInputColumns = database.prepare(
+        `PRAGMA table_info("pending_loop_inputs")`,
+      ).all().map((column) => column.name);
+      expect(pendingInputColumns).toContain("admitted_after_transcript_sequence");
+      expect(database.prepare(
+        `PRAGMA table_info("pending_loop_input_mailbox")`,
+      ).all().map((column) => column.name)).toContain("admitted_after_transcript_sequence");
+      expect(pendingInputColumns).not.toEqual(expect.arrayContaining([
+        "state", "delivered_turn_id", "delivered_attention_ordinal", "delivered_at",
+        "claimed_at", "cancelled_at", "cancelled_reason",
+      ]));
+      expect(database.prepare(`PRAGMA table_info("delivered_loop_inputs")`).all()
+        .map((column) => column.name)).toEqual([
+          "input_id",
+          "loop_id",
+          "input_sequence",
+          "delivered_turn_id",
+          "delivered_attention_ordinal",
+          "delivered_at",
+        ]);
+      expect(database.prepare(`PRAGMA foreign_key_list("runs")`).all()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            table: "delivered_loop_inputs",
+            from: "loop_input_id",
+            to: "input_id",
+          }),
+        ]),
+      );
+      expect(database.prepare(`PRAGMA table_info("bind_loop_heads")`).all()
+        .map((column) => column.name)).toEqual(expect.arrayContaining([
+          "transition_kind",
+          "system_renderer_version",
+          "system_input_hash",
+          "last_model_turn_index",
+          "last_assistant_reservation_json",
+        ]));
+      expect(database.prepare(
+        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'bind_loop_states'`,
+      ).all()).toEqual([]);
+      expect(database.prepare(`PRAGMA table_info("bind_activation_inputs")`).all()
+        .map((column) => column.name)).toEqual(expect.arrayContaining([
+          "loop_id", "activation_input_id", "fact_id", "admitted_state_revision",
+        ]));
       const strictness = database.prepare("PRAGMA table_list").all()
         .filter((row) => row.schema === "main" && EXPECTED_TABLES.includes(String(row.name) as never))
         .map((row) => ({ name: String(row.name), strict: Number(row.strict) }));
@@ -246,26 +388,169 @@ describe("the Workstream Durable Object relational schema", () => {
 
       applyWorkstreamObjectSchema(storage, "worker-after-retirement", 2_000);
 
+      // A row that existed only in the retired compatibility feed is not
+      // promoted into the canonical transcript. There is deliberately no
+      // timestamp/sequence heuristic here that could invent its position.
       expect(database.prepare(
-        `SELECT content, structured_content_json
-           FROM workstream_message_details WHERE id = 'message-1'`,
-      ).get()).toEqual({ content: "Hello", structured_content_json: '{"answer":42}' });
+        `SELECT content FROM canonical_conversation_turn_details WHERE id = 'message-1'`,
+      ).get()).toBeUndefined();
+      expect(database.prepare(`PRAGMA table_info(workstream_message_records)`).all())
+        .toEqual([]);
       expect(database.prepare(
         `SELECT name FROM sqlite_master
           WHERE type = 'index' AND name = 'workstream_message_records_sequence_idx'`,
-      ).get()).toEqual({ name: "workstream_message_records_sequence_idx" });
+      ).get()).toBeUndefined();
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM transcript_compaction_checkpoints`,
       ).get()).toEqual({ count: 1 });
+      // Activity rows are an execution projection rebuilt only by forward
+      // execution. The canonical turn retains its immutable activity edge.
       expect(database.prepare(
         `SELECT lifecycle_state, revision FROM transcript_activities
           WHERE activity_id = 'run-1:compaction:2'`,
-      ).get()).toEqual({ lifecycle_state: "completed", revision: 2 });
+      ).get()).toBeUndefined();
       expect(database.prepare(
-        `SELECT revision FROM participant_transcript_turns
+        `SELECT activity_id, revision FROM participant_transcript_turns
           WHERE turn_id = 'run-1:compaction:2'`,
-      ).get()).toEqual({ revision: 2 });
+      ).get()).toEqual({ activity_id: "run-1:compaction:2", revision: 2 });
       expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("upgrades a populated v32 graph while preserving canonical history and retiring operational work", () => {
+    const database = new DatabaseSync(":memory:");
+    const storage = objectStorage(database);
+    try {
+      applyDurableObjectSqliteMigrations({
+        storage,
+        migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.filter((migration) => migration.version <= 32),
+        component: "substream_agent_do",
+        workerVersionId: "worker-v32",
+        now: 1_000,
+      });
+      database.exec(`
+        INSERT INTO substreams
+          (id, kind, inherit_mode, depth, return_mode, origin_message_id,
+           audience, tool_policy, status, created_at)
+        VALUES ('0', 'main', 'none', 0, 'none', NULL, 'workspace', 'full', 'open', 1);
+        INSERT INTO runs
+          (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+           next_action_cursor, input_fence_seq, revision, started_at,
+           active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count,
+           retry_count, tool_count, input_tokens, output_tokens, cost_micros,
+           output_bytes, created_at, updated_at)
+        VALUES ('${RUN_ID}', '0', 'running', '{}', 0, 0, '', 0, 0, 1,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1);
+        INSERT INTO transcript_payloads
+          (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+        VALUES ('payload-1', 'shared', 'application/json',
+                '{"role":"user","content":"Preserve me","structuredContent":null}',
+                'payload-hash', 11, 1);
+        INSERT INTO transcript_facts
+          (fact_id, fact_kind, payload_id, origin_kind, turn_id, created_at)
+        VALUES ('fact-1', 'workstream_message', 'payload-1', 'canonical', '${MESSAGE_ID}', 1);
+        INSERT INTO participant_transcript_turns
+          (transcript_sequence, turn_id, entry_kind, actor, author_user_id,
+           root_fact_id, attention_ordinal, revision, created_at, updated_at)
+        VALUES (1, '${MESSAGE_ID}', 'conversation', 'human', '${AUTHOR_ID}',
+                'fact-1', 1, 1, 1, 1);
+        INSERT INTO participant_transcript_blocks
+          (turn_id, block_id, block_index, block_kind, fact_id, revision, updated_at)
+        VALUES ('${MESSAGE_ID}', '${MESSAGE_ID}:text:0', 0, 'text', 'fact-1', 1, 1);
+        INSERT INTO workstream_message_records
+          (id, substream_id, sequence_number, attention_ordinal, fact_id, role,
+           kind, author_type, author_user_id, client_message_id, visibility,
+           pinned, message_type, created_at, updated_at)
+        VALUES ('${MESSAGE_ID}', '0', 1, 1, 'fact-1', 'user', 'text', 'member',
+                '${AUTHOR_ID}', 'client-1', 'both', 0, 'text', 1, 1);
+        INSERT INTO substreams
+          (id, kind, inherit_mode, depth, return_mode, origin_message_id,
+           audience, tool_policy, status, created_at)
+        VALUES ('child', 'chat', 'none', 1, 'none', '${MESSAGE_ID}',
+                'workspace', 'full', 'open', 2);
+        INSERT INTO workstream_message_attachments
+          (message_id, resource_id, position, attachment_json)
+        VALUES ('${MESSAGE_ID}', 'resource-1', 0, '{"fileName":"evidence.pdf"}');
+        INSERT INTO workstream_message_mentions
+          (message_id, mention_index, mention_kind, target_user_id,
+           start_offset, end_offset, attention_ordinal)
+        VALUES ('${MESSAGE_ID}', 0, 'person', '${RECIPIENT_ID}', 0, 4, 1);
+        INSERT INTO tool_effects
+          (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key,
+           tool_name, mode, request_hash, authority_revision, status, tool_call_id, input_json)
+        VALUES
+          ('effect-command', '${RUN_ID}', 0, 0, 'effect-command', 'run_command',
+           'write', 'request-1', 'authority', 'executing', 'call-command', '{}'),
+          ('effect-publish', '${RUN_ID}', 0, 1, 'effect-publish', 'publish',
+           'write', 'request-2', 'authority', 'executing', 'call-publish', '{}');
+        INSERT INTO tool_effect_checkpoints
+          (checkpoint_id, effect_intent_id, run_id, attempt_id, checkpoint_index,
+           phase, member_safe_payload_json, created_at)
+        VALUES ('checkpoint-1', 'effect-command', '${RUN_ID}', '${ATTEMPT_ID}', 0,
+                'executing', '{}', 1);
+        INSERT INTO terminal_workspace
+          (id, provider, sandbox_id, lifecycle_state, generation, stable_name,
+           authority_fingerprint, applied_network_revision, version,
+           created_at, updated_at)
+        VALUES (1, 'daytona', 'sandbox-1', 'running', 1, 'rally-sandbox-1',
+                'authority', 1, 1, 1, 1);
+        INSERT INTO terminal_tasks
+          (task_id, run_id, effect_intent_id, sandbox_generation,
+           provider_task_name, state, command_sha256, command_deadline_at,
+           stdout_head, stdout_tail, stderr_head, stderr_tail,
+           stdout_bytes, stderr_bytes, created_at, updated_at)
+        VALUES ('task-1', '${RUN_ID}', 'effect-command', 1,
+                'rally-task-1', 'running', 'command-hash', 9999,
+                '', '', '', '', 0, 0, 1, 1);
+        INSERT INTO terminal_publication_grants
+          (grant_id, run_id, source_message_id, principal_key, repository_full_name,
+           base_ref, head_ref, expires_at, consumed_by_effect_intent_id, consumed_at, created_at)
+        VALUES ('grant-1', '${RUN_ID}', '${MESSAGE_ID}', 'user:${AUTHOR_ID}',
+                'owner/repo', 'main', 'rally/change', 9999, 'effect-publish', 2, 1);
+        INSERT INTO repository_publications
+          (publication_id, effect_intent_id, grant_id, repository_full_name,
+           base_ref, head_ref, requested_commit_sha, state, title, body, created_at, updated_at)
+        VALUES ('publication-1', 'effect-publish', 'grant-1', 'owner/repo',
+                'main', 'rally/change', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'publishing', 'Title', 'Body', 1, 1);
+        INSERT INTO run_steering
+          (run_id, steering_message_id, requested_at)
+        VALUES ('${RUN_ID}', '${MESSAGE_ID}', 2);
+        INSERT INTO active_output_turns
+          (run_id, attempt_epoch, turn_id, substream_id, status, durable_event_seq,
+           durable_through_frame_seq, next_chunk_index, message_id,
+           seen_turn_ids_json, turn_start_offset, started_at, checkpointed_at, updated_at)
+        VALUES ('${RUN_ID}', 0, '${RUN_ID}:turn:1', '0', 'streaming', 1, 1, 0,
+                '${RUN_ID}', '["${RUN_ID}:turn:1"]', 0, 1, 1, 1);
+      `);
+
+      applyWorkstreamObjectSchema(storage, "worker-current", 2_000);
+
+      expect(database.prepare(`SELECT resource_id FROM participant_transcript_attachments`).all())
+        .toEqual([{ resource_id: "resource-1" }]);
+      expect(database.prepare(`SELECT target_user_id FROM participant_transcript_mentions`).all())
+        .toEqual([{ target_user_id: RECIPIENT_ID }]);
+      expect(database.prepare(`SELECT run_id FROM runs`).all()).toEqual([]);
+      expect(database.prepare(`SELECT task_id FROM terminal_tasks`).all())
+        .toEqual([]);
+      expect(database.prepare(`SELECT sandbox_id FROM terminal_workspace`).all())
+        .toEqual([{ sandbox_id: "sandbox-1" }]);
+      expect(database.prepare(`SELECT checkpoint_id FROM tool_effect_checkpoints`).all())
+        .toEqual([]);
+      expect(database.prepare(`SELECT publication_id FROM repository_publications`).all())
+        .toEqual([]);
+      expect(database.prepare(
+        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'run_steering'`,
+      ).all()).toEqual([]);
+      expect(database.prepare(
+        `SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'agent_run_dispatches'`,
+      ).all()).toEqual([]);
+      expect(database.prepare(`SELECT stream_id FROM active_output_turns`).all())
+        .toEqual([]);
+      expect(database.prepare(`PRAGMA foreign_key_check`).all()).toEqual([]);
+      expect(database.prepare(`PRAGMA foreign_keys`).get()).toEqual({ foreign_keys: 1 });
     } finally {
       database.close();
     }
@@ -681,18 +966,21 @@ describe("the Workstream Durable Object relational schema", () => {
 
   it("checkpoints live output in bounded relational chunks and clears it at terminal state", async () => {
     const database = new DatabaseSync(":memory:");
-    const store = new WorkstreamObjectStore(objectStorage(database), "worker-one", "eu");
+    const storage = objectStorage(database);
+    const store = new WorkstreamObjectStore(storage, "worker-one", "eu");
     try {
       await store.waitUntilReady();
       store.ensureIdentity({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }, "eu");
       const at = "2026-08-16T12:00:00.000Z";
+      activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({
         type: "stream_started",
         sequence: 0,
         occurredAt: at,
-        messageId: MESSAGE_ID,
+        streamId: MESSAGE_ID,
         harnessRunId: RUN_ID,
         turnId: "turn-one",
+        transcriptSequence: 1,
         epoch: 0,
         streamSeq: 0,
         reset: false,
@@ -701,16 +989,20 @@ describe("the Workstream Durable Object relational schema", () => {
         type: "stream_delta",
         sequence: 0,
         occurredAt: at,
-        messageId: MESSAGE_ID,
+        streamId: MESSAGE_ID,
         harnessRunId: RUN_ID,
         turnId: "turn-one",
+        transcriptSequence: 1,
         epoch: 0,
         streamSeq: 1,
         reset: false,
         delta: `${"a".repeat(70_000)}😀`,
       }));
 
-      expect(store.activeStreamCheckpoints()[0]?.text).toBe(`${"a".repeat(70_000)}😀`);
+      expect(store.activeStreamCheckpoints()[0]).toMatchObject({
+        transcriptSequence: 1,
+        text: `${"a".repeat(70_000)}😀`,
+      });
       expect(database.prepare(
         `SELECT COUNT(*) AS count FROM active_output_chunks`,
       ).get()).toEqual({ count: 2 });
@@ -775,26 +1067,29 @@ describe("the Workstream Durable Object relational schema", () => {
       expect(store.activeStreamCheckpoints()).toEqual([]);
       expect(store.activeCompaction()).toBeNull();
       expect(database.prepare("SELECT status FROM runs WHERE run_id = ?").get(RUN_ID))
-        .toEqual({ status: "completed" });
+        .toEqual({ status: "running" });
     } finally {
       database.close();
     }
   });
 
-  it("projects a stopped realtime event to the cancelled durable run state", async () => {
+  it("does not let a stopped realtime frame terminalize the durable execution receipt", async () => {
     const database = new DatabaseSync(":memory:");
-    const store = new WorkstreamObjectStore(objectStorage(database), "worker-one", "global");
+    const storage = objectStorage(database);
+    const store = new WorkstreamObjectStore(storage, "worker-one", "global");
     try {
       await store.waitUntilReady();
       store.ensureIdentity({ workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID }, "global");
       const at = "2026-08-21T03:00:00.000Z";
+      activateRealtimeExecution(storage, Date.parse(at));
       store.commitRealtimeEvent(ServerSocketEventSchema.parse({
         type: "stream_started",
         sequence: 0,
         occurredAt: at,
-        messageId: MESSAGE_ID,
+        streamId: MESSAGE_ID,
         harnessRunId: RUN_ID,
         turnId: "turn-stopped",
+        transcriptSequence: 1,
         epoch: 0,
         streamSeq: 0,
         reset: false,
@@ -809,7 +1104,7 @@ describe("the Workstream Durable Object relational schema", () => {
 
       expect(database.prepare(
         "SELECT status, terminal_reason FROM runs WHERE run_id = ?",
-      ).get(RUN_ID)).toEqual({ status: "cancelled", terminal_reason: "cancelled" });
+      ).get(RUN_ID)).toEqual({ status: "running", terminal_reason: null });
     } finally {
       database.close();
     }

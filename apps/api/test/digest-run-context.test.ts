@@ -4,18 +4,23 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
+  seedCanonicalConversationTurn,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectRun,
 } from "./helpers/durable-authority";
 
-const { loadRunPromptContext, projectModelProtocolTranscript } = __integrationTesting;
+const {
+  loadRunPromptContext,
+  projectModelProtocolTranscript,
+  workstreamActivationInput,
+} = __integrationTesting;
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = "00000000-0000-7000-8000-000000000002";
@@ -58,9 +63,8 @@ function envFor(database: DatabaseSync): Env {
     DAYTONA_TERMINAL_SNAPSHOT: "terminal-snapshot",
     TERMINAL_EMERGENCY_DISABLED: "false",
   });
-  // The prompt loader runs inside the SubstreamAgent, which hands it the
-  // routed execution environment — transcript reads reach the object, never D1.
-  return withWorkstreamRuntimeDatabase(base, WORKSPACE, WORKSTREAM);
+  // Transcript reads reach the object through the typed message port.
+  return base;
 }
 
 /**
@@ -120,31 +124,20 @@ function seededDatabase(options: { brief?: string } = {}): DatabaseSync {
   });
   objectStores = new Map([[WORKSTREAM as string, objectStore]]);
 
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at,
-        attempt_id, lease_owner, lease_expires_at)
-     VALUES (?, ?, ?, 'scheduled_digest', ?, 'running', '2026-08-11', ?, ?, '2099-01-01T00:00:00.000Z')`,
-    RUN,
-    WORKSPACE,
-    WORKSTREAM,
-    JSON.stringify({ type: "user", userId: OWNER }),
-    ATTEMPT,
-    LEASE_OWNER,
-  );
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO messages
-       (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-        message_type, text_content, structured_content_json, sequence_number, created_at)
-     VALUES (?, ?, ?, ?, 'system', NULL, 'system', ?, NULL, 1, '2026-08-11T16:00:00.000Z')`,
-    BRIEF_MESSAGE,
-    `digest:${DELIVERY}`,
-    WORKSPACE,
-    WORKSTREAM,
-    brief,
-  );
+  seedWorkstreamRun(objectStore, { id: RUN, origin: "scheduled_digest",
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: OWNER }),
+    attemptId: ATTEMPT, leaseOwner: LEASE_OWNER,
+    leaseExpiresAt: Date.parse("2099-01-01T00:00:00.000Z") });
+  seedCanonicalConversationTurn(objectStore, {
+    turnId: BRIEF_MESSAGE,
+    clientMessageId: `digest:${DELIVERY}`,
+    actor: "system",
+    authorSnapshot: null,
+    messageType: "system",
+    text: brief,
+    transcriptSequence: 1,
+    createdAt: "2026-08-11T16:00:00.000Z",
+  });
   workstreamObjectRun(
     objectStore,
     `INSERT INTO run_memory_contexts
@@ -163,6 +156,7 @@ function workflowInput(overrides: Record<string, unknown> = {}) {
     region: "global" as const,
     workspaceId: WORKSPACE,
     workstreamId: WORKSTREAM,
+    loopId: `workstream:${WORKSTREAM}:substream:0:loop`,
     harnessRunId: RUN,
     triggerMessageId: BRIEF_MESSAGE,
     automationSubscriptionId: null,
@@ -199,6 +193,19 @@ describe("the window a scheduled digest run is given", () => {
     // rather than quoted from anybody.
     expect(brief?.content).toContain("2026-08-11T16:00:00.000Z");
     expect(brief?.content).toContain("covering 42 events");
+    if (!brief) throw new Error("digest activation context was not assembled");
+    expect(workstreamActivationInput(brief)).toMatchObject({
+      activationInputId: `activation:["digest_delivery","${DELIVERY}",null]`,
+      message: {
+        role: "user",
+        provenance: {
+          originKind: "derived",
+          sourceKind: "digest_delivery",
+          sourceId: DELIVERY,
+          sourceRevision: null,
+        },
+      },
+    });
   });
 
   it("is not told to write the digest as a document", async () => {

@@ -3,6 +3,7 @@ import {
   readStructuredFailure,
   ActivityQueueMessageSchema,
   ActiveStreamCheckpointSchema,
+  BlockDashboardStreamCheckpointSchema,
   AnswerElicitationRequestSchema,
   AppendNoteTranscriptSegmentRequestSchema,
   AutomationDeliveryTargetSetSchema,
@@ -39,7 +40,6 @@ import {
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
   StartWorkOpportunityRequestSchema,
-  SubstreamDirectSocketEventSchema,
   UpdateBlockDashboardPreferenceRequestSchema,
   UpdateBlockDashboardRequestSchema,
   UpdateWorkspaceRequestSchema,
@@ -680,6 +680,26 @@ describe("boundary contracts", () => {
       clientMessageId: "client-message-one",
       error: { status: 409, code: "conflict", message: "Try again" },
     }).success).toBe(true);
+    const accepted = {
+      type: "client_command_succeeded" as const,
+      command: "create_message" as const,
+      clientMessageId: "client-message-one",
+      turn: {
+        turnId: id,
+        clientMessageId: "client-message-one",
+        createdAt: "2026-08-28T12:00:00.000Z",
+      },
+      deliveryState: "pending" as const,
+    };
+    expect(WorkstreamSocketCommandResultSchema.parse(accepted)).toEqual(accepted);
+    expect(WorkstreamSocketCommandResultSchema.safeParse({
+      ...accepted,
+      agentInvoked: true,
+    }).success).toBe(false);
+    expect(WorkstreamSocketCommandResultSchema.safeParse({
+      ...accepted,
+      deliveryState: "replayed",
+    }).success).toBe(false);
   });
 
   it("bounds HyperSight configuration and preserves unique block identities", () => {
@@ -724,8 +744,8 @@ describe("boundary contracts", () => {
   });
 
   it("carries resumable stream checkpoints on HyperSight block-agent sockets", () => {
-    const checkpoint = ActiveStreamCheckpointSchema.parse({
-      messageId: id,
+    const checkpoint = BlockDashboardStreamCheckpointSchema.parse({
+      streamId: id,
       harnessRunId: id,
       turnId: "turn-1",
       epoch: 0,
@@ -753,8 +773,9 @@ describe("boundary contracts", () => {
       type: "stream_delta",
       sequence: 42,
       occurredAt: "2026-07-31T20:00:00.000Z",
-      messageId: id,
+      streamId: id,
       turnId: "turn-1",
+      transcriptSequence: 9,
       epoch: 2,
       streamSeq: 7,
       reset: true,
@@ -764,12 +785,35 @@ describe("boundary contracts", () => {
       type: "stream_started",
       sequence: 43,
       occurredAt: "2026-07-31T20:00:00.000Z",
-      messageId: id,
+      streamId: id,
       harnessRunId: id,
       turnId: "turn-1",
       epoch: 2,
       streamSeq: 0,
       reset: true
+    }).success).toBe(false);
+    expect(ServerSocketEventSchema.safeParse({
+      type: "stream_delta",
+      sequence: 44,
+      occurredAt: "2026-07-31T20:00:00.000Z",
+      messageId: id,
+      turnId: "turn-1",
+      epoch: 2,
+      streamSeq: 8,
+      reset: false,
+      delta: "old ambiguous identity",
+    }).success).toBe(false);
+    expect(ActiveStreamCheckpointSchema.safeParse({
+      messageId: id,
+      harnessRunId: id,
+      turnId: "turn-1",
+      epoch: 0,
+      streamSeq: 1,
+      seenTurnIds: ["turn-1"],
+      text: "old checkpoint",
+      turnStartOffset: 0,
+      roomSequence: 1,
+      createdAt: "2026-07-31T20:00:00.000Z",
     }).success).toBe(false);
   });
 
@@ -801,33 +845,32 @@ describe("boundary contracts", () => {
     })).toMatchObject({ type: "compaction_finished", outcome: "completed" });
   });
 
-  it("keeps correlated message-page reads outside the shared room sequence", () => {
-    expect(ClientSocketEventSchema.parse({
-      type: "load_message_page",
-      requestId: id,
-      cursor: { direction: "before", value: "42" },
-    })).toMatchObject({ type: "load_message_page", limit: 200 });
+  it("rejects the retired compatibility message-page protocol", () => {
     expect(ClientSocketEventSchema.safeParse({
       type: "load_message_page",
       requestId: id,
-      cursor: { direction: "before", value: "0" },
+      cursor: { direction: "before", value: "42" },
     }).success).toBe(false);
-    expect(SubstreamDirectSocketEventSchema.parse({
+    expect(ServerSocketEventSchema.safeParse({
       type: "message_page",
       requestId: id,
       occurredAt: "2026-08-18T20:00:00.000Z",
       page: { items: [], nextCursor: "12", newerCursor: null },
-    })).toMatchObject({
-      type: "message_page",
-      page: { nextCursor: "12" },
-    });
+    }).success).toBe(false);
+    expect(ServerSocketEventSchema.safeParse({
+      type: "message_created",
+      sequence: 1,
+      occurredAt: "2026-08-18T20:00:00.000Z",
+      message: {},
+    }).success).toBe(false);
   });
 
   it("bounds a stream checkpoint's retry prefix to its accumulated text", () => {
     const checkpoint = {
-      messageId: id,
+      streamId: id,
       harnessRunId: id,
       turnId: "turn-2",
+      transcriptSequence: 10,
       epoch: 1,
       streamSeq: 7,
       seenTurnIds: ["turn-1", "turn-2"],
@@ -848,6 +891,7 @@ describe("boundary contracts", () => {
       region: "global",
       workspaceId: id,
       workstreamId: id,
+      loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
       triggerMessageId: null,
       automationSubscriptionId: null,
@@ -862,6 +906,7 @@ describe("boundary contracts", () => {
       region: "global",
       workspaceId: id,
       workstreamId: id,
+      loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
       triggerMessageId: id,
       automationSubscriptionId: null,
@@ -883,6 +928,7 @@ describe("boundary contracts", () => {
       region: "global",
       workspaceId: id,
       workstreamId: id,
+      loopId: `workstream:${id}:substream:0:loop`,
       harnessRunId: id,
       triggerMessageId: id,
       automationSubscriptionId: null,
@@ -934,6 +980,31 @@ describe("boundary contracts", () => {
     }).success).toBe(false);
   });
 
+  it("keeps persistent loop identity independent from subordinate execution receipts", () => {
+    const loopId = `workstream:${id}:substream:0:loop`;
+    const base = {
+      region: "global",
+      workspaceId: id,
+      workstreamId: id,
+      loopId,
+      triggerMessageId: id,
+      automationSubscriptionId: null,
+      activityId: null,
+      executionPrincipal: { type: "user", userId: id },
+      reason: "human_message",
+    };
+    const first = WorkstreamWorkflowInputSchema.parse({ ...base, harnessRunId: id });
+    const second = WorkstreamWorkflowInputSchema.parse({
+      ...base,
+      harnessRunId: "018f3f4e-7b5a-7cc1-9a6f-2aa0324b79d1",
+    });
+
+    expect(first.loopId).toBe(second.loopId);
+    expect(first.harnessRunId).not.toBe(second.harnessRunId);
+    expect(WorkstreamWorkflowInputSchema.safeParse({ ...base, harnessRunId: id, loopId: "" }).success)
+      .toBe(false);
+  });
+
   it("exposes bounded harness-run metadata for the contextual rail", () => {
     expect(HarnessRunMetadataSchema.parse({
       id,
@@ -968,7 +1039,7 @@ describe("boundary contracts", () => {
       completedAt: "2026-07-31T20:00:12.000Z",
       tokenCount: 1250,
       toolUses: 3,
-      transcriptMessageId: id
+      transcriptTurnId: id
     })).toMatchObject({ taskType: "agent", tokenCount: 1250, toolUses: 3 });
   });
 

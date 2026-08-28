@@ -297,9 +297,32 @@ Pass evidence: one work stream, two persistent participants, no Rally participan
    product targets: p50 at or under one second and p90 at or under two seconds.
    Record renderer total duration; server snapshot duration alone is only a
    lower-bound proxy.
+7. Create three turns with deliberately nonmonotonic timestamps and repeated
+   text, then load the tail range before the middle range. Confirm the rendered
+   order follows only `transcript_sequence`, every turn identity appears once,
+   and joining the middle coverage does not move the visible anchor.
+8. During one response, reconnect after an optimistic human turn, an active
+   assistant overlay, and a completed canonical assistant turn have each been
+   observed. Confirm reconciliation uses the explicit client/turn/overlay IDs:
+   the optimistic turn is replaced once, the overlay remains at its declared
+   anchor until its canonical turn arrives, and unrelated equal text is never
+   removed. Deliver stale and duplicate revisions in both orders and confirm
+   neither can roll back or duplicate the canonical row.
+9. Force a range request across an empty sequence interval, a snapshot-ID
+   mismatch, a replay-window miss, and a cursor ahead of the room. Confirm empty
+   coverage closes the gap, while every fence/waterline mismatch requests a
+   canonical resync without retaining unproven rows or advancing the cursor.
+10. Produce assistant prose before and after a tool call, request stop while an
+    inference is in flight, and separately force the provider to fail after
+    partial output is visible. Confirm stop waits for the accepted assistant and
+    all tool effects before ending the loop at its safe step boundary. Confirm a
+    failed partial stream disappears and leaves one durable error pill in its
+    reserved position. Neither path may concatenate prior prose into a run-final
+    aggregate, create a second final answer, or retry observable work.
 
 Pass evidence: stable turn/block IDs, explicit covered ranges and known gaps,
-no duplicated/reordered tokens or tool blocks, reconnect-safe UTC timing,
+no duplicated/reordered/lost turns, tokens, or tool blocks under permuted frame
+delivery, reconnect-safe UTC timing,
 two exact compaction generations, provider-boundary hash equality, and p50/p90
 opening measurements from the visible desktop boundary. The automation wizard
 is not part of this flow.

@@ -22,8 +22,9 @@
  * `lease_expires_at` is what makes "someone is working on this" and "someone
  * died working on this" distinguishable without a live process to ask, which
  * is the same pattern `memory_index_outbox` and `workstream_notification_intents`
- * already use. `agent_run_dispatches` was the only queue in the object schemas
- * that had skipped it.
+ * already use. BlockDashboard's `agent_run_dispatches` was the only remaining
+ * queue in the object schemas that had skipped it. SubstreamAgent owns one
+ * persistent loop instead of a per-message dispatch queue.
  */
 
 /**
@@ -47,21 +48,15 @@ export const AGENT_RUN_DISPATCH_LEASE_MS = 5 * 60_000;
 export const AGENT_RUN_DISPATCH_SWEEP_MS = 60_000;
 
 /**
- * Identifies one of the two dispatch tables. Both columns are compile-time
- * constants from the schema modules and are interpolated into SQL; they must
- * never be derived from a request.
+ * Identifies the BlockDashboard dispatch table. Both columns are compile-time
+ * constants from its schema and are interpolated into SQL; they must never be
+ * derived from a request.
  */
 export interface AgentRunDispatchTable {
   readonly name: string;
   readonly idColumn: string;
   readonly payloadColumn: string;
 }
-
-export const SUBSTREAM_AGENT_RUN_DISPATCHES: AgentRunDispatchTable = {
-  name: "agent_run_dispatches",
-  idColumn: "run_id",
-  payloadColumn: "input_json",
-};
 
 export const BLOCK_DASHBOARD_RUN_DISPATCHES: AgentRunDispatchTable = {
   name: "agent_run_dispatches",
@@ -89,7 +84,7 @@ export interface AgentRunDispatchClaim {
  *
  * Exported because `BlockDashboardAgent` selects over a second lane of its own
  * and cannot use the whole query below; the expression itself must not be
- * copied, or the two objects will drift apart on the subtle half.
+ * copied, or the two lanes will drift apart on the subtle half.
  */
 export const AGENT_RUN_DISPATCH_DUE_AT_SQL = `CASE
          WHEN state = 'queued' THEN available_at

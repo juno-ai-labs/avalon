@@ -12,6 +12,7 @@ import {
   telemetryJourneyDuration,
 } from './product-usage';
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 
 export interface AgentToolStartedTelemetryInput {
   workspaceId: WorkspaceId;
@@ -115,7 +116,7 @@ function terminalResult(row: ToolTerminalRow):
 
 function terminalRunKind(row: ToolTerminalRow): AgentToolStartedTelemetryInput['runKind'] {
   if (row.parent_tool_call_id) return 'subagent';
-  if (row.origin === 'hypersight_block') return 'hypersight';
+  if (row.origin === 'block_dashboard_block') return 'hypersight';
   if (row.automation_id) return 'automation';
   if (row.origin === 'scheduled_digest') return 'system';
   return 'workstream';
@@ -136,30 +137,26 @@ export async function emitAgentToolTerminalTelemetry(
     replayed?: boolean;
   },
 ): Promise<void> {
-  // Pointed at the real `tool_effects` rather than the compatibility view, so
-  // this statement stops being a reason that view has to exist. It is not
-  // converted to the typed port: its primary table is `harness_runs` and its
-  // shape is run-and-workstream, not receipt — a `terminalTelemetryRow` on the
-  // receipt storage class would be the wrong owner. The harness-runs slice
-  // converts the whole statement; this only stops it blocking the receipt one.
-  //
-  // The workspace and workstream predicates are gone with the view that
-  // supplied those columns. They are not lost: every receipt in this object
-  // belongs to this work stream, and the routed statement reaches the object
-  // only after its identity has been checked.
-  const row = await env.DB.prepare(
-    `SELECT ti.effect_intent_id AS id, ti.run_id AS harness_run_id,
-            ti.status, ti.started_at, ti.settled_at, ti.error_json,
-            ti.execution_plan_json, hr.origin, hr.parent_tool_call_id,
-            hr.execution_principal_json
-       FROM tool_effects ti
-       JOIN harness_runs hr ON hr.id = ti.run_id
-      WHERE ti.effect_intent_id = ? AND ti.run_id = ?`,
-  ).bind(
-    input.invocationId,
-    input.harnessRunId,
-  ).first<ToolTerminalRow>();
-  if (!row || !['completed', 'failed', 'ambiguous'].includes(row.status)) return;
+  const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+    .toolTerminalTelemetry({
+      runId: input.harnessRunId,
+      effectIntentId: input.invocationId,
+    });
+  if (!stored || !['completed', 'failed', 'ambiguous'].includes(stored.status)) return;
+  const row: ToolTerminalRow = {
+    id: stored.effect_intent_id,
+    harness_run_id: stored.run_id,
+    status: stored.status,
+    started_at: stored.started_at,
+    settled_at: stored.settled_at,
+    error_json: stored.error_json,
+    execution_plan_json: stored.execution_plan_json,
+    origin: stored.origin,
+    parent_tool_call_id: stored.parent_tool_call_id,
+    execution_principal_json: stored.execution_principal_json,
+    automation_id: null,
+    automation_run_id: null,
+  };
   // The work stream's automation run was a third table in the join, and the
   // only column this needed from it. It is the identity authority's row, asked
   // for after the status gate rather than fetched for every receipt.
@@ -168,7 +165,8 @@ export async function emitAgentToolTerminalTelemetry(
   // The automation lookup is workspace authority (the WorkspaceDO); the rows
   // above are work-stream authority, and no database holds both sides of the
   // old JOIN — which the swallowed telemetry errors hid.
-  row.automation_id = row.automation_run_id && ["automation", "automation_run"].includes(row.origin)
+  row.automation_id = row.automation_run_id
+    && ["automation", "automation_run", "automation_activity"].includes(row.origin)
     ? (await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
       `SELECT automation_subscription_id FROM automation_runs WHERE id = ? AND workspace_id = ?`,
     ).bind(row.automation_run_id, input.workspaceId)

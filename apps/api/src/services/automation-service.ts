@@ -20,10 +20,11 @@ import { isReconnectRequiredConnectorError } from "./connector-connection-access
 import type { AutomationCompilerStreamEvent } from "@rally/agent-harness";
 import type { AuthContext, Env } from "../env";
 import { ApiError, isConstraintError } from "../lib/api-error";
+import { substreamLoopId } from "../durable-objects/names";
 import { connectorRegistryForEnv } from "../lib/connector-registry";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { automationModelOverride, scheduledWorkstreamModel } from "./agent-model-flags";
-import { compileAutomationDraft, startWorkstreamWorkflow } from "./integrations";
+import { activateWorkstreamLoop, compileAutomationDraft } from "./integrations";
 import {
   buildAutomationMemoryTableStatements,
   ensureAutomationMemoryTables,
@@ -57,7 +58,6 @@ import { publishedRunStatus } from "../runtime/harness-run-runtime";
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
-  workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
 import {
   withWorkspaceRuntimeDatabase,
@@ -1728,7 +1728,6 @@ export class AutomationService {
           model,
           triggerPartId: triggerMessageId ?? null,
           parentRunId: null,
-          supersedeActive: false,
           expectedLatestRunId: null,
           now: Date.parse(at),
         });
@@ -1848,11 +1847,7 @@ export class AutomationService {
       run_workflow_instance_id: string | null;
     }>();
     if (!run) return null;
-    const executionEnv = await workstreamExecutionEnvironment(
-      this.env,
-      this.auth.workspaceId,
-      run.workstream_id,
-    );
+    const executionEnv = this.env;
     const [harness, message] = await Promise.all([
       createHarnessRunObjectPort(executionEnv, this.auth.workspaceId, run.workstream_id)
         .latestRootRun(),
@@ -1884,15 +1879,16 @@ export class AutomationService {
     if (terminalStatuses.has(run.runStatus) || (run.harnessStatus && terminalStatuses.has(run.harnessStatus))) {
       return;
     }
+    // Projection succeeds only after the stable receipt has been accepted by
+    // SubstreamAgent. Together these fields are durable proof that this exact
+    // activation crossed both boundaries; replay is for the ambiguous
+    // scheduled state only.
+    if (run.runStatus === "running" && run.workflowInstanceId) return;
     if (!run.harnessRunId) {
       throw new ApiError(503, "workflow_launch_pending", "The automation run is still being prepared; retry with the same key");
     }
     if (run.workflowInstanceId) {
-      const executionEnv = await workstreamExecutionEnvironment(
-        this.env,
-        this.auth.workspaceId,
-        run.workstreamId,
-      );
+      const executionEnv = this.env;
       const { harnessRunId, workflowInstanceId } = run;
       const reconcile = () => Promise.all([
         createHarnessRunObjectPort(executionEnv, this.auth.workspaceId, run.workstreamId)
@@ -1912,7 +1908,9 @@ export class AutomationService {
         // the cross-object pair did not commit before the transient failure.
         await reconcile();
       }
-      return;
+      // The receipt commits before SubstreamAgent activation. A lost response
+      // can therefore leave this pair reconciled without proving the loop saw
+      // the request. Fall through and replay the same stable activation.
     }
     const principal = parseJson<ExecutionPrincipal>(subscription.execution_principal_json, {
       type: "user",
@@ -1935,6 +1933,7 @@ export class AutomationService {
       region: this.env.AVALON_REGION,
       workspaceId: this.auth.workspaceId,
       workstreamId: run.workstreamId,
+      loopId: substreamLoopId(asWorkstreamId(run.workstreamId)),
       harnessRunId: run.harnessRunId,
       triggerMessageId: run.triggerMessageId,
       automationSubscriptionId: String(subscription.id),
@@ -1943,7 +1942,7 @@ export class AutomationService {
       reason: triggerType,
     };
     try {
-      await startWorkstreamWorkflow(this.env, workflowInput);
+      await activateWorkstreamLoop(this.env, workflowInput);
     } catch {
       throw new ApiError(503, "workflow_unavailable", "The automation run could not be started; retry with the same key");
     }

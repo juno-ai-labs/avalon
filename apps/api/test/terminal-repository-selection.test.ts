@@ -14,14 +14,13 @@ import {
   createGitHubTerminalCatalogGateway,
   type TerminalRepositoryCatalogGateway,
 } from "../src/services/terminal/workstream-state";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import type { WorkstreamRuntimeResourceAttachment } from "../src/services/workstream-object-client";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
-  executeWorkstreamObjectSql,
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -130,16 +129,8 @@ async function fixture(input?: {
     participationReason: "creator",
     addedAt: Date.parse("2026-08-13T00:00:00.000Z"),
   });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-     VALUES (?, ?, ?, 'manual', ?, 'running', '2026-08-13')`,
-    R,
-    W,
-    S,
-    JSON.stringify({ type: "user", userId: U }),
-  );
+  seedWorkstreamRun(objectStore, { id: R, origin: "manual",
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
   database.prepare(
     `INSERT INTO connector_connections
      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
@@ -210,13 +201,7 @@ async function fixture(input?: {
       },
     }),
   });
-  const env = withWorkstreamRuntimeDatabase(
-    baseEnv,
-    W,
-    S,
-    "0",
-    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-  );
+  const env = baseEnv;
   const context: HarnessToolContext = {
     workspaceId: W,
     workstreamId: S,
@@ -261,21 +246,12 @@ describe("Terminal model repository selection", () => {
     const payloadPut = vi.fn(async () => undefined);
     const attachRuntimeResource = vi.fn(() => ({ status: 200, bodyJson: JSON.stringify({ ok: true }) }));
     const runtimeStatements: string[] = [];
-    const workstreamEnv = withWorkstreamRuntimeDatabase(
-      createTestEnv({
+    const workstreamEnv = createTestEnv({
         DB: sqliteD1(regional),
         AVALON_REGION: "global",
         PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
         SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, { extra: { attachRuntimeResource } }),
-      }),
-      W,
-      S,
-      "0",
-      async (statements) => {
-        runtimeStatements.push(...statements.map(({ sql }) => sql));
-        return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
-      },
-    );
+      });
     const env = withWorkspaceRuntimeDatabase(workstreamEnv, W, async (statements) => {
       runtimeStatements.push(...statements.map(({ sql }) => sql));
       return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
@@ -308,20 +284,11 @@ describe("Terminal model repository selection", () => {
     const backupSha = await sha256Hex(backupBytes);
     const payloadPut = vi.fn(async () => undefined);
     const runtimeStatements: string[] = [];
-    const workstreamEnv = withWorkstreamRuntimeDatabase(
-      createTestEnv({
+    const workstreamEnv = createTestEnv({
         DB: sqliteD1(regional),
         AVALON_REGION: "global",
         PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
-      }),
-      W,
-      S,
-      "0",
-      async (statements) => {
-        runtimeStatements.push(...statements.map(({ sql }) => sql));
-        return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
-      },
-    );
+      });
     const env = withWorkspaceRuntimeDatabase(workstreamEnv, W, async (statements) => {
       runtimeStatements.push(...statements.map(({ sql }) => sql));
       return statements.map(() => ({ columns: [], rows: [], changes: 1 }));
@@ -509,16 +476,11 @@ describe("Terminal model repository selection", () => {
   it("claims the shared sandbox lease before replacing repository state", async () => {
     const { objectStore, provider, context, selector } = await fixture();
     const otherRun = "71000000-0000-4000-8000-000000000099";
-    // 'scheduled' rather than 'running': the object allows one mutating run
-    // per substream and the fixture's own run holds that slot; the lease
-    // check counts a scheduled run as active all the same.
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-       VALUES (?, ?, ?, 'manual', ?, 'scheduled', ?)`,
-      otherRun, W, S, JSON.stringify({ type: "user", userId: U }), "2026-08-13",
-    );
+    // Admitted rather than running: the object allows one executing receipt
+    // per substream and the fixture's own run holds that slot; the lease check
+    // counts an admitted receipt as active all the same.
+    seedWorkstreamRun(objectStore, { id: otherRun, status: "admitted", origin: "manual",
+      executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
     workstreamObjectRun(
       objectStore,
       `INSERT INTO terminal_workspace

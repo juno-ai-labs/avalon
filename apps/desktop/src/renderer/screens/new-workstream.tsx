@@ -1,4 +1,4 @@
-import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type ProjectSummary } from '@rally/contracts';
+import { MESSAGE_MAX_CHARACTERS, MESSAGE_TOO_LONG_MESSAGE, type ProjectSummary, type WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { ChevronRight, Plus } from 'lucide-react';
@@ -23,7 +23,7 @@ import { useWindowFilePaste } from '../lib/use-file-paste';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { useProjectDirectories } from '../lib/use-project-directories';
 import { WORKSTREAMS_QUERY_KEY, useWorkstreamsQuery } from '../lib/use-workstreams-query';
-import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, MessageMention, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
+import type { AgentModelOverride, CreatedWorkstream, Message, MessageAttachment, WorkOpportunity, Workspace, WorkspaceMember, WorkstreamDetail, WorkstreamSummary } from '../lib/types';
 import { AgentWorkTiming } from '../components/agent-work-timing';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
 import type { AttachmentPreview } from '../components/attachments';
@@ -76,20 +76,85 @@ interface LaunchingWorkstream {
   startedAt: number;
 }
 
-/** Presentation metadata for the accepted optimistic turn seeded after create. */
-function optimisticMessageMentions(mentions: readonly MentionIdentity[]): MessageMention[] {
-  return mentions.flatMap((mention) => (
-    mention.startOffset === undefined || mention.endOffset === undefined
-      ? []
-      : [{
-          type: mention.type,
-          ...(mention.userId ? { personId: mention.userId } : {}),
-          ...(mention.connectorType ? { connectorType: mention.connectorType } : {}),
-          displayName: mention.label,
-          startOffset: mention.startOffset,
-          endOffset: mention.endOffset,
-        }]
-  ));
+function optimisticOpeningTranscript(
+  created: CreatedWorkstream,
+  input: CreateWorkstreamInput,
+  author: Pick<WorkspaceMember, 'id' | 'name' | 'avatarUrl'>,
+): WorkstreamTranscriptSnapshot {
+  const turn = {
+    transcriptSequence: 1,
+    turnId: created.turnId,
+    entryKind: 'conversation' as const,
+    actor: 'human' as const,
+    authorUserId: author.id,
+    authorSnapshot: {
+      userId: author.id,
+      displayName: author.name,
+      avatarUrl: author.avatarUrl ?? null,
+    },
+    clientMessageId: created.clientMessageId,
+    attentionOrdinal: 1,
+    createdAtUtc: created.createdAt,
+    // Local seed only. The first authoritative turn starts at revision 1 and
+    // must replace this provisional content even when its identity is equal.
+    revision: 0,
+    blocks: [{
+      type: 'text' as const,
+      blockId: `${created.turnId}:text:0`,
+      blockIndex: 0,
+      text: input.openingMessage,
+      streaming: false,
+      messageType: 'text' as const,
+      mentions: input.mentions.flatMap((mention) => (
+        mention.startOffset === undefined || mention.endOffset === undefined
+          ? []
+          : [{
+              type: mention.type,
+              userId: mention.userId,
+              connectorType: mention.connectorType,
+              startOffset: mention.startOffset,
+              endOffset: mention.endOffset,
+            }]
+      )),
+      attachments: input.attachments,
+    }],
+    activityId: null,
+  };
+  return {
+    snapshotId: `optimistic:${created.turnId}`,
+    snapshotThrough: 1,
+    eventSequence: 0,
+    snapshotAtUtc: created.createdAt,
+    unreadAnchorSequence: null,
+    unreadReason: 'no_unread',
+    ranges: [{
+      purpose: 'latest',
+      requested: { startInclusive: 1, endExclusive: 2 },
+      covered: { startInclusive: 1, endExclusive: 2 },
+      turns: [turn],
+      activities: [],
+    }],
+    activities: [],
+    activeActivities: [],
+    activeTurns: [],
+    pendingInputs: [],
+  };
+}
+
+function emptyOptimisticTranscript(created: CreatedWorkstream): WorkstreamTranscriptSnapshot {
+  return {
+    snapshotId: `optimistic:${created.turnId}`,
+    snapshotThrough: 0,
+    eventSequence: 0,
+    snapshotAtUtc: created.createdAt,
+    unreadAnchorSequence: null,
+    unreadReason: 'no_unread',
+    ranges: [],
+    activities: [],
+    activeActivities: [],
+    activeTurns: [],
+    pendingInputs: [],
+  };
 }
 
 /**
@@ -433,24 +498,12 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
           participants: selectedParticipants,
           startedAt: input.startedAt,
         });
-      const openingMessage: Message = {
-        id: created.messageId,
-        clientMessageId: created.clientMessageId,
-        workstreamId: created.workstream.id,
-        sequenceNumber: 1,
-        authorType: 'human',
-        author: workspace.currentUser,
-        messageType: 'text',
-        text: input.openingMessage,
-        mentions: optimisticMessageMentions(input.mentions),
-        attachments: input.attachments,
-        createdAt: created.createdAt,
-      };
       queryClient.setQueryData(['workstream', created.workstream.id], detail);
-      queryClient.setQueryData(['messages', created.workstream.id], [openingMessage]);
-      queryClient.setQueryData(['messages-cursor', created.workstream.id], null);
+      queryClient.setQueryData(
+        ['ordered-transcript', created.workstream.id],
+        optimisticOpeningTranscript(created, input, workspace.currentUser),
+      );
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       attachmentDraft.consume(input.attachmentLocalIds);
       createTrace.current?.mark('cache_seed');
@@ -508,10 +561,11 @@ export function NewWorkstreamScreen({ workspace, projectId }: { workspace: Works
         startedAt: opportunityStartedAt.current ?? created.createdAt,
       });
       queryClient.setQueryData(['workstream', created.workstream.id], detail);
-      queryClient.setQueryData(['messages', created.workstream.id], []);
-      queryClient.setQueryData(['messages-cursor', created.workstream.id], null);
+      queryClient.setQueryData(
+        ['ordered-transcript', created.workstream.id],
+        emptyOptimisticTranscript(created),
+      );
       void queryClient.invalidateQueries({ queryKey: ['workstream', created.workstream.id], exact: true });
-      void queryClient.invalidateQueries({ queryKey: ['messages', created.workstream.id], exact: true });
       void queryClient.invalidateQueries({ queryKey: ['work-opportunities'] });
       void queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY });
       void navigate(`/workstreams/${created.workstream.id}`);

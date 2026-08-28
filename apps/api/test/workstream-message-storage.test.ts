@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 
@@ -24,6 +25,7 @@ afterEach(() => {
  */
 function open(): {
   storage: WorkstreamMessageStorage;
+  transcript: WorkstreamTranscriptStorage;
   sql: ReturnType<typeof createTestSqlStorage>;
 } {
   const database = new DatabaseSync(":memory:");
@@ -47,15 +49,19 @@ function open(): {
               'idle','s',1,1,0,0,0,0,0,0,0,1,1,1,1)`);
   sql.exec(`INSERT INTO substreams (id,kind,inherit_mode,depth,return_mode,audience,tool_policy,status,created_at)
     VALUES ('0','main','none',0,'none','workspace','full','open',1)`);
-  return { storage: new WorkstreamMessageStorage(binding), sql };
+  return {
+    storage: new WorkstreamMessageStorage(binding),
+    transcript: new WorkstreamTranscriptStorage(binding),
+    sql,
+  };
 }
 
 function message(overrides: Record<string, unknown> = {}) {
   return {
     messageId: "message-1",
     clientMessageId: "client-1",
-    authorType: "human" as const,
-    authorUserId: "user-1",
+    authorType: "agent" as const,
+    authorUserId: null,
     externalActorJson: null,
     messageType: "text" as const,
     text: "What changed?",
@@ -81,13 +87,13 @@ describe("appending to the transcript", () => {
     // caller's own `UPDATE workstreams` advanced `next_sequence_number`.
     expect(sql.exec(
       `SELECT sequence_number, attention_ordinal, role, author_type, visibility, content
-         FROM workstream_message_details`,
+         FROM canonical_conversation_turn_details`,
     ).toArray()).toEqual([{
       sequence_number: 1,
       attention_ordinal: 1,
-      role: "user",
-      author_type: "member",
-      visibility: "both",
+      role: "assistant",
+      author_type: "agent",
+      visibility: "people",
       content: "What changed?",
     }]);
     expect(sql.exec(
@@ -111,7 +117,7 @@ describe("appending to the transcript", () => {
     // re-read the table to find out what had happened.
     expect(await storage.appendMessage(message({ messageId: "message-2", text: "again" })))
       .toEqual({ outcome: "replayed", messageId: "message-1", sequenceNumber: 1 });
-    expect(sql.exec(`SELECT COUNT(*) AS n FROM workstream_message_records`).one().n).toBe(1);
+    expect(sql.exec(`SELECT COUNT(*) AS n FROM participant_transcript_turns`).one().n).toBe(1);
     // And the counters do not move for a message that was not written.
     expect(sql.exec(`SELECT next_sequence_number FROM workstream`).one().next_sequence_number)
       .toBe(2);
@@ -137,7 +143,7 @@ describe("appending to the transcript", () => {
     // The retired trigger's mapping, which is not one-to-one: `external` is a
     // `user` role written by an `external` author, because what a person says
     // through Slack is still something a person said.
-    expect(sql.exec(`SELECT id, role, author_type FROM workstream_message_details ORDER BY sequence_number`).toArray())
+    expect(sql.exec(`SELECT id, role, author_type FROM canonical_conversation_turn_details ORDER BY sequence_number`).toArray())
       .toEqual([
         { id: "message-1", role: "assistant", author_type: "agent" },
         { id: "message-2", role: "user", author_type: "external" },
@@ -149,13 +155,13 @@ describe("appending to the transcript", () => {
     const { storage } = open();
     await storage.appendMessage(message());
 
-    // `member` comes back as `human`, and `content` as `text_content`. Callers
-    // still speak the view's names; what changed is that nothing translates
-    // them in SQL on every read.
+    // `agent` comes back in the reader's vocabulary, and `content` as
+    // `text_content`. Callers still speak the view's names; what changed is
+    // that nothing translates them in SQL on every read.
     expect(storage.messageByClientId({ clientMessageId: "client-1" })).toMatchObject({
       id: "message-1",
-      author_type: "human",
-      author_user_id: "user-1",
+      author_type: "agent",
+      author_user_id: null,
       text_content: "What changed?",
       sequence_number: 1,
     });
@@ -168,13 +174,6 @@ describe("the windows a reader asks for", () => {
   async function mixed(storage: WorkstreamMessageStorage): Promise<void> {
     await storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", messageType: "text", text: "First" }));
     await storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", messageType: "system", text: "Host notice", now: NOW + 1_000 }));
-    await storage.upsertToolMessage({
-      messageId: "m3",
-      clientMessageId: "c3",
-      structuredContentJson: JSON.stringify({ invocation: { toolName: "t", status: "completed" } }),
-      createdAt: NOW + 2_000,
-      editedAt: null,
-    });
     await storage.appendMessage(message({ messageId: "m4", clientMessageId: "c4", messageType: "text", text: "  ", now: NOW + 3_000 }));
     await storage.appendMessage(message({ messageId: "m5", clientMessageId: "c5", messageType: "text", text: "Last", now: NOW + 4_000 }));
   }
@@ -229,8 +228,22 @@ describe("the windows a reader asks for", () => {
   });
 
   it("answers Terminal's admission check only for a participant's own message", async () => {
-    const { storage, sql } = open();
-    await storage.appendMessage(message({ messageId: "m1", clientMessageId: "c1", authorUserId: "user-1" }));
+    const { storage, transcript, sql } = open();
+    await transcript.appendParticipantMessage({
+      turnId: "m1",
+      actor: "human",
+      authorUserId: "user-1",
+      authorSnapshot: { displayName: "User at posting time", avatarUrl: null },
+      clientMessageId: "c1",
+      messageType: "text",
+      text: "What changed?",
+      structuredContentJson: null,
+      externalActorJson: null,
+      producedByRunId: null,
+      messageSequenceNumber: 1,
+      createdAtUtc: new Date(NOW).toISOString(),
+      attentionOrdinal: 1,
+    });
     sql.exec(
       `INSERT INTO participants
          (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -262,7 +275,7 @@ describe("the windows a reader asks for", () => {
     await storage.appendMessage(message({ messageId: "m2", clientMessageId: "c2", now: NOW + 1_000 }));
     for (const [part, resource, position] of [["m1", "r1", 0], ["m1", "r2", 1], ["m2", "r3", 0]] as const) {
       sql.exec(
-        `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+        `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
          VALUES (?, ?, ?, '{}')`,
         part,
         resource,
@@ -274,121 +287,6 @@ describe("the windows a reader asks for", () => {
     // it is sequence 1 and nothing else — an attachment added later is not part
     // of how the work stream was created.
     expect(storage.openingAttachmentCount()).toBe(2);
-  });
-});
-
-describe("a tool card in the transcript", () => {
-  const card = (status: string) => JSON.stringify({
-    invocation: { toolName: "linear.issue.get", status },
-  });
-
-  it("takes a sequence number but no attention ordinal, and leaves the people clock", async () => {
-    const { storage, sql } = open();
-
-    expect(await storage.upsertToolMessage({
-      messageId: "invocation-1",
-      clientMessageId: "tool:invocation-1",
-      structuredContentJson: card("pending"),
-      createdAt: NOW,
-      editedAt: null,
-    })).toEqual({ outcome: "appended", sequenceNumber: 1 });
-
-    // A tool call is machinery a member did not do. It occupies a transcript
-    // position, so it takes a sequence number; it is not something to come back
-    // to, so it takes no attention ordinal and does not move the people clock.
-    // That distinction was in the retired trigger rather than in any caller.
-    expect(sql.exec(
-      `SELECT sequence_number, attention_ordinal, tool_name, tool_status, visibility FROM workstream_message_details`,
-    ).toArray()).toEqual([{
-      sequence_number: 1,
-      attention_ordinal: null,
-      tool_name: "linear.issue.get",
-      tool_status: "pending",
-      visibility: "people",
-    }]);
-    expect(sql.exec(
-      `SELECT next_sequence_number, next_attention_ordinal, last_people_activity_at
-         FROM workstream`,
-    ).toArray()).toEqual([{
-      next_sequence_number: 2,
-      next_attention_ordinal: 1,
-      last_people_activity_at: 1,
-    }]);
-  });
-
-  it("refreshes the card in place when the call settles, without taking a second position", async () => {
-    const { storage, sql } = open();
-    await storage.upsertToolMessage({
-      messageId: "invocation-1",
-      clientMessageId: "tool:invocation-1",
-      structuredContentJson: card("pending"),
-      createdAt: NOW,
-      editedAt: null,
-    });
-
-    // The same card, settled. Consuming another sequence number here would
-    // leave a member with two rows for one tool call, which is why the routed
-    // statement guarded its counter update on the insert having actually taken
-    // the position it was about to consume.
-    expect(await storage.upsertToolMessage({
-      messageId: "invocation-1",
-      clientMessageId: "tool:invocation-1",
-      structuredContentJson: card("completed"),
-      createdAt: NOW,
-      editedAt: NOW + 5_000,
-    })).toEqual({ outcome: "refreshed", sequenceNumber: 1 });
-    expect(sql.exec(`SELECT COUNT(*) AS n FROM workstream_message_records`).one().n).toBe(1);
-    expect(sql.exec(`SELECT tool_status, edited_at FROM workstream_message_details`).toArray())
-      .toEqual([{ tool_status: "completed", edited_at: NOW + 5_000 }]);
-    expect(sql.exec(
-      `SELECT tool_name, tool_mode, tool_status, edited_at
-         FROM workstream_message_records WHERE id = 'invocation-1'`,
-    ).toArray()).toEqual([{
-      tool_name: "linear.issue.get",
-      tool_mode: "read",
-      tool_status: "completed",
-      edited_at: NOW + 5_000,
-    }]);
-    expect(JSON.parse(sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
-      `SELECT payload.payload_json
-         FROM workstream_message_records record
-         JOIN transcript_facts fact ON fact.fact_id = record.fact_id
-         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        WHERE record.id = 'invocation-1'`,
-    ).one().payload_json)).toMatchObject({
-      structuredContent: { invocation: { status: "completed" } },
-    });
-
-    // The work stream's own clock moves and its two counters do not. The
-    // retired trigger's counter update ran on the conflict path too — its guard
-    // was `changes() > 0`, and a refresh changes a row — with
-    // `next_attention_ordinal + 0` and the people clock preserved.
-    expect(sql.exec(
-      `SELECT next_sequence_number, next_attention_ordinal, last_people_activity_at, updated_at
-         FROM workstream`,
-    ).toArray()).toEqual([{
-      next_sequence_number: 2,
-      next_attention_ordinal: 1,
-      last_people_activity_at: 1,
-      updated_at: NOW + 5_000,
-    }]);
-  });
-
-  it("treats a started call as still pending, as the retired trigger did", async () => {
-    const { storage, sql } = open();
-    await storage.upsertToolMessage({
-      messageId: "invocation-1",
-      clientMessageId: "tool:invocation-1",
-      structuredContentJson: card("started"),
-      createdAt: NOW,
-      editedAt: null,
-    });
-
-    // `started` is not a settled status. A tool the model has begun is still a
-    // card a member is waiting on, and rendering it as completed would say the
-    // work finished.
-    expect(sql.exec(`SELECT tool_status FROM workstream_message_details`).toArray())
-      .toEqual([{ tool_status: "pending" }]);
   });
 });
 
@@ -422,13 +320,13 @@ describe("reading a page of transcript", () => {
     const { storage, sql } = open();
     await seed(storage, 2);
     sql.exec(
-      `INSERT INTO workstream_message_mentions
-         (message_id, mention_index, mention_kind, target_user_id, connector_type,
+      `INSERT INTO participant_transcript_mentions
+         (turn_id, mention_index, mention_kind, target_user_id, connector_type,
           start_offset, end_offset, attention_ordinal)
        VALUES ('message-1', 0, 'person', 'user-2', NULL, 0, 5, 1)`,
     );
     sql.exec(
-      `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+      `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
        VALUES ('message-2', 'resource-1', 0, ?)`,
       JSON.stringify({ attachedAt: new Date(NOW).toISOString() }),
     );

@@ -1633,7 +1633,7 @@ export class WorkOpportunityService {
     return this.startDurable(id, version, idempotencyKey);
   }
 
-  private async findDurableStart(opportunityId: string): Promise<{ workstreamId: string; messageId: string } | null> {
+  private async findDurableStart(opportunityId: string): Promise<{ workstreamId: string; turnId: string } | null> {
     const row = await this.env.DB.prepare(
       `SELECT workstream_id, message_id
          FROM workstream_create_receipts
@@ -1645,12 +1645,12 @@ export class WorkOpportunityService {
       this.auth.userId,
       `opportunity:${opportunityId}:v%`,
     ).first<{ workstream_id: string; message_id: string }>();
-    return row ? { workstreamId: row.workstream_id, messageId: row.message_id } : null;
+    return row ? { workstreamId: row.workstream_id, turnId: row.message_id } : null;
   }
 
-  private async startedResponse(durable: { workstreamId: string; messageId: string }) {
+  private async startedResponse(durable: { workstreamId: string; turnId: string }) {
     const existing = await new WorkstreamService(this.env, this.auth).get(durable.workstreamId);
-    return { workstream: existing, messageId: durable.messageId, harnessRunId: existing.latestHarnessRunId };
+    return { workstream: existing, turnId: durable.turnId, harnessRunId: existing.latestHarnessRunId };
   }
 
   private workspaceProduct() {
@@ -1693,14 +1693,14 @@ export class WorkOpportunityService {
       const durable = opportunity.created_workstream_id && opportunity.created_message_id
         ? {
           workstreamId: String(opportunity.created_workstream_id),
-          messageId: String(opportunity.created_message_id),
+          turnId: String(opportunity.created_message_id),
         }
         : await this.findDurableStart(id);
       if (durable) {
         await workspace.completeOpportunityStart({
           ...request,
           workstreamId: durable.workstreamId,
-          messageId: durable.messageId,
+          messageId: durable.turnId,
           snapshotId: newId(),
         });
         return { ...await this.startedResponse(durable), telemetryContext };
@@ -1728,7 +1728,7 @@ export class WorkOpportunityService {
         await workspace.completeOpportunityStart({
           ...request,
           workstreamId: durable.workstreamId,
-          messageId: durable.messageId,
+          messageId: durable.turnId,
           snapshotId: newId(),
         });
       } else {
@@ -1736,11 +1736,11 @@ export class WorkOpportunityService {
       }
       throw error;
     }
-    const durable = { workstreamId: createdResult.workstream.id, messageId: createdResult.messageId };
+    const durable = { workstreamId: createdResult.workstream.id, turnId: createdResult.turnId };
     await workspace.completeOpportunityStart({
       ...request,
       workstreamId: durable.workstreamId,
-      messageId: durable.messageId,
+      messageId: durable.turnId,
       snapshotId: newId(),
     });
     return { ...createdResult, telemetryContext };

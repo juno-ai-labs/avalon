@@ -4,13 +4,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { createTerminalResourceBridge } from "../src/services/terminal/resource-bridge";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import type { WorkstreamRuntimeResourceAttacher } from "../src/services/workstream-object-client";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
   executeWorkstreamObjectSql,
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -65,14 +65,9 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, { workstreamId: S, workspaceId: W });
+  seedWorkstreamRun(objectStore, { id: R,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: U }) });
   executeWorkstreamObjectSql(objectStore, [
-    {
-      sql: `INSERT INTO harness_runs
-              (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-            VALUES (?, ?, ?, 'test', ?, 'running', '2026-08-13')`,
-      params: [R, W, S, JSON.stringify({ type: "user", userId: U })],
-    },
-
     {
       sql: `INSERT INTO terminal_workspace
               (id, provider, lifecycle_state, stable_name, sandbox_id, generation,
@@ -135,13 +130,7 @@ function fixture(inObjectResourceAttacher?: WorkstreamRuntimeResourceAttacher) {
       },
     }),
   });
-  const env = withWorkstreamRuntimeDatabase(
-    baseEnv,
-    W,
-    S,
-    "0",
-    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-  );
+  const env = baseEnv;
   const provider: TerminalSandboxProvider = {
     createSandbox: vi.fn(), getSandbox: vi.fn(), startSandbox: vi.fn(), stopSandbox: vi.fn(), archiveSandbox: vi.fn(), deleteSandbox: vi.fn(), updateNetworkPolicy: vi.fn(),
     configureGitHubReadAccess: vi.fn(), clearGitHubReadAccess: vi.fn(),

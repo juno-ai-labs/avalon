@@ -1,4 +1,4 @@
-import { asWorkspaceId, type Message, type Region } from "@rally/contracts";
+import { asWorkspaceId, type Region } from "@rally/contracts";
 import { newId } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
@@ -9,7 +9,6 @@ import {
   ACCEPTED_WORKSTREAM_EMAIL_DOMAINS,
   WORKSTREAM_EMAIL_DOMAIN,
 } from "../lib/workstream-email-address";
-import { publishWorkstreamEvent } from "./integrations";
 import { runAutomationFromInboundEmail } from "./automation-service";
 import { attachWorkstreamRuntimeResource } from "./workstream-object-client";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
@@ -198,11 +197,6 @@ export interface ResendInboundEmailRoutingServiceOptions {
 export interface ResendRegionalEmailServiceOptions {
   fetch?: typeof globalThis.fetch;
   now?: () => number;
-  publish?: (
-    workspaceId: string,
-    workstreamId: string,
-    event: Record<string, unknown>,
-  ) => Promise<unknown>;
 }
 
 /**
@@ -481,7 +475,6 @@ export class ResendInboundEmailRoutingService {
 export class ResendRegionalEmailService {
   private readonly fetcher: typeof globalThis.fetch;
   private readonly now: () => number;
-  private readonly publish: NonNullable<ResendRegionalEmailServiceOptions["publish"]>;
 
   constructor(
     private env: Env,
@@ -489,8 +482,6 @@ export class ResendRegionalEmailService {
   ) {
     this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
     this.now = options.now ?? Date.now;
-    this.publish = options.publish ?? ((workspaceId, workstreamId, event) =>
-      publishWorkstreamEvent(this.env, workspaceId, workstreamId, event));
   }
 
   async ingest(rawInput: ResendRegionalEmailInput): Promise<ResendRegionalIngestionResult> {
@@ -696,25 +687,6 @@ export class ResendRegionalEmailService {
         return { accepted: true, duplicate: true, messageId: appended.messageId, resourceId };
       }
 
-      const message: Message = {
-        id: messageId,
-        clientMessageId,
-        workspaceId: input.workspaceId,
-        workstreamId: input.workstreamId,
-        author: { type: "system" },
-        messageType: "system",
-        textContent,
-        structuredContent,
-        mentions: [],
-        attachments: [],
-        sequenceNumber: appended.sequenceNumber,
-        createdAt,
-        editedAt: null,
-      };
-      await this.publish(input.workspaceId, input.workstreamId, {
-        type: "message_created",
-        message,
-      });
       return { accepted: true, duplicate: false, messageId, resourceId };
     } catch (error) {
       await this.recordRegionalFailure(receiptsDb, input, leaseToken, stableErrorCode(error));

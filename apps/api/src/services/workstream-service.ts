@@ -1,6 +1,6 @@
 import { newId, nowIso } from "@rally/db";
 import { memberSafeHarnessFailureMessage } from "@rally/agent-harness";
-import { HarnessFailureCodeSchema, asHarnessRunId, asSubstreamId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
+import { HarnessFailureCodeSchema, asHarnessRunId, asWorkspaceId, asWorkstreamId, type WorkspaceId, type WorkstreamId } from "@rally/contracts";
 import type {
   AnswerElicitationRequestSchema,
   CreateMessageRequestSchema,
@@ -16,12 +16,13 @@ import type {
 import type { z } from "zod";
 import type { AuthContext, Env } from "../env";
 import { substreamAgentName } from "../durable-objects/substream-agent";
-import { workspaceDOName } from "../durable-objects/names";
+import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import { WorkspaceOpportunityOriginEventsResultSchema } from "../durable-objects/workspace-opportunity-protocol";
 import { ApiError } from "../lib/api-error";
+import { loopActivationWasRecorded } from "../lib/loop-activation-signal";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
-import { publishWorkstreamEvent } from "./integrations";
+import { activateWorkstreamLoop, publishWorkstreamEvent } from "./integrations";
 import { logStructuredEvent, logWarn } from "../observability/logger";
 import { scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import {
@@ -42,7 +43,6 @@ import { activityIsWorkspaceVisible } from "../lib/activity-visibility";
 import type { SchedulingObjectPort } from "../durable-objects/workstream-scheduling-protocol";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { readMessage } from "../runtime/message-projection";
 import {
   claimDueWorkstreamWakeup,
   releaseClaimedWorkstreamWakeup,
@@ -52,9 +52,16 @@ import {
 import { requireOpenWorkstreamAuthority } from "./workstream-authority";
 import { WorkstreamObjectClient } from "./workstream-object-client";
 import { WorkstreamObjectCreationService } from "./workstream-object-creation-service";
-import { withWorkstreamRuntimeDatabase } from "./workstream-runtime-database";
 import { rpcResultBody } from "../durable-objects/rpc-result";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import {
+  AdmitExternalMessageInputSchema,
+  AnswerExternalElicitationInputSchema,
+  ExternalMessageAdmissionResultSchema,
+  type AdmitExternalMessageInput,
+  type AnswerExternalElicitationInput,
+  type ExternalMessageAdmissionResult,
+} from "../durable-objects/workstream-external-message-protocol";
 
 /**
  * `descriptionSource` is the caller's assertion, never inferred from whether
@@ -149,6 +156,54 @@ const GENERIC_MEMBER_SAFE_HARNESS_ERROR = Object.freeze({
   message: "Rally could not complete this run. Retrying is unlikely to help — copy the request ID for support",
 });
 
+async function externalMessageAgent(
+  env: Env,
+  workspaceId: WorkspaceId,
+  workstreamId: WorkstreamId,
+) {
+  await requireOpenWorkstreamAuthority(env);
+  return durableObjectStubForWorkspace(
+    env,
+    env.SUBSTREAM_AGENTS,
+    workspaceId,
+    substreamAgentName(env.AVALON_REGION, workspaceId, workstreamId),
+  );
+}
+
+export async function admitExternalWorkstreamMessage(
+  env: Env,
+  rawInput: AdmitExternalMessageInput,
+): Promise<ExternalMessageAdmissionResult> {
+  const input = AdmitExternalMessageInputSchema.parse(rawInput);
+  const agent = await externalMessageAgent(env, input.workspaceId, input.workstreamId);
+  const response = await agent.admitExternalMessage(input);
+  const body = rpcResultBody(response);
+  if (response.status < 200 || response.status >= 300) {
+    const error = body && typeof body === "object" && "error" in body
+      ? String(body.error)
+      : "external_message_admission_failed";
+    throw new Error(error);
+  }
+  return ExternalMessageAdmissionResultSchema.parse(body);
+}
+
+export async function answerExternalWorkstreamElicitation(
+  env: Env,
+  rawInput: AnswerExternalElicitationInput,
+): Promise<ExternalMessageAdmissionResult> {
+  const input = AnswerExternalElicitationInputSchema.parse(rawInput);
+  const agent = await externalMessageAgent(env, input.workspaceId, input.workstreamId);
+  const response = await agent.answerExternalElicitation(input);
+  const body = rpcResultBody(response);
+  if (response.status < 200 || response.status >= 300) {
+    const error = body && typeof body === "object" && "error" in body
+      ? String(body.error)
+      : "external_elicitation_answer_failed";
+    throw new Error(error);
+  }
+  return ExternalMessageAdmissionResultSchema.parse(body);
+}
+
 export async function launchWorkstreamHarness(
   env: Env,
   input: {
@@ -165,38 +220,36 @@ export async function launchWorkstreamHarness(
     slackOrigin?: SlackOriginContext;
     slackSearchAuthorization?: SlackSearchAuthorization;
     parentHarnessRunId?: string;
-    supersedeActiveRun?: boolean;
-    scheduledWakeupId?: string;
-    digestDeliveryId?: string;
     telemetryOperationId?: string;
     telemetrySubjectUserId?: string;
     /** Admit only while this is still the latest participant-facing run. */
     expectedLatestHarnessRunId?: string;
-  },
+  } & (
+    | { scheduledWakeupId: string; digestDeliveryId?: never }
+    | { digestDeliveryId: string; scheduledWakeupId?: never }
+  ),
   publishEvent: typeof publishWorkstreamEvent = publishWorkstreamEvent,
 ): Promise<string> {
   // The Durable-Object authority is the only execution arm left; a stack that
   // has not opened it must refuse here, before the admission writes below.
   await requireOpenWorkstreamAuthority(env);
-  const executionEnv = withWorkstreamRuntimeDatabase(
-    env,
-    input.workspaceId,
-    input.workstreamId,
-  );
-  const id = asHarnessRunId(newId());
+  const executionEnv = env;
+  const id = await stableActivationRunId(input);
   const at = nowIso();
+  const executionPrincipalJson = JSON.stringify(input.executionPrincipal);
   const model = await scheduledWorkstreamModelForExisting(executionEnv, {
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
   });
-  const admission = await createHarnessRunObjectPort(
+  const runs = createHarnessRunObjectPort(
     executionEnv,
     input.workspaceId,
     input.workstreamId,
-  ).admitRun({
+  );
+  const admission = await runs.admitRun({
     runId: id,
     origin: input.origin,
-    executionPrincipalJson: JSON.stringify(input.executionPrincipal),
+    executionPrincipalJson,
     status: "running",
     startedAt: Date.parse(at),
     model,
@@ -205,25 +258,31 @@ export async function launchWorkstreamHarness(
     // wrong for every run whose trigger was not the newest human message.
     triggerPartId: input.triggerMessageId,
     parentRunId: input.parentHarnessRunId ?? null,
-    supersedeActive: input.supersedeActiveRun === true,
     expectedLatestRunId: input.expectedLatestHarnessRunId ?? null,
     now: Date.parse(at),
   });
-  // Both refusals carry the same member-visible error, which is what the routed
-  // version did: its staleness check and its swallowed UNIQUE collision were
-  // both a zero-change insert, and neither could say which it had been. They
-  // are different conditions — `stale` means someone else got here first,
-  // `busy` means the run this one superseded has not stopped yet — and the
-  // second is the common one on a follow-up into a live work stream. Splitting
-  // what a member is told is a product decision rather than part of this
-  // conversion.
-  if (admission.outcome === "stale" || admission.outcome === "busy") {
+  if (admission.outcome === "stale") {
     throw new ApiError(409, "terminal_repository_request_stale", "A newer run replaced this Terminal repository request. Reload the work stream before continuing.");
+  }
+  if (admission.outcome === "exists") {
+    const existing = await runs.run({ runId: id });
+    if (!existing) throw new Error("substream_loop_execution_receipt_not_found");
+    if (existing.origin !== input.origin
+      || existing.execution_principal_json !== executionPrincipalJson
+      || existing.trigger_part_id !== input.triggerMessageId
+      || existing.parent_run_id !== (input.parentHarnessRunId ?? null)) {
+      throw new Error("substream_loop_execution_replay_mismatch");
+    }
+    // The stable source receipt is the idempotency answer even after its loop
+    // cycle finished. Re-arming a terminal receipt is both impossible and
+    // unnecessary; the caller is retrying admission, not asking for a new turn.
+    if (existing.terminalized_at !== null) return id;
   }
   const workflowInput: WorkstreamWorkflowInput = {
     region: env.AVALON_REGION,
     workspaceId: input.workspaceId,
     workstreamId: input.workstreamId,
+    loopId: substreamLoopId(input.workstreamId),
     harnessRunId: id,
     triggerMessageId: input.triggerMessageId,
     automationSubscriptionId: null,
@@ -244,32 +303,8 @@ export async function launchWorkstreamHarness(
       : {}),
     reason: input.origin,
   };
-  /*
-   * The dispatch round trip stays on the caller's path, and it is the slowest
-   * step in a create. Handing it to `waitUntil` was tried and reverted: the run
-   * row above already says `running` while `attempt_id` and `lease_expires_at`
-   * stay NULL until the agent admits the run, and nothing reaps that shape.
-   * A dropped deferral therefore left a work stream permanently "working" —
-   * `stop` only records a request a live run has to observe, `retry` refuses a
-   * `running` stream, and no screen offers either. Losing the start here
-   * instead fails loudly, in front of the person who asked for it.
-   */
   try {
-    const agent = await durableObjectStubForWorkspace(
-      env,
-      env.SUBSTREAM_AGENTS,
-      input.workspaceId,
-      substreamAgentName(
-        env.AVALON_REGION,
-        input.workspaceId,
-        input.workstreamId,
-      ),
-    );
-    const response = await agent.dispatchRun({ ...workflowInput, substreamId: asSubstreamId("0") });
-    if (response.status < 200 || response.status >= 300) {
-      const body = rpcResultBody(response) as { error?: unknown } | null;
-      throw new Error(typeof body?.error === "string" ? body.error : "substream_agent_unavailable");
-    }
+    await activateWorkstreamLoop(env, workflowInput);
   } catch (error) {
     const diagnosticMessage = error instanceof Error ? error.message : "Workflow start failed";
     logStructuredEvent(env, "error", "workstream_harness_launch_failed", {
@@ -281,6 +316,11 @@ export async function launchWorkstreamHarness(
       error_name: error instanceof Error ? error.name : "UnknownError",
       error_message: diagnosticMessage,
     });
+    // Once the subordinate receipt commits, the caller must replay this same
+    // stable activation. Terminalizing it here would race the alarm that may
+    // already own it and recreate the exact split authority this cutover
+    // removes.
+    if (loopActivationWasRecorded(error)) throw error;
     const memberSafeError = memberSafeHarnessError({ code: "workflow_unavailable" })
       ?? GENERIC_MEMBER_SAFE_HARNESS_ERROR;
     // Through the object's own authority like the admission above: the run row
@@ -321,6 +361,35 @@ export async function launchWorkstreamHarness(
     status: "running",
   });
   return id;
+}
+
+async function stableActivationRunId(input: {
+  workspaceId: WorkspaceId;
+  workstreamId: WorkstreamId;
+} & (
+  | { scheduledWakeupId: string; digestDeliveryId?: never }
+  | { digestDeliveryId: string; scheduledWakeupId?: never }
+)): Promise<ReturnType<typeof asHarnessRunId>> {
+  const source = input.scheduledWakeupId
+    ? ["scheduled_wakeup", input.scheduledWakeupId]
+    : input.digestDeliveryId
+      ? ["digest_delivery", input.digestDeliveryId]
+      : ["digest_delivery", input.digestDeliveryId];
+  const seed = new TextEncoder().encode(JSON.stringify([
+    "rally-persistent-loop-activation-v1",
+    input.workspaceId,
+    input.workstreamId,
+    ...source,
+  ]));
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", seed));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = [...bytes.slice(0, 16)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return asHarnessRunId(
+    `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`,
+  );
 }
 
 /**
@@ -438,7 +507,9 @@ async function appendWakeupSystemMessage(env: Env, row: WorkstreamWakeupRow): Pr
   // The insert and the counter it consumed were a two-statement batch: one of
   // them advanced `next_attention_ordinal` inside the retired view's trigger
   // and the other advanced `next_sequence_number` here. One operation now.
-  const appended = await messages.appendMessage({
+  // The object port publishes the canonical turn only when this append wins;
+  // a replay returns the same identity without broadcasting it a second time.
+  await messages.appendMessage({
     messageId: newId(),
     clientMessageId,
     authorType: "system",
@@ -450,21 +521,6 @@ async function appendWakeupSystemMessage(env: Env, row: WorkstreamWakeupRow): Pr
     producedByRunId: null,
     now: Date.now(),
   });
-  // A redelivered alarm names the wake-up it already announced. Publishing a
-  // second `message_created` for a row that was already there would put the
-  // same notice in front of a member twice.
-  if (appended.outcome === "replayed") return;
-  const message = await readMessage(
-    messages,
-    { workspaceId: row.workspace_id, workstreamId: row.workstream_id },
-    clientMessageId,
-  );
-  if (message) {
-    await publishWorkstreamEvent(env, row.workspace_id, row.workstream_id, {
-      type: "message_created",
-      message,
-    });
-  }
 }
 
 function json<T>(value: unknown, fallback: T): T {
@@ -606,10 +662,6 @@ export class WorkstreamService {
       }
     }
     return client.update(input);
-  }
-
-  async messages(id: string, limit: number, before?: number, after?: number, around?: number) {
-    return (await this.authoritativeClient(id)).messages(limit, before, after, around);
   }
 
   async acknowledgeRead(id: string, input: AcknowledgeReadInput) {
