@@ -453,6 +453,19 @@ describe('resource detail content preview', () => {
     expect(loadResourceContent).toHaveBeenCalledTimes(1);
   });
 
+  it('does not re-ask a rejection that is final, however it is decorated', async () => {
+    // 422 is an answer. A `retryAfterMs` riding along on one does not make it a
+    // wait, and reading it as one would turn this into a general retry layer
+    // over responses that are already settled — which is what the code check,
+    // not just the `instanceof`, is here to prevent.
+    const loadResourceContent = vi.fn()
+      .mockRejectedValue(new ApiError('This attachment format cannot be previewed', 422, 'resource_preview_unsupported', { retryAfterMs: 5 }));
+    openDetail(note, loadResourceContent);
+
+    await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+    expect(loadResourceContent).toHaveBeenCalledTimes(1);
+  });
+
   it('treats a zero delay as no delay, rather than asking as fast as the network allows', async () => {
     // The budget bounds how long the loop runs, not how many requests it makes:
     // `wait(0)` resolves on the next tick, so a route answering 0 would be asked
