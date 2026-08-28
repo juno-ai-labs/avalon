@@ -387,14 +387,16 @@ ${syntax}
     background: #f1efe5;
     border: 1px solid #dcd9c9;
     border-radius: 8px;
+    box-sizing: border-box;
     display: flex;
     gap: 10px;
     margin: 12px 0;
     padding: 10px 12px;
+    width: 100%;
   }
   .citation-card-icon { display: none; }
   .citation-card-body strong { display: block; font-size: 13.5px; font-weight: 640; }
-  .citation-card-body small { color: #6b6d5e; font-size: 11.5px; }
+  .citation-card-body small { color: #6b6d5e; font-size: 11.5px; text-transform: capitalize; }
   .citation-pill {
     background: #e3e6c4;
     border-radius: 999px;

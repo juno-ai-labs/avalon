@@ -15,7 +15,8 @@ one of them silently missed the others; the changelog records what that cost.
 
 | Path | Responsibility |
 | --- | --- |
-| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its four component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, and the `a` renderer that turns mention links into chips. |
+| `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, the `a` renderer that turns mention links into chips, and the `img`, `li`, `section` and `sup` overrides that citations are decided in. |
+| `apps/desktop/src/renderer/components/citations.tsx` | The (position × scheme) citation registry the overrides above dispatch into. [`inline-resource-citations.md`](inline-resource-citations.md) owns it. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guard that `react-markdown` stays mounted in one place. |
@@ -35,8 +36,10 @@ Eight call sites, all passing a markdown string as `children`:
 ## How it works
 
 `MarkdownBody` renders a `div.markdown-body` around `ReactMarkdown` with
-`remark-gfm`, so tables, task lists, strikethrough, and autolinks all parse. Four
-overrides sit on top of the default element mapping.
+`remark-gfm`, so tables, task lists, strikethrough, footnotes, and autolinks all
+parse. Overrides sit on top of the default element mapping: code, tables and
+mentions below, and the citation positions that
+[`inline-resource-citations.md`](inline-resource-citations.md) owns.
 
 ### Code
 
@@ -80,6 +83,13 @@ schemes through untouched — everything else goes through react-markdown's
 a `connector:` href minted by this render's own token becomes a connector chip.
 Neither is ever emitted as a navigable link. Every other link renders as an
 external one, with `target="_blank"` and `rel="noopener noreferrer"`.
+
+A third scheme, `resource:`, joins them and behaves the opposite way: it *does*
+navigate, because it names openable content rather than an identity. It is
+decided in the same `a` override, and the same `urlTransform` pass-through is
+what lets a malformed one be recognised as a citation rather than arriving as an
+empty href. [`inline-resource-citations.md`](inline-resource-citations.md) owns
+the protocol, the image and footnote positions, and the asymmetry's reasoning.
 
 The connector token is created once per mounted body, so a link keeps its
 identity across re-renders and a `connector:` string that merely appears in the
@@ -285,6 +295,40 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-28 — Citations render as chips, embed cards, and footnote pills
+
+**What changed:** The `a` override gained a third scheme, `resource:`, and three
+positions gained overrides beside it: `img` for the embed-card form, and `li`,
+`section` and `sup` for the footnote form. `MarkdownBody` now computes the
+message's citation map, passes a per-mount `clobberPrefix` to `remark-rehype`,
+and provides both through context. Unlike a mention, a citation navigates.
+
+**Why:** [`inline-resource-citations.md`](inline-resource-citations.md) carries
+the product reasoning. What belongs here is why it landed inside this component
+rather than beside it: the mention chips were already proof that hijacking link
+syntax in the one renderer works, and the alternative — a dedicated message type
+— would have delivered the same affordance through a wire enum and a dispatch
+branch on every client. A second renderer for citations was never on the table;
+the single-mount guard is why.
+
+**Considered and rejected:** Passing the citation map through the memoised
+component config, the way `mentions` is passed. It changes on every streamed
+commit, so it invalidates every settled segment and turns the streaming fast path
+back into a whole-body re-parse — the exact trap this document already warns
+about for `mentions = []`, and the streaming-cost guard caught it at six times
+its budget.
+
+**Consequences:** Anything the components need that changes per commit goes
+through context, not through that config. `remark-gfm` is pinned in the manifest
+now: its footnote output — the `data-footnote-ref` attribute, the
+`section[data-footnotes]` wrapper, and the `clobberPrefix` option — is a contract
+this renderer reads rather than an implementation detail. And a class added for a
+citation form needs a rule in the exported card's stylesheet in the same change,
+the same as every other class here.
+
+Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+
 
 ### 2026-08-23 — A code block gets a header bar instead of a floating button
 

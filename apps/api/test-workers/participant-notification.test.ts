@@ -881,10 +881,19 @@ describe("who a create is allowed to tell", () => {
       && envelope.effect.eventType === "workstream_participant_added"
     ))).toHaveLength(0);
     // Seated all the same: not telling somebody is not leaving them out.
-    expect(envelopes.filter((envelope) => (
-      envelope.effect.kind === "directory_user"
-      && (envelope.effect.userId === INVITEE_ID || envelope.effect.userId === SECOND_INVITEE_ID)
-    ))).toHaveLength(2);
+    //
+    // Read from `projection_keys` rather than from the outbox rows above,
+    // because a directory effect is the one kind that *is* acked without a
+    // consumer: `deliverDirectoryEffectsEagerly` runs under `waitUntil` and
+    // deletes the row, so counting outbox envelopes here races that delete and
+    // fails with zero when it loses. `deliveredEffects` says as much in its own
+    // docblock. `projection_keys` is never drained, so a row per invitee is the
+    // same fact stated where it cannot be raced away.
+    // A version of -1 is the absence of a row; anything from 0 up is a seat.
+    expect([
+      await viewerProjectionVersion(INVITEE_ID) >= 0,
+      await viewerProjectionVersion(SECOND_INVITEE_ID) >= 0,
+    ]).toEqual([true, true]);
   });
 
   it("tells every person named, once each, gated on their own row", async () => {
