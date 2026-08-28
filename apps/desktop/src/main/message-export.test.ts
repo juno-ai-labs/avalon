@@ -222,10 +222,14 @@ describe('the exported document', () => {
     for (const selector of ['.citation-chip', '.citation-card', '.citation-pill', '.citation-text-fallback']) {
       expect(html).toContain(selector);
     }
+    // Anchored at the selector's own brace, not `[^{]*`: that walks the shared
+    // reset's selector list, so the assertion was satisfied by the very rule
+    // that strips the fill — passing for a chip with no background at all.
+    expect(html).toMatch(/\.citation-chip\s*\{[^}]*\bbackground:\s*#eceade/u);
+    expect(html).toMatch(/\.citation-pill\s*\{[^}]*\bvertical-align:\s*super;/u);
     // A chip is a labelled span on a page, not a control: the card is a
     // picture, so a button's chrome and a pointer cursor are noise in it.
-    expect(html).toMatch(/\.citation-chip[^{]*\{[^}]*\bbackground:/u);
-    expect(html).toMatch(/\.citation-pill[^{]*\{[^}]*\bvertical-align:\s*super;/u);
+    expect(html).toMatch(/\.citation-chip,[^{]*\{[^}]*\bbackground:\s*none/u);
   });
 
   it('splashes two different messages differently and the same message the same way', () => {

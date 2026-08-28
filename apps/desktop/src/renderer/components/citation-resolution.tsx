@@ -51,7 +51,7 @@ export function CitationResolutionProvider({ children }: { children: React.React
     }).then((resource) => {
       setResolutions((current) => new Map(current).set(resourceId, {
         status: 'resolved',
-        resource: { id: resource.id, title: resource.title, resourceType: resource.resourceType },
+        resource: { resourceType: resource.resourceType },
       }));
     }).catch(() => {
       setResolutions((current) => new Map(current).set(resourceId, { status: 'unavailable' }));

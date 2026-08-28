@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AutomationDraft } from "@rally/contracts";
+import { parseCitationTarget } from "@rally/contracts/citations";
 import { describe, expect, it } from "vitest";
 import {
   renderActivityRoutingMessages,
@@ -108,7 +109,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "c3bb9ce0f9f4db164cdc13ccb3322f0c36987f4992565cddfe8a1eb19b2ffd33",
+        hash: "5ee06b99ab39dafb8aa1cce5ce1620a135b5b7ed894f144e2830565a15b3ef79",
       },
       workstreamWithDocuments: {
         actual: renderWorkstreamSystemPrompt({
@@ -116,7 +117,7 @@ describe("prompt renderers", () => {
           objective: "Find the cause and create a concise incident note.",
           documentPublishing: true,
         }),
-        hash: "7a8e0c0c1c80f40dceb9f65c9aa60c83948431afd622bd826aa4a328b66c8485",
+        hash: "2db566a372dcdce3d2b0a0e8b1a8158c6ae08e20b9b6f55c9615d4f4981b8bf1",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -124,7 +125,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "92af43c36b3a1e59e3103e470658a947b1bd2ed55c42719b35e44590d6e1cd90",
+        hash: "46ab02bfacb2a3b97739db7beb0d99943e01846e088425fa706322da67f35bed",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -254,7 +255,7 @@ describe("prompt renderers", () => {
     expect(withDocuments).not.toMatch(/terminal_[a-z_]+/u);
     // Where a run cannot publish a document, the prompt is what it was.
     expect(withoutDocuments).not.toContain("# Documents");
-    expect(withoutDocuments).not.toContain("work-stream resource");
+    expect(withoutDocuments).not.toContain("publish it as a work-stream resource");
   });
 
   it("tells an automation run that Rally delivers its result, and where", () => {
@@ -652,16 +653,41 @@ describe("prompt renderers", () => {
   it("teaches both citation forms, footnotes, and never fabricating an identifier", () => {
     const prompt = renderWorkstreamSystemPrompt({ title: "T", objective: "O", documentPublishing: true });
 
-    expect(prompt).toContain("![Title](resource://<resource-id>)");
-    expect(prompt).toContain("[Title](resource://<resource-id>)");
-    expect(prompt).toContain("[^1]");
+    // Distinguishing tails, not the bare syntax: `[Title](resource://<resource-id>)`
+    // is a substring of the embed form, so asserting it alone survives deleting
+    // the whole inline clause — which is the assertion failing to be able to
+    // fail, on half of what this test's name promises.
+    expect(prompt).toContain("inside a sentence as `[Title](resource://<resource-id>)`");
+    expect(prompt).toContain("on its own line using the identifier the publish returned");
+    expect(prompt).toContain("`Revenue grew 40%.[^1]`");
     expect(prompt).toContain("Never invent an identifier");
   });
 
   it("renders the citation guidance whatever the run can produce", () => {
-    // A run with no terminal workspace still cites what it read, so this is not
-    // conditioned on document publishing the way the document section is.
-    expect(renderWorkstreamSystemPrompt({ title: "T", objective: "O" })).toContain("resource://");
+    // A run with no terminal workspace still cites what it read, so the reading
+    // half is unconditional. The announcing half is not: it lives in the
+    // document section, behind the same gate, because a run that cannot publish
+    // has nothing to announce and a rule it must resolve before ignoring.
+    const plain = renderWorkstreamSystemPrompt({ title: "T", objective: "O" });
+
+    expect(plain).toContain("inside a sentence as `[Title](resource://<resource-id>)`");
+    expect(plain).not.toContain("on its own line using the identifier the publish returned");
+  });
+
+  // The prompt teaches a spelling; the shared grammar decides which spellings
+  // become a chip. Drift either way is silent — a taught form the grammar
+  // rejects renders as plain label text on every surface — so the taught forms
+  // are parsed here rather than compared to a literal.
+  it("teaches only citation targets the shared grammar accepts", () => {
+    const resourceId = "0192abcd7000";
+    const taught = renderWorkstreamSystemPrompt({ title: "T", objective: "O", documentPublishing: true })
+      .replaceAll("<resource-id>", resourceId);
+    const targets = [...taught.matchAll(/!?\[[^\]]*\]\((resource:[^\s)`]*)\)/gu)].map((match) => match[1]!);
+
+    expect(targets.length).toBeGreaterThan(0);
+    for (const href of targets) {
+      expect(parseCitationTarget(href)).toEqual({ kind: "resource", resourceId });
+    }
   });
 
   it("keeps fixed prompt overhead bounded", () => {

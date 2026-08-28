@@ -76,6 +76,24 @@ describe('resource citations', () => {
     });
   });
 
+  it('names the action on a chip and a card, the way a pill already does', () => {
+    const container = renderBody('See [Mute windows PRD](resource://prd-1).\n\n![Mute windows PRD](resource://prd-1)\n');
+
+    for (const button of container.querySelectorAll('button')) {
+      expect(button.getAttribute('aria-label')).toBe('Open Mute windows PRD');
+    }
+  });
+
+  it('falls back to the label text itself when the label is not plain text', () => {
+    // The accessible name then comes from the button's own contents, which is
+    // never worse than today — an invented `aria-label` would be.
+    const container = renderBody('See [**Mute windows** PRD](resource://prd-1).');
+    const button = container.querySelector('button');
+
+    expect(button?.getAttribute('aria-label')).toBeNull();
+    expect(button?.textContent).toBe('Mute windows PRD');
+  });
+
   it('renders a chip while a lookup is still pending, from the label the message already carried', () => {
     renderBody('See [Another stream’s doc](resource://elsewhere).');
 
@@ -157,6 +175,18 @@ describe('grounding footnotes', () => {
     expect(footnotes?.textContent).toContain('Just a note, with no link in it.');
   });
 
+  it('leaves a definition whose target is malformed as a classic footnote', () => {
+    // Reachable from the guidance itself: a model that echoes the `<resource-id>`
+    // placeholder writes exactly this. Lifting it would put the *source's title*
+    // where the reference marker belongs — "Revenue grew 40%.Q3 board deck" —
+    // and drop the definition from the bottom, losing the source entirely.
+    const container = renderBody('Revenue grew 40%.[^1]\n\n[^1]: [Q3 board deck](resource://<resource-id>)');
+
+    expect(container.querySelector('.citation-pill')).toBeNull();
+    expect(container.querySelector('p')?.textContent).toBe('Revenue grew 40%.1');
+    expect(container.querySelector('.footnotes')?.textContent).toContain('Q3 board deck');
+  });
+
   it('renders only the definitions it did not lift, when a message mixes both', () => {
     const container = renderBody([
       'Cited.[^1] Noted.[^2]',
@@ -169,6 +199,11 @@ describe('grounding footnotes', () => {
     const items = within(container.querySelector('.footnotes') as HTMLElement).getAllByRole('listitem');
     expect(items).toHaveLength(1);
     expect(items[0]?.textContent).toContain('A free-form remark.');
+    // The surviving item keeps the number its reference shows. Dropping the
+    // lifted item renumbers the list, so without this the prose says "2" and
+    // the source list says "1." — two numbers for one footnote.
+    expect(container.querySelector('[data-footnote-ref]')?.textContent).toBe('2');
+    expect(items[0]?.getAttribute('value')).toBe('2');
   });
 
   it('namespaces footnote ids per message, so two mounts cannot cross-wire', () => {

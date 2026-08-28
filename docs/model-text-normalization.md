@@ -275,7 +275,7 @@ first, and the call sites say so. `mapMarkdownProse` is now shared API rather
 than a private detail: changing what counts as code changes both rewriters at
 once, which is the point, and means its tests protect two callers.
 
-Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+Shipped in #382. Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
 
 ### 2026-08-23 — Created, because TeX was reaching readers
 

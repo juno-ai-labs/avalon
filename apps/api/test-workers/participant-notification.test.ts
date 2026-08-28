@@ -184,11 +184,15 @@ async function openWorkstream(
  * The parent keeps them because nothing here drains it: `wrangler.test.jsonc`
  * declares the activity queue as a producer with no consumer, so no Queue
  * message ever arrives to acknowledge an effect out of `durable_outbox`. Its
- * own alarm only marks rows `inflight`. The one thing that *does* ack without a
- * consumer is `deliverDirectoryEffectsEagerly`, which runs inside
- * `acceptSubstreamEffects` under `waitUntil` and covers directory effects only
- * — so a directory assertion here is read back before that lands rather than
- * guaranteed, and `directoryEffectFor` below waits for it to settle instead.
+ * own alarm only marks rows `inflight`.
+ *
+ * This paragraph used to claim `deliverDirectoryEffectsEagerly` acks directory
+ * effects without a consumer, and pointed at a `directoryEffectFor` helper. The
+ * first is contradicted by that function, which delivers and deliberately does
+ * not acknowledge; the second does not exist in this file. Both are corrected
+ * rather than repeated, because a directory assertion here did fail once and
+ * this docblock is what a reader consults about why — see the seating
+ * assertion in "who a create is allowed to tell" for what is known.
  */
 async function deliveredEffects(
   stub: DurableObjectStub,
@@ -339,15 +343,16 @@ describe("adding somebody to a work stream", () => {
     expect(added.status).toBe(200);
 
     const envelopes = await deliveredEffects(stub);
-    const viewer = envelopes.filter((envelope) => (
-      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
-    ));
     const activity = envelopes.filter((envelope) => (
       envelope.effect.kind === "activity_event"
       && envelope.effect.eventType === "workstream_participant_added"
     ));
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
-    expect([viewer.length, activity.length, notification.length]).toEqual([1, 1, 1]);
+    // Seating is read from `projection_keys`, not counted in the outbox: a
+    // directory effect is the one kind acked without a consumer, so counting
+    // its envelopes races `deliverDirectoryEffectsEagerly`'s delete.
+    expect([await viewerProjectionVersion(INVITEE_ID) >= 0, activity.length, notification.length])
+      .toEqual([true, 1, 1]);
 
     const activityEffect = activity[0]!.effect;
     if (activityEffect.kind !== "activity_event") throw new Error("expected an activity event");
@@ -587,6 +592,10 @@ describe("naming somebody when the work stream is created", () => {
       envelope.effect.kind === "participant_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ));
+    // The one directory assertion that cannot move to `projection_keys`: it
+    // reads the effect's payload, which only the outbox row carries. It still
+    // races the eager delivery's delete; closing that needs a record of what
+    // was acked, which nothing keeps today.
     const viewer = envelopes.find((envelope) => (
       envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
     ));
@@ -612,15 +621,16 @@ describe("naming somebody when the work stream is created", () => {
     await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
 
     const envelopes = await deliveredEffects(stub);
-    const viewer = envelopes.filter((envelope) => (
-      envelope.effect.kind === "directory_user" && envelope.effect.userId === INVITEE_ID
-    ));
     const activity = envelopes.filter((envelope) => (
       envelope.effect.kind === "activity_event"
       && envelope.effect.eventType === "workstream_participant_added"
     ));
     const notification = envelopes.filter((envelope) => envelope.effect.kind === "participant_notification");
-    expect([viewer.length, activity.length, notification.length]).toEqual([1, 1, 1]);
+    // Seating is read from `projection_keys`, not counted in the outbox: a
+    // directory effect is the one kind acked without a consumer, so counting
+    // its envelopes races `deliverDirectoryEffectsEagerly`'s delete.
+    expect([await viewerProjectionVersion(INVITEE_ID) >= 0, activity.length, notification.length])
+      .toEqual([true, 1, 1]);
 
     const notificationEffect = notification[0]!.effect;
     if (notificationEffect.kind !== "participant_notification") {
@@ -882,13 +892,21 @@ describe("who a create is allowed to tell", () => {
     ))).toHaveLength(0);
     // Seated all the same: not telling somebody is not leaving them out.
     //
-    // Read from `projection_keys` rather than from the outbox rows above,
-    // because a directory effect is the one kind that *is* acked without a
-    // consumer: `deliverDirectoryEffectsEagerly` runs under `waitUntil` and
-    // deletes the row, so counting outbox envelopes here races that delete and
-    // fails with zero when it loses. `deliveredEffects` says as much in its own
-    // docblock. `projection_keys` is never drained, so a row per invitee is the
-    // same fact stated where it cannot be raced away.
+    // Read from `projection_keys` rather than counted out of the outbox rows
+    // above, because this assertion failed once with zero directory envelopes
+    // and passed on every rerun.
+    //
+    // **The cause was not established.** The obvious candidate is wrong:
+    // `deliverDirectoryEffectsEagerly` (`workstream-do.ts`) says in terms that
+    // it delivers without acknowledging and leaves the outbox untouched, so it
+    // is not draining the rows this counted. The `deliveredEffects` docblock
+    // below still claims it acks, which is what pointed the wrong way; that
+    // claim predates the commit that removed the ack.
+    //
+    // What is true regardless of the mechanism is that `projection_keys` is
+    // never drained by anything, so a row per invitee states the same fact —
+    // each was seated — where no background work can take it away. That is why
+    // the assertion moved rather than being rerun until green.
     // A version of -1 is the absence of a row; anything from 0 up is a seat.
     expect([
       await viewerProjectionVersion(INVITEE_ID) >= 0,

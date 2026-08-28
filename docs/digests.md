@@ -692,7 +692,7 @@ why. If a deep link into the desktop ever exists, this is where an internal
 source stops being title text and becomes a real link; nothing about the protocol
 or the renderer changes with it.
 
-Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+Shipped in #382. Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
 
 ### 2026-08-25 — The Digest settings section hides when digests-enabled is off
 

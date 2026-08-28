@@ -124,6 +124,19 @@ An automation run's final message is what Rally delivers, so the run is told whi
 
 A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the trigger — an explicit document type, a composition past roughly three paragraphs organized with headings or a table, or a result long enough to bury the conversation — plus the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is rendered only for a run that can produce one — the region reports Terminal supported, and the run is not an automation, a scheduled digest, an inbound email, or Slack-originated, each of which delivers a final message that a rail entry is not part of. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the rule steers into.
 
+A model cites what an answer rests on inline, in ordinary Markdown
+(`CITATION_POLICY`, `prompts/citations.ts`): a work-stream resource with link
+syntax carrying a `resource://` scheme, a grounding source with a
+GitHub-flavored footnote. It names no tool and adds no wire field — the
+desktop's single Markdown renderer dispatches on the scheme, and outbound email
+and Slack rewrite the syntax to readable text before sending. It renders for
+every work-stream run rather than only a publishing one, because a run with no
+terminal workspace still cites what it read; the *announcing* half — the embed
+form for a document just published — sits in `DOCUMENT_GENERATION_POLICY`
+instead, behind the same gate, because a run that cannot publish has nothing to
+announce. [`inline-resource-citations.md`](inline-resource-citations.md) owns
+the protocol and its three renderings.
+
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
 ### Automation compilation
@@ -685,7 +698,13 @@ and general child participants remain deferred product work.
 
 Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
-A published document has no reading surface in the desktop client. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel shows metadata only — title, provider, type, direction, version, last updated, `Remove`. `InspectorDetail` renders no body, and `AttachmentLightbox`, the one surface that fetches `/resources/:id/preview`, is wired only to attachments on a message. So the `# Documents` policy can produce a document a participant cannot read in the app, and the run's short chat message is the only thing they see. This is why [the terminal-artifact generation PRD](PRDs/2026-08-27_terminal-artifact-generation/prd.md) is not `completed`; building the viewer is a desktop change that PRD excludes.
+A published document is read in the rail. `InspectorDetail` renders the
+resource's own content beneath its metadata through the shared
+`document-preview.tsx` loader and the authorized `/resources/:id/preview` route
+— the same path the attachment lightbox uses — so the `# Documents` policy no
+longer produces a document a participant cannot read in the app. That gap is
+what the 2026-08-27 entry below recorded as scope deliberately cut; it was
+closed by the citations change, which needed a destination for a chip to open.
 
 Per-tool time and the model catalog fetch use a **cancellable** deadline whose timer is cleared once the call it guarded returns. The Bind loop runs inside a long-lived `SubstreamAgent` operation, so an `AbortSignal.timeout()` left armed after a fast tool call retains dead timer work and can keep the isolate active after useful work ended. The rule and its incident are [`runbook.md`](runbook.md).
 
@@ -809,6 +828,44 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-28 — The prompt teaches citations, and a published document gains its reader
+
+**What changed:** `CITATION_POLICY` joined the work-stream system prompt,
+unconditionally, teaching the inline and footnote citation forms. The embed form
+went into `DOCUMENT_GENERATION_POLICY` instead, behind the publishing gate that
+section already carries. And the reason recorded on 2026-08-27 for the terminal
+PRD staying open — that a published document had no reading surface — no longer
+holds: the rail's resource detail now renders the resource's content.
+
+**Why:** The renderer repairs nothing about a citation's content. A fabricated
+identifier renders as plain text, so emission guidance is the only place a wrong
+citation can be prevented, and it has to be in front of every run that cites —
+which is every run, not only one that can publish. The split falls where
+capability does: a run with no terminal workspace still cites what it read, and
+telling it how to announce a publication is a rule it has to resolve before it
+can ignore it, which is the shape this document already rejected for the
+document section itself.
+
+**Considered and rejected:** Keeping the announcement clause in the citation
+section, which is where it started. It duplicated the sentence
+`DOCUMENT_GENERATION_POLICY` already owns about what to say in the chat, gave
+two rules for one moment with no tie-break, and charged automations, digests,
+Slack- and email-origin runs and HyperSight blocks for guidance none of them can
+act on. Also rejected: excluding email- or Slack-origin runs from the citation
+guidance, which answers an origin question the PRD had already settled and would
+strip citations from the transcript copy, which renders them fully.
+
+**Consequences:** The fixed overhead is 6,857 bytes with the document section
+rendered, against the 8,000-byte ceiling — about 1.1 KB of headroom, so the next
+section of any size is the conversation about moving something out rather than
+raising the number. The prompt teaches `resource://` and the shared grammar
+decides what becomes a chip; `prompts.test.ts` now parses the taught forms
+through `parseCitationTarget` rather than comparing them to a literal, because
+drift either way is silent and renders every citation as plain text.
+
+Shipped in #382. Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+
 
 ### 2026-08-27 — A document request becomes a published resource, not a wall of chat
 

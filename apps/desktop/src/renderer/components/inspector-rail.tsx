@@ -6,9 +6,6 @@ import {
   Copy,
   ExternalLink,
   Eye,
-  File,
-  FileText,
-  Link2,
   Plus,
   Trash2,
   UserPlus,
@@ -25,6 +22,7 @@ import type {
 } from '../lib/types';
 import { type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
+import { ResourceIcon } from './citations';
 import { DocumentPreviewContent, useDocumentPreview } from './document-preview';
 import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
 import { RailSurface } from './rail-surface';
@@ -68,13 +66,6 @@ function Section({ title, action, children }: { title: string; action?: React.Re
   );
 }
 
-function ResourceIcon({ type }: { type: string }): React.JSX.Element {
-  const normalized = type.toLowerCase();
-  if (normalized.includes('doc') || normalized.includes('text')) return <FileText size={15} />;
-  if (normalized.includes('url') || normalized.includes('web')) return <Link2 size={15} />;
-  return <File size={15} />;
-}
-
 function ResourceCards({
   resources,
   onToggleWatch,
@@ -90,7 +81,7 @@ function ResourceCards({
         return (
           <li className="rail-card resource-row" key={resource.id}>
             <button className="rail-card-main" onClick={() => inspect({ type: 'resource', id: resource.id })} type="button">
-              <span className="rail-card-icon"><ResourceIcon type={resource.resourceType} /></span>
+              <span className="rail-card-icon"><ResourceIcon resourceType={resource.resourceType} size={15} /></span>
               <span><strong>{resource.title}</strong><small>{resource.provider ?? resource.resourceType}</small></span>
             </button>
             {resource.direction === 'source' && (
@@ -387,7 +378,7 @@ function InspectorDetail({ workstream, onDetachResource, loadResourceContent }: 
   if (resource) {
     return (
       <div className="inspector-detail">
-        <span className="inspector-hero-icon"><ResourceIcon type={resource.resourceType} /></span>
+        <span className="inspector-hero-icon"><ResourceIcon resourceType={resource.resourceType} size={15} /></span>
         <h3>{resource.title}</h3>
         <p>{resource.provider ?? resource.resourceType}</p>
         <dl className="detail-list">

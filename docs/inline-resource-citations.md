@@ -58,9 +58,10 @@ legacy-mention behaviour (a dead anchor carrying its label) intact.
 
 The identifier is an opaque token over `[A-Za-z0-9_-]`, not a UUID pattern: its
 shape belongs to the resource system, so a short slug will parse with no change
-here. `?v=` is reserved, unparsed syntax — a citation opens the current version,
-because a citation in a live conversation means "the document", not "the bytes as
-of 2:14 PM". Parsing is lenient across `resource://` and the bare `resource:`
+here. A target carrying `?v=` is not an identifier under that alphabet, so it is
+refused and renders as plain label text today; versioned addressing is reserved
+for later. A citation opens the current version, because a citation in a live
+conversation means "the document", not "the bytes as of 2:14 PM". Parsing is lenient across `resource://` and the bare `resource:`
 spelling that predates it; the guidance teaches `resource://` only.
 
 ### Footnotes
@@ -207,6 +208,7 @@ evaluation suite, evals — not a verification pipeline.
 pnpm --filter @rally/contracts exec vitest run src/citations.test.ts
 pnpm --filter @rally/desktop exec vitest run --project renderer src/renderer/components/citations.test.tsx
 pnpm --filter @rally/desktop exec vitest run --project renderer src/renderer/components/workstream-blocks-streaming-cost.test.tsx
+pnpm --filter @rally/desktop exec vitest run --project renderer src/renderer/components/inspector-rail.test.tsx
 pnpm --filter @rally/desktop exec vitest run --project main src/main/message-export.test.ts
 pnpm --filter @rally/connectors exec vitest run src/slack-markdown.test.ts
 pnpm --filter @rally/api exec vitest run test/email-markdown.test.ts
@@ -263,7 +265,7 @@ did not make. [`security.md`](security.md) owns the wider model.
 
 ## Changelog
 
-### 2026-08-27 — Citations ship as content, on the mechanism mention chips already use
+### 2026-08-28 — Citations ship as content, on the mechanism mention chips already use
 
 **What changed:** A model can now cite a work-stream resource with
 `[Title](resource://<id>)` for an inline chip and `![Title](resource://<id>)` for
@@ -308,4 +310,4 @@ gives `MarkdownBody`'s component config a per-commit identity — the citation m
 was the first — silently re-parses every settled segment, which only the
 streaming-cost guard will tell you about.
 
-Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+Shipped in #382. Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.

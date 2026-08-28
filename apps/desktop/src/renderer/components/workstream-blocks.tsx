@@ -36,7 +36,9 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import {
   footnoteIdentifierFromHref,
   footnoteIdentifierFromId,
+  footnoteOrdinal,
   liftableFootnoteCitations,
+  messageFootnoteOrder,
   MessageCitationContext,
   renderCitation,
   useMessageCitations,
@@ -425,11 +427,12 @@ function FootnoteReference({ children, href, ...props }: React.ComponentProps<'a
  * exists to reclaim.
  */
 function MarkdownListItem({ children, id, node, ...props }: React.ComponentProps<'li'> & ExtraProps): React.JSX.Element | null {
-  void node;
-  const { clobberPrefix, footnotes } = useMessageCitations();
+  const { clobberPrefix, footnotes, order } = useMessageCitations();
   const identifier = footnoteIdentifierFromId(id, clobberPrefix);
-  if (identifier !== undefined && footnotes.has(identifier)) return null;
-  return <li {...props} id={id}>{children}</li>;
+  void node;
+  if (identifier === undefined) return <li {...props} id={id}>{children}</li>;
+  if (footnotes.has(identifier)) return null;
+  return <li {...props} id={id} value={footnoteOrdinal(order, identifier)}>{children}</li>;
 }
 
 /** The footnote section, or nothing when every definition in it was lifted. */
@@ -690,6 +693,7 @@ export function MarkdownBody({ children, mentions = NO_MENTIONS, streaming = fal
   const citations = useMemo(() => ({
     clobberPrefix,
     footnotes: liftableFootnoteCitations(markdown),
+    order: messageFootnoteOrder(markdown),
   }), [clobberPrefix, markdown]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised

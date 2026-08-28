@@ -50,9 +50,10 @@ export function mapMarkdownProse(value: string, transform: (prose: string) => st
 /**
  * `value` with every code character replaced by a space, and nothing else moved.
  *
- * Length, offsets and newlines are all preserved, so a caller can analyse the
- * mask line by line and then slice or splice the *original* string at the
- * offsets it found. That is what lets a rule read a whole line while staying
+ * Length, offsets and newlines are all preserved — exactly, in UTF-16 units, so
+ * a caller can analyse the mask line by line and then slice or splice the
+ * *original* string at the offsets it found. `markdown-code.test.ts` holds that
+ * contract directly, because the callers only fail it at a distance. That is what lets a rule read a whole line while staying
  * blind to the code inside it: a fenced block becomes lines of blanks that
  * match no rule, and an inline span becomes blanks that keep their line intact.
  *
@@ -66,7 +67,13 @@ export function maskMarkdownCode(value: string): string {
   CODE_OR_TEXT.lastIndex = 0;
   for (let match = CODE_OR_TEXT.exec(value); match !== null; match = CODE_OR_TEXT.exec(value)) {
     result += value.slice(cursor, match.index);
-    result += match[0].replace(/[^\n]/gu, " ");
+    // Deliberately no `u` flag: with it, `[^\n]` matches a whole code point, so
+    // an emoji in a fence — two UTF-16 units — collapses to one space and the
+    // mask comes back shorter than the source. Every offset after it then
+    // slices the original in the wrong place, which shows up as a footnote
+    // definition cut mid-syntax and raw `resource://` text in the delivered
+    // copy. One space per UTF-16 unit is what keeps the lengths equal.
+    result += match[0].replace(/[^\n]/g, " ");
     cursor = match.index + match[0].length;
   }
   return result + value.slice(cursor);

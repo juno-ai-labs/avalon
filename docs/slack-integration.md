@@ -785,7 +785,7 @@ path gets it for free. It runs before chunking because it changes the length of
 what is being split, and a trailing source list has to land whole in the last
 chunk rather than be assembled across two.
 
-Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+Shipped in #382. Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
 
 This document predates the [module document](module-documents.md) convention and
 had no changelog until the entries below; the reasoning behind everything above them

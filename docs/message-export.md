@@ -275,7 +275,7 @@ carries in the application is absent by construction, because the tooltip render
 into a portal outside the exported subtree. A future citation form needs its rule
 here in the same change, as every other class does.
 
-Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+Shipped in #382. Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
 
 ### 2026-08-25 — The export scheme is rallywithai-export://
 

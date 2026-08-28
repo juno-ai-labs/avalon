@@ -1,3 +1,3 @@
-- [ ] planned
+- [x] planned
 - [x] in progress
 - [ ] completed

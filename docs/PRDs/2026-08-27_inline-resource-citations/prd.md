@@ -294,7 +294,30 @@ surface appears. No clause moves.
 
 ## Decision log
 
-None yet.
+### 2026-08-28 — Citation metadata resolves over `GET /resources/:id`
+
+Open question 4 asked whether the cross-workspace metadata lookup rides the
+workspace socket or a REST read.
+[`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md) pushes what a
+window will paint, and a chip's icon is paint — but a cited identifier is
+arbitrary and unbounded, and nothing can push what it cannot enumerate. The
+alternative is sending every resource in the workspace to every window on
+connect for the few a message happens to cite. The route already exists and is
+authorized, each identifier is read once and cached, and if it ever has to
+become a push, one component changes.
+
+Reviewed and narrowed after implementation: the argument holds for a resource
+outside the loaded work stream and not for the common case, where the record is
+already on the client in the work stream's own resource set. Consulting that set
+first is named as follow-up rather than done here.
+
+### 2026-08-28 — The pill is the trigger and the action at once
+
+Open question 3 asked how the popover and the pill behave on touch and keyboard.
+An interactive popover — a button inside a tooltip — has no touch equivalent and
+an awkward focus order. So the popover names the source and the pill opens it,
+which reads the same with a pointer, a keyboard and a finger, and the chip and
+the card name their action the same way.
 
 ## Key design decisions
 
