@@ -389,6 +389,12 @@ const SPAN_PLACEHOLDER = "\u0000";
  * character the input cannot contain: it is stripped from the line first, so a
  * model writing a NUL cannot forge a placeholder and splice a span of its own
  * choosing back in.
+ *
+ * The fence tracking is deliberately looser than CommonMark: a closing fence is
+ * any run of the opener's character at least as long, whatever follows it, where
+ * the spec wants the rest of the line bare. Reaching the difference means
+ * writing ```` ```more ```` inside a fenced block, and erring loose fails in the
+ * safe direction — a line wrongly read as code is left alone, never rewritten.
  */
 function mapOutsideCode(markdown: string, rewrite: (segment: string) => string): string {
   const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
