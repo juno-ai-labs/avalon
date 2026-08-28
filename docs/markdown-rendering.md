@@ -18,6 +18,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, and the `a`, `img`, `li` and `section` renderers that hand a node to the citation matrix. |
 | `apps/desktop/src/renderer/components/markdown-citations.tsx` | The citation matrix — every scheme in every position — and the chip, embed card, footnote pill and identity card it renders. |
 | `packages/contracts/src/citations.ts` | The protocol itself: the scheme allowlist, the footnote definition grammar, and the plain-text rewrite that outbound email and Slack delivery send instead. |
+| `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
@@ -165,8 +166,9 @@ tail alone; the settled body's elements are reused untouched. Cuts are decided
 only at complete lines — the still-arriving final line decides nothing,
 because its classification can change as it grows (a bare `1` is a paragraph
 until the `.` makes it a list item), and that deferral is what makes the
-settled prefix unconditionally stable — and land, outside code fences, in two
-places: at a non-blank line after a blank line that does not continue the
+settled prefix unconditionally stable — and land, outside code fences (whose
+boundaries are [`markdown-code.md`](markdown-code.md)'s answer, shared with the
+delivery rewrites), in two places: at a non-blank line after a blank line that does not continue the
 previous block (a blockquote line or an indented continuation still does),
 and at a top-level list item that follows an item of the same marker, blank
 line between or not. The list cut exists because a list-dominant reply — a
@@ -372,6 +374,12 @@ needs it should parse rather than widen the pattern again.
 - **A footnote reference whose definition never arrived** renders literally,
   which is the existing behavior for a split footnote and is what streaming
   shows until the message settles.
+- **A same-length fence nested inside another cuts the outer block while it
+  streams.** The shared close rule closes a block on any run of the opener's
+  character at least as long, info string or not, where this splitter used to
+  demand a bare closer. Transient by construction: the commit that ends the
+  stream re-renders the source whole. The rule and the argument for its
+  looseness are in [`markdown-code.md`](markdown-code.md).
 - **A very long markdown string** is rendered in full. Nothing here truncates;
   the surfaces that need a cap impose it themselves, as the system-message clamp
   in `app.css` does.
@@ -412,6 +420,41 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-28 — The streaming splitter stopped deciding where a fence ends
+
+**What changed:** `FENCE_OPEN` and `FENCE_CLOSE` are gone from
+`workstream-blocks.tsx`, and `splitStreamingMarkdown` reads `markdownLineKinds`
+from `@rally/contracts/markdown-code` instead. Its cut rules, its list handling
+and the `settled.join('') + tail === source` property are untouched.
+
+**Why:** this splitter held one of five copies of the same question — where does
+a block of code start and end — and the copies did not agree with one another.
+The commit before this one collapsed the three inside `citations.ts` onto a
+private classifier; [`markdown-code.md`](markdown-code.md) records moving that
+classifier somewhere the other four could read it.
+
+The rule the splitter gave up was its **strict** closer: it required a closing
+fence's rest-of-line to be bare, where the shared rule accepts any run of the
+opener's character at least as long, whatever follows it. That was a real
+choice, not an accident, and it was given up rather than kept because a
+disagreement between five rewriters about where a block ends is the defect, and
+the cost here is the cheapest of them: measured against a vendored copy of the
+old function over 104,976 documents, 195 differ, all of that one cause. In each,
+a same-length nested fence cuts the outer block in two while the message
+streams, and the commit that ends the stream re-renders it whole. The Slack
+chunker made the opposite call for the opposite reason — a severed block in a
+delivered message has nothing to heal it — and is deliberately still outside the
+shared module.
+
+The splitter reads only the *fence* kinds, not the classifier's indented-code
+answer. A fence is a block boundary in this function's model and an indented
+chunk is not; `CONTINUES_ACROSS_BLANK` already refuses to cut before an indented
+line, so there was nothing for the extra kind to buy here.
+
+**Consequences:** where a block ends is one edit with seven readers now, and the
+number that matters — how much of a streaming reply is re-parsed per commit — is
+unchanged, since neither the cut rules nor the memo chain moved.
 
 ### 2026-08-28 — One answer about what is code, indented blocks included
 

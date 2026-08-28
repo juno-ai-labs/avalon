@@ -22,6 +22,7 @@ widening what counts as math, and before moving where either function is called.
 | Path | Responsibility |
 | --- | --- |
 | `packages/contracts/src/model-markdown.ts` | `normalizeModelMarkdown` and `normalizeModelText`, the command table, and the rules deciding what is math. Exported as `@rally/contracts/model-markdown`. |
+| `packages/contracts/src/markdown-code.ts` | Which lines are code — the rule this module reads rather than states. See [`markdown-code.md`](markdown-code.md). |
 | `packages/contracts/src/model-markdown.test.ts` | The behavioural suite, including the cases that must *not* be rewritten. |
 | `packages/agent-harness/src/prompts/response-formatting.ts` | `RESPONSE_FORMATTING_POLICY`, the prompt section that asks for none of this to be necessary. |
 
@@ -51,7 +52,12 @@ gap stands.
 ## How it works
 
 `normalizeModelMarkdown` splits its input into code and not-code, rewrites only
-the not-code, and reassembles. Within a run of prose it does two passes: the
+the not-code, and reassembles. The split has two levels and only the inner one
+belongs to this module: whole lines of code — fenced *and* indented blocks — are
+[`markdown-code.ts`](markdown-code.md)'s answer, shared with every other
+rewriter in the repository so none of them can disagree about where a block
+ends, and inline code spans are this module's own, a run of backticks closed by
+a run of the same length. Within a run of prose it does two passes: the
 delimited one, which unwraps `$…$`, `$$…$$`, `\(…\)` and `\[…\]`, and the bare
 one, which catches a command a model wrote with no delimiters at all. The bare
 pass takes only a command standing as its own token — beginning after a space,
@@ -105,9 +111,12 @@ dependency, and it is cheap to reverse if that ever stops being true.
 
 ## Invariants
 
-- **Code is never rewritten.** A fenced block or an inline span may be showing
-  TeX deliberately — a snippet, a regex, a shell line with a `$` in it — and a
-  rewritten code sample is worse than the symptom this module exists to fix.
+- **Code is never rewritten.** A fenced block, an indented block, or an inline
+  span may be showing TeX deliberately — a snippet, a regex, a shell line with a
+  `$` in it — and a rewritten code sample is worse than the symptom this module
+  exists to fix. *Which lines* are a block is not decided here; see
+  [`markdown-code.md`](markdown-code.md), whose close rule is deliberately loose
+  and shared with the citation reduction and both email passes.
 - **Unwrapped math is escaped before it re-enters Markdown.** What comes out of
   `texToPlainText` is literal text that a Markdown parser then reads. A subscript
   that mapped to a bare `_` would open an emphasis run and italicize the rest of
@@ -198,12 +207,19 @@ halves are kept.
 - **An unterminated fence swallows the rest of the text.** Everything after it is
   treated as code and left alone, which is what the Markdown parser downstream
   does too.
-- **An indented code block is not recognised.** The code splitter knows fences
-  and inline spans; four-space-indented code is prose to it, and TeX inside one
-  is rewritten before the downstream parser renders it as code. Telling a
-  four-space code block from a deeply nested list item needs the container
-  context only a real Markdown parser has, which this module deliberately is
-  not.
+- **A fence closes only on its own character, at a length it reaches.** A
+  ```` ``` ```` block used to close on a `~~~` line here and no longer does,
+  since the shared rule replaced this module's own. The other direction is the
+  same rule's documented looseness: a same-length nested fence closes the outer
+  block. Both are in [`markdown-code.md`](markdown-code.md).
+- **A list item's indented continuation is treated as code.** Since this module
+  started reading the shared classifier it *does* recognise indented blocks, and
+  four columns under a bullet is a paragraph of that item to a real parser and
+  an indented block to the classifier — so TeX there is now left as written
+  rather than repaired. That is the safe direction, and the trade is deliberate:
+  telling the two apart needs the container context only a real Markdown parser
+  has, which this module is not. The paragraph rule keeps the common case right;
+  [`markdown-code.md`](markdown-code.md) has it.
 - **A connector label containing TeX would be rewritten, and a mention inside a
   math span is flattened.** Normalization runs over `MarkdownBody`'s output,
   links included; a `$…$` span with a backslash command that also encloses a
@@ -247,6 +263,49 @@ Both entry points are asserted against the same input where they differ, so the
 escaping rule is visible as a difference rather than stated only in prose.
 
 ## Changelog
+
+### 2026-08-28 — The code splitter moved out, and picked up indented blocks on the way
+
+**What changed:** `CODE_OR_TEXT` — the single regex that recognised a fenced
+block *and* an inline code span in one pass — is gone.
+`normalizeModelMarkdown` now calls `mapMarkdownProse` from
+`@rally/contracts/markdown-code` for the whole-line half and keeps a `CODE_SPAN`
+pattern of its own for the span half. Nothing about what counts as math, what is
+escaped, or what either entry point returns changed.
+
+**Why:** this module's code splitter was one of five copies of the same
+question, and they did not agree with each other. `citations.ts` had just
+collapsed its own three onto a private classifier;
+[`markdown-code.md`](markdown-code.md) records moving that classifier where the
+rest of us can read it, and why the shared close rule is the citation copy's
+rather than this one's.
+
+**The headline consequence is a fix, not a cost.** The shared classifier knows
+indented code blocks, so the failure mode this document carried from the
+beginning — "an indented code block is not recognised… TeX inside one is
+rewritten before the downstream parser renders it as code" — is closed. Measured
+against a vendored copy of the old implementation over 15,625 documents, 1,082
+of the 1,974 differences are exactly that: TeX under four spaces now left as
+written. It replaces a narrower limit, listed above: an indented *continuation
+of a list item* is now read as code too, which errs toward leaving text alone.
+
+The rest of the differences are the fence rule converging: a block now closes
+only on its own delimiter character (it closed a ```` ``` ```` block on a `~~~`
+line), only on a run reaching the opener's length, and a delimiter indented four
+columns or by a tab is an indented block rather than a fence — which changes the
+classification and not the protection, since both are code.
+
+Inline code spans deliberately stayed. The other rewriter that skips them parks
+a span inside a line rather than splitting prose at one, and their patterns
+differ — narrowing either to match would change what each rewrites. Splitting
+lines first and spans second also means a backtick run opened in prose can no
+longer swallow a fence line, which the single combined regex allowed.
+
+**Consequences:** the code rule is no longer visible in this file, so a reader
+asking why a sample was or was not rewritten has one more hop to make; the
+pointer is in *How it works*, in the invariant, and beside `CODE_SPAN`. Changing
+what closes a block is now a change to seven readers, and the shared document
+says so.
 
 ### 2026-08-23 — Created, because TeX was reaching readers
 
