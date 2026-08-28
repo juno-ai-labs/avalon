@@ -3216,6 +3216,62 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("lists an automation's attention reason and refuses one no screen can render", async () => {
+    await seedOpenAuthority();
+    const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
+      workspaceDOName("global", WORKSPACE_ID),
+    ));
+    await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
+
+    const automationId = "00000000-0000-7000-8000-000000000821";
+    const projection = {
+      schemaVersion: 1 as const,
+      automationId,
+      workspaceId: WORKSPACE_ID,
+      authorUserId: USER_ID,
+      authorityGeneration: 1,
+      projectionVersion: 1,
+      payloadHash: "carried-over-v1",
+      // What the cutover writes for an automation whose trigger it could not
+      // carry: paused, with the reason beside it. Nothing about "paused" alone
+      // tells the person this one is never starting again.
+      lifecycle: "paused" as const,
+      scope: "workspace" as const,
+      title: "Release watcher",
+      description: "Watched a document",
+      nextRunAt: null,
+      attentionCode: "unsupported_trigger",
+    };
+    await expect(stub.applyAutomationProjection(projection)).resolves.toEqual({ applied: true });
+
+    await expect(stub.listAutomationDirectory({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+    })).resolves.toMatchObject({
+      items: [{ id: automationId, status: "paused", attention: "unsupported_trigger" }],
+    });
+
+    // A reason the client has no words for is a marker with nothing behind it,
+    // so it is refused where it is written rather than rendered as a mystery.
+    // Asserted inside the object: a rejected native RPC on a stub leaves a
+    // second rejection the runtime holds, which fails the run under a summary
+    // of passing tests.
+    await runInDurableObject(stub, async (instance: WorkspaceDO) => {
+      await expect(instance.applyAutomationProjection({
+        ...projection,
+        projectionVersion: 2,
+        payloadHash: "carried-over-v2",
+        attentionCode: "something_the_client_has_never_heard_of",
+      })).rejects.toThrow();
+    });
+    await expect(stub.listAutomationDirectory({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+    })).resolves.toMatchObject({
+      items: [{ id: automationId, attention: "unsupported_trigger" }],
+    });
+  });
+
   it("pushes the automation list when a write lands, including the scheduler's", async () => {
     await seedOpenAuthority();
     const stub = env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
@@ -3310,14 +3366,17 @@ describe("Durable Objects in the Workers runtime", () => {
         title: "Weekly changelog",
         description: "Every Monday",
         nextRunAt: Date.parse("2026-09-04T09:00:00.000Z"),
-        attentionCode: "paused",
+        attentionCode: "legacy_runtime_error",
       })).resolves.toEqual({ applied: true });
       const second = JSON.parse(String((await secondPush).data)) as {
         waterline: number;
-        items: Array<{ status: string }>;
+        items: Array<{ status: string; attention: string | null }>;
       };
       expect(second.waterline).toBeGreaterThan(event.waterline);
       expect(second.items[0]?.status).toBe("paused");
+      // The status says it stopped; only the reason says why, and the row is
+      // where the sidebar reads both.
+      expect(second.items[0]?.attention).toBe("legacy_runtime_error");
     } finally {
       socket!.close(1000, "test complete");
     }
