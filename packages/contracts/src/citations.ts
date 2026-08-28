@@ -257,7 +257,13 @@ export function rewriteCitationsAsPlainText(markdown: string): string {
   // Definitions come out before the rewrite, not after: the rewrite renumbers
   // `[^rev]` to `[1]` everywhere, the head of a definition line included, and a
   // definition that no longer looks like one cannot be found to remove.
-  const source = numbers.size === 0 ? markdown : stripFootnoteDefinitions(markdown);
+  //
+  // Unconditionally, too. Gating this on there being references left an
+  // unreferenced definition in the delivered text with its `[^rev]:` marker
+  // intact — reachable whenever a model writes a definition and then edits away
+  // the sentence that cited it. GFM renders such a definition as nothing; so
+  // does this. The `**Sources**` append below has its own guard.
+  const source = stripFootnoteDefinitions(markdown);
   const rewritten = mapOutsideCode(source, (segment) => segment
     // `citationScheme`, not `parseCitationHref`: the question here is "is this
     // a citation", not "is this a *resolvable* citation". A malformed
