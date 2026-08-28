@@ -14,7 +14,7 @@ import {
 } from "../src/services/workspace-schedule-execution";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
+import { applyWorkspaceResourceSchema, createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
@@ -1719,6 +1719,8 @@ describe("Slack ingress maintenance reaps link challenges", () => {
     // The alarm's draft arm reads the object's links table, which no regional
     // snapshot has ever carried.
     createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
+    // The alias arm reads a column the object added to `resources`.
+    applyWorkspaceResourceSchema(database, WORKSPACE_ID);
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
     seedChallenge(database, await sha256("expired"), "2026-01-01T00:15:00.000Z");

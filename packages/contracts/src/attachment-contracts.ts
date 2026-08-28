@@ -272,6 +272,12 @@ export const ATTACHMENT_TOOL_ARGUMENT_SCHEMAS = {
 
 const ResourceListItemSchema = z.object({
   resourceId: CanonicalUuidSchema,
+  /**
+   * The resource's short alias, cheaper for a model to read back and to write
+   * into a citation than the UUID beside it. Null until one is allocated; the
+   * UUID above is what every tool argument and internal reference uses.
+   */
+  slug: z.string().min(3).max(80).nullable(),
   title: z.string(),
   resourceType: z.string(),
   provider: z.string(),

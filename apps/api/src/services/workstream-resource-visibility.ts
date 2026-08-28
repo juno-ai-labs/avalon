@@ -4,6 +4,8 @@ import { BOUND_PARAMETER_ID_CHUNK } from "../durable-objects/bound-parameters";
 
 export interface VisibleWorkstreamResourceRow extends Record<string, unknown> {
   id: string;
+  /** Null for a resource the alias backfill has not reached yet. */
+  slug: string | null;
   workspace_id: string;
   resource_type: string;
   provider: string;
