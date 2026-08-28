@@ -294,6 +294,26 @@ surface appears. No clause moves.
 
 ## Decision log
 
+### 2026-08-28 — A saved card keeps the source list the transcript drops
+
+**Decided:** The footnote lift is conditional on the surface. The transcript
+lifts every qualifying definition into its pill and renders no trailing list;
+the saved card renders both. `MarkdownBody` carries a `still` flag, and the
+card is its only caller.
+
+**Why:** Two rules that were each right on their own contradicted each other.
+The lift trades the source list for a hover popover, and the export document
+hides that popover deliberately — a hover affordance printed into a PNG is a
+grey box over the text with no way to dismiss it. Together they produced a card
+whose claims carried numbered pills pointing at nothing, in the artifact people
+save and send on. Keeping the list only in a still is the narrow fix: the
+reclaimed vertical space is the point of the lift in a scrolling transcript, and
+a picture has no scroll to spend it on.
+
+**Changes:** Narrows Product behavior's "no trailing source list" to the
+transcript. Acceptance flow 4 should be read on the saved card as well as on
+screen.
+
 ### 2026-08-28 — Cross-workspace citation metadata is a REST `GET`, not a socket push
 
 **Decided:** Open question 4 resolves to `GET /resources/:id`, the route that

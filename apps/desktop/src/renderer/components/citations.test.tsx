@@ -187,6 +187,20 @@ describe('footnote citations', () => {
     expect(document.body).not.toHaveTextContent('Footnotes');
   });
 
+  it('keeps the source list in a still, where no popover can be opened', () => {
+    // The saved card is a picture: the export stylesheet hides the popover
+    // because a hover affordance printed into a PNG is a grey box with no way
+    // to dismiss it. Lifting the definitions as well left the card showing bare
+    // numbers over nothing, and the sources gone from the file somebody keeps.
+    render(<MarkdownBody citations={context()} still>{grounded}</MarkdownBody>);
+
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1', '2']);
+    const list = document.querySelector('.footnotes');
+    expect(list).not.toBeNull();
+    expect(list).toHaveTextContent('Q3 board deck');
+    expect(list).toHaveTextContent('Margin memo');
+  });
+
   it('names the source in a popover, and says where opening it goes', async () => {
     render(<MarkdownBody citations={context()}>{grounded}</MarkdownBody>);
 

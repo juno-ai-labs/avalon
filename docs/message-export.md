@@ -71,6 +71,13 @@ reader recognises the thing they clicked in the app. The pill stays a plain
 numbered superscript, which is what a citation degrades to everywhere outside
 Rally's renderer anyway.
 
+What the card does *not* share with the turn is the footnote lift. The card
+renders with `MarkdownBody`'s `still` flag, which keeps the trailing source list
+the transcript drops: on screen a pill's sources are one hover away, and here
+that hover does not exist and its popover is hidden two paragraphs above. Without
+it the card printed numbered pills over nothing — the claims kept their markers
+and the sources left the file entirely.
+
 The colours are the light inverse of the application's, with one deliberate
 exception — a code block stays dark. The highlighter writes its colours as inline
 styles chosen for a dark background, and repainting them on white would mean
@@ -138,6 +145,10 @@ The chain recovers from a rejected export rather than wedging behind it.
   true today: the miss is invisible until somebody opens a saved card, which is
   the wrong place to find out. A parameterised test in `message-export.test.ts`
   names each citation class and fails the build when one has no rule.
+- **Nothing on the card depends on a pointer.** Hover, focus and click are all
+  absent from a picture, so anything they would have revealed is either drawn
+  into the card or lost with it. That is what the `still` flag is for, and it is
+  the question to ask of the next affordance that reaches this document.
 - **A file name is validated, never sanitized.** The name is derived from message
   text, and text a model wrote reaches `showSaveDialog` as a default path.
   Rejecting is checkable; sanitizing invites the argument about whether the
@@ -261,6 +272,25 @@ Two traps:
   `../lib/platform` mock, or the buttons throw on render.
 
 ## Changelog
+
+### 2026-08-28 — The card keeps a citation's sources
+
+**What changed:** The card renders `MarkdownBody` with a new `still` flag, which
+stops the footnote lift dropping the trailing source list. Pills and list now
+appear together, numbered by the same ordering.
+
+**Why:** The lift trades the source list for a hover popover, and this document
+already hides that popover — a hover affordance printed into a PNG is a grey box
+with no way to dismiss it. Both rules were right on their own and wrong
+together: a saved grounded answer carried a `1` and a `2` after its claims and
+said nowhere what either one was. A picture has no scroll to spend, so the
+vertical space the lift reclaims is worth nothing here, which is what makes
+keeping the list the cheap side of the trade.
+
+**What a future change has to respect:** `still` is the card's, not a general
+switch — the transcript's lift is the feature, and turning it off there spends
+the space this was all built to reclaim. Anything else the card borrows from an
+interaction it cannot have belongs behind the same flag.
 
 ### 2026-08-27 — The card styles citations
 
