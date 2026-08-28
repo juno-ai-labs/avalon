@@ -549,6 +549,66 @@ describe("AutomationAgent", () => {
     });
   });
 
+  it("does not let a later work-stream state reopen a finished run", async () => {
+    const now = 1_800_000_000_000;
+    const runId = "00000000-0000-7000-8000-000000000a01";
+    const workstreamId = "00000000-0000-7000-8000-000000000a02";
+    await runInDurableObject(automationStub(), async (instance: AutomationAgent, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO automation_identity
+           (id, automation_id, workspace_id, author_user_id, region, authority_generation,
+            created_at, updated_at)
+         VALUES (1, ?, ?, ?, 'global', 1, ?, ?)`,
+        AUTOMATION_ID, WORKSPACE_ID, AUTHOR_ID, now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_state
+           (id, lifecycle, title, definition_revision, accepted_definition_revision,
+            event_sequence, created_at, updated_at)
+         VALUES (1, 'active', 'Run owner', 1, 1, 0, ?, ?)`,
+        now, now,
+      );
+      state.storage.sql.exec(
+        `INSERT INTO automation_runs
+           (run_id, occurrence_key, trigger_type, workstream_id, workstream_generation,
+            harness_run_id, admission_state, execution_state, delivery_state, context_json,
+            source_version, created_at, updated_at)
+         VALUES (?, 'manual:terminal', 'manual', ?, 1, ?, 'provisioned', 'completed',
+                 'pending', '{}', 5, ?, ?)`,
+        runId, workstreamId, "00000000-0000-7000-8000-000000000a03", now, now,
+      );
+
+      const project = (sourceVersion: number, projectedState: string) => instance.applyRunProjection({
+        schemaVersion: 1,
+        automationId: AUTOMATION_ID,
+        workspaceId: WORKSPACE_ID,
+        runId,
+        workstreamId,
+        workstreamGeneration: 1,
+        sourceVersion,
+        payloadHash: `sha256:${projectedState}`,
+        state: projectedState,
+        completedAt: null,
+      });
+
+      // A stop settles the work stream as `idle`, and a member replying on the
+      // same stream starts another loop whose first envelope is `scheduled`.
+      // Both arrive after the run finished and both used to map to `running`.
+      await project(6, "idle");
+      expect(state.storage.sql.exec<{ execution_state: string }>(
+        `SELECT execution_state FROM automation_runs WHERE run_id = ?`, runId,
+      ).one().execution_state).toBe("completed");
+
+      await project(7, "scheduled");
+      const settled = state.storage.sql.exec<{ execution_state: string; source_version: number }>(
+        `SELECT execution_state, source_version FROM automation_runs WHERE run_id = ?`, runId,
+      ).one();
+      expect(settled.execution_state).toBe("completed");
+      // Still acknowledged: the sender has nothing to retry.
+      expect(settled.source_version).toBe(7);
+    });
+  });
+
   it("recognises a memory row carried through the cutover instead of duplicating it", async () => {
     const now = 1_800_000_000_000;
     const runId = "00000000-0000-7000-8000-0000000000f1";

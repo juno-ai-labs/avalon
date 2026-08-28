@@ -115,6 +115,9 @@ const RUN_EXECUTION_STATE = {
   restoring: null,
 } as const satisfies Record<string, "completed" | "failed" | "needs_input" | "stopped" | "running" | null>;
 
+/** Once a run reads as one of these, no later projection moves it off. */
+const TERMINAL_RUN_STATES = new Set(["completed", "failed", "stopped"]);
+
 const RUN_PROJECTION_STATES = Object.keys(RUN_EXECUTION_STATE) as [
   keyof typeof RUN_EXECUTION_STATE,
   ...(keyof typeof RUN_EXECUTION_STATE)[],
@@ -2059,7 +2062,8 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       workstream_generation: number;
       source_version: number;
       source_hash: string | null;
-    }>(`SELECT workstream_id, workstream_generation, source_version, source_hash
+      execution_state: string;
+    }>(`SELECT workstream_id, workstream_generation, source_version, source_hash, execution_state
           FROM automation_runs WHERE run_id = ?`,
     request.runId).toArray()[0];
     if (!row || row.workstream_id !== request.workstreamId) {
@@ -2092,13 +2096,24 @@ export class AutomationAgent extends ScheduledDurableObject<Env> {
       }
       return { applied: false, outcomeCode: "automation_run_projection_replayed" };
     }
-    const executionState = RUN_EXECUTION_STATE[request.state];
-    // `null` means the sender told us about the work stream rather than the
-    // run — archived, being deleted, being restored. None of those is a run
-    // outcome, and folding them into "running" would leave a finished run
-    // reading as in-flight, so the run's own state is left as it was. The
-    // source version still advances below, so this is a real acknowledgement
-    // and not a retry.
+    // A run's execution state only ever moves forwards. Two different senders
+    // would otherwise walk it backwards, both on ordinary paths: a work stream
+    // settles a stop as `idle` rather than `cancelled` and lands on `idle`
+    // again when it is unarchived, and a member replying on the same work
+    // stream starts another loop, whose first envelope is `scheduled`. Either
+    // one arrives with a higher source version than the run's own completion,
+    // so without this a finished automation run is rewritten as in-flight and
+    // its history says it is still going.
+    //
+    // `null` is the same rule stated for a different reason: archived,
+    // deleting, and restoring describe the work stream and say nothing about
+    // the run at all.
+    const projected = RUN_EXECUTION_STATE[request.state];
+    const executionState = projected === null || TERMINAL_RUN_STATES.has(row.execution_state)
+      ? null
+      : projected;
+    // The source version still advances, so an ignored projection is a real
+    // acknowledgement rather than something the sender should retry.
     if (executionState === null) {
       this.state.storage.sql.exec(
         `UPDATE automation_runs
