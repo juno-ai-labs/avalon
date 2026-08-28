@@ -20,40 +20,102 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import {
+  evictDurableObject,
+  reset,
+  runDurableObjectAlarm,
+  runInDurableObject,
+} from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import {
+  WorkstreamWorkflowInputSchema,
+  asUserId,
+  asWorkspaceId,
+  asWorkstreamId,
+  type WorkstreamWorkflowInput,
+} from "@rally/contracts";
 
-import { substreamAgentName, workspaceDOName } from "../src/durable-objects/names";
+import type { AuthContext, Env } from "../src/env";
+import {
+  substreamAgentName,
+  substreamLoopId,
+  workspaceDOName,
+} from "../src/durable-objects/names";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
+import { createSchedulingObjectPort } from "../src/runtime/scheduling-port";
+import { launchWorkstreamHarness } from "../src/services/workstream-service";
 import {
   seedCanonicalMessageRecord,
   seedParticipantMessage,
+  holdLoopExecuting,
+  releaseHeldLoop,
 } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000005a1");
-const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000005a2");
-const USER_ID = "00000000-0000-7000-8000-0000000005a3";
+/**
+ * Reassigned per test. Every test here drives the same *named* objects, and a
+ * finished test's live instance — its persistent-loop drain above all — can
+ * outlast `reset()` and keep working. Giving each test its own work-stream id
+ * sends that zombie work to its own objects instead of the next test's;
+ * evicting or aborting instead breaks the tests that manage their own
+ * instance lifecycle (and Miniflare's D1 is itself a Durable Object, so
+ * `abortAllDurableObjects` wedges every later reset).
+ */
+let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000005a2");
+let workstreamOrdinal = 0;
+const USER_ID = asUserId("00000000-0000-7000-8000-0000000005a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000005a4";
+const SCHEDULED_ACTIVATION_MODEL = "deepseek/deepseek-v4-flash-0731";
+const STREAM_FAILURE_PRIMARY_MODEL = "pipeline-b06/primary";
+const STREAM_FAILURE_FALLBACK_MODEL = "pipeline-b06/fallback";
+const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
+
+interface CapturedProviderRequest {
+  url: string;
+  body: Record<string, unknown>;
+}
+
+type ProviderCaptureGlobal = typeof globalThis & {
+  __rallyPipelineOriginalFetch?: typeof fetch;
+  __rallyPipelineProviderRequests?: CapturedProviderRequest[];
+  __rallyPipelineProviderScripts?: unknown[][];
+};
+
+interface SocketFrame extends Record<string, unknown> {
+  type: string;
+}
 
 /** Failure codes that mean the run died before the provider boundary. */
 const PRE_PROVIDER_FAILURES = [
   "harness_run_not_found",
   "workstream_run_start_fenced",
-  "agent_run_dispatch_undecodable",
   "workstream_runtime_cross_authority_statement",
-  "workstream_run_abandoned",
 ];
 
-const AUTH = {
+const AUTH: AuthContext = {
   sessionId: SESSION_ID,
   userId: USER_ID,
   workspaceId: WORKSPACE_ID,
   region: "global" as const,
   role: "member" as const,
 };
+const TEST_ENV: Env = env;
 
 beforeEach(async () => {
+  // Evict the shared agent before wiping storage: every test drives the same
+  // named object, whose live instance — its persistent-loop drain above all —
+  // survives `reset()` and keeps running. A drain that outlives its test
+  // consumes the next test's freshly admitted pending inputs, and the failure
+  // lands two tests away from its cause. Eviction joins that in-flight work;
+  // `abortAllDurableObjects` is not an alternative here, because Miniflare's
+  // D1 is itself a Durable Object and aborting it wedges every later reset.
+  workstreamOrdinal += 1;
+  WORKSTREAM_ID = asWorkstreamId(
+    `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}000005a2`,
+  );
   await reset();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
@@ -65,7 +127,14 @@ beforeEach(async () => {
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
     env.DB.prepare(`CREATE TABLE workspaces (
-      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT
+      id TEXT PRIMARY KEY, region TEXT NOT NULL, analytics_workspace_id TEXT,
+      timezone TEXT NOT NULL DEFAULT 'America/Los_Angeles'
+    )`),
+    env.DB.prepare(`CREATE TABLE audit_events (
+      id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, actor_type TEXT NOT NULL,
+      actor_user_id TEXT, workstream_id TEXT, action TEXT NOT NULL,
+      target_type TEXT NOT NULL, target_id TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}', request_id TEXT, created_at TEXT NOT NULL
     )`),
     env.DB.prepare(`INSERT INTO workspaces(id, region) VALUES (?, 'global')`).bind(WORKSPACE_ID),
     env.DB.prepare(`CREATE TABLE workspace_members (
@@ -114,7 +183,23 @@ async function product(stub: DurableObjectStub, body: unknown): Promise<{
   return { status: response.status, body: await response.json() };
 }
 
-async function initializeWorkstream(stub: DurableObjectStub, openingMessage: string): Promise<{
+async function externalAdmission(
+  stub: DurableObjectStub,
+  method: "admitExternalMessage" | "answerExternalElicitation",
+  input: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const result = await (stub as unknown as Record<
+    typeof method,
+    (value: unknown) => Promise<{ status: number; bodyJson: string }>
+  >)[method](input);
+  return { status: result.status, body: JSON.parse(result.bodyJson) as Record<string, unknown> };
+}
+
+async function initializeWorkstream(
+  stub: DurableObjectStub,
+  openingMessage: string,
+  modelOverride: string | null = null,
+): Promise<{
   status: number;
   body: Record<string, unknown>;
 }> {
@@ -135,7 +220,7 @@ async function initializeWorkstream(stub: DurableObjectStub, openingMessage: str
       clientMessageId: "pipeline-open-1",
       participantUserIds: [],
       attachmentIds: [],
-      modelOverride: null,
+      modelOverride,
       executionPrincipal: { type: "user", userId: USER_ID },
       reason: "user_message",
     },
@@ -147,7 +232,7 @@ interface RunRow extends Record<string, SqlStorageValue> {
   status: string;
   error_json: string | null;
   terminalized_at: number | null;
-  final_part_id: string | null;
+  final_turn_id: string | null;
 }
 
 /** Polls the object until the run settles; a run that never settles fails here. */
@@ -155,16 +240,16 @@ async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRo
   // Use the workerd test helper so the alarm's execution context, including
   // waitUntil work, is joined before inspecting the terminal run. Calling the
   // instance method directly joins only the handler promise and can leave the
-  // claimed dispatch running until the suite's wall-clock poll expires under
+  // claimed loop execution running until the suite's wall-clock poll expires under
   // cross-file contention.
   await runDurableObjectAlarm(stub);
   let lastRow: RunRow | null = null;
-  let lastDispatches = "[]";
+  let lastLoop = "null";
   let lastAlarm: number | null = null;
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const row = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<RunRow>(
-        `SELECT run_id, status, error_json, terminalized_at, final_part_id
+        `SELECT run_id, status, error_json, terminalized_at, final_turn_id
            FROM runs WHERE run_id = ?`,
         runId,
       ).toArray()[0] ?? null);
@@ -172,19 +257,339 @@ async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRo
     lastRow = row;
     const diagnostics = await runInDurableObject(stub, async (_instance, state) => ({
       alarm: await state.storage.getAlarm(),
-      dispatches: state.storage.sql.exec(
-        `SELECT run_id, state, attempt, available_at, lease_expires_at, last_error_code
-           FROM agent_run_dispatches ORDER BY created_at, run_id`,
-      ).toArray(),
+      loop: state.storage.sql.exec(
+        `SELECT loop_id, status, cycle_ordinal, active_execution_id,
+                active_execution_epoch, lease_expires_at
+           FROM substream_loops WHERE id = 1`,
+      ).toArray()[0] ?? null,
     }));
     lastAlarm = diagnostics.alarm;
-    lastDispatches = JSON.stringify(diagnostics.dispatches);
+    lastLoop = JSON.stringify(diagnostics.loop);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(
     `run ${runId} never reached a terminal state — row=${JSON.stringify(lastRow)} `
-    + `alarm=${String(lastAlarm)} dispatches=${lastDispatches}`,
+    + `alarm=${String(lastAlarm)} loop=${lastLoop}`,
   );
+}
+
+async function settledRunForTrigger(
+  stub: DurableObjectStub,
+  triggerMessageId: string,
+): Promise<RunRow> {
+  await runDurableObjectAlarm(stub);
+  const runId = await runInDurableObject(stub, (_instance, state) => {
+    const rows = state.storage.sql.exec<{ run_id: string; execution_context_json: string }>(
+      `SELECT run_id, execution_context_json FROM runs
+        WHERE execution_context_json IS NOT NULL ORDER BY created_at, run_id`,
+    ).toArray();
+    return rows.find((row) => (
+      JSON.parse(row.execution_context_json) as { triggerMessageId?: string | null }
+    ).triggerMessageId === triggerMessageId)?.run_id ?? null;
+  });
+  if (!runId) throw new Error(`no execution receipt was created for ${triggerMessageId}`);
+  return settledRun(stub, runId);
+}
+
+async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const executing = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM substream_loops WHERE status = 'executing'`,
+      ).one().count);
+    if (executing === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("singleton loop did not release its execution");
+}
+
+/**
+ * Give one real SubstreamAgent isolate a deterministic OpenRouter boundary.
+ *
+ * The Worker test deliberately omits a selected model so unrelated pipeline
+ * cases cannot reach the network. This test needs the stronger oracle: the
+ * exact body handed to the provider. The proxy changes only this live object,
+ * and the fetch replacement records the wire body before returning a terminal
+ * provider response. Neither bypasses the production harness or its RPC/storage
+ * ports; they replace only the external system workerd cannot own.
+ */
+async function installProviderCapture(
+  stub: DurableObjectStub,
+  model: string,
+): Promise<void> {
+  await runInDurableObject(stub, (instance) => {
+    const target = instance as unknown as { env: Env };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => {
+        if (property === "OPENROUTER_PRIMARY_MODEL") return model;
+        if (property === "OPENROUTER_FALLBACK_MODELS") return "";
+        return Reflect.get(current, property, receiver);
+      },
+    });
+    const scope = globalThis as ProviderCaptureGlobal;
+    scope.__rallyPipelineOriginalFetch ??= scope.fetch;
+    scope.__rallyPipelineProviderRequests = [];
+    scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof request === "string"
+        ? request
+        : request instanceof URL
+          ? request.toString()
+          : request.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        return Response.json({ data: [{ id: model, context_length: 131_072 }] });
+      }
+      if (url === "https://openrouter.ai/api/v1/chat/completions") {
+        const text = typeof init?.body === "string"
+          ? init.body
+          : request instanceof Request
+            ? await request.clone().text()
+            : "";
+        scope.__rallyPipelineProviderRequests!.push({
+          url,
+          body: JSON.parse(text) as Record<string, unknown>,
+        });
+        return Response.json(
+          { error: { code: "test_provider_rejection", message: "test provider rejection" } },
+          { status: 401 },
+        );
+      }
+      throw new Error(`unexpected_pipeline_provider_request:${url}`);
+    }) as typeof fetch;
+  });
+}
+
+function providerStream(events: readonly unknown[]): Response {
+  const encoder = new TextEncoder();
+  const chunks = [
+    ...events.map((event) => `data: ${JSON.stringify(event)}\n\n`),
+    "data: [DONE]\n\n",
+  ];
+  let index = 0;
+  return new Response(new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const chunk = chunks[index];
+      index += 1;
+      if (chunk === undefined) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(chunk));
+    },
+  }), { headers: { "content-type": "text/event-stream" } });
+}
+
+/** Replace only the external provider with deterministic streaming turns. */
+async function installScriptedProvider(
+  stub: DurableObjectStub,
+  scripts: readonly (readonly unknown[])[],
+  routing: {
+    primaryModel: string;
+    fallbackModels: readonly string[];
+  },
+): Promise<void> {
+  await runInDurableObject(stub, (instance) => {
+    const target = instance as unknown as { env: Env };
+    target.env = new Proxy(target.env, {
+      get: (current, property, receiver) => {
+        if (property === "OPENROUTER_API_KEY") return "workerd-scripted-provider-key";
+        if (property === "OPENROUTER_PRIMARY_MODEL") return routing.primaryModel;
+        if (property === "OPENROUTER_FALLBACK_MODELS") {
+          return routing.fallbackModels.join(",");
+        }
+        return Reflect.get(current, property, receiver);
+      },
+    });
+    const scope = globalThis as ProviderCaptureGlobal;
+    scope.__rallyPipelineOriginalFetch ??= scope.fetch;
+    scope.__rallyPipelineProviderRequests = [];
+    scope.__rallyPipelineProviderScripts = scripts.map((events) => [...events]);
+    scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof request === "string"
+        ? request
+        : request instanceof URL
+          ? request.toString()
+          : request.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        return Response.json({
+          data: [routing.primaryModel, ...routing.fallbackModels].map((id) => ({
+            id,
+            context_length: 131_072,
+          })),
+        });
+      }
+      if (url !== "https://openrouter.ai/api/v1/chat/completions") {
+        throw new Error(`unexpected_pipeline_provider_request:${url}`);
+      }
+      const text = typeof init?.body === "string"
+        ? init.body
+        : request instanceof Request
+          ? await request.clone().text()
+          : "";
+      const body = JSON.parse(text) as Record<string, unknown>;
+      scope.__rallyPipelineProviderRequests!.push({ url, body });
+      if (body.stream !== true) {
+        return Response.json(
+          { error: { code: "test_structured_request_refused", message: "not part of this oracle" } },
+          { status: 401 },
+        );
+      }
+      const events = scope.__rallyPipelineProviderScripts!.shift();
+      if (!events) {
+        return Response.json(
+          { error: { code: "unexpected_extra_stream", message: "script exhausted" } },
+          { status: 500 },
+        );
+      }
+      return providerStream(events);
+    }) as typeof fetch;
+  });
+}
+
+function nextSocketFrameOfType(socket: WebSocket, type: string): Promise<SocketFrame> {
+  return new Promise((resolve) => {
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const frame = JSON.parse(String(event.data)) as SocketFrame;
+        if (frame.type !== type) return;
+        socket.removeEventListener("message", onMessage);
+        resolve(frame);
+      } catch {
+        // Ignore heartbeat and unrelated non-JSON frames.
+      }
+    };
+    socket.addEventListener("message", onMessage);
+  });
+}
+
+async function openSubscribedSocket(
+  stub: DurableObjectStub,
+  ticketId: string,
+): Promise<{ socket: WebSocket; initial: SocketFrame }> {
+  const response = await stub.fetch("https://substream.test/socket", {
+    headers: {
+      Upgrade: "websocket",
+      "x-rally-workspace-id": WORKSPACE_ID,
+      "x-rally-workstream-id": WORKSTREAM_ID,
+      "x-rally-substream-id": "0",
+      "x-rally-user-id": USER_ID,
+      "x-rally-session-id": SESSION_ID,
+      "x-rally-socket-ticket-id": ticketId,
+      "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+    },
+  });
+  expect(response.status).toBe(101);
+  const socket = response.webSocket!;
+  socket.accept();
+  const initial = nextSocketFrameOfType(socket, "snapshot");
+  socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0, publishPresence: false }));
+  const initialFrame = await initial;
+  // Snapshot delivery precedes the server's final subscribed attachment write.
+  // Do not let the alarm publish into that narrow gap or the test could miss
+  // the first live frame while still appearing to have a subscribed client.
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const subscribed = await runInDurableObject(stub, (_instance, state) =>
+      state.getWebSockets().some((server) => (
+        server.deserializeAttachment() as { subscribed?: boolean }
+      ).subscribed === true));
+    if (subscribed) return { socket, initial: initialFrame };
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  socket.close(1011, "subscription did not settle");
+  throw new Error("product socket did not become subscribed");
+}
+
+function collectSocketFrames(socket: WebSocket): {
+  frames: SocketFrame[];
+  stop: () => void;
+} {
+  const frames: SocketFrame[] = [];
+  const onMessage = (event: MessageEvent) => {
+    try {
+      frames.push(JSON.parse(String(event.data)) as SocketFrame);
+    } catch {
+      // Heartbeats are not semantic transcript evidence.
+    }
+  };
+  socket.addEventListener("message", onMessage);
+  return { frames, stop: () => socket.removeEventListener("message", onMessage) };
+}
+
+async function waitForSocketEvidence(
+  frames: readonly SocketFrame[],
+  predicate: (frame: SocketFrame) => boolean,
+): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (frames.some(predicate)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`socket evidence did not arrive: ${frames.map((frame) => frame.type).join(",")}`);
+}
+
+async function capturedProviderRequests(stub: DurableObjectStub): Promise<CapturedProviderRequest[]> {
+  return runInDurableObject(stub, () => {
+    const scope = globalThis as ProviderCaptureGlobal;
+    return structuredClone(scope.__rallyPipelineProviderRequests ?? []);
+  });
+}
+
+async function restoreProviderFetch(stub: DurableObjectStub): Promise<void> {
+  await runInDurableObject(stub, () => {
+    const scope = globalThis as ProviderCaptureGlobal;
+    if (scope.__rallyPipelineOriginalFetch) scope.fetch = scope.__rallyPipelineOriginalFetch;
+    delete scope.__rallyPipelineOriginalFetch;
+    delete scope.__rallyPipelineProviderRequests;
+    delete scope.__rallyPipelineProviderScripts;
+  });
+}
+
+function visibleAssistantBlockOrder(turns: readonly Record<string, unknown>[]): string[] {
+  return [...turns]
+    .filter((turn) => turn.actor === "assistant" && turn.entryKind === "conversation")
+    .sort((left, right) => Number(left.transcriptSequence) - Number(right.transcriptSequence))
+    .flatMap((turn) => (turn.blocks as Array<Record<string, unknown>>).flatMap((block) => {
+      if (block.type === "text") return [`text:${String(block.text)}`];
+      if (block.type === "tool") return ["tool"];
+      return [];
+    }));
+}
+
+function answeredExternalElicitationContent(answer: string): string {
+  // This is the same durable answered-question projection the Slack product
+  // path prepares before admission. A kind-only object cannot become a Bind
+  // user message and correctly fails closed at the mailbox boundary.
+  return JSON.stringify({
+    kind: "elicitation_response",
+    elicitation: {
+      prompt: "Choose",
+      responseType: "text",
+      options: [],
+      status: "answered",
+      answer,
+    },
+  });
+}
+
+function snapshotTurns(frame: SocketFrame | Record<string, unknown>): Record<string, unknown>[] {
+  const transcript = frame.transcript as {
+    ranges?: Array<{ turns?: Record<string, unknown>[] }>;
+    activeTurns?: Record<string, unknown>[];
+  } | undefined;
+  return [
+    ...(transcript?.ranges ?? []).flatMap((range) => range.turns ?? []),
+    ...(transcript?.activeTurns ?? []),
+  ];
+}
+
+function latestLiveTurns(frames: readonly SocketFrame[]): Record<string, unknown>[] {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const frame of frames) {
+    if (frame.type !== "transcript_turn_upserted") continue;
+    const turn = frame.turn as Record<string, unknown>;
+    const turnId = String(turn.turnId);
+    const current = byId.get(turnId);
+    if (!current || Number(turn.revision) > Number(current.revision)) byId.set(turnId, turn);
+  }
+  return [...byId.values()];
 }
 
 function failureCode(row: RunRow): string {
@@ -227,13 +632,13 @@ describe("a member's message travels the whole pipeline", () => {
     expect(message).toMatch(/Retrying is unlikely to help|try again|support/iu);
 
     // The member sees the truth, not a spinner: the work stream reflects the
-    // failure and the object holds no outstanding dispatch or alarm debt.
+    // failure and the singleton loop releases its active execution.
     //
-    // Both land after the run settles, and the *dispatch* lands last: a run
+    // Both land after the run settles, and the loop release lands last: a run
     // reaching a terminal status is not the end of the drain, which then names
     // the work stream and refreshes its description before releasing the row.
     // So both halves wait, and on the same window — waiting on the state alone
-    // and then asserting on the dispatch reads whatever the drain happens to
+    // and then asserting on the loop reads whatever the drain happens to
     // have reached, which is a race the drain wins or loses by milliseconds.
     let observed = "";
     let outstanding = -1;
@@ -246,25 +651,923 @@ describe("a member's message travels the whole pipeline", () => {
           `SELECT exact_state FROM workstream WHERE id = 1`,
         ).toArray()[0]!.exact_state,
         state.storage.sql.exec<{ n: number }>(
-          `SELECT COUNT(*) AS n FROM agent_run_dispatches WHERE state IN ('queued','running')`,
+          `SELECT COUNT(*) AS n FROM substream_loops WHERE status = 'executing'`,
         ).toArray()[0]!.n,
       ] as const);
       if (observed === "failed" && outstanding === 0) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(observed, "run failed but the member still sees it running").toBe("failed");
-    expect(outstanding, "the drain left a dispatch queued").toBe(0);
+    expect(outstanding, "the drain left the singleton loop executing").toBe(0);
+    const assistantSettlement = await runInDurableObject(stub, (_instance, state) => {
+      const reservation = state.storage.sql.exec<{
+        turn_id: string;
+        transcript_sequence: number;
+        state: string;
+        outcome: string | null;
+      }>(
+        `SELECT turn_id, transcript_sequence, state, outcome
+           FROM assistant_turn_reservations ORDER BY assistant_turn_sequence DESC LIMIT 1`,
+      ).toArray()[0] ?? null;
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const projection = transcript.readBindProjection(substreamLoopId(WORKSTREAM_ID));
+      const turn = reservation ? transcript.participantTurn(reservation.turn_id) : null;
+      return {
+        reservation,
+        lastAssistantReservation: projection?.lastAssistantReservation ?? null,
+        turn: turn ? {
+          transcriptSequence: turn.transcriptSequence,
+          actor: turn.actor,
+          text: turn.blocks.find((block) => block.type === "text")?.text ?? null,
+        } : null,
+      };
+    });
+    expect(assistantSettlement.reservation).toMatchObject({
+      state: "materialized",
+      outcome: "error",
+    });
+    expect(assistantSettlement.lastAssistantReservation).toMatchObject({
+      turnId: assistantSettlement.reservation?.turn_id,
+      transcriptSequence: assistantSettlement.reservation?.transcript_sequence,
+      status: "failed",
+    });
+    expect(assistantSettlement.turn).toMatchObject({
+      transcriptSequence: assistantSettlement.reservation?.transcript_sequence,
+      actor: "system",
+      text: "Response could not be completed",
+    });
     // Long enough that the bounded wait above ends first, so a drain that never
     // releases its row reports as the assertion that names it rather than as a
     // timeout. This test drives a whole run to the provider boundary; the
-    // default 5s left no room for the wait, which is why the dispatch half of
+    // default 5s left no room for the wait, which is why the loop half of
     // the assertion could not have one before.
   }, 20_000);
 
-  it("a follow-up message starts a fresh run instead of wedging behind the failed one", async () => {
+  it("delivers a scheduled activation into an existing Bind projection exactly once across eviction and replay", async () => {
+    const stub = agentStub();
+    const opened = await (async () => {
+      await installScriptedProvider(stub, [[
+        { choices: [{ delta: { content: "persistent conversation ready" }, finish_reason: "stop" }] },
+      ]], {
+        primaryModel: SCHEDULED_ACTIVATION_MODEL,
+        fallbackModels: [],
+      });
+      try {
+        const result = await initializeWorkstream(
+          stub,
+          "establish the persistent conversation",
+          SCHEDULED_ACTIVATION_MODEL,
+        );
+        expect((await settledRun(stub, result.body.harnessRunId as string)).status)
+          .toBe("completed");
+        await waitForLoopRelease(stub);
+        return result;
+      } finally {
+        await restoreProviderFetch(stub);
+      }
+    })();
+
+    const wakeupId = "00000000-0000-7000-8000-0000000005c1";
+    const wakeupPrompt = "Inspect the canary after its quiet period";
+    const existingBindRevision = await runInDurableObject(stub, (_instance, state) =>
+      new WorkstreamTranscriptStorage(state.storage)
+        .readBindProjection(substreamLoopId(WORKSTREAM_ID))!.stateRevision);
+    expect(existingBindRevision).toBeGreaterThan(0);
+    const scheduled = await createSchedulingObjectPort(TEST_ENV, WORKSPACE_ID, WORKSTREAM_ID)
+      .scheduleWakeup({
+        wakeupId,
+        createdByRunId: opened.body.harnessRunId as string,
+        executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }),
+        prompt: wakeupPrompt,
+        // This test activates the saved wake-up explicitly. Keeping the timer
+        // in the future prevents its separate scheduler alarm from becoming a
+        // second producer while the activation replay is under test.
+        dueAt: Date.now() + 3_600_000,
+        idempotencyKey: "pipeline-scheduled-activation-1",
+        now: Date.now(),
+      });
+    expect(scheduled).toMatchObject({ outcome: "scheduled", wakeupId });
+
+    const activation = {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      triggerMessageId: null,
+      origin: "scheduled_wakeup",
+      executionPrincipal: { type: "user" as const, userId: USER_ID },
+      scheduledWakeupId: wakeupId,
+    };
+    const { runId, workflowInput, providerRequests } = await (async () => {
+      // The alarm is autonomous in real workerd. Install the only external
+      // dependency before admission so the test remains about durable replay
+      // even when workerd runs the alarm between either awaited assertion.
+      await installProviderCapture(stub, SCHEDULED_ACTIVATION_MODEL);
+      try {
+        const runId = await launchWorkstreamHarness(TEST_ENV, activation);
+        const workflowInput = await runInDurableObject(stub, (_instance, state) => {
+          const row = state.storage.sql.exec<{ execution_context_json: string }>(
+            `SELECT execution_context_json FROM runs WHERE run_id = ?`,
+            runId,
+          ).one();
+          return WorkstreamWorkflowInputSchema.parse(JSON.parse(row.execution_context_json));
+        });
+        expect(workflowInput).toMatchObject({
+          loopId: substreamLoopId(WORKSTREAM_ID),
+          harnessRunId: runId,
+          triggerMessageId: null,
+          scheduledWakeupId: wakeupId,
+        });
+
+        // Lose every in-memory activation hint before the executor runs, then
+        // replay the same public launch. Stable source/run identity must re-arm
+        // the existing receipt, not mint a second execution or model input. If
+        // the autonomous alarm already terminalized it, replay still returns
+        // that stable receipt and never attempts to reactivate it.
+        await evictDurableObject(stub);
+        await expect(launchWorkstreamHarness(TEST_ENV, activation)).resolves.toBe(runId);
+        await runInDurableObject(stub, (_instance, state) => {
+          expect(state.storage.sql.exec<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM runs WHERE run_id = ?`,
+            runId,
+          ).one().count).toBe(1);
+        });
+
+        const run = await settledRun(stub, runId);
+        expect(run.status).toBe("failed");
+        expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(run));
+        await waitForLoopRelease(stub);
+        return {
+          runId,
+          workflowInput,
+          providerRequests: await capturedProviderRequests(stub),
+        };
+      } finally {
+        await restoreProviderFetch(stub);
+      }
+    })();
+
+    const chatRequests = providerRequests.filter((request) =>
+      request.url === "https://openrouter.ai/api/v1/chat/completions");
+    expect(chatRequests).toHaveLength(1);
+    expect(chatRequests[0]!.body.model).toBe(SCHEDULED_ACTIVATION_MODEL);
+    const providerMessages = chatRequests[0]!.body.messages as Array<{
+      role?: unknown;
+      content?: unknown;
+    }>;
+    expect(providerMessages.filter((message) =>
+      message.role === "user" && JSON.stringify(message.content).includes(wakeupPrompt)))
+      .toHaveLength(1);
+
+    const durableBeforeTerminalReplay = await runInDurableObject(stub, (_instance, state) => {
+      const participantPromptCopies = new WorkstreamTranscriptStorage(state.storage)
+        .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null })
+        .ranges.flatMap((range) => range.turns)
+        .filter((turn) => turn.blocks.some((block) =>
+          block.type === "text" && block.text.includes(wakeupPrompt)));
+      expect(participantPromptCopies).toHaveLength(0);
+      const activationRows = state.storage.sql.exec<{
+        activation_input_id: string;
+        fact_kind: string;
+        source_kind: string | null;
+        source_id: string | null;
+        source_revision: number | null;
+        payload_json: string;
+        admitted_state_revision: number;
+      }>(
+        `SELECT receipt.activation_input_id, receipt.admitted_state_revision,
+                fact.fact_kind, fact.source_kind, fact.source_id, fact.source_revision,
+                payload.payload_json
+           FROM bind_activation_inputs receipt
+           JOIN transcript_facts fact ON fact.fact_id = receipt.fact_id
+           JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+          WHERE receipt.loop_id = ? AND fact.source_kind = 'scheduled_wakeup'
+            AND fact.source_id = ?`,
+        substreamLoopId(WORKSTREAM_ID),
+        wakeupId,
+      ).toArray();
+      expect(activationRows).toHaveLength(1);
+      expect(activationRows[0]).toMatchObject({
+        activation_input_id: `activation:${JSON.stringify(["scheduled_wakeup", wakeupId, null])}`,
+        fact_kind: "activation_input",
+        source_kind: "scheduled_wakeup",
+        source_id: wakeupId,
+        source_revision: null,
+      });
+      expect(JSON.parse(activationRows[0]!.payload_json)).toMatchObject({
+        role: "user",
+        content: expect.stringContaining(wakeupPrompt),
+      });
+
+      const boundary = state.storage.sql.exec<{
+        state_revision: number;
+        projected_hash: string;
+        bind_hash: string;
+      }>(
+        `SELECT state_revision, projected_hash, bind_hash
+           FROM bind_provider_boundaries WHERE loop_id = ?
+          ORDER BY state_revision DESC LIMIT 1`,
+        substreamLoopId(WORKSTREAM_ID),
+      ).one();
+      expect(boundary.projected_hash).toBe(boundary.bind_hash);
+      expect(boundary.state_revision).toBeGreaterThan(existingBindRevision);
+      expect(boundary.state_revision).toBeGreaterThanOrEqual(activationRows[0]!.admitted_state_revision);
+      // Storage holds one current projected state per loop (v35's head model),
+      // so the exactly-once claim is asked of that state rather than of a
+      // per-revision history the schema deliberately does not keep.
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count
+           FROM bind_loop_state_messages projected
+           JOIN transcript_facts fact ON fact.fact_id = projected.fact_id
+          WHERE projected.loop_id = ?
+            AND fact.source_kind = 'scheduled_wakeup' AND fact.source_id = ?`,
+        substreamLoopId(WORKSTREAM_ID),
+        wakeupId,
+      ).one().count).toBe(1);
+
+      return {
+        activationInputs: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM bind_activation_inputs
+            WHERE loop_id = ? AND activation_input_id = ?`,
+          substreamLoopId(WORKSTREAM_ID),
+          `activation:${JSON.stringify(["scheduled_wakeup", wakeupId, null])}`,
+        ).one().count,
+        providerBoundaries: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM bind_provider_boundaries WHERE loop_id = ?`,
+          substreamLoopId(WORKSTREAM_ID),
+        ).one().count,
+        inferenceAttempts: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM inference_attempts WHERE run_id = ?`,
+          runId,
+        ).one().count,
+        runs: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs WHERE run_id = ?`,
+          runId,
+        ).one().count,
+      };
+    });
+    expect(durableBeforeTerminalReplay).toMatchObject({
+      activationInputs: 1,
+      inferenceAttempts: 1,
+      runs: 1,
+    });
+
+    // A late delivery retry reaches the replacement object through the real
+    // activation RPC. The terminal receipt refuses re-execution, and—more
+    // importantly—the durable Bind/source identities remain byte-for-byte one.
+    await evictDurableObject(stub);
+    const terminalReplay = await (stub as unknown as {
+      activateLoop(input: WorkstreamWorkflowInput): Promise<{
+        status: number;
+        bodyJson: string;
+      }>;
+    }).activateLoop(workflowInput);
+    expect(terminalReplay.status).toBe(409);
+    expect(JSON.parse(terminalReplay.bodyJson)).toMatchObject({
+      error: "substream_loop_execution_receipt_terminal",
+    });
+    const durableAfterTerminalReplay = await runInDurableObject(stub, (_instance, state) => ({
+      activationInputs: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM bind_activation_inputs
+          WHERE loop_id = ? AND activation_input_id = ?`,
+        substreamLoopId(WORKSTREAM_ID),
+        `activation:${JSON.stringify(["scheduled_wakeup", wakeupId, null])}`,
+      ).one().count,
+      providerBoundaries: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM bind_provider_boundaries WHERE loop_id = ?`,
+        substreamLoopId(WORKSTREAM_ID),
+      ).one().count,
+      inferenceAttempts: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM inference_attempts WHERE run_id = ?`,
+        runId,
+      ).one().count,
+      runs: state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs WHERE run_id = ?`,
+        runId,
+      ).one().count,
+    }));
+    expect(durableAfterTerminalReplay).toEqual(durableBeforeTerminalReplay);
+  }, 20_000);
+
+  it("admits an addressed follow-up as immutable pending input without publishing it early", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      // Admissions below schedule loop activation one millisecond out; on a
+      // fast run the loop promotes the very inputs whose *pending* stage this
+      // test asserts. Hold the step in flight — the state a follow-up really
+      // queues behind — so pending is a fact rather than a race.
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+      // The regional-effect claim below is "admission wrote no NEW effect",
+      // established by comparing message-id sets: the background drain
+      // legitimately empties this queue at any moment, so an absolute row
+      // count races it by construction.
+      const effectIdsBefore = new Set(state.storage.sql.exec<{ message_id: string }>(
+        `SELECT message_id FROM durable_outbox WHERE channel = 'regional_effect_v1'`,
+      ).toArray().map((row) => row.message_id));
+      const before = {
+        turns: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
+        ).one().count,
+        runs: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs`,
+        ).one().count,
+        transcriptSequence: state.storage.sql.exec<{ next_transcript_sequence: number }>(
+          `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
+        ).one().next_transcript_sequence,
+        attention: state.storage.sql.exec<{ next_attention_ordinal: number }>(
+          `SELECT next_attention_ordinal FROM workstream WHERE id = 1`,
+        ).one().next_attention_ordinal,
+      };
+      const input = {
+        text: "exactly once after the safe boundary",
+        clientMessageId: "pipeline-pending-1",
+        mentions: [],
+        confirmedParticipantUserIds: [],
+        attachmentIds: [],
+      };
+      const first = await productService.createMessage(AUTH, input);
+      const replay = await productService.createMessage(AUTH, input);
+      const concurrentInput = {
+        ...input,
+        text: "one future turn under interleaving",
+        clientMessageId: "pipeline-pending-concurrent-1",
+      };
+      const concurrent = await Promise.all([
+        productService.createMessage(AUTH, concurrentInput),
+        productService.createMessage(AUTH, concurrentInput),
+      ]);
+
+      expect(first).toMatchObject({
+        deliveryState: "pending",
+        inserted: true,
+        // No wake is requested while a step is in flight: the held loop
+        // observes queued input at its own safe boundary. Idle-loop admission
+        // returning an activate_substream_loop request is proved end-to-end by
+        // the promotion test below, which actually mints the run.
+        activationRequest: null,
+      });
+      expect(replay).toMatchObject({
+        turn: { turnId: first.turn.turnId },
+        deliveryState: "pending",
+        inserted: false,
+      });
+      expect(concurrent[0].turn.turnId).toBe(concurrent[1].turn.turnId);
+      expect(concurrent.map((result) => result.inserted).sort()).toEqual([false, true]);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM substream_loops`,
+      ).one().count).toBe(1);
+      expect(state.storage.sql.exec<{ loop_id: string }>(
+        `SELECT loop_id FROM substream_loops WHERE id = 1`,
+      ).one().loop_id).toBe(substreamLoopId(WORKSTREAM_ID));
+      const openingContext = JSON.parse(state.storage.sql.exec<{
+        execution_context_json: string;
+      }>(
+        `SELECT execution_context_json FROM runs WHERE run_id = ?`,
+        opened.body.harnessRunId as string,
+      ).one().execution_context_json) as Record<string, unknown>;
+      expect(openingContext).toMatchObject({
+        loopId: substreamLoopId(WORKSTREAM_ID),
+        harnessRunId: opened.body.harnessRunId,
+      });
+      expect(openingContext.loopId).not.toBe(opened.body.harnessRunId);
+      const pending = state.storage.sql.exec<{
+        prepared_turn_id: string;
+        client_message_id: string;
+        prepared_payload_json: string;
+        provenance_json: string;
+        authorization_json: string;
+        attachments_json: string;
+        mentions_json: string;
+      }>(
+        `SELECT prepared_turn_id, client_message_id, prepared_payload_json,
+                provenance_json, authorization_json, attachments_json, mentions_json
+           FROM pending_loop_inputs WHERE client_message_id = ?`,
+        input.clientMessageId,
+      ).one();
+      expect(pending).toMatchObject({
+        prepared_turn_id: first.turn.turnId,
+        client_message_id: input.clientMessageId,
+        attachments_json: "[]",
+        mentions_json: "[]",
+      });
+      expect(JSON.parse(pending.prepared_payload_json)).toMatchObject({
+        role: "user",
+        content: input.text,
+      });
+      expect(JSON.parse(pending.provenance_json)).toMatchObject({
+        factKind: "participant_message",
+        originKind: "canonical",
+        sourceKind: null,
+        sourceId: null,
+        sourceRevision: null,
+        runId: null,
+        toolCallId: null,
+      });
+      expect(JSON.parse(pending.authorization_json)).toMatchObject({
+        workspaceId: WORKSPACE_ID,
+        workstreamId: WORKSTREAM_ID,
+        executionPrincipal: { type: "user", userId: USER_ID },
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns
+          WHERE client_message_id = ?`,
+        input.clientMessageId,
+      ).one().count).toBe(0);
+      expect({
+        turns: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM participant_transcript_turns`,
+        ).one().count,
+        runs: state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM runs`,
+        ).one().count,
+        transcriptSequence: state.storage.sql.exec<{ next_transcript_sequence: number }>(
+          `SELECT next_transcript_sequence FROM transcript_counters WHERE id = 1`,
+        ).one().next_transcript_sequence,
+        attention: state.storage.sql.exec<{ next_attention_ordinal: number }>(
+          `SELECT next_attention_ordinal FROM workstream WHERE id = 1`,
+        ).one().next_attention_ordinal,
+      }).toEqual(before);
+      const newEffectIds = state.storage.sql.exec<{ message_id: string }>(
+        `SELECT message_id FROM durable_outbox WHERE channel = 'regional_effect_v1'`,
+      ).toArray().map((row) => row.message_id)
+        .filter((messageId) => !effectIdsBefore.has(messageId));
+      expect(newEffectIds).toEqual([]);
+    });
+  });
+
+  it("delivers an invoked external message through pending input before minting its run", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    // This is the forward-resume case that regressed: Bind already has a
+    // durable head from an earlier execution, so the connector turn must enter
+    // through pending delivery rather than rely on bootstrap history.
+    await settledRun(stub, opened.body.harnessRunId as string);
+    // Admission schedules loop activation one millisecond out, so on a fast
+    // machine the input this test wants to observe as *pending* is already
+    // promoted by the time the replay answers. Hold the loop mid-execution —
+    // the durable state in which a queued connector message actually waits —
+    // so the pending stage is a fact rather than a race.
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
+    const now = Date.now();
+    const messageId = "00000000-0000-7000-8000-0000000005d1";
+    const actor = {
+      provider: "slack",
+      providerAccountId: "T123",
+      providerUserId: "U456",
+      displayName: "Taylor",
+      avatarUrl: null,
+    };
+    const admitted = await externalAdmission(stub, "admitExternalMessage", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      messageId,
+      clientMessageId: "slack:event:pending-1",
+      actor,
+      messageType: "text",
+      text: "Please inspect the latest deploy",
+      structuredContentJson: null,
+      executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+      origin: "slack_workspace_message",
+      slackOrigin: {
+        teamId: "T123",
+        actorSlackUserId: "U456",
+        channelId: "C123",
+        channelName: null,
+        threadTs: "1710000000.000001",
+        invocationType: "direct_message",
+        channelType: "im",
+        matchedAvalonUserId: null,
+        nearbyMessagesStatus: "not_applicable",
+        nearbyMessages: [],
+        attachments: [],
+      },
+      runMode: "steer",
+      now,
+    });
+    const replay = await externalAdmission(stub, "admitExternalMessage", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      messageId: "00000000-0000-7000-8000-0000000005d2",
+      clientMessageId: "slack:event:pending-1",
+      actor,
+      messageType: "text",
+      text: "Please inspect the latest deploy",
+      structuredContentJson: null,
+      executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+      origin: "slack_workspace_message",
+      slackOrigin: {
+        teamId: "T123",
+        actorSlackUserId: "U456",
+        channelId: "C123",
+        channelName: null,
+        threadTs: "1710000000.000001",
+        invocationType: "direct_message",
+        channelType: "im",
+        matchedAvalonUserId: null,
+        nearbyMessagesStatus: "not_applicable",
+        nearbyMessages: [],
+        attachments: [],
+      },
+      runMode: "steer",
+      now: now + 1,
+    });
+
+    expect(admitted).toEqual({
+      status: 200,
+      body: {
+        turn: {
+          turnId: messageId,
+          clientMessageId: "slack:event:pending-1",
+          createdAt: new Date(now).toISOString(),
+        },
+        deliveryState: "pending",
+      },
+    });
+    expect(replay).toEqual({
+      status: 200,
+      body: {
+        turn: {
+          turnId: messageId,
+          clientMessageId: "slack:event:pending-1",
+          createdAt: new Date(now).toISOString(),
+        },
+        deliveryState: "pending",
+      },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
+        messageId,
+      ).one().count).toBe(0);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs WHERE trigger_part_id = ?`,
+        messageId,
+      ).one().count).toBe(0);
+      const pending = new SubstreamLoopStorage(state.storage).input(messageId)!;
+      expect(pending).toMatchObject({
+        actor: "external",
+        external_actor_json: JSON.stringify(actor),
+      });
+      expect(JSON.parse(pending.authorization_json)).toMatchObject({
+        executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+        reason: "slack_workspace_message",
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM pending_loop_inputs
+          WHERE client_message_id = 'slack:event:pending-1'`,
+      ).one().count).toBe(1);
+    });
+
+    // Pending is proved; let go of the held step so the loop can promote the
+    // input and mint its execution receipt.
+    await runInDurableObject(stub, (_instance, state) => {
+      releaseHeldLoop(state);
+    });
+    const run = await settledRunForTrigger(stub, messageId);
+    expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(run));
+    const deliveredReplay = await externalAdmission(stub, "admitExternalMessage", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      messageId: "00000000-0000-7000-8000-0000000005d3",
+      clientMessageId: "slack:event:pending-1",
+      actor,
+      messageType: "text",
+      text: "Please inspect the latest deploy",
+      structuredContentJson: null,
+      executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+      origin: "slack_workspace_message",
+      runMode: "steer",
+      now: now + 2,
+    });
+    expect(deliveredReplay).toEqual({
+      status: 200,
+      body: {
+        turn: {
+          turnId: messageId,
+          clientMessageId: "slack:event:pending-1",
+          createdAt: expect.any(String),
+        },
+        deliveryState: "canonical",
+      },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT author_type, external_actor_json FROM canonical_conversation_turn_details
+          WHERE id = ?`,
+        messageId,
+      ).one()).toEqual({
+        author_type: "external",
+        external_actor_json: JSON.stringify(actor),
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs WHERE trigger_part_id = ?`,
+        messageId,
+      ).one().count).toBe(1);
+    });
+  }, 20_000);
+
+  it("keeps non-final external elicitation answers canonical and admits only the final answer", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
     await settledRun(stub, opened.body.harnessRunId as string);
+    const firstId = "00000000-0000-7000-8000-0000000005e1";
+    const finalId = "00000000-0000-7000-8000-0000000005e2";
+    await runInDurableObject(stub, (_instance, state) => {
+      for (const [elicitationId, createdAt] of [[firstId, 1], [finalId, 2]] as const) {
+        state.storage.sql.exec(
+          `INSERT INTO elicitation_requests
+             (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+              minimum_selections, maximum_selections, target_user_id, status,
+              answer_json, answered_by_user_id, external_actor_json, created_at, answered_at)
+           VALUES (?, ?, ?, 'Choose', 'text', '[]', 0, NULL, NULL, 'pending',
+                   NULL, NULL, NULL, ?, NULL)`,
+          elicitationId,
+          opened.body.harnessRunId as string,
+          `${opened.body.harnessRunId as string}:turn:1:tool:${createdAt}`,
+          createdAt,
+        );
+      }
+    });
+    const actor = {
+      provider: "slack",
+      providerAccountId: "T123",
+      providerUserId: "U456",
+      displayName: "Taylor",
+      avatarUrl: null,
+    };
+    const answer = (elicitationId: string, messageId: string, clientMessageId: string) => ({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      elicitationId,
+      answerJson: JSON.stringify("yes"),
+      messageId,
+      clientMessageId,
+      actor,
+      messageType: "elicitation" as const,
+      text: "",
+      structuredContentJson: answeredExternalElicitationContent("yes"),
+      executionPrincipal: { type: "workspace" as const, workspaceId: WORKSPACE_ID },
+      origin: "slack_workspace_elicitation_answer",
+      parentHarnessRunId: opened.body.harnessRunId as string,
+      runMode: "steer" as const,
+      now: Date.now(),
+    });
+    const firstMessageId = "00000000-0000-7000-8000-0000000005f1";
+    const finalMessageId = "00000000-0000-7000-8000-0000000005f2";
+    const first = await externalAdmission(
+      stub,
+      "answerExternalElicitation",
+      answer(firstId, firstMessageId, "slack:answer:first"),
+    );
+    const final = await externalAdmission(
+      stub,
+      "answerExternalElicitation",
+      answer(finalId, finalMessageId, "slack:answer:final"),
+    );
+
+    expect(first).toEqual({
+      status: 200,
+      body: {
+        turn: {
+          turnId: firstMessageId,
+          clientMessageId: "slack:answer:first",
+          createdAt: expect.any(String),
+        },
+        deliveryState: "canonical",
+      },
+    });
+    expect(final).toEqual({
+      status: 200,
+      body: {
+        turn: {
+          turnId: finalMessageId,
+          clientMessageId: "slack:answer:final",
+          createdAt: expect.any(String),
+        },
+        deliveryState: "pending",
+      },
+    });
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT elicitation_id, status FROM elicitation_requests ORDER BY created_at`,
+      ).toArray()).toEqual([
+        { elicitation_id: firstId, status: "answered" },
+        { elicitation_id: finalId, status: "answered" },
+      ]);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
+        firstMessageId,
+      ).one().count).toBe(1);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
+        finalMessageId,
+      ).one().count).toBe(0);
+      expect(new SubstreamLoopStorage(state.storage).input(finalMessageId)).toMatchObject({
+        actor: "external",
+        message_type: "elicitation",
+      });
+    });
+  }, 20_000);
+
+  it("refuses an external answer when the durable elicitation targets another member", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    const elicitationId = "00000000-0000-7000-8000-0000000005e3";
+    const targetUserId = "00000000-0000-4000-8000-000000000099";
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO elicitation_requests
+           (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json,
+            minimum_selections, maximum_selections, target_user_id, status,
+            answer_json, answered_by_user_id, external_actor_json, created_at, answered_at)
+         VALUES (?, ?, ?, 'Choose', 'text', '[]', 0, NULL, ?, 'pending',
+                 NULL, NULL, NULL, ?, NULL)`,
+        elicitationId,
+        opened.body.harnessRunId as string,
+        `${opened.body.harnessRunId as string}:turn:1:tool:0`,
+        targetUserId,
+        Date.now(),
+      );
+    });
+    const response = await externalAdmission(stub, "answerExternalElicitation", {
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      elicitationId,
+      answerJson: JSON.stringify("yes"),
+      messageId: "00000000-0000-7000-8000-0000000005f3",
+      clientMessageId: "slack:answer:target-mismatch",
+      actor: {
+        provider: "slack",
+        providerAccountId: "T123",
+        providerUserId: "U456",
+        displayName: "Taylor",
+        avatarUrl: null,
+      },
+      messageType: "elicitation",
+      text: "",
+      structuredContentJson: answeredExternalElicitationContent("yes"),
+      executionPrincipal: { type: "workspace", workspaceId: WORKSPACE_ID },
+      origin: "slack_workspace_elicitation_answer",
+      parentHarnessRunId: opened.body.harnessRunId as string,
+      runMode: "steer",
+      now: Date.now(),
+    });
+    expect(response.status).toBe(403);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT status, answer_json FROM elicitation_requests WHERE elicitation_id = ?`,
+        elicitationId,
+      ).one()).toEqual({ status: "pending", answer_json: null });
+    });
+  }, 20_000);
+
+  it("records stop on the loop and makes retry durable as a subordinate execution receipt", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    // Settle the opening run first: this test claims the loop by hand, and the
+    // opening run's live activation alarm would otherwise race that claim.
+    await settledRun(stub, opened.body.harnessRunId as string);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const loops = new SubstreamLoopStorage(state.storage);
+      const initial = loops.loop()!;
+      const now = Date.now();
+      // A receipt deferred beyond the wall clock: the object's own drain skips
+      // it on every alarm, so only this test's logical clock can claim it.
+      const executionId = "00000000-0000-7000-8000-00000000e001";
+      const deferredUntil = now + 3_600_000;
+      const logicalNow = deferredUntil + 1;
+      state.storage.sql.exec(
+        `INSERT INTO runs (
+           run_id, substream_id, status, budget, attempt_epoch,
+           model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
+           active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+           tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+           origin, execution_principal_json,
+           execution_context_json, execution_available_at, chain_depth, created_at, updated_at
+         ) VALUES (?, '0', 'admitted', '{}', 0, 0, '', 0, 0, ?,
+                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                   'member_message', ?, ?, ?, 0, ?, ?)`,
+        executionId,
+        now,
+        JSON.stringify({ type: "user", userId: USER_ID }),
+        JSON.stringify({
+          region: "global",
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          substreamId: "0",
+          loopId: initial.loop_id,
+          harnessRunId: executionId,
+          triggerMessageId: null,
+          automationSubscriptionId: null,
+          activityId: null,
+          executionPrincipal: { type: "user", userId: USER_ID },
+          reason: "user_message",
+        }),
+        deferredUntil,
+        now,
+        now,
+      );
+      const leaseOwner = "product-control-test";
+      const executing = loops.activateExecutionReceipt({
+        runId: executionId,
+        loopId: initial.loop_id,
+        executionEpoch: 1,
+        leaseOwner,
+        leaseExpiresAt: logicalNow + 60_000,
+        expectedLoopRevision: initial.revision,
+        expectedBindStateRevision: initial.bind_state_revision,
+        now: logicalNow,
+      }).loop;
+
+      await productService.stop(AUTH);
+      const stopped = loops.loop()!;
+      expect(stopped).toMatchObject({
+        loop_id: substreamLoopId(WORKSTREAM_ID),
+        status: "executing",
+        active_execution_id: executionId,
+        stop_after_step_ordinal: executing.step_ordinal,
+        stop_reason: "stopped_by_user",
+      });
+      expect(state.storage.sql.exec<{ cancellation_requested_at: number | null }>(
+        `SELECT cancellation_requested_at FROM runs WHERE run_id = ?`,
+        executionId,
+      ).one().cancellation_requested_at).toBeNull();
+
+      await productService.recordWorkflowFailed(
+        executionId,
+        { code: "test_execution_settled", message: "Test execution settled" },
+        {
+          loopId: stopped.loop_id,
+          executionId,
+          executionEpoch: 1,
+          leaseOwner,
+        },
+      );
+      const idle = loops.loop()!;
+      const runCount = state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs`,
+      ).one().count;
+      const retry = await productService.retry(AUTH);
+
+      expect(retry).toMatchObject({
+        activationRequest: {
+          kind: "activate_substream_loop",
+          loopId: idle.loop_id,
+          cause: "manual_retry",
+          inputId: null,
+          receiptRunId: retry.harnessRunId,
+          workflowInput: {
+            loopId: idle.loop_id,
+            harnessRunId: retry.harnessRunId,
+            executionPrincipal: { type: "user", userId: USER_ID },
+            reason: "manual_retry",
+          },
+        },
+      });
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs`,
+      ).one().count).toBe(runCount + 1);
+      const receipt = state.storage.sql.exec<{
+        status: string;
+        origin: string;
+        substream_loop_id: string | null;
+        execution_context_json: string;
+      }>(
+        `SELECT status, origin, substream_loop_id, execution_context_json
+           FROM runs WHERE run_id = ?`,
+        retry.harnessRunId,
+      ).one();
+      expect(receipt).toMatchObject({
+        status: "admitted",
+        origin: "manual_retry",
+        substream_loop_id: null,
+      });
+      expect(JSON.parse(receipt.execution_context_json)).toEqual(
+        retry.activationRequest.workflowInput,
+      );
+      expect(loops.loop()).toMatchObject({
+        loop_id: initial.loop_id,
+        status: "idle",
+      });
+    });
+  });
+
+  it("a follow-up is promoted by the same loop after the failed execution releases it", async () => {
+    const stub = agentStub();
+    const opened = await initializeWorkstream(stub, "first message");
+    await settledRun(stub, opened.body.harnessRunId as string);
+    // Hold the step so the pending mid-state below is observable rather than a
+    // race against the one-millisecond activation alarm; released before the
+    // promotion this test is actually about.
+    await runInDurableObject(stub, (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+    });
 
     const followUp = await product(stub, {
       operation: "create_message",
@@ -279,13 +1582,30 @@ describe("a member's message travels the whole pipeline", () => {
     });
 
     expect(followUp.status).toBe(200);
-    const secondRunId = followUp.body.harnessRunId as string;
-    // One participant means the agent is always addressed; a follow-up that
-    // admits no run would strand the member without recourse.
-    expect(secondRunId).toBeTruthy();
-    expect(secondRunId).not.toBe(opened.body.harnessRunId);
+    expect(followUp.body).toEqual({
+      turn: {
+        turnId: expect.any(String),
+        clientMessageId: "pipeline-follow-1",
+        createdAt: expect.any(String),
+      },
+      deliveryState: "pending",
+    });
+    const turnId = (followUp.body.turn as { turnId: string }).turnId;
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(new SubstreamLoopStorage(state.storage).pendingInputs()
+        .map((input) => input.prepared_turn_id)).toContain(turnId);
+      expect(state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM runs
+          WHERE json_extract(execution_context_json, '$.triggerMessageId') = ?`,
+        turnId,
+      ).one().n).toBe(0);
+    });
 
-    const second = await settledRun(stub, secondRunId);
+    await runInDurableObject(stub, (_instance, state) => {
+      releaseHeldLoop(state);
+    });
+    const second = await settledRunForTrigger(stub, turnId);
+    expect(second.run_id).not.toBe(opened.body.harnessRunId);
     expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(second));
   });
 
@@ -305,17 +1625,28 @@ describe("a member's message travels the whole pipeline", () => {
 
     expect(first.status).toBe(200);
     expect(repeat.status).toBe(200);
-    // The replay returns the original message and admits no second run.
-    expect((repeat.body.message as { id: string }).id)
-      .toBe((first.body.message as { id: string }).id);
-    expect(repeat.body.harnessRunId ?? null).toBeNull();
+    // The replay returns the same future turn and admits neither a duplicate
+    // pending input nor any message-owned run.
+    expect((repeat.body.turn as { turnId: string }).turnId)
+      .toBe((first.body.turn as { turnId: string }).turnId);
+    expect(Object.keys(first.body).sort()).toEqual(["deliveryState", "turn"]);
+    expect(Object.keys(repeat.body).sort()).toEqual(["deliveryState", "turn"]);
+    expect(["canonical", "pending"]).toContain(first.body.deliveryState);
+    expect(["canonical", "pending"]).toContain(repeat.body.deliveryState);
 
     await runInDurableObject(stub, (_instance, state) => {
-      const copies = state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM workstream_message_records
+      const canonicalCopies = state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM participant_transcript_turns
           WHERE client_message_id = 'pipeline-dup-1'`,
       ).toArray()[0]!;
-      expect(copies.n).toBe(1);
+      const pendingCopies = state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM pending_loop_inputs
+          WHERE client_message_id = 'pipeline-dup-1'`,
+      ).toArray()[0]!;
+      // An alarm may promote the input between the two HTTP requests. The
+      // authority invariant is one logical turn across both states, not which
+      // side of that asynchronous boundary happens to be observed here.
+      expect(canonicalCopies.n + pendingCopies.n).toBe(1);
     });
   });
 
@@ -341,12 +1672,172 @@ describe("a member's message travels the whole pipeline", () => {
     expect(attempt.status).toBe(401);
     await runInDurableObject(stub, (_instance, state) => {
       const copies = state.storage.sql.exec<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM workstream_message_records
+        `SELECT COUNT(*) AS n FROM participant_transcript_turns
           WHERE client_message_id = 'pipeline-revoked-1'`,
       ).toArray()[0]!;
       expect(copies.n).toBe(0);
     });
   });
+
+  it("fails an observable streamed response without retry and replaces its partial overlay with the reserved error turn", async () => {
+    const stub = agentStub();
+    await installScriptedProvider(stub, [[
+      { choices: [{ delta: { content: "observable partial" }, finish_reason: null }] },
+      { error: { message: "provider stream broke" } },
+    ]], {
+      // The fallback is deliberate: the oracle proves that participant-visible
+      // output closes the entire route, rather than succeeding because there
+      // was no later model available.
+      primaryModel: STREAM_FAILURE_PRIMARY_MODEL,
+      fallbackModels: [STREAM_FAILURE_FALLBACK_MODEL],
+    });
+    let socket: WebSocket | null = null;
+    let stopCollecting: (() => void) | null = null;
+
+    try {
+      const opened = await initializeWorkstream(stub, "show me a streamed answer");
+      expect(opened.status).toBe(200);
+      ({ socket } = await openSubscribedSocket(
+        stub,
+        "00000000-0000-7000-8000-0000000005c1",
+      ));
+      const live = collectSocketFrames(socket);
+      stopCollecting = live.stop;
+
+      const run = await settledRun(stub, opened.body.harnessRunId as string);
+      expect(run.status).toBe("failed");
+      await waitForSocketEvidence(live.frames, (frame) => frame.type === "stream_completed");
+      await waitForLoopRelease(stub);
+
+      const partialIndex = live.frames.findIndex((frame) =>
+        frame.type === "stream_delta" && frame.delta === "observable partial");
+      const partial = live.frames[partialIndex];
+      expect(partialIndex).toBeGreaterThanOrEqual(0);
+      const reservedTurnId = String(partial?.turnId);
+      const errorIndex = live.frames.findIndex((frame) => {
+        if (frame.type !== "transcript_turn_upserted") return false;
+        const turn = frame.turn as Record<string, unknown>;
+        return turn.turnId === reservedTurnId
+          && (turn.blocks as Array<Record<string, unknown>>).some((block) =>
+            block.type === "text"
+            && block.text === "Response could not be completed"
+            && (block.structuredContent as Record<string, unknown> | undefined)?.kind
+              === "assistant_turn_failed");
+      });
+      const completionIndex = live.frames.findIndex((frame) =>
+        frame.type === "stream_completed" && frame.streamId === opened.body.harnessRunId);
+      expect(errorIndex).toBeGreaterThan(partialIndex);
+      expect(completionIndex).toBeGreaterThan(errorIndex);
+
+      const streamedRequests = (await capturedProviderRequests(stub))
+        .filter((request) => request.body.stream === true);
+      expect(streamedRequests.map((request) => request.body.model))
+        .toEqual([STREAM_FAILURE_PRIMARY_MODEL]);
+
+      const reloaded = await product(stub, { operation: "boot", auth: AUTH });
+      expect(reloaded.status).toBe(200);
+      const turns = snapshotTurns(reloaded.body);
+      const reserved = turns.find((turn) => turn.turnId === reservedTurnId);
+      expect(reserved).toMatchObject({
+        entryKind: "status",
+        actor: "system",
+        blocks: [{
+          type: "text",
+          text: "Response could not be completed",
+          structuredContent: {
+            kind: "assistant_turn_failed",
+          },
+        }],
+      });
+      expect(JSON.stringify(turns)).not.toContain("observable partial");
+    } finally {
+      stopCollecting?.();
+      socket?.close(1000, "test complete");
+      await restoreProviderFetch(stub);
+    }
+  }, 20_000);
+
+  it("keeps interleaved assistant text and tools in exact order live, after reconnect, and after cold reload", async () => {
+    const stub = agentStub();
+    const toolCall = (id: string) => ({
+      index: 0,
+      id,
+      type: "function",
+      function: { name: "core_current_time", arguments: "{}" },
+    });
+    await installScriptedProvider(stub, [
+      [
+        { choices: [{ delta: { content: "text A" }, finish_reason: null }] },
+        { choices: [{ delta: { tool_calls: [toolCall("provider-tool-1")] }, finish_reason: "tool_calls" }] },
+      ],
+      [
+        { choices: [{ delta: { content: "text B" }, finish_reason: null }] },
+        { choices: [{ delta: { tool_calls: [toolCall("provider-tool-2")] }, finish_reason: "tool_calls" }] },
+      ],
+      [{ choices: [{ delta: { content: "final C" }, finish_reason: "stop" }] }],
+    ], {
+      primaryModel: INTERLEAVED_TOOLS_MODEL,
+      fallbackModels: [],
+    });
+    const expectedOrder = ["text:text A", "tool", "text:text B", "tool", "text:final C"];
+    let liveSocket: WebSocket | null = null;
+    let reconnectSocket: WebSocket | null = null;
+    let stopCollecting: (() => void) | null = null;
+
+    try {
+      const opened = await initializeWorkstream(stub, "perform two deterministic tool steps");
+      expect(opened.status).toBe(200);
+      ({ socket: liveSocket } = await openSubscribedSocket(
+        stub,
+        "00000000-0000-7000-8000-0000000005c2",
+      ));
+      const live = collectSocketFrames(liveSocket);
+      stopCollecting = live.stop;
+
+      const run = await settledRun(stub, opened.body.harnessRunId as string);
+      expect(run.status).toBe("completed");
+      await waitForSocketEvidence(live.frames, (frame) =>
+        visibleAssistantBlockOrder(latestLiveTurns(live.frames)).join("|")
+          === expectedOrder.join("|")
+        && frame.type === "stream_completed");
+      await waitForLoopRelease(stub);
+      expect(visibleAssistantBlockOrder(latestLiveTurns(live.frames))).toEqual(expectedOrder);
+
+      stopCollecting();
+      stopCollecting = null;
+      liveSocket.close(1000, "reconnect");
+      liveSocket = null;
+
+      const reconnect = await openSubscribedSocket(
+        stub,
+        "00000000-0000-7000-8000-0000000005c3",
+      );
+      reconnectSocket = reconnect.socket;
+      expect(visibleAssistantBlockOrder(snapshotTurns(reconnect.initial))).toEqual(expectedOrder);
+
+      const streamedRequests = (await capturedProviderRequests(stub))
+        .filter((request) => request.body.stream === true);
+      expect(streamedRequests.map((request) => request.body.model)).toEqual([
+        INTERLEAVED_TOOLS_MODEL,
+        INTERLEAVED_TOOLS_MODEL,
+        INTERLEAVED_TOOLS_MODEL,
+      ]);
+
+      reconnectSocket.close(1000, "cold reload");
+      reconnectSocket = null;
+      await evictDurableObject(stub);
+      // A product boot after eviction is the cold-load source the desktop uses
+      // when neither an object cache nor a socket replay cursor survives.
+      const reloaded = await product(agentStub(), { operation: "boot", auth: AUTH });
+      expect(reloaded.status).toBe(200);
+      expect(visibleAssistantBlockOrder(snapshotTurns(reloaded.body))).toEqual(expectedOrder);
+    } finally {
+      stopCollecting?.();
+      liveSocket?.close(1000, "test complete");
+      reconnectSocket?.close(1000, "test complete");
+      await restoreProviderFetch(stub);
+    }
+  }, 20_000);
 
   it("the failed run leaves the transcript readable and ordered", async () => {
     const stub = agentStub();
@@ -389,23 +1880,19 @@ describe("a member's message travels the whole pipeline", () => {
       );
     });
 
-    const listed = await product(stub, { operation: "messages", auth: AUTH, limit: 50 });
-
-    expect(listed.status).toBe(200);
-    const items = listed.body.items as {
-      id: string;
-      sequenceNumber: number;
-      attentionSequenceNumber?: number | null;
-      content?: string;
-    }[];
+    const items = await runInDurableObject(stub, (_instance, state) => (
+      new WorkstreamTranscriptStorage(state.storage)
+        .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null })
+        .ranges.flatMap((range) => range.turns)
+    ));
     expect(items.length).toBeGreaterThan(0);
-    const sequences = items.map((item) => item.sequenceNumber);
+    const sequences = items.map((item) => item.transcriptSequence);
     expect([...sequences].sort((a, b) => a - b)).toEqual(sequences);
-    expect(items.some((item) => item.attentionSequenceNumber === 1)).toBe(true);
+    expect(items.some((item) => item.attentionOrdinal === 1)).toBe(true);
     expect(items.filter((item) => [
       "00000000-0000-7000-8000-0000000005b1",
       "00000000-0000-7000-8000-0000000005b2",
-    ].includes(item.id)).map((item) => item.attentionSequenceNumber ?? null))
+    ].includes(item.turnId)).map((item) => item.attentionOrdinal ?? null))
       .toEqual([null, 2]);
   });
 });

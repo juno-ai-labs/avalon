@@ -1,7 +1,7 @@
 /**
  * Object-local transcript for one work stream.
  *
- * `workstream_message_records` is the work stream's record of what was said and by whom.
+ * Ordered canonical conversation turns are the work stream's record of what was said and by whom.
  * Members read it through `WorkstreamObjectProductService`, which has always
  * been object-native. This class is the other reader and writer: the harness,
  * the digest, Slack, inbound email, and the automation service, all of which
@@ -40,10 +40,9 @@
 
 import { boundParameterChunks } from "./bound-parameters";
 import {
-  insertWorkstreamMessageRecord,
-  prepareWorkstreamMessageRecord,
-  type PreparedWorkstreamMessageRecord,
-  type WorkstreamMessageRecordInput,
+  prepareConversationTurn,
+  type PreparedConversationTurn,
+  type ConversationTurnInput,
   WorkstreamTranscriptStorage,
 } from "./workstream-transcript-storage";
 
@@ -104,18 +103,14 @@ export type MessageAppendOutcome =
   | { outcome: "appended"; messageId: string; sequenceNumber: number }
   | { outcome: "replayed"; messageId: string; sequenceNumber: number };
 
-export interface UpsertToolMessageInput {
-  messageId: string;
-  clientMessageId: string;
-  structuredContentJson: string;
-  createdAt: number;
-  editedAt: number | null;
-}
-
 export type MessageAppendInput = Omit<
-  WorkstreamMessageRecordInput,
-  "sequenceNumber" | "attentionOrdinal" | "messageType"
-> & { messageType: "text" | "system" | "elicitation" };
+  ConversationTurnInput,
+  "sequenceNumber" | "attentionOrdinal" | "messageType" | "authorType" | "authorUserId"
+> & {
+  authorType: "agent" | "external" | "system";
+  authorUserId: null;
+  messageType: "text" | "system" | "elicitation";
+};
 
 const MESSAGE_COLUMNS = `part.id, part.client_message_id,
         CASE part.author_type WHEN 'member' THEN 'human' WHEN 'agent' THEN 'agent'
@@ -133,8 +128,7 @@ function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageVa
 /**
  * Which message types a window is about, as the question its caller asks.
  *
- * Not one list. `workstream_message_records.message_type` carries no CHECK constraint, so "these
- * types" and "everything but these" are genuinely different questions about it:
+ * Not one list. "these types" and "everything but these" are genuinely different questions:
  * an `include` list silently drops a type nobody has added yet, and an
  * `exclude` list silently admits one. Naming means the first — `text` alone,
  * because an elicitation or a host notice is not the conversation a name should
@@ -173,7 +167,7 @@ export class WorkstreamMessageStorage {
   messageByClientId(input: { clientMessageId: string }): MessageRow | undefined {
     return first(this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.client_message_id = ?`,
       input.clientMessageId,
     ));
@@ -183,7 +177,7 @@ export class WorkstreamMessageStorage {
   message(input: { messageId: string }): MessageRow | undefined {
     return first(this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.id = ?`,
       input.messageId,
     ));
@@ -200,7 +194,7 @@ export class WorkstreamMessageStorage {
   messagesBefore(input: { beforeSequence: number; limit: number }): MessageRow[] {
     return this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.sequence_number < ?
         ORDER BY part.sequence_number DESC LIMIT ?`,
       input.beforeSequence,
@@ -212,7 +206,7 @@ export class WorkstreamMessageStorage {
   messagesAfter(input: { afterSequence: number; limit: number }): MessageRow[] {
     return this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.sequence_number > ?
         ORDER BY part.sequence_number ASC LIMIT ?`,
       input.afterSequence,
@@ -224,7 +218,7 @@ export class WorkstreamMessageStorage {
   messageAtSequence(input: { sequenceNumber: number }): MessageRow | undefined {
     return first(this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND part.sequence_number = ?`,
       input.sequenceNumber,
     ));
@@ -253,7 +247,7 @@ export class WorkstreamMessageStorage {
     const types = messageTypePredicate(input.messageTypes, "part.message_type");
     const rows = this.sql.exec<MessageRow>(
       `SELECT ${MESSAGE_COLUMNS}
-         FROM workstream_message_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
+         FROM canonical_conversation_turn_details part LEFT JOIN runs run ON run.run_id = part.produced_by_run_id
         WHERE part.substream_id = '0' AND ${types.sql}
           AND trim(COALESCE(part.content, '')) <> ''
           AND (? IS NULL OR part.created_at >= ?)
@@ -283,7 +277,7 @@ export class WorkstreamMessageStorage {
     const types = messageTypePredicate(input.messageTypes, "message_type");
     return Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count FROM (
-         SELECT 1 FROM workstream_message_details
+         SELECT 1 FROM canonical_conversation_turn_details
           WHERE substream_id = '0' AND ${types.sql}
             AND trim(COALESCE(content, '')) <> ''
             AND (? IS NULL OR created_at >= ?)
@@ -354,7 +348,7 @@ export class WorkstreamMessageStorage {
   }): { text_content: string } | undefined {
     return first(this.sql.exec<{ text_content: string } & Record<string, SqlStorageValue>>(
       `SELECT COALESCE(part.content, '') AS text_content
-         FROM workstream_message_details part
+         FROM canonical_conversation_turn_details part
          JOIN participants participant ON participant.user_id = part.author_user_id
         WHERE part.substream_id = '0' AND part.id = ?1
           AND part.author_type = 'member' AND part.author_user_id = ?2
@@ -368,8 +362,8 @@ export class WorkstreamMessageStorage {
   openingAttachmentCount(): number {
     return Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
       `SELECT COUNT(*) AS count
-         FROM workstream_message_attachments attachment
-         JOIN workstream_message_records part ON part.id = attachment.message_id
+         FROM participant_transcript_attachments attachment
+         JOIN canonical_conversation_turn_details part ON part.id = attachment.turn_id
         WHERE part.substream_id = '0' AND part.sequence_number = 1`,
     ).one().count);
   }
@@ -384,10 +378,10 @@ export class WorkstreamMessageStorage {
     // tables the same way, for the same reason.
     return boundParameterChunks(input.messageIds).flatMap((ids) =>
       this.sql.exec<MessageMentionRow>(
-        `SELECT message_id AS part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
-           FROM workstream_message_mentions
-          WHERE message_id IN (${ids.map(() => "?").join(", ")})
-          ORDER BY message_id, mention_index`,
+        `SELECT turn_id AS part_id, mention_kind, target_user_id, connector_type, start_offset, end_offset
+           FROM participant_transcript_mentions
+          WHERE turn_id IN (${ids.map(() => "?").join(", ")})
+          ORDER BY turn_id, mention_index`,
         ...ids,
       ).toArray());
   }
@@ -405,16 +399,16 @@ export class WorkstreamMessageStorage {
     if (input.messageIds.length === 0) return [];
     return boundParameterChunks(input.messageIds).flatMap((ids) =>
       this.sql.exec<MessageAttachmentRow>(
-        `SELECT attachment.message_id AS part_id, attachment.resource_id, attachment.position,
+        `SELECT attachment.turn_id AS part_id, attachment.resource_id, attachment.position,
                 json_extract(link.resource_json, '$.title') AS title,
                 json_extract(link.resource_json, '$.mimeType') AS mime_type,
                 json_extract(link.resource_json, '$.contentRef') AS content_ref,
                 json_extract(link.resource_json, '$.metadata') AS metadata_json,
                 link.attached_at
-           FROM workstream_message_attachments attachment
+           FROM participant_transcript_attachments attachment
            JOIN workstream_resource_links link ON link.resource_id = attachment.resource_id
-          WHERE attachment.message_id IN (${ids.map(() => "?").join(", ")})
-          ORDER BY attachment.message_id, attachment.position`,
+          WHERE attachment.turn_id IN (${ids.map(() => "?").join(", ")})
+          ORDER BY attachment.turn_id, attachment.position`,
         ...ids,
       ).toArray());
   }
@@ -466,8 +460,8 @@ export class WorkstreamMessageStorage {
    * consumed, and the people clock always moves — a `'tool'` slipping through
    * would write a row the retired trigger would have branched away from.
    */
-  async prepareMessage(input: MessageAppendInput): Promise<PreparedWorkstreamMessageRecord> {
-    return prepareWorkstreamMessageRecord({
+  async prepareMessage(input: MessageAppendInput): Promise<PreparedConversationTurn> {
+    return prepareConversationTurn({
       ...input,
       sequenceNumber: 0,
       attentionOrdinal: null,
@@ -479,8 +473,11 @@ export class WorkstreamMessageStorage {
     return this.storage.transactionSync(() => this.appendPreparedMessage(prepared));
   }
 
-  appendPreparedMessage(prepared: PreparedWorkstreamMessageRecord): MessageAppendOutcome {
+  appendPreparedMessage(prepared: PreparedConversationTurn): MessageAppendOutcome {
       const { input } = prepared;
+      if (input.authorType === "human" || input.authorUserId !== null) {
+        throw new Error("message_append_human_author_forbidden");
+      }
       const existing = this.messageByClientId({ clientMessageId: input.clientMessageId });
       if (existing) {
         return {
@@ -500,11 +497,12 @@ export class WorkstreamMessageStorage {
       if (input.messageType === "tool" || input.messageType === "suggestion") {
         throw new Error("participant_message_type_not_appendable");
       }
-      new WorkstreamTranscriptStorage(this.storage).appendPreparedParticipantMessage({
+      const transcriptSequence = new WorkstreamTranscriptStorage(this.storage).appendPreparedParticipantMessage({
         input: {
           turnId: input.messageId,
           actor: input.authorType === "agent" ? "assistant" : input.authorType,
           authorUserId: input.authorUserId,
+          authorSnapshot: null,
           clientMessageId: input.clientMessageId,
           messageType: input.messageType,
           text: input.text,
@@ -522,102 +520,8 @@ export class WorkstreamMessageStorage {
       return {
         outcome: "appended" as const,
         messageId: input.messageId,
-        sequenceNumber: root.next_sequence_number,
+        sequenceNumber: transcriptSequence,
       };
-  }
-
-  /**
-   * Write or refresh the transcript card for one tool call.
-   *
-   * Keyed by the invocation's own id rather than a client message id, because
-   * this row is written more than once on purpose: a tool card appears while
-   * the call is pending and is rewritten when it settles. The routed statement
-   * expressed that as `ON CONFLICT(id) DO UPDATE`, and guarded its counter
-   * update on the inserted row having actually taken the sequence number it was
-   * about to consume — so a refresh did not advance the transcript.
-   *
-   * A tool card takes no attention ordinal and does not move the people clock.
-   * It is machinery a member did not do, and the retired trigger made that
-   * distinction rather than any caller. It does move `workstream.updated_at`,
-   * on both paths: the trigger's counter update ran whenever the upsert changed
-   * a row, and a refresh changes one.
-   *
-   * `produced_by_run_id` and `attempt_epoch` are NULL rather than threaded
-   * through, unlike `appendMessage`. The trigger set both from
-   * `NEW.harness_run_id`, and the routed tool insert never named that column —
-   * so NULL is what production has stored for every tool card there is. Giving
-   * the card its run would be a change, and belongs to whoever needs it.
-   */
-  async prepareToolMessage(
-    input: UpsertToolMessageInput,
-  ): Promise<PreparedWorkstreamMessageRecord> {
-    return prepareWorkstreamMessageRecord({
-      messageId: input.messageId,
-      clientMessageId: input.clientMessageId,
-      authorType: "agent",
-      authorUserId: null,
-      externalActorJson: null,
-      messageType: "tool",
-      text: "",
-      structuredContentJson: input.structuredContentJson,
-      producedByRunId: null,
-      role: "assistant",
-      kind: "tool_call",
-      effectIntentId: input.messageId,
-      toolName: toolNameOf(input.structuredContentJson),
-      toolMode: "read",
-      toolStatus: toolStatusOf(input.structuredContentJson),
-      visibility: "people",
-      sequenceNumber: 0,
-      attentionOrdinal: null,
-      createdAt: input.createdAt,
-      editedAt: input.editedAt,
-      now: input.editedAt ?? input.createdAt,
-    });
-  }
-
-  async upsertToolMessage(
-    input: UpsertToolMessageInput,
-  ): Promise<{ outcome: "appended" | "refreshed"; sequenceNumber: number }> {
-    const prepared = await this.prepareToolMessage(input);
-    return this.storage.transactionSync(() => this.upsertPreparedToolMessage(input, prepared));
-  }
-
-  upsertPreparedToolMessage(
-    input: UpsertToolMessageInput,
-    prepared: PreparedWorkstreamMessageRecord,
-  ): { outcome: "appended" | "refreshed"; sequenceNumber: number } {
-    // Guarded on `message_type = 'tool'` in the *lookup*, not only in the
-    // update, so the answer is about a row that exists. The routed
-    // `DO UPDATE … WHERE workstream_message_records.message_type = 'tool'`
-    // matched nothing when a non-tool row held this id and still reported a
-    // write; here that case falls to the insert and fails on the primary key
-    // instead. Neither is a path production takes — the id is the invocation's
-    // own UUIDv7 and no message carries it — so this is about the operation
-    // answering truly rather than about a state to handle.
-    const existing = first(this.sql.exec<{ sequence_number: number } & Record<string, SqlStorageValue>>(
-      `SELECT sequence_number FROM workstream_message_records
-        WHERE substream_id = '0' AND id = ? AND message_type = 'tool'`,
-      input.messageId,
-    ));
-    if (existing) {
-      prepared.input.sequenceNumber = existing.sequence_number;
-      insertWorkstreamMessageRecord(this.sql, prepared);
-      // What the trigger's counter update did on the conflict path: the work
-      // stream's own clock moves, its sequence and attention counters do not.
-      this.sql.exec(
-        `UPDATE workstream SET updated_at = ? WHERE id = 1`,
-        input.editedAt ?? input.createdAt,
-      );
-      return { outcome: "refreshed" as const, sequenceNumber: existing.sequence_number };
-    }
-    const sequence = this.sql.exec<{ next_sequence_number: number } & Record<string, SqlStorageValue>>(
-      `SELECT next_sequence_number FROM workstream WHERE id = 1`,
-    ).one().next_sequence_number;
-    prepared.input.sequenceNumber = sequence;
-    insertWorkstreamMessageRecord(this.sql, prepared);
-    this.#advanceCounters(true, input.createdAt);
-    return { outcome: "appended" as const, sequenceNumber: sequence };
   }
 
   /**
@@ -643,35 +547,4 @@ export class WorkstreamMessageStorage {
       now,
     );
   }
-}
-
-/** The tool name a tool message's payload carries, as the trigger read it. */
-function toolNameOf(structuredContentJson: string | null): string | null {
-  if (!structuredContentJson) return null;
-  const parsed = JSON.parse(structuredContentJson) as {
-    invocation?: { toolName?: unknown };
-  };
-  const name = parsed.invocation?.toolName;
-  return typeof name === "string" ? name : null;
-}
-
-/**
- * The `tool_status` a tool message's payload maps to.
- *
- * `pending` and `started` both mean "not settled yet", which is the trigger's
- * mapping and not an obvious one: a tool the model has begun is still a card a
- * member is waiting on.
- */
-function toolStatusOf(
-  structuredContentJson: string | null,
-): "pending" | "completed" | "failed" | "ambiguous" | null {
-  if (!structuredContentJson) return "completed";
-  const parsed = JSON.parse(structuredContentJson) as {
-    invocation?: { status?: unknown };
-  };
-  const status = parsed.invocation?.status;
-  if (status === "pending" || status === "started") return "pending";
-  if (status === "ambiguous") return "ambiguous";
-  if (status === "failed") return "failed";
-  return "completed";
 }

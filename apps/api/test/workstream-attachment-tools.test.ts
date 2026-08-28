@@ -11,14 +11,12 @@ import {
   createWorkstreamAttachmentTools,
   rehydrateWorkstreamViewReceipt,
 } from "../src/services/workstream-attachment-tools";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
-  executeWorkstreamObjectSql,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
   seedToolReceipt,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
@@ -81,15 +79,8 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
     createdByUserId: USER_ID,
     exactState: "running",
   });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-     VALUES (?, ?, ?, 'test', ?, 'running', '2026-01-01')`,
-    HARNESS_RUN_ID,
-    WORKSPACE_ID,
-    WORKSTREAM_ID,
-    JSON.stringify({ type: "user", userId: USER_ID }),
-  );
+  seedWorkstreamRun(objectStore, { id: HARNESS_RUN_ID,
+    executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }) });
   const bucket = new MemoryBucket();
   const baseEnv = createTestEnv({
     DB: sqliteD1(database),
@@ -105,18 +96,7 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
     database,
     objectStore,
     bucket,
-    // Wrapped the way the harness wraps its execution environment. This used to
-    // matter to the receipt services as well, because they branched on
-    // `regionalDatabase(env) !== env.DB`; that branch is gone and they reach
-    // their object through the typed port. It still matters to everything else
-    // routed through this env.
-    env: withWorkstreamRuntimeDatabase(
-      baseEnv,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      "0",
-      async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-    ),
+    env: baseEnv,
   };
 }
 
@@ -208,7 +188,8 @@ function imageTransformBinding(
 
 function input(principal: WorkstreamWorkflowInput["executionPrincipal"] = { type: "user", userId: USER_ID }): WorkstreamWorkflowInput {
   return {
-    region: "global", workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID, harnessRunId: HARNESS_RUN_ID,
+    region: "global", workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID,
+    loopId: `workstream:${WORKSTREAM_ID}:substream:0:loop`, harnessRunId: HARNESS_RUN_ID,
     triggerMessageId: null, automationSubscriptionId: null, activityId: null, executionPrincipal: principal, reason: "test",
   };
 }

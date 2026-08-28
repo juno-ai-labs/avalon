@@ -10,6 +10,7 @@ import {
 import type { InferenceAttemptError } from "@juno-ai/bind/routing";
 import {
   __testing,
+  applyBindLoopTransition,
   canonicalToolInputHash,
   classifyAddressing,
   classifyAddressingHeuristically,
@@ -24,6 +25,7 @@ import {
   runHarness,
   type AutomationCompilerStreamEvent,
   type BindLoopTransition,
+  type BindLoopProjectionState,
   type BindProviderBoundary,
   type HarnessEvent,
   type HarnessPlugin,
@@ -33,6 +35,7 @@ import {
   type InferenceAttemptEvent,
   type InferenceRequestEvent,
   type PluginAuthorization,
+  type RunHarnessInput,
   type StructuredModelDiagnostic,
 } from "./index";
 
@@ -581,22 +584,7 @@ describe("agent harness", () => {
     );
   });
 
-  it("restores settled narration when one research turn's stream is abandoned", async () => {
-    const valid = {
-      name: "Daily summary",
-      description: "Create a daily summary.",
-      overview: "Creates a concise daily summary from recent project activity.",
-      instructions: "Summarize changes.",
-      triggers: [{ type: "manual" }],
-      requiredCapabilities: [],
-      recommendedPlugins: [],
-      expectedOutputs: ["Summary"],
-      defaultBehavior: "{}",
-      suggestedScope: "personal",
-      followUpQuestion: null,
-      elicitation: null,
-      ready: true,
-    };
+  it("does not retry a malformed research turn after its narration became observable", async () => {
     const responses = [
       streamResponse([
         { choices: [{ delta: { content: "Checking the plugin catalog." } }] },
@@ -616,18 +604,7 @@ describe("agent harness", () => {
           finish_reason: "length",
         }],
       }]),
-      // The retried attempt keeps the abandoned turn's id, so the settle
-      // branch must not re-fire and the separator has to come back.
-      streamResponse([
-        { choices: [{ delta: { content: "Searching GitHub instead." } }] },
-        {
-          choices: [{
-            delta: { tool_calls: [toolDeltaWithArguments(0, "creator-search", "automation_plugins_search", '{"query":"github"}')] },
-            finish_reason: "tool_calls",
-          }],
-        },
-      ]),
-      automationSubmitResponse(valid),
+      streamResponse([{ choices: [{ delta: { content: "must not run" }, finish_reason: "stop" }] }]),
     ];
     const compilerEvents: AutomationCompilerStreamEvent[] = [];
     const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
@@ -638,17 +615,13 @@ describe("agent harness", () => {
       messages: [{ role: "user", content: "Create it" }],
       fetch: fetcher,
       onStreamEvent: (event) => { compilerEvents.push(event); },
-    })).resolves.toMatchObject({ name: "Daily summary" });
+    })).rejects.toMatchObject({ name: "AutomationCompilerError" });
 
     expect(compilerEvents.flatMap((event) => event.type === "delta" ? [event] : [])).toEqual([
       { type: "delta", delta: "Checking the plugin catalog.", reset: false },
       { type: "delta", delta: "\n\ndiscard this", reset: false },
-      // The abandoned attempt is retracted, but the first turn's update is not.
-      { type: "delta", delta: "Checking the plugin catalog.", reset: true },
-      // Text after the reset re-applies the paragraph break, because the reset
-      // zeroed `current` while `settled` still holds the first turn.
-      { type: "delta", delta: "\n\nSearching GitHub instead.", reset: false },
     ]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("loads and uses an Avalon web plugin while compiling a draft", async () => {
@@ -1209,6 +1182,9 @@ describe("agent harness", () => {
 
     expect(fetcher).toHaveBeenCalledTimes(2);
     const recoveryMessages = requestBodies[1]!.messages as Array<{ role: string; content: string | null }>;
+    expect(recoveryMessages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: null }),
+    ]));
     const recoveryReminder = recoveryMessages.find((message) =>
       message.role === "user" && message.content?.includes("without successfully calling automation_submit_draft")
     );
@@ -1396,8 +1372,8 @@ describe("agent harness", () => {
   });
 
   it("canonicalizes tool inputs for stable hashes", () => {
-    expect(__testing.canonicalJson({ b: 2, a: { z: 1, y: 0 } })).toBe(
-      '{"a":{"y":0,"z":1},"b":2}'
+    expect(__testing.canonicalJson({ "é": 3, a: 2, "😀": 4, Z: 1 })).toBe(
+      '{"Z":1,"a":2,"é":3,"😀":4}'
     );
   });
 
@@ -1668,12 +1644,12 @@ describe("agent harness", () => {
     expect(outcome).toMatchObject({ status: "completed", content: "Done" });
     expect(transitions.map((transition) => transition.kind)).toEqual([
       "state_initialized",
-      "state_reconciled",
+      "assistant_reserved",
       "assistant_accepted",
     ]);
     expect(boundaries).toEqual([
       expect.objectContaining({
-        stateRevision: 2,
+        stateRevision: 1,
         generation: 1,
         projectedHash: expect.any(String),
         bindHash: expect.any(String),
@@ -1692,6 +1668,700 @@ describe("agent harness", () => {
     }
     expect(JSON.stringify(providerBody)).not.toContain("provenance");
     expect(JSON.stringify(providerBody)).not.toContain("participant_turn");
+  });
+
+  it("reserves the exact assistant slot before provider I/O and fails closed", async () => {
+    const order: string[] = [];
+    const fetcher = vi.fn(async () => {
+      order.push("provider");
+      return streamResponse([{
+        choices: [{ delta: { content: "Done" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const checkpointSequences: Array<number | undefined> = [];
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      onAssistantTurnReserved: async (turn) => {
+        order.push(`reserved:${turn.turnId}`);
+        return { transcriptSequence: 41 };
+      },
+      onBindLoopTransition: (transition) => {
+        if (transition.kind === "assistant_reserved") order.push(`bind:${transition.turnId}`);
+      },
+      onEvent: (event) => { events.push(event); },
+      onInferenceRequest: (request) => { checkpointSequences.push(request.transcriptSequence); },
+      onInferenceAttempt: (attempt) => { checkpointSequences.push(attempt.transcriptSequence); },
+    })).resolves.toMatchObject({ status: "completed" });
+
+    expect(order).toEqual(["reserved:run-1:turn:1", "bind:run-1:turn:1", "provider"]);
+    expect(events.filter((event) => event.type === "stream_started" || event.type === "stream_delta"))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ turnId: "run-1:turn:1", transcriptSequence: 41 }),
+      ]));
+    expect(checkpointSequences).toEqual([41, 41]);
+
+    const refusedFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+    await expect(runHarness({
+      ...runInput(refusedFetch),
+      onAssistantTurnReserved: async () => { throw new Error("reservation unavailable"); },
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+    expect(refusedFetch).not.toHaveBeenCalled();
+
+    const uncommittedFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+    await expect(runHarness({
+      ...runInput(uncommittedFetch),
+      onAssistantTurnReserved: () => ({ transcriptSequence: 42 }),
+      onBindLoopTransition: (transition) => {
+        if (transition.kind === "assistant_reserved") throw new Error("Bind unavailable");
+      },
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+    expect(uncommittedFetch).not.toHaveBeenCalled();
+  });
+
+  it("resumes one stable loop without reinitializing or resetting model turn identity", async () => {
+    let projection: BindLoopProjectionState | null = null;
+    const commit = (transition: BindLoopTransition): void => {
+      projection = applyBindLoopTransition(projection, transition);
+    };
+    const firstFetch = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "First" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(firstFetch),
+      loopId: "persistent-loop",
+      harnessRunId: "execution-1",
+      onAssistantTurnReserved: () => ({ transcriptSequence: 10 }),
+      onBindLoopTransition: commit,
+    })).resolves.toMatchObject({ status: "completed", content: "First" });
+    const firstProjection = projection as BindLoopProjectionState | null;
+    if (!firstProjection) throw new Error("first execution did not persist a Bind head");
+    expect(firstProjection).toMatchObject({ loopId: "persistent-loop", lastModelTurnIndex: 1 });
+
+    const secondTransitions: BindLoopTransition[] = [];
+    const secondRequests: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const secondFetch = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      secondRequests.push(JSON.parse(String(init?.body)) as typeof secondRequests[number]);
+      return streamResponse([{
+        choices: [{ delta: { content: "Second" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+    const resumedProjection = structuredClone(firstProjection);
+    let secondProjection = resumedProjection;
+    const continuationInput = {
+      activationInputId: "manual_resume:execution-2",
+      message: {
+        role: "user" as const,
+        content: "Continue the persistent loop.",
+        provenance: {
+          originKind: "derived" as const,
+          sourceKind: "manual_resume",
+          sourceId: "execution-2",
+          sourceRevision: null,
+        },
+      },
+    };
+
+    await expect(runHarness({
+      ...runInput(secondFetch),
+      loopId: "persistent-loop",
+      harnessRunId: "execution-2",
+      bindLoopProjection: resumedProjection,
+      activationInputs: [continuationInput],
+      onActivationBoundary: (boundary) => {
+        const transition = {
+          kind: "protocol_user_appended" as const,
+          loopId: boundary.loopId,
+          generation: boundary.generation,
+          stateRevision: boundary.stateRevision + 1,
+          message: { role: "user" as const, content: "Continue the persistent loop." },
+          provenance: continuationInput.message.provenance,
+          activationInputId: continuationInput.activationInputId,
+        };
+        secondProjection = applyBindLoopTransition(secondProjection, transition);
+        return { transitions: [transition], replayedActivationInputIds: [] };
+      },
+      onAssistantTurnReserved: (turn) => {
+        expect(turn).toMatchObject({
+          loopId: "persistent-loop",
+          executionId: "execution-2",
+          turnId: "persistent-loop:turn:2",
+          modelTurnIndex: 2,
+        });
+        return { transcriptSequence: 12 };
+      },
+      onBindLoopTransition: (transition) => {
+        secondProjection = applyBindLoopTransition(secondProjection, transition);
+        secondTransitions.push(transition);
+      },
+    })).resolves.toMatchObject({ status: "completed", content: "Second" });
+
+    expect(secondTransitions.some((transition) => transition.kind === "state_initialized")).toBe(false);
+    expect(secondTransitions.find((transition) => transition.kind === "assistant_accepted"))
+      .toMatchObject({
+        loopId: "persistent-loop",
+        turnId: "persistent-loop:turn:2",
+        modelTurnIndex: 2,
+        transcriptSequence: 12,
+      });
+    expect(secondRequests[0]!.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: "First" }),
+    ]));
+
+    const pendingProjection = applyBindLoopTransition(firstProjection, {
+      kind: "assistant_reserved",
+      loopId: "persistent-loop",
+      generation: firstProjection.generation,
+      stateRevision: firstProjection.stateRevision + 1,
+      turnId: "persistent-loop:turn:2",
+      modelTurnIndex: 2,
+      transcriptSequence: 11,
+    });
+    const pendingFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+    await expect(runHarness({
+      ...runInput(pendingFetch),
+      loopId: "persistent-loop",
+      harnessRunId: "execution-after-crash",
+      bindLoopProjection: pendingProjection,
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+    expect(pendingFetch).not.toHaveBeenCalled();
+  });
+
+  it("durably synchronizes activation-only input at the resumed head before provider I/O", async () => {
+    let projection: BindLoopProjectionState | null = null;
+    const commit = (transition: BindLoopTransition): void => {
+      projection = applyBindLoopTransition(projection, transition);
+    };
+    await runHarness({
+      ...runInput(vi.fn(async () => streamResponse([{
+        choices: [{ delta: { content: "First" }, finish_reason: "stop" }],
+      }])) as typeof fetch),
+      loopId: "activation-loop",
+      harnessRunId: "execution-1",
+      onBindLoopTransition: commit,
+    });
+    const resumed = structuredClone(projection) as BindLoopProjectionState | null;
+    if (!resumed) throw new Error("first execution did not persist a Bind head");
+
+    const order: string[] = [];
+    const requests: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      order.push("provider");
+      requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+      return streamResponse([{
+        choices: [{ delta: { content: "After wake-up" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+    const activationInput = {
+      activationInputId: "scheduled_wakeup:wakeup-7:none",
+      message: {
+        role: "user" as const,
+        content: "Wake up and inspect the release",
+        provenance: {
+          originKind: "derived" as const,
+          sourceKind: "scheduled_wakeup",
+          sourceId: "wakeup-7",
+          sourceRevision: null,
+        },
+      },
+    };
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      loopId: "activation-loop",
+      harnessRunId: "execution-2",
+      bindLoopProjection: resumed,
+      // A resumed loop must not replace its projection with this freshly
+      // assembled array. Only the explicit activation boundary may append.
+      messages: [{ role: "user", content: "DO NOT REPLACE DURABLE HISTORY" }],
+      activationInputs: [activationInput],
+      onActivationBoundary: (boundary) => {
+        order.push("activation");
+        expect(boundary).toMatchObject({
+          loopId: "activation-loop",
+          executionId: "execution-2",
+          generation: resumed.generation,
+          stateRevision: resumed.stateRevision,
+          inputs: [activationInput],
+        });
+        const transition = {
+          kind: "protocol_user_appended" as const,
+          loopId: boundary.loopId,
+          generation: boundary.generation,
+          stateRevision: boundary.stateRevision + 1,
+          message: { role: "user", content: "Wake up and inspect the release" },
+          provenance: activationInput.message.provenance,
+          activationInputId: activationInput.activationInputId,
+        };
+        // The host commits atomically before it returns the transition.
+        projection = applyBindLoopTransition(projection, transition);
+        return { transitions: [transition], replayedActivationInputIds: [] };
+      },
+      onBindLoopTransition: commit,
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "After wake-up" });
+    expect(order.slice(0, 2)).toEqual(["activation", "provider"]);
+    expect(requests[0]!.messages.filter((message) =>
+      message.content === "Wake up and inspect the release")).toHaveLength(1);
+    expect(requests[0]!.messages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: "DO NOT REPLACE DURABLE HISTORY" }),
+    ]));
+  });
+
+  it("converges activation replay without appending the same logical input twice", async () => {
+    let projection = applyBindLoopTransition(null, {
+      kind: "state_initialized",
+      loopId: "activation-loop",
+      generation: 1,
+      stateRevision: 1,
+      systemProjection: {
+        revision: 1,
+        rendererVersion: "workstream-system-v1",
+        inputHash: "stored-system-hash",
+        message: { role: "system", content: "Be useful." },
+      },
+      nonSystemMessages: [{ role: "user", content: "Original request" }],
+      nonSystemMessageOrigins: [{
+        originKind: "canonical",
+        sourceKind: null,
+        sourceId: null,
+        sourceRevision: null,
+      }],
+    });
+    projection = applyBindLoopTransition(projection, {
+      kind: "protocol_user_appended",
+      loopId: "activation-loop",
+      generation: 1,
+      stateRevision: 2,
+      message: { role: "user", content: "Scheduled context" },
+      provenance: {
+        originKind: "derived",
+        sourceKind: "scheduled_wakeup",
+        sourceId: "wakeup-7",
+        sourceRevision: null,
+      },
+      activationInputId: "scheduled_wakeup:wakeup-7:none",
+    });
+    const requests: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+      return streamResponse([{
+        choices: [{ delta: { content: "Recovered" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      loopId: "activation-loop",
+      harnessRunId: "takeover-execution",
+      bindLoopProjection: projection,
+      activationInputs: [{
+        activationInputId: "scheduled_wakeup:wakeup-7:none",
+        message: {
+          role: "user",
+          content: "Scheduled context",
+          provenance: {
+            originKind: "derived",
+            sourceKind: "scheduled_wakeup",
+            sourceId: "wakeup-7",
+            sourceRevision: null,
+          },
+        },
+      }],
+      // The host's durable idempotency receipt says this logical input is
+      // already present, even though a different execution took over.
+      onActivationBoundary: () => ({
+        transitions: [],
+        replayedActivationInputIds: ["scheduled_wakeup:wakeup-7:none"],
+      }),
+    })).resolves.toMatchObject({ status: "completed", content: "Recovered" });
+
+    expect(requests[0]!.messages.filter((message) =>
+      message.content === "Scheduled context")).toHaveLength(1);
+  });
+
+  it("fences a system-only activation even when it has no model-only input", async () => {
+    const order: string[] = [];
+    const fetcher = vi.fn(async () => {
+      order.push("provider");
+      return streamResponse([{
+        choices: [{ delta: { content: "System activation handled" }, finish_reason: "stop" }],
+      }]);
+    }) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      activationInputs: [],
+      onActivationBoundary: (boundary) => {
+        order.push("activation");
+        expect(boundary.inputs).toEqual([]);
+        return { transitions: [], replayedActivationInputIds: [] };
+      },
+    })).resolves.toMatchObject({
+      status: "completed",
+      content: "System activation handled",
+    });
+    expect(order.slice(0, 2)).toEqual(["activation", "provider"]);
+  });
+
+  it("fails before provider I/O when activation persistence or its fence is invalid", async () => {
+    const activationInput = {
+      activationInputId: "connector_activity:activity-1:none",
+      message: {
+        role: "user" as const,
+        content: "New connector activity",
+        provenance: {
+          originKind: "derived" as const,
+          sourceKind: "connector_activity",
+          sourceId: "activity-1",
+          sourceRevision: null,
+        },
+      },
+    };
+    const unwiredFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+    await expect(runHarness({
+      ...runInput(unwiredFetch),
+      activationInputs: [activationInput],
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+    expect(unwiredFetch).not.toHaveBeenCalled();
+
+    const refusedFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+    await expect(runHarness({
+      ...runInput(refusedFetch),
+      // With no injected catalog snapshot, compaction would normally fetch
+      // OpenRouter's model metadata. The activation fence must precede even
+      // that provider-side request, not merely the completion request.
+      compaction: {},
+      activationInputs: [activationInput],
+      onActivationBoundary: async () => { throw new Error("storage unavailable"); },
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+    expect(refusedFetch).not.toHaveBeenCalled();
+
+    const staleFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+    await expect(runHarness({
+      ...runInput(staleFetch),
+      activationInputs: [activationInput],
+      onActivationBoundary: (boundary) => ({
+        transitions: [{
+          kind: "protocol_user_appended",
+          loopId: boundary.loopId,
+          generation: boundary.generation,
+          stateRevision: boundary.stateRevision + 2,
+          message: { role: "user", content: "New connector activity" },
+          provenance: activationInput.message.provenance,
+          activationInputId: activationInput.activationInputId,
+        }],
+        replayedActivationInputIds: [],
+      }),
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+    expect(staleFetch).not.toHaveBeenCalled();
+
+    for (const invalidAcknowledgement of [{
+      transitions: [],
+      replayedActivationInputIds: [],
+    }, {
+      transitions: [],
+      replayedActivationInputIds: ["unrequested-activation"],
+    }, {
+      transitions: [],
+      replayedActivationInputIds: [
+        activationInput.activationInputId,
+        activationInput.activationInputId,
+      ],
+    }]) {
+      const unacknowledgedFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+      await expect(runHarness({
+        ...runInput(unacknowledgedFetch),
+        activationInputs: [activationInput],
+        onActivationBoundary: () => invalidAcknowledgement,
+      })).resolves.toMatchObject({
+        status: "failed",
+        failure: { code: "run_state_persistence_failed" },
+      });
+      expect(unacknowledgedFetch).not.toHaveBeenCalled();
+    }
+
+    const duplicateAcknowledgementFetch = vi.fn(async () => streamResponse([])) as typeof fetch;
+    await expect(runHarness({
+      ...runInput(duplicateAcknowledgementFetch),
+      activationInputs: [activationInput],
+      onActivationBoundary: (boundary) => ({
+        transitions: [{
+          kind: "protocol_user_appended",
+          loopId: boundary.loopId,
+          generation: boundary.generation,
+          stateRevision: boundary.stateRevision + 1,
+          message: { role: "user", content: "New connector activity" },
+          provenance: activationInput.message.provenance,
+          activationInputId: activationInput.activationInputId,
+        }],
+        replayedActivationInputIds: [activationInput.activationInputId],
+      }),
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+    expect(duplicateAcknowledgementFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps generic Bind hosts sequence-less without faking a participant slot", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "Generic result" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+    const input: RunHarnessInput = runInput(fetcher);
+    delete input.onAssistantTurnReserved;
+    const events: HarnessEvent[] = [];
+    const transitions: BindLoopTransition[] = [];
+
+    await expect(runHarness({
+      ...input,
+      onEvent: (event) => { events.push(event); },
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
+    })).resolves.toMatchObject({ status: "completed", content: "Generic result" });
+
+    expect(transitions.find((transition) => transition.kind === "assistant_reserved"))
+      .toMatchObject({ transcriptSequence: null });
+    for (const event of events) {
+      if (event.type !== "stream_started"
+        && event.type !== "stream_delta"
+        && event.type !== "stream_completed") continue;
+      expect(event).not.toHaveProperty("transcriptSequence");
+    }
+  });
+
+  it("delivers host-committed steer input before a tool-less final can end the loop", async () => {
+    const requests: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{ choices: [{ delta: { content: "Initial answer" }, finish_reason: "stop" }] }]),
+      streamResponse([{ choices: [{ delta: { content: "Steered answer" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as typeof requests[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    let delivered = false;
+    const settled: boolean[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      onStepSettled: (step) => {
+        settled.push(step.wouldEnd);
+        if (delivered) return { transitions: [], stop: false };
+        delivered = true;
+        return {
+          transitions: [{
+            kind: "protocol_user_appended" as const,
+            loopId: step.loopId,
+            generation: step.generation,
+            stateRevision: step.stateRevision + 1,
+            message: { role: "user", content: "A durable steer" },
+            provenance: {
+              originKind: "derived" as const,
+              sourceKind: "pending_input",
+              sourceId: "participant-turn-2",
+              sourceRevision: 1,
+            },
+            activationInputId: null,
+          }],
+          stop: false,
+        };
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "completed", content: "Steered answer" });
+    expect(settled).toEqual([true, true]);
+    expect(requests[1]!.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: "A durable steer" }),
+    ]));
+  });
+
+  it("honors a safe-boundary stop before a tool-less host nudge can continue", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "Final" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      onStepSettled: () => ({ transitions: [], stop: true }),
+      onTurnWouldEnd: () => "Inspect the remaining attachment before finishing.",
+    })).resolves.toMatchObject({ status: "stopped", content: "Final" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("records a tool-less continuation nudge as protocol-only provenance", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{ delta: { content: "First pass" }, finish_reason: "stop" }],
+      }]),
+      streamResponse([{
+        choices: [{ delta: { content: "Finished" }, finish_reason: "stop" }],
+      }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const transitions: BindLoopTransition[] = [];
+    let continued = false;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
+      onTurnWouldEnd: () => {
+        if (continued) return null;
+        continued = true;
+        return "Inspect the remaining attachment before finishing.";
+      },
+    })).resolves.toMatchObject({ status: "completed", content: "Finished" });
+
+    expect(transitions.find((transition) =>
+      transition.kind === "protocol_user_appended"
+      && transition.message.content === "Inspect the remaining attachment before finishing."))
+      .toMatchObject({
+        provenance: {
+          originKind: "protocol",
+          sourceKind: null,
+          sourceId: null,
+          sourceRevision: null,
+        },
+        activationInputId: null,
+      });
+  });
+
+  it("settles a tolerated empty completion without accepting an empty assistant into the next request", async () => {
+    const requestBodies: Array<{ messages: Array<{ role: string; content?: unknown }> }> = [];
+    const responses = [
+      streamResponse([{
+        choices: [{ delta: { content: "" }, finish_reason: "stop" }],
+      }]),
+      streamResponse([{
+        choices: [{ delta: { content: "Finished" }, finish_reason: "stop" }],
+      }]),
+    ];
+    const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
+      requestBodies.push(JSON.parse(String(init?.body)) as typeof requestBodies[number]);
+      return responses.shift()!;
+    }) as typeof fetch;
+    const transitions: BindLoopTransition[] = [];
+    let continued = false;
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      acceptEmptyCompletion: true,
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
+      onTurnWouldEnd: () => {
+        if (continued) return null;
+        continued = true;
+        return "Submit the required structured result.";
+      },
+    })).resolves.toMatchObject({ status: "completed", content: "Finished" });
+
+    expect(transitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "assistant_reservation_settled",
+        turnId: "run-1:turn:1",
+        outcome: "failed",
+      }),
+      expect.objectContaining({
+        kind: "protocol_user_appended",
+        message: { role: "user", content: "Submit the required structured result." },
+      }),
+      expect.objectContaining({
+        kind: "assistant_accepted",
+        turnId: "run-1:turn:2",
+      }),
+    ]));
+    expect(transitions).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "assistant_accepted", turnId: "run-1:turn:1" }),
+    ]));
+    expect(requestBodies[1]!.messages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "assistant", content: null }),
+    ]));
+  });
+
+  it("refuses resume when host recovery has not settled an accepted assistant's tools", async () => {
+    let projection = applyBindLoopTransition(null, {
+      kind: "state_initialized",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 1,
+      systemProjection: {
+        revision: 1,
+        rendererVersion: "workstream-system-v1",
+        inputHash: "stored-system-hash",
+        message: { role: "system", content: "Be useful." },
+      },
+      nonSystemMessages: [{ role: "user", content: "Do the work" }],
+      nonSystemMessageOrigins: [{
+        originKind: "canonical",
+        sourceKind: "participant_turn",
+        sourceId: "participant-turn-1",
+        sourceRevision: 1,
+      }],
+    });
+    projection = applyBindLoopTransition(projection, {
+      kind: "assistant_reserved",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 2,
+      turnId: "persistent-loop:turn:1",
+      modelTurnIndex: 1,
+      transcriptSequence: 2,
+    });
+    projection = applyBindLoopTransition(projection, {
+      kind: "assistant_accepted",
+      loopId: "persistent-loop",
+      generation: 1,
+      stateRevision: 3,
+      turnId: "persistent-loop:turn:1",
+      modelTurnIndex: 1,
+      transcriptSequence: 2,
+      message: {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "unfinished-call",
+          type: "function",
+          function: { name: "list_plugins", arguments: "{}" },
+        }],
+      },
+    });
+    const fetcher = vi.fn(async () => streamResponse([])) as typeof fetch;
+    const issues: Array<{ kind: string; healed?: boolean }> = [];
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      loopId: "persistent-loop",
+      harnessRunId: "recovery-execution",
+      bindLoopProjection: projection,
+      onTranscriptIssues: (reported) => { issues.push(...reported); },
+    })).resolves.toMatchObject({
+      status: "failed",
+      failure: { code: "run_state_persistence_failed" },
+    });
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "dangling_tool_calls_unanswered", healed: true }),
+    ]));
   });
 
   it("does not let Bind accept an assistant message whose durable transition failed", async () => {
@@ -1719,7 +2389,7 @@ describe("agent harness", () => {
     const responses = [
       streamResponse([{
         choices: [{
-          delta: { tool_calls: [
+          delta: { content: "Checking both sources.", tool_calls: [
             toolDelta(0, "call-first", "first"),
             toolDelta(1, "call-second", "second"),
           ] },
@@ -1746,6 +2416,7 @@ describe("agent harness", () => {
       return { output: { which }, summary: which };
     };
     const transitions: BindLoopTransition[] = [];
+    const settledSteps: Array<{ wouldEnd: boolean; acceptedToolResults: number }> = [];
     const run = runHarness({
       ...runInput(fetcher),
       corePlugins: [testCorePlugin([
@@ -1753,6 +2424,14 @@ describe("agent harness", () => {
         { ...harnessTool("second", "read", []), execute: gate("second") },
       ])],
       onBindLoopTransition: async (transition) => { transitions.push(transition); },
+      onStepSettled: (step) => {
+        settledSteps.push({
+          wouldEnd: step.wouldEnd,
+          acceptedToolResults: transitions.filter((transition) =>
+            transition.kind === "tool_result_accepted").length,
+        });
+        return { transitions: [], stop: false };
+      },
     });
 
     await bothStarted;
@@ -1767,9 +2446,74 @@ describe("agent harness", () => {
     > => transition.kind === "tool_result_accepted");
     expect(accepted.map((transition) => [transition.toolCallId, transition.callIndex]))
       .toEqual([["call-first", 0], ["call-second", 1]]);
+    expect(settledSteps[0]).toEqual({ wouldEnd: false, acceptedToolResults: 2 });
+    expect(settledSteps.at(-1)).toEqual({ wouldEnd: true, acceptedToolResults: 2 });
     const secondBoundary = transitions.findIndex((transition) =>
-      transition.kind === "state_reconciled" && transition.stateRevision > accepted[1]!.stateRevision);
+      transition.kind === "assistant_reserved" && transition.modelTurnIndex === 2);
     expect(secondBoundary).toBeGreaterThan(transitions.indexOf(accepted[1]!));
+  });
+
+  it("numbers accepted tool results densely when an earlier elicitation result is withheld", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{
+        delta: { tool_calls: [
+          toolDelta(0, "ask-first", "ask"),
+          toolDelta(1, "read-second", "read"),
+        ] },
+        finish_reason: "tool_calls",
+      }],
+    }])) as typeof fetch;
+    const transitions: BindLoopTransition[] = [];
+
+    await expect(runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([
+        {
+          ...harnessTool("ask", "read", []),
+          execute: async () => ({ output: { elicitationId: "question-1" }, summary: "Asked", halt: "needs_input" }),
+        },
+        harnessTool("read", "read", []),
+      ])],
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
+    })).resolves.toMatchObject({ status: "needs_input" });
+
+    const accepted = transitions.filter((transition): transition is Extract<
+      BindLoopTransition,
+      { kind: "tool_result_accepted" }
+    > => transition.kind === "tool_result_accepted");
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]).toMatchObject({
+      toolCallId: "read-second",
+      callIndex: 1,
+      resultOrdinal: 0,
+    });
+  });
+
+  it("honors a durable stop only after the active tool step settles", async () => {
+    const responses = [
+      streamResponse([{
+        choices: [{
+          delta: { tool_calls: [toolDelta(0, "stop-after-tool", "read_once")] },
+          finish_reason: "tool_calls",
+        }],
+      }]),
+      streamResponse([{ choices: [{ delta: { content: "must not run" }, finish_reason: "stop" }] }]),
+    ];
+    const fetcher = vi.fn(async () => responses.shift()!) as typeof fetch;
+    const executionOrder: string[] = [];
+    const transitions: BindLoopTransition[] = [];
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      corePlugins: [testCorePlugin([harnessTool("read_once", "read", executionOrder)])],
+      onBindLoopTransition: (transition) => { transitions.push(transition); },
+      onStepSettled: (step) => ({ transitions: [], stop: !step.wouldEnd }),
+    });
+
+    expect(outcome).toMatchObject({ status: "stopped" });
+    expect(executionOrder).toEqual(["read_once:start", "read_once:end"]);
+    expect(transitions.some((transition) => transition.kind === "tool_result_accepted")).toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   // A work stream pinned from the developer-mode model selector routes with no
@@ -4686,7 +5430,7 @@ describe("agent harness", () => {
     ]);
   });
 
-  it("retries truncated tool completions on the same endpoint and resets streamed text", async () => {
+  it("does not retry a truncated tool completion after its text became observable", async () => {
     const responses = [
       streamResponse([{
         choices: [{
@@ -4707,12 +5451,10 @@ describe("agent harness", () => {
       onEvent: (event) => { events.push(event); },
     });
 
-    expect(outcome).toMatchObject({ status: "completed", content: "recovered" });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({ status: "failed", content: "discard this" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
     expect(events.filter((event) => event.type === "stream_delta")).toEqual([
       expect.objectContaining({ type: "stream_delta", delta: "discard this", epoch: 0, streamSeq: 1, reset: false }),
-      expect.objectContaining({ type: "stream_delta", delta: "", epoch: 1, streamSeq: 2, reset: true }),
-      expect.objectContaining({ type: "stream_delta", delta: "recovered", epoch: 1, streamSeq: 3, reset: false }),
     ]);
   });
 
@@ -4736,6 +5478,49 @@ describe("agent harness", () => {
     expect(onTurnWouldEnd).toHaveBeenCalledWith({
       assistantContent: "recovered",
       cumulativeToolCalls: 0,
+    });
+  });
+
+  it("accepts and completes only the host-approved assistant content", async () => {
+    const fetcher = vi.fn(async () => streamResponse([{
+      choices: [{ delta: { content: "an unverified attachment claim" }, finish_reason: "stop" }],
+    }])) as typeof fetch;
+    const events: HarnessEvent[] = [];
+    const transitions: BindLoopTransition[] = [];
+    const transformAssistantMessageBeforeAcceptance = vi.fn(async () =>
+      "Attachment content unverified; no attachment values are included.");
+
+    const outcome = await runHarness({
+      ...runInput(fetcher),
+      onEvent: (event) => { events.push(event); },
+      onBindLoopTransition: async (transition) => { transitions.push(transition); },
+      transformAssistantMessageBeforeAcceptance,
+    });
+
+    expect(transformAssistantMessageBeforeAcceptance).toHaveBeenCalledOnce();
+    expect(transformAssistantMessageBeforeAcceptance).toHaveBeenCalledWith({
+      turnId: "run-1:turn:1",
+      content: "an unverified attachment claim",
+      hasToolCalls: false,
+    });
+    expect(outcome).toMatchObject({
+      status: "completed",
+      content: "Attachment content unverified; no attachment values are included.",
+    });
+    expect(transitions.find((transition) => transition.kind === "assistant_accepted"))
+      .toMatchObject({
+        kind: "assistant_accepted",
+        turnId: "run-1:turn:1",
+        message: {
+          role: "assistant",
+          content: "Attachment content unverified; no attachment values are included.",
+        },
+      });
+    expect(events.find((event) => event.type === "stream_completed")).toMatchObject({
+      type: "stream_completed",
+      turnId: "run-1:turn:1",
+      transcriptSequence: 1,
+      content: "Attachment content unverified; no attachment values are included.",
     });
   });
 
@@ -5139,11 +5924,16 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
     },
     workspaceId: overrides.workspaceId ?? "workspace-1",
     workstreamId: "workstream-1",
+    loopId: "run-1",
     harnessRunId: "run-1",
     executionPrincipal: { type: "user" as const, userId: asUserId("00000000-0000-4000-8000-000000000001") },
     systemPrompt: "Be useful.",
     messages: [{ role: "user" as const, content: "Do the work" }],
     corePlugins: [] as HarnessPlugin[],
+    onAssistantTurnReserved: ({ modelTurnIndex }: { modelTurnIndex: number }) => ({
+      transcriptSequence: modelTurnIndex,
+    }),
+    onStepSettled: () => ({ transitions: [], stop: false }),
     onEvent: () => {},
   };
 }

@@ -227,13 +227,13 @@ Opening a work stream should deliver, without being asked:
 
 - **The complete metadata snapshot** — the WorkstreamDO common row and the
   viewer overlay, as one snapshot rather than a patch.
-- **The first page of message metadata** — the newest page and, when the reader
-  has a resume position, the page around it, with both cursors. The client
+- **Canonical transcript coverage** — snapshot-fenced newest and unread
+  half-open sequence ranges, including authoritative empty coverage. The client
   should be able to paint a transcript from the frames the open produced.
 - **The block configuration and the viewer's panel preference**, so the panel
   does not flash a default it then corrects.
 
-Deeper history is paged **on the same socket**, correlated by request id,
+Deeper history is loaded as canonical ranges **on the same socket**, correlated by request id,
 because the room is the authority for its own transcript and a page reply must
 not move any other reader's cursor. That is a request rather than a push, and it
 is allowed to be one: the reader asked for it by scrolling. This document asks

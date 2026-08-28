@@ -136,17 +136,32 @@ async function main() {
     return { status: response.status, body: await response.json().catch(() => null) };
   };
   const uid = () => crypto.randomUUID();
+  const canonicalTurns = (body) => {
+    const transcript = body?.transcript;
+    if (!transcript) return [];
+    const byId = new Map();
+    for (const turn of [...(transcript.ranges ?? []).flatMap((range) => range.turns ?? []),
+      ...(transcript.activeTurns ?? [])]) {
+      const current = byId.get(turn.turnId);
+      if (!current || turn.revision > current.revision) byId.set(turn.turnId, turn);
+    }
+    return [...byId.values()].sort((left, right) =>
+      left.transcriptSequence - right.transcriptSequence || left.turnId.localeCompare(right.turnId));
+  };
+  const turnText = (turn) => (turn?.blocks ?? [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("");
 
   const waitForTerminal = async (workstreamId, timeoutMs = 120_000) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const messages = await api("GET", `/workstreams/${workstreamId}/messages?limit=30`);
-      const items = messages.body?.messages ?? messages.body?.items ?? [];
-      const agent = items.filter((m) => m.author?.type === "agent" && m.messageType !== "tool");
       const workstream = await api("GET", `/workstreams/${workstreamId}`);
-      const status = workstream.body?.workstream?.harnessStatus ?? workstream.body?.harnessStatus;
+      const turns = canonicalTurns(workstream.body);
+      const agent = turns.filter((turn) => turn.actor === "assistant" && turn.entryKind === "conversation");
+      const status = workstream.body?.harnessStatus;
       if (TERMINAL_STATES.includes(status)) {
-        return { status, agentText: agent.at(-1)?.textContent ?? null };
+        return { status, agentText: turnText(agent.at(-1)) || null };
       }
       await new Promise((resolve) => setTimeout(resolve, 2_500));
     }
@@ -203,10 +218,10 @@ async function main() {
     async happy_transcript_ordered() {
       const workstreamId = await create("Reply with the word ORDERED.");
       await waitForTerminal(workstreamId);
-      const listed = await api("GET", `/workstreams/${workstreamId}/messages?limit=50`);
-      const items = listed.body?.messages ?? listed.body?.items ?? [];
+      const listed = await api("GET", `/workstreams/${workstreamId}`);
+      const items = canonicalTurns(listed.body);
       if (listed.status !== 200 || items.length < 1) throw new Error(`transcript ${listed.status}`);
-      const sequences = items.map((m) => m.sequenceNumber);
+      const sequences = items.map((turn) => turn.transcriptSequence);
       if (JSON.stringify([...sequences].sort((a, b) => a - b)) !== JSON.stringify(sequences)) {
         throw new Error("transcript out of order");
       }
@@ -267,9 +282,18 @@ async function main() {
       const first = await message(workstreamId, "exactly once", clientMessageId);
       const replay = await message(workstreamId, "exactly once", clientMessageId);
       if (replay.status >= 500) throw new Error(`replay returned ${replay.status}`);
-      const listed = await api("GET", `/workstreams/${workstreamId}/messages?limit=100`);
-      const items = listed.body?.messages ?? listed.body?.items ?? [];
-      const copies = items.filter((m) => m.clientMessageId === clientMessageId);
+      if (first.body?.turn?.turnId !== replay.body?.turn?.turnId) {
+        throw new Error("replay returned a different accepted turn");
+      }
+      for (const [label, response] of [["first", first], ["replay", replay]]) {
+        const keys = Object.keys(response.body ?? {}).sort().join(",");
+        if (keys !== "deliveryState,turn") throw new Error(`${label} receipt exposed unexpected fields: ${keys}`);
+        if (!["canonical", "pending"].includes(response.body.deliveryState)) {
+          throw new Error(`${label} receipt has invalid delivery state`);
+        }
+      }
+      const listed = await api("GET", `/workstreams/${workstreamId}`);
+      const copies = canonicalTurns(listed.body).filter((turn) => turn.clientMessageId === clientMessageId);
       if (copies.length > 1) throw new Error(`replay landed ${copies.length} times`);
       return { first: first.status, replay: replay.status };
     },

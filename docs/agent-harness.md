@@ -1,8 +1,11 @@
 # Agent harness
 
-Rally's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. After the work-stream authority cutover, the owning `SubstreamAgent` Durable Object hosts the complete work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Non-workstream loops and pre-cutover drain may still use Cloudflare Workflows.
+Rally's production loop is an adapter over `@juno-ai/bind` 13.0.0. Bind owns turn/tool iteration, plugin activation, skill registration and activation, transcript healing, completion-defect detection, streaming resets, and route execution. The owning `SubstreamAgent` Durable Object hosts every work-stream loop and stores admission, leases, transcript, receipts, streaming checkpoints, and terminal state in explicit SQLite; there is no pre-cutover drain or Workflow fallback for this surface. WorkspaceDO is authoritative for workspace connector/resource/memory/policy state and cross-work-stream products; regional D1 retains identity, membership, routing, migration and operational records, while R2 stores large outputs. Separate non-workstream loops may still use Cloudflare Workflows.
 
-Each run is one server-side, tool-using loop inherent to a work stream. It is not a participant, separate persona, terminal, or general code-execution environment.
+Each substream owns one persistent server-side, tool-using loop. A run is a
+subordinate execution receipt for one activation of that loop; it never creates
+or identifies the loop. The loop is not a participant, separate persona,
+terminal, or general code-execution environment.
 
 The user-facing dashboard is **HyperSight**. Its harness role, plugin wire
 prefix, durable owner, persistence rows, and terminal error codes use the
@@ -39,9 +42,10 @@ Immediately before every provider request, Rally reconstructs the ledger's
 message array and compares its canonical SHA-256 with the validated array Bind
 will send. The equality includes the newly rendered system projection and its
 renderer/input revision. A mismatch or failed persistence port stops the run
-before the model-facing state can advance. This makes `input.messages` an exact
-provider-boundary value even though Bind's internal `state.messages` remains
-private and may be replaced by compaction.
+before the model-facing state can advance. `input.messages` is therefore only
+the never-started loop's canonical bootstrap; after initialization the durable
+Bind projection is the exact provider-boundary value. Bind's internal
+`state.messages` remains private and may be replaced by compaction.
 
 Host context messages carry non-provider `provenance` metadata until Bind heals
 the initial array. The initialization transition records an origin beside each
@@ -50,14 +54,61 @@ turn/event, tool wrappers point to receipts, memory wrappers point to the frozen
 memory hash, and compaction continuations point to their checkpoint. The adapter
 strips that metadata while constructing OpenAI-compatible messages, so it never
 changes provider bytes. Runtime-created continuation nudges are protocol-only;
-accepted assistant messages are canonical; accepted tool results retain their
-receipt identity.
+accepted assistant messages are canonical, and a host policy transformation is
+applied before either Bind or the participant transcript can accept one;
+accepted tool results retain their receipt identity. The work-stream host uses
+that boundary to replace output after an unresolved attachment access with a
+content-free provenance notice. Because the replacement is the accepted turn,
+run settlement and realtime completion cannot disagree with canonical text.
+
+On the first activation, only canonical transcript history bootstraps the
+persistent Bind projection. Model-only activation inputs — connector activity,
+scheduled wake-ups, digest briefs, Slack origin wrappers, and frozen recalled
+memory — cross a separate host boundary on every activation. Each carries full
+derived provenance plus a stable logical `activationInputId` that is independent
+of the execution attempt. The host atomically deduplicates and appends the
+missing inputs under the exact active-execution and Bind-head fence, then returns
+the committed transitions for Bind to apply plus the stable IDs durably
+acknowledged without another append. Every requested ID must be
+acknowledged exactly once by one of those two paths; an empty or partial host
+answer fails closed instead of silently dropping activation context. The
+boundary runs even when the activation has no model-only input, and it resolves before assistant reservation
+or provider I/O; persistence or fence failure therefore stops inference. A
+resumed loop never replaces its durable history from a freshly assembled
+`input.messages` array, and a takeover never repeats an already delivered
+pending participant input merely because the executor changed.
+The projection is one current metadata head plus one ordered current message
+set, rather than one full snapshot per transition. In memory, its non-system
+messages form an immutable suffix chain: an append allocates one node and
+reservation or system-only transitions share the existing tail. Storage checks
+the small head before reusing that projection, writes only the changed message,
+and rehydrates the full chain only after eviction or an observed head change.
+The chain crosses only the same-isolate storage-to-harness call; it is excluded
+from the transcript object RPC and is never JSON serialized. The harness shares
+the immutable tail on resume instead of recursively cloning it.
+Compaction is the one operation that replaces the complete set. Each stable
+activation ID has one immutable fact-backed receipt, and replay lookup reads
+only IDs presented at the current boundary.
 
 Assistant streaming remains independent: token deltas continue over the room
 while durable lifecycle edges are recorded at accepted turn/tool boundaries.
 Each Bind model turn has its own stable participant turn ID, so text before a
 tool batch, parallel tool blocks in declared call order, and narration after the
 batch cannot be collapsed back into one aggregate row.
+
+Before provider I/O, the work-stream host reserves the next global model-turn
+index, stable turn ID, and exact participant transcript sequence, then Bind
+commits `assistant_reserved` to its durable projection. Provider I/O may begin
+only after both commits. The host repairs an unresolved reservation before
+calling the harness again; Bind refuses to infer from a projection that still
+contains one. A failed or stopped harness outcome settles that reservation
+before execution terminalization and replaces ephemeral partial output with a
+canonical status pill. If the host reservation survived but `assistant_reserved`
+did not, recovery commits that missing edge first and then settles it; neither
+step invokes the provider, and either may be safely resumed after a crash.
+Stream and checkpoint events for participant loops carry that
+same sequence. A generic host such as HyperSight has no participant sequence
+but still keeps one stable loop identity.
 
 ### Addressing
 
@@ -73,32 +124,67 @@ The transcript is what a name is usually missing. A work stream is looked at onc
 
 Every write is conditional on the status the pass started from, which is what keeps a person's title safe: renaming a work stream settles it, so a generated name that arrives afterwards is dropped rather than applied, and a title supplied by the caller is settled from the start and never generated over. Every failure — an unreachable model, an unusable answer, an absent `OPENROUTER_API_KEY` — leaves the title standing and still advances the status, because a skeleton that never resolves is worse than a title taken from the request.
 
-### Admission and immutable run scope
+### Activation, admission, and immutable run scope
 
-The child dispatcher creates one replay-stable run identity; each execution attempt reaps expired attempts and claims a time-bounded object-local lease. At most one unexpired harness lease may run in a substream. The owner heartbeats while waiting on model output and tools; scope, activation, receipt-plan/completion, checkpoint, and terminal commits require the same attempt ID, lease owner, and expiry. An obsolete executor cannot publish a terminal result, and `completed` cannot commit until its final agent message is durable. Expired attempts are compare-and-swap reaped as failed. Every in-memory drain also receives an identity predicate: abandoning a stranded promise revokes that predicate, so its late continuation exits before another dispatch even if the promise itself cannot be cancelled. The Substream loop rechecks that identity after its pre-claim regional-effects await, not only at the loop head. Substream and BlockDashboard dispatch settlement is separately fenced by the row's exact lease token; even the Substream product-failure transaction requires that token before changing the run or work-stream state.
+Every producer derives the same `loopId` from stable product identity. A human
+pending-input activation promotes that input, creates and links its subordinate
+execution receipt, and acquires the loop lease in one object transaction. An
+external or manual-retry producer commits its receipt first, and activation
+atomically links that same receipt to the idle loop. In both cases a lost
+response replays one stable activation rather than minting another loop. Each
+execution attempt claims a time-bounded object-local lease and heartbeats while
+waiting on model output and tools; after each committed attempt heartbeat it also extends the singleton
+loop lease. Scope, receipt-plan/completion, checkpoint, and terminal commits
+require the same attempt ID, lease owner, and expiry. An obsolete executor
+cannot publish a terminal result, and `completed` cannot commit until its final
+agent message is durable. Expired attempts are compare-and-swap reaped as
+failed.
 
-A launch is never split across the response that asked for it. The run row, work-stream state, and `agent_run_dispatches` admission commit before the child acknowledges launch. The dispatcher itself may continue through `waitUntil`, because the SQL dispatch row—not the in-memory promise—is the durable start signal and constructor/alarm activation resumes it. A start that fails before durable admission marks the run failed, publishes `harness_status_changed`, and answers `503`.
+Activation has one durable signal: the subordinate run receipt. There is no
+second dispatch table whose row can disagree with it. An external automation,
+wake-up, email, or activity may arrive with that receipt already created; it
+still targets the same stable loop. A failure after receipt commit is replayable
+against the same receipt and loop, while a failure before it commits may be
+prepared again.
 
 ### Execution primitive and expected duration
 
-One `SubstreamAgent` execution represents one **full Bind loop**, not one model
-turn. Most loops are expected to last 2–30 minutes. Time to first token is
+One `SubstreamAgent` owns one **persistent Bind loop**, not one loop per message
+or execution receipt. One model/tool step plus settlement is its safe boundary:
+steering input becomes visible after the active step settles, queued input waits
+until the active activation becomes idle, and neither interrupts in-flight
+provider or tool I/O. Most active cycles are expected to last 2–30 minutes. Time to first token is
 normally 1–5 seconds, ordinary tools take seconds, and a Terminal call usually
 finishes within a minute at p95 but can take 3–5 minutes. Rare coding sessions
 may continue for more than two hours.
 
 The child wraps active work in a custom `keepAliveWhile()`, scheduling a
 30-second alarm heartbeat while the in-memory computation exists. Correctness
-does not depend on remaining resident: `agent_run_dispatches`, the attempt
-lease, immutable scope, tool receipts, streaming checkpoint, and final-message
+does not depend on remaining resident: the persistent-loop projection and
+lease, subordinate execution receipt and attempt lease, immutable scope, tool receipts, streaming checkpoint, and final-turn
 fence resume or reconcile the run after eviction. Hibernating feed sockets wake
 only for batched frames or product events; user commands arrive through the
 workspace socket. Terminal remains a plugin in the same loop and executes its
 actual coding commands in Daytona.
 
-A run records the message it was triggered by in `harness_runs.trigger_message_id`, because that id is what fences the transcript the run may see — everything up to and including the trigger, nothing after. `retry` creates a new run for a failed one and inherits that stored id rather than reconstructing it: a run with no message behind it (a scheduled wakeup, an activity, an automation run with no opening message, a HyperSight block) stores NULL and replays the whole available transcript, and so does a row written before the column existed. A scheduled digest is not one of these — it appends its brief and launches against that message — and neither is an automation run that has one. Reconstructing the trigger as "the latest human message" — which is what `retry` did before the column existed — is right only while nothing has happened since, and fences finished work out of the replay whenever it has.
+An invoked participant message is admitted first as a pending loop input. It
+does not create an execution receipt or a second loop. At its eligible boundary,
+one object-local transaction promotes that input to its immutable canonical
+turn and advances the persistent Bind projection. If the loop was idle, that
+same transaction creates the subordinate receipt for the activation that will
+execute it; a steer promoted at a safe step continues the receipt already
+executing. The receipt keeps `triggerMessageId` as immutable execution
+provenance; the persistent loop keeps the conversation itself and is resumed
+rather than reconstructed from that trigger on every activation.
 
-The trigger's two jobs come apart on a retry, and `transcriptFenceMessageId` is what separates them. As *identity* the trigger is what admits a suggested-work brief or an inbound email to the model at all; as *bound* it is the newest message the run may see. A retry has to keep the first and move the second, or replaying the failed run would hide anything said since it failed — including the correction a teammate posts *because* it failed, which starts no run of its own when the work stream has other participants and the message was not for the agent. The fence is resolved once at launch and travels in the durable workflow input, never re-read at projection time: an attempt that replays must read the same window it read the first time. Absent, the trigger is the bound, which is correct for every run a message started.
+System producers that already own a canonical trigger—such as a digest brief,
+automation opening input, activity, or inbound email—may prepare an unlinked
+execution receipt and wake the same loop. `transcriptFenceMessageId` separates
+the trigger's identity from the newest canonical turn that activation may see.
+A retry can therefore preserve what caused the failed activation while moving
+its upper input fence to an explicitly admitted correction. Both values are
+frozen in the receipt's execution context before it is linked to the singleton;
+neither value creates or identifies a loop.
 
 After admission Rally validates the execution principal and persists an immutable, canonically hashed run scope: principal, eligible connection IDs and capabilities, trigger policy, routing and prompt versions, tool-surface hash, and limits. A replay must reproduce that scope. Connections installed or expanded later cannot enter it; subsequent membership, ownership, grant, disablement, and policy checks may only remove authority.
 
@@ -204,7 +290,17 @@ Three bounds keep a looping model from loading its way into a context-limit erro
 
 The package ships three skills of its own (`BUILT_IN_SKILLS` in `@rally/agent-harness`), for a host with no library yet: `deep-research`, `writing-an-email`, and `scheduling-a-calendar-event`. The latter two are deliberately provider-agnostic — they name no connector and no tool, because the failures they exist to prevent (an address composed from a name and a domain, a fact quoted from memory, a guest list replaced when one attendee was meant to be added, a write reported as done without a result confirming it) belong to the task rather than to any one provider, and the next mail or calendar connector will carry them too. Neither sets an `ownerPlugin`, so neither implies that loading it granted the connection it describes.
 
-All three are offered to every run the API starts — ad-hoc, automation, HyperSight block, and inline child alike. Nothing is withheld by surface. A skill is advice, and what a surface may *do* is settled in the tool loop: HyperSight and inline children both compose `rejectToolModesBeforeCall(["write"], …)` into their `beforeToolCall`, so a write-mode tool is refused before it runs no matter what the model has read. Withholding a skill from those two would hide the advice without removing any authority, and would silently hide the next, more general skill along with the mail and calendar ones. Offering is not activation: a run sees only the catalog line until it loads one, and loading grants no authority. It is an ordinary `HarnessSkill` and not a second source: a host still chooses to put it in `skills`, and the frozen-scope rule is unchanged. It is authored in TypeScript rather than as a `SKILL.md` because the harness runs in `workerd`, where there is no filesystem to read one from at startup.
+All three are offered to every production run the API starts — ad-hoc,
+automation, and HyperSight block alike. Nothing is withheld by surface. A skill
+is advice, and what a surface may *do* is settled in the tool loop: HyperSight
+composes `rejectToolModesBeforeCall(["write"], …)` into its `beforeToolCall`, so
+a write-mode tool is refused before it runs no matter what the model has read.
+Withholding a skill would hide advice without removing authority. Offering is
+not activation: a run sees only the catalog line until it loads one, and loading
+grants no authority. It is an ordinary `HarnessSkill` and not a second source:
+a host still chooses to put it in `skills`, and the frozen-scope rule is
+unchanged. It is authored in TypeScript rather than as a `SKILL.md` because the
+harness runs in `workerd`, where there is no filesystem to read one at startup.
 
 Bind's skill warnings — a name collision that lost a skill, a restored hint refused by a narrowed scope, a drifted pin — surface through `onSkillWarning`. Unwired, they are computed and discarded.
 
@@ -222,20 +318,33 @@ and only bounded resource paths travel through the structured failure allowlist.
 2. Register the applicable stable core plugins plus the frozen connection catalog; restore only reauthorized hints.
 3. Reauthorize active plugins, render the stable prompt/tool surface, and ask OpenRouter through Bind's deterministic route plan.
 4. Stream text through the epoch-aware protocol; reasoning fields are ignored.
-5. Normalize unambiguous schema-declared numeric strings, validate tools, and recheck authority. Bind runs writes sequentially and may overlap independent reads, while returning results in the model's original call order.
+5. Normalize unambiguous schema-declared numeric strings, validate tools, and recheck authority. Bind runs writes sequentially and may overlap independent reads. It accepts ordinary results in the model's original call order; a withheld elicitation result keeps its original call index and receives a later dense acceptance ordinal when the person answers.
 6. Persist each immutable execution plan before execution and make a successful bounded result durable before returning it to Bind.
 7. Persist the complete assistant message, then let the lease-owning child executor append the terminal lifecycle event.
-8. Stop on completion, elicitation, durable cancellation, ambiguous write, limit, lease loss, or failure.
+8. Stop on completion, elicitation, the host's safe-boundary loop stop, ambiguous
+   write, limit, lease loss, or failure. Receipt-local cancellation remains a
+   separate terminal signal for child and generic non-work-stream executions.
 
 Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY` and from inbound-email runs.
 
 ### Elicitation
 
-The canonical `request_elicitation` tool belongs to `rally:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. In a work stream, the work stream becomes `needs_input`; a valid answer persists a visible response, clears attention when no blockers remain, and admits a new run into the same `SubstreamAgent`, linked to the previous run. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
+The canonical `request_elicitation` tool belongs to `rally:core` and is rendered to the model as `core_request_elicitation`. It creates a typed text/radio/single/multi-select block and pauses the shared harness loop. The request row retains the stable original tool slot. When a person answers, the loop atomically accepts one tool result containing that answer and promotes the visible participant response before any later provider call. The participant turn is canonical UI history, not a second Bind user message; the model therefore receives the answer exactly once through the suspended tool protocol. Original tool-call position and dense result-acceptance order are separate identities, so another result accepted while the elicitation waits does not renumber either fact. In a work stream, the work stream becomes `needs_input`; a valid answer clears attention when no blockers remain and activates the same `SubstreamAgent` loop. In automation creation, the architect first saves its best partial state with `automation_submit_draft`, then calls the same core elicitation tool; the next creator request resumes from the saved draft and answered conversation.
 
 ### Durable receipts and terminal state
 
-Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. Before the Durable Object authority cutover, D1 stores the canonical input and immutable plan hashes, plugin/connection, mode, idempotency policy, and optional provider key. After cutover, the owning `SubstreamAgent` stores those records in `tool_effects` and `tool_effect_checkpoints`; the protocol and receipt identity do not change. Append-only checkpoints record progress, and completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
+Each tool call receives a stable Rally receipt ID derived from the run, model turn, and original tool position; the provider call ID remains only in the model protocol. A tool that starts work outside Rally keys it to `HarnessToolContext.effectIntentId` instead, which the host resolves through `resolveToolEffectIntentId` after `tool_started` and which names the stored receipt row rather than the call: the row is created once and kept, so a resumed attempt reattaches to the effect it already started instead of starting a second one. The owning `SubstreamAgent` stores canonical inputs, immutable plan hashes, plugin/connection identity, mode, idempotency policy, optional provider key, and append-only progress in `tool_effects` and `tool_effect_checkpoints`; there is no D1 compatibility owner. Completed receipts retain provider operation IDs. Successful output is written to regional R2 and then committed to the current regional work-stream authority before Bind can observe it.
+
+If the object is evicted after `assistant_accepted` but before every
+`tool_result_accepted`, Bind does not repair the protocol array. Before another
+provider request or pending input can cross the loop boundary, the host walks
+the missing call positions against their durable receipts. A completed or
+failed receipt becomes the corresponding exact tool result; an admitted call is
+terminalized as `not_run`; an executing write becomes
+`ambiguous_external_write`. Results are appended with their original call index
+and a separate dense accepted ordinal. An ambiguous recovery settles the whole
+tool batch and then fails the current cycle visibly without retrying the
+provider or pretending that human input was requested.
 
 Before the input hash or any host hook sees arguments, the harness walks the
 tool's provider-facing JSON Schema and normalizes a string only where the field
@@ -332,7 +441,13 @@ Each agent's default model and its fallback stages are one Cloudflare Flagship f
 
 Standalone structured-output agents enter through `runStructuredInference`. The gateway resolves the role's flag, constructs the provider client, combines any caller cancellation with a two-minute ceiling, and emits redacted diagnostics for every request, repair, validation, fallback, and completion stage. ESLint prevents API feature modules from constructing `OpenRouterClient`, reading model-selection variables directly, or removing the gateway's signal and diagnostic hooks. The harness package has a separate portability boundary: production sources cannot import database, connector, API, or Node-only implementations and cannot read `process`; host capabilities arrive through explicit ports.
 
-OpenRouter routing is deterministic and versioned. Empty completions and truncated tool calls receive a bounded same-endpoint defect retry. Other fallback-eligible failures traverse configured model stages under Bind's classified failure policy and a workspace-scoped circuit breaker; cancellation and host failures do not route onward. Because Rally's stream is retractable, a later attempt explicitly resets partial text instead of concatenating two answers.
+OpenRouter routing is deterministic and versioned. Empty completions, truncated
+tool calls, and fallback-eligible failures may retry or traverse configured
+model stages only before an assistant byte is published and before a tool effect
+begins. The first observable delta closes that route permanently. A later
+failure terminalizes the step, removes its transient preview, and materializes
+the reserved failure status instead of asking another provider for a competing
+answer. Cancellation and host failures never route onward.
 
 The Bind/OpenAI/OpenRouter boundary is converted member by member rather than
 asserted through `unknown`. Model content parts and function tools are mapped to
@@ -366,11 +481,11 @@ outcome.
 
 ### Streaming stability
 
-OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`. A route restart increments `epoch`; `streamSeq` orders frames within the turn epoch; `reset: true` replaces text from the abandoned attempt. These fields are independent of the SubstreamAgent event `sequence` used for socket replay.
+OpenRouter SSE comments are ignored and function-call fragments are combined by index. Each model turn has a stable `turnId`; `epoch` and `streamSeq` order protocol frames within it, independently of the SubstreamAgent event `sequence` used for socket replay. A pre-output route retry may advance the attempt epoch but has no participant text to retract. Once a delta is observable, failure closes the step rather than issuing a transparent route restart.
 
-Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and retry boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
+Text deltas are buffered before broadcast, but a reset is sent alone and batches never cross turn or epoch boundaries. The room commits each sequenced stream frame together with an accumulated active-stream checkpoint in Durable Object storage. Its metadata and bounded text chunks share that transaction, so a long answer cannot make one storage value reject every later frame. An initial snapshot or history-gap resync reassembles that checkpoint, including its independent Bind cursor and attempt boundary, so somebody joining after the response began installs the exact partial text before catch-up and live frames cross the same sequence boundary.
 
-The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and replaces only the active turn's abandoned partial text on reset while preserving completed text from earlier tool turns. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its final row arrives. The current regional work-stream authority stores the complete final assistant message plus a bounded active-output checkpoint while streaming; terminal resynchronization remains canonical. That authority is D1 before the guarded maintenance cutover and the owning `SubstreamAgent` afterward.
+The desktop retains room and per-message stream cursors across socket and route handoffs, rejects duplicate or stale frames, and removes only the failed active turn's ephemeral preview while preserving completed text from earlier tool turns. The shell keeps a background subscriber only for running work streams that are not open, and a canonical refresh retains the active transient assistant row until its accepted turn or failure status arrives. The owning `SubstreamAgent` is the only regional work-stream authority: it stores the complete accepted assistant message plus a bounded active-output checkpoint while streaming, and terminal resynchronization remains canonical.
 
 ### Transcript row attribution
 
@@ -413,9 +528,11 @@ later either names its tools with a recognized verb or declares its own prose.
 
 ### HyperSight blocks
 
-A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript or interactive participant of its own. A user may watch read-only state and streamed output over the block agent's direct socket while the dashboard is visible, but cannot send a message, pause it, or answer an elicitation. One stable `BlockDashboardAgent` owns each block's complete loop. WorkstreamDO owns configuration and fan-out; the block agent resolves main `SubstreamAgent("0")` directly for its Bind runtime SQL and a frozen model-array interval: exact compaction event (or array start) through a complete tool-safe upper sequence. It never executes in the source agent, the parent, or a Workflow. Three things follow.
+A HyperSight block run is the same harness with a different terminal product: it renders one block of shared Markdown for a work stream's dashboard, on a schedule, with no transcript or interactive participant of its own. A user may watch read-only state and streamed output over the block agent's direct socket while the dashboard is visible, but cannot send a message, pause it, or answer an elicitation. One stable `BlockDashboardAgent` owns each block's complete loop. WorkstreamDO owns configuration and fan-out; the block agent resolves main `SubstreamAgent("0")` directly through typed object ports for its run/receipt state and a frozen model-array interval: exact compaction event (or array start) through a complete tool-safe upper sequence. It never executes in the source agent, the parent, or a Workflow. Three things follow.
 
-It is read-only, by the same `rejectToolModesBeforeCall(["write"], …)` hook the inline children use, and it cannot pause — a run that reaches `needs_input` fails with `block_dashboard_input_unavailable`, because there is no one to answer.
+It is read-only through `rejectToolModesBeforeCall(["write"], …)`, and it cannot
+pause — a run that reaches `needs_input` fails with
+`block_dashboard_input_unavailable`, because there is no one to answer.
 
 Its output is a tool call. The block is exactly the `markdown` argument passed to the `rally:block-dashboard` plugin's `submit_block`, and assistant text is discarded. Taking the block from the run's trailing text instead made every preamble, apology, and "here is the block:" part of the dashboard; an argument with a schema cannot drift that way. The tool is `mode: "read"` — it settles Rally's own record and reaches no provider, the same reason the automation architect's draft submission is a read — so the write ban above does not lock the run out of its own output.
 
@@ -427,18 +544,16 @@ of resource policy. Each terminal refresh contributes one aggregate summary to
 the root-run Analytics Engine dataset, so future ceilings can be selected from
 the measured distributions rather than assumed in advance.
 
-### Durable inline subagents
+### Child agents
 
-The root harness exposes `workstream_run_subagent` through the default-loaded `rally:workstream` plugin for several independent, substantial read-only investigations. Rally follows Monad's useful delegation shape while preserving Rally-specific durable authority:
-
-- A child is an inline Bind run, not an autonomous participant. It receives one self-contained objective and a narrowed subset of plugins already authorized and active in the parent run.
-- Child admission is atomically keyed by the parent's stable tool-call receipt. Duplicate calls replay the same durable result, and a child can never widen the parent's frozen scope.
-- The database records parent/chain lineage, depth, delegated-task and inherited-scope hashes, leases, activations, inference attempts, tool receipts, checkpoints, result hashes, and terminal state.
-- Children are read-only, and that is enforced in the tool loop rather than by what the child was given: a `rejectToolModesBeforeCall(["write"], …)` hook refuses a write-mode tool before it runs, and returns a rejection the child can recover from rather than aborting it the way the scope check behind it does. Firecrawl tools for inbound-email parents, elicitation, recursion, and human-facing progress are unavailable.
-- Child and chain depth, concurrency, plugin surface, model iterations, tool calls, tokens, cost, and wall time are independently bounded. Capacity refusal is deterministic rather than an untracked background task.
-- Parent and child ownership are revalidated during inference and around tool execution. A lost parent or child lease aborts the child, and a successful result becomes visible to Bind only after it is durable.
-
-This deliberately adopts Monad's focused parallel-investigation strategy without copying in-memory interrupt queues, fire-and-forget persistence, autonomous agents, personas, or nested delegation. Inline children receive no direct memory access; their parent supplies any recalled context needed for the delegated objective.
+Inline child Bind execution inside a parent `SubstreamAgent` is disabled. It
+would create a second logical loop inside the parent's authority while hiding it
+behind the parent's identity, which breaks the one-loop-per-substream invariant.
+A future child must receive its own stable child substream and `SubstreamAgent`;
+the parent loop ID plus tool-call ID may address that distinct child, but may
+never identify a loop executing inside the parent object. Until that durable
+routing exists, `workstream_run_subagent` is absent from production tool
+surfaces.
 
 ### Scoped durable memory
 
@@ -493,7 +608,7 @@ row today, so both stay open.
 
 Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
-Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records. Inline children receive no direct table access.
+Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
 Memory and table mutations return identifiers and current revisions. On a revision
 conflict, the failed result directs the model to re-read those exact identifiers,
@@ -522,13 +637,62 @@ boundary for complete wake-up detail.
 
 That split — a labelled trigger message for the model, a system row for the person reading the transcript — is the contract for every scheduler-started run, not a wake-up detail. A scheduled digest carries its frozen window the same way ([`digests.md`](digests.md#the-run)). A run whose instructions exist only as a transcript `system` row reaches the model with nothing but its work stream's objective, because the protocol projector drops those rows as UI state; whatever starts a run has to hand the host something to render.
 
-### Cancellation and deferred systems
+### Loop stop, receipt cancellation, and deferred systems
 
-Stopping a run persists `cancellation_requested_at`; it does not terminate an in-flight model request or tool call out of band. Admission observes pre-start cancellation, and a live owner observes it through heartbeats and event checks. If that observation aborts a tool, the same live attempt may settle that exact in-flight receipt even though cancellation has been requested; the narrow settlement path still requires the current attempt id, lease owner, unexpired lease, `running` parent, and no prior terminalization. A `record_before_execute` write remains ambiguous, while a definitive read failure remains failed. In every checkpoint, successful-completion, and failure batch, the live-lease fence admits the checkpoint insert; the immediately following receipt update is tied to that admitted checkpoint rather than re-reading wall-clock expiry. Crossing the lease deadline between serialized statements therefore cannot leave an immutable checkpoint beside a still-started receipt. Parent terminalization still requires the live lease. The leased owner first commits the requested `stopped` transition, then closes any still-unfinished receipt through the object-local exact-terminal-stamp fence — unresolved writes become ambiguous and reads fail — whether it came from the current executor or survived an expired attempt. Cleanup advances past any checkpoint stranded by an older deployment. A definite completion or failure that wins first remains terminal. **Every** terminal transition closes residual receipts, not only the stopped one: a run that reaches `completed`, `needs_input`, or `failed` is supposed to have settled each receipt as its tool returned, so one still open at that point is a defect, and one whose only symptom is a permanently spinning tool card. A run that wrote its own terminal row says so — its residual receipts carry `run_terminated`, never the reaper's `parent_run_terminated`, because no lease was observed to be lost. Both retry paths *derive* that from the terminal row rather than from who is asking: the reaper keeps `attempt_id` and clears only the lease, so a reaped root whose settlement was lost matches every predicate the returning original executor tests, and assuming `direct` there would relabel the reaper's own work. An immutable lifecycle marker acknowledges successful residual settlement; a direct retry or the bounded activation sweep repairs any terminal run missing that marker, preventing a transient second-call failure from leaving a permanently `started` tool row. The sweep's retry predicate is every terminal row without the marker rather than a list of the paths known to write one, so a path added later is covered without being named. Because that walk now also visits ordinary terminal rows, the stale-automation settlement it performs — which matches every unfinished automation row in the work stream rather than the run's own — is restricted to a reaped root. If an obsolete executor loses ownership, its local dispatch is deferred to adopt the successor's result; it cannot write an unfenced product failure.
+Ordinary **Stop** on a persistent work-stream loop writes
+`substream_loops.stop_requested_at` and `stop_after_step_ordinal`. It does not
+write `runs.cancellation_requested_at` and does not terminate an in-flight model
+request or tool call out of band. The loop owner observes the request only after
+the accepted response and every tool it already emitted settle, then prevents
+the next provider step and terminalizes the subordinate receipt.
 
-Cancellation-requested or orphaned inline children are reaped only after their own lease expires. The same attempt, owner, lease snapshot, expiry, and parent-liveness predicates fence the terminal lifecycle and child-result commit. Residual child receipts are then classified under that exact terminal stamp; unresolved writes become ambiguous and reads fail, and the same marker-backed sweep retries a lost response. Thus neither a stopped parent nor its eventual child reaper can leave a descendant tool card looking live.
+`runs.cancellation_requested_at` is instead a receipt-local cleanup signal for
+descendant/child runs and generic non-work-stream executions. It is not loop
+control. Admission observes a pre-start receipt cancellation, and a live receipt
+owner observes it through heartbeats and event checks. If that observation
+aborts a child or generic tool, the same live attempt may settle that exact
+in-flight receipt even though receipt cancellation has been requested; the
+narrow settlement path still requires the current attempt id, lease owner,
+unexpired lease, `running` parent, and no prior terminalization. A
+`record_before_execute` write remains ambiguous, while a definitive read failure
+remains failed. In every checkpoint, successful-completion, and failure batch,
+the live-lease fence admits the checkpoint insert; the immediately following
+receipt update is tied to that admitted checkpoint rather than re-reading
+wall-clock expiry. Crossing the lease deadline between serialized statements
+therefore cannot leave an immutable checkpoint beside a still-started receipt.
+Parent terminalization still requires the live lease. When receipt-local
+cancellation is settled, the leased owner first commits the requested `stopped`
+transition, then closes any still-unfinished receipt through the object-local
+exact-terminal-stamp fence — unresolved writes become ambiguous and reads fail —
+whether it came from the current executor or survived an expired attempt.
+Cleanup advances past any checkpoint stranded by an older deployment. A
+definite completion or failure that wins first remains terminal. **Every**
+terminal transition closes residual receipts, not only the stopped one: a run
+that reaches `completed`, `needs_input`, or `failed` is supposed to have settled
+each receipt as its tool returned, so one still open at that point is a defect,
+and one whose only symptom is a permanently spinning tool card. A run that wrote
+its own terminal row says so — its residual receipts carry `run_terminated`,
+never the reaper's `parent_run_terminated`, because no lease was observed to be
+lost. Both retry paths *derive* that from the terminal row rather than from who
+is asking: the reaper keeps `attempt_id` and clears only the lease, so a reaped
+root whose settlement was lost matches every predicate the returning original
+executor tests, and assuming `direct` there would relabel the reaper's own work.
+An immutable lifecycle marker acknowledges successful residual settlement; a
+direct retry or the bounded activation sweep repairs any terminal run missing
+that marker, preventing a transient second-call failure from leaving a
+permanently `started` tool row. The sweep's retry predicate is every terminal
+row without the marker rather than a list of the paths known to write one, so a
+path added later is covered without being named. Because that walk now also
+visits ordinary terminal rows, the stale-automation settlement it performs —
+which matches every unfinished automation row in the work stream rather than
+the run's own — is restricted to a reaped root. If an obsolete executor loses
+ownership, its local dispatch is deferred to adopt the successor's result; it
+cannot write an unfenced product failure.
 
-The work-stream transcript, attached resources, activation hints, run scope, inference ledger, tool receipts, inline child results, and scoped memory remain distinct durable records. Nested child delegation, personas, roles, autonomous heartbeats, and general child participants remain deferred product work.
+The work-stream transcript, attached resources, activation hints, run scope,
+inference ledger, tool receipts, and scoped memory remain distinct durable
+records. Nested child delegation, personas, roles, and general child
+participants remain deferred product work.
 
 
 ## Invariants
@@ -551,6 +715,20 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   activation, receipt-plan and completion, checkpoint, and terminal commits all
   require the same attempt ID, lease owner, and expiry. An obsolete executor cannot
   publish a terminal result.
+- **One stable `loopId` belongs to each Bind host.** An execution receipt,
+  activation, message, retry, or wake-up may not create a replacement loop.
+- **Provider I/O starts only after host reservation and `assistant_reserved`
+  both commit.** A crash may leave a reservation to repair, but may not skip or
+  allocate a second participant sequence.
+- **Canonical messages are immutable.** Streaming output is ephemeral until the
+  reserved assistant settles; a failed partial stream becomes an error pill at
+  that exact sequence rather than a compatibility message or reordered copy.
+- **No provider attempt is retried after observable output or an external
+  effect.** Once either happens, replay could duplicate visible text or work.
+- **Stop is observed only at the post-step safe boundary.** The active assistant
+  and all of its tools settle first; no next provider request begins. If stop
+  commits while the host is preparing newly arrived steers, stop wins the
+  transaction and those inputs remain pending for the next activation.
 - **`completed` cannot commit until the final agent message is durable.**
 - **A failed attachment-content call cannot authorize attachment facts.** The
   host gives the model one recovery turn, then replaces terminal prose with a
@@ -560,12 +738,8 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
   fails every pending or started tool invocation in the same fenced batch;
   member-requested stops render a distinct terminal stopped outcome in the
   desktop rather than disappearing into idle state.
-- **Terminal inline children leave no live-looking descendant receipt.** The
-  child reaper settles its pending and started receipts before its fenced child
-  result becomes replayable to the parent.
-- **A launch is never acknowledged before durable child admission.** The run,
-  state transition, and `agent_run_dispatches` row exist before the request
-  reports success, so constructor/alarm recovery has a durable start signal.
+- **Activation never precedes its subordinate execution receipt.** The receipt
+  is the durable start signal; a replay uses its same identity and loop.
 - **The run scope is frozen, canonically hashed, and immutable.** A replay must
   reproduce it. Connections installed or expanded later cannot enter it; every
   later check may only *remove* authority.
@@ -655,8 +829,9 @@ The work-stream transcript, attached resources, activation hints, run scope, inf
 
 ## Boundary
 
-This document owns the run: how one is admitted, what authority it is frozen with,
-how the loop executes and records tool calls, and how it terminalizes. **Bind** owns
+This document owns the persistent loop and its subordinate executions: how an
+activation is admitted, what authority it is frozen with, how steps execute and
+record tool calls, and how an execution terminalizes. **Bind** owns
 transcript healing, plugin and skill activation, turn and tool iteration,
 completion-defect recovery, epoch-aware streaming, and classified route traversal.
 **Rally** owns authorization, regional persistence, admission, accounting, and
@@ -678,14 +853,14 @@ It does not own:
 | Reading a captured inference record back | [`runbook.md`](runbook.md#inspecting-a-runs-raw-inference) |
 | Regional analytical inference capture and retention | [`inference-lakehouse.md`](inference-lakehouse.md) |
 
-A run is one server-side, tool-using loop inherent to a work stream. It is
-not a participant, a separate persona, a terminal, or a general code-execution
-environment, and nested child delegation, personas, roles, autonomous heartbeats,
+A substream owns one server-side, tool-using loop. A run is an execution receipt.
+Neither is a participant, a separate persona, a terminal, or a general code-execution
+environment, and nested child delegation, personas, roles,
 and general child participants remain deferred product work.
 
 ## Failure modes and limits
 
-Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. They otherwise continue until completion, elicitation, durable cancellation, ambiguous write, lease or authority loss, context failure, or provider failure; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Inline children and deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, replay payload bytes, and child-result bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
+Root ordinary work-stream and HyperSight runs allow 1,000 model iterations and have no tool-call, wall-clock, or cost ceiling. An ordinary work-stream loop otherwise continues until completion, elicitation, its safe-boundary stop, ambiguous write, lease or authority loss, context failure, or provider failure. HyperSight and generic execution receipts may additionally end through durable receipt cancellation; HyperSight converts elicitation and a missing block submission into its own terminal failures. Per-tool time and plugin-catalog tokens remain bounded, and request establishment, time to first token, and inter-chunk idle time have separate watchdogs. Deliberately bounded one-shot callers such as meeting notes and automation compilation retain their own independent ceilings. Active plugin count, active tool-schema bytes, model-visible tool-result bytes, and replay payload bytes are not capped by the agent runtime. Web results, fetched bytes, and attachments remain independently bounded by their owning tools. Live context size comes only from OpenRouter's returned prompt and completion token counts; Rally does not estimate it from serialized bytes. After a completed provider turn exceeds 80% of the selected model's OpenRouter `context_length` (with Monad's 200,000-token fallback when the catalog is unavailable), Bind replaces the whole live context beneath the system prompt with one synthetic user message carrying an LLM continuation summary; no earlier message survives verbatim. Work-stream checkpoints store one principal-and-resource-inventory-revision-scoped summary regionally with the durable sequence boundary. The live checkpoint and every authorized replay append a freshly rendered, fixed-size resource inventory before newer messages; a scope mismatch falls back to durable transcript replay only within its 2,000-message and 4-MiB serialized preflight bounds. [`context-compaction.md`](context-compaction.md) owns that policy — the threshold, the summary prompt, the deterministic appendix, the checkpoint shape, and the stored row — and is the document to read and update before changing any of them.
 
 A published document is readable in the desktop client, and was not until 2026-08-27. A generated resource appears in the work-stream rail under **Artifacts**, and its detail panel now renders the resource's readable content beneath the metadata, through `/resources/:id/preview` — the same authorized route `AttachmentLightbox` uses, which materializes extracted text for a file that is not already text. The gap that remains is narrower: the rail resolves an inspector target only from the loaded work stream's own resources, so a document cited from *another* work stream still has nowhere to open. [`markdown-rendering.md`](markdown-rendering.md) owns the citation half of this and records the same limit.
 
@@ -707,7 +882,7 @@ Bounded callers use `run_wall_time_limit_exceeded`, `run_iteration_limit_exceede
 
 When every route candidate answers with a transport fault the provider owns — no response, a 408, a 429, or a 5xx — the run fails as `provider_unavailable`, kind `provider`, and not as `harness_execution_failed`. When the circuit breaker had already opened and no request went out at all, the run fails as `provider_circuit_open`, also kind `provider`: Bind's executor reports that as `no_viable_endpoints` carrying no error, and letting that emptiness fall through to the generic bucket reinstated the misattribution during exactly the minute an outage was worst — the first run in a workspace named accurately, every run behind it blamed on Rally. The two codes stay separate because the breaker opens on 401/402/403 as readily as on a 5xx, so a refusal cannot be attributed to the provider without knowing why it opened, which the breaker does not record. The distinction is the whole point of the code: `harness_execution_failed` means Rally’s own defect and gives a member no reason to try again, so filing an upstream outage under it sends whoever reads the failure to the wrong system. A 400 stays generic, because the request shape is ours; 401, 402, and 403 stay generic too, because the credential or the credit is ours. A refusal from the platform Rally runs *on* is neither: Cloudflare bounds how deep one request may recurse through Workers and how many subrequests one invocation may make, and enforces both by refusing whichever call asks next — a D1 read, a Durable Object hop, a fetch. That run fails as `platform_limit_exceeded`, kind `platform`, decided in `FatalHarnessPortError` from the platform's own wording rather than at the call site, because the port that happened to ask is in no position to know. Filing it under that port's code is not a naming quibble: on 2026-08-24 a work stream died reporting `tool_receipt_persistence_failed` when nothing about the receipt had failed, and the investigation started in the receipt authority. Bind's `isRetriableAttemptError` is the authority for the split, minus completion defects, which are the model answering badly rather than the provider failing to answer.
 
-Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host and the inline child set from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected; a 90s inline child effectively declines the retry, which is the honest answer for a budget that cannot hold a second pass. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
+Before that failure is reached, the harness re-executes the **whole route plan** up to `transportRetries` times, which the work-stream host sets from `HARNESS_TRANSPORT_RETRIES` (declared as `1` in both regional Wrangler configs; `0` disables it, which is why it is read through `countEnv` rather than `numericEnv` — the latter rejects zero). The wait is a clamped backoff honouring `Retry-After` up to `TRANSPORT_RETRY_MAX_DELAY_MS`, and it is skipped entirely when the run's remaining wall clock cannot hold the wait plus a **worst-case replay of the whole plan** — every candidate, each able to spend its establishment timeout and then its time-to-first-token timeout, because the stream watchdog only opens once the response head lands. Reserving less lets a bounded caller's retry manufacture the deadline it defers to, and the outage is then reported as `run_wall_time_limit_exceeded`. Root work-stream runs set no wall clock and are unaffected. This is the host-side retry Bind's disposition matrix expects rather than a second guess at its ordering: the matrix answers a retriable transport fault by traversing to the next provider and then the fallback model, and gives it no same-endpoint budget, because with somewhere to traverse to there is no reason to wait. A plan with nowhere to go therefore had no recovery at all — and a work stream pinned from the developer-mode model selector is exactly that plan, since [`feature-flags.md`](feature-flags.md) has an override carry no fallbacks by design. The retry is skipped once output or an external effect has reached a surface that cannot be retracted, the same rule the executor applies to traversal. Each re-execution records another failure against the shared per-workspace circuit breaker, whose threshold is 3, which is why the budget is small by default: a larger one trades one run's recovery for opening the endpoint on every other run in the workspace. Each attempt appends to the owning execution object's `inference_attempts` ledger and emits its own lakehouse terminal record, so a retried turn is visible as more than one attempt sharing a `turn_id`.
 
 A tool that throws reaches the model as a failed tool result. Where the thrown error carries a machine-readable half — a `code`, and `details` such as which identifier family was expected, that a connection must be reconnected, or which values were available — that half travels in the failure's `data` field, the slot declared for structured recovery context, so the remediation a tool attached is readable by the caller that has to act on it. Keys outside the result variant's own fields are discarded when the message is encoded, so this is not somewhere a caller may improvise.
 
@@ -753,11 +928,21 @@ outputs, summaries, token content, and provider responses remain excluded.
 
 ## Testing
 
+The suite table below is an inventory, not a claim that the ordered-transcript
+PRD is fully proved. Its focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
+maps the persistent-loop, safe-boundary, exact-settlement, observable-failure,
+recovery, range/hydration, authority, and renderer requirements to actual test
+names. Every focused scenario now has a named implementation; exact-head CI and
+the repository's deliberate-break practice remain the acceptance proof. This
+documentation pass ran no suites and recorded no deliberate-break failure
+proof.
+
 | Suite | Covers |
 | --- | --- |
 | `apps/api/test/harness-run-runtime.test.ts` | Admission, the lease and its fencing, run-scope freezing, terminal commits, durable structured failures, successful/failure/stop receipt settlement across a mid-batch lease deadline, residual settlement on every terminal status and the marker-driven repair of a directly-failed root that lost its settlement response, healing an occupied checkpoint index, bulk residual-receipt settlement for stop/steering, descendant receipt settlement during child reaping, attachment dependency ordering, and dependency/replan interleavings. |
-| `apps/api/test/durable-agent-runtime.test.ts`, `agent-run-dispatch-queue.test.ts` | One drain per isolate, abandonment revoking the obsolete loop before another claim, durable wake derivation, reclaim ordering, and exact lease-token fences for Substream and BlockDashboard dispatch settlement. |
-| `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `durable-object-runtime.test.ts` | Real workerd alarms, eviction/reclaim, abandoned-run recovery, queue progress against the same authoritative workstream root required by production product mutations, and the direct BlockDashboard terminal transition refusing an obsolete lease token without changing the successor's token, outcome, or stream checkpoint. |
+| `apps/api/test-workers/agent-run-dispatch-reliability.test.ts`, `agent-run-lifecycle.test.ts` | The real-workerd stable-loop state machine: singleton identity, pending-input FIFO and delivery mode, activation replay, alarm recovery after eviction, live-lease exclusion, expired-owner takeover, deferred retry on the same cycle and receipt, and exact execution fences through terminal settlement. |
+| `apps/api/test-workers/message-to-output-pipeline.test.ts` | The real-workerd product-to-provider path, including provider-failure reservation settlement into a canonical error pill, a scheduled activation-only input on an already-initialized Bind projection, exact provider-body inclusion, pre-execution launch replay after eviction, and terminal replay without a second source fact, execution receipt, provider boundary, or inference attempt. |
+| `apps/api/test/agent-run-dispatch-queue.test.ts`, `apps/api/test-workers/durable-object-runtime.test.ts` | The separate HyperSight block dispatch ledger: durable wake derivation, reclaim ordering, and direct terminal settlement refusing an obsolete lease token without changing the successor's token, outcome, or stream checkpoint. It does not model SubstreamAgent execution. |
 | `apps/api/test/harness-liveness-monitor-lifecycle.test.ts` | Heartbeats, expiry reaping, and the compare-and-swap that fails an abandoned attempt. |
 | `apps/api/test/tool-transcript-durability.test.ts` | That a successful result is durable before Bind observes it, and that receipts replay. |
 | `apps/api/test/core-tool-idempotency.test.ts` | Receipt identity, plan hashes, and the `ambiguous_external_write` path. |
@@ -766,6 +951,8 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
 | `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
+| `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
+| `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
 | `apps/api/test/document-run-context.test.ts` | Which runs are told to write documents: an interactive run in a region with Terminal is, and a region without Terminal, an inbound-email run and a Slack-origin run are not. The automation and digest origins are pinned in their own suites, beside the delivery context each already proves. **The trap:** the gate reads the whole Terminal region configuration, so a test asserting the section's *absence* must set `TERMINAL_REGION_CAPABILITY`, all four `DAYTONA_*` variables and `TERMINAL_EMERGENCY_DISABLED` — otherwise it passes because the region is unsupported rather than because of the origin it names. |
 | `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
@@ -775,7 +962,7 @@ outputs, summaries, token content, and provider responses remain excluded.
 | `apps/api/test/agent-inference-logging.test.ts` | That no legacy D1/R2 path remains and provider refusals stay content-free in Workers Logs. |
 | `apps/api/test/inference-lakehouse.test.ts` | Exact request/attempt archival, pointer integrity, Pipeline delivery, and oversized-record preservation. |
 | `packages/db/test/agent-inference-retirement-migration.test.ts` | Migration 0094 removes the regional payload-log table and workspace preference while preserving workspace rows and foreign-key integrity. |
-| `packages/agent-harness/src/*.test.ts` | The prompts' golden hashes, the skill bounds, `toolActivityName`, and the transport retry — that a fallback-less plan re-executes and re-sends **identical bytes**, that an exhausted budget and a refused endpoint each get their own provider code, that a 400 gets neither a retry nor the provider's name, and the backoff curve, `Retry-After` preference, and clamp as a pure function., and the automation compiler's submission loop — the correction a refused draft is answered with, and the argument-validation classification behind it. |
+| `packages/agent-harness/src/*.test.ts` | Persistent-loop projection and activation boundaries, including resumed-history preservation, empty system activations, takeover replay, and fail-closed ordering before model-catalog or inference I/O; plus prompt golden hashes, skill bounds, `toolActivityName`, transport retry/fallback behavior, and the automation compiler submission loop. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/harness-run-runtime.test.ts` — the
@@ -812,6 +999,347 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-28 — The harness serves one persistent loop per substream
+
+**What changed:** The workflow host executes activations of one persistent
+substream loop instead of minting a loop per message: activation admits inputs
+through durable receipts, assistant turns reserve their canonical transcript
+position before provider I/O, tool results and step settlement commit through
+the loop's fenced transition port, and resume reconstructs the existing Bind
+head instead of initializing a new history. One landing (#378, the ordered
+work-stream transcript PRD); the facets below each carry their own rejected
+alternative and invariant.
+
+**Why:** Per-message loop identity let independent activations compete for
+conversation order, and positions allocated after asynchronous work could
+invert the order a member had already seen.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+
+#### Active stream recovery retains its canonical reservation
+
+**What changed:** Workstream active-output checkpoints now persist and reload
+the assistant turn's reserved transcript sequence. The forward migration clears
+only the old transient checkpoint projection before adding the required field;
+canonical transcript turns and execution receipts are untouched.
+
+**Why:** In-memory streaming carried the reservation, but the SQLite checkpoint
+dropped it. A wake-up therefore could not validate the checkpoint contract and
+silently returned no active output even though its chunks were durable.
+
+**Considered and rejected:** Inferring a sequence from the turn ID or rebuilding
+old checkpoints. The reservation is allocated before provider I/O and is the
+only ordering authority; active output is disposable recovery state, so an old
+row with no reservation has no safe compatibility value.
+
+**Consequences:** Hibernation recovery preserves the same transcript position
+as the live stream. Realtime terminal frames still clear transient output only;
+the fenced harness outcome owns execution-receipt and singleton-loop finality.
+
+#### Activation lands before provider-shape validation
+
+**What changed:** A resumed loop now commits its fenced activation inputs before
+validating the exact provider message array. A deliberately tolerated empty
+completion settles its assistant reservation as failed and is not appended to
+Bind; an explicit protocol reminder can then continue the same bounded loop.
+
+**Why:** A valid idle projection ends in its previously accepted assistant turn.
+Validating that projection before appending the new activation made Bind add a
+synthetic continuation and the harness correctly rejected the mutation, so the
+real wake-up input could never reach the provider. Separately, accepting an
+empty assistant before appending the automation compiler's reminder made the
+next validation drop that empty row and fail the compiler as a persistence
+error. Both failures came from validating an intermediate shape that should
+never have crossed the provider boundary.
+
+**Considered and rejected:** Allowing Bind's healer to mutate the durable
+projection. That would replace host-owned protocol facts with provider-shaping
+guesses and could hide incomplete tool recovery. Recreating the loop for each
+activation would discard the persistent identity and history this module owns.
+
+**Consequences:** Every real resumed execution needs a durable stimulus: a
+pending participant input or an activation input with stable provenance. An
+execution with neither has nothing new to infer from and must not rely on a
+synthetic `Continue`. Provider-shape healing remains fail-closed after the
+activation boundary, and an empty tolerated compiler turn consumes a model-turn
+identity without creating a model message.
+
+Implements the forward persistent-loop path in
+[#378](https://github.com/juno-ai-labs/avalon/pull/378).
+
+#### The harness test inventory points to the focused product contract
+
+**What changed:** The harness testing section now points to the ordered-
+transcript PRD's focused objective/scenario mapping. It names the actual tests
+that prove persistent loop identity, safe control boundaries, exact protocol
+settlement, observable-failure behavior, and semantic interleaving through the
+real workerd product pipeline.
+
+**Why:** The previous 94-case audit corrected nonexistent filenames but then
+treated compatibility migration, fleet operations, provider matrices,
+benchmarks, and exhaustive faults as product blockers. Rally is shipping a
+forward-only persistent-loop contract; its tests should make that behavior
+clear without creating unrelated systems.
+
+**Considered and rejected:** Keeping the exhaustive catalog because it looked
+more rigorous. It hid the original semantic-ordering and observable-failure E2E
+gaps among requirements the approved product does not have.
+
+**Consequences:** A scenario is covered only by a named behavioral assertion at
+the correct layer. Manifest hydration and the two original product-path gaps now
+have SQL, real-workerd, harness, and Desktop implementations. Exact-head CI and
+the deliberate-break practice in `docs/testing.md` are still required, but no
+checked-in mutation matrix or operator artifact is required.
+
+
+#### The host closes interrupted tool batches before Bind resumes
+
+**What changed:** SubstreamAgent now reconciles every missing result after an
+accepted assistant tool batch from durable effect receipts. It records explicit
+`not_run` and ambiguous results, commits participant lifecycle and Bind state
+together, and closes recovered assistant activity intervals as upper bounds.
+
+**Why:** An isolate could disappear after accepting the assistant and only a
+prefix of parallel tool results. Bind correctly refused the dangling protocol,
+but the host had no recovery step, so the persistent loop could never reach its
+next provider boundary.
+
+**Considered and rejected:** Letting Bind synthesize results or retrying the
+whole batch. Bind cannot know whether external effects ran, and replaying an
+executing write would violate the no-transparent-retry rule.
+
+**Consequences:** Recovery is conservative and receipt-derived. It can continue
+after completed, failed, and definitely unstarted calls; any possibly completed
+write ends the current cycle visibly after the durable protocol is settled.
+
+#### Elicitation answers close their withheld Bind tool slot
+
+**What changed:** Every durable elicitation records its stable original tool-call
+slot. Answer delivery accepts the missing `tool_result_accepted` transition and
+promotes the canonical participant response in one commit without adding a
+second Bind user message. Tool transitions now distinguish the
+original call index from the dense ordinal in which results became durable.
+
+**Why:** The persistent loop previously tried to append an elicitation answer as
+a user message while its assistant tool call was still open, so the Bind
+projector correctly refused the answer and the loop could not resume. A withheld
+first outcome also passed its sparse batch index as result order, conflating two
+identities as soon as a later tool result was accepted.
+
+**Considered and rejected:** Healing the message array when the next provider
+request is built. That would make provider projection a second authority and
+leave crash recovery unable to prove whether the answer had closed the tool.
+
+**Consequences:** Provider I/O remains blocked until the tool transition and UI
+promotion are durable. A crash sees either the unanswered pending input or the
+complete tool result plus participant turn, never a canonical response beyond
+an open call and never two model-facing copies of one answer.
+
+#### Protocol nudges and Bind hashes are environment-independent
+
+**What changed:** Tool-less continuation nudges are persisted with protocol
+provenance and no source identity. Bind canonical JSON orders object keys by
+specified UTF-16 code units rather than runtime locale collation.
+
+**Why:** A harness-created nudge has no durable participant or event source, so
+assigning a synthetic derived identity contradicted the transcript protocol.
+Locale collation can change across ICU builds and therefore cannot define the
+bytes fenced immediately before provider I/O.
+
+**Considered and rejected:** Keeping a generated nudge source ID or pinning a
+locale. The former invents a second authority; the latter still delegates a
+hash invariant to mutable collation data.
+
+**Consequences:** Nudge replay matches the PRD's protocol-only category, and
+equal Bind projections hash identically across supported runtimes regardless
+of their configured locale data.
+
+#### Harness state crosses object boundaries only as typed operations
+
+**What changed:** The SubstreamAgent runtime SQL endpoint and D1-shaped table
+router are removed. Run admission, attempt leases, inference accounting, tool
+receipts, telemetry, memory access, and development fixtures call typed storage
+operations against the object that owns them. The final run/inference/user
+compatibility views are dropped by the work-stream v33 cutover.
+
+**Why:** A database-shaped port made every caller a partial co-owner of schema
+and status translation. It also preserved per-message-era machinery beside a
+loop whose identity and lifecycle are substream-owned. Typed operations keep the
+loop singleton while making each run visibly subordinate.
+
+**Considered and rejected:** Retaining a read-only SQL adapter and testing its
+rewrite behavior. That would leave duplicate protocol vocabulary and tests that
+could pass while the semantic storage operation was wrong.
+
+**Consequences:** No active write accepts the retired `waiting` or `steering`
+run phases. Ordinary work-stream Stop is a `substream_loops` request observed at
+the safe step boundary; it never uses receipt cancellation and does not cancel
+provider or tool work already in flight. Receipt cancellation remains only for
+descendant/child and generic non-work-stream cleanup. Immutable migration source
+still contains old compatibility definitions only so deployed schema
+fingerprints can replay before the cutover drops them.
+
+#### Bind projection updates are proportional to the transition
+
+**What changed:** `bind_loop_heads` is the sole current metadata authority and
+current message rows reference it directly. The harness holds non-system
+messages as an immutable suffix chain; ordinary append, reservation, settlement,
+and system transitions share the unchanged prefix. Object storage validates the
+cached head and writes only the transition's message delta, while compaction
+performs the deliberate full replacement. Provider-boundary reconstruction and
+hash verification still materialize the complete ordered array.
+
+**Why:** A second one-row `bind_loop_states` table duplicated the head's
+generation/revision authority, and every ordinary transition still rehydrated,
+cloned, and rescanned the full conversation before changing one edge. Over a
+long-lived loop that made append cost grow with all prior messages and invited
+the two metadata rows to diverge.
+
+**Considered and rejected:** Keeping the duplicate state row as a compatibility
+projection, and introducing a generalized transition log. The cutover has not
+shipped and old Bind heads are intentionally discarded at cutover, so neither
+adds a forward-path capability. The immutable activation receipt table remains
+because it owns replay identity across compaction rather than current projection
+metadata.
+
+**Consequences:** Eviction recovery pays one full ordered read, provider I/O
+pays one full projection/hash, and compaction rewrites the current set. Ordinary
+durable transitions do not copy or rewrite historical prefixes. Any future
+metadata field belongs on `bind_loop_heads`; recreating a second current-state
+row would recreate split authority. The chain must remain an in-isolate detail;
+an RPC/JSON projection needs a flat bounded representation instead.
+
+#### Terminalization releases the loop only after the receipt is closed
+
+**What changed:** A safe model/tool step advances the persistent loop's step and
+Bind revision but leaves the singleton executing. Host-outcome publication and
+attempt terminalization then close the subordinate receipt and make the loop
+idle in the terminal boundary. Failed output remains transient and materializes
+only as the reserved typed status; provider retry and fallback are unavailable
+after any output or effect becomes observable.
+
+**Why:** Making the singleton idle at the safe-step commit left a crash window in
+which a running receipt was no longer owned by an executing loop. A later
+activation could claim the idle singleton while recovery still had to settle the
+old receipt. Retrying after visible output created the same split at the model
+boundary: two providers could answer one reserved semantic step.
+
+**Considered and rejected:** Releasing the singleton before receipt settlement
+and teaching recovery to search for detached running receipts. That recreates a
+second lifecycle authority precisely where the persistent loop is meant to be
+the only one.
+
+**Consequences:** Safe-step settlement is not a terminal state. Queue delivery
+waits for the terminal boundary that makes the loop idle, while steer delivery
+can still commit at the safe step. Any failure after observable work closes that
+step without a transparent provider retry.
+
+
+#### Substreams own persistent loops; runs are activation receipts
+
+**What changed:** `loopId` is stable for each work-stream substream and each
+HyperSight block, while `harnessRunId` identifies only a subordinate execution.
+The host durably reserves every assistant sequence before provider I/O, delivers
+steering only after a complete model/tool step, and heartbeats the singleton
+loop lease after its attempt heartbeat. External callers record an execution
+receipt before `activateLoop`; inline child execution inside the parent host is
+removed from the production surface. Recovery advances the current execution
+epoch on the singleton and its subordinate receipt in one transaction. A safe
+step may close the singleton, but only host-outcome publication and attempt
+terminalization close the receipt; assistant reservations, not a singular run
+column, associate every model turn in that execution. When a replacement
+isolate expires the vanished owner's harness-attempt lease, it expires that
+exact loop lease too without moving a logical cursor, so epoch + 1 takeover is
+immediate; a deliberately deferred receipt is left at its chosen due time.
+Activation-only model inputs now cross their own pre-provider durable boundary:
+logical-source identity provides replay idempotency, full provenance survives
+projection, every requested identity receives an explicit durable acknowledgement,
+and canonical bootstrap history is never replaced on resume.
+The real-workerd pipeline now proves that boundary against the actual provider
+body after an object eviction and activation replay, rather than stopping at a
+storage-only activation test.
+
+**Why:** Persisted compatibility messages and per-run loop reconstruction made
+two authorities able to compose and order the same visible response. They also
+left crash windows where inference could start before its transcript position
+existed and where a long provider or tool call could outlive the loop lease even
+while the subordinate attempt remained healthy.
+
+**Consequences:** Canonical participant messages are immutable and ordered by
+one reserved sequence authority. A crash leaves an exact reservation to repair,
+not a turn to skip or duplicate. An activation replay uses the same receipt and
+loop, and one receipt can span multiple assistant turns. A future child agent
+must be routed to its own child substream and
+`SubstreamAgent` before its tool can return to production.
+
+#### Participant-safety policy preserves authorship through settlement
+
+**What changed:** Bind now exposes one host policy boundary immediately before
+an assistant message is accepted into its private loop and canonical transcript.
+The work-stream attachment guard uses it to replace a terminal answer after an
+unresolved content access, and suppresses raw deltas while that failure remains
+unresolved. When the boundary is accepted by Bind, completion, settlement, and
+transcript persistence all receive the same approved bytes. If a boundary is
+needed only after an earlier assistant turn was accepted, the host retains that
+turn and appends the boundary as a separately identified system notice.
+
+**Why:** Replacing an attachment-derived answer only after Bind accepted the
+provider text made the transcript and the run-final checkpoint disagree. The
+fail-closed settlement guard then correctly rejected the mismatch, turning the
+intended safety response into a failed run.
+
+**Considered and rejected:** Weakening the final-turn equality check, mutating
+the canonical turn during settlement, or assigning the provider's streamed turn
+ID to host-authored safety text. Each makes settlement a second assistant-text
+authority and allows a run result to name text Bind never accepted.
+
+**Consequences:** Any future participant-safety transformation must happen at
+the pre-acceptance boundary and must return the exact durable content. It is a
+policy boundary, not a renderer filter; post-acceptance rewrites remain invalid.
+The host replaces its streamed accumulator with accepted content at that
+boundary. A later host-only boundary is a `system` participant turn with its own
+stable identity, never an assistant turn. The atomic host-outcome checkpoint can
+therefore contain an accepted final turn, a system notice, both, or neither; the
+last case is how failed and stopped runs with no assistant output remain
+recoverable after a crash. It must not derive assistant settlement content from
+later guard state: a recovery tool can clear the failure after an earlier
+tool-bearing assistant turn was already sanitized, including on stopped and
+needs-input exits.
+The fail-closed settlement diagnostic names only the divergent invariant —
+`actor`, `run_id`, `role`, or `content` — and never includes either payload.
+
+
+#### Work-stream settlement adopts the final accepted turn
+
+**What changed:** Bind returns only the latest accepted assistant turn as a run
+outcome, including for inline children; tool-turn narration is protocol context,
+not part of the terminal answer. Work-stream settlement no longer treats even
+that outcome field as transcript authority: the API host tracks the latest
+explicitly identified Bind turn, replaces its buffer at every turn boundary,
+and adopts only the content Bind accepted for that turn. Earlier assistant text
+remains in its own ordered transcript turn.
+
+**Why:** Ordered-turn projection made every assistant response durable when
+accepted, but the host still accumulated all assistant text and handed that
+aggregate to run settlement. The host separately accumulated every delta across
+turns and corrected that value only on `stream_completed`; stopped, failed, and
+needs-input paths do not emit that event. Settlement then could not adopt the
+final Bind turn exactly and previously copied the aggregate into a second
+message.
+
+**Considered and rejected:** Deduplicating by run alone would erase legitimate
+assistant turns around tools. Keeping cumulative output as settlement metadata
+would preserve a second semantic answer that no model turn actually produced.
+
+**Consequences:** Tool-turn prose remains visible in its causal turn, while the
+terminal checkpoint refers only to the current identified response. A stopped
+provider stream may preserve its provider-authored partial under the explicit
+stream turn ID. Host-authored terminal guidance cannot borrow that ID and uses
+a system-notice identity instead. Inline child callers receive the terminal
+assistant response as their tool result; they do not concatenate narration from
+earlier tool-bearing turns into that response.
 
 ### 2026-08-27 — A third standing policy: an answer cites what it rests on
 

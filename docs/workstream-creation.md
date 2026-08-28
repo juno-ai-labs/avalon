@@ -131,7 +131,8 @@ order by `created_at`.
 ### The swap
 
 On success the destination is seeded before `navigate`: a `WorkstreamDetail`
-built by `launchedWorkstreamDetail`, the transcript, and a null message cursor.
+built by `launchedWorkstreamDetail` and one canonical ordered-transcript
+snapshot.
 The work-stream screen shows its full-screen `Opening work stream…` state
 whenever *either* of those two queries is loading, so seeding one is not enough —
 both launchers write both, and a work stream that was just created therefore
@@ -144,16 +145,17 @@ but its text was expanded server-side from the prompt, so it seeds an empty
 transcript and lets the refetch bring the real turn a moment later — and the
 work-stream screen withholds its `Ready to begin` empty state while a run is
 scheduled or running, because an admitted run is already work even before its
-Workflow starts. During a rolling transcript cutover, the routed opening turn
-also remains visible until its canonical ordered turn arrives; a temporarily
-incomplete projection must not erase the turn the person already saw.
+Workflow starts. The create response names that opening row as `turnId`; the
+optimistic snapshot uses exactly that canonical identity, so the socket upsert
+replaces it by identity rather than asking timestamps or equal text to prove
+that two rows are the same turn.
 
 ### What the server makes you wait for
 
 Everything. `POST /workstreams` finishes the participant and attachment checks,
 the address reservation, the authoritative SubstreamAgent work-stream/opening
-message/run write, the `message_created` publish, and the Workflows round trip
-that starts the run. It then synchronously drains the committed directory facts
+turn/run write, the canonical `transcript_turn_upserted` publication, and the
+Workflows round trip that starts the run. It then synchronously drains the committed directory facts
 through WorkstreamDO into WorkspaceDO, verifies the workspace directory row,
 changes the minimal D1 route from `verified` to `active`, and activates email —
 only then does it answer. The one thing off the path is the naming call, which
@@ -205,9 +207,10 @@ than whichever rejection landed first.
   header conditional on `contextLabel` rather than on authorship alone for
   exactly this case; removing that exception leaves a member reading a brief
   under their own name with nothing on screen to account for it.
-- **`message_created` is published before the harness launch.** Both land in the
-  same Durable Object log, and a client resyncing from a sequence must not see the
-  run start before the message that triggered it.
+- **The opening turn commits and publishes before the harness launch.** Both
+  events land in the same Durable Object log, and a client resyncing from a
+  sequence must not see the run start before the canonical turn that triggered
+  it. There is no compatibility-message publication beside this path.
 - **A run row that says `running` must have a Workflow behind it.** `attempt_id`
   and `lease_expires_at` stay NULL until the Workflow admits the run, and nothing
   reaps that shape: `stop` only records a request a live workflow has to observe,
@@ -432,6 +435,29 @@ pins both declarations, and pins that the kill switch owns the only
 higher-specificity delay can reopen the hole silently.
 
 Shipped in [#376](https://github.com/juno-ai-labs/avalon/pull/376).
+
+### 2026-08-27 — Creation hands off one canonical turn identity
+
+**What changed:** Both creation endpoints return `turnId`, and the launcher
+seeds its ordered transcript under that exact identity. The object publishes the
+opening `transcript_turn_upserted` as part of the canonical append path; the
+separate `message_created` compatibility publication is gone.
+
+**Why:** A create previously exposed the same durable row as a message in its
+HTTP response and as a turn in the canonical socket. That forced the renderer to
+reconcile two vocabularies and allowed the compatibility frame to race the
+ordered turn. Equal text and nearby timestamps cannot establish identity.
+
+**Considered and rejected:** Keeping the old response key for Electron rollout
+compatibility. There are no deployed users to protect, and accepting both names
+would leave ambiguity at the exact protocol boundary this change closes.
+
+**Consequences:** A newly created turn is optimistic only in availability, not
+in identity or order. API and Electron versions must move together; old clients
+fail their strict response parser instead of silently composing a second feed.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
 ### 2026-08-27 — The composer owns IME composition, so no host has to
 
@@ -836,9 +862,9 @@ attachment draft, and the composer — the mutation would have had to move or be
 re-fired from the new route, and the composer would have remounted, which is
 precisely the element the transition is built on. Rendering both states from one
 component keeps the create, the draft, the attachments, and the failure path
-exactly where they already were. *Deferring the `message_created` publish too*:
+exactly where they already were. *Deferring the canonical turn publication too*:
 it shares a Durable Object log with the harness events, and deferring it would
-let a run start appear before the message that triggered it.
+let a run start appear before the turn that triggered it.
 
 **Also fixed here:** the work-stream room's snapshot named the latest harness
 run's id but did not describe the run, and a snapshot replaces the client's whole

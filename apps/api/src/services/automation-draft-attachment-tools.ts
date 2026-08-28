@@ -33,6 +33,7 @@ export function createAutomationDraftAttachmentTools(
     region: env.AVALON_REGION,
     workspaceId: scope.workspaceId,
     workstreamId: asWorkstreamId(scope.scopeId),
+    loopId: `automation-draft:${scope.scopeId}:loop`,
     harnessRunId: asHarnessRunId(scope.scopeId),
     triggerMessageId: null,
     automationSubscriptionId: null,

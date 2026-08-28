@@ -2,8 +2,11 @@ import { asHarnessRunId, type HarnessRunId, type StructuredFailureDetail, type W
 
 import { uuidV7 } from "../lib/uuid-v7";
 import type { HarnessRunObjectPort } from "../durable-objects/workstream-harness-run-protocol";
-import type { MessageObjectPort } from "../durable-objects/workstream-message-protocol";
-import { TERMINAL_RUN_STATUSES } from "../durable-objects/workstream-harness-run-storage";
+import {
+  TERMINAL_RUN_STATUSES,
+  type TerminalRunStatus,
+  type TerminalLoopExecutionFence,
+} from "../durable-objects/workstream-harness-run-storage";
 import type { ToolReceiptObjectPort } from "../durable-objects/workstream-tool-receipt-protocol";
 import type {
   BlockDashboardObjectPort,
@@ -99,7 +102,7 @@ export interface ImmutableRunScope {
 
 export interface TerminalOutcome {
   status: HarnessTerminalStatus;
-  finalMessageId?: string;
+  finalTurnId?: string;
   model?: string;
   usage?: Record<string, unknown>;
   error?: { code: string; message: string };
@@ -107,7 +110,8 @@ export interface TerminalOutcome {
 }
 
 export interface PersistedHarnessHostOutcome {
-  messageId: string;
+  finalTurnId?: string;
+  participantNoticeTurnId?: string;
   status: HarnessTerminalStatus;
   error?: { code: string; message: string };
 }
@@ -197,7 +201,7 @@ function stableValue(value: unknown): unknown {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
         .map(([key, entry]) => [key, stableValue(entry)]),
     );
   }
@@ -255,17 +259,14 @@ async function parseVerifiedInlineChildResult(
 /**
  * The published spelling of a stored run status.
  *
- * `_runtime_harness_runs` did this remap in SQL — `admitted` as `scheduled`,
- * `cancelled` as `stopped`, `waiting` and `steering` both as `running`. The
- * object has never stored the published spellings, so the translation does not
- * disappear with the view; it moves here, to the one boundary that serves
- * callers written against the published enum.
+ * The forward receipt vocabulary translates only admission and cancellation.
+ * v35 terminalizes the retired per-run phase spellings before runtime reads.
  */
 export function publishedRunStatus(stored: string): string {
   switch (stored) {
     case "admitted": return "scheduled";
     case "cancelled": return "stopped";
-    case "waiting": case "steering": return "running";
+    case "waiting": case "steering": throw new Error("retired_run_status");
     default: return stored;
   }
 }
@@ -273,10 +274,9 @@ export function publishedRunStatus(stored: string): string {
 /**
  * The inverse, for a status on its way *into* the object.
  *
- * Only `stopped` needs translating: the runtime never writes `scheduled`,
- * `waiting` or `steering` — those are states the object reaches on its own.
+ * Only `stopped` needs translating; retired per-run phases have no writer.
  */
-function storedRunStatus(published: string): string {
+function storedRunStatus(published: HarnessTerminalStatus): TerminalRunStatus {
   return published === "stopped" ? "cancelled" : published;
 }
 
@@ -479,7 +479,7 @@ export async function persistImmutableRunScope(
     eligibleCapabilities: [...new Set(scope.eligibleCapabilities)].sort(),
     eligibleConnectionCapabilities: Object.fromEntries(
       Object.entries(scope.eligibleConnectionCapabilities)
-        .sort(([left], [right]) => left.localeCompare(right))
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
         .map(([connectionId, capabilities]) => [
           connectionId,
           [...new Set(capabilities)].sort(),
@@ -710,29 +710,23 @@ export async function assertInlineChildAttemptOwned(
   if (owned.outcome === "ownership_lost") throw new RunOwnershipLostError();
 }
 
-export async function persistHarnessFinalMessage(
+export async function persistHarnessHostOutcome(
   runs: HarnessRunObjectPort,
-  messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
-  message: { id: string; text: string },
+  finalTurn: { turnId: string; text: string } | null,
+  participantNotice: { turnId: string; text: string } | null,
   hostOutcome: Pick<TerminalOutcome, "status" | "error">,
 ): Promise<void> {
-  const published = await runs.publishFinalMessage({
+  const published = await runs.publishHostOutcome({
     runId: input.harnessRunId,
     attemptId: lease.attemptId,
     owner: lease.owner,
     now: Date.now(),
-    messageId: message.id,
-    text: message.text,
+    finalTurn,
+    participantNotice,
     hostOutcomeStatus: hostOutcome.status,
-    eventPayloadJson: stableJson({
-      finalMessageId: message.id,
-      hostOutcome: {
-        status: hostOutcome.status,
-        ...(hostOutcome.error ? { error: hostOutcome.error } : {}),
-      },
-    }),
+    hostOutcomeError: hostOutcome.error ?? null,
     lifecycleEventId: uuidV7(),
     // A member who stopped the run still gets to read what it had already
     // written. The routed statement made the same exemption, and for the same
@@ -740,75 +734,72 @@ export async function persistHarnessFinalMessage(
     allowCancellationRequested: hostOutcome.status === "stopped",
   });
   if (published.outcome === "ownership_lost") throw new RunOwnershipLostError();
-  // Read back through the same pair a recovery would, rather than trusting the
-  // write: the two rows are what every later reader joins, and a mismatch here
-  // is the one chance to notice before the run is reported terminal.
-  const persistedOutcome = await loadPersistedHarnessFinalOutcome(runs, messages, input);
+  if (published.outcome === "content_mismatch") {
+    throw new Error(`host_outcome_content_mismatch:${published.reasons.join(",")}`);
+  }
+  // Read back through recovery rather than trusting the write. The lifecycle
+  // event, optional canonical assistant turn, and optional participant notice
+  // commit together, so recovery must name the same records the host selected.
+  const persistedOutcome = await loadPersistedHarnessHostOutcome(runs, input);
   if (
     !persistedOutcome
-    || persistedOutcome.messageId !== message.id
+    || (persistedOutcome.finalTurnId ?? null) !== (finalTurn?.turnId ?? null)
+    || (persistedOutcome.participantNoticeTurnId ?? null) !== (participantNotice?.turnId ?? null)
     || persistedOutcome.status !== hostOutcome.status
     || stableJson(persistedOutcome.error ?? null) !== stableJson(hostOutcome.error ?? null)
   ) {
-    throw new Error("final_message_host_outcome_mismatch");
+    throw new Error("host_outcome_mismatch");
   }
 }
 
-export async function loadPersistedHarnessFinalOutcome(
+export async function loadPersistedHarnessHostOutcome(
   runs: HarnessRunObjectPort,
-  messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
 ): Promise<PersistedHarnessHostOutcome | null> {
-  // The routed version was one join across two authorities, so every way of
-  // failing produced the same empty row. These are the join's three conditions,
-  // asked separately: the message exists and this run wrote it, the event
-  // exists, and the two agree on which attempt did it. Only the last is a
-  // corruption rather than an absence, and it still reads as "nothing
-  // persisted" because that is what a caller must do about it either way.
-  const [message, lifecycle] = await Promise.all([
-    messages.messageByClientId({ clientMessageId: `harness:${input.harnessRunId}` }),
-    runs.lifecycleEvent({ runId: input.harnessRunId, eventKey: "final_message" }),
-  ]);
-  if (!message
-    || message.harness_run_id !== input.harnessRunId
-    || !lifecycle
-    || lifecycle.event_type !== "final_message_persisted"
-    || lifecycle.attempt_id !== message.harness_attempt_id) {
-    return null;
-  }
-  const row = {
-    message_id: message.id,
-    status: lifecycle.status,
-    member_safe_payload_json: lifecycle.member_safe_payload_json,
-  };
-  if (!row.status || !TERMINAL_STATUSES.has(row.status)) {
-    throw new Error("final_message_host_outcome_invalid");
+  const lifecycle = await runs.lifecycleEvent({
+    runId: input.harnessRunId,
+    eventKey: "host_outcome",
+  });
+  if (!lifecycle) return null;
+  if (!lifecycle.status || !TERMINAL_STATUSES.has(lifecycle.status)) {
+    throw new Error("host_outcome_invalid");
   }
 
-  let payload: {
-    finalMessageId?: unknown;
-    hostOutcome?: { status?: unknown; error?: unknown };
-  };
+  let decoded: unknown;
   try {
-    payload = JSON.parse(row.member_safe_payload_json) as typeof payload;
+    decoded = JSON.parse(lifecycle.member_safe_payload_json) as unknown;
   } catch {
-    throw new Error("final_message_host_outcome_invalid");
+    throw new Error("host_outcome_invalid");
   }
-  if (payload.finalMessageId !== row.message_id) {
-    throw new Error("final_message_host_outcome_invalid");
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new Error("host_outcome_invalid");
   }
-
-  // The completed-only shape predates exact host-outcome checkpoints. Preserve
-  // that one safe legacy interpretation; every other status must carry the
-  // versioned host outcome so recovery can never infer or upgrade it.
-  if (!payload.hostOutcome) {
-    if (row.status !== "completed") throw new Error("final_message_host_outcome_invalid");
-    return { messageId: row.message_id, status: "completed" };
+  const payload = decoded as {
+    finalTurnId?: unknown;
+    participantNoticeTurnId?: unknown;
+    error?: unknown;
+  };
+  if (lifecycle.event_type !== "host_outcome_persisted"
+    || (payload.finalTurnId !== null && typeof payload.finalTurnId !== "string")
+    || (payload.participantNoticeTurnId !== null
+      && typeof payload.participantNoticeTurnId !== "string")) {
+    throw new Error("host_outcome_invalid");
   }
-  if (payload.hostOutcome.status !== row.status) {
-    throw new Error("final_message_host_outcome_invalid");
+  if (typeof payload.finalTurnId === "string") {
+    const turn = await runs.finalAssistantTurn({
+      runId: input.harnessRunId,
+      turnId: payload.finalTurnId,
+    });
+    if (turn?.turn_id !== payload.finalTurnId) return null;
   }
-  const rawError = payload.hostOutcome.error;
+  if (typeof payload.participantNoticeTurnId === "string") {
+    const notice = await runs.hostOutcomeParticipantNotice({
+      runId: input.harnessRunId,
+      turnId: payload.participantNoticeTurnId,
+    });
+    if (notice?.turn_id !== payload.participantNoticeTurnId) return null;
+  }
+  const rawError = payload.error;
   const error = rawError && typeof rawError === "object"
     && typeof (rawError as { code?: unknown }).code === "string"
     && typeof (rawError as { message?: unknown }).message === "string"
@@ -817,10 +808,13 @@ export async function loadPersistedHarnessFinalOutcome(
         message: (rawError as { message: string }).message,
       }
     : undefined;
-  if (rawError !== undefined && !error) throw new Error("final_message_host_outcome_invalid");
+  if (rawError !== undefined && !error) throw new Error("host_outcome_invalid");
   return {
-    messageId: row.message_id,
-    status: row.status as HarnessTerminalStatus,
+    ...(typeof payload.finalTurnId === "string" ? { finalTurnId: payload.finalTurnId } : {}),
+    ...(typeof payload.participantNoticeTurnId === "string"
+      ? { participantNoticeTurnId: payload.participantNoticeTurnId }
+      : {}),
+    status: lifecycle.status as HarnessTerminalStatus,
     ...(error ? { error } : {}),
   };
 }
@@ -998,7 +992,11 @@ export class CoalescedRunLiveness {
     private readonly runs: HarnessRunObjectPort,
     private readonly runId: string,
     lease: AttemptLease,
-    private readonly options: { leaseSeconds?: number; minimumIntervalMs?: number } = {},
+    private readonly options: {
+      leaseSeconds?: number;
+      minimumIntervalMs?: number;
+      afterHeartbeat?: () => void | Promise<void>;
+    } = {},
   ) {
     this.currentLease = lease;
   }
@@ -1023,6 +1021,7 @@ export class CoalescedRunLiveness {
             this.currentLease,
             this.options.leaseSeconds ?? 60,
           );
+          await this.options.afterHeartbeat?.();
           this.nextHeartbeatAt = Date.now() + (this.options.minimumIntervalMs ?? 5_000);
         } catch (error) {
           this.controller.abort(error);
@@ -1453,12 +1452,12 @@ async function settleStaleAutomationRun(
 
 export async function terminalizeHarnessAttempt(
   runs: HarnessRunObjectPort,
-  messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptIdentity,
   outcome: TerminalOutcome,
   receipts: ToolReceiptObjectPort,
   blocks: BlockDashboardObjectPort,
+  loopExecutionFence?: TerminalLoopExecutionFence,
 ): Promise<"terminalized" | "already_terminal"> {
   const target = await runs.run({ runId: input.harnessRunId });
   if (!target || target.parent_tool_call_id !== null) throw new Error("harness_run_not_found");
@@ -1472,8 +1471,8 @@ export async function terminalizeHarnessAttempt(
         throw new Error("block_dashboard_result_not_persisted");
       }
     } else {
-      if (!outcome.finalMessageId) throw new Error("final_message_required");
-      await assertFinalMessagePersisted(runs, messages, input.harnessRunId, outcome.finalMessageId);
+      if (!outcome.finalTurnId) throw new Error("final_turn_required");
+      await assertFinalTurnPersisted(runs, input.harnessRunId, outcome.finalTurnId);
     }
   }
   const now = Date.now();
@@ -1484,13 +1483,14 @@ export async function terminalizeHarnessAttempt(
     owner: lease.owner,
     now,
     status: storedRunStatus(outcome.status),
-    finalPartId: outcome.finalMessageId ?? null,
+    finalTurnId: outcome.finalTurnId ?? null,
     model: outcome.model ?? null,
     usageJson: outcome.usage ? stableJson(outcome.usage) : null,
     errorJson: safeErrorJson(outcome.error),
     memberSafePayloadJson: payload,
     lifecycleEventId: uuidV7(),
     receiptMarkerEventKey: RESIDUAL_RECEIPTS_SETTLED_EVENT_KEY,
+    loopExecutionFence: loopExecutionFence ?? null,
   });
   if (settled.outcome === "not_found") throw new Error("harness_run_not_found");
   if (settled.outcome === "ownership_lost") throw new RunOwnershipLostError();
@@ -1565,30 +1565,32 @@ export async function terminalizeHarnessAttempt(
 }
 
 /**
- * The final message exists, and the run said it wrote it.
+ * The final turn exists, and the run said it wrote it.
  *
  * Two object-local reads where the routed version was one join. Both halves
  * matter and neither implies the other: the part could exist without the run
  * having recorded that it published one — a partially applied write — and the
  * lifecycle event could exist while the part was never committed.
  */
-async function assertFinalMessagePersisted(
+async function assertFinalTurnPersisted(
   runs: HarnessRunObjectPort,
-  messages: MessageObjectPort,
   harnessRunId: string,
-  finalMessageId: string,
+  finalTurnId: string,
 ): Promise<void> {
-  const [message, published] = await Promise.all([
-    messages.message({ messageId: finalMessageId }),
-    runs.lifecycleEvent({ runId: harnessRunId, eventKey: "final_message" }),
-  ]);
-  if (!message
-    || message.harness_run_id !== harnessRunId
-    || message.author_type !== "agent"
-    || message.message_type !== "text"
-    || published?.event_type !== "final_message_persisted") {
-    throw new Error("final_message_not_persisted");
+  const published = await runs.lifecycleEvent({ runId: harnessRunId, eventKey: "host_outcome" });
+  if (published?.event_type !== "host_outcome_persisted") throw new Error("final_turn_not_persisted");
+  let payload: { finalTurnId?: unknown };
+  try {
+    payload = JSON.parse(published.member_safe_payload_json) as { finalTurnId?: unknown };
+  } catch {
+    throw new Error("final_turn_not_persisted");
   }
+  if (payload.finalTurnId !== finalTurnId) throw new Error("final_turn_not_persisted");
+  // Transport/authority failures are not evidence that the turn is absent.
+  // Let them retain their identity so workflow retry policy can classify them.
+  const turn = await runs.finalAssistantTurn({ runId: harnessRunId, turnId: finalTurnId });
+  if (turn?.turn_id === finalTurnId) return;
+  throw new Error("final_turn_not_persisted");
 }
 
 export async function recordInferenceAttempt(
@@ -1862,3 +1864,8 @@ export async function reapStaleHarnessRuns(
   }
   return reaped;
 }
+
+export const __harnessRunRuntimeTesting = {
+  assertFinalTurnPersisted,
+  stableJson,
+};

@@ -41,19 +41,21 @@ serve workspace product state or transcripts after cutover.
 | `apps/api/src/workflows/work-opportunity.ts` | Retryable admission and ranking compute using fenced WorkspaceDO RPC inputs and settlements. |
 | `apps/api/src/durable-objects/workspace-directory-protocol.ts` | Runtime-validated typed RPC contracts for cross-work-stream lists, visibility, scheduling, resource lookup, routing, feedback, and child effect application. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Non-agent aggregation of child directory/user effects, HyperSight configuration and refresh fan-out, complete metadata WebSocket snapshots, and the regional delivery outbox. |
-| `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed socket, streaming checkpoints, timers, steering, and child-to-parent effect RPC. |
+| `apps/api/src/durable-objects/substream-agent.ts` | Authoritative substream SQL, direct Bind loop, hibernating feed socket, streaming checkpoints, timers, pending-input delivery, and child-to-parent effect RPC. |
+| `apps/api/src/durable-objects/substream-loop-storage.ts` | Singleton loop lifecycle, execution-epoch and lease fencing, prepared-input admission/delivery state, subordinate execution receipts, and exact assistant-turn sequence reservations. |
 | `apps/api/src/durable-objects/block-dashboard-agent.ts` | One durable Bind execution owner per stable HyperSight block, including dispatch recovery, keep-alive, fenced source-runtime access, resumable token checkpoints, hibernating block sockets, and result settlement. |
 | `apps/api/src/durable-objects/durable-agent-runtime.ts` | Shared reference-counted keep-alive and single-flight drain primitives used by both agent Durable Objects. |
-| `apps/api/src/durable-objects/agent-run-dispatch-queue.ts` | The dispatch queue's leased claim and its wake-up derivation, shared by both agent objects. Derived from persisted rows only; read it before changing how either object schedules an alarm. |
+| `apps/api/src/durable-objects/agent-run-dispatch-queue.ts` | The HyperSight block agent's leased dispatch claim and row-derived wake-up calculation. Substream execution is owned by `substream_loops`, not this queue. |
 | `apps/api/src/durable-objects/block-dashboard-protocol.ts` | Runtime-validated WorkstreamDO control, block dispatch, result, and maintenance-import contracts. |
 | `apps/api/src/durable-objects/rpc-result.ts` | Shared typed native-RPC status/body envelope used where former internal HTTP handlers must preserve status semantics without `stub.fetch()`. |
 | `apps/api/src/durable-objects/workstream-object-schema.ts` | Normalized `SubstreamAgent` schema and append-only schema versions. |
 | `apps/api/src/durable-objects/workstream-transcript-storage.ts`, `workstream-transcript-protocol.ts` | Canonical transcript facts, participant and exact Bind-loop orderings, snapshot-fenced ranges, activity intervals, compaction replacement, and the typed object port. |
+| `apps/api/src/durable-objects/workstream-harness-run-storage.ts`, `workstream-harness-run-protocol.ts` | Subordinate execution receipts, attempt leases, terminal settlement, provider-attempt accounting, and typed telemetry reads. |
+| `apps/api/src/durable-objects/workstream-semantic-realtime-outbox.ts` | Object-local sequenced references that commit with transcript/pending mutations and are hydrated, broadcast, dashboard-scheduled, and acknowledged afterward. |
 | `packages/contracts/src/workstream-transcript.ts` | Socket-safe ordered turn, block, mention, attachment, external-actor, range, and activity schemas. |
-| `apps/desktop/src/renderer/lib/transcript.ts` | Flattens ordered blocks into participant-visible rows and reconciles them with the authorized compatibility message page. |
+| `apps/desktop/src/renderer/lib/transcript.ts` | Flattens canonical ordered blocks into participant-visible rows and composes explicitly identified transient overlays at protocol-declared anchors. |
 | `apps/api/src/durable-objects/workstream-object-product.ts` | Product transactions, message/run admission, read waterlines, compaction inputs, and local regional-effect creation. |
 | `apps/api/src/durable-objects/workstream-object-storage.ts` | SQL repositories for replay, active output, alarms, inbox/outbox receipts, and projection versions. |
-| `apps/api/src/durable-objects/workstream-runtime-sql.ts` | Restricted D1-compatible SQL adapter used by the Bind harness against object-local tables. |
 | `apps/api/src/durable-objects/sqlite-migrations.ts` | Shared SQL-only constructor migration runner. |
 | `apps/api/src/durable-objects/migration-reporting.ts` | `withMigrationReport`, which wraps every constructor's migration call and reports the outcome to `avalon-migration-tracker`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/lib/durable-object-namespace.ts` | The only product-object stub resolver; applies jurisdiction, persisted workspace affinity, explicit singleton fallback, and runtime jurisdiction validation. |
@@ -91,10 +93,15 @@ or a safe compaction status versus the private replacement.
 Participant turns retain the source part's client identity, author user or
 validated external actor, and message type. Each participant text block hydrates
 its canonical mentions, ordered message-local attachment descriptors, and
-validated structured content from the same `workstream_message_records` fact and its relationship
-tables. The transcript carries presentation-safe metadata, not resource bytes or
-mutable profile snapshots; the desktop resolves stable person IDs and maps the
-descriptors into its existing participant message renderer.
+validated structured content from the turn's root fact and the
+`participant_transcript_mentions` and `participant_transcript_attachments`
+relations. The transcript carries presentation-safe metadata, not resource
+bytes. Human turns freeze the author's ID, display name, and avatar URL at
+admission; the desktop never substitutes a later mutable member profile for
+canonical authorship. The message-local
+attachment JSON is immutable; the stable work-stream resource row it names may
+be renamed, watched, or otherwise updated before delivery and is reused rather
+than overwritten or treated as an admission conflict.
 
 Every Bind transition is committed before the adapter returns the accepted
 assistant or tool-result message to Bind. At every provider boundary the host
@@ -103,6 +110,13 @@ and requires its canonical SHA-256 to equal the array about to be sent.
 Compaction atomically records the private checkpoint, generation replacement,
 and safe status transition. Two compactions therefore create two immutable
 events while the current loop head advances twice.
+`bind_loop_heads` is the only current Bind metadata row. Current ordered message
+facts reference it directly. The object validates that small head before reusing
+its immutable in-memory suffix chain, so an ordinary append inserts one message
+row and reservation-only transitions touch no message row; eviction recovery
+and provider-boundary verification are the deliberate full-history reads. The
+suffix chain is local to the object/harness call and is not exposed through the
+transcript RPC or JSON serialization.
 
 Anything that can yield while constructing a transcript payload is prepared
 before `commitRuntimeMutation`. Its callback is synchronous: it inserts the
@@ -114,15 +128,28 @@ writes. Preparation therefore carries immutable inputs into the callback, which
 re-checks the attempt, lease, authority generation, or source revision that may
 have changed while preparation was in flight.
 
-Schema v32 is the canonical-only boundary. It verifies row-for-row equality of
-the former message, attachment, mention, and compaction owners against their
-canonical facts and projections before any destructive statement runs, then
-removes the legacy tables, compatibility views, receipts, and operator RPCs.
-The verification is an object-local SQLite guard inside the same constructor
-migration: an object missing even one canonical owner refuses activation rather
-than dropping or partially exposing data. The one-time fleet transfer that made
-that guard pass is historical deployment evidence, not a runtime read or repair
-path.
+Participant turns, activity changes, and pending-input admission/removal also
+advance the room cursor and insert a reference into the object's existing
+durable outbox in that same transaction. Delivery hydrates the canonical row;
+it does not persist a second transcript payload. The outbox row is removed only
+after the frame has been offered to the room and, for a turn change, the
+HyperSight refresh intent is durable. A crash in any later window therefore
+replays the same room sequence, while a lower pending canonical sequence holds
+back ephemeral stream/presence frames. Reconnect snapshots remain the recovery
+authority and client cursors make a repeated sequence idempotent.
+
+Schema v32 verified the canonical transfer and removed the original payload
+owners. Schema v33 is the final relational boundary: it adds canonical
+conversation metadata, rebuilds every remaining foreign key against
+`participant_transcript_turns(turn_id)`, moves attachment
+and mention relationships to canonical turn-keyed tables, and deletes the
+temporary `workstream_message_records` identity shim and compatibility view.
+The v32 boundary had first verified row-for-row equality of the former message,
+attachment, mention, and compaction owners against their canonical facts and
+projections before removing the original payload tables, views, receipts, and
+operator RPCs. That object-local fail-closed guard and the one-time fleet
+transfer that satisfied it are historical deployment evidence, not a runtime
+read or repair path.
 
 Participant history is read through snapshot-fenced half-open ranges. Opening
 creates one fence and returns the first-unread conversation turn with up to five
@@ -362,49 +389,46 @@ nullable values clear cached fields rather than behaving like absent patches.
 
 ### Full agent-loop execution
 
-After `durable_object_open`, one `SubstreamAgent` runs one complete Bind harness
-loop directly. A run is not one model turn: it includes every model/tool turn,
-plugin activation, structured elicitation, compaction, Terminal interaction,
-and terminalization needed to finish the admitted work. Bind remains the loop
-implementation; Rally does not depend on the Agents SDK.
+Each `SubstreamAgent` owns exactly one durable Bind loop for its entire
+lifetime, whether that loop is executing or idle. A message, reconnect, retry,
+or wakeup never creates another loop. The loop singleton is its lifecycle and
+fencing authority; execution receipts, provider attempts, and tool effects are
+subordinate evidence for one activation and may not be used as loop identity.
+Bind remains the loop implementation; Rally does not depend on the Agents SDK.
+
+The two execution boundaries are normative. A **step** is one accepted model
+response plus settlement of every tool call it already emitted. The persistent
+**loop** spans steps and alternates between executing and idle. Steer input is
+eligible after a step; queued input is eligible only after the loop reaches
+idle. Stop requests prevent another step but do not cancel an in-flight model
+request or tool effect. Ordinary work-stream Stop writes only the singleton's
+`stop_requested_at` and `stop_after_step_ordinal`; `runs.cancellation_requested_at`
+is reserved for subordinate child or generic execution cleanup and is not loop
+control. Model, permission, plugin, and tool-surface changes also take effect
+only at the next safe step boundary.
 
 Expected wall time is 2–30 minutes. Time to first token is normally 1–5 seconds,
 ordinary tools take seconds, and a Daytona Terminal action may take 3–5 minutes
 although p95 is expected below one minute. Rare coding sessions may run for more
-than two hours. The durable run, attempt lease, tool receipts, final message, and
-dispatch ledger—not an in-memory promise—are the recovery authority for all of
-those durations.
+than two hours. The durable loop, execution lease and receipt, tool receipts,
+reserved assistant turn, and canonical transcript—not an in-memory promise—are
+the recovery authority for all of those durations.
 
-`agent_run_dispatches` is the child-local durable dispatcher. `queued` work is
-claimed as `running` under a `lease_expires_at` deadline, and both queued and
-lease-expired running rows are resumed by the alarm after an eviction. The
-lease is what makes "a run in flight" and "a run whose owner died" separable
-without a live process to ask; a claim with no deadline is not recoverable
-state. Two rules keep the queue live and are not negotiable:
+`substream_loops` is the child-local execution coordinator. Its executing row
+names the activation, epoch, lease owner, lease deadline, cycle, step, and Bind
+state revision. Recovery keeps the activation and cycle, increments only the
+execution epoch after the old lease expires, and resumes from persisted Bind
+state. Compaction generation is a separate Bind projection value and never
+changes the loop cycle or makes a pending steer stale.
 
-- **The next alarm is a pure function of the rows.** No in-memory value may be
-  an input to it. `SubstreamAgent.nextRunDispatchAt` and
-  `BlockDashboardAgent.nextRunAt` both once consulted a "drain is active" flag
-  and both went permanently inert because of it.
-- **The alarm executes; callers only enqueue.** An RPC records the dispatch,
-  arms the alarm, and returns. Durable work is never handed to a promise the
-  invocation then abandons, because the runtime cancels it and cancellation
-  raises nothing.
-
-`agent-run-dispatch-queue.ts` owns both rules for both objects. While any row is
-non-terminal the alarm is additionally floored at
-`AGENT_RUN_DISPATCH_SWEEP_MS`, so a future scheduling defect costs one interval
-rather than the run.
-
-Construction releases every surviving lease. A lease is only ever held by a
-living isolate and an object runs one isolate at a time, so a lease still
-recorded when a new isolate boots was issued by one that is gone: its run is
-recoverable immediately rather than at expiry. The lease duration therefore
-bounds how long a *cancelled invocation within a living isolate* goes
-unnoticed, not how long an eviction does. The harness attempt lease prevents a
-replacement isolate from overlapping the previous owner. Once that lease
-expires, replay resumes through the same run scope and tool receipts, so an
-external write is not intentionally performed twice.
+`runs` remains as a subordinate execution receipt. A linked non-terminal row
+stores the exact execution context needed to restart one provider/tool attempt,
+but its run ID is never the loop ID. Alarms derive recovery from the executing
+singleton, its lease, and linked non-terminal receipts. Callers only admit an
+input or request activation; they do not hand correctness to an abandoned
+in-memory promise. `run_steering` and the SubstreamAgent-local
+`agent_run_dispatches` table are retired. The identically named HyperSight
+block-agent dispatch ledger remains a separate authority.
 
 `WorkstreamLoopWorkflow` and its binding are gone: every work-stream run
 executes inside the SubstreamAgent, and a stack whose authority is not
@@ -429,9 +453,9 @@ Each outbox row resolves a stable `BlockDashboardAgent` name using the
 workspace's jurisdiction and placement affinity. That object runs the complete
 read-only Bind loop directly. It does not use the Agents SDK or a Cloudflare
 Workflow. `BlockDashboardAgent` talks directly to `SubstreamAgent("0")` through
-the internal runtime-SQL port: it resolves the transcript fence there and
-stores the harness attempt, scope, inference attempts, tool receipts, and
-terminal runtime record beside the source data they reference. The block DO's
+typed transcript, run, receipt, and block-dashboard ports. It resolves the
+transcript fence there and stores the harness attempt, scope, inference
+attempts, tool receipts, and terminal runtime record beside the source data they reference. The block DO's
 own SQL dispatch row is the durable execution and recovery boundary, so an
 eviction does not require the parent or source to retain an in-memory promise.
 It permits at most one unsettled running dispatch. When a fresher refresh
@@ -460,7 +484,7 @@ rather than concatenates partial text. Thus the exact paths are:
 ```text
 SubstreamAgent("0") -- trigger + transcript fence --> WorkstreamDO
 WorkstreamDO -- versioned durable fan-out --> BlockDashboardAgent(block-id)
-BlockDashboardAgent -- fenced runtime SQL --> SubstreamAgent("0")
+BlockDashboardAgent -- typed object ports --> SubstreamAgent("0")
 BlockDashboardAgent -- versioned result settlement --> WorkstreamDO
 BlockDashboardAgent -- state + stream checkpoints --> Electron
 ```
@@ -491,11 +515,11 @@ the refresh but cannot silently lose it.
 the useful Agents SDK lifecycle behavior shared by `SubstreamAgent` and
 `BlockDashboardAgent`. The first reference ensures an alarm no later than 30
 seconds; nested long operations share it; the final idempotent disposer
-recomputes the alarm only from durable work. `DurableAgentDrain` similarly
-ensures one in-isolate dispatcher drain at a time — deduplication only. It
-never suppresses scheduling, and its result is awaited by the invocation that
-started it rather than left to `waitUntil`. Runtime ping/pong is handled
-by WebSocket auto-response and does not wake the object.
+recomputes the alarm only from durable work. The in-isolate drain is
+deduplication only: it never suppresses persisted scheduling, and its result is
+awaited by the invocation that started it rather than left to `waitUntil`.
+Runtime ping/pong is handled by WebSocket auto-response and does not wake the
+object.
 
 A keep-alive heartbeat is a separate Durable Object event. When it observes an
 already active drain it never awaits that promise: joining would carry the alarm
@@ -505,18 +529,19 @@ a heartbeat no sooner than 30 seconds, excluding the already-due run row from
 that calculation so the alarm cannot spin at `now + 1` while the run remains
 active. Recent in-memory drain progress or an unexpired durable harness attempt
 lease proves the owner is still healthy, including legitimate multi-hour runs.
-After five minutes without progress, the agent checks that durable lease; only
-when no live lease remains does it abandon the stranded promise and start a
-fenced successor. The late predecessor cannot clear the successor because the
-single-flight promise and dispatch lease tokens are both identity-fenced. The
-same rule applies to `SubstreamAgent` and `BlockDashboardAgent`; the former
-reads its local harness lease and the latter reads the source WorkstreamDO's
-runtime lease.
+After five minutes without progress, the agent checks durable execution state;
+only when no live lease remains does it abandon the stranded promise and start
+a fenced successor. The late predecessor cannot clear the successor because
+the single-flight promise and persistent execution epoch are identity-fenced.
+For a substream, recovery increments `substream_loops.active_execution_epoch`;
+the block agent retains its separate dispatch lease and reads the source
+WorkstreamDO's runtime lease.
 
 The keep-alive alarm lowers the chance of eviction during a long model request,
-external API wait, or computation. It is not correctness state. If an isolate
-is evicted anyway, `agent_run_dispatches`, the attempt lease, run events, tool
-receipts, streaming checkpoint, and final-message fence drive recovery.
+external API wait, or computation. It is not correctness state. If a substream
+is evicted anyway, the loop lease/epoch, linked execution receipt, persisted
+Bind head, tool receipts, streaming checkpoint, and reserved final-turn slot
+drive recovery. A HyperSight block uses its own `agent_run_dispatches` ledger.
 
 ### Streaming and reconnect
 
@@ -530,9 +555,20 @@ Each accepted `stream_started` or batched `stream_delta` receives a monotonic
 room sequence and updates `active_output_turns` plus bounded
 `active_output_chunks` in the same SQLite transaction. The cursor therefore
 cannot advance past text that was not checkpointed. Final assistant text is
-stored once as an ordinary `workstream_message_records` row whose fact owns the
-payload, and the active checkpoint is removed.
+stored once as the canonical Bind conversation turn whose root fact owns the
+payload, and the active checkpoint is removed. Run settlement adopts that same
+turn; it never authors an aggregate copy.
 Token frames never write regional D1 and never update the sidebar.
+
+Streamed assistant bytes are presentation-only until the provider response is
+accepted. A failed or interrupted attempt clears its overlay and materializes a
+small typed failure pill at the already reserved transcript position; arbitrary
+partial prefixes never become canonical assistant messages. Retry or provider
+fallback is allowed only before any assistant bytes are published and before
+any tool effect begins. Once output or an effect is observable, failure closes
+the step and a later attempt is a new step. An already-started tool is allowed
+to settle and persist its receipt; stop never claims to cancel or roll back its
+external effect.
 
 Compaction uses the same ordered publication boundary but no token checkpoint.
 `compaction_started` writes the singleton `active_agent_compaction` with its run,
@@ -561,9 +597,11 @@ canonical product state is invalid.
    replay when the complete interval is still in memory.
 3. A cursor behind the durable sequence with an absent or incomplete replay
    interval normally receives a canonical snapshot at the durable sequence on
-   the same socket. `history_unavailable` is the internal snapshot reason
-   recorded in `rally.subscribe.snapshot_reason`. If that snapshot cannot be
-   assembled, the same reason becomes the explicit `resync_required` fallback.
+   the same socket. Its required `history_unavailable` reason travels with the
+   frame as well as being recorded in `rally.subscribe.snapshot_reason`, so the
+   renderer does not mistake bounded recovery state for a continuous refresh.
+   If that snapshot cannot be assembled, the same reason becomes the explicit
+   `resync_required` fallback.
 4. A cursor ahead of the durable sequence receives `resync_required` with reason
    `sequence_ahead`. The current desktop cursor guard would reject a
    lower-sequence snapshot, so this case alone recovers over HTTP.
@@ -590,33 +628,90 @@ an optimization into a write-ahead event log; suppressing one event producer
 leaves every other replayable event exposed. Any future change to this recovery
 must preserve canonical snapshot contents, the one-stage post-snapshot
 catch-up, failure without cursor advancement, and the separate
-`sequence_ahead` compatibility case.
+`sequence_ahead` resync case.
 
 The renderer may animate a received text batch one token at a time; that
 presentation trick does not change durable text or cursor semantics.
 
-The newest bounded message page and its older/newer cursors ride in the initial
-snapshot. Further pages are direct `load_message_page` requests against the
-same child's local `parts`; replies are correlated to one socket and consume no
-room sequence because they are queries, not shared events. The default page is
-200 rows, the contract caps it at 250, and the encoded reply is capped at 900
-KB by shortening the page toward the requested boundary while returning the
-new continuation cursor. Electron automatically asks for the next older page
-near the top and adjusts the scroll offset by inserted height, so the visible
-message does not jump.
+Snapshot reason is also the range-retention proof. A `reconciliation` snapshot
+was explicitly requested on the same subscribed socket; the one-stage catch-up
+closes its assembly window, so Electron may retain already loaded ranges that
+fall outside its bounded opening ranges. An `initial` or `history_unavailable`
+snapshot has no such continuity proof. Electron replaces the old snapshot in
+full, leaving those intervals as gaps to reload under the new snapshot ID.
+Canonical turns can revise or retract, so copying even apparently immutable
+old-fence rows beneath a new ID would make missed lifecycle events look current.
+
+The initial snapshot carries canonical half-open sequence ranges around the
+first unread turn and at the tail. Further history uses correlated
+`load_transcript_range` requests naming that snapshot fence, the requested
+half-open interval, and the current room event waterline. A
+`transcript_range` response reports the exact covered interval; empty intervals
+are coverage, not missing data. These direct replies consume no room sequence
+because they answer one admitted reader's query rather than publishing shared
+state. Electron requests only known gaps and preserves the visible scroll
+anchor as adjacent canonical ranges join. If a fresh snapshot supersedes a
+range while its reply is in flight, Electron rejects that reply as
+`transcript_snapshot_changed` and recomputes the adjacent gap against the new
+snapshot. It never resolves a discarded old-fence range as successful.
 
 ### Queueing and steering
 
-Every admitted run is ordered in the selected child. Queue mode appends the new
-message and run without changing the in-flight run.
+Incoming human input is first a server-authoritative pending record with a
+stable input ID and arrival order. It is not a canonical transcript turn and
+does not consume `transcript_sequence` while pending. The desktop may paint an
+identified optimistic overlay, but reconnect replaces that set from the
+object's pending-input authority.
 
-Steer mode targets only the run that was active when the message committed.
-`run_steering` records that run, message, and boundary count. Bind never aborts
-an active model request or tool call. It observes the steering request at turn
-boundaries: the current turn completes, and the old run stops no later than one
-additional turn. A new run admitted for the steering message then reads the
-persisted transcript fence. If the targeted run terminalized first, the stale
-steer cannot affect a later run.
+`WorkstreamObjectProductService` prepares the future canonical payload before
+admission and freezes its payload hash, author snapshot, provenance,
+authorization, attachment descriptors, and normalized mentions in that pending
+row. Admission creates no `runs` row, workflow input, harness-run ID, attention
+ordinal, activity, notification, or resource link. It requests activation from
+the owning `SubstreamAgent`. If the loop is idle, the activation transaction
+promotes the oldest eligible input and creates/starts its subordinate execution
+receipt together. If the loop is already executing, the input stays pending;
+an eligible steer is promoted at the safe step into that same activation. The
+same `client_message_id` is checked against both canonical and pending authority,
+so an ambiguous-response retry returns the same future turn ID without
+admitting another input or loop.
+
+Every public message-admission response contains only the accepted `turn`
+identity and a truthful `deliveryState` of `canonical` or `pending`. A replay
+reports the row's current state, not a separate replay outcome. It never reports
+`agentInvoked`, a nullable harness-run ID, or an activation flag: committing a
+pending input may request an internal loop wake, but admission does not prove
+that an execution has started. `activationRequest` and whether this call inserted
+the row remain private between the product transaction and its SubstreamAgent
+owner.
+
+`steer` means deliver after the current step: the in-flight provider response
+finishes, its reserved assistant turn becomes canonical, and every tool call it
+already emitted settles before pending steer inputs are promoted in arrival
+order and included in the next model request. `queue` means deliver after the
+persistent loop next becomes idle; promotion wakes that same loop rather than
+creating another one. If failure or stop prevents a steer boundary, the input
+falls forward to the next idle activation and is never lost. Multiple inputs
+remain distinct; no later steer overwrites an earlier one.
+While the loop is executing, Electron exposes that choice beside Send and
+defaults each newly composed message to steer. The choice travels on the command
+and is painted back from the server-owned pending row as either **Will steer
+after this response** or **Queued for the next loop**; reconnect never infers it
+from local composer state.
+
+Promotion is one object-local transaction that validates the loop fence,
+creates the immutable canonical participant turn with its exact fact,
+provenance, attachments and mentions, allocates transcript and attention order,
+replaces the full pending envelope with a minimal immutable delivery receipt,
+and enqueues the resulting directory, user,
+activity, mention, and non-duplicate participant effects in `durable_outbox`.
+A crash can therefore observe none of the canonical turn, delivery receipt,
+and effect intents, or all of them. The loop owner persists the corresponding
+Bind transition before crossing the next provider boundary.
+Rows in `pending_loop_inputs` are immutable and exist only while pending. A changed
+request is a new ordered input; it does not rewrite or silently cancel the
+earlier one. Canonical turns are immutable afterwards; `delivered_loop_inputs`
+retains only the input-to-turn replay identity and allocated delivery ordinals.
 
 ### Compaction and concurrent messages
 
@@ -750,7 +845,7 @@ upgrades because that platform flow must return a 101 `Response`; lint rejects
 
 | Sender | Receiver | Primitive | Durable handoff |
 | --- | --- | --- | --- |
-| WorkspaceDO/Worker | SubstreamAgent | typed RPC | idempotent child product transaction or run-dispatch row |
+| WorkspaceDO/Worker | SubstreamAgent | typed RPC | idempotent child product transaction, pending loop input, or subordinate execution receipt |
 | SubstreamAgent | WorkstreamDO | typed RPC | child `durable_outbox`; parent receipt/aggregate/outbox transaction |
 | SubstreamAgent("0") | WorkstreamDO | typed RPC | child pending refresh plus parent fan-out rows |
 | WorkstreamDO | BlockDashboardAgent | typed RPC | parent dispatch outbox; block dispatch ledger |
@@ -828,13 +923,22 @@ example:
 1. create strict `_sql_schema_migrations` if absent;
 2. validate positive, strictly increasing, append-only versions;
 3. compare the deterministic implementation hash of every applied version;
-4. apply each version's SQL and receipt in one `transactionSync` transaction;
+4. apply each normal group of versions and its receipts in one
+   `transactionSync` transaction;
 5. reject an object whose schema is ahead of the Worker or whose historical SQL
    was edited;
 6. run `PRAGMA foreign_key_check`, then `PRAGMA optimize` after changes.
 
 Migration definitions may not include their own `BEGIN`, `COMMIT`, or
-`ROLLBACK`; the runner owns atomicity. Constructor migrations are bounded DDL.
+`ROLLBACK`; the runner owns atomicity. A migration that rebuilds a referenced
+parent table must remain valid with enforcement enabled, rebuild dependent rows
+child-first, and pass a complete `foreign_key_check` before commit. The released
+v32 transcript migration retains its legacy execution marker only because that
+marker records its shipped wrapper without changing its stored hash; it is not
+a pattern for new migrations. An execution mode participates in a new
+migration's hash;
+older definitions have no suffix, preserving every deployed receipt.
+Constructor migrations are bounded DDL.
 Large data rewrites use the fleet maintenance/import control plane and resumable
 receipts, never unbounded constructor work. `durable-utils` is intentionally not
 a dependency.
@@ -919,9 +1023,9 @@ does not migrate unrelated agent loops to `SubstreamAgent`.
 | Workstream metadata socket hibernates | Runtime restores identity; subscribe returns a complete authoritative viewer snapshot and later effects push newer revisions. |
 | Child evicted during a 2–30 minute or rare 2+ hour run | Keep-alive reduces occurrence; dispatch ledger plus lease resumes after activation/expiry. |
 | Feed replay window lost | Child sends a canonical snapshot on the admitted socket, catches up events published during assembly, and keeps the subscription open. |
-| Transcript page requested | The agent accepts an opaque before/after cursor, defaults to 200 rows, and rejects limits above 250. A per-socket request has a 15-second desktop timeout and is queued again after reconnect without advancing the room cursor. |
-| Encoded transcript page would exceed 900 KB | The agent shortens the page toward the requested boundary and returns an adjusted continuation cursor. A single defensive oversize message produces a correlated `message_page_too_large` error instead of an oversized frame. |
-| Historical-page read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
+| Transcript range requested | The agent accepts a snapshot-fenced half-open sequence interval. A per-socket request times out after 15,000 ms and is queued again after reconnect without advancing the room cursor. If the client accepts a newer snapshot first, it rejects the old-fence reply and retries the newly adjacent gap rather than reporting a successful no-op. |
+| Encoded transcript range would exceed the shared 1,000,000-byte realtime-frame limit | The agent removes whole turns from the response tail until the frame fits and reports the exact shorter covered prefix. The original requested interval remains in the response, so Electron leaves the uncovered suffix as a canonical gap. If one turn is itself indivisible at that size, the response retains its exact sequence as a payload-free envelope (`blocksOmitted: true` with the true block count) and the client renders a "too large to display" placeholder, so ordering never depends on payload delivery. |
+| Historical-range read loses authorization | The agent returns a correlated authorization error and closes the revoked socket with policy code 1008; cached history is not treated as current authority. |
 | Schema v32 finds an unverified legacy payload owner | Constructor activation fails with `transcript_payload_retirement_not_verified`; every legacy row remains intact and the object serves nothing until an operator completes ownership transfer under the pre-retirement Worker. |
 | Participant removal targets the final active participant | The object returns `409 workstream_participant_required` and leaves the participant active. The desktop disables the action when its current snapshot already shows only one participant, but that is not the authority fence. |
 | Somebody loses access while holding sockets | A queue message per object closes their sockets; a failed hop retries and then dead-letters. Nothing else closes them, so a message that is never published leaves the socket open until the client reconnects. See [`access-revocation.md`](access-revocation.md). |
@@ -939,6 +1043,15 @@ output are SQL. Provider fragments are batched; regional D1 sees semantic
 projection changes only, not token cadence.
 
 ## Testing
+
+This inventory does not by itself satisfy the ordered-transcript acceptance
+contract. The PRD's focused [test contract](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md#test-contract)
+maps persistent loop ownership, reserve-before-await ordering, safe controls,
+exact settlement, recovery, atomic realtime delivery, bounded ranges,
+authority, and renderer convergence to actual test names. Every focused
+scenario now has a named implementation; exact-head CI and the repository's
+deliberate-break practice remain the acceptance proof. This documentation pass
+ran no suites and recorded no deliberate-break failure proof.
 
 Run:
 
@@ -959,8 +1072,8 @@ and work-stream control sockets, foreground presence across WorkspaceDO eviction
 plus inaccessible-work-stream rejection, typed native-RPC success/conflict envelopes,
 complete initial directory delivery across all four live execution states even
 past 1,250 combined rows, presence-free proactive feed subscriptions,
-bidirectional message pages without room-cursor movement, page revocation,
-compaction recovery, HyperSight checkpoint recovery/revocation, socket
+snapshot-fenced canonical transcript ranges without room-cursor movement,
+range revocation, compaction recovery, HyperSight checkpoint recovery/revocation, socket
 revocation across all four roles, obsolete queued
 run coalescing, stale-arrival rejection, per-block parent head-of-line delivery,
 ticket replay, and the read-only child socket.
@@ -985,15 +1098,29 @@ absence assertion written that way passes vacuously. Flush with
 from the parent's `projection_keys` rather than from an outbox row, because the
 eager directory delivery inside `acceptSubstreamEffects` acknowledges directory
 rows out of the parent outbox without any Queue consumer.
-Node tests cover migration
-rollback/hash drift/ahead versions, normalized product SQL, compatibility-view
-replay deduplication and same-row tool settlement, authorization — including
+`test-workers/workstream-schema-migration.test.ts` upgrades a populated v32
+foreign-key graph through real workerd storage and proves canonical content and
+relations survive with an empty `foreign_key_check`. Node tests cover migration
+rollback, grouped-failure resume, execution-mode/hash drift and ahead versions,
+normalized product SQL, canonical replay deduplication and fenced same-row tool
+settlement, authorization — including
 the product API's session and connector principals in
 `test/workstream-room-authorization.test.ts` —
 effect idempotency, streaming checkpoints, and renderer socket switching.
-Desktop tests cover page merging, reconnect queueing, direction-neutral page
-errors, scroll threshold/anchor preservation, compaction reconciliation, and
-HyperSight full-checkpoint replacement. `scripts/durable-object-native-rpc.test.mjs`
+`test-workers/message-to-output-pipeline.test.ts` asserts the exact public
+canonical/pending admission envelope across first admission, pending replay,
+promotion, and external elicitation delivery while separately inspecting the
+private activation state. `test/slack-workspace-assignment.test.ts` proves a
+connector replay returns the same pending turn and creates one deterministic
+audit row. `packages/contracts/src/index.test.ts` rejects the retired
+execution-shaped socket receipt, and
+`apps/desktop/src/renderer/lib/workspace-socket.test.tsx` proves pending state
+survives reconnect and reaches the composer acknowledgement.
+Desktop tests cover canonical range merging, paged-history retention across a
+snapshot refresh, rejection and retry of an in-flight old-fence range,
+stream-specific completion, reconnect queueing, range errors, scroll
+threshold/anchor preservation, compaction reconciliation, and HyperSight
+full-checkpoint replacement. `scripts/durable-object-native-rpc.test.mjs`
 proves the custom lint rule rejects direct, computed, aliased, optional, and
 typed-stub internal fetches without flagging unrelated HTTP clients.
 `scripts/durable-object-sync-transaction.test.mjs` proves explicit async and
@@ -1140,10 +1267,11 @@ join crosses an object boundary.
 | `_sql_schema_migrations`, `object_versions` | Schema versions and the applied-migration receipts. |
 | `workstream`, `substream_agent_identity`, `substreams` | Local root/authority, immutable external child identity, and LLM-array context metadata. Existing main data uses local context `0`. |
 | `participants`, `member_attention` | Participation and personal read/mention waterlines; active workspace membership remains D1 authority. |
-| `workstream_message_records`, `workstream_message_attachments`, `workstream_message_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose records reference content-addressed payloads plus exact attachment, mention, and large-content joins. One stable tool message advances in place from started to its terminal state even though both its id and `client_message_id` conflict; a different message under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; queued messages are fenced by their admitted run rather than leaking into an older run. |
-| `runs`, `agent_run_dispatches`, `run_steering`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Full-loop admission/recovery, targeted steering, frozen authority/context, and provider attempts. Terminal dispatch and spent wake-up rows age out after 180 days; `runs` is the durable record. |
-| `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. |
-| `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output and active compaction phase, and the room sequence. `active_agent_compaction` is a singleton operational checkpoint; immutable summary history remains below. |
+| `participant_transcript_turns`, `participant_transcript_blocks`, `participant_transcript_attachments`, `participant_transcript_mentions`, `transcript_facts`, `transcript_payloads`, `content_refs` | One provider-neutral semantic order whose canonical turns reference content-addressed payloads plus exact attachment, mention, and large-content joins. Accepted human and assistant content, identity, and order never change. One stable tool turn may advance only its explicit lifecycle from started to terminal; a different turn under the same client id remains an ignored replay. Terminal residual-receipt repair asynchronously prepares the replacement payload, then commits its fact and tool metadata synchronously so alarm/reaper settlement cannot leave a started card behind. Tool UI rows project only as complete assistant-call/tool-result pairs; pending messages have no canonical order and enter Bind only through the persistent loop's delivery transaction. |
+| `substream_loops`, `pending_loop_inputs`, `delivered_loop_inputs`, `assistant_turn_reservations`, `bind_loop_heads`, `bind_loop_state_messages`, `bind_activation_inputs`, `bind_provider_boundaries` | One persistent loop lifecycle and execution fence, server-authoritative prepared input awaiting atomic promotion, minimal delivery replay identity after promotion, exact canonical slots reserved before assistant generation, the current Bind projection, immutable activation receipts, and provider-boundary hashes. `bind_loop_heads` is the only current Bind metadata authority; ordered message rows reference it directly. Pending inputs have neither transcript nor attention order until delivery. |
+| `runs`, `run_scopes`, `run_memory_contexts`, `run_plugin_activations`, `run_lifecycle_events`, `inference_attempts` | Subordinate execution receipts, frozen authority/context, and provider attempts. A run records restart context and loop provenance but is never the loop identity. |
+| `tool_effects`, `tool_effect_checkpoints`, `attachment_tool_receipts`, `plugin_activation_hints`, `elicitation_requests` | Planned/executed tools, replay fences, resumable activation, and human-input pauses. Each elicitation retains the stable Bind tool slot that its eventual answer must close. |
+| `active_output_turns`, `active_output_chunks`, `active_agent_compaction`, `realtime_state` | Reconnect-safe partial output keyed by an explicit transient `stream_id`, active compaction phase, and the room sequence. Canonical output identity remains the turn's `turn_id`; `active_agent_compaction` is a singleton operational checkpoint and immutable summary history remains below. |
 | `transcript_compaction_checkpoints`, `description_refresh_state` | Sequence/revision-fenced context derivations. Checkpoints reference immutable model-only facts per principal/run/sequence so a derived run can bind an exact compaction event rather than mutable “latest” state. |
 | `workstream_wakeups`, `due_work` | Agent-created timers and other child-local alarm jobs. |
 | `workstream_resource_links`, `resource_inventory_revision`, `suggested_actions` | Links to workspace resources with a CHECK-constrained relationship (`attachment`, `message_attachment`, `origin`, `generated`, `suggested_activity`, `inbound_email`, or `context`), the authorization revision every relationship change advances, and operational suggestion overlays. `generated` derives artifact direction; every other value derives source direction. A suggestion is not transcript/model input unless acceptance explicitly authors a new part. |
@@ -1151,21 +1279,23 @@ join crosses an object boundary.
 | `terminal_workspace`, `terminal_tasks`, `terminal_imported_resources`, `terminal_repository`, `terminal_publication_grants`, `repository_publications` | Durable Rally state for the Daytona-backed Terminal plugin. |
 | `projection_keys`, `durable_outbox`, `durable_inbox_receipts` | Versioned child-to-parent effects and inbound dedupe such as feed tickets. |
 
-`workstream_message_records.sequence_number` is transcript order, including tool and system rows.
-`workstream_message_records.attention_ordinal` is the independent people-visible main-substream
+`participant_transcript_turns.transcript_sequence` is canonical transcript
+order, including tool and safe status turns.
+`participant_transcript_turns.attention_ordinal` is the independent people-visible main-substream
 waterline used by unread tracking. Product messages expose the latter as the
 nullable `attentionSequenceNumber`; tool/transient rows carry `null`. Desktop
 read receipts and unread anchors must never substitute transcript sequence for
 that field, including while an older Worker omits the optional wire property.
 
-Compatibility views named `_runtime_*` map established D1-shaped repository SQL
-onto these normalized tables. They are not duplicate storage or a second
-authority. For a compatibility-view mutation, `_runtime_statement_changes` is
-the semantic row count returned to the caller. workerd's native cursor count
-also includes bookkeeping and projection rows touched inside the `INSTEAD OF`
-trigger, so using that physical count would misclassify a first receipt write
-as a replay. Direct normalized-table mutations continue to use the native
-count.
+There is no work-stream runtime SQL adapter. Worker and sibling-object callers
+use typed object ports; a resident `SubstreamAgent` installs the same storage
+operations as local authorities, so self-calls do not leave the isolate. The
+`_runtime_harness_runs`, `_runtime_inference_attempts`, and `_runtime_users`
+views, their triggers, and `_runtime_statement_changes` are retired by the v33
+cutover. Their definitions remain only inside immutable migration v1 history so a
+new object can replay the shipped fingerprint before the later migration drops
+them. They are not a forward read, write, telemetry, or development-fixture
+path.
 
 ### `BlockDashboardAgent`
 
@@ -1245,9 +1375,11 @@ provider bytes remain in R2.
 Health endpoints report role and object-local database bytes. Migration errors
 include component/version reason. Inspect `_sql_schema_migrations`,
 `workspace_directory_state`, `workspace_workstream_effect_receipts`,
-`agent_run_dispatches`, attempt leases, child and parent `durable_outbox`,
-WorkspaceDO external-delivery attempts, and authority route/generation before retrying a
-quarantined object. The maintenance control plane can quarantine a failed route;
+`substream_loops`, pending inputs, assistant reservations, linked execution
+receipts, BlockDashboardAgent `agent_run_dispatches`, attempt leases, child and
+parent `durable_outbox`, WorkspaceDO external-delivery attempts, and authority
+route/generation before retrying a quarantined object. The maintenance control
+plane can quarantine a failed route;
 operators must never reopen legacy D1 writers or an unrestricted predecessor as
 recovery. Cloudflare does not move an existing object when a hint changes; a
 placement/jurisdiction change requires the same explicit maintenance export,
@@ -1277,6 +1409,617 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-28 — Persistent substream loops over a canonical ordered transcript
+
+**What changed:** One breaking, forward-only cutover (schema v33 from shipped
+v32): each substream is one persistent execution loop; runs are subordinate
+execution receipts; canonical transcript turns are the only display authority;
+pending and streaming state are explicit server-authoritative overlays. The
+facets below are the decisions this change is made of — they landed together in
+one revision and are recorded per facet because each carries its own rejected
+alternative and its own invariant.
+
+**Why:** The message-ordering incident was caused by competing order
+authorities — canonical turns, compatibility message records, per-run terminal
+aggregates, and arrival-ordered stream state — and by durable positions being
+allocated after asynchronous work instead of at admission. No patch inside the
+per-message run model could close the class.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+#### Loop time is monotonic bookkeeping and recovery is diagnosable
+
+**What changed:** `#bumpLoop` and every loop/receipt write clamp `updated_at`
+monotonically (`MAX(updated_at, ?)`); `nextLoopWorkAt` derives a due receipt's
+wake time even when the loop singleton does not exist yet; snapshot assembly
+failures are logged (`substream_snapshot_assembly_failed`) before degrading to
+a resync; and an external elicitation answer's authorization refusal returns
+the product's own status (403) instead of a blanket 409.
+
+**Why:** Loop rows carry `CHECK (updated_at >= created_at)` while callers
+supply `now` from clocks that can lag the row's creator (a test's fixed
+timestamps; `Date.now()` across isolate replacement), so an unclamped write
+can violate the CHECK intermittently. Without the receipt-first wake
+derivation, a recovered or pre-activation receipt contributed no alarm and
+stalled with nothing left to rediscover it. And a silently swallowed snapshot
+failure turns a real assembly defect into an unexplained client resync with no
+recorded cause.
+
+**Considered and rejected:** Storing the caller's clock in `updated_at` and
+relaxing the CHECK instead. That conflates bookkeeping with event time and
+weakens an invariant every reader of the row relies on.
+
+**Consequences, and what a future change has to respect:** `updated_at` on
+loop-owned rows is monotonic bookkeeping, not an event time — code that needs
+the caller's clock reads a column that stores it. A receipt with
+`execution_context_json` must contribute a wake time regardless of loop-row
+existence. A snapshot that cannot be assembled is an object defect first and a
+client resync second; keep the log line ahead of the degradation.
+
+#### Recovered ambiguous writes stay ambiguous end to end
+
+**What changed:** The unshipped activity projection accepts `ambiguous` as a
+terminal state, and recovery propagates it from the tool block through plugin
+and assistant activity aggregates. The cutover rebuilds only the derived timing
+projection; canonical transcript turns remain untouched.
+
+**Why:** An external write with an unknown result is materially different from
+a known failure because Rally must not retry it. Collapsing the activity tree to
+`failed` made reconnect and timing surfaces contradict the durable tool block.
+
+**Considered and rejected:** Keeping the narrow old CHECK and translating the
+state only for storage. That would make the database, protocol, and renderer
+disagree about the same execution outcome.
+
+**Consequences:** Recovery can close the full activity tree without violating a
+CHECK, and the no-transparent-retry warning survives live rendering, reconnect,
+and cold reload. The forward-only rebuild loses only pre-cutover derived timing
+rows, not workspace message history.
+
+#### Failure turns publish atomically and pending inputs reveal in FIFO order
+
+**What changed:** Failed or stopped reserved assistant turns now enqueue their
+canonical transcript reference in the same SQLite transaction that materializes
+the status turn. Pending-input preparation also publishes only the newly
+visible FIFO prefix: a later ready input stays absent from both realtime and
+snapshots until every earlier preparation has completed, failed, or been
+discarded.
+
+**Why:** A subscribed member could otherwise keep an abandoned partial response
+until reconnect even though the explanatory status turn was already durable.
+And publishing a later ready input while the snapshot correctly hid it behind
+an earlier preparation made a live overlay disappear on reconnect until that
+earlier preparation settled.
+
+**Considered and rejected:** Publishing the status turn after the transaction,
+which recreates the mutation-without-event crash window; and a separate hidden
+900,000-byte transcript ceiling, which had no product requirement and drifted
+from the reviewed socket contract.
+
+**Consequences:** Live failure rollback converges in canonical sequence before
+`stream_completed`.
+Pending overlays now have one FIFO visibility rule across both transports.
+Their transcript anchor is reserved alongside `input_sequence` before any
+external preparation await, so completion timing cannot invert their rendered
+order or make them swap when canonicalized.
+
+
+#### Required behavior is mapped to the focused shipping contract
+
+**What changed:** The module testing section now points to the PRD's concise
+objective/scenario mapping rather than treating a list of related suites as
+proof. It names the real SQL, workerd, Desktop, authority, and local-E2E files
+for the persistent-loop and canonical-ordering behavior being shipped.
+
+**Why:** The message-ordering defect escaped broad suites that exercised nearby
+storage and renderer code. The replacement keeps exact behavior-to-test
+traceability while removing compatibility migration, fleet-operation,
+benchmark, provider-matrix, and exhaustive-fault gates that conflict with the
+approved forward-only product.
+
+**Considered and rejected:** Retaining the 94-case audit as a measure of rigor.
+It made unrequested systems release blockers and made the genuine semantic E2E
+and observable-failure gaps harder to see.
+
+**Consequences:** The focused contract's original product-path and
+bounded-range gaps now have named real-workerd and Desktop implementations. Existing named
+tests still require exact-head execution, and new or modified tests still
+require the repository's deliberate-break proof.
+
+
+#### Terminal receipts close execution-owned activity intervals
+
+**What changed:** Run terminalization closes every still-active response,
+assistant, plugin, and tool interval rooted in that execution inside the same
+SQLite transaction. Recovery-stopped intervals carry
+`boundary_source = recovered` and `timing_accuracy = upper_bound`; the desktop
+renders their historical duration as “at most …”. Interrupted assistant tool
+batches use the same qualified boundary when their durable results are repaired.
+
+**Why:** The ordinary harness finally block closes observed activities, but an
+isolate loss can bypass it. The run receipt could therefore become terminal
+while a response or child activity remained active forever, making reconnects
+continue a clock for work that had already ended.
+
+**Considered and rejected:** A later UI timeout or an independent activity
+reaper. Both create a second lifecycle authority and cannot share the terminal
+receipt's exact atomic boundary.
+
+**Consequences:** A terminal execution can never retain an active activity tree.
+Recovered durations are conservative upper bounds rather than invented exact
+stop times, and realtime activity references are enqueued with the settlement.
+
+#### Elicitation promotion and Bind settlement are one transaction
+
+**What changed:** `elicitation_requests` records the stable tool-call receipt ID.
+Pending answer promotion derives the provider call ID from the current durable
+Bind projection, appends its answer tool result, and promotes the participant
+turn only to canonical UI history under the same loop/execution/head fence.
+
+**Why:** Promoting only the participant message left the prior assistant's
+`core_request_elicitation` call unanswered. Bind refused that invalid protocol
+history, stranding an accepted answer outside the persistent loop.
+
+**Considered and rejected:** Rebuilding or replacing the complete model history
+on answer. Canonical transcript and current Bind projection are already the two
+durable inputs; replacing history would hide the missing transition instead of
+recording it.
+
+**Consequences:** Answer admission may remain pending, but delivery is all or
+nothing: the sole model-facing tool result, participant authority, transcript
+order, and pending-row removal commit together before the next inference. The
+canonical participant turn is deliberately not a second Bind user message.
+The cutover
+deletes pre-persistent-loop elicitation request rows before making the stable
+tool slot required, because those operational rows did not record an identity
+that can be backfilled honestly. Their canonical question/answer turns remain
+in the independent transcript authority; this is a forward-only execution-state
+cutover, not transcript deletion.
+
+#### Lazy transcript ranges and indivisible turns obey one byte budget
+
+**What changed:** Correlated `transcript_range` replies now enforce the same
+1,000,000-byte realtime-frame budget as opening transcript snapshots. An
+oversized reply removes whole turns from its tail and narrows
+`covered.endExclusive` to the first omitted canonical sequence while retaining
+the caller's full `requested` interval. A sole turn that cannot fit is
+represented by a sequence-owning payload-free envelope: `blocksOmitted: true`
+plus the true `blockCount`, with the client rendering a "too large to display"
+placeholder in its canonical position. No block payload is copied into a
+second authority.
+
+**Why:** The snapshot path enforced the transport ceiling, but the lazy range
+path serialized its complete result directly. Twenty individually valid turns
+could therefore produce a frame the Electron broker refused, losing the range
+without a truthful continuation boundary.
+
+**Considered and rejected:** Marking omitted history covered, which loses
+history; splitting the ordered range frame into an unbounded reassembly
+protocol, which couples sequence coverage to byte delivery; copying block JSON
+into a parallel blob store, which creates duplicate payload authority; and an
+out-of-line delivery protocol for the oversized payload itself (immutable
+manifest tables plus chunked, hash-verified byte-range hydration). Nothing in
+the product can produce an indivisible oversized turn today — provider output
+is chunked well below the frame limit and pending inputs are bounded at
+admission — so that transport would exist to serve a row no code writes.
+
+**Consequences:** Electron's existing range-union logic leaves any omitted
+multi-turn suffix as a requestable gap. An indivisible envelope advances exact
+coverage immediately and keeps ordering independent of payload delivery; its
+content is deliberately not delivered, and the agent logs
+`substream_transcript_turn_oversized` when this fires. The envelope contract
+(`blocksOmitted`) is the whole interface at this boundary: a future feature
+that can genuinely produce oversized turns builds its delivery mechanism
+behind that flag — the envelope already owns the sequence — and the log line
+is the signal to design delivery against an actual producer rather than a
+guess.
+
+#### Message admission receipts describe admission, not execution
+
+**What changed:** Human HTTP/socket commands and connector ingress now return
+the accepted turn plus `deliveryState: canonical | pending`. Replay returns the
+same shape with the current durable state. Product-only insertion and activation
+facts stay inside SubstreamAgent; public receipts and message-send telemetry no
+longer expose `agentInvoked`, nullable harness/workflow placeholders, or
+`shouldActivate`.
+
+**Why:** A committed pending input can request a wake without proving that the
+persistent loop has claimed an execution. The old receipt crossed that boundary
+and could claim work had begun while no execution receipt existed. It also made
+replay a historical label instead of answering the caller's useful question:
+whether the accepted turn is canonical yet.
+
+**Considered and rejected:** Returning the internal activation request or a
+synthetic harness identity for convenience. Both would make admission a second
+execution authority and reintroduce per-message run semantics. Callers that need
+execution state read the loop and its real subordinate receipts.
+
+**Consequences:** Pending desktop overlays remain visibly pending after command
+acknowledgement and converge through server snapshots/realtime promotion. Slack
+audit insertion is idempotent by admitted turn identity, so loss of a public
+`replayed` outcome cannot duplicate audit rows.
+
+#### Work-stream execution has no compatibility SQL path
+
+**What changed:** The cutover drops the final run/inference/user compatibility
+views, their run/inference triggers, and the statement-change counter. The
+SubstreamAgent no longer exposes a runtime SQL RPC or rewrites D1 table names.
+Memory authorization, automation recovery, telemetry, development fixtures,
+Terminal, naming, and source-runtime readers now use explicit typed object
+operations over normalized storage.
+
+**Why:** A generic SQL proxy let unrelated callers share an untyped vocabulary,
+hid which object owned a read, and kept per-message-era views in the forward
+execution path. That was both extra authority and extra work on every routed
+statement. A persistent loop needs one durable owner and narrow subordinate
+receipt operations, not a database-shaped compatibility surface.
+
+**Considered and rejected:** Keeping the router as a read-only adapter or a test
+fixture. A second query vocabulary would still be a second protocol, and tests
+of its rewrites would prove the shim rather than the product behavior.
+WorkspaceDO's separate rollout adapter is not part of this removal because it
+owns distinct workspace-scoped tables and migration history.
+
+**Consequences:** Run and receipt writes reject the retired `waiting` and
+`steering` per-run phases at their active operation boundary. The original
+`runs` CHECK still names those inert values because removing them alone requires
+rebuilding the table and its foreign-key closure; no forward API can create or
+interpret them. Run rows remain subordinate execution receipts. Trigger-turn
+identity is causal provenance. The loop's stop fields implement ordinary
+safe-boundary Stop; receipt cancellation fields remain limited to subordinate
+child or generic execution cleanup. Neither makes a run the loop owner.
+
+#### Delivery deletes the pending envelope
+
+**What changed:** Atomic promotion now replaces the full `pending_loop_inputs`
+row with a minimal `delivered_loop_inputs` receipt and deletes the ready mailbox
+plus attachment-recovery rows. The canonical participant turn/facts remain the
+only content, provenance, attachment, mention, and authorization history.
+Subordinate runs reference the receipt, and delayed pending-upsert realtime
+references converge to a delivered removal through it.
+
+**Why:** A delivered pending row duplicated canonical authority and retained the
+whole prepared envelope indefinitely. Crash replay and response-loss recovery
+need a stable input-to-turn witness, not a second transcript.
+
+**Considered and rejected:** Leaving `state = delivered` on the prepared row or
+copying its payload into a new receipt. Both retain two representations that can
+drift and make every reader decide which one wins.
+
+**Consequences:** Pending snapshots list table existence, not lifecycle flags.
+Delivery, receipt insertion, temporary-row deletion, canonical effects, and
+realtime removal remain one SQLite transaction; failure restores the pending
+envelope and its recovery obligation together.
+
+#### Pending attachment admission has a cross-object hold
+
+**What changed:** A human input with drafts writes an object-local recovery row
+before calling WorkspaceDO's typed reservation RPC. Preparing and ready mailbox
+rows retain the hold. Failed preparations replay an idempotent release;
+delivered inputs delete the recovery row in the local commit that enqueues
+WorkspaceDO's canonical resource projection, while directly canonical inputs
+leave release to that projection.
+
+**Why:** The persistent loop owns input order, but it does not own workspace
+resources. Crossing that boundary without a durable reservation allowed a delete
+or TTL pass to invalidate an already-acknowledged input.
+
+**Considered and rejected:** Moving resources into the substream and treating
+all terminal mailbox states alike. Resource ownership is workspace-scoped, and
+`discarded` also describes the successful direct-canonical path whose projection
+may still be pending.
+
+**Consequences:** The local recovery table carries no attachment content and no
+independent lifecycle. Its only job is to make reserve/release RPC ambiguity
+recoverable; WorkspaceDO remains the deletion and canonical-link authority.
+
+#### Current Bind storage has one head and delta message writes
+
+**What changed:** The cutover replaces the interim `bind_loop_states`; `bind_loop_heads` now
+owns all current projection metadata and current message facts reference it
+directly. `WorkstreamTranscriptStorage` validates a cached immutable projection
+against that head, inserts only an appended suffix, updates only a changed
+system row, and reserves full-set replacement for initialization or compaction.
+
+**Why:** Maintaining two current metadata rows plus reading and rewriting the
+whole message history for one append made both authority and cost grow in the
+wrong direction. A persistent substream loop is expected to outlive individual
+execution receipts, so ordinary transition work must not scale with every prior
+turn.
+
+**Considered and rejected:** A compatibility view/table and a generalized event
+store. The cutover is unshipped history, deliberately discards prior run-shaped projections,
+and already has the two histories it actually needs: immutable activation
+receipts for replay and exact provider-boundary hashes for verification.
+
+**Consequences:** A cold object reconstructs the current chain once, and each
+provider request still proves exact full-array equality. Hot ordinary writes are
+proportional to their delta. Compaction remains explicitly linear because it
+replaces the model context by design.
+
+#### Canonical transcript visibility gets an object-local outbox
+
+**What changed:** Transcript turns, activity updates, and pending-input
+admission/delivery now allocate a room sequence and store a canonical reference
+in `durable_outbox` in the same SQLite transaction as their authoritative
+mutation. `SubstreamAgent` drains those references in sequence, persists the
+HyperSight refresh intent before acknowledgement, and derives alarm recovery
+from remaining rows. Subordinate execution receipts now persist their actual
+substream instead of hardcoding main substream `0`.
+
+**Why:** The prior post-commit `publishAgentRuntimeEvent` call left two invalid
+crash windows: a committed transition could disappear from live clients if the
+isolate died before publication, and a publication or dashboard-scheduling
+failure could be reported as though the already-accepted Bind transition had
+failed. The hardcoded receipt also assigned child executions to the wrong
+substream authority.
+
+**Considered and rejected:** Copying complete socket payloads into a second
+outbox-specific transcript was rejected because it creates another message
+authority. Best-effort publication without a durable reference was rejected
+because reconnect eventually repairing state does not make the live semantic
+change crash-atomic.
+
+**Consequences:** Canonical room events may replay the same sequence after a
+crash, which is intentionally idempotent. Ephemeral frames yield behind a
+pending canonical reference, and constructor/alarm derivation recovers any row
+left after commit.
+
+#### The terminal boundary releases execution ownership
+
+**What changed:** Safe-step settlement now advances only the persistent loop's
+step ordinal and Bind revision. The singleton remains executing until the
+host-outcome and terminal receipt commit closes execution ownership. Failed or
+stopped assistant reservations materialize as typed status pills; partial
+provider bytes never become a final assistant turn. Pending inputs remain
+immutable prepared facts, so a correction is another FIFO input rather than an
+edit or cancellation race.
+
+**Why:** Idling the singleton while its subordinate receipt was still running
+created a crash window that stranded the receipt outside the only active loop
+authority. Adopting interrupted partial bytes or mutating pending facts would
+create equivalent second authorities for assistant content or delivery order.
+
+**Considered and rejected:** Letting the safe step release the loop and teaching
+recovery to discover detached receipts, retaining interrupted prefixes as final
+turns, and adding mutable pending revisions. Each moves correctness into
+reconciliation after the authoritative transaction instead of making the
+invalid interleaving impossible.
+
+**Consequences:** Steers may promote at a safe step, but queued input waits until
+terminalization makes the singleton idle. A receipt cannot remain running behind
+an idle loop, a failed preview always rolls back to its status pill, and pending
+replay compares one immutable prepared value.
+
+
+#### Persistent loop state owns admission, recovery, and transcript delivery
+
+**What changed:** The cutover adds one `substream_loops` singleton, immutable
+`pending_loop_inputs`, exact `assistant_turn_reservations`, persisted Bind-head
+recovery fields, and loop provenance plus restart context on subordinate
+`runs`. Transcript snapshots expose pending inputs as identified overlays.
+Delivery atomically materializes the prepared participant fact, payload,
+provenance, attachments, mentions, transcript sequence, and attention ordinal,
+replaces its prepared envelope with a minimal delivery receipt, and synchronously
+enqueues its regional effects in the same SQLite transaction. Bind transition,
+assistant-error, and compaction
+commits advance the singleton's Bind cursor in that transaction too; exact
+replay repairs only the historical head-ahead crash window. SubstreamAgent's
+`run_steering` and `agent_run_dispatches` tables are removed;
+BlockDashboardAgent's separate dispatch ledger is unchanged.
+Every conditional loop, receipt, reservation, and pending-input mutation uses
+`UPDATE ... RETURNING` and validates the returned identity or revision. It does
+not infer a logical transition from `SqlStorageCursor.rowsWritten`, because
+workerd counts index maintenance as physical writes; doing so caused a valid
+receipt activation to roll back and immediately re-arm its alarm forever.
+The migration also deletes pre-cutover Bind heads and their cascading derived
+states/messages/boundaries because those heads used per-run IDs; the first
+stable-loop activation rebuilds Bind once from retained canonical participant
+history instead of guessing which obsolete run projection should win.
+The stable projection keeps one current metadata row and ordered message set;
+ordinary transitions insert or update only changed messages, while compaction
+alone replaces the set. Immutable `bind_activation_inputs` receipts point to
+exact facts and preserve activation identity across replacement without full
+state snapshots. The cutover deletes pre-existing operational run rows
+outright — canonical participant history is the only carried transcript
+input — so forward receipt predicates accept only `admitted` and `running`.
+
+**Why:** A message-owned run and compatibility steering row could not represent
+one conversation loop across multiple model steps, crash recovery, queued
+inputs, and safe-boundary steering. Assigning canonical or unread order at
+admission also let presentation get ahead of what the model had actually
+received.
+
+**Considered and rejected:** Retaining the old dispatch tables as a fallback,
+using a per-message run ID as loop identity, and assigning a provisional
+transcript or attention ordinal to pending input. Each option preserves two
+authorities or creates order that must later be moved.
+
+**Consequences:** Pending input survives compaction and executor replacement
+without becoming canonical or unread early. Recovery retains the loop cycle and
+increments only its execution epoch after lease expiry. Assistant order is
+reserved before generation and every slot must materialize as accepted output
+or an error. Execution receipts remain queryable evidence, but orchestration
+must fence lifecycle and pending-set changes on loop revision. Ordinary Bind
+commits instead fence stable execution identity/epoch/lease plus the prior Bind
+state revision, so concurrent admission or lease renewal cannot invalidate an
+otherwise correct provider transition. If the first executor died before
+`state_initialized`, the next activation still promotes the oldest input and
+starts its receipt atomically, then initializes Bind exactly once from that
+canonical history instead of deadlocking on a missing head.
+The loop execution epoch is separate from the receipt's harness-attempt epoch:
+activation records the former on both the singleton and receipt, recovery
+advances both atomically so product failure/settlement can fence the current
+owner, and only a harness attempt claim increments the latter. Cycle ordinal
+and execution sequence remain immutable activation provenance. Closing a safe
+step advances only the loop's step ordinal and Bind revision; the singleton
+stays executing until the terminal receipt commit releases ownership, and
+host-outcome publication and attempt terminalization own that receipt's final
+status. One receipt may therefore carry any number of assistant-turn
+reservations within its cycle rather than storing a singular assistant turn.
+
+#### Product admission stopped publishing invoked input before delivery
+
+**What changed:** The product service now initializes one persistent substream
+loop with identity derived from the work stream and substream, independently of
+any execution receipt. Addressed messages and
+elicitation answers store immutable prepared input and return a typed request to
+activate that loop; they no longer create a canonical turn, attention ordinal,
+regional effect, execution receipt, or workflow input at admission. Stop writes
+only the loop's safe-boundary stop request. Retry creates one subordinate
+execution receipt whose immutable execution context is the durable activation
+intent, then returns that receipt to the same stable loop; it never creates a
+second logical loop. Slack opening messages and follow-ups use the same product
+admission boundary instead of appending an external turn and separately asking
+the Worker to launch a run. External elicitation answers are decided atomically:
+an answer remains canonical while another question is still open, and only the
+answer that clears the final open question becomes pending invoked input.
+
+**Why:** A message that was visible and notification-producing before Bind
+accepted it could be ordered ahead of the assistant/tool step it actually
+steered, and a crash could leave transcript history without corresponding model
+state. Minting one harness run per message also confused an execution attempt
+with the substream's long-lived conversation identity. Connector ingress had
+the same defect through a different service: on an already-initialized Bind
+loop, rebuilding execution input did not make a separately appended Slack turn
+part of the resumed array, so the acknowledged trigger could be absent from the
+model call entirely.
+
+**Considered and rejected:** Keeping the eager canonical write and repairing its
+display order, continuing to overwrite `run_steering`, and treating a transient
+alarm as the retry's activation authority. Those preserve the split-brain
+boundary or let a crash forget an acknowledged retry.
+
+**Consequences:** The loop owner must promote the prepared fact, required
+participant/resource projections, exact Bind transition, and delivery receipt
+atomically with the regional effect outbox before it creates the subordinate
+execution receipt. Activation is
+currently handed to that owner as a typed request; it may not be reconstructed
+from a message-owned run ID. Product tests assert that pending admission leaves
+canonical counters, run rows, and regional outbox state unchanged.
+Invoked connector producers must call the typed external-admission RPC rather
+than composing a generic transcript append with `launchWorkstreamHarness`;
+external messages that intentionally do not invoke Bind may still append
+canonically through the generic message port.
+
+#### Snapshot provenance fences retained transcript ranges
+
+**What changed:** Snapshot socket frames now say whether they are an initial
+delivery, a same-socket reconciliation, or recovery from unavailable replay
+history. Electron retains loaded ranges across a new snapshot ID only for the
+reconciliation case; initial and history-recovery snapshots replace old-fence
+ranges completely. The shared object-port type now maps only its declared
+operation union, matching the methods its runtime factory actually constructs.
+
+**Why:** A bounded recovery snapshot contains the latest five turns, not every
+turn a reader previously loaded. Relabelling an uncovered old range with its new
+snapshot ID could preserve a missed tool completion, elicitation answer,
+revision, or retraction indefinitely. Separately, message and scheduling ports
+claimed their resident prepare/commit phases were remotely callable even though
+the dispatcher never exposed them.
+
+**Considered and rejected:** Retaining only turns that look immutable, eagerly
+copying every prior range, and fixing the two port aliases with unrelated
+one-off `Pick` wrappers. Canonical turns may revise or retract; old bytes cannot
+prove their own freshness; and the port mismatch originated in the shared
+factory return type.
+
+**Consequences:** Rare replay loss may temporarily remove paged-in history until
+the reader loads that gap at the new fence. Same-socket reconciliation preserves
+it without another read because ordered catch-up proves continuity. Any future
+snapshot producer must declare which proof it carries, and adding a local-only
+storage method cannot silently widen a Worker-side object port.
+
+#### Forward relation cutovers remain valid under enforcement
+
+**What changed:** The canonical relation cutover now stays valid with
+foreign-key enforcement enabled at every statement. It copies dependent tool,
+publication, suggestion, steering, attachment, and mention rows first, removes
+the old graph child-first, and only then removes the compatibility parent. The
+released v32 payload migration retains its legacy execution marker and hash;
+new migrations do not inherit that exception. The cutover also recreates the
+live run view with current turn vocabulary.
+
+**Why:** A foreign-key toggle is connection state, not a safe forward schema
+contract. It can be ineffective inside an object event, and deferred checks do
+not suppress `ON DELETE` cascades. A migration can therefore report an empty
+`foreign_key_check` while having already deleted valid child rows.
+
+**Considered and rejected:** Generalizing a deferred-constraint migration mode.
+That abstraction masked missing child relations and made valid SQL depend on
+ambient event state. Rebuilding the actual dependency graph is narrower and is
+proved with populated rows for every relation.
+
+**Consequences:** Every new referenced-parent change names and tests its complete
+incoming dependency graph. A new object's migration ledger is still bootstrapped
+inside the first pending transaction, and every shipped migration through v32
+remains fingerprint-pinned. The populated v32 upgrade fixture must retain each
+seeded transcript relation and operational receipt rather than relying only on
+an empty final `foreign_key_check`.
+
+
+#### Ordered turns and explicit overlays replace compatibility messages
+
+**What changed:** The cutover adds canonical conversation metadata, rebuilds
+every message-related foreign key onto `participant_transcript_turns`, renames
+turn-owned attachment and mention
+relations, and deletes the `workstream_message_records` key shim and detail
+view. The socket contract now exposes canonical snapshots/ranges and typed
+transient overlays with explicit identity, provenance, revision, and sequence
+anchors. Run settlement adopts the canonical Bind turn instead of persisting a
+run-final copy. The final implementation names the atomic operation and recovery
+checkpoint `publishHostOutcome` / `host_outcome`, because the same commit may
+contain an accepted assistant turn, a participant-visible system notice, both,
+or neither. The cutover and the wire protocol name the transient run grouping
+as `stream_id` / `streamId` and the durable settlement identity as
+`final_turn_id` / `finalTurnId`; neither is allowed to masquerade as a message
+ID. External ingress and activity routing rely on the canonical turn upsert
+emitted by the object port rather than publishing a second message event. The
+creation API likewise returns `turnId`, so the optimistic opening row and its
+authoritative replacement share one protocol identity. Canonical block
+flattening indexes only singleton protocol identities in linear time; it never
+deduplicates ordinary blocks by their shared client submission identity.
+Human turns persist the author's display name and avatar as an immutable turn
+snapshot, so later participant removal cannot erase authorship or change
+own-message layout. The wire schema rejects missing, mismatched, or nonhuman author
+provenance. Authenticated product operations are the only human write path; the
+generic runtime message port accepts only agent, external, and system authors.
+The desktop may consult current membership for a revision-zero optimistic turn,
+but never for a canonical revision, and the checked-in development fixture
+provides the same immutable snapshot required in production.
+Resumed harness attempts rebuild attachment-grounding state
+from durable tool receipts before any new delta can be published.
+
+**Why:** The incident was not fundamentally a bad sort. Compatibility pages,
+canonical ranges, and live state supplied competing identities and ordering
+rules. Persisted rows from an unloaded range could be mistaken for live tail
+state, while run settlement could copy an already accepted assistant turn. The
+same generic message reconciler also collapsed distinct canonical blocks when
+one submitted turn legitimately gave them the same `clientMessageId`.
+
+**Considered and rejected:** Filtering duplicated run finals, deduplicating by
+text/time, or retaining an ID-only compatibility table. Those patches leave two
+authorities and fail for repeated text, clock skew, partial range coverage, and
+legitimate multi-turn runs.
+
+**Consequences:** Canonical `transcript_sequence` is the only durable display
+order. An overlay may appear between canonical turns only through its declared
+anchor and is retired only by its explicit canonical identity. Retired message
+page/feed contracts and old Electron builds are deliberately incompatible.
+Terminal settlement accepts assistant content only when Bind accepted that
+exact turn and content or when an interrupted provider stream supplied the
+explicit identity for its own partial bytes. Host-authored terminal guidance
+receives its own system-turn identity and never borrows the stream's. The
+host-outcome event is durable even with no transcript write, closing the
+recovery gap for failures and stops before an assistant turn.
+Tests cover permuted timestamps and arrival order, disjoint/empty ranges,
+optimistic and streaming handoff, duplicate/stale revisions, large transcripts,
+run-final adoption, hibernation recovery, and deletion/FK integrity.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
 ### 2026-08-27 — Participant removal preserves one reader
 
@@ -1309,7 +2052,6 @@ failure cannot extend a removed reader's transcript access. The one-participant
 floor deliberately applies at both scopes, even though workspace visibility
 would still make a zero-participant stream readable, so participant lifecycle
 does not gain a second empty state.
-
 ### 2026-08-27 — Canonical transcript ownership becomes the only runtime path
 
 **What changed:** SubstreamAgent schema v32 first proves exact parity for every
@@ -1621,8 +2363,9 @@ visible semantics, not only visible text. Author IDs determine own-versus-
 coworker layout and stable person color; mention IDs determine chips independently
 of notification delivery; attachment links determine message-local tiles; type
 and structured content determine specialized rows. Assistant output remains on
-the canonical Bind projection and must not also be appended through the legacy
-final-message path. A transcript contract change must compare its hydrated shape
+the canonical Bind projection; run settlement may assign attention or create a
+missing stopped-stream turn, but must not append a second final-message row. A
+transcript contract change must compare its hydrated shape
 with the existing message-page mapper and cover both real object snapshots and
 the desktop flattening boundary. Rows written during a deployment that omitted
 the ordered projection remain readable through the identity-matched message

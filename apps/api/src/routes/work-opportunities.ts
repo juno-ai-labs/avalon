@@ -50,9 +50,9 @@ function suggestionFreshness(createdAt: string): "lt_1h" | "1h_24h" | "1d_7d" | 
  */
 export const StartedWorkOpportunityResponseSchema = z.object({
   workstream: WorkstreamSchema,
-  messageId: IdSchema,
+  turnId: IdSchema,
   harnessRunId: IdSchema.nullable(),
-});
+}).strict();
 
 export const workOpportunityRoutes = new Hono<HonoAppEnv>();
 
@@ -135,7 +135,11 @@ workOpportunityRoutes.post(
       input.idempotencyKey,
     );
     const context = startResult.telemetryContext;
-    const started = StartedWorkOpportunityResponseSchema.parse(startResult);
+    const started = StartedWorkOpportunityResponseSchema.parse({
+      workstream: startResult.workstream,
+      turnId: startResult.turnId,
+      harnessRunId: startResult.harnessRunId,
+    });
     const surface = input.surface;
     const hasDetailedContext = Boolean(context && surface && input.position);
     if (!hasDetailedContext) {

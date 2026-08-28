@@ -33,6 +33,20 @@ export function substreamAgentName(
   return substreamId === "0" ? workstreamName : `${workstreamName}:${substreamId}`;
 }
 
+/**
+ * Permanent Bind-loop identity for one substream.
+ *
+ * It is derived from durable product identity rather than from an activation,
+ * message, or executor receipt, so eviction and recovery can never mint a
+ * second logical loop for the same substream.
+ */
+export function substreamLoopId(
+  workstreamId: WorkstreamId,
+  substreamId: SubstreamId | "0" = "0",
+): string {
+  return `workstream:${workstreamId}:substream:${substreamId}:loop`;
+}
+
 /** One durable Bind-loop owner for each stable HyperSight block. */
 export function blockDashboardAgentName(
   region: Region,
@@ -41,4 +55,9 @@ export function blockDashboardAgentName(
   blockId: BlockId,
 ): string {
   return `${workstreamDOName(region, workspaceId, workstreamId)}:block-dashboard:${blockId}`;
+}
+
+/** Permanent Bind-loop identity for one HyperSight block across its executions. */
+export function blockDashboardLoopId(blockId: BlockId): string {
+  return `block-dashboard:${blockId}:loop`;
 }

@@ -17,13 +17,14 @@ import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { applyWorkspaceResourceSchema, createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import {
   openWorkstreamAuthorityForTest,
+  seedCanonicalConversationTurn,
   seedWorkstreamObjectRoot,
+  seedWorkstreamRun,
   testSubstreamAgentsBinding,
   testWorkstreamContract,
   testWorkstreamObjectStore,
   workstreamObjectAll,
   workstreamObjectGet,
-  workstreamObjectRun,
   applyWorkstreamObjectRootFields,
   seedWorkstreamObjectParticipant,
   workstreamObjectParticipantRows,
@@ -289,7 +290,7 @@ describe("Slack workspace workstream assignment", () => {
           attachments: [],
         },
       },
-    )).resolves.toEqual({ elicitation: null, harnessRunId: null });
+    )).resolves.toEqual({ elicitation: null });
 
     expect(workstreamObjectAll(
       objectStore,
@@ -348,7 +349,6 @@ describe("Slack workspace workstream assignment", () => {
 
     // `elicitation-b` is still open, so the work stream is still waiting on
     // somebody and no run is launched to resume it.
-    expect(answered).toMatchObject({ harnessRunId: null });
     expect(answered?.elicitation).toMatchObject({ id: "elicitation-a", status: "answered", answer: "staging" });
     expect(workstreamObjectAll(
       objectStore,
@@ -364,13 +364,151 @@ describe("Slack workspace workstream assignment", () => {
     expect(workstreamObjectGet(
       objectStore,
       `SELECT author_type, message_type, sequence_number, external_actor_json
-         FROM messages WHERE client_message_id = 'event:answer'`,
+         FROM canonical_conversation_turn_details WHERE client_message_id = 'event:answer'`,
     )).toEqual({
       author_type: "external",
       message_type: "elicitation",
       sequence_number: 2,
       external_actor_json: JSON.stringify(actor),
     });
+  });
+
+  it("admits the final external answer to the loop without publishing or minting a run", async () => {
+    const database = migratedDatabase();
+    const objectStores = new Map<string, DatabaseSync>();
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    const workstreamId = "7a000000-0000-4000-8000-000000000005";
+    const workspaceId = "3f88f9ca-d7b3-4714-828e-b22187914524";
+    seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
+    objectStores.set(workstreamId, objectStore);
+    seedElicitationRetry(database, objectStore, "system", null, null);
+    objectStore.prepare(
+      `UPDATE elicitation_requests
+          SET status = 'answered', answer_json = '"already done"', answered_at = created_at
+        WHERE elicitation_id = 'elicitation-b'`,
+    ).run();
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      AVALON_REGION: "global",
+    });
+    const before = workstreamObjectRootRow(
+      objectStore,
+      "next_sequence_number, next_attention_ordinal",
+    );
+    const actor = {
+      provider: "slack" as const,
+      providerAccountId: "T123",
+      providerUserId: "U456",
+      displayName: "Taylor",
+      avatarUrl: null,
+    };
+
+    const answered = await new SlackWorkspaceWorkstreamService(
+      env,
+      asWorkspaceId(workspaceId),
+    ).answerOpenElicitation(workstreamId, {
+      actor,
+      text: "ship it",
+      clientMessageId: "event:final-answer",
+      slackOrigin: {
+        teamId: "T123",
+        channelId: "C123",
+        channelName: "general",
+        threadTs: "123.456",
+        invocationType: "app_mention",
+        channelType: "public",
+        matchedAvalonUserId: null,
+        nearbyMessagesStatus: "available",
+        nearbyMessages: [],
+        attachments: [],
+      },
+    });
+
+    expect(answered).toMatchObject({
+      elicitation: { id: "elicitation-a", status: "answered", answer: "ship it" },
+    });
+    expect(workstreamObjectGet(
+      objectStore,
+      `SELECT actor, external_actor_json, message_type
+         FROM pending_loop_inputs WHERE client_message_id = 'event:final-answer'`,
+    )).toEqual({
+      actor: "external",
+      external_actor_json: JSON.stringify(actor),
+      message_type: "elicitation",
+    });
+    expect(workstreamObjectGet(
+      objectStore,
+      `SELECT COUNT(*) AS count FROM canonical_conversation_turn_details
+        WHERE client_message_id = 'event:final-answer'`,
+    )).toEqual({ count: 0 });
+    expect(workstreamObjectGet(objectStore, "SELECT COUNT(*) AS count FROM runs"))
+      .toEqual({ count: 2 });
+    expect(workstreamObjectRootRow(
+      objectStore,
+      "next_sequence_number, next_attention_ordinal",
+    )).toEqual(before);
+  });
+
+  it("reports pending delivery without execution claims and audits a replay once", async () => {
+    const database = migratedDatabase();
+    const objectStores = new Map<string, DatabaseSync>();
+    const objectStore = testWorkstreamObjectStore();
+    databases.push(objectStore);
+    const workstreamId = "7a000000-0000-4000-8000-000000000005";
+    const workspaceId = "3f88f9ca-d7b3-4714-828e-b22187914524";
+    seedWorkstreamObjectRoot(objectStore, { workstreamId, workspaceId });
+    objectStores.set(workstreamId, objectStore);
+    seedElicitationRetry(database, objectStore, "system", null, null);
+    const service = new SlackWorkspaceWorkstreamService(
+      createTestEnv({
+        DB: sqliteD1(database),
+        SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+        AVALON_REGION: "global",
+      }),
+      asWorkspaceId(workspaceId),
+    );
+    const input = {
+      actor: {
+        provider: "slack" as const,
+        providerAccountId: "T123",
+        providerUserId: "U456",
+        displayName: "Taylor",
+        avatarUrl: null,
+      },
+      text: "Please inspect the deploy",
+      clientMessageId: "event:message-replay",
+      slackOrigin: {
+        teamId: "T123",
+        channelId: "C123",
+        channelName: "general",
+        threadTs: "123.456",
+        invocationType: "app_mention" as const,
+        channelType: "public" as const,
+        matchedAvalonUserId: null,
+        nearbyMessagesStatus: "available" as const,
+        nearbyMessages: [],
+        attachments: [],
+      },
+    };
+
+    const first = await service.createMessage(workstreamId, input);
+    const replay = await service.createMessage(workstreamId, input);
+
+    expect(first).toEqual({
+      message: {
+        id: expect.any(String),
+        clientMessageId: "event:message-replay",
+      },
+      deliveryState: "pending",
+    });
+    expect(replay).toEqual(first);
+    expect(database.prepare(
+      `SELECT COUNT(*) AS count FROM audit_events
+        WHERE action = 'slack.workspace_workstream.message_created'
+          AND target_id = ?`,
+    ).get(first.message.id)).toEqual({ count: 1 });
   });
 
   it("lets an explicit account link correct a creator its own email guess produced", async () => {
@@ -497,7 +635,6 @@ describe("Slack workspace workstream assignment", () => {
   });
 });
 
-
 async function seedLinkedSlackMember(database: DatabaseSync, credentialsKey: string): Promise<void> {
   await seedSlackInstallation(database, credentialsKey);
   database.exec(`
@@ -584,7 +721,7 @@ describe("Slack connector principal delivery", () => {
                 createdByUserId: input.creatorUserId,
                 emailAddress: input.emailAddress,
               }),
-              messageId: crypto.randomUUID(),
+              turnId: crypto.randomUUID(),
               harnessRunId: crypto.randomUUID(),
             };
           },
@@ -700,23 +837,12 @@ describe("Slack connector principal delivery", () => {
           create_message: (request) => {
             captured.push(request as { operation: string; auth: unknown });
             return {
-              message: {
-                id: "019fc4e0-5555-7000-8000-000000000055",
+              turn: {
+                turnId: "019fc4e0-5555-7000-8000-000000000055",
                 clientMessageId: "slack:reply",
-                workspaceId: "22222222-2222-4222-8222-222222222222",
-                workstreamId: "7a000000-0000-4000-8000-0000000000aa",
-                author: { type: "agent" },
-                messageType: "text",
-                textContent: "which domains are available",
-                structuredContent: null,
-                mentions: [],
-                attachments: [],
-                sequenceNumber: 2,
                 createdAt: "2026-01-02T00:00:00.000Z",
-                editedAt: null,
               },
-              agentInvoked: true,
-              harnessRunId: "019fc4e0-6666-7000-8000-000000000066",
+              deliveryState: "canonical",
             };
           },
       },
@@ -1078,7 +1204,7 @@ describe("Slack public channel membership", () => {
                 createdByUserId: input.creatorUserId,
                 emailAddress: input.emailAddress,
               }),
-              messageId: crypto.randomUUID(),
+              turnId: crypto.randomUUID(),
               harnessRunId: crypto.randomUUID(),
             };
           },
@@ -1482,42 +1608,39 @@ function seedElicitationRetry(
     emailAddress: "retry@automation.with-avalon.com",
     emailRouteStatus: "active",
   });
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-     VALUES
-       ('run-a', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'test', '{}', 'needs_input', '2026-01-01'),
-       ('run-b', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', 'test', '{}', 'needs_input', '2026-01-02')`,
-  );
+  seedWorkstreamRun(objectStore, { id: "run-a", status: "needs_input",
+    createdAt: Date.parse("2026-01-01") });
+  seedWorkstreamRun(objectStore, { id: "run-b", status: "needs_input",
+    createdAt: Date.parse("2026-01-02") });
   // The object's own table and vocabulary: `_runtime_elicitations` is gone
   // with the last caller that named it, and `pending` is what the object
   // stores for what the retired view rendered as `open`.
   objectStore.exec(`
     INSERT INTO elicitation_requests
-      (elicitation_id, run_id, prompt, response_type, options_json, minimum_selections,
+      (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json, minimum_selections,
        maximum_selections, target_user_id, status, answer_json, answered_by_user_id,
        external_actor_json, created_at, answered_at)
     VALUES
-      ('elicitation-a', 'run-a', 'First?', 'text', '[]', 0, NULL, NULL, 'pending',
+      ('elicitation-a', 'run-a', 'loop:turn:1:tool:0', 'First?', 'text', '[]', 0, NULL, NULL, 'pending',
        NULL, NULL, NULL, 1767225600000, NULL),
-      ('elicitation-b', 'run-b', 'Second?', 'text', '[]', 0, NULL, NULL, 'pending',
+      ('elicitation-b', 'run-b', 'loop:turn:2:tool:0', 'Second?', 'text', '[]', 0, NULL, NULL, 'pending',
        NULL, NULL, NULL, 1767312000000, NULL)
   `);
-  workstreamObjectRun(
-    objectStore,
-    `INSERT INTO messages
-     (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-      message_type, text_content, structured_content_json, sequence_number, created_at,
-      external_actor_json)
-     VALUES ('message-retry', 'event:retry', '3f88f9ca-d7b3-4714-828e-b22187914524', '7a000000-0000-4000-8000-000000000005', ?, ?,
-             'elicitation', '', NULL, 1, '2026-01-01', ?)`,
-    // The object stores an externally-actored message as author `external` —
-    // its parts table rejects the legacy `system` + actor-json encoding.
-    externalActorJson === null ? authorType : "external",
+  seedCanonicalConversationTurn(objectStore, {
+    turnId: "message-retry",
+    clientMessageId: "event:retry",
+    // Canonical authorship preserves the external actor directly.
+    actor: externalActorJson === null
+      ? authorType
+      : "external",
     authorUserId,
+    authorSnapshot: null,
     externalActorJson,
-  );
+    messageType: "elicitation",
+    text: "",
+    transcriptSequence: 1,
+    createdAt: "2026-01-01",
+  });
 }
 
 async function seedSlackInstallation(database: DatabaseSync, credentialsKey: string): Promise<void> {
@@ -1717,10 +1840,11 @@ describe("Slack ingress maintenance reaps link challenges", () => {
     // alarm comes back for it as fast as it can: the 2026-08-22 hot loop.
     const database = migratedDatabase();
     // The alarm's draft arm reads the object's links table, which no regional
-    // snapshot has ever carried.
+    // snapshot has ever carried, plus its pending reservation ledger.
     createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
     // The alias arm reads a column the object added to `resources`.
     applyWorkspaceResourceSchema(database, WORKSPACE_ID);
+
     const credentialsKey = "test-connector-credentials-key";
     await seedSlackInstallation(database, credentialsKey);
     seedChallenge(database, await sha256("expired"), "2026-01-01T00:15:00.000Z");
@@ -2101,7 +2225,6 @@ function slackMembershipEnvironment(
     SLACK_SIGNING_SECRET: "signing",
   }), ...overrides };
 }
-
 
 function migratedDatabase(): DatabaseSync {
   const database = legacyProductSqliteDatabase();

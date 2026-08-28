@@ -14,6 +14,7 @@ import { NO_MENTIONS, useDraftText } from '../lib/use-draft-text';
 import { draftWithMentionStarted, mentionOptionId, mentionQueryAtCaret, useMentionNavigation } from '../lib/use-mention-navigation';
 import type { PendingAttachment } from '../lib/use-file-attachments';
 import type { WorkspaceMember, WorkstreamDetail } from '../lib/types';
+import type { WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import type { AttachmentPreview } from './attachments';
 import { ComposerInput } from './composer-input';
 import { Avatar, Badge, Button, Modal } from './primitives';
@@ -41,7 +42,12 @@ interface WorkstreamComposerProps {
   uploading: boolean;
   error?: string;
   attachments: PendingAttachment[];
-  onSend: (text: string, mentions: MentionIdentity[], confirmedParticipantUserIds?: string[]) => Promise<void>;
+  onSend: (
+    text: string,
+    mentions: MentionIdentity[],
+    confirmedParticipantUserIds?: string[],
+    deliveryMode?: WorkstreamMessageDeliveryMode,
+  ) => Promise<void>;
   onAttach: (files: FileList | File[]) => void;
   onOpenAttachment: (preview: AttachmentPreview) => void;
   onRemoveAttachment: (localId: string) => void;
@@ -53,6 +59,7 @@ interface PendingMentionConfirmation {
   text: string;
   mentions: MentionIdentity[];
   members: WorkspaceMember[];
+  deliveryMode?: WorkstreamMessageDeliveryMode;
 }
 
 interface ComposerCommand {
@@ -95,6 +102,7 @@ export function WorkstreamComposer({
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingMentionConfirmation | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [deliveryMode, setDeliveryMode] = useState<WorkstreamMessageDeliveryMode>('steer');
   const readyAttachmentCount = attachments.filter((attachment) => attachment.status === 'ready').length;
   const participantIds = useMemo(() => new Set(workstream.participants.map((person) => person.id)), [workstream.participants]);
   const candidates = useMemo<MentionCandidate[]>(() => members
@@ -274,16 +282,26 @@ export function WorkstreamComposer({
       return resolvedPersonIds.has(member.id);
     });
     if (workstream.scope === 'personal' && nonparticipants.length > 0) {
-      setPendingConfirmation({ text: trimmed, mentions: submitted.mentions, members: nonparticipants });
+      setPendingConfirmation({
+        text: trimmed,
+        mentions: submitted.mentions,
+        members: nonparticipants,
+        ...(workstream.harnessStatus === 'running' ? { deliveryMode } : {}),
+      });
       return;
     }
     const mentions = submitted.mentions;
     const revision = draftRevisionRef.current;
+    const submittedDeliveryMode = workstream.harnessStatus === 'running' ? deliveryMode : undefined;
     resetDraft();
+    setDeliveryMode('steer');
     try {
-      await onSend(trimmed, mentions);
+      await onSend(trimmed, mentions, undefined, submittedDeliveryMode);
     } catch {
       restoreDraft(trimmed, mentions, revision);
+      if (draftRevisionRef.current === revision && submittedDeliveryMode) {
+        setDeliveryMode(submittedDeliveryMode);
+      }
     }
   };
 
@@ -294,14 +312,19 @@ export function WorkstreamComposer({
     setConfirming(true);
     setPendingConfirmation(null);
     resetDraft();
+    setDeliveryMode('steer');
     try {
       await onSend(
         submitted.text,
         submitted.mentions,
         submitted.members.map((member) => member.id),
+        submitted.deliveryMode,
       );
     } catch {
       restoreDraft(submitted.text, submitted.mentions, revision);
+      if (draftRevisionRef.current === revision && submitted.deliveryMode) {
+        setDeliveryMode(submitted.deliveryMode);
+      }
     } finally {
       setConfirming(false);
     }
@@ -417,7 +440,29 @@ export function WorkstreamComposer({
         ref={textareaRef}
         shouldSubmitOnEnter={() => mentionQuery === null}
         submitAccessory={workstream.harnessStatus === 'running'
-          ? <Button className="stop-button" onClick={() => void onStop()}><Square fill="currentColor" size={9} /> Stop</Button>
+          ? (
+              <div className="message-delivery-controls">
+                <label className="sr-only" htmlFor={`message-delivery-mode-${workstream.id}`}>Message delivery</label>
+                <select
+                  aria-label="Message delivery"
+                  className="message-delivery-mode"
+                  id={`message-delivery-mode-${workstream.id}`}
+                  onChange={(event) => setDeliveryMode(event.target.value as WorkstreamMessageDeliveryMode)}
+                  value={deliveryMode}
+                >
+                  <option value="steer">Steer after this response</option>
+                  <option value="queue">Queue for next loop</option>
+                </select>
+                <Button
+                  className="stop-button"
+                  disabled={workstream.stopRequested}
+                  onClick={() => void onStop()}
+                >
+                  <Square fill="currentColor" size={9} />
+                  {workstream.stopRequested ? 'Stopping after this response…' : 'Stop'}
+                </Button>
+              </div>
+            )
           : undefined}
         submitDisabled={uploading || (!text.trim() && readyAttachmentCount === 0)}
         submitLabel="Send message"

@@ -16,15 +16,13 @@ import {
   refreshWorkstreamDescription,
   restUntil,
 } from "../src/services/workstream-description-service";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
-  executeWorkstreamObjectSql,
+  seedCanonicalConversationTurn,
   testSubstreamAgentsBinding,
   seedWorkstreamObjectRoot,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
   workstreamObjectRootRow,
   applyWorkstreamObjectRootFields,
 } from "./helpers/durable-authority";
@@ -120,11 +118,7 @@ function fixture(options: {
   };
   vi.stubGlobal("fetch", fetcher);
 
-  // Production hands the refresh loop a routed environment — the substream
-  // agent's local runtime environment; the local executor is that agent-side
-  // port over the object store.
-  const env = withWorkstreamRuntimeDatabase(
-    createTestEnv({
+  const env = createTestEnv({
       DB: sqliteD1(database),
       // The refresh cadence's own rows reach the object through the scheduling
       // port rather than the runtime router, so the fixture needs the binding
@@ -137,12 +131,7 @@ function fixture(options: {
       OPENROUTER_STRUCTURED_MODEL: "test/structured",
       OPENROUTER_FALLBACK_MODELS: "",
       PUBLIC_API_BASE_URL: "https://api.example.com",
-    }),
-    WORKSPACE_ID,
-    WORKSTREAM_ID,
-    "0",
-    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-  );
+    });
   return { database, objectStore, env, prompts };
 }
 
@@ -182,22 +171,15 @@ function addMessages(
   const storedAuthorType = authorType;
   for (let index = 0; index < count; index += 1) {
     const sequence = startSequence + index;
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO messages
-         (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-          message_type, text_content, sequence_number, created_at, external_actor_json)
-       VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?, ?)`,
-      `message-${sequence}`,
-      `client-${sequence}`,
-      WORKSPACE_ID,
-      WORKSTREAM_ID,
-      storedAuthorType,
-      authorType === "human" ? USER_ID : null,
-      options.text ?? DRIFTING_MESSAGE,
-      sequence,
-      options.createdAt ?? NOW.toISOString(),
-      authorType === "external"
+    seedCanonicalConversationTurn(objectStore, {
+      turnId: `message-${sequence}`,
+      clientMessageId: `client-${sequence}`,
+      actor: storedAuthorType === "agent" ? "assistant" : storedAuthorType,
+      authorUserId: authorType === "human" ? USER_ID : null,
+      authorSnapshot: authorType === "human"
+        ? { displayName: "Test user at posting time", avatarUrl: null }
+        : null,
+      externalActorJson: authorType === "external"
         ? JSON.stringify({
             provider: "slack",
             providerAccountId: "TACME",
@@ -206,7 +188,10 @@ function addMessages(
             avatarUrl: null,
           })
         : null,
-    );
+      text: options.text ?? DRIFTING_MESSAGE,
+      transcriptSequence: sequence,
+      createdAt: options.createdAt ?? NOW.toISOString(),
+    });
   }
 }
 

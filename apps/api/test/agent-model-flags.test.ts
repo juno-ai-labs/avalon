@@ -16,7 +16,6 @@ import {
 import type * as FlagTargetingModule from "../src/services/flag-targeting-attributes";
 import type { FlagTargetingAttributes } from "../src/services/flag-targeting-attributes";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import {
@@ -109,9 +108,9 @@ function seededEnv(env: Env, modelOverride: string | null = null): Env {
     )
     .run(SEEDED_WORKSPACE_ID, "00000000-0000-4000-8000-000000000011", at);
   // The work stream is its object's, not the region's: a targeting attribute
-  // about it is read through `workstreamExecutionEnvironment`, which routes at
-  // the object. Seeded regionally, the read finds nothing and the resolver
-  // reports a suppressed subject rather than the facts this file is about.
+  // about it is read through its typed object authority. Seeded regionally,
+  // the read finds nothing and the resolver reports a suppressed subject
+  // rather than the facts this file is about.
   const objectStore = testWorkstreamObjectStore();
   openDatabases.push(objectStore);
   seedWorkstreamObjectRoot(objectStore, {
@@ -490,7 +489,7 @@ describe("agent model flags", () => {
     // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
     // reads `env.DB`, and the pin lives in the work stream's own object.
     await expect(resolveWorkstreamModelRouting(
-      withWorkstreamRuntimeDatabase(env, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID),
+      env,
       { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
     ))
       .resolves.toEqual({ model: "deepseek/deepseek-v4-pro", fallbackModels: [] });
@@ -506,7 +505,7 @@ describe("agent model flags", () => {
     // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
     // reads `env.DB`, and the pin lives in the work stream's own object.
     await expect(resolveWorkstreamModelRouting(
-      withWorkstreamRuntimeDatabase(env, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID),
+      env,
       { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
     ))
       .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: ["google/gemini-3.6-flash"] });
@@ -521,7 +520,7 @@ describe("agent model flags", () => {
     // Routed by the caller, as production routes it: `resolveWorkstreamModelRouting`
     // reads `env.DB`, and the pin lives in the work stream's own object.
     await expect(resolveWorkstreamModelRouting(
-      withWorkstreamRuntimeDatabase(env, SEEDED_WORKSPACE_ID, SEEDED_WORKSTREAM_ID),
+      env,
       { workspaceId: SEEDED_WORKSPACE_ID, workstreamId: SEEDED_WORKSTREAM_ID },
     ))
       .resolves.toEqual({ model: "x-ai/grok-4.5", fallbackModels: [] });

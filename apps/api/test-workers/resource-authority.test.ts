@@ -219,7 +219,7 @@ describe("resource authority on real workerd", () => {
           now: 1,
         });
         state.storage.sql.exec(
-          `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+          `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
            VALUES (?, ?, 0, '{}')`,
           `p${index}`,
           resourceId,

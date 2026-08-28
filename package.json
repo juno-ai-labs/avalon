@@ -41,7 +41,7 @@
     "e2e:local": "node scripts/e2e-local.mjs",
     "db:open-authority": "node scripts/open-local-authority.mjs",
     "smoke:model": "node scripts/smoke-model.mjs",
-    "test": "pnpm -r --no-sort --if-present test",
+    "test": "pnpm -r --no-sort --no-bail --if-present test",
     "test:observability": "node --test scripts/configure-cloudflare-observability.test.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",
     "test:watch": "vitest",

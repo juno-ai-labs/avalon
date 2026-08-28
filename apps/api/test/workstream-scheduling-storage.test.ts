@@ -200,6 +200,7 @@ describe("open elicitations", () => {
   const ask = (elicitationId: string, createdAt: number, overrides: Record<string, unknown> = {}) => ({
     elicitation_id: elicitationId,
     run_id: RUN,
+    tool_call_id: `${RUN}:turn:1:tool:${createdAt}`,
     prompt: `Question ${elicitationId}`,
     response_type: "text",
     options_json: "[]",
@@ -217,12 +218,13 @@ describe("open elicitations", () => {
   ): void {
     sql.exec(
       `INSERT INTO elicitation_requests
-         (elicitation_id, run_id, prompt, response_type, options_json, minimum_selections,
+         (elicitation_id, run_id, tool_call_id, prompt, response_type, options_json, minimum_selections,
           maximum_selections, target_user_id, status, answer_json, answered_by_user_id,
           external_actor_json, created_at, answered_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL)`,
       row.elicitation_id,
       row.run_id,
+      row.tool_call_id,
       row.prompt,
       row.response_type,
       row.options_json,

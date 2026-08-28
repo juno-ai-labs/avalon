@@ -96,7 +96,7 @@ describe("a watched resource's change notification", () => {
     // documents the re-fetch would refresh.
     const stored = workstreamObjectGet(
       objectStore,
-      "SELECT structured_content_json FROM messages WHERE message_type = 'system'",
+      "SELECT structured_content_json FROM canonical_conversation_turn_details WHERE message_type = 'system'",
     ) as { structured_content_json: string };
     expect(JSON.parse(stored.structured_content_json)).toMatchObject({
       kind: "connected_activity",
@@ -119,7 +119,7 @@ describe("a watched resource's change notification", () => {
     // is the whole loop this notification exists to start.
     const stored = workstreamObjectGet(
       objectStore,
-      "SELECT text_content FROM messages WHERE message_type = 'system'",
+      "SELECT content AS text_content FROM canonical_conversation_turn_details WHERE message_type = 'system'",
     ) as { text_content: string };
     expect(stored.text_content).toContain("Launch plan changed");
     expect(stored.text_content).toContain("Attached here and now out of date: Launch plan");

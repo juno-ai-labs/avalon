@@ -72,11 +72,9 @@ describe('setCachedWorkstreams', () => {
     setCachedWorkstreams(queryClient, [summary(), other]);
     const prefixes = [
       'workstream',
-      'messages',
-      'messages-cursor',
-      'messages-newer-cursor',
+      'ordered-transcript',
+      'transcript-overlays',
       'workstream-feed-source',
-      'workstream-recovery-feed',
       'workstream-socket-snapshot-generation',
       'workstream-context',
       'block-dashboard',

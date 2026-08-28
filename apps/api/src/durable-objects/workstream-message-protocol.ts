@@ -12,8 +12,8 @@ import type { WorkstreamMessageStorage } from "./workstream-message-storage";
 export const AppendMessageInputSchema = z.object({
   messageId: z.string().min(1),
   clientMessageId: z.string().min(1),
-  authorType: z.enum(["human", "agent", "external", "system"]),
-  authorUserId: z.string().min(1).nullable(),
+  authorType: z.enum(["agent", "external", "system"]),
+  authorUserId: z.null(),
   externalActorJson: z.string().nullable(),
   messageType: z.enum(["text", "system", "elicitation"]),
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
@@ -22,29 +22,19 @@ export const AppendMessageInputSchema = z.object({
   now: z.number().finite(),
 }).strict();
 
-export const UpsertToolMessageInputSchema = z.object({
-  messageId: z.string().min(1),
-  clientMessageId: z.string().min(1),
-  structuredContentJson: z.string().max(MESSAGE_MAX_CHARACTERS),
-  createdAt: z.number().finite(),
-  editedAt: z.number().finite().nullable(),
-}).strict();
-
 /**
  * The wire contract for one work stream's transcript.
  *
- * The canonical message records are object-local, but every reader and writer that is not
- * the product service runs in the Worker. This endpoint is how they reach them,
+ * Canonical conversation turns are object-local, but every reader and writer that is not
+ * the product service runs in the Worker. This endpoint is how they reach those turns,
  * in place of D1-shaped SQL rewritten onto `_runtime_messages`.
  */
 type LocalOnlyMessageOperation =
   | "prepareMessage"
-  | "appendPreparedMessage"
-  | "prepareToolMessage"
-  | "upsertPreparedToolMessage";
+  | "appendPreparedMessage";
 export type MessageOperation = Exclude<keyof WorkstreamMessageStorage, LocalOnlyMessageOperation>;
 
-export type MessageObjectPort = ObjectPortOf<WorkstreamMessageStorage>;
+export type MessageObjectPort = ObjectPortOf<WorkstreamMessageStorage, MessageOperation>;
 
 const DISPATCHED_OPERATIONS = [
   "message",
@@ -61,7 +51,6 @@ const DISPATCHED_OPERATIONS = [
   "attachmentsFor",
   "authorsFor",
   "appendMessage",
-  "upsertToolMessage",
 ] as const satisfies readonly MessageOperation[];
 
 /** Every operation the endpoint will dispatch, proven complete both ways. */
@@ -76,7 +65,7 @@ export const MESSAGE_OPERATIONS:
  * belongs beside. The endpoint runs these inside `commitRuntimeMutation`: the
  * row and the directory projection showing its preview are one commit.
  */
-const TRANSCRIPT_WRITES = new Set<MessageOperation>(["appendMessage", "upsertToolMessage"]);
+const TRANSCRIPT_WRITES = new Set<MessageOperation>(["appendMessage"]);
 
 export function mutatesTranscript(operation: MessageOperation): boolean {
   return TRANSCRIPT_WRITES.has(operation);
