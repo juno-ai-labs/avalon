@@ -294,7 +294,119 @@ surface appears. No clause moves.
 
 ## Decision log
 
-None yet.
+### 2026-08-28 — A saved card keeps the source list the transcript drops
+
+**Decided:** The footnote lift is conditional on the surface. The transcript
+lifts every qualifying definition into its pill and renders no trailing list;
+the saved card renders both. `MarkdownBody` carries a `still` flag, and the
+card is its only caller.
+
+**Why:** Two rules that were each right on their own contradicted each other.
+The lift trades the source list for a hover popover, and the export document
+hides that popover deliberately — a hover affordance printed into a PNG is a
+grey box over the text with no way to dismiss it. Together they produced a card
+whose claims carried numbered pills pointing at nothing, in the artifact people
+save and send on. Keeping the list only in a still is the narrow fix: the
+reclaimed vertical space is the point of the lift in a scrolling transcript, and
+a picture has no scroll to spend it on.
+
+**Changes:** Narrows Product behavior's "no trailing source list" to the
+transcript. Acceptance flow 4 should be read on the saved card as well as on
+screen.
+
+### 2026-08-28 — Cross-workspace citation metadata is a REST `GET`, not a socket push
+
+**Decided:** Open question 4 resolves to `GET /resources/:id`, the route that
+already exists, under the viewer's existing authorization. No new endpoint, no
+new socket frame.
+
+**Why:** The id is not known until a viewer reads a message that names it, so
+nothing about a connect payload could have carried it, and pushing the
+workspace's whole resource set to cover the few that get cited fails
+[`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md)'s "bound
+every collection". The genuine alternative was not a *push* but a correlated
+socket request, which that document does allow — REST still wins here because
+the route, the authorization and the wire schema all already exist, which makes
+it the cheapest thing to reverse.
+
+**Changes:** Nothing in the agreed scope. Superseded in part by the entry below.
+Shipped in [#381](https://github.com/juno-ai-labs/avalon/pull/381).
+
+### 2026-08-28 — A citation resolves only against the loaded work stream
+
+**Decided:** The renderer dresses a chip from the loaded work stream's resource
+set and nothing wider. A citation naming a resource from another work stream
+renders as its label text. The REST lookup decided above is not shipped.
+
+**Why:** Review found the wider lookup's best case is a dead end. The rail's
+detail resolves an inspector target from `workstream.resources` too, so a chip
+the wider lookup dressed opens the rail's unavailable state — which tells the
+reader the resource "may have been removed", of something that exists and that
+they may be entitled to see. Label text says less and says nothing false. The
+implementation also had a real defect (an effect cancelled by the next commit
+discarded its own answer), but the argument stands without it.
+
+**Changes:** Narrows Product behavior's "resolves against the workspace's
+resource authority". The wider lookup returns with the rail's fetch-by-id
+detail, which this PRD already named as follow-up it does not include — the two
+have to land together so the chip and the panel it opens agree about what
+exists. Shipped in [#381](https://github.com/juno-ai-labs/avalon/pull/381).
+
+### 2026-08-28 — The popover is the app's tooltip, and carries no Open action
+
+**Decided:** Open questions 1 and 3 resolve together. A pill's popover carries
+the source title, the definition's own words, and a line saying where opening
+goes — no excerpt. It is a Radix tooltip, portalled, with the app's standard
+450ms delay.
+
+**Why:** Settled against a real window, which is where the hand-positioned
+version failed: an absolutely-positioned box inside the transcript's scroll
+container is *clipped* by it, so a pill on the top visible line lost its popover
+entirely and one near the right edge had the title sheared off mid-word. The
+house tooltip is portalled and handles the collision, and it brings dismissal on
+Escape and keyboard reachability — the touch/keyboard half of question 3 — with
+it. An excerpt was dropped for question 1: the popover is a hover surface over
+prose, and a paragraph in it covers the sentence it annotates.
+
+**Changes:** Product behavior said "an **Open** action"; the pill itself is the
+action and the popover describes it. Deletes questions 1 and 3. Shipped in
+[#381](https://github.com/juno-ai-labs/avalon/pull/381).
+
+### 2026-08-28 — The embed form is taught in the document policy, not in standing policy
+
+**Decided:** The announcement rule (`![Title](resource://<id>)` on its own line)
+lives in `DOCUMENT_GENERATION_POLICY`, which is gated on the run being able to
+publish. `CITATION_POLICY` teaches the link and footnote forms only.
+
+**Why:** Review found the first draft charged every automation, scheduled
+digest, inbound-email and Slack-origin run to announce documents they were
+deliberately never told to make — and on the Slack path the delivery rewrite
+reduces such a line to a bare title with nothing to open, the exact outcome that
+gate exists to prevent. Agent behavior's stated reason for no carve-out ("would
+need a run-origin field the prompt context does not carry today") was wrong:
+`documentPublishing` already encodes that partition.
+
+**Changes:** Supersedes the placement in Agent behavior; the no-per-origin-carve-out
+argument still holds for the *citation* rules, which any run may need. Shipped
+in [#381](https://github.com/juno-ai-labs/avalon/pull/381).
+
+### 2026-08-28 — No identifier length limit is added
+
+**Decided:** The identifier is validated by alphabet only. The bounded-length
+half of key design decision 2 is not implemented, and no open placeholder is
+left behind.
+
+**Why:** Non-goal 8 already said no new defensive numbers. A guard written open
+still has to justify existing, and this one could not: nothing in the parse is
+quadratic, nothing is retained, and an over-long id fails the alphabet check or
+fails to resolve and renders as its label text.
+[`adding-security-defensive-and-other-limits.md`](../../adding-security-defensive-and-other-limits.md)'s
+default answer to "should there be a limit here?" is no.
+
+**Changes:** Narrows key design decision 2's "bounded length". The alphabet is
+not a placeholder — it is enforced, and it is what stops a target carrying a
+path or a second scheme. Shipped in
+[#381](https://github.com/juno-ai-labs/avalon/pull/381).
 
 ## Key design decisions
 
@@ -543,20 +655,9 @@ passing through unmangled.
 
 ## Open questions
 
-1. **Popover depth** — title-and-open only, or an excerpt line? Settle
-   against real screenshots; excerpts require deciding what text is safe
-   and local to show.
-2. **Embed card contents** — icon, title, and kind now; later an inline
-   excerpt or live preview of the resource inside the card itself?
-   Presentation call to revisit once the rail preview exists.
-3. **Popover and card interaction details on touch/keyboard** — hover
-   has no touch equivalent and focus order matters for the pills; settle
-   against the real window during implementation.
-4. **Transport for cross-workspace citation-metadata resolution** —
-   workspace socket or a REST endpoint? Flagged genuinely open in
-   review. [`choosing-sockets-or-rest.md`](../../choosing-sockets-or-rest.md)
-   governs: its default pushes data down the socket proactively, but a
-   viewer-triggered lookup for an arbitrary cited id is close to its
-   "when a GET is still right" territory. Decide at implementation
-   against that document; changes the lookup's plumbing, not any
-   rendering or degradation behavior.
+1. **Embed card contents** — icon, title, and kind now; later an inline excerpt
+   or live preview of the resource inside the card itself? Presentation call to
+   revisit once the rail preview exists, which it now does.
+
+Questions 1, 3 and 4 of the original four were resolved during implementation
+and are recorded in the decision log above.

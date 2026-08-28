@@ -108,7 +108,7 @@ describe("prompt renderers", () => {
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "0d0a1f189edb0d426b884ac70c4aa75576cc11311708fbaf09e8c4b19b1cc121",
+        hash: "f6a630ce74b05ee4ed9ea6748626ebaf0f46251cf0028848c33fe6290662cfd4",
       },
       workstreamWithDocuments: {
         actual: renderWorkstreamSystemPrompt({
@@ -116,7 +116,7 @@ describe("prompt renderers", () => {
           objective: "Find the cause and create a concise incident note.",
           documentPublishing: true,
         }),
-        hash: "80e573612c097fc19146409e9e64613a8e1a07e693eb2156c2f0bb0dddf28734",
+        hash: "2025e45135d304db80f35721944b2b18fd6d01bfc74362015b3f7aa4b96a5464",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -124,7 +124,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "864a3cd17d13251e27c5c0f16e9f7e5dce6045d45069080b215016b1c0f5c074",
+        hash: "6a5294e17a874c938acb91d5f869a2cba0b2c38894072a06ff0348ceed22a4c9",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -834,5 +834,71 @@ describe("prompt renderers", () => {
     expect(semantic).toContain("untrusted evidence");
     expect(routing).toContain("strong unique match");
     expect(routing).toContain("objective as the primary relevance signal");
+  });
+});
+
+/**
+ * The emission half of inline resource citations.
+ *
+ * The renderer's half is guarded in the desktop package; this is the guidance
+ * that gets a citation written at all. It is checked by content rather than only
+ * by the golden hash above because the hash says the prompt changed, not what it
+ * lost — and the two instructions asserted here are the two whose absence has a
+ * consequence a reader would blame on the feature: an announcement that splits a
+ * sentence, and a chip that never appears because the id was invented.
+ */
+describe("citation guidance", () => {
+  // Asserted against the *rendered* prompt, not the constant. A regex over
+  // `CITATION_POLICY` can only fail if somebody edits the constant — which the
+  // golden hash above already catches — and stays green if the policy stops
+  // being composed into the prompt at all, which is the failure worth catching.
+  const rendered = (): string => renderWorkstreamSystemPrompt({
+    title: "Investigate checkout failures",
+    objective: "Find the cause and create a concise incident note.",
+  });
+
+  it("reaches a run, and teaches the chip form inside a sentence", () => {
+    // Not `toContain` on the bracket syntax: the image form's own string
+    // contains the link form's, so that assertion could not fail.
+    expect(rendered()).toMatch(/link form, inside the sentence/u);
+    expect(rendered()).toContain("[Title](resource://<resource-id>)");
+  });
+
+  it("teaches the footnote form with a definition the renderer would lift", () => {
+    expect(rendered()).toContain("[^1]: [Q3 board deck](resource://<resource-id>)");
+  });
+
+  it("charges the embed form only to a run that can publish a document", () => {
+    // The embed form announces something the run produced, and a run that was
+    // deliberately not told it can publish has nothing to announce — on the
+    // Slack path the delivery rewrite reduces such a line to a bare title with
+    // nothing to open, which is what that gate exists to prevent.
+    expect(rendered()).not.toContain("![Title](resource://<resource-id>)");
+    expect(renderWorkstreamSystemPrompt({
+      title: "Investigate checkout failures",
+      objective: "Find the cause and create a concise incident note.",
+      documentPublishing: true,
+    })).toContain("![Title](resource://<resource-id>)");
+  });
+
+  it("says what to do when no identifier is in context, which is the part that was missing", () => {
+    // Platform policy already forbids inventing an identifier, twice — in the
+    // working-style rule and in the attachment policy. Repeating the
+    // prohibition a third time only added a third, conflicting remedy: those
+    // two say ask a person, which a headless automation run cannot do. What
+    // this owes is the citation-specific action.
+    const prompt = rendered();
+    expect(prompt).toMatch(/name the thing in plain words rather than citing it/u);
+    expect(prompt).toMatch(/the identifier a tool result in this run returned/u);
+  });
+
+  it("pins the definition grammar the renderer actually implements", () => {
+    // The renderer lifts a definition into a pill only when it is one paragraph
+    // carrying exactly one link *whose target it recognises*. Guidance that
+    // promised more would produce footnotes that silently render as classic
+    // ones, with the trailing list the feature exists to remove.
+    expect(rendered()).toMatch(/exactly one link/u);
+    expect(rendered()).toMatch(/resource:\/\/ identifier or an https:\/\/ URL/u);
+    expect(rendered()).toMatch(/is a plain footnote, not a citation/u);
   });
 });

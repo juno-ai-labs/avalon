@@ -1,3 +1,4 @@
+import { rewriteCitationsAsPlainText } from "@rally/contracts/citations";
 import { workstreamCanonicalUrl, type Region } from "@rally/contracts";
 
 import type { Env } from "../env";
@@ -74,8 +75,24 @@ export async function sendWorkstreamMentionEmail(
   }, request);
 }
 
+/**
+ * The quoted line a mention email carries.
+ *
+ * A citation is reduced first, for the reason the `person:` strip beside it
+ * already exists: this quotes an agent's message text, and every internal
+ * syntax in it — a mention's UUID, a `resource://` target, a bare `[^1]` — is
+ * something a mail client shows verbatim.
+ *
+ * Without its source list, and for two reasons. This excerpt is HTML-escaped
+ * into a `<td>` and quoted into the plain-text body, so a Markdown source list
+ * would arrive as literal syntax either way. And it is *one line*: `singleLine`
+ * below would flatten a bibliography into the quote, where it competes with the
+ * length budget — truncating mid-entry on a long message and doubling the
+ * quote on a short one. A "you were mentioned" excerpt wants the sentence, not
+ * the sources.
+ */
 function messageExcerpt(value: string): string {
-  const normalized = singleLine(value.replace(
+  const normalized = singleLine(rewriteCitationsAsPlainText(value, { sources: "none" }).replace(
     /\[@((?:\\.|[^\]])+)\]\(person:[0-9a-f-]{36}\)/giu,
     (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
   ));
