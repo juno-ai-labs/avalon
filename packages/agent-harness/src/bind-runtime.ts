@@ -47,6 +47,7 @@ import {
   OpenRouterClient,
   OpenRouterError,
   canonicalToolInputHash,
+  modelMessageWithoutProvenance,
   type HarnessEvent,
   type HarnessFailure,
   type HarnessOutcome,
@@ -77,6 +78,22 @@ import {
   normalizeToolArguments,
   validateToolArguments,
 } from "./tool-arguments";
+
+const PersistedProviderMessageSchema = z.custom<OpenAI.ChatCompletionMessageParam>(
+  (value) => {
+    if (!isRecordValue(value) || !("content" in value)
+      || !["system", "user", "assistant", "tool"].includes(String(value.role))) {
+      return false;
+    }
+    if (value.role === "tool" && typeof value.tool_call_id !== "string") return false;
+    if (value.role === "assistant" && value.tool_calls !== undefined
+      && !Array.isArray(value.tool_calls)) {
+      return false;
+    }
+    return true;
+  },
+  { error: "Invalid persisted Bind provider message" },
+);
 import {
   applyBindLoopTransition,
   BIND_SYSTEM_RENDERER_VERSION,
@@ -524,12 +541,13 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   let content = "";
   let streamedContent = "";
   let routedAttempts = 0;
-  let stableTurnIndex = 0;
+  let stableTurnIndex = input.bindLoopProjection?.lastModelTurnIndex ?? 0;
   let compactionIndex = 0;
   let terminalCompactionInputTokens = 0;
   let terminalCompactionOutputTokens = 0;
   let terminalCompactionModelTimeMs = 0;
   let completedByTool = false;
+  let completedWithoutAcceptedAssistant = false;
   let bindLoopProjection: BindLoopProjectionState | null = null;
   const toolCallPositions = new Map<string, { turn: number; index: number }>();
   const commitBindTransition = async (transition: BindLoopTransition): Promise<void> => {
@@ -551,21 +569,203 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   });
   const persistAcceptedToolMessage = async (
     toolMessage: OpenAI.ChatCompletionToolMessageParam,
-    callIndex: number,
+    resultOrdinal: number,
   ): Promise<void> => {
     if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
     const toolCallId = toolMessage.tool_call_id;
     const position = toolCallPositions.get(toolCallId);
+    if (!position) throw new Error("bind_loop_tool_call_position_missing");
     await commitBindTransition({
       kind: "tool_result_accepted",
-      loopId: input.harnessRunId,
+      loopId: input.loopId,
       generation: bindLoopProjection.generation,
       stateRevision: bindLoopProjection.stateRevision + 1,
       message: toBindLoopMessage(toolMessage),
-      turnId: `${input.harnessRunId}:turn:${position?.turn ?? stableTurnIndex}`,
+      turnId: `${input.loopId}:turn:${position.turn}`,
       toolCallId,
-      callIndex,
+      callIndex: position.index,
+      resultOrdinal,
     });
+  };
+  const settleStep = async (wouldEnd: boolean): Promise<{
+    messages: OpenAI.ChatCompletionMessageParam[];
+    stop: boolean;
+  }> => {
+    if (!input.onStepSettled) return { messages: [], stop: false };
+    const settledProjection = bindLoopProjection;
+    if (!settledProjection || stableTurnIndex < 1) {
+      throw new Error("bind_loop_step_without_assistant");
+    }
+    let projection = settledProjection;
+    const settlement = await requiredPort(
+      "run_state_persistence_failed",
+      "Settled-step input delivery failed",
+      () => input.onStepSettled!({
+        loopId: input.loopId,
+        executionId: input.harnessRunId,
+        assistantTurnId: `${input.loopId}:turn:${stableTurnIndex}`,
+        modelTurnIndex: stableTurnIndex,
+        generation: settledProjection.generation,
+        stateRevision: settledProjection.stateRevision,
+        wouldEnd,
+      }),
+    );
+    if (!settlement || !Array.isArray(settlement.transitions)
+      || typeof settlement.stop !== "boolean") {
+      throw new FatalHarnessPortError(
+        "run_state_persistence_failed",
+        "Settled-step input delivery returned an invalid settlement",
+      );
+    }
+    const messages: OpenAI.ChatCompletionMessageParam[] = [];
+    for (const transition of settlement.transitions) {
+      if (transition.loopId !== input.loopId
+        || (transition.kind !== "tool_result_accepted"
+          && (transition.kind !== "protocol_user_appended"
+            || transition.activationInputId !== null
+            || transition.provenance.originKind !== "derived"
+            || !transition.provenance.sourceKind
+            || !transition.provenance.sourceId
+            || (transition.provenance.sourceRevision !== null
+              && (!Number.isSafeInteger(transition.provenance.sourceRevision)
+                || transition.provenance.sourceRevision < 0))))) {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Settled-step input delivery returned an invalid transition",
+        );
+      }
+      const message = structuredClone(transition.message) as OpenAI.ChatCompletionMessageParam;
+      if (message.role !== "user" && message.role !== "tool") {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Settled-step input delivery returned a non-user message",
+        );
+      }
+      try {
+        projection = applyBindLoopTransition(projection, transition);
+      } catch (error) {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Settled-step input delivery returned an out-of-order transition",
+          error,
+        );
+      }
+      messages.push(message);
+    }
+    bindLoopProjection = projection;
+    return { messages, stop: settlement.stop };
+  };
+  const synchronizeActivationInputs = async (): Promise<void> => {
+    const activationInputs = input.activationInputs ?? [];
+    if (!input.onActivationBoundary) {
+      if (activationInputs.length > 0) {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Activation inputs require a durable activation boundary",
+        );
+      }
+      return;
+    }
+    const projection = bindLoopProjection;
+    if (!projection) throw new Error("bind_loop_not_initialized");
+    const inputById = new Map<string, typeof activationInputs[number]>();
+    for (const activationInput of activationInputs) {
+      const provenance = activationInput.message.provenance;
+      if (!activationInput.activationInputId
+        || inputById.has(activationInput.activationInputId)
+        || activationInput.message.role !== "user"
+        || provenance.originKind !== "derived"
+        || !provenance.sourceKind
+        || !provenance.sourceId
+        || (provenance.sourceRevision !== null
+          && (!Number.isSafeInteger(provenance.sourceRevision)
+            || provenance.sourceRevision < 0))) {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Activation boundary received an invalid activation input",
+        );
+      }
+      inputById.set(activationInput.activationInputId, activationInput);
+    }
+    const result = await requiredPort(
+      "run_state_persistence_failed",
+      "Activation input persistence failed",
+      () => input.onActivationBoundary!({
+        loopId: input.loopId,
+        executionId: input.harnessRunId,
+        generation: projection.generation,
+        stateRevision: projection.stateRevision,
+        inputs: activationInputs,
+      }),
+    );
+    if (!result || !Array.isArray(result.transitions)
+      || !Array.isArray(result.replayedActivationInputIds)) {
+      throw new FatalHarnessPortError(
+        "run_state_persistence_failed",
+        "Activation boundary returned an invalid result",
+      );
+    }
+    let nextProjection = projection;
+    const returnedIds = new Set<string>();
+    for (const transition of result.transitions) {
+      const activationInput = inputById.get(transition.activationInputId);
+      const provenance = activationInput?.message.provenance;
+      const expectedMessage = activationInput
+        ? modelMessageWithoutProvenance(activationInput.message)
+        : null;
+      if (transition.kind !== "protocol_user_appended"
+        || transition.loopId !== input.loopId
+        || transition.generation !== nextProjection.generation
+        || !activationInput
+        || returnedIds.has(transition.activationInputId)
+        || transition.message.role !== "user"
+        || !provenance
+        || transition.provenance.originKind !== provenance.originKind
+        || transition.provenance.sourceKind !== provenance.sourceKind
+        || transition.provenance.sourceId !== provenance.sourceId
+        || transition.provenance.sourceRevision !== provenance.sourceRevision
+        || JSON.stringify(transition.message) !== JSON.stringify(expectedMessage)) {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Activation boundary returned an invalid transition",
+        );
+      }
+      try {
+        nextProjection = applyBindLoopTransition(nextProjection, transition);
+      } catch (error) {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Activation boundary returned an out-of-order transition",
+          error,
+        );
+      }
+      returnedIds.add(transition.activationInputId);
+      const providerMessage = toOpenAiMessages([activationInput.message])[0];
+      if (!providerMessage || providerMessage.role !== "user") {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Activation boundary returned a non-user model message",
+        );
+      }
+    }
+    for (const replayedActivationInputId of result.replayedActivationInputIds) {
+      if (typeof replayedActivationInputId !== "string"
+        || !inputById.has(replayedActivationInputId)
+        || returnedIds.has(replayedActivationInputId)) {
+        throw new FatalHarnessPortError(
+          "run_state_persistence_failed",
+          "Activation boundary returned an invalid replay acknowledgement",
+        );
+      }
+      returnedIds.add(replayedActivationInputId);
+    }
+    if (returnedIds.size !== inputById.size) {
+      throw new FatalHarnessPortError(
+        "run_state_persistence_failed",
+        "Activation boundary did not acknowledge every activation input",
+      );
+    }
+    bindLoopProjection = nextProjection;
   };
   const emit = async (event: HarnessEvent): Promise<void> => {
     try {
@@ -575,6 +775,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         await input.onBestEffortEventDropped?.({
           type: event.type,
           turnId: event.turnId,
+          ...(event.transcriptSequence === undefined
+            ? {}
+            : { transcriptSequence: event.transcriptSequence }),
           epoch: event.epoch,
           streamSeq: event.streamSeq,
         });
@@ -594,39 +797,130 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
   };
 
   try {
-    const contextWindowTokensByModel = input.compaction
-      ? await resolveOpenRouterContextWindows(input, signal)
-      : new Map<string, number>();
+    const resumeProjection = input.bindLoopProjection ?? null;
+    if (resumeProjection && resumeProjection.loopId !== input.loopId) {
+      throw new Error("bind_loop_resume_identity_mismatch");
+    }
+    if (resumeProjection && (!Number.isSafeInteger(resumeProjection.lastModelTurnIndex)
+      || resumeProjection.lastModelTurnIndex < 0)) {
+      throw new Error("bind_loop_resume_model_turn_invalid");
+    }
+    const lastReservation = resumeProjection?.lastAssistantReservation ?? null;
+    if (resumeProjection && (
+      (resumeProjection.lastModelTurnIndex === 0 && lastReservation !== null)
+      || (resumeProjection.lastModelTurnIndex > 0 && (
+        !lastReservation
+        || lastReservation.modelTurnIndex !== resumeProjection.lastModelTurnIndex
+        || lastReservation.turnId !== `${input.loopId}:turn:${resumeProjection.lastModelTurnIndex}`
+        || !["pending", "accepted", "failed", "stopped"].includes(lastReservation.status)
+        || (lastReservation.transcriptSequence !== null
+          && (!Number.isSafeInteger(lastReservation.transcriptSequence)
+            || lastReservation.transcriptSequence < 1))
+      ))
+    )) {
+      throw new Error("bind_loop_resume_reservation_invalid");
+    }
+    if (lastReservation?.status === "pending") {
+      // The host owns canonical reservation recovery. It must atomically
+      // materialize the accepted assistant or a failed/stopped error pill and
+      // commit the matching settlement transition before resuming Bind.
+      throw new FatalHarnessPortError(
+        "run_state_persistence_failed",
+        "Bind loop resume requires host settlement of the pending assistant reservation",
+      );
+    }
     const runtime = await createPluginRuntime(input);
     const initialSystemPrompt = runtime.renderSystemPrompt();
-    const inputProviderMessages = toOpenAiMessages(input.messages);
-    const healed = validateAndHealMessages([
-      { role: "system", content: initialSystemPrompt.content },
-      ...inputProviderMessages,
-    ]);
-    state.messages.push(...healed.messages);
+    if (resumeProjection) {
+      // The message suffix is immutable and may be long. Share it in-isolate
+      // instead of recursively serializing it through structuredClone; every
+      // transition returns a new projection/tail before the host persists it.
+      bindLoopProjection = {
+        ...resumeProjection,
+        systemProjection: structuredClone(resumeProjection.systemProjection),
+        lastAssistantReservation: resumeProjection.lastAssistantReservation
+          ? { ...resumeProjection.lastAssistantReservation }
+          : null,
+      };
+      const initialSystemMessage: OpenAI.ChatCompletionSystemMessageParam = {
+        role: "system",
+        content: initialSystemPrompt.content,
+      };
+      const currentSystemHash = await hashBindLoop(resumeProjection.systemProjection.message);
+      const resumedSystemHash = await hashBindLoop(initialSystemMessage);
+      if (currentSystemHash !== resumedSystemHash) {
+        await commitBindTransition({
+          kind: "system_projection_changed",
+          loopId: input.loopId,
+          generation: resumeProjection.generation,
+          stateRevision: resumeProjection.stateRevision + 1,
+          systemProjection: await systemProjection(
+            initialSystemMessage,
+            resumeProjection.systemProjection.revision + 1,
+          ),
+        });
+      }
+    } else {
+      const inputProviderMessages = toOpenAiMessages(input.messages);
+      const healed = validateAndHealMessages([
+        { role: "system", content: initialSystemPrompt.content } as OpenAI.ChatCompletionSystemMessageParam,
+        ...inputProviderMessages,
+      ]);
+      await input.onTranscriptIssues?.(healed.issues.map((issue) => ({
+        kind: issue.kind,
+        index: issue.index,
+        healed: issue.healed,
+      })));
+      const initialSystemMessage = healed.messages[0];
+      if (!initialSystemMessage || initialSystemMessage.role !== "system") {
+        throw new Error("bind_loop_system_message_missing");
+      }
+      await commitBindTransition({
+        kind: "state_initialized",
+        loopId: input.loopId,
+        generation: 1,
+        stateRevision: 1,
+        systemProjection: await systemProjection(initialSystemMessage, 1),
+        nonSystemMessages: healed.messages.slice(1).map(toBindLoopMessage),
+        nonSystemMessageOrigins: healedMessageOrigins(
+          input.messages,
+          inputProviderMessages,
+          healed.messages.slice(1),
+        ),
+      });
+    }
+    // The activation authority is the last durable boundary before Bind may
+    // reserve an assistant turn or cross into provider I/O. It runs even with
+    // no model-only inputs so a transcript-aware host can reject a stale
+    // execution/head fence rather than infer on an activation that never
+    // durably landed.
+    await synchronizeActivationInputs();
+    if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+    const seededMessages = projectBindLoopMessages(bindLoopProjection).map((message) =>
+      PersistedProviderMessageSchema.parse(structuredClone(message)));
+    const healed = validateAndHealMessages(seededMessages);
     await input.onTranscriptIssues?.(healed.issues.map((issue) => ({
       kind: issue.kind,
       index: issue.index,
       healed: issue.healed,
     })));
-    const initialSystemMessage = healed.messages[0];
-    if (!initialSystemMessage || initialSystemMessage.role !== "system") {
-      throw new Error("bind_loop_system_message_missing");
+    const [seededHash, healedHash] = await Promise.all([
+      hashBindLoop(seededMessages),
+      hashBindLoop(healed.messages),
+    ]);
+    if (seededHash !== healedHash) {
+      // Activation-owned user/tool transitions must land before this provider
+      // shape check. Any healing still required now is incomplete host recovery,
+      // never permission for Bind to invent or discard a durable protocol row.
+      throw new FatalHarnessPortError(
+        "run_state_persistence_failed",
+        "Bind loop requires host recovery of incomplete model protocol",
+      );
     }
-    await commitBindTransition({
-      kind: "state_initialized",
-      loopId: input.harnessRunId,
-      generation: 1,
-      stateRevision: 1,
-      systemProjection: await systemProjection(initialSystemMessage, 1),
-      nonSystemMessages: healed.messages.slice(1).map(toBindLoopMessage),
-      nonSystemMessageOrigins: healedMessageOrigins(
-        input.messages,
-        inputProviderMessages,
-        healed.messages.slice(1),
-      ),
-    });
+    state.messages.push(...healed.messages);
+    const contextWindowTokensByModel = input.compaction
+      ? await resolveOpenRouterContextWindows(input, signal)
+      : new Map<string, number>();
 
     const selectedContextWindowTokens = (): number => {
       const selectedModel = model ?? input.config.primaryModel;
@@ -771,7 +1065,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
         const replacementTransition: Extract<BindLoopTransition, { kind: "state_replaced" }> = {
           kind: "state_replaced",
-          loopId: input.harnessRunId,
+          loopId: input.loopId,
           generation: bindLoopProjection.generation,
           nextGeneration: bindLoopProjection.generation + 1,
           stateRevision: bindLoopProjection.stateRevision + 1,
@@ -911,31 +1205,34 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           index: issue.index,
           healed: issue.healed,
         })));
+        if (prepared.issues.some((issue) => issue.healed)) {
+          throw new FatalHarnessPortError(
+            "run_state_persistence_failed",
+            "Bind provider validation changed immutable loop messages",
+          );
+        }
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
         const preparedSystemMessage = prepared.messages[0];
         if (!preparedSystemMessage || preparedSystemMessage.role !== "system") {
           throw new Error("bind_loop_system_message_missing");
         }
-        const currentSystem = bindLoopProjection.systemProjection.message;
-        const [currentSystemHash, preparedSystemHash] = await Promise.all([
-          hashBindLoop(currentSystem),
-          hashBindLoop(preparedSystemMessage),
-        ]);
-        const nextSystemRevision = currentSystemHash === preparedSystemHash
-          ? bindLoopProjection.systemProjection.revision
-          : bindLoopProjection.systemProjection.revision + 1;
-        await commitBindTransition({
-          kind: "state_reconciled",
-          loopId: input.harnessRunId,
-          generation: bindLoopProjection.generation,
-          stateRevision: bindLoopProjection.stateRevision + 1,
-          systemProjection: await systemProjection(preparedSystemMessage, nextSystemRevision),
-          nonSystemMessages: prepared.messages.slice(1).map(toBindLoopMessage),
-          reason: "provider_validation",
-        });
+        const currentSystemHash = await hashBindLoop(bindLoopProjection.systemProjection.message);
+        const preparedSystemHash = await hashBindLoop(preparedSystemMessage);
+        if (currentSystemHash !== preparedSystemHash) {
+          await commitBindTransition({
+            kind: "system_projection_changed",
+            loopId: input.loopId,
+            generation: bindLoopProjection.generation,
+            stateRevision: bindLoopProjection.stateRevision + 1,
+            systemProjection: await systemProjection(
+              preparedSystemMessage,
+              bindLoopProjection.systemProjection.revision + 1,
+            ),
+          });
+        }
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
         const boundary = await verifyBindProviderBoundary({
-          loopId: input.harnessRunId,
+          loopId: input.loopId,
           generation: bindLoopProjection.generation,
           stateRevision: bindLoopProjection.stateRevision,
           systemProjectionRevision: bindLoopProjection.systemProjection.revision,
@@ -947,14 +1244,47 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           "Bind provider boundary persistence failed",
           () => input.onBindProviderBoundary?.(boundary),
         );
-        stableTurnIndex += 1;
+        const modelTurnIndex = stableTurnIndex + 1;
+        const turnId = `${input.loopId}:turn:${modelTurnIndex}`;
+        const reservation = input.onAssistantTurnReserved
+          ? await requiredPort(
+              "run_state_persistence_failed",
+              "Assistant turn reservation failed",
+              () => input.onAssistantTurnReserved!({
+                loopId: input.loopId,
+                executionId: input.harnessRunId,
+                turnId,
+                modelTurnIndex,
+              }),
+            )
+          : null;
+        if (reservation && (!Number.isSafeInteger(reservation.transcriptSequence)
+          || reservation.transcriptSequence < 1)) {
+          throw new FatalHarnessPortError(
+            "run_state_persistence_failed",
+            "Assistant turn reservation returned an invalid transcript sequence",
+          );
+        }
+        if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
+        await commitBindTransition({
+          kind: "assistant_reserved",
+          loopId: input.loopId,
+          generation: bindLoopProjection.generation,
+          stateRevision: bindLoopProjection.stateRevision + 1,
+          turnId,
+          modelTurnIndex,
+          transcriptSequence: reservation?.transcriptSequence ?? null,
+        });
+        stableTurnIndex = modelTurnIndex;
+        streamedContent = "";
         const routed = await routeOpenRouterTurn({
           input,
           messages: prepared.messages,
           tools: authorizedTools,
           systemPrompt,
           signal,
-          turnId: `${input.harnessRunId}:turn:${stableTurnIndex}`,
+          turnId,
+          ...(reservation ? { transcriptSequence: reservation.transcriptSequence } : {}),
           emit,
           acceptEmptyCompletion: input.acceptEmptyCompletion === true,
           ...(onOutputProgress ? { onOutputProgress } : {}),
@@ -979,26 +1309,53 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         routed.result.toolCalls.forEach((call, index) => {
           toolCallPositions.set(call.id, { turn: stableTurnIndex, index });
         });
+        const acceptedContent = input.transformAssistantMessageBeforeAcceptance
+          ? await input.transformAssistantMessageBeforeAcceptance({
+              turnId,
+              content: routed.result.content,
+              hasToolCalls: routed.result.toolCalls.length > 0,
+            })
+          : routed.result.content;
         const message: OpenAI.ChatCompletionMessage = {
-            role: "assistant",
-            content: routed.result.content || null,
-            refusal: null,
-            ...(routed.result.toolCalls.length > 0
-              ? { tool_calls: routed.result.toolCalls }
-              : {}),
+          role: "assistant",
+          content: acceptedContent || null,
+          refusal: null,
+          ...(routed.result.toolCalls.length > 0
+            ? { tool_calls: routed.result.toolCalls }
+            : {}),
         };
+        const discardEmptyAssistant = input.acceptEmptyCompletion === true
+          && routed.result.toolCalls.length === 0
+          && acceptedContent.trim().length === 0;
         if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
-        await commitBindTransition({
-          kind: "assistant_accepted",
-          loopId: input.harnessRunId,
-          generation: bindLoopProjection.generation,
-          stateRevision: bindLoopProjection.stateRevision + 1,
-          message: toBindLoopMessage(message),
-          turnId: `${input.harnessRunId}:turn:${stableTurnIndex}`,
-          modelTurnIndex: stableTurnIndex,
-        });
+        if (discardEmptyAssistant) {
+          await commitBindTransition({
+            kind: "assistant_reservation_settled",
+            loopId: input.loopId,
+            generation: bindLoopProjection.generation,
+            stateRevision: bindLoopProjection.stateRevision + 1,
+            turnId,
+            modelTurnIndex: stableTurnIndex,
+            transcriptSequence: reservation?.transcriptSequence ?? null,
+            outcome: "failed",
+          });
+          completedWithoutAcceptedAssistant = true;
+        } else {
+          await commitBindTransition({
+            kind: "assistant_accepted",
+            loopId: input.loopId,
+            generation: bindLoopProjection.generation,
+            stateRevision: bindLoopProjection.stateRevision + 1,
+            message: toBindLoopMessage(message),
+            turnId,
+            modelTurnIndex: stableTurnIndex,
+            transcriptSequence: reservation?.transcriptSequence ?? null,
+          });
+          completedWithoutAcceptedAssistant = false;
+        }
         return {
           message,
+          acceptMessage: !discardEmptyAssistant,
           inputTokens: turnInputTokens,
           outputTokens: turnOutputTokens,
           cachedInputTokens: cachedTokens(routed.result.usage),
@@ -1009,7 +1366,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         if (signal.aborted) throw abortReason(signal);
         const position = toolCallPositions.get(toolCall.id);
         const participantToolCallId = position
-          ? `${input.harnessRunId}:turn:${position.turn}:tool:${position.index}`
+          ? `${input.loopId}:turn:${position.turn}:tool:${position.index}`
           : toolCall.id;
         if (toolCall.type !== "function") {
           return { toolMessage: toolResultMessage(toolCall.id, {
@@ -1058,8 +1415,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         args = normalizeToolArguments(args, dispatched.tool.definition.inputSchema);
         const inputHash = await canonicalToolInputHash(args);
         const receiptId = position
-          ? `${input.harnessRunId}:turn:${position.turn}:tool:${position.index}`
-          : `${input.harnessRunId}:tool:${toolCall.function.name}:${inputHash.slice(0, 32)}`;
+          ? `${input.loopId}:turn:${position.turn}:tool:${position.index}`
+          : `${input.loopId}:tool:${toolCall.function.name}:${inputHash.slice(0, 32)}`;
         let beforeToolCallDecision;
         try {
           beforeToolCallDecision = await input.beforeToolCall?.({
@@ -1308,8 +1665,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         return harnessResultOutcome(toolCall.id, toolResult, () => { completedByTool = true; });
       },
       beforeToolMessageAccepted: persistAcceptedToolMessage,
+      onStepSettled: ({ wouldEnd }) => settleStep(wouldEnd),
       onAssistantMessage: (message) => {
-        content += message;
+        content = message;
       },
       ...(onTurnWouldEnd || input.compaction
         ? {
@@ -1323,12 +1681,17 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
                 if (!bindLoopProjection) throw new Error("bind_loop_not_initialized");
                 await commitBindTransition({
                   kind: "protocol_user_appended",
-                  loopId: input.harnessRunId,
+                  loopId: input.loopId,
                   generation: bindLoopProjection.generation,
                   stateRevision: bindLoopProjection.stateRevision + 1,
                   message: { role: "user", content: nudge },
-                  origin: "protocol",
-                  sourceId: null,
+                  provenance: {
+                    originKind: "protocol",
+                    sourceKind: null,
+                    sourceId: null,
+                    sourceRevision: null,
+                  },
+                  activationInputId: null,
                 });
               }
               return nudge ?? null;
@@ -1361,9 +1724,17 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
         };
 
     if (result.stopReason === "resuming_later" && completedByTool) {
+      const completedReservation = bindLoopProjection?.lastAssistantReservation;
+      if (!completedReservation || completedReservation.status !== "accepted") {
+        throw new Error("bind_loop_completed_turn_missing");
+      }
       await emit({
         type: "stream_completed",
         content: content || streamedContent,
+        turnId: completedReservation.turnId,
+        ...(completedReservation.transcriptSequence === null
+          ? {}
+          : { transcriptSequence: completedReservation.transcriptSequence }),
         usage: usageRecord(state),
       });
       return outcome("completed", content || streamedContent, model, state, routedAttempts, resultStats);
@@ -1375,21 +1746,32 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       return outcome("needs_input", content || streamedContent, model, state, routedAttempts, resultStats);
     }
     if (result.stopReason === "aborted") {
-      return outcome("stopped", content || streamedContent, model, state, routedAttempts, resultStats);
+      return outcome("stopped", streamedContent || content, model, state, routedAttempts, resultStats);
     }
     if (result.stopReason === "iteration_limit") {
       throw new HarnessLimitError("run_iteration_limit_exceeded", `Harness exceeded ${maxIterations} model iterations`);
     }
+    const completedReservation = bindLoopProjection?.lastAssistantReservation;
+    if (completedWithoutAcceptedAssistant && completedReservation?.status === "failed") {
+      return outcome("completed", content || streamedContent, model, state, routedAttempts, resultStats);
+    }
+    if (!completedReservation || completedReservation.status !== "accepted") {
+      throw new Error("bind_loop_completed_turn_missing");
+    }
     await emit({
       type: "stream_completed",
       content: content || streamedContent,
+      turnId: completedReservation.turnId,
+      ...(completedReservation.transcriptSequence === null
+        ? {}
+        : { transcriptSequence: completedReservation.transcriptSequence }),
       usage: usageRecord(state),
     });
     return outcome("completed", content || streamedContent, model, state, routedAttempts, resultStats);
   } catch (error) {
     const timedOut = deadline?.timedOut ?? false;
     if (input.signal?.aborted && !timedOut && !(error instanceof AmbiguousExternalWriteError)) {
-      return outcome("stopped", content || streamedContent, model, state, routedAttempts);
+      return outcome("stopped", streamedContent || content, model, state, routedAttempts);
     }
     // `timedOut` outranks the two provider arms but not an explicit limit or
     // durable-host persistence error:
@@ -1445,7 +1827,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       message: error instanceof Error ? error.message : "Harness execution failed",
     };
     return {
-      ...outcome("failed", content || streamedContent, model, state, routedAttempts),
+      ...outcome("failed", streamedContent || content, model, state, routedAttempts),
       error: failure.message,
       failure,
     };
@@ -1460,6 +1842,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
     systemPrompt: RenderedSystemPrompt;
     signal: AbortSignal;
     turnId: string;
+    transcriptSequence?: number;
     emit: (event: HarnessEvent) => Promise<void>;
     onOutputProgress?: (tokens: number) => void;
     primaryModel?: string;
@@ -1476,27 +1859,35 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       turnId: args.turnId,
       maxResets: args.input.config.maxStreamResets ?? 4,
       sink: {
-        retractable: true,
+        // Participant-visible bytes cannot be withdrawn. Once a delta is
+        // observable, Bind's routing executor sees `producedOutput` and must
+        // not retry or fall back to a second semantic answer.
+        retractable: false,
         emit(event: TurnStreamEvent) {
           streamEventChain = streamEventChain.then(async () => {
+            if (args.suppressStreamOutput) return;
             if (!emittedStart) {
               emittedStart = true;
               await args.emit({
                 type: "stream_started",
                 model: currentModel,
                 turnId: event.turnId,
+                ...(args.transcriptSequence === undefined
+                  ? {}
+                  : { transcriptSequence: args.transcriptSequence }),
                 epoch: event.epoch,
                 streamSeq: 0,
                 reset: false,
               });
             }
-            if (!args.suppressStreamOutput) {
-              streamedContent = event.kind === "reset" ? "" : streamedContent + event.text;
-            }
+            streamedContent = event.kind === "reset" ? "" : streamedContent + event.text;
             await args.emit({
               type: "stream_delta",
               delta: event.kind === "text" ? event.text : "",
               turnId: event.turnId,
+              ...(args.transcriptSequence === undefined
+                ? {}
+                : { transcriptSequence: args.transcriptSequence }),
               epoch: event.epoch,
               // Sequence zero is reserved for `stream_started`. Bind's text
               // stream is zero-based, so shift every data/reset frame by one;
@@ -1546,6 +1937,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           await args.input.onInferenceRequest?.({
             inferenceRequestId,
             turnId: args.turnId,
+            ...(args.transcriptSequence === undefined
+              ? {}
+              : { transcriptSequence: args.transcriptSequence }),
             model: candidate.canonicalModelId,
             providerInvocationModel: candidate.providerInvocationModel,
             provider: candidate.providerId,
@@ -1582,6 +1976,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             inferenceRequestId,
             success: true,
             turnId: args.turnId,
+            ...(args.transcriptSequence === undefined
+              ? {}
+              : { transcriptSequence: args.transcriptSequence }),
             disposition: cursor.stageIndex > 0 || cursor.candidateIndex > 0
               ? "fallback"
               : cursor.endpointAttempt > 0
@@ -1628,6 +2025,9 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
             inferenceRequestId,
             success: false,
             turnId: args.turnId,
+            ...(args.transcriptSequence === undefined
+              ? {}
+              : { transcriptSequence: args.transcriptSequence }),
             disposition: classified.kind === "aborted"
               ? "cancelled"
               : classified.kind === "completion_defect"
@@ -1677,9 +2077,8 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       if (routed.ok || routed.reason !== "attempts_exhausted") break;
       if (!isProviderTransportFailure(routed.error)) break;
       // The same rule the executor applies to traversal: never replay a turn the
-      // reader is already looking at. A retractable surface keeps this false by
-      // wiping on the retry's first byte, so in practice it stops us only once
-      // the reset budget is spent.
+      // reader is already looking at. Work-stream output is non-retractable, so
+      // the first observable delta closes this retry path permanently.
       if (textStream.producedOutput) break;
       if (args.signal.aborted) break;
       const delayMs = transportRetryDelayMs(routed.error, retryNumber);
@@ -2298,7 +2697,7 @@ function availablePluginCatalog(registry: ToolRegistry<BindPlugin>): Array<{
 }> {
   return registry.summaries()
     .filter((plugin) => !registry.isCoreName(plugin.name))
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
     .slice(0, 500)
     .map((plugin) => {
       const registered = registry.get(plugin.name);

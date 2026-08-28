@@ -17,8 +17,7 @@ import {
 } from "./sqlite-migrations";
 
 export const WORKSTREAM_OBJECT_CONTRACT_VERSION = 1;
-export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 32;
-
+export const WORKSTREAM_OBJECT_SCHEMA_VERSION = 33;
 
 export type WorkstreamObjectSchemaMigration = DurableObjectSqliteMigration;
 
@@ -257,6 +256,10 @@ const WORKSTREAM_SCHEMA_V1 = [
      ON substreams(inherit_from_substream_id, id) WHERE inherit_from_substream_id IS NOT NULL`,
   `CREATE UNIQUE INDEX IF NOT EXISTS substreams_origin_part_uq
      ON substreams(origin_part_id) WHERE origin_part_id IS NOT NULL`,
+  // `input_fence_seq` is the canonical transcript sequence of the participant
+  // turn that admitted a root run; zero means the run has no participant input
+  // (delegated/system work). It is not the room event or legacy message
+  // sequence. Keep this comment outside the shipped v1 SQL fingerprint.
   `CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
     substream_id TEXT NOT NULL REFERENCES substreams(id),
@@ -1082,6 +1085,66 @@ const WORKSTREAM_SUBSTREAM_AGENT_SCHEMA = [
   ) STRICT`,
 ] as const;
 
+/**
+ * Temporarily removes the live triggers whose SQL names a table rebuilt by
+ * migration v33. SQLite validates trigger bodies on every schema change, so a
+ * standard create-copy-drop-rename rebuild must remove these dependents for
+ * the two statements in which the old name is absent. They are restored from
+ * their canonical definitions immediately after every table name is back.
+ */
+function canonicalTurnRelationTriggerDrops(): string[] {
+  return [
+    `DROP TRIGGER _runtime_harness_runs_insert`,
+    `DROP TRIGGER suggested_actions_terminal_status_immutable`,
+    `DROP TRIGGER accepted_suggestion_source_audience_immutable`,
+    `DROP TRIGGER accepted_suggestion_source_audience_retained`,
+    `DROP TRIGGER participants_restricted_content_insert`,
+    `DROP TRIGGER participants_restricted_content_reactivate`,
+    `DROP TRIGGER workstream_restricted_content_scope`,
+  ];
+}
+
+function canonicalTurnRelationTriggerRecreates(): string[] {
+  const harnessRunsInsert = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.find((statement) =>
+    statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_harness_runs_insert"));
+  if (!harnessRunsInsert) throw new Error("harness runs insert trigger not found in compat schema");
+  return [
+    // julianday() is floating point. Round its millisecond conversion instead
+    // of truncating a representation such as 999.999999 to the prior
+    // millisecond; the physical INTEGER timestamps already use nearest-ms time.
+    harnessRunsInsert
+      .replaceAll("origin_part_id", "origin_message_id")
+      .replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER"),
+    `CREATE TRIGGER IF NOT EXISTS suggested_actions_terminal_status_immutable
+       BEFORE UPDATE OF status ON suggested_actions
+       WHEN OLD.status != 'pending' AND NEW.status != OLD.status
+       BEGIN
+         SELECT RAISE(ABORT, 'suggested_action_terminal_status_immutable');
+       END`,
+    ...acceptedSuggestionAudienceTriggers(),
+  ];
+}
+
+/**
+ * Migration v1 is hashed, shipped history and retains its old public
+ * spellings. Once v34 renames the physical columns, recreate only the live run
+ * compatibility surface with canonical turn vocabulary.
+ */
+function finalTurnHarnessRunContract(): string[] {
+  const statements = WORKSTREAM_RUNTIME_COMPAT_SCHEMA.filter((statement) =>
+    statement.includes("CREATE VIEW IF NOT EXISTS _runtime_harness_runs")
+    || statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_harness_runs_insert")
+    || statement.includes("CREATE TRIGGER IF NOT EXISTS _runtime_harness_runs_update"));
+  if (statements.length !== 3) throw new Error("harness run compatibility contract incomplete");
+  // See canonicalTurnRelationTriggerRecreates: every recreated run contract
+  // rounds julianday's floating-point result to the nearest stored millisecond.
+  return statements.map((statement) => statement
+    .replaceAll("origin_part_id", "origin_message_id")
+    .replaceAll("final_message_id", "final_turn_id")
+    .replaceAll("final_part_id", "final_turn_id")
+    .replaceAll("* 86400000 AS INTEGER", "* 86400000 + 0.5 AS INTEGER"));
+}
+
 export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchemaMigration[] = [
   {
     version: 1,
@@ -1768,6 +1831,8 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
   {
     version: 32,
     description: "retire legacy transcript payload storage",
+    foreignKeys: "disabled_during_rebuild",
+    legacyHashWithoutExecutionMode: true,
     statements: [
       `CREATE TABLE transcript_payload_retirement_guard (
         id INTEGER PRIMARY KEY CHECK (id = 1)
@@ -1849,6 +1914,935 @@ export const WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS: readonly WorkstreamObjectSchem
            FROM workstream_message_records record
            JOIN transcript_facts fact ON fact.fact_id = record.fact_id
             JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id`,
+    ],
+  },
+  {
+    version: 33,
+    description: "one persistent loop per substream over a canonical ordered transcript",
+    // One forward-only cutover from shipped v32. This entry is the exact
+    // concatenation of the eight interim revisions the cutover went through
+    // while it was being built (33–40); none of them shipped, they always ran
+    // as one same-mode execution group, and eight receipts for one decision
+    // were only history of the branch, not of the schema. Interior churn — a
+    // later section replacing a table an earlier one creates — is retained
+    // verbatim rather than hand-merged: the statements are proven equivalent
+    // to the interim chain by full schema-and-data dump equality over the
+    // populated-v32 upgrade fixture, and a hand merge would forfeit that
+    // proof for cosmetics.
+    statements: [
+      // ── formerly v33: delete the message compatibility projection and key all relations to canonical turns
+
+      `ALTER TABLE participant_transcript_turns ADD COLUMN client_message_id TEXT`,
+      `ALTER TABLE participant_transcript_turns ADD COLUMN author_name_snapshot TEXT`,
+      `ALTER TABLE participant_transcript_turns ADD COLUMN author_avatar_url_snapshot TEXT`,
+      `ALTER TABLE participant_transcript_turns ADD COLUMN external_actor_json TEXT
+         CHECK (external_actor_json IS NULL OR json_valid(external_actor_json))`,
+      `ALTER TABLE participant_transcript_turns ADD COLUMN message_type TEXT NOT NULL DEFAULT 'text'`,
+      `UPDATE participant_transcript_turns
+          SET author_name_snapshot = CASE
+                WHEN actor = 'human' THEN 'A workspace member' ELSE NULL
+              END,
+              author_avatar_url_snapshot = NULL,
+              client_message_id = (
+                SELECT client_message_id FROM workstream_message_records
+                 WHERE id = participant_transcript_turns.turn_id
+              ),
+              external_actor_json = (
+                SELECT external_actor_json FROM workstream_message_records
+                 WHERE id = participant_transcript_turns.turn_id
+              ),
+              message_type = COALESCE((
+                SELECT message_type FROM workstream_message_records
+                 WHERE id = participant_transcript_turns.turn_id
+              ), 'text')`,
+      `CREATE UNIQUE INDEX participant_transcript_client_message_uq
+         ON participant_transcript_turns(client_message_id)
+         WHERE client_message_id IS NOT NULL`,
+      `DROP VIEW workstream_message_details`,
+      `CREATE TABLE substreams_v33 (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('main', 'chat', 'agent')),
+        inherit_mode TEXT NOT NULL CHECK (inherit_mode IN ('none', 'fork', 'document')),
+        inherit_from_substream_id TEXT REFERENCES substreams_v33(id),
+        inherit_fence_seq INTEGER,
+        depth INTEGER NOT NULL CHECK (depth BETWEEN 0 AND 4),
+        return_mode TEXT NOT NULL CHECK (return_mode IN ('none', 'tool_result')),
+        origin_message_id TEXT REFERENCES participant_transcript_turns(turn_id),
+        owner_user_id TEXT,
+        audience TEXT NOT NULL CHECK (audience IN ('owner', 'workspace', 'system')),
+        tool_policy TEXT NOT NULL CHECK (tool_policy IN ('none', 'read_only', 'full')),
+        status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+        created_at INTEGER NOT NULL,
+        closed_at INTEGER,
+        CHECK ((status = 'open' AND closed_at IS NULL) OR (status = 'closed' AND closed_at IS NOT NULL)),
+        CHECK (inherit_from_substream_id IS NULL OR inherit_from_substream_id != id),
+        CHECK (
+          (inherit_mode = 'none' AND inherit_from_substream_id IS NULL AND inherit_fence_seq IS NULL)
+          OR (inherit_mode = 'fork' AND inherit_from_substream_id IS NOT NULL
+              AND inherit_fence_seq IS NOT NULL AND inherit_fence_seq >= 0)
+          OR (inherit_mode = 'document' AND inherit_from_substream_id IS NOT NULL
+              AND (inherit_fence_seq IS NULL OR inherit_fence_seq >= 0))
+        ),
+        CHECK (audience != 'owner' OR owner_user_id IS NOT NULL),
+        CHECK (
+          (id = '0' AND kind = 'main' AND inherit_mode = 'none' AND depth = 0
+            AND return_mode = 'none' AND owner_user_id IS NULL AND audience = 'workspace'
+            AND tool_policy = 'full' AND origin_message_id IS NULL
+            AND inherit_from_substream_id IS NULL AND inherit_fence_seq IS NULL
+            AND status = 'open' AND closed_at IS NULL)
+          OR (id != '0' AND kind != 'main')
+        )
+      ) STRICT`,
+      `INSERT INTO substreams_v33 SELECT * FROM substreams`,
+      // V32 operational rows belong to the per-message run model retired by
+      // this cutover. Preserve canonical participant history, but do not carry
+      // active execution/tool state across the new transcript authority.
+      `UPDATE workstream_message_records SET produced_by_run_id = NULL`,
+      `DELETE FROM repository_publications`,
+      `DELETE FROM attachment_tool_receipts`,
+      `DELETE FROM terminal_tasks`,
+      `DELETE FROM tool_effect_checkpoints`,
+      `DELETE FROM terminal_publication_grants`,
+      `DELETE FROM tool_effects`,
+      `DELETE FROM elicitation_requests`,
+      `DELETE FROM runs`,
+      `CREATE TABLE tool_effects_v33 (
+        effect_intent_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id),
+        attempt_epoch INTEGER NOT NULL,
+        tool_position INTEGER NOT NULL,
+        occurrence_key TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (mode IN ('read', 'write')),
+        request_hash TEXT NOT NULL,
+        authority_revision TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('admitted', 'executing', 'completed', 'failed', 'ambiguous')),
+        result_message_id TEXT REFERENCES participant_transcript_turns(turn_id),
+        provider_operation_id TEXT,
+        started_at INTEGER,
+        settled_at INTEGER,
+        result_hash TEXT,
+        tool_call_id TEXT NOT NULL,
+        connection_id TEXT,
+        input_json TEXT NOT NULL CHECK (json_valid(input_json)),
+        output_ref TEXT,
+        output_summary TEXT,
+        error_json TEXT CHECK (error_json IS NULL OR json_valid(error_json)),
+        execution_plan_hash TEXT,
+        execution_plan_json TEXT CHECK (execution_plan_json IS NULL OR json_valid(execution_plan_json)),
+        provider_idempotency_key TEXT,
+        checkpoint_index INTEGER NOT NULL DEFAULT 0 CHECK (checkpoint_index >= 0),
+        UNIQUE (run_id, attempt_epoch, tool_position)
+      ) STRICT`,
+      `INSERT INTO tool_effects_v33 SELECT * FROM tool_effects`,
+      `CREATE TABLE attachment_tool_receipts_v33 (
+        workspace_id TEXT NOT NULL,
+        resource_id TEXT NOT NULL,
+        tool_invocation_id TEXT NOT NULL
+          REFERENCES tool_effects_v33(effect_intent_id) ON DELETE CASCADE,
+        derivative_sha256 TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (resource_id, tool_invocation_id)
+      ) STRICT`,
+      `INSERT INTO attachment_tool_receipts_v33 SELECT * FROM attachment_tool_receipts`,
+      `CREATE TABLE tool_effect_checkpoints_v33 (
+        checkpoint_id TEXT PRIMARY KEY,
+        effect_intent_id TEXT NOT NULL REFERENCES tool_effects_v33(effect_intent_id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        attempt_id TEXT NOT NULL,
+        checkpoint_index INTEGER NOT NULL CHECK (checkpoint_index >= 0),
+        phase TEXT NOT NULL,
+        member_safe_payload_json TEXT NOT NULL CHECK (json_valid(member_safe_payload_json)),
+        created_at INTEGER NOT NULL,
+        UNIQUE (effect_intent_id, checkpoint_index)
+      ) STRICT`,
+      `INSERT INTO tool_effect_checkpoints_v33 SELECT * FROM tool_effect_checkpoints`,
+      `CREATE TABLE terminal_tasks_v33 (
+        task_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        effect_intent_id TEXT NOT NULL UNIQUE REFERENCES tool_effects_v33(effect_intent_id) ON DELETE CASCADE,
+        sandbox_generation INTEGER NOT NULL CHECK (sandbox_generation >= 1),
+        provider_task_name TEXT NOT NULL UNIQUE,
+        provider_task_id TEXT,
+        state TEXT NOT NULL CHECK (
+          state IN ('planned', 'submitting', 'running', 'completed', 'failed', 'timed_out', 'cancelled')
+        ),
+        command_sha256 TEXT NOT NULL,
+        command_deadline_at INTEGER NOT NULL,
+        exit_code INTEGER,
+        termination_reason TEXT CHECK (
+          termination_reason IS NULL OR termination_reason IN (
+            'exited', 'timed_out', 'cancelled', 'output_limit_exceeded'
+          )
+        ),
+        stdout_head TEXT NOT NULL,
+        stdout_tail TEXT NOT NULL,
+        stderr_head TEXT NOT NULL,
+        stderr_tail TEXT NOT NULL,
+        stdout_bytes INTEGER NOT NULL CHECK (stdout_bytes >= 0),
+        stderr_bytes INTEGER NOT NULL CHECK (stderr_bytes >= 0),
+        output_resource_id TEXT,
+        continuation_emitted_at INTEGER,
+        started_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `INSERT INTO terminal_tasks_v33 SELECT * FROM terminal_tasks`,
+      `CREATE TABLE terminal_publication_grants_v33 (
+        grant_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+        source_message_id TEXT NOT NULL REFERENCES participant_transcript_turns(turn_id) ON DELETE CASCADE,
+        principal_key TEXT NOT NULL,
+        repository_full_name TEXT NOT NULL,
+        base_ref TEXT NOT NULL,
+        head_ref TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        consumed_by_effect_intent_id TEXT REFERENCES tool_effects_v33(effect_intent_id) ON DELETE SET NULL,
+        consumed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        UNIQUE (run_id, source_message_id, repository_full_name)
+      ) STRICT`,
+      `INSERT INTO terminal_publication_grants_v33 SELECT * FROM terminal_publication_grants`,
+      `CREATE TABLE repository_publications_v33 (
+        publication_id TEXT PRIMARY KEY,
+        effect_intent_id TEXT NOT NULL UNIQUE REFERENCES tool_effects_v33(effect_intent_id) ON DELETE CASCADE,
+        grant_id TEXT NOT NULL REFERENCES terminal_publication_grants_v33(grant_id) ON DELETE RESTRICT,
+        repository_full_name TEXT NOT NULL,
+        base_ref TEXT NOT NULL,
+        head_ref TEXT NOT NULL,
+        expected_old_sha TEXT,
+        requested_commit_sha TEXT NOT NULL,
+        published_sha TEXT,
+        state TEXT NOT NULL CHECK (
+          state IN ('planned', 'validating', 'publishing', 'completed', 'failed', 'ambiguous')
+        ),
+        pull_request_number INTEGER,
+        pull_request_url TEXT,
+        pull_request_state TEXT CHECK (
+          pull_request_state IS NULL OR pull_request_state IN ('open', 'closed', 'merged')
+        ),
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        failure_code TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER
+      ) STRICT`,
+      `INSERT INTO repository_publications_v33 SELECT * FROM repository_publications`,
+      `CREATE TABLE suggested_actions_v33 (
+        action_id TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        source_activity_id TEXT NOT NULL,
+        delivery_id TEXT NOT NULL UNIQUE,
+        audience_kind TEXT NOT NULL CHECK (audience_kind IN ('user', 'workstream')),
+        audience_user_id TEXT,
+        provenance_ref TEXT NOT NULL CHECK (length(provenance_ref) <= 2048),
+        authorization_selector_hash TEXT NOT NULL CHECK (length(authorization_selector_hash) <= 512),
+        source_revisions_json TEXT NOT NULL CHECK (
+          json_valid(source_revisions_json) AND length(source_revisions_json) <= 262144
+        ),
+        source_authorization_epoch INTEGER NOT NULL CHECK (source_authorization_epoch >= 0),
+        display_title TEXT NOT NULL CHECK (length(display_title) <= 2048),
+        display_body TEXT NOT NULL CHECK (length(display_body) <= 16384),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'dismissed', 'retracted', 'expired')),
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        retracted_at INTEGER,
+        resolved_by_user_id TEXT,
+        resolution_client_id TEXT,
+        share_intent_json TEXT CHECK (
+          share_intent_json IS NULL
+          OR (json_valid(share_intent_json) AND length(share_intent_json) <= 262144)
+        ),
+        authored_message_id TEXT REFERENCES participant_transcript_turns(turn_id),
+        feedback_message_id TEXT UNIQUE,
+        PRIMARY KEY (action_id, version),
+        CHECK (
+          (audience_kind = 'user' AND audience_user_id IS NOT NULL)
+          OR (audience_kind = 'workstream' AND audience_user_id IS NULL)
+        ),
+        CHECK (expires_at >= created_at),
+        CHECK (
+          (status = 'pending' AND resolved_at IS NULL AND retracted_at IS NULL
+            AND resolved_by_user_id IS NULL AND resolution_client_id IS NULL)
+          OR (status IN ('accepted', 'dismissed') AND resolved_at IS NOT NULL
+            AND retracted_at IS NULL AND resolved_by_user_id IS NOT NULL
+            AND resolution_client_id IS NOT NULL)
+          OR (status = 'retracted' AND resolved_at IS NULL AND retracted_at IS NOT NULL
+            AND resolved_by_user_id IS NULL AND resolution_client_id IS NULL)
+          OR (status = 'expired' AND resolved_at IS NULL AND retracted_at IS NULL
+            AND resolved_by_user_id IS NULL AND resolution_client_id IS NULL)
+        )
+      ) STRICT`,
+      `INSERT INTO suggested_actions_v33 SELECT * FROM suggested_actions`,
+      `CREATE TABLE run_steering_v33 (
+        run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+        steering_message_id TEXT NOT NULL REFERENCES participant_transcript_turns(turn_id) ON DELETE CASCADE,
+        requested_at INTEGER NOT NULL,
+        boundaries_observed INTEGER NOT NULL DEFAULT 0 CHECK (boundaries_observed >= 0),
+        max_boundaries INTEGER NOT NULL DEFAULT 2 CHECK (max_boundaries BETWEEN 1 AND 2),
+        consumed_at INTEGER
+      ) STRICT`,
+      `INSERT INTO run_steering_v33 SELECT * FROM run_steering`,
+      `CREATE TABLE participant_transcript_attachments (
+        turn_id TEXT NOT NULL REFERENCES participant_transcript_turns(turn_id) ON DELETE CASCADE,
+        resource_id TEXT NOT NULL,
+        position INTEGER NOT NULL CHECK (position >= 0),
+        attachment_json TEXT NOT NULL CHECK (
+          json_valid(attachment_json) AND length(attachment_json) <= 262144
+        ),
+        PRIMARY KEY(turn_id, resource_id),
+        UNIQUE(turn_id, position)
+      ) STRICT`,
+      `INSERT INTO participant_transcript_attachments(turn_id, resource_id, position, attachment_json)
+       SELECT message_id, resource_id, position, attachment_json FROM workstream_message_attachments`,
+      `CREATE TABLE participant_transcript_mentions (
+        turn_id TEXT NOT NULL REFERENCES participant_transcript_turns(turn_id) ON DELETE CASCADE,
+        mention_index INTEGER NOT NULL CHECK (mention_index >= 0),
+        mention_kind TEXT NOT NULL CHECK (mention_kind IN ('person', 'connector')),
+        target_user_id TEXT,
+        connector_type TEXT,
+        start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
+        end_offset INTEGER NOT NULL CHECK (end_offset > start_offset),
+        attention_ordinal INTEGER NOT NULL,
+        PRIMARY KEY(turn_id, mention_index),
+        CHECK (
+          (mention_kind = 'person' AND target_user_id IS NOT NULL AND connector_type IS NULL)
+          OR (mention_kind = 'connector' AND target_user_id IS NULL AND connector_type IS NOT NULL)
+        )
+      ) STRICT`,
+      `INSERT INTO participant_transcript_mentions(
+         turn_id, mention_index, mention_kind, target_user_id, connector_type,
+         start_offset, end_offset, attention_ordinal)
+       SELECT message_id, mention_index, mention_kind, target_user_id, connector_type,
+              start_offset, end_offset, attention_ordinal FROM workstream_message_mentions`,
+      `UPDATE substreams SET origin_message_id = NULL WHERE origin_message_id IS NOT NULL`,
+      `UPDATE suggested_actions
+          SET authored_message_id = NULL WHERE authored_message_id IS NOT NULL`,
+      `DELETE FROM workstream_message_records`,
+      ...canonicalTurnRelationTriggerDrops(),
+      `DROP TABLE run_steering`,
+      `ALTER TABLE run_steering_v33 RENAME TO run_steering`,
+      `DROP TABLE suggested_actions`,
+      `ALTER TABLE suggested_actions_v33 RENAME TO suggested_actions`,
+      `DROP TABLE repository_publications`,
+      `DROP TABLE terminal_publication_grants`,
+      `DROP TABLE terminal_tasks`,
+      `DROP TABLE tool_effect_checkpoints`,
+      `DROP TABLE attachment_tool_receipts`,
+      `DROP TABLE tool_effects`,
+      `ALTER TABLE tool_effects_v33 RENAME TO tool_effects`,
+      `ALTER TABLE attachment_tool_receipts_v33 RENAME TO attachment_tool_receipts`,
+      `ALTER TABLE tool_effect_checkpoints_v33 RENAME TO tool_effect_checkpoints`,
+      `ALTER TABLE terminal_tasks_v33 RENAME TO terminal_tasks`,
+      `ALTER TABLE terminal_publication_grants_v33 RENAME TO terminal_publication_grants`,
+      `ALTER TABLE repository_publications_v33 RENAME TO repository_publications`,
+      `DROP TABLE workstream_message_attachments`,
+      `DROP TABLE workstream_message_mentions`,
+      `DROP TABLE substreams`,
+      `ALTER TABLE substreams_v33 RENAME TO substreams`,
+      `DROP TABLE workstream_message_records`,
+      `CREATE INDEX substreams_kind_status_idx ON substreams(kind, status, id)`,
+      `CREATE INDEX substreams_owner_idx
+         ON substreams(owner_user_id, status, id) WHERE owner_user_id IS NOT NULL`,
+      `CREATE INDEX substreams_parent_idx
+         ON substreams(inherit_from_substream_id, id) WHERE inherit_from_substream_id IS NOT NULL`,
+      `CREATE UNIQUE INDEX substreams_origin_message_uq
+         ON substreams(origin_message_id) WHERE origin_message_id IS NOT NULL`,
+      `CREATE INDEX attachment_tool_receipts_invocation_idx
+         ON attachment_tool_receipts(tool_invocation_id, resource_id)`,
+      `CREATE INDEX tool_effects_status_idx ON tool_effects(status, started_at)`,
+      `CREATE UNIQUE INDEX tool_effects_run_call_uq
+         ON tool_effects(run_id, tool_call_id)`,
+      `CREATE INDEX tool_effect_checkpoints_run_idx
+         ON tool_effect_checkpoints(run_id, created_at, checkpoint_id)`,
+      `CREATE INDEX terminal_tasks_state_idx
+         ON terminal_tasks(state, command_deadline_at, task_id)`,
+      `CREATE INDEX terminal_publication_grants_expiry_idx
+         ON terminal_publication_grants(expires_at, consumed_at)`,
+      `CREATE INDEX repository_publications_target_idx
+         ON repository_publications(repository_full_name, base_ref, head_ref, state)`,
+      `CREATE INDEX suggested_actions_audience_idx
+         ON suggested_actions(audience_kind, audience_user_id, status, created_at)`,
+      `CREATE INDEX suggested_actions_source_idx
+         ON suggested_actions(source_activity_id, status, created_at)`,
+      `CREATE INDEX suggested_actions_expiry_idx
+         ON suggested_actions(status, expires_at)`,
+      `CREATE INDEX suggested_actions_authored_message_idx
+         ON suggested_actions(authored_message_id) WHERE authored_message_id IS NOT NULL`,
+      `CREATE INDEX run_steering_pending_idx
+         ON run_steering(consumed_at, requested_at) WHERE consumed_at IS NULL`,
+      `CREATE INDEX participant_transcript_attachments_resource_idx
+         ON participant_transcript_attachments(resource_id, turn_id)`,
+      `CREATE INDEX participant_transcript_mentions_user_attention_idx
+         ON participant_transcript_mentions(target_user_id, attention_ordinal)`,
+      ...canonicalTurnRelationTriggerRecreates(),
+      `CREATE VIEW canonical_conversation_turn_details AS
+         SELECT turn.turn_id AS id,
+                '0' AS substream_id,
+                turn.transcript_sequence AS sequence_number,
+                turn.attention_ordinal,
+                turn.turn_id,
+                NULL AS turn_open_sequence,
+                NULL AS part_index,
+                CASE turn.actor
+                  WHEN 'human' THEN 'user'
+                  WHEN 'external' THEN 'user'
+                  WHEN 'assistant' THEN 'assistant'
+                  ELSE 'system'
+                END AS role,
+                'text' AS kind,
+                CASE turn.actor
+                  WHEN 'human' THEN 'member'
+                  WHEN 'assistant' THEN 'agent'
+                  WHEN 'external' THEN 'external'
+                  ELSE 'system'
+                END AS author_type,
+                turn.author_user_id,
+                turn.external_actor_json,
+                json_extract(payload.payload_json, '$.content') AS content,
+                NULL AS content_ref_id,
+                NULL AS content_bytes,
+                NULL AS content_hash,
+                NULL AS answers_message_id,
+                NULL AS input_message_ids_json,
+                turn.client_message_id,
+                NULL AS effect_intent_id,
+                NULL AS occurrence_key,
+                fact.run_id AS produced_by_run_id,
+                NULL AS attempt_epoch,
+                NULL AS executor_event_seq,
+                NULL AS model_turn_id,
+                NULL AS tool_position,
+                NULL AS delivery_intent,
+                NULL AS input_batch_id,
+                NULL AS admission_cut_seq,
+                (SELECT block.tool_name FROM participant_transcript_blocks block
+                  WHERE block.turn_id = turn.turn_id AND block.block_kind = 'tool'
+                  ORDER BY block.block_index LIMIT 1) AS tool_name,
+                NULL AS tool_mode,
+                (SELECT CASE block.lifecycle_state
+                          WHEN 'planned' THEN 'pending' WHEN 'started' THEN 'pending'
+                          ELSE block.lifecycle_state END
+                   FROM participant_transcript_blocks block
+                  WHERE block.turn_id = turn.turn_id AND block.block_kind = 'tool'
+                  ORDER BY block.block_index LIMIT 1) AS tool_status,
+                NULL AS compacts_through_sequence,
+                NULL AS compacts_through_turn_id,
+                NULL AS projected_input_hash,
+                NULL AS projection_key,
+                NULL AS authorization_revisions_json,
+                NULL AS lineage_fences_json,
+                NULL AS terminal_reason,
+                'people' AS visibility,
+                0 AS pinned,
+                turn.message_type,
+                CASE WHEN json_type(payload.payload_json, '$.structuredContent') = 'null'
+                  THEN NULL
+                  ELSE json_extract(payload.payload_json, '$.structuredContent')
+                END AS structured_content_json,
+                NULL AS edited_at,
+                turn.created_at,
+                turn.updated_at
+           FROM participant_transcript_turns turn
+           JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+           JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+          WHERE turn.entry_kind = 'conversation'`,
+      // ── formerly v34: name transient output stream identity independently from transcript messages
+
+      `ALTER TABLE runs RENAME COLUMN final_part_id TO final_turn_id`,
+      `ALTER TABLE active_output_turns RENAME COLUMN message_id TO stream_id`,
+      `DROP TRIGGER _runtime_harness_runs_insert`,
+      `DROP TRIGGER _runtime_harness_runs_update`,
+      `DROP VIEW _runtime_harness_runs`,
+      ...finalTurnHarnessRunContract(),
+      // ── formerly v35: make one persistent loop authoritative for each substream
+
+      // v33 retired every pre-persistent-loop elicitation. New questions keep
+      // the exact stable Bind tool slot whose delayed answer must settle.
+      // Repeat the retirement at the constraint boundary so an object with an
+      // interrupted or manually repaired v33 cannot make ADD NOT NULL depend
+      // on an unprovable legacy tool identity. Canonical elicitation turns are
+      // independent transcript rows and remain intact.
+      `DELETE FROM elicitation_requests`,
+      `ALTER TABLE elicitation_requests ADD COLUMN tool_call_id TEXT NOT NULL`,
+      `CREATE UNIQUE INDEX elicitation_requests_tool_call_idx
+         ON elicitation_requests(tool_call_id)`,
+      // Pre-v35 Bind loop IDs were per-run identities. There is no sound way
+      // to choose one of those projections as the stable substream head, so
+      // discard the derived context and bootstrap it once from canonical
+      // participant history. ON DELETE CASCADE removes message projections and
+      // provider boundaries; canonical transcript rows are independent.
+      `DELETE FROM bind_loop_heads`,
+      // Bind recovery owns one current projection, not one full message
+      // snapshot per transition. The old rows are empty after deleting heads,
+      // so v35 can replace the unshipped shape without compatibility copying.
+      `DROP TABLE bind_loop_state_messages`,
+      `DROP TABLE bind_loop_states`,
+      `DROP TABLE bind_provider_boundaries`,
+      `DROP TABLE bind_loop_heads`,
+      `CREATE TABLE bind_loop_heads (
+        loop_id TEXT PRIMARY KEY,
+        generation INTEGER NOT NULL CHECK (generation > 0),
+        state_revision INTEGER NOT NULL CHECK (state_revision > 0),
+        transition_kind TEXT NOT NULL,
+        system_projection_revision INTEGER NOT NULL CHECK (system_projection_revision > 0),
+        system_renderer_version TEXT NOT NULL,
+        system_input_hash TEXT NOT NULL,
+        projector_version TEXT NOT NULL,
+        last_model_turn_index INTEGER NOT NULL CHECK (last_model_turn_index >= 0),
+        last_assistant_reservation_json TEXT CHECK (
+          last_assistant_reservation_json IS NULL
+          OR (json_valid(last_assistant_reservation_json)
+            AND json_type(last_assistant_reservation_json) = 'object')
+        ),
+        updated_at INTEGER NOT NULL
+      ) STRICT`,
+      `CREATE TABLE bind_loop_state_messages (
+        loop_id TEXT NOT NULL REFERENCES bind_loop_heads(loop_id) ON DELETE CASCADE,
+        message_position INTEGER NOT NULL CHECK (message_position >= 0),
+        loop_sequence INTEGER NOT NULL UNIQUE CHECK (loop_sequence > 0),
+        fact_id TEXT NOT NULL REFERENCES transcript_facts(fact_id),
+        PRIMARY KEY(loop_id, message_position)
+      ) STRICT`,
+      `CREATE INDEX bind_loop_state_messages_fact_idx
+         ON bind_loop_state_messages(loop_id, fact_id)`,
+      `CREATE TABLE bind_provider_boundaries (
+        loop_id TEXT NOT NULL REFERENCES bind_loop_heads(loop_id) ON DELETE CASCADE,
+        state_revision INTEGER NOT NULL,
+        generation INTEGER NOT NULL,
+        system_projection_revision INTEGER NOT NULL,
+        projector_version TEXT NOT NULL,
+        projected_hash TEXT NOT NULL,
+        bind_hash TEXT NOT NULL,
+        verified_at INTEGER NOT NULL,
+        PRIMARY KEY(loop_id, state_revision),
+        CHECK (projected_hash = bind_hash)
+      ) STRICT`,
+      `CREATE TABLE bind_activation_inputs (
+        loop_id TEXT NOT NULL REFERENCES bind_loop_heads(loop_id) ON DELETE CASCADE,
+        activation_input_id TEXT NOT NULL,
+        fact_id TEXT NOT NULL REFERENCES transcript_facts(fact_id),
+        admitted_state_revision INTEGER NOT NULL CHECK (admitted_state_revision > 0),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY(loop_id, activation_input_id)
+      ) STRICT`,
+      `CREATE TABLE substream_loops (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        loop_id TEXT NOT NULL UNIQUE,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        status TEXT NOT NULL CHECK (status IN ('idle', 'executing')),
+        cycle_ordinal INTEGER NOT NULL CHECK (cycle_ordinal >= 0),
+        step_ordinal INTEGER NOT NULL CHECK (step_ordinal >= 0),
+        bind_state_revision INTEGER NOT NULL CHECK (bind_state_revision >= 0),
+        active_execution_id TEXT,
+        active_execution_epoch INTEGER CHECK (
+          active_execution_epoch IS NULL OR active_execution_epoch > 0
+        ),
+        lease_owner TEXT,
+        lease_expires_at INTEGER,
+        stop_requested_at INTEGER,
+        stop_after_step_ordinal INTEGER CHECK (
+          stop_after_step_ordinal IS NULL OR stop_after_step_ordinal >= 0
+        ),
+        stop_reason TEXT,
+        next_input_sequence INTEGER NOT NULL CHECK (next_input_sequence > 0),
+        next_assistant_turn_sequence INTEGER NOT NULL CHECK (next_assistant_turn_sequence > 0),
+        next_execution_sequence INTEGER NOT NULL CHECK (next_execution_sequence > 0),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+        CHECK (
+          (status = 'idle'
+            AND active_execution_id IS NULL
+            AND active_execution_epoch IS NULL
+            AND lease_owner IS NULL
+            AND lease_expires_at IS NULL
+            AND stop_requested_at IS NULL
+            AND stop_after_step_ordinal IS NULL
+            AND stop_reason IS NULL)
+          OR (status = 'executing'
+            AND active_execution_id IS NOT NULL
+            AND active_execution_epoch IS NOT NULL
+            AND lease_owner IS NOT NULL
+            AND lease_expires_at IS NOT NULL)
+        ),
+        CHECK (
+          (stop_requested_at IS NULL
+            AND stop_after_step_ordinal IS NULL
+            AND stop_reason IS NULL)
+          OR (status = 'executing'
+            AND stop_requested_at IS NOT NULL
+            AND stop_after_step_ordinal IS NOT NULL
+            AND stop_reason IS NOT NULL)
+        )
+      ) STRICT`,
+      `CREATE TABLE pending_loop_input_mailbox (
+        input_id TEXT PRIMARY KEY,
+        loop_id TEXT NOT NULL REFERENCES substream_loops(loop_id) ON DELETE RESTRICT,
+        input_sequence INTEGER NOT NULL CHECK (input_sequence > 0),
+        admitted_after_transcript_sequence INTEGER NOT NULL CHECK (
+          admitted_after_transcript_sequence >= 0
+        ),
+        client_message_id TEXT NOT NULL UNIQUE,
+        preparation_kind TEXT NOT NULL CHECK (
+          preparation_kind IN (
+            'human_message', 'human_elicitation',
+            'external_message', 'external_elicitation'
+          )
+        ),
+        envelope_json TEXT CHECK (
+          envelope_json IS NULL
+          OR (json_valid(envelope_json) AND json_type(envelope_json) = 'object')
+        ),
+        state TEXT NOT NULL CHECK (
+          state IN ('preparing', 'ready', 'failed', 'discarded')
+        ),
+        terminal_code TEXT CHECK (
+          terminal_code IS NULL OR length(terminal_code) BETWEEN 1 AND 160
+        ),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+        UNIQUE(loop_id, input_sequence),
+        CHECK (
+          (state = 'preparing' AND envelope_json IS NOT NULL AND terminal_code IS NULL)
+          OR (state = 'failed' AND envelope_json IS NULL AND terminal_code IS NOT NULL)
+          OR (state IN ('ready', 'discarded')
+            AND envelope_json IS NULL AND terminal_code IS NULL)
+        )
+      ) STRICT`,
+      `CREATE TRIGGER pending_loop_input_mailbox_identity_immutable
+       BEFORE UPDATE OF
+         input_id, loop_id, input_sequence, admitted_after_transcript_sequence,
+         client_message_id,
+         preparation_kind, created_at
+       ON pending_loop_input_mailbox
+       WHEN NEW.input_id IS NOT OLD.input_id
+         OR NEW.loop_id IS NOT OLD.loop_id
+         OR NEW.input_sequence IS NOT OLD.input_sequence
+         OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
+         OR NEW.client_message_id IS NOT OLD.client_message_id
+         OR NEW.preparation_kind IS NOT OLD.preparation_kind
+         OR NEW.created_at IS NOT OLD.created_at
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_identity_is_immutable');
+       END`,
+      `CREATE TRIGGER pending_loop_input_mailbox_state_transition
+       BEFORE UPDATE OF state
+       ON pending_loop_input_mailbox
+       WHEN NOT (
+         OLD.state = 'preparing' AND NEW.state IN ('ready', 'failed', 'discarded')
+       )
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_state_transition_invalid');
+       END`,
+      `CREATE TRIGGER pending_loop_input_mailbox_envelope_immutable
+       BEFORE UPDATE OF envelope_json
+       ON pending_loop_input_mailbox
+       WHEN OLD.state = 'preparing' AND NEW.state = 'preparing'
+         AND NEW.envelope_json IS NOT OLD.envelope_json
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_mailbox_envelope_is_immutable');
+       END`,
+      `CREATE INDEX pending_loop_input_mailbox_order_idx
+         ON pending_loop_input_mailbox(loop_id, state, input_sequence)`,
+      `CREATE TABLE pending_loop_inputs (
+        input_id TEXT PRIMARY KEY,
+        loop_id TEXT NOT NULL REFERENCES substream_loops(loop_id) ON DELETE RESTRICT,
+        input_sequence INTEGER NOT NULL CHECK (input_sequence > 0),
+        prepared_turn_id TEXT NOT NULL UNIQUE,
+        admitted_after_transcript_sequence INTEGER NOT NULL CHECK (
+          admitted_after_transcript_sequence >= 0
+        ),
+        mode TEXT NOT NULL CHECK (mode IN ('steer', 'queue')),
+        actor TEXT NOT NULL CHECK (actor IN ('human', 'external', 'system')),
+        author_user_id TEXT,
+        author_name_snapshot TEXT,
+        author_avatar_url_snapshot TEXT,
+        client_message_id TEXT UNIQUE,
+        external_actor_json TEXT CHECK (
+          external_actor_json IS NULL OR json_valid(external_actor_json)
+        ),
+        message_type TEXT NOT NULL,
+        prepared_payload_id TEXT NOT NULL,
+        prepared_fact_id TEXT NOT NULL UNIQUE,
+        prepared_payload_audience TEXT NOT NULL CHECK (
+          prepared_payload_audience IN ('shared', 'participant', 'model')
+        ),
+        prepared_payload_media_type TEXT NOT NULL,
+        prepared_payload_json TEXT NOT NULL CHECK (json_valid(prepared_payload_json)),
+        prepared_payload_sha256 TEXT NOT NULL,
+        prepared_payload_byte_length INTEGER NOT NULL CHECK (prepared_payload_byte_length >= 0),
+        bind_payload_json TEXT NOT NULL CHECK (
+          json_valid(bind_payload_json) AND json_type(bind_payload_json) = 'object'
+        ),
+        provenance_json TEXT NOT NULL CHECK (
+          json_valid(provenance_json) AND json_type(provenance_json) = 'object'
+        ),
+        authorization_json TEXT NOT NULL CHECK (
+          json_valid(authorization_json) AND json_type(authorization_json) = 'object'
+        ),
+        attachments_json TEXT NOT NULL CHECK (
+          json_valid(attachments_json) AND json_type(attachments_json) = 'array'
+        ),
+        mentions_json TEXT NOT NULL CHECK (
+          json_valid(mentions_json) AND json_type(mentions_json) = 'array'
+        ),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+        UNIQUE(loop_id, input_sequence),
+        CHECK (prepared_turn_id = input_id),
+        CHECK (
+          (actor = 'human'
+            AND author_user_id IS NOT NULL
+            AND author_name_snapshot IS NOT NULL
+            AND external_actor_json IS NULL)
+          OR (actor = 'external'
+            AND author_user_id IS NULL
+            AND author_name_snapshot IS NULL
+            AND author_avatar_url_snapshot IS NULL
+            AND external_actor_json IS NOT NULL)
+          OR (actor = 'system'
+            AND author_user_id IS NULL
+            AND author_name_snapshot IS NULL
+            AND author_avatar_url_snapshot IS NULL
+            AND external_actor_json IS NULL)
+        )
+      ) STRICT`,
+      `CREATE TRIGGER pending_loop_inputs_prepared_immutable
+       BEFORE UPDATE OF
+         input_id, loop_id, input_sequence, prepared_turn_id,
+         admitted_after_transcript_sequence, mode,
+         actor, author_user_id, author_name_snapshot,
+         author_avatar_url_snapshot, client_message_id, external_actor_json,
+         message_type, prepared_payload_id, prepared_fact_id,
+         prepared_payload_audience, prepared_payload_media_type,
+         prepared_payload_json, prepared_payload_sha256,
+         prepared_payload_byte_length, bind_payload_json, provenance_json, authorization_json,
+         attachments_json, mentions_json, created_at
+       ON pending_loop_inputs
+       WHEN NEW.input_id IS NOT OLD.input_id
+         OR NEW.loop_id IS NOT OLD.loop_id
+         OR NEW.input_sequence IS NOT OLD.input_sequence
+         OR NEW.prepared_turn_id IS NOT OLD.prepared_turn_id
+         OR NEW.admitted_after_transcript_sequence IS NOT OLD.admitted_after_transcript_sequence
+         OR NEW.mode IS NOT OLD.mode
+         OR NEW.actor IS NOT OLD.actor
+         OR NEW.author_user_id IS NOT OLD.author_user_id
+         OR NEW.author_name_snapshot IS NOT OLD.author_name_snapshot
+         OR NEW.author_avatar_url_snapshot IS NOT OLD.author_avatar_url_snapshot
+         OR NEW.client_message_id IS NOT OLD.client_message_id
+         OR NEW.external_actor_json IS NOT OLD.external_actor_json
+         OR NEW.message_type IS NOT OLD.message_type
+         OR NEW.prepared_payload_id IS NOT OLD.prepared_payload_id
+         OR NEW.prepared_fact_id IS NOT OLD.prepared_fact_id
+         OR NEW.prepared_payload_audience IS NOT OLD.prepared_payload_audience
+         OR NEW.prepared_payload_media_type IS NOT OLD.prepared_payload_media_type
+         OR NEW.prepared_payload_json IS NOT OLD.prepared_payload_json
+         OR NEW.prepared_payload_sha256 IS NOT OLD.prepared_payload_sha256
+         OR NEW.prepared_payload_byte_length IS NOT OLD.prepared_payload_byte_length
+         OR NEW.bind_payload_json IS NOT OLD.bind_payload_json
+         OR NEW.provenance_json IS NOT OLD.provenance_json
+         OR NEW.authorization_json IS NOT OLD.authorization_json
+         OR NEW.attachments_json IS NOT OLD.attachments_json
+         OR NEW.mentions_json IS NOT OLD.mentions_json
+         OR NEW.created_at IS NOT OLD.created_at
+       BEGIN
+         SELECT RAISE(ABORT, 'pending_loop_input_prepared_fields_are_immutable');
+       END`,
+      `CREATE INDEX pending_loop_inputs_ready_idx
+         ON pending_loop_inputs(loop_id, input_sequence)`,
+      `CREATE TABLE delivered_loop_inputs (
+        input_id TEXT PRIMARY KEY,
+        loop_id TEXT NOT NULL REFERENCES substream_loops(loop_id) ON DELETE RESTRICT,
+        input_sequence INTEGER NOT NULL CHECK (input_sequence > 0),
+        delivered_turn_id TEXT NOT NULL UNIQUE
+          REFERENCES participant_transcript_turns(turn_id) ON DELETE RESTRICT,
+        delivered_attention_ordinal INTEGER NOT NULL CHECK (delivered_attention_ordinal > 0),
+        delivered_at INTEGER NOT NULL,
+        UNIQUE(loop_id, input_sequence)
+      ) STRICT`,
+      `CREATE TRIGGER delivered_loop_inputs_immutable
+       BEFORE UPDATE ON delivered_loop_inputs
+       BEGIN
+         SELECT RAISE(ABORT, 'delivered_loop_input_is_immutable');
+       END`,
+      `CREATE TABLE assistant_turn_reservations (
+        turn_id TEXT PRIMARY KEY,
+        loop_id TEXT NOT NULL REFERENCES substream_loops(loop_id) ON DELETE RESTRICT,
+        execution_id TEXT NOT NULL,
+        cycle_ordinal INTEGER NOT NULL CHECK (cycle_ordinal > 0),
+        execution_epoch INTEGER NOT NULL CHECK (execution_epoch > 0),
+        assistant_turn_sequence INTEGER NOT NULL CHECK (assistant_turn_sequence > 0),
+        transcript_sequence INTEGER NOT NULL UNIQUE CHECK (transcript_sequence > 0),
+        stream_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('reserved', 'streaming', 'materialized')),
+        outcome TEXT CHECK (outcome IS NULL OR outcome IN ('accepted', 'error')),
+        materialized_turn_id TEXT UNIQUE
+          REFERENCES participant_transcript_turns(turn_id) ON DELETE RESTRICT,
+        reserved_at INTEGER NOT NULL,
+        started_at INTEGER,
+        materialized_at INTEGER,
+        updated_at INTEGER NOT NULL CHECK (updated_at >= reserved_at),
+        UNIQUE(loop_id, assistant_turn_sequence),
+        CHECK (
+          (state = 'reserved'
+            AND started_at IS NULL AND outcome IS NULL
+            AND materialized_at IS NULL AND materialized_turn_id IS NULL)
+          OR (state = 'streaming'
+            AND started_at IS NOT NULL AND outcome IS NULL
+            AND materialized_at IS NULL AND materialized_turn_id IS NULL)
+          OR (state = 'materialized'
+            AND outcome IS NOT NULL AND materialized_at IS NOT NULL
+            AND materialized_turn_id = turn_id)
+        )
+      ) STRICT`,
+      `CREATE UNIQUE INDEX assistant_turn_reservations_active_uq
+         ON assistant_turn_reservations(loop_id)
+         WHERE state IN ('reserved', 'streaming')`,
+      `CREATE INDEX assistant_turn_reservations_stream_idx
+         ON assistant_turn_reservations(stream_id, assistant_turn_sequence)`,
+      `CREATE INDEX participant_transcript_activity_idx
+         ON participant_transcript_turns(activity_id)
+         WHERE activity_id IS NOT NULL`,
+      `CREATE INDEX assistant_turn_reservations_cycle_idx
+         ON assistant_turn_reservations(loop_id, cycle_ordinal, assistant_turn_sequence)`,
+      `ALTER TABLE runs ADD COLUMN substream_loop_id TEXT
+         REFERENCES substream_loops(loop_id) ON DELETE RESTRICT`,
+      `ALTER TABLE runs ADD COLUMN loop_input_id TEXT
+         REFERENCES delivered_loop_inputs(input_id) ON DELETE RESTRICT`,
+      `ALTER TABLE runs ADD COLUMN loop_cycle_ordinal INTEGER
+         CHECK (loop_cycle_ordinal IS NULL OR loop_cycle_ordinal > 0)`,
+      `ALTER TABLE runs ADD COLUMN loop_execution_id TEXT`,
+      `ALTER TABLE runs ADD COLUMN loop_execution_epoch INTEGER
+         CHECK (loop_execution_epoch IS NULL OR loop_execution_epoch > 0)`,
+      `ALTER TABLE runs ADD COLUMN loop_execution_sequence INTEGER
+         CHECK (loop_execution_sequence IS NULL OR loop_execution_sequence > 0)`,
+      `ALTER TABLE runs ADD COLUMN execution_context_json TEXT
+         CHECK (
+           execution_context_json IS NULL
+           OR (json_valid(execution_context_json)
+             AND json_type(execution_context_json) = 'object')
+         )`,
+      `ALTER TABLE runs ADD COLUMN execution_available_at INTEGER
+         CHECK (execution_available_at IS NULL OR execution_available_at >= 0)`,
+      `ALTER TABLE runs ADD COLUMN external_settled_at INTEGER
+         CHECK (external_settled_at IS NULL OR external_settled_at >= 0)`,
+      `ALTER TABLE runs ADD COLUMN last_settlement_error_code TEXT`,
+      // A receipt is subordinate to the singleton loop. Multiple admitted
+      // receipts may wait while one execution owns the loop lease, so the old
+      // per-substream run exclusion is both redundant and incorrect.
+      `DROP INDEX IF EXISTS runs_mutating_substream_uq`,
+      `CREATE UNIQUE INDEX runs_loop_execution_uq
+         ON runs(substream_loop_id, loop_execution_sequence)
+         WHERE substream_loop_id IS NOT NULL AND loop_execution_sequence IS NOT NULL`,
+      `CREATE INDEX runs_loop_input_idx
+         ON runs(loop_input_id, created_at) WHERE loop_input_id IS NOT NULL`,
+      `CREATE INDEX runs_loop_recovery_idx
+         ON runs(substream_loop_id, status, execution_available_at, created_at)
+         WHERE substream_loop_id IS NOT NULL
+           AND status IN ('admitted', 'running')`,
+      `CREATE INDEX runs_execution_due_idx
+         ON runs(status, execution_available_at, created_at)
+         WHERE execution_context_json IS NOT NULL
+           AND substream_loop_id IS NULL
+           AND terminalized_at IS NULL
+           AND status IN ('admitted', 'running')`,
+      `CREATE INDEX runs_external_settlement_due_idx
+         ON runs(external_settled_at, updated_at)
+         WHERE terminalized_at IS NOT NULL AND external_settled_at IS NULL`,
+      // Pre-v35 run dispatches were per-message operational authority. They
+      // are not valid inputs to the stable-loop claim path. Retain referenced
+      // run rows only as already-settled historical receipts and discard their
+      // resumable/streaming state; canonical participant turns are independent.
+      `DELETE FROM active_output_chunks`,
+      `DELETE FROM active_output_turns`,
+      // The interim chain retired still-active run receipts here; on the one
+      // real upgrade path every pre-cutover run row is already deleted above,
+      // so the retirement was a no-op and is not carried.
+      `DROP TABLE run_steering`,
+      `DROP TABLE agent_run_dispatches`,
+      // ── formerly v36: recover WorkspaceDO draft reservations for pending attachment inputs
+
+      `CREATE TABLE pending_attachment_reservation_recovery (
+        input_id TEXT NOT NULL CHECK (length(input_id) = 36)
+          REFERENCES pending_loop_input_mailbox(input_id) ON DELETE RESTRICT,
+        resource_id TEXT NOT NULL CHECK (length(resource_id) = 36),
+        workspace_id TEXT NOT NULL CHECK (length(workspace_id) = 36),
+        workstream_id TEXT NOT NULL CHECK (length(workstream_id) = 36),
+        release_authority TEXT NOT NULL CHECK (
+          release_authority IN ('preparation', 'projection')
+        ),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (input_id, resource_id)
+      ) STRICT`,
+      `CREATE INDEX pending_attachment_reservation_recovery_input_idx
+         ON pending_attachment_reservation_recovery(input_id, resource_id)`,
+      // ── formerly v37: retire the final work-stream runtime SQL compatibility objects
+
+      `DROP TRIGGER IF EXISTS _runtime_harness_runs_insert`,
+      `DROP TRIGGER IF EXISTS _runtime_harness_runs_update`,
+      `DROP TRIGGER IF EXISTS _runtime_inference_attempts_insert`,
+      `DROP VIEW IF EXISTS _runtime_harness_runs`,
+      `DROP VIEW IF EXISTS _runtime_inference_attempts`,
+      `DROP VIEW IF EXISTS _runtime_users`,
+      `DROP TABLE IF EXISTS _runtime_statement_changes`,
+      // ── formerly v38: make recovered activity outcomes exact and qualify their timing
+
+      // Activity rows are an execution projection, not message history. Rally
+      // has no production users at this cutover, so rebuild this projection
+      // instead of carrying a compatibility table solely to widen its terminal
+      // state vocabulary. Canonical participant turns are untouched.
+      `DROP TABLE transcript_activity_intervals`,
+      `DROP TABLE transcript_activities`,
+      `CREATE TABLE transcript_activities (
+        activity_id TEXT PRIMARY KEY,
+        parent_activity_id TEXT REFERENCES transcript_activities(activity_id),
+        scope TEXT NOT NULL CHECK (scope IN ('response', 'assistant_turn', 'plugin', 'tool_call', 'thinking', 'compaction')),
+        subject_id TEXT NOT NULL,
+        call_index INTEGER,
+        label TEXT NOT NULL,
+        lifecycle_state TEXT NOT NULL CHECK (lifecycle_state IN ('active', 'completed', 'failed', 'cancelled', 'abandoned', 'ambiguous')),
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (call_index IS NULL OR call_index >= 0)
+      ) STRICT`,
+      `CREATE INDEX transcript_active_activity_idx
+         ON transcript_activities(lifecycle_state, parent_activity_id, call_index, created_at)
+         WHERE lifecycle_state = 'active'`,
+      `CREATE INDEX transcript_activity_subject_idx
+         ON transcript_activities(scope, subject_id, revision)`,
+      `CREATE TABLE transcript_activity_intervals (
+        activity_id TEXT NOT NULL REFERENCES transcript_activities(activity_id) ON DELETE CASCADE,
+        interval_id TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        stopped_at INTEGER,
+        duration_ms INTEGER,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        boundary_source TEXT NOT NULL DEFAULT 'rally'
+          CHECK (boundary_source IN ('rally', 'provider', 'normalized', 'recovered')),
+        timing_accuracy TEXT NOT NULL DEFAULT 'observed'
+          CHECK (timing_accuracy IN ('observed', 'upper_bound')),
+        PRIMARY KEY(activity_id, interval_id),
+        CHECK (stopped_at IS NULL OR stopped_at >= started_at),
+        CHECK (duration_ms IS NULL OR duration_ms >= 0)
+      ) STRICT`,
+      `CREATE INDEX transcript_active_interval_idx
+         ON transcript_activity_intervals(activity_id, started_at)
+         WHERE stopped_at IS NULL`,
+      `CREATE INDEX transcript_activity_parent_idx
+         ON transcript_activities(parent_activity_id, activity_id)`,
+      // ── formerly v40: persist canonical transcript reservations for active streamed turns
+
+      // Active output is a transient recovery projection, not canonical
+      // history. Retire any pre-v40 projection rather than inventing the
+      // transcript reservation that its old row did not persist.
+      `DELETE FROM active_output_chunks`,
+      `DELETE FROM active_output_turns`,
+      `ALTER TABLE active_output_turns ADD COLUMN transcript_sequence INTEGER NOT NULL
+         CHECK (transcript_sequence > 0)`,
     ],
   },
 ];
@@ -2094,9 +3088,9 @@ function compatObjectDrops(names: RegExp, expected: number, family: string): str
  *
  * It survived that slice for one reason: the two functions that publish and
  * recover a run's final message joined it to `messages`, so it could not go
- * until the transcript write did. `publishFinalMessage` makes that one
- * transaction inside the object — the append and the event it records — and
- * `loadPersistedHarnessFinalOutcome` asks the two authorities separately, so
+ * until the transcript write did. `publishHostOutcome` makes that one
+ * transaction inside the object — the optional turns and their event — and
+ * `loadPersistedHarnessHostOutcome` asks the authorities separately, so
  * the join and the view it needed are both gone.
  */
 function runLifecycleAuthorityPromotion(): string[] {
@@ -2999,33 +3993,14 @@ export function applyWorkstreamObjectSchema(
   workerVersionId: string,
   now = Date.now(),
 ): void {
-  const ledgerExists = storage.sql.exec<{ name: string }>(
-    `SELECT name FROM sqlite_master
-      WHERE type = 'table' AND name = '_sql_schema_migrations'`,
-  ).toArray().length > 0;
-  const currentVersion = ledgerExists
-    ? Number(storage.sql.exec<{ version: number }>(
-      `SELECT COALESCE(MAX(version), 0) AS version FROM _sql_schema_migrations`,
-    ).one().version)
-    : 0;
-  const retiringTranscript = currentVersion < 32;
-  if (retiringTranscript) {
-    // v32 swaps the verified canonical record table under existing local FKs.
-    // SQLite must preserve the old FK target names across the first rename;
-    // the final rename rewrites them to the canonical table before the runner's
-    // mandatory foreign_key_check. This happens outside the migration
-    // transaction because SQLite ignores a foreign_keys toggle inside one.
-    storage.sql.exec(`PRAGMA foreign_keys = OFF`);
-  }
-  try {
-    applyDurableObjectSqliteMigrations({
-      storage,
-      migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
-      component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
-      workerVersionId,
-      now,
-      afterMigrations: (sql) => {
-        sql.exec(
+  applyDurableObjectSqliteMigrations({
+    storage,
+    migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS,
+    component: WORKSTREAM_OBJECT_SCHEMA_COMPONENT,
+    workerVersionId,
+    now,
+    afterMigrations: (sql) => {
+      sql.exec(
         `INSERT INTO object_versions
            (id, worker_version_id, contract_version, schema_version, data_version,
             projection_version, restore_generation, updated_at)
@@ -3042,10 +4017,7 @@ export function applyWorkstreamObjectSchema(
         WORKSTREAM_OBJECT_CONTRACT_VERSION,
         WORKSTREAM_OBJECT_SCHEMA_VERSION,
         now,
-        );
-      },
-    });
-  } finally {
-    if (retiringTranscript) storage.sql.exec(`PRAGMA foreign_keys = ON`);
-  }
+      );
+    },
+  });
 }

@@ -199,8 +199,8 @@ const replayedMessage = await jsonRequest(`/workstreams/${seedWorkstreamId}/mess
   }),
 });
 assert(replayedMessage.response.status === 201, "Message idempotency replay failed");
-assert(replayedMessage.body?.message?.id === "00000000-0000-7000-8000-000000000032", "Message replay created a duplicate");
-assert(replayedMessage.body?.agentInvoked === false, "Message replay launched duplicate agent work");
+assert(replayedMessage.body?.turn?.turnId === "00000000-0000-7000-8000-000000000032", "Message replay created a duplicate");
+assert(replayedMessage.body?.deliveryState === "canonical", "Message replay did not report its canonical durable state");
 
 const ticket = await jsonRequest(`/workstreams/${seedWorkstreamId}/socket`, { headers: authHeaders });
 assert(ticket.response.ok && ticket.body?.url && ticket.body?.ticket, "Realtime ticket creation failed");

@@ -80,7 +80,7 @@ function run() {
 
 function checkpoint(roomSequence: number, text: string) {
   return {
-    messageId,
+    streamId: messageId,
     harnessRunId,
     turnId: 'turn-1',
     epoch: 0,

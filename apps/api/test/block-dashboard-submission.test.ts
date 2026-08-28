@@ -39,6 +39,7 @@ const integrationsSource = readFileSync(
 const workflowInput = (): WorkstreamWorkflowInput => ({
   workspaceId: "00000000-0000-4000-8000-000000000001",
   workstreamId: "00000000-0000-4000-8000-000000000002",
+  loopId: "block-dashboard:test-block:loop",
   harnessRunId: "00000000-0000-4000-8000-000000000003",
   region: "global",
   reason: "human_message",

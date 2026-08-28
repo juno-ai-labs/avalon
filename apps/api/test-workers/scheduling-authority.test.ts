@@ -95,6 +95,7 @@ function elicitation(overrides: Record<string, unknown> = {}): Record<string, un
   return {
     elicitationId: ELICITATION,
     runId: RUN,
+    toolCallId: `${RUN}:turn:1:tool:0`,
     prompt: "Which environment?",
     responseType: "text",
     optionsJson: "[]",
@@ -407,7 +408,7 @@ describe("scheduling authority on real workerd", () => {
       // sequence and the root's next one cannot disagree.
       expect(state.storage.sql.exec(
         `SELECT sequence_number, attention_ordinal, author_type, message_type
-           FROM workstream_message_details WHERE client_message_id = 'elicitation:' || ?`,
+           FROM canonical_conversation_turn_details WHERE client_message_id = 'elicitation:' || ?`,
         ELICITATION,
       ).toArray()).toEqual([{
         sequence_number: 1,
@@ -467,7 +468,7 @@ describe("scheduling authority on real workerd", () => {
         external_actor_json: ACTOR,
       }]);
       expect(state.storage.sql.exec(
-        `SELECT client_message_id FROM workstream_message_details WHERE message_type = 'elicitation'
+        `SELECT client_message_id FROM canonical_conversation_turn_details WHERE message_type = 'elicitation'
           ORDER BY sequence_number`,
       ).toArray()).toEqual([
         { client_message_id: `elicitation:${ELICITATION}` },

@@ -32,14 +32,14 @@ import {
   MESSAGE_TOO_LONG_MESSAGE,
   type TranscriptActivity,
   type TranscriptTurn,
+  type WorkstreamMessageDeliveryState,
   type WorkstreamTranscriptSnapshot,
 } from '@rally/contracts';
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
 import { useCitations } from '../lib/use-citations';
-import { ApiError, messagesWithTransientBlocks, type MentionIdentity } from '../lib/api';
-import { answerElicitationOptimistically } from '../lib/elicitation';
+import { ApiError, type MentionIdentity } from '../lib/api';
 import { formatDateTime } from '../lib/format';
 import { isComposingKeyEvent } from '../lib/ime';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
@@ -54,20 +54,24 @@ import {
   type WorkstreamFeedSource,
   workstreamFeedOpenAttemptId,
   workstreamFeedSourceQueryKey,
-  workstreamRecoveryFeedQueryKey,
   workstreamSocketSnapshotGenerationQueryKey,
   workstreamNavigation,
 } from '../lib/telemetry';
 import {
   appendDismissedSuggestionId,
   adjacentTranscriptRange,
+  composeTranscript,
   createTextMessage,
   dismissedSuggestionIdsQueryKey,
-  removeTranscriptMessage,
   orderedTranscriptMessages,
-  transientMessagesWithoutCanonicalMatch,
-  transcriptGaps,
-  visibleTranscriptMessages,
+  pendingTranscriptInputOverlay,
+  reconcileAuthoritativeTranscriptOverlays,
+  removeTranscriptOverlay,
+  setTranscriptElicitationState,
+  transcriptCoverageAdvanced,
+  transcriptOverlaysQueryKey,
+  type TranscriptOverlay,
+  upsertTranscriptOverlay,
 } from '../lib/transcript';
 import { useFileAttachments } from '../lib/use-file-attachments';
 import { useFileDrop } from '../lib/use-file-drop';
@@ -79,18 +83,12 @@ import { useWorkstreamSendReadyTelemetry } from '../lib/use-workstream-send-read
 import { useBlockDashboardSockets } from '../lib/use-block-dashboard-sockets';
 import { useClientFeatureFlags } from '../lib/use-client-feature-flags';
 import { type RailPanel, type RailVariant, useUiStore } from '../lib/ui-store';
-import {
-  insertMessage,
-  nextTranscriptSequence,
-  orderTranscript,
-  reconcileCanonicalTranscript,
-  type SocketState,
-} from '../lib/use-workstream-socket';
+import { type SocketState, type WorkstreamMessageDeliveryMode } from '../lib/use-workstream-socket';
 import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -115,7 +113,14 @@ export function resourceVersionsQueryKey(
   resourceId: string | null,
   currentVersion: number | null,
 ): readonly [string, string | null, number | null] {
-  return ['resource-versions', resourceId, currentVersion];
+  return ['resource-versions', resourceId, currentVersion];}
+
+export function acceptedMessageOverlayDeliveryState(
+  deliveryState: WorkstreamMessageDeliveryState,
+  requestedMode: WorkstreamMessageDeliveryMode | undefined,
+): Message['deliveryState'] {
+  if (deliveryState === 'canonical') return undefined;
+  return requestedMode === 'queue' ? 'queue_pending' : 'steer_pending';
 }
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
@@ -143,12 +148,9 @@ export function workstreamPresenceViewers(
     .map((member) => ({ ...member, viewing: true }));
 }
 
-type WorkstreamRecoveryFeed = Pick<WorkstreamBoot, 'messageFeed' | 'resumeFeed'>;
-
 function detailFromRecoveryBoot(boot: WorkstreamBoot): WorkstreamDetail {
-  const { messageFeed, resumeFeed, ...detail } = boot;
-  void messageFeed;
-  void resumeFeed;
+  const { transcript, ...detail } = boot;
+  void transcript;
   return detail;
 }
 
@@ -212,11 +214,10 @@ export function orderedTranscriptOwnsRunTiming(
 export function workstreamPayloadBelongsToRoute(
   routeWorkstreamId: string,
   workstream: Pick<WorkstreamDetail, 'id'> | undefined,
-  messages: readonly Pick<Message, 'workstreamId'>[] | undefined,
+  transcript: WorkstreamTranscriptSnapshot | undefined,
 ): boolean {
   return workstream?.id === routeWorkstreamId
-    && messages !== undefined
-    && messages.every((message) => message.workstreamId === routeWorkstreamId);
+    && transcript !== undefined;
 }
 
 /**
@@ -826,28 +827,6 @@ export function preservedPrependScrollTop(
   return previousScrollTop + Math.max(0, nextScrollHeight - previousScrollHeight);
 }
 
-export function transcriptPageCursor(
-  page: MessagePage,
-  requestedCursor: string,
-  direction: 'before' | 'after',
-): string | null {
-  const nextCursor = direction === 'before' ? page.nextCursor : page.newerCursor;
-  if (nextCursor === requestedCursor) {
-    throw new Error('Rally received a repeated transcript cursor.');
-  }
-  return nextCursor;
-}
-
-export function mergeTranscriptPage(
-  current: Message[] | undefined,
-  page: MessagePage,
-): Message[] {
-  return visibleTranscriptMessages(page.items).reduce(
-    (merged, message) => insertMessage(merged, message),
-    current ?? [],
-  );
-}
-
 export function highestVisibleAttentionSequence(
   transcript: Message[],
   visibleIndexes: number[],
@@ -1014,7 +993,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   // gives the reconnecting/unavailable Retry button an explicit canonical fallback
   // without racing a second boot against the room on every navigation.
   const initialFeedCacheState = useMemo(() => (
-    queryClient.getQueryData(['messages', id]) !== undefined
+    queryClient.getQueryData(['ordered-transcript', id]) !== undefined
       ? 'feed_cached'
       : queryClient.getQueryData(['workstream', id]) !== undefined ? 'detail_cached' : 'cold'
   ), [id, queryClient]);
@@ -1030,14 +1009,21 @@ export function WorkstreamScreen(): React.JSX.Element {
       if (socketDetail) return socketDetail;
       throw new Error('Socket snapshot superseded REST work-stream recovery');
     }
-    queryClient.setQueryData<WorkstreamRecoveryFeed>(workstreamRecoveryFeedQueryKey(id), {
-      messageFeed: boot.messageFeed,
-      resumeFeed: boot.resumeFeed,
-    });
     queryClient.setQueryData<WorkstreamTranscriptSnapshot>(
       ['ordered-transcript', id],
       boot.transcript,
     );
+    const canonical = orderedTranscriptMessages(boot.transcript, id);
+    const pendingOverlays = boot.transcript.pendingInputs.map((input) =>
+      pendingTranscriptInputOverlay(input, id, {
+        source: 'rest_snapshot',
+        snapshotId: boot.transcript.snapshotId,
+      }));
+    queryClient.setQueryData<TranscriptOverlay[]>(
+      transcriptOverlaysQueryKey(id),
+      (current) => reconcileAuthoritativeTranscriptOverlays(canonical, current, pendingOverlays),
+    );
+    queryClient.setQueryData<WorkstreamFeedSource>(workstreamFeedSourceQueryKey(id), 'boot_payload');
     return detailFromRecoveryBoot(boot);
   }, [api, id, queryClient]);
   const workstream = useQuery<WorkstreamDetail>({
@@ -1045,6 +1031,19 @@ export function WorkstreamScreen(): React.JSX.Element {
     queryFn: ({ signal }) => fetchWorkstreamDetail(signal),
     enabled: false,
     staleTime: 5_000,
+  });
+  const orderedTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
+    queryKey: ['ordered-transcript', id],
+    queryFn: async () => undefined,
+    enabled: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const transcriptOverlays = useQuery<TranscriptOverlay[]>({
+    queryKey: transcriptOverlaysQueryKey(id),
+    queryFn: async () => [],
+    enabled: false,
+    initialData: [],
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const telemetryOpenedWorkstreamRef = useRef<string | null>(null);
   useEffect(() => {
@@ -1060,103 +1059,17 @@ export function WorkstreamScreen(): React.JSX.Element {
       pinned: detail.pinPosition !== null,
     });
   }, [id, workstream.data]);
-  const messageCursor = useQuery<string | null>({
-    queryKey: ['messages-cursor', id],
-    queryFn: async () => null,
-    enabled: false,
-    initialData: null,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-  const newerMessageCursor = useQuery<string | null>({
-    queryKey: ['messages-newer-cursor', id],
-    queryFn: async () => null,
-    enabled: false,
-    initialData: null,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-  const messages = useQuery({
-    queryKey: ['messages', id],
-    queryFn: async ({ signal }) => {
-      const snapshotGeneration = queryClient.getQueryData<number>(
-        workstreamSocketSnapshotGenerationQueryKey(id),
-      ) ?? 0;
-      const socketMessagesIfSuperseded = (): Message[] | undefined => {
-        const currentGeneration = queryClient.getQueryData<number>(
-          workstreamSocketSnapshotGenerationQueryKey(id),
-        ) ?? 0;
-        if (currentGeneration === snapshotGeneration) return undefined;
-        return queryClient.getQueryData<Message[]>(['messages', id]);
-      };
-      const detail = await queryClient.fetchQuery({
-        queryKey: ['workstream', id],
-        queryFn: ({ signal: detailSignal }) => fetchWorkstreamDetail(detailSignal),
-        staleTime: 5_000,
-      });
-      const socketMessagesAfterDetail = socketMessagesIfSuperseded();
-      if (socketMessagesAfterDetail !== undefined) return socketMessagesAfterDetail;
-      // No second request: the detail above carries both windows. `resumeFeed`
-      // is where this reader stopped, which is what the screen scrolls to, so
-      // it is preferred whenever the room sent one. They are not contiguous, so
-      // exactly one of them is rendered and the other is paged to.
-      //
-      // The fetch is the rollout fallback, not the normal path: a Worker that
-      // predates the boot payload sends neither window, and an empty transcript
-      // would be the wrong reading of that.
-      const recoveryFeed = queryClient.getQueryData<WorkstreamRecoveryFeed>(
-        workstreamRecoveryFeedQueryKey(id),
-      );
-      const bootPage = recoveryFeed?.resumeFeed ?? recoveryFeed?.messageFeed;
-      if (recoveryFeed) {
-        queryClient.removeQueries({ queryKey: workstreamRecoveryFeedQueryKey(id), exact: true });
-      }
-      const page = bootPage ?? await api!.getMessagePage(id, {
-        ...(detail.firstUnreadSequenceNumber !== null
-          ? { around: detail.firstUnreadSequenceNumber }
-          : {}),
-        // Against an older Worker this is the only transcript request there is,
-        // so leaving it uncancelled means a navigation away resolves into a
-        // cache the reader has left.
-        signal,
-      });
-      const socketMessagesAfterPage = socketMessagesIfSuperseded();
-      if (socketMessagesAfterPage !== undefined) return socketMessagesAfterPage;
-      queryClient.setQueryData<WorkstreamFeedSource>(
-        workstreamFeedSourceQueryKey(id),
-        bootPage ? 'boot_payload' : 'legacy_page',
-      );
-      const previous = queryClient.getQueryData<Message[]>(['messages', id]);
-      const pageOldestSequence = page.items.reduce(
-        (oldest, message) => Math.min(oldest, message.sequenceNumber),
-        Number.POSITIVE_INFINITY,
-      );
-      const alreadyHasOlderMessages = (previous ?? []).some((message) =>
-        message.realtimeOrder === undefined && message.sequenceNumber < pageOldestSequence);
-      if (!alreadyHasOlderMessages) {
-        queryClient.setQueryData(['messages-cursor', id], page.nextCursor);
-      }
-      queryClient.setQueryData(['messages-newer-cursor', id], page.newerCursor);
-      const canonicalMessages = messagesWithTransientBlocks(
-        page.items,
-        detail,
-        queryClient.getQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id)),
-      );
-      return reconcileCanonicalTranscript(previous, canonicalMessages, detail.harnessStatus);
-    },
-    enabled: false,
-    staleTime: 2_000,
-  });
   const payloadBelongsToRoute = workstreamPayloadBelongsToRoute(
     id,
     workstream.data,
-    messages.data,
+    orderedTranscript.data,
   );
   const routedDetail = payloadBelongsToRoute ? workstream.data : undefined;
-  const routedMessages = payloadBelongsToRoute ? messages.data : undefined;
   useEffect(() => {
-    if (workstream.isError || messages.isError) {
+    if (workstream.isError) {
       cancelWorkstreamFeedOpen(id, performance.now(), readSocketOpenContext().socketLeaseId);
     }
-  }, [id, messages.isError, readSocketOpenContext, workstream.isError]);
+  }, [id, readSocketOpenContext, workstream.isError]);
   const feedSource = useQuery<WorkstreamFeedSource | null>({
     queryKey: workstreamFeedSourceQueryKey(id),
     queryFn: async () => null,
@@ -1168,16 +1081,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     feedSource: WorkstreamFeedSource;
     messageCount: ReturnType<typeof telemetryCountBucket>;
   } | null>(() => {
-    if (!routedDetail || !routedMessages) return null;
+    if (!routedDetail || !orderedTranscript.data) return null;
     const resolvedFeedSource = initialFeedCacheState === 'feed_cached'
       ? 'feed_cache'
       : feedSource.data;
     if (!resolvedFeedSource) return null;
     return {
       feedSource: resolvedFeedSource,
-      messageCount: telemetryCountBucket(routedMessages.length),
+      messageCount: telemetryCountBucket(orderedTranscript.data.ranges.reduce(
+        (count, range) => count + range.turns.reduce(
+          (turnCount, turn) => turnCount + turn.blocks.length,
+          0,
+        ),
+        orderedTranscript.data.activeTurns.reduce(
+          (count, turn) => count + turn.blocks.length,
+          0,
+        ),
+      )),
     };
-  }, [feedSource.data, initialFeedCacheState, routedDetail, routedMessages]);
+  }, [feedSource.data, initialFeedCacheState, orderedTranscript.data, routedDetail]);
   useWorkstreamFeedOpenTelemetry({
     cacheState: initialFeedCacheState,
     feedSource: initialFeedTelemetrySnapshot?.feedSource,
@@ -1207,7 +1129,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, automationSubscriptionId ?? null],
     queryFn: ({ signal }) => api!.getWorkstreamContext(id, automationSubscriptionId, signal),
-    enabled: Boolean(api && id && routedDetail && routedMessages),
+    enabled: Boolean(api && id && routedDetail && orderedTranscript.data),
     staleTime: 5_000,
   });
   // No request and no open gate of its own. The independently-started control
@@ -1288,41 +1210,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     workstreamId: id,
   });
   const socketState = socketConnection.state;
-  const loadSocketMessagePage = socketConnection.loadMessagePage;
   const loadTranscriptRange = socketConnection.loadTranscriptRange;
-  const orderedTranscript = useQuery<WorkstreamTranscriptSnapshot | undefined>({
-    queryKey: ['ordered-transcript', id],
-    queryFn: async () => undefined,
-    enabled: false,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
-  const orderedTranscriptGaps = useMemo(
-    () => orderedTranscript.data ? transcriptGaps(orderedTranscript.data) : [],
-    [orderedTranscript.data],
+  const olderTranscriptRange = orderedTranscript.data
+    ? adjacentTranscriptRange(orderedTranscript.data, 'older')
+    : null;
+  const newerTranscriptRange = orderedTranscript.data
+    ? adjacentTranscriptRange(orderedTranscript.data, 'newer')
+    : null;
+  // Streaming reveal changes only presentation overlays, potentially once per
+  // painted frame. Keep the canonical flatten/dedupe/sort outside that clock:
+  // it changes only when the durable snapshot or author projection changes.
+  const canonicalTranscript = useMemo(() => orderedTranscriptMessages(
+    orderedTranscript.data,
+    id,
+    members.data ?? [],
+  ), [id, members.data, orderedTranscript.data]);
+  const transcript = useMemo(
+    () => composeTranscript(canonicalTranscript, transcriptOverlays.data),
+    [canonicalTranscript, transcriptOverlays.data],
   );
-  const transcript = useMemo(() => {
-    const ordered = orderedTranscriptMessages(
-      orderedTranscript.data,
-      id,
-      members.data ?? [],
-      routedMessages ?? [],
-    );
-    const transient = transientMessagesWithoutCanonicalMatch(ordered, routedMessages ?? []);
-    const lastAnchor = ordered.reduce(
-      (maximum, message) => Math.max(maximum, message.sequenceNumber),
-      0,
-    );
-    return orderTranscript([
-      ...ordered,
-      ...transient.map((message, index) => ({
-        ...message,
-        sequenceNumber: lastAnchor + index + 1,
-        realtimeOrder: message.realtimeOrder
-          ? { ...message.realtimeOrder, anchorSequenceNumber: lastAnchor + index + 1 }
-          : message.realtimeOrder,
-      })),
-    ]);
-  }, [id, members.data, orderedTranscript.data, routedMessages]);
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
@@ -1356,7 +1262,8 @@ export function WorkstreamScreen(): React.JSX.Element {
     transcriptRef,
     initialPositionedWorkstreamRef.current === id
       && transcript.length > 0
-      && newerMessageCursor.data === null,
+      && orderedTranscript.data !== undefined
+      && adjacentTranscriptRange(orderedTranscript.data, 'newer') === null,
     id,
   );
 
@@ -1367,9 +1274,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     const orderedRange = orderedSnapshot
       ? adjacentTranscriptRange(orderedSnapshot, 'older')
       : null;
-    const before = queryClient.getQueryData<string | null>(['messages-cursor', id]);
-    if (orderedSnapshot && !orderedRange) return;
-    if (!api || (!orderedRange && !before) || loadingOlderRef.current) return;
+    if (!orderedSnapshot || !orderedRange || loadingOlderRef.current) return;
     if (socketState !== 'connected') {
       pendingOlderAfterReconnectRef.current = true;
       setOlderMessagesError(undefined);
@@ -1383,31 +1288,25 @@ export function WorkstreamScreen(): React.JSX.Element {
     const previousScrollHeight = scrollElement?.scrollHeight ?? 0;
     const previousScrollTop = scrollElement?.scrollTop ?? 0;
     try {
-      if (orderedSnapshot && orderedRange) {
-        await loadTranscriptRange({
-          snapshotId: orderedSnapshot.snapshotId,
-          range: orderedRange,
-          resumeAfterEventSequence: orderedSnapshot.eventSequence,
-        });
-        if (activeWorkstreamIdRef.current !== id) return;
-        window.requestAnimationFrame(() => {
-          const element = transcriptRef.current;
-          if (!element) return;
-          scrollTranscriptTo(preservedPrependScrollTop(
-            previousScrollTop,
-            previousScrollHeight,
-            element.scrollHeight,
-          ));
-        });
-        return;
+      while (activeWorkstreamIdRef.current === id) {
+        const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', id],
+        );
+        const range = snapshot ? adjacentTranscriptRange(snapshot, 'older') : null;
+        if (!snapshot || !range) return;
+        try {
+          await loadTranscriptRange({
+            snapshotId: snapshot.snapshotId,
+            range,
+            resumeAfterEventSequence: snapshot.eventSequence,
+          });
+          break;
+        } catch (error) {
+          if (error instanceof ApiError && error.code === 'transcript_snapshot_changed') continue;
+          throw error;
+        }
       }
-      if (!before) return;
-      const page = await loadSocketMessagePage({ before });
       if (activeWorkstreamIdRef.current !== id) return;
-      const nextCursor = transcriptPageCursor(page, before, 'before');
-      queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        mergeTranscriptPage(current, page));
-      queryClient.setQueryData(['messages-cursor', id], nextCursor);
       window.requestAnimationFrame(() => {
         const element = transcriptRef.current;
         if (!element) return;
@@ -1427,7 +1326,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [api, id, loadSocketMessagePage, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState]);
+  }, [id, loadTranscriptRange, queryClient, scrollTranscriptTo, socketState]);
 
   const loadNewerMessages = useCallback(async (): Promise<void> => {
     const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
@@ -1436,9 +1335,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     const orderedRange = orderedSnapshot
       ? adjacentTranscriptRange(orderedSnapshot, 'newer')
       : null;
-    const after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
-    if (orderedSnapshot && !orderedRange) return;
-    if (!api || (!orderedRange && !after) || loadingNewerRef.current) return;
+    if (!orderedSnapshot || !orderedRange || loadingNewerRef.current) return;
     if (socketState !== 'connected') {
       pendingNewerAfterReconnectRef.current = true;
       setOlderMessagesError(undefined);
@@ -1448,21 +1345,24 @@ export function WorkstreamScreen(): React.JSX.Element {
     loadingNewerRef.current = true;
     setOlderMessagesError(undefined);
     try {
-      if (orderedSnapshot && orderedRange) {
-        await loadTranscriptRange({
-          snapshotId: orderedSnapshot.snapshotId,
-          range: orderedRange,
-          resumeAfterEventSequence: orderedSnapshot.eventSequence,
-        });
-        return;
+      while (activeWorkstreamIdRef.current === id) {
+        const snapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+          ['ordered-transcript', id],
+        );
+        const range = snapshot ? adjacentTranscriptRange(snapshot, 'newer') : null;
+        if (!snapshot || !range) return;
+        try {
+          await loadTranscriptRange({
+            snapshotId: snapshot.snapshotId,
+            range,
+            resumeAfterEventSequence: snapshot.eventSequence,
+          });
+          break;
+        } catch (error) {
+          if (error instanceof ApiError && error.code === 'transcript_snapshot_changed') continue;
+          throw error;
+        }
       }
-      if (!after) return;
-      const page = await loadSocketMessagePage({ after });
-      if (activeWorkstreamIdRef.current !== id) return;
-      const newerCursor = transcriptPageCursor(page, after, 'after');
-      queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        mergeTranscriptPage(current, page));
-      queryClient.setQueryData(['messages-newer-cursor', id], newerCursor);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'workstream_socket_unavailable') {
         pendingNewerAfterReconnectRef.current = true;
@@ -1472,10 +1372,10 @@ export function WorkstreamScreen(): React.JSX.Element {
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, loadSocketMessagePage, loadTranscriptRange, queryClient, socketState]);
+  }, [id, loadTranscriptRange, queryClient, socketState]);
 
   const jumpToLatest = useCallback(async (): Promise<void> => {
-    if (!api || loadingNewerRef.current) return;
+    if (loadingNewerRef.current) return;
     if (socketState !== 'connected') {
       pendingJumpAfterReconnectRef.current = true;
       setOlderMessagesError(undefined);
@@ -1488,7 +1388,7 @@ export function WorkstreamScreen(): React.JSX.Element {
       const orderedSnapshot = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
         ['ordered-transcript', id],
       );
-      if (orderedSnapshot && orderedSnapshot.snapshotThrough === 0) {
+      if (!orderedSnapshot || orderedSnapshot.snapshotThrough === 0) {
         window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
         return;
       }
@@ -1497,15 +1397,40 @@ export function WorkstreamScreen(): React.JSX.Element {
         window.requestAnimationFrame(() => scrollTranscriptToEnd({ smooth: true }));
         return;
       }
-      let after = queryClient.getQueryData<string | null>(['messages-newer-cursor', id]);
-      while (after) {
-        const page = await loadSocketMessagePage({ after });
+      let snapshot = orderedSnapshot;
+      let range = adjacentTranscriptRange(snapshot, 'newer');
+      while (range) {
+        try {
+          await loadTranscriptRange({
+            snapshotId: snapshot.snapshotId,
+            range,
+            resumeAfterEventSequence: snapshot.eventSequence,
+          });
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.code !== 'transcript_snapshot_changed') throw error;
+          const refreshed = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+            ['ordered-transcript', id],
+          );
+          if (!refreshed) throw error;
+          snapshot = refreshed;
+          range = adjacentTranscriptRange(snapshot, 'newer');
+          continue;
+        }
         if (activeWorkstreamIdRef.current !== id) return;
-        const newerCursor = transcriptPageCursor(page, after, 'after');
-        queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-          mergeTranscriptPage(current, page));
-        after = newerCursor;
-        queryClient.setQueryData(['messages-newer-cursor', id], after);
+        const next = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', id]);
+        if (!next) {
+          throw new Error('Rally could not load the latest messages. Try again.');
+        }
+        if (next.snapshotId !== snapshot.snapshotId) {
+          snapshot = next;
+          range = adjacentTranscriptRange(snapshot, 'newer');
+          continue;
+        }
+        if (!transcriptCoverageAdvanced(snapshot, next)) {
+          throw new Error('Rally could not load the latest messages. Try again.');
+        }
+        snapshot = next;
+        range = adjacentTranscriptRange(snapshot, 'newer');
       }
       // Not `scrollToIndex`: aimed at the last row with `align: 'end'` it
       // targets the virtualizer's maximum offset, which it recomputes every
@@ -1521,7 +1446,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     } finally {
       loadingNewerRef.current = false;
     }
-  }, [api, id, loadSocketMessagePage, queryClient, scrollTranscriptToEnd, socketState]);
+  }, [id, loadTranscriptRange, queryClient, scrollTranscriptToEnd, socketState]);
 
   useEffect(() => {
     if (socketState !== 'connected') return;
@@ -1655,6 +1580,8 @@ export function WorkstreamScreen(): React.JSX.Element {
   const stop = useMutation({
     mutationFn: () => api!.stopHarness(id),
     onSuccess: () => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) =>
+        current ? { ...current, stopRequested: true } : current);
       requestSocketSnapshot();
       void queryClient.invalidateQueries({ queryKey: ['workstream-context', id] });
     },
@@ -1779,29 +1706,52 @@ export function WorkstreamScreen(): React.JSX.Element {
     answer: string | string[] | null,
     customResponse?: string,
   ): Promise<void> => {
-    const previousMessage = queryClient.getQueryData<Message[]>(['messages', id])?.find((message) =>
-      message.messageType === 'elicitation' && message.elicitation?.id === elicitationId);
-    await answerElicitationOptimistically({
-      answer,
-      elicitationId,
-      previousMessage,
-      submit: async () => {
-        await api!.answerElicitation(id, elicitationId, answer, customResponse);
-        requestSocketSnapshot();
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
-          queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
-        ]);
-      },
-      updateMessages: (update) => queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-        current ? update(current) : current),
-    });
+    queryClient.setQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', id], (current) =>
+      current ? setTranscriptElicitationState(current, elicitationId, {
+        status: 'answered',
+        answer,
+      }) : current);
+    const previous = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id))
+      ?.find((overlay) => overlay.identity.type === 'elicitation'
+        && overlay.identity.elicitationId === elicitationId);
+    queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
+      (current ?? []).map((overlay) => overlay.identity.type === 'elicitation'
+        && overlay.identity.elicitationId === elicitationId
+        && overlay.message.elicitation
+        ? {
+            ...overlay,
+            message: {
+              ...overlay.message,
+              elicitation: { ...overlay.message.elicitation, status: 'answered', answer },
+            },
+          }
+        : overlay));
+    try {
+      await api!.answerElicitation(id, elicitationId, answer, customResponse);
+      requestSocketSnapshot();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
+      ]);
+    } catch (error) {
+      queryClient.setQueryData<WorkstreamTranscriptSnapshot>(['ordered-transcript', id], (current) =>
+        current ? setTranscriptElicitationState(current, elicitationId, {
+          status: 'open',
+          answer: null,
+        }) : current);
+      if (previous) {
+        queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
+          upsertTranscriptOverlay(current, previous));
+      }
+      throw error;
+    }
   };
 
   const sendMessage = async (
     text: string,
     mentions: MentionIdentity[],
     confirmedParticipantUserIds: string[] = [],
+    deliveryMode?: WorkstreamMessageDeliveryMode,
   ): Promise<void> => {
     if (!api || !routedDetail) throw new Error('This work stream is not ready to receive messages.');
     // Ahead of the optimistic turn and of `sending`. A message the server will
@@ -1823,7 +1773,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     // waiting for. Before the follow could be stopped at all this happened by
     // accident, because the next token re-armed it.
     scrollTranscriptToEnd();
-    const readyAttachments = attachmentDraft.ready;
     pendingSendCount.current += 1;
     setSending(true);
     setSendError(undefined);
@@ -1840,15 +1789,26 @@ export function WorkstreamScreen(): React.JSX.Element {
       }
       return;
     }
+    const attachmentLease = await attachmentDraft.leaseReady();
+    const readyAttachments = attachmentLease.attachments;
     const clientId = crypto.randomUUID();
-    queryClient.setQueryData<Message[]>(['messages', id], (current) => {
-      const anchorSequenceNumber = nextTranscriptSequence(current);
+    queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) => {
+      const latestTranscript = queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+        ['ordered-transcript', id],
+      );
+      const afterTranscriptSequence = latestTranscript?.snapshotThrough ?? 0;
+      const eventSequence = Math.max(
+        latestTranscript?.eventSequence ?? 0,
+        ...(current ?? [])
+          .filter((overlay) => overlay.position.afterTranscriptSequence === afterTranscriptSequence)
+          .map((overlay) => overlay.position.eventSequence),
+      ) + 1;
       const createdAt = new Date().toISOString();
       const optimistic = createTextMessage({
         id: clientId,
         clientMessageId: clientId,
         workstreamId: id,
-        sequenceNumber: anchorSequenceNumber,
+        sequenceNumber: 0,
         authorType: 'human',
         author: workspaceMemberFromSession(session),
         text,
@@ -1862,13 +1822,13 @@ export function WorkstreamScreen(): React.JSX.Element {
         }] : []),
         createdAt,
         deliveryState: 'sending',
-        realtimeOrder: {
-          anchorSequenceNumber,
-          eventSequence: Number.MAX_SAFE_INTEGER,
-          placement: 'at_anchor',
-        },
       });
-      return insertMessage(current, optimistic);
+      return upsertTranscriptOverlay(current, {
+        identity: { type: 'client_message', clientMessageId: clientId },
+        provenance: { source: 'client_command', phase: 'sending' },
+        position: { afterTranscriptSequence, eventSequence },
+        message: optimistic,
+      });
     });
     try {
       const created = await socketConnection.createMessage({
@@ -1877,16 +1837,51 @@ export function WorkstreamScreen(): React.JSX.Element {
         mentions,
         confirmedParticipantUserIds,
         attachmentIds: readyAttachments.flatMap((attachment) => attachment.resource ? [attachment.resource.id] : []),
+        ...(deliveryMode ? { runMode: deliveryMode } : {}),
       });
-      queryClient.setQueryData<Message[]>(['messages', id], (current) => insertMessage(current, created));
-      attachmentDraft.consume();
+      queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) => {
+        const optimistic = (current ?? []).find((overlay) =>
+          overlay.identity.type === 'client_message'
+          && overlay.identity.clientMessageId === clientId
+          && overlay.provenance.source === 'client_command');
+        if (!optimistic) return current ?? [];
+        const turnId = created.turnId;
+        const { deliveryState: _deliveryState, ...acceptedMessage } = optimistic.message;
+        void _deliveryState;
+        const overlayDeliveryState = acceptedMessageOverlayDeliveryState(
+          created.deliveryState,
+          deliveryMode,
+        );
+        return upsertTranscriptOverlay(
+          removeTranscriptOverlay(current, (overlay) => overlay === optimistic),
+          {
+            ...optimistic,
+            identity: { type: 'client_message', clientMessageId: clientId, turnId },
+            provenance: { source: 'client_command', phase: 'accepted' },
+            message: {
+              ...acceptedMessage,
+              id: turnId,
+              clientMessageId: created.clientMessageId,
+              transcriptTurnId: turnId,
+              createdAt: created.createdAt,
+              ...(overlayDeliveryState ? { deliveryState: overlayDeliveryState } : {}),
+            },
+          },
+        );
+      });
+      attachmentDraft.commitLease(attachmentLease.leaseId);
       requestSocketSnapshot();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: WORKSTREAMS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: ['workstream-context', id] }),
       ]);
     } catch (error) {
-      queryClient.setQueryData<Message[]>(['messages', id], (current) => (current ?? []).filter((message) => message.id !== clientId));
+      await attachmentDraft.restoreLease(attachmentLease.leaseId);
+      queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
+        removeTranscriptOverlay(current, (overlay) =>
+          overlay.identity.type === 'client_message'
+          && overlay.identity.clientMessageId === clientId
+          && overlay.provenance.source === 'client_command'));
       setSendError(error instanceof Error ? error.message : 'The message could not be sent.');
       throw error;
     } finally {
@@ -1900,16 +1895,20 @@ export function WorkstreamScreen(): React.JSX.Element {
     // transcript rebuild cannot restore a card whose decision is in flight.
     const pending = queryClient.getQueryData<WorkstreamDetail>(['workstream', id])
       ?.suggestions?.find((suggestion) => suggestion.id === suggestionId);
+    const pendingOverlay = queryClient.getQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id))
+      ?.find((overlay) => overlay.identity.type === 'activity_suggestion'
+        && overlay.identity.suggestionId === suggestionId);
     queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current
       ? { ...current, suggestions: (current.suggestions ?? []).filter((suggestion) => suggestion.id !== suggestionId) }
       : current);
+    queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
+      removeTranscriptOverlay(current, (overlay) => overlay.identity.type === 'activity_suggestion'
+        && overlay.identity.suggestionId === suggestionId));
     try {
       await api!.resolveActivitySuggestion(id, suggestionId, action);
       if (action === 'dismiss') {
         queryClient.setQueryData<readonly string[]>(dismissedSuggestionIdsQueryKey(id), (current) =>
           appendDismissedSuggestionId(current, suggestionId));
-        queryClient.setQueryData<Message[]>(['messages', id], (current) =>
-          removeTranscriptMessage(current, `suggestion-${suggestionId}`));
       }
     } catch (error) {
       const status = error instanceof ApiError ? error.status : 0;
@@ -1918,6 +1917,10 @@ export function WorkstreamScreen(): React.JSX.Element {
           && !(current.suggestions ?? []).some((suggestion) => suggestion.id === suggestionId)
           ? { ...current, suggestions: [...(current.suggestions ?? []), pending] }
           : current);
+        if (pendingOverlay) {
+          queryClient.setQueryData<TranscriptOverlay[]>(transcriptOverlaysQueryKey(id), (current) =>
+            upsertTranscriptOverlay(current, pendingOverlay));
+        }
       } else {
         requestSocketSnapshot();
       }
@@ -2020,20 +2023,19 @@ export function WorkstreamScreen(): React.JSX.Element {
     };
   }, [scheduleReadAcknowledgement]);
 
-  if (!payloadBelongsToRoute || !routedDetail || !routedMessages) {
+  if (!payloadBelongsToRoute || !routedDetail) {
     if (
       socketConnection.state === 'reconnecting'
       || socketConnection.state === 'unavailable'
       || workstream.error
-      || messages.error
     ) {
       return (
         <WorkstreamErrorState
-          description={workstream.error?.message ?? messages.error?.message
+          description={workstream.error?.message
             ?? (socketConnection.state === 'reconnecting'
-              ? 'The live connection could not be opened. Try the recovery reader while Rally reconnects.'
+              ? 'The live connection could not be opened. Try again while Rally reconnects.'
               : 'This work stream is unavailable.')}
-          onRetry={() => void Promise.all([workstream.refetch(), messages.refetch()])}
+          onRetry={() => void workstream.refetch()}
           workstreamId={id}
         />
       );
@@ -2140,13 +2142,13 @@ export function WorkstreamScreen(): React.JSX.Element {
           const nearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < TRANSCRIPT_END_SLACK;
           if (shouldLoadEarlierFromScroll(
             element.scrollTop,
-            Boolean(messageCursor.data) || orderedTranscriptGaps.length > 0,
+            olderTranscriptRange !== null,
             loadingOlderRef.current,
           )) {
             void loadOlderMessages();
           }
           if (nearBottom
-            && (newerMessageCursor.data || orderedTranscriptGaps.length > 0)
+            && newerTranscriptRange !== null
             && !loadingNewerRef.current) {
             void loadNewerMessages();
           }
@@ -2155,7 +2157,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         ref={transcriptRef}
       >
         <div className="transcript-column">
-          {messageCursor.data && (
+          {olderTranscriptRange && (
             <div className="transcript-history-control">
               <Button disabled={loadingOlder || socketState !== 'connected'} onClick={() => void loadOlderMessages()}>
                 {loadingOlder || socketState !== 'connected'
@@ -2206,16 +2208,22 @@ export function WorkstreamScreen(): React.JSX.Element {
                     {virtualRow.index === firstUnreadIndex && (
                       <div className="unread-divider" role="separator"><span>Unread messages</span></div>
                     )}
-                    <MessageBlock
-                      citations={citations}
-                      currentUserId={session?.user.id}
-                      loadAttachmentContent={loadAttachmentContent}
-                      message={message}
-                      onAnswerElicitation={answerElicitation}
-                      onOpenAttachment={setAttachmentPreview}
-                      onResolveSuggestion={resolveSuggestion}
-                      systemRowDisclosure={systemRowDisclosure}
-                    />
+                    {message.blocksOmittedPlaceholder ? (
+                      <div className="transcript-history-control" role="status">
+                        <span>This message is too large to display.</span>
+                      </div>
+                    ) : (
+                      <MessageBlock
+                        citations={citations}
+                        currentUserId={session?.user.id}
+                        loadAttachmentContent={loadAttachmentContent}
+                        message={message}
+                        onAnswerElicitation={answerElicitation}
+                        onOpenAttachment={setAttachmentPreview}
+                        onResolveSuggestion={resolveSuggestion}
+                        systemRowDisclosure={systemRowDisclosure}
+                      />
+                    )}
                   </div>
                 );
               })}

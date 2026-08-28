@@ -27,7 +27,6 @@ import { noFlowSpan, type FlowSpan } from "../observability/tracing";
 import { provisionalWorkstreamDescription } from "./workstream-description-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import {
-  withWorkstreamRuntimeDatabase,
   writeRegionalWorkstreamAnchorBatch,
 } from "./workstream-runtime-database";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
@@ -197,7 +196,7 @@ export class WorkstreamObjectCreationService {
 
   async create(input: CreateInput, options: CreateOptions = {}): Promise<{
     workstream: Workstream;
-    messageId: string;
+    turnId: string;
     harnessRunId: string;
   }> {
     const span = options.span ?? noFlowSpan;
@@ -294,7 +293,7 @@ export class WorkstreamObjectCreationService {
       }
       return {
         workstream,
-        messageId: receipt.message_id,
+        turnId: receipt.message_id,
         harnessRunId: receipt.harness_run_id,
       };
     }
@@ -465,7 +464,7 @@ export class WorkstreamObjectCreationService {
         WHERE workspace_id = ? AND creator_user_id = ? AND client_message_id = ?
           AND request_hash = ?`,
     ).bind(
-      created.messageId,
+      created.turnId,
       created.harnessRunId,
       new Date().toISOString(),
       this.auth.workspaceId,
@@ -477,11 +476,11 @@ export class WorkstreamObjectCreationService {
     // The first naming pass. The legacy creation path schedules this and the
     // object path never did, so every post-cutover work stream kept its
     // provisional title in `naming` forever — a permanent skeleton shimmer in
-    // the sidebar. The routed environment matters: `advanceTitle` writes
-    // `workstreams`, which post-cutover lives behind the runtime router.
+    // the sidebar. Naming reaches transcript and identity through their typed
+    // object ports; it does not need a database-shaped work-stream proxy.
     if (body.title == null) {
       const naming = nameWorkstream(
-        withWorkstreamRuntimeDatabase(this.env, this.auth.workspaceId, receipt.workstream_id),
+        this.env,
         {
           workspaceId: this.auth.workspaceId,
           workstreamId: receipt.workstream_id,

@@ -23,9 +23,15 @@
  * vocabulary; the published spelling is the port's caller's business.
  */
 
+import { pendingBindToolBatch } from "@rally/agent-harness";
 import { boundParameterChunks } from "./bound-parameters";
+import {
+  type PreparedConversationTurn,
+  type PreparedParticipantMessage,
+  WorkstreamTranscriptStorage,
+} from "./workstream-transcript-storage";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
-import type { PreparedWorkstreamMessageRecord } from "./workstream-transcript-storage";
+import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
 
 /** What a caller proved before it was allowed to write. */
 export interface AttemptFence {
@@ -36,14 +42,27 @@ export interface AttemptFence {
   now: number;
 }
 
-export interface PublishFinalMessageInput extends AttemptFence {
-  messageId: string;
-  text: string;
-  hostOutcomeStatus: string;
-  eventPayloadJson: string;
+/** The persistent-loop writer whose subordinate receipt is being closed. */
+export interface TerminalLoopExecutionFence {
+  loopId: string;
+  executionId: string;
+  executionEpoch: number;
+  leaseOwner: string;
+}
+
+export interface PublishHostOutcomeInput extends AttemptFence {
+  finalTurn: { turnId: string; text: string } | null;
+  participantNotice: { turnId: string; text: string } | null;
+  hostOutcomeStatus: "completed" | "needs_input" | "failed" | "stopped";
+  hostOutcomeError: { code: string; message: string } | null;
   lifecycleEventId: string;
   /** A stopped run may still publish: the member asked it to stop, not to vanish. */
   allowCancellationRequested: boolean;
+}
+
+interface PreparedHostOutcome {
+  finalTurn: PreparedParticipantMessage | null;
+  participantNotice: PreparedConversationTurn | null;
 }
 
 /** Why a fenced operation refused, or that it did not. */
@@ -81,12 +100,30 @@ export type ClaimOutcome =
  * vocabulary, where this `cancelled` is `stopped`. A caller reading a `RunRow`
  * is reading the object's words and must compare against these.
  */
-export const TERMINAL_RUN_STATUSES = new Set([
+export type TerminalRunStatus = "completed" | "needs_input" | "failed" | "cancelled";
+export type AdmittedRunStatus = "admitted" | "running";
+export type PersistedRunStatus = AdmittedRunStatus | TerminalRunStatus;
+
+export const TERMINAL_RUN_STATUSES = new Set<string>([
   "completed",
   "needs_input",
   "failed",
   "cancelled",
 ]);
+
+function assertTerminalRunStatus(status: string): asserts status is TerminalRunStatus {
+  if (!TERMINAL_RUN_STATUSES.has(status)) throw new Error("terminal_run_status_invalid");
+}
+
+function assertAdmittedRunStatus(status: string): asserts status is AdmittedRunStatus {
+  if (status !== "admitted" && status !== "running") throw new Error("admitted_run_status_invalid");
+}
+
+function assertPersistedRunStatus(status: string): asserts status is PersistedRunStatus {
+  if (status !== "admitted" && status !== "running" && !TERMINAL_RUN_STATUSES.has(status)) {
+    throw new Error("persisted_run_status_invalid");
+  }
+}
 
 /**
  * What a write fenced by the attempt's lease did.
@@ -194,32 +231,9 @@ export type TerminalizeOutcome =
   | { outcome: "not_found" };
 
 /** One run the reaper found terminal but never receipt-reconciled. */
-/**
- * The run statuses that mean a run is busy, as SQL.
- *
- * The retired `_runtime_harness_runs` view projected `waiting` and `steering`
- * onto `running`, so every routed predicate these fences replace accepted all
- * three. `docs/workstream-durable-object.md` carries the rule an earlier slice
- * wrote after review caught the same narrowing in the receipt and
- * block-dashboard fences: a new fence written against `runs.status` decides the
- * same question, and `running` alone is the wrong default — a busy run is any
- * of the three.
- *
- * Nothing writes `waiting` or `steering` today, so every one of these reads the
- * same as `= 'running'` would. It is spelled out because the directions are not
- * equally safe: a fence that does not recognise a status refuses, and every
- * refusal here is reported as a lost lease or an unsupervised child — the two
- * answers nobody investigates, because they are the expected ones. If the
- * product settles on a single busy status, retire the other two from the CHECK
- * constraint rather than from the fences.
- */
-const BUSY_RUN_STATUSES = `('running', 'waiting', 'steering')`;
-
-/** The same three, for a fence that reads a row rather than filtering in SQL. */
-const BUSY_RUN_STATUS_SET = new Set(["running", "waiting", "steering"]);
-
-/** The same set, plus the status a claimed-but-unlaunched run still holds. */
-const OPEN_RUN_STATUSES = `('admitted', 'running', 'waiting', 'steering')`;
+const BUSY_RUN_STATUSES = `('running')`;
+const BUSY_RUN_STATUS_SET = new Set(["running"]);
+const OPEN_RUN_STATUSES = `('admitted', 'running')`;
 
 export interface ResidualRepairRow extends Record<string, SqlStorageValue> {
   run_id: string;
@@ -250,14 +264,7 @@ export type AdmitRunOutcome =
   /** A newer run has taken the work stream since the caller last looked. */
   | { outcome: "stale" }
   /** This exact run id is already here. Creation is idempotent by id. */
-  | { outcome: "exists" }
-  /**
-   * A mutating run still holds the work stream's main substream.
-   *
-   * Distinct from `stale`: the caller's view of "newest" was right, and the
-   * incumbent has been asked to stop — it simply has not stopped yet.
-   */
-  | { outcome: "busy" };
+  | { outcome: "exists" };
 
 /** One attempt's frozen memory recall. */
 export interface MemoryContextRow extends Record<string, SqlStorageValue> {
@@ -291,7 +298,7 @@ export interface RunRow extends Record<string, SqlStorageValue> {
   terminalized_at: number | null;
   started_at: number;
   completed_at: number | null;
-  final_part_id: string | null;
+  final_turn_id: string | null;
   error_json: string | null;
   workflow_instance_id: string | null;
   chain_root_run_id: string | null;
@@ -300,6 +307,43 @@ export interface RunRow extends Record<string, SqlStorageValue> {
   inherited_scope_hash: string | null;
   child_result_json: string | null;
   child_result_hash: string | null;
+  execution_principal_json: string;
+  trigger_part_id: string | null;
+  model: string | null;
+  usage_json: string | null;
+  created_at: number;
+}
+
+/** The terminal run facts needed by product telemetry, in object vocabulary. */
+export interface RunOutcomeTelemetryRow extends Record<string, SqlStorageValue> {
+  status: string;
+  started_at: number;
+  completed_at: number | null;
+  created_at: number;
+  origin: string;
+  execution_principal_json: string;
+  model: string | null;
+  usage_json: string | null;
+  first_inference_started_at: number | null;
+  first_ttft_ms: number | null;
+  turn_count: number;
+  tool_call_count: number;
+  write_tool_call_count: number;
+  fallback_used: number;
+}
+
+/** One settled tool receipt joined to the run authority that admitted it. */
+export interface ToolTerminalTelemetryRow extends Record<string, SqlStorageValue> {
+  effect_intent_id: string;
+  run_id: string;
+  status: string;
+  started_at: number | null;
+  settled_at: number | null;
+  error_json: string | null;
+  execution_plan_json: string | null;
+  origin: string;
+  parent_tool_call_id: string | null;
+  execution_principal_json: string;
 }
 
 export interface RecoverableAttempt {
@@ -317,9 +361,9 @@ export function previousInstanceRecoveryOwner(attemptId: string): string {
 const RUN_COLUMNS = `run_id, status, origin, parent_run_id, parent_tool_call_id,
   legacy_attempt_id, attempt_epoch, lease_owner, lease_expires_at,
   cancellation_requested_at, cancellation_reason, terminalized_at, started_at,
-  completed_at, final_part_id, error_json, workflow_instance_id, chain_root_run_id,
+  completed_at, final_turn_id, error_json, workflow_instance_id, chain_root_run_id,
   chain_depth, delegated_task_hash, inherited_scope_hash, child_result_json,
-  child_result_hash`;
+  child_result_hash, execution_principal_json, trigger_part_id, model, usage_json, created_at`;
 
 function first<T>(cursor: SqlStorageCursor<T extends Record<string, SqlStorageValue> ? T : never>) {
   return cursor.toArray()[0];
@@ -413,20 +457,19 @@ export function expireLocalAttemptLeasesFromPreviousInstance(
 
 export class WorkstreamHarnessRunStorage {
   /**
-   * The transcript authority, over this same object storage.
+   * The ordered transcript authority, over this same object storage.
    *
    * Composed rather than reimplemented, because publishing a run's final
    * message is one transaction that has to touch two authorities' tables. The
    * decision is this one's — whether the attempt may still speak — and the
-   * transcript row belongs to the class that owns `workstream_message_records`,
-   * so that record still has exactly one writer. Both wrap the same
+   * assistant turn belongs to the transcript class. Both wrap the same
    * `DurableObjectStorage`, so the
    * nested `transactionSync` is the same transaction rather than a second one.
    */
-  private readonly messages: WorkstreamMessageStorage;
+  private readonly transcript: WorkstreamTranscriptStorage;
 
   constructor(private readonly storage: DurableObjectStorage) {
-    this.messages = new WorkstreamMessageStorage(storage);
+    this.transcript = new WorkstreamTranscriptStorage(storage);
   }
 
   private get sql(): SqlStorage {
@@ -485,11 +528,10 @@ export class WorkstreamHarnessRunStorage {
               OR lease_expires_at IS NULL
               OR lease_expires_at <= ?5
             )
-            -- One mutating run per work stream, except HyperSight blocks,
-            -- which each own their own. The runs_mutating_substream_uq index
-            -- enforces one per substream; this is the product rule on top of
-            -- it, and it is why a second interactive run waits rather than
-            -- racing.
+            -- A receipt may claim a harness attempt only while no other root
+            -- receipt holds a live attempt lease. The stable substream-loop
+            -- lease is the lifecycle authority; this remains a subordinate
+            -- provider/effect fence rather than a second loop identity.
             AND (
               origin = 'block_dashboard_block'
               OR NOT EXISTS (
@@ -795,24 +837,48 @@ export class WorkstreamHarnessRunStorage {
   launchRun(input: {
     runId: string;
     workflowInstanceId: string;
+    executionContextJson: string;
+    executionAvailableAt: number;
     startedAt: number;
     now: number;
   }): { outcome: "launched" | "not_found" } {
     return this.storage.transactionSync(() => {
       const run = this.run({ runId: input.runId });
       if (!run) return { outcome: "not_found" as const };
-      this.sql.exec(
+      if (run.terminalized_at !== null) throw new Error("substream_loop_execution_receipt_terminal");
+      const existing = first(this.sql.exec<{
+        execution_context_json: string | null;
+      } & Record<string, SqlStorageValue>>(
+        `SELECT execution_context_json FROM runs WHERE run_id = ?`,
+        input.runId,
+      ));
+      if (run.workflow_instance_id !== null && run.workflow_instance_id !== input.workflowInstanceId) {
+        throw new Error("substream_loop_execution_workflow_mismatch");
+      }
+      if (existing?.execution_context_json !== null
+        && existing?.execution_context_json !== input.executionContextJson) {
+        throw new Error("substream_loop_execution_context_mismatch");
+      }
+      const launched = first(this.sql.exec<{ run_id: string } & Record<string, SqlStorageValue>>(
         `UPDATE runs
             SET workflow_instance_id = ?2,
                 status = CASE WHEN status = 'admitted' THEN 'running' ELSE status END,
                 started_at = CASE WHEN started_at = 0 THEN ?3 ELSE started_at END,
-                updated_at = ?4
-          WHERE run_id = ?1`,
+                execution_context_json = ?4,
+                execution_available_at = COALESCE(execution_available_at, ?5),
+                updated_at = ?6
+          WHERE run_id = ?1 AND terminalized_at IS NULL
+        RETURNING run_id`,
         input.runId,
         input.workflowInstanceId,
         input.startedAt,
+        input.executionContextJson,
+        input.executionAvailableAt,
         input.now,
-      );
+      ));
+      if (launched?.run_id !== input.runId) {
+        throw new Error("substream_loop_execution_receipt_changed");
+      }
       if (run.origin !== "block_dashboard_block") {
         this.sql.exec(
           `UPDATE workstream
@@ -877,10 +943,77 @@ export class WorkstreamHarnessRunStorage {
     ));
   }
 
+  /** The newest still-live root receipt for one producer family. */
+  latestActiveRootRun(input: { origin: string }): RunRow | undefined {
+    return first(this.sql.exec<RunRow>(
+      `SELECT ${RUN_COLUMNS} FROM runs
+        WHERE parent_tool_call_id IS NULL AND origin = ?
+          AND status IN ('admitted', 'running') AND terminalized_at IS NULL
+        ORDER BY started_at DESC, run_id DESC LIMIT 1`,
+      input.origin,
+    ));
+  }
+
+  /**
+   * Terminal run telemetry assembled beside the rows that own every count.
+   *
+   * This deliberately returns storage vocabulary and unix milliseconds. The
+   * retired runtime SQL path exposed a D1-shaped view, converted timestamps to
+   * text, joined it back to the same object, and made telemetry depend on a
+   * compatibility trigger that had nothing to do with telemetry.
+   */
+  runOutcomeTelemetry(input: { runId: string }): RunOutcomeTelemetryRow | undefined {
+    return first(this.sql.exec<RunOutcomeTelemetryRow>(
+      `SELECT CASE run.status WHEN 'cancelled' THEN 'stopped' ELSE run.status END AS status,
+              run.started_at, run.completed_at, run.created_at, run.origin,
+              run.execution_principal_json, run.model, run.usage_json,
+              (SELECT attempt.started_at FROM inference_attempts attempt
+                WHERE attempt.run_id = run.run_id AND attempt.ttft_ms IS NOT NULL
+                ORDER BY attempt.started_at, attempt.inference_attempt_id LIMIT 1)
+                AS first_inference_started_at,
+              (SELECT attempt.ttft_ms FROM inference_attempts attempt
+                WHERE attempt.run_id = run.run_id AND attempt.ttft_ms IS NOT NULL
+                ORDER BY attempt.started_at, attempt.inference_attempt_id LIMIT 1)
+                AS first_ttft_ms,
+              (SELECT COUNT(DISTINCT attempt.turn_id) FROM inference_attempts attempt
+                WHERE attempt.run_id = run.run_id AND attempt.outcome = 'success') AS turn_count,
+              (SELECT COUNT(*) FROM tool_effects effect
+                WHERE effect.run_id = run.run_id) AS tool_call_count,
+              (SELECT COUNT(*) FROM tool_effects effect
+                WHERE effect.run_id = run.run_id
+                  AND effect.mode = 'write')
+                AS write_tool_call_count,
+              EXISTS(SELECT 1 FROM inference_attempts attempt
+                WHERE attempt.run_id = run.run_id AND attempt.fallback_attempt > 0)
+                AS fallback_used
+         FROM runs run
+        WHERE run.run_id = ? AND run.parent_tool_call_id IS NULL`,
+      input.runId,
+    ));
+  }
+
+  /** A settled tool receipt with the exact run facts used by terminal telemetry. */
+  toolTerminalTelemetry(input: {
+    runId: string;
+    effectIntentId: string;
+  }): ToolTerminalTelemetryRow | undefined {
+    return first(this.sql.exec<ToolTerminalTelemetryRow>(
+      `SELECT effect.effect_intent_id, effect.run_id, effect.status,
+              effect.started_at, effect.settled_at, effect.error_json,
+              effect.execution_plan_json, run.origin, run.parent_tool_call_id,
+              run.execution_principal_json
+         FROM tool_effects effect
+         JOIN runs run ON run.run_id = effect.run_id
+        WHERE effect.effect_intent_id = ? AND effect.run_id = ?`,
+      input.effectIntentId,
+      input.runId,
+    ));
+  }
+
   /** Whether a run is still on its way to a terminal state. */
   runIsActive(input: { runId: string }): boolean {
     const run = this.run({ runId: input.runId });
-    return run !== undefined && ["admitted", "running", "waiting", "steering"].includes(run.status);
+    return run !== undefined && ["admitted", "running"].includes(run.status);
   }
 
   /** The transcript part that triggered a run, if it recorded one. */
@@ -1245,9 +1378,9 @@ export class WorkstreamHarnessRunStorage {
         return { outcome: "refused" as const, reason: "chain_budget_exhausted" as const };
       }
 
-      // A delegated child owns its own substream. Sharing the parent's would
-      // violate `runs_mutating_substream_uq`, which allows one mutating run per
-      // substream — the child would be a UNIQUE failure rather than a sub-agent.
+      // A delegated child owns its own substream and therefore its own stable
+      // loop. It must not be hidden as a second loop inside the parent's
+      // substream execution receipt.
       const substreamId = `run:${input.childRunId}`;
       this.sql.exec(
         `INSERT OR IGNORE INTO substreams
@@ -1371,7 +1504,7 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
-   * Publish this attempt's final message, and record that it did.
+   * Commit this attempt's participant-visible output and recoverable outcome.
    *
    * The last of the guarded batches, and the only one that spanned two
    * authorities. Three statements: the transcript insert, a lifecycle event
@@ -1380,18 +1513,14 @@ export class WorkstreamHarnessRunStorage {
    * again. Both checks exist because a D1 batch cannot branch on its own
    * progress; inside one transaction there is nothing to check.
    *
-   * The third statement turns out to have done nothing at all. It assigned
-   * `latest_attention_sequence_number`, which was never a column — the retired
-   * view derived it as `next_attention_ordinal - 1` and its update trigger
-   * ignored every caller that assigned to it. What remains of that statement is
-   * `last_activity_at` and `updated_at`, which is exactly what `appendMessage`
-   * already moves.
-   *
-   * The sequence number is allocated here rather than passed in. The caller
-   * used to reserve one first through a bespoke `UPDATE workstreams SET
-   * next_sequence_number = next_sequence_number + 1 … RETURNING` rewrite, which
-   * burned a number whenever the write was then refused; taking it inside the
-   * transaction that uses it cannot.
+   * Ordered Bind projection later made the transcript insert redundant for a
+   * completed turn. This operation adopts an accepted turn, or finalizes the
+   * explicitly identified provider bytes left by an interrupted stream, and
+   * assigns attention. Host-authored terminal guidance is a separate system
+   * turn, not assistant text wearing a nearby stream identity. Either turn is
+   * optional, while the lifecycle event is not: a failure before any assistant
+   * output still needs an immutable recovery checkpoint. All three facts
+   * remain one transaction.
    *
    * `status` on the lifecycle event is the *published* spelling, unlike the
    * `terminal` event's. That is deliberate and load-bearing: this event records
@@ -1399,35 +1528,62 @@ export class WorkstreamHarnessRunStorage {
    * compares it against the published terminal set. The `terminal` event
    * records the run's own state, which is the object's vocabulary.
    */
-  async prepareFinalMessage(
-    input: PublishFinalMessageInput,
-  ): Promise<PreparedWorkstreamMessageRecord> {
-    return this.messages.prepareMessage({
-      messageId: input.messageId,
-      clientMessageId: `harness:${input.runId}`,
-      authorType: "agent",
-      authorUserId: null,
-      externalActorJson: null,
-      messageType: "text",
-      text: input.text,
-      structuredContentJson: null,
-      producedByRunId: input.runId,
-      now: input.now,
-    });
+  async prepareHostOutcome(input: PublishHostOutcomeInput): Promise<PreparedHostOutcome> {
+    const messages = new WorkstreamMessageStorage(this.storage);
+    return {
+      finalTurn: input.finalTurn
+        ? await this.transcript.prepareParticipantMessage({
+          turnId: input.finalTurn.turnId,
+          actor: "assistant",
+          authorUserId: null,
+          authorSnapshot: null,
+          messageType: "text",
+          text: input.finalTurn.text,
+          structuredContentJson: null,
+          producedByRunId: input.runId,
+          createdAtUtc: new Date(input.now).toISOString(),
+          attentionOrdinal: null,
+        })
+        : null,
+      participantNotice: input.participantNotice
+        ? await messages.prepareMessage({
+          messageId: input.participantNotice.turnId,
+          clientMessageId: input.participantNotice.turnId,
+          authorType: "system",
+          authorUserId: null,
+          externalActorJson: null,
+          messageType: "system",
+          text: input.participantNotice.text,
+          structuredContentJson: null,
+          producedByRunId: input.runId,
+          now: input.now,
+        })
+        : null,
+    };
   }
 
-  async publishFinalMessage(input: PublishFinalMessageInput): Promise<
-    { outcome: "published" | "replayed"; sequenceNumber: number }
+  async publishHostOutcome(input: PublishHostOutcomeInput): Promise<
+    {
+      outcome: "published" | "replayed";
+      finalTurnSequenceNumber: number | null;
+      participantNoticeSequenceNumber: number | null;
+    }
+    | { outcome: "content_mismatch"; reasons: Array<"actor" | "run_id" | "role" | "content" | "notice"> }
     | { outcome: "ownership_lost" }
   > {
-    const prepared = await this.prepareFinalMessage(input);
-    return this.storage.transactionSync(() => this.publishPreparedFinalMessage(input, prepared));
+    const prepared = await this.prepareHostOutcome(input);
+    return this.storage.transactionSync(() => this.publishPreparedHostOutcome(input, prepared));
   }
 
-  publishPreparedFinalMessage(
-    input: PublishFinalMessageInput,
-    prepared: PreparedWorkstreamMessageRecord,
-  ): { outcome: "published" | "replayed"; sequenceNumber: number }
+  publishPreparedHostOutcome(
+    input: PublishHostOutcomeInput,
+    prepared: PreparedHostOutcome,
+  ): {
+      outcome: "published" | "replayed";
+      finalTurnSequenceNumber: number | null;
+      participantNoticeSequenceNumber: number | null;
+    }
+    | { outcome: "content_mismatch"; reasons: Array<"actor" | "run_id" | "role" | "content" | "notice"> }
     | { outcome: "ownership_lost" } {
       const run = this.run({ runId: input.runId });
       if (!run
@@ -1441,20 +1597,79 @@ export class WorkstreamHarnessRunStorage {
         || run.lease_expires_at <= input.now) {
         return { outcome: "ownership_lost" as const };
       }
-      const appended = this.messages.appendPreparedMessage(prepared);
-      this.recordLifecycleEvent({
+      if (input.hostOutcomeStatus === "completed" && !input.finalTurn) {
+        return { outcome: "content_mismatch" as const, reasons: ["content" as const] };
+      }
+      if (
+        input.finalTurn !== null
+        && input.participantNotice !== null
+        && input.finalTurn.turnId === input.participantNotice.turnId
+      ) {
+        return { outcome: "content_mismatch" as const, reasons: ["notice" as const] };
+      }
+
+      const priorEvent = this.lifecycleEvent({ runId: input.runId, eventKey: "host_outcome" });
+      const eventPayloadJson = JSON.stringify({
+        finalTurnId: input.finalTurn?.turnId ?? null,
+        participantNoticeTurnId: input.participantNotice?.turnId ?? null,
+        ...(input.hostOutcomeError ? {
+          error: {
+            code: input.hostOutcomeError.code,
+            message: input.hostOutcomeError.message,
+          },
+        } : {}),
+      });
+      if (priorEvent && (
+        priorEvent.event_type !== "host_outcome_persisted"
+        || priorEvent.status !== input.hostOutcomeStatus
+        || priorEvent.member_safe_payload_json !== eventPayloadJson
+      )) {
+        return { outcome: "content_mismatch" as const, reasons: ["content" as const] };
+      }
+
+      const messages = new WorkstreamMessageStorage(this.storage);
+      const existingNotice = prepared.participantNotice
+        ? messages.messageByClientId({
+          clientMessageId: prepared.participantNotice.input.clientMessageId,
+        })
+        : undefined;
+      if (existingNotice && (
+        existingNotice.id !== prepared.participantNotice?.input.messageId
+        || existingNotice.author_type !== "system"
+        || existingNotice.message_type !== "system"
+        || existingNotice.text_content !== prepared.participantNotice.input.text
+        || existingNotice.harness_run_id !== input.runId
+      )) {
+        return { outcome: "content_mismatch" as const, reasons: ["notice" as const] };
+      }
+
+      const finalized = prepared.finalTurn
+        ? this.transcript.finalizePreparedAssistantTurn(prepared.finalTurn)
+        : null;
+      if (finalized?.outcome === "content_mismatch") {
+        return finalized;
+      }
+      const notice = prepared.participantNotice
+        ? messages.appendPreparedMessage(prepared.participantNotice)
+        : null;
+      const lifecycle = this.recordLifecycleEvent({
         eventId: input.lifecycleEventId,
         runId: input.runId,
         attemptId: input.attemptId,
-        eventKey: "final_message",
-        eventType: "final_message_persisted",
+        eventKey: "host_outcome",
+        eventType: "host_outcome_persisted",
         status: input.hostOutcomeStatus,
-        memberSafePayloadJson: input.eventPayloadJson,
+        memberSafePayloadJson: eventPayloadJson,
         now: input.now,
       });
       return {
-        outcome: appended.outcome === "appended" ? "published" as const : "replayed" as const,
-        sequenceNumber: appended.sequenceNumber,
+        outcome: lifecycle.outcome === "recorded"
+          || finalized?.outcome === "published"
+          || notice?.outcome === "appended"
+          ? "published"
+          : "replayed",
+        finalTurnSequenceNumber: finalized?.transcriptSequence ?? null,
+        participantNoticeSequenceNumber: notice?.sequenceNumber ?? null,
       };
   }
 
@@ -1476,25 +1691,37 @@ export class WorkstreamHarnessRunStorage {
    * the next attempt rather than leaving a tool card spinning forever.
    */
   terminalizeAttempt(input: AttemptFence & {
-    status: string;
-    finalPartId: string | null;
+    status: TerminalRunStatus;
+    finalTurnId: string | null;
     model: string | null;
     usageJson: string | null;
     errorJson: string | null;
     memberSafePayloadJson: string;
     lifecycleEventId: string;
     receiptMarkerEventKey: string;
+    loopExecutionFence: TerminalLoopExecutionFence | null;
   }): TerminalizeOutcome {
+    assertTerminalRunStatus(input.status);
     return this.storage.transactionSync(() => {
       const run = this.run({ runId: input.runId });
       if (!run || run.parent_tool_call_id !== null) return { outcome: "not_found" as const };
       const stopping = input.status === "cancelled";
+      // A linked persistent-loop execution owns the terminal outcome. A
+      // cancellation marker on its subordinate receipt is provenance from an
+      // earlier request, not authority to replace or veto the outcome chosen
+      // when the loop reached its safe boundary. The exact loop fence below is
+      // what proves that this caller still owns terminalization.
+      const loopOwnsTerminalOutcome = input.loopExecutionFence !== null;
       const stoppingRecoveredAttempt = stopping
         && run.cancellation_requested_at !== null
         && run.lease_owner === previousInstanceRecoveryOwner(input.attemptId);
       if (run.legacy_attempt_id === input.attemptId
         && run.terminalized_at !== null
         && run.status === input.status) {
+        if (!this.#closeLinkedLoopForTerminalReceipt(input.runId, input.loopExecutionFence, input.now)) {
+          return { outcome: "ownership_lost" as const };
+        }
+        this.#closeExecutionActivities(input.runId, input.status, run.terminalized_at);
         const terminal = this.lifecycleEvent({ runId: input.runId, eventKey: "terminal" });
         return {
           outcome: "already_terminal" as const,
@@ -1511,11 +1738,15 @@ export class WorkstreamHarnessRunStorage {
       if (run.legacy_attempt_id !== input.attemptId
         || run.lease_owner !== input.owner
         || run.terminalized_at !== null
-        || (!stopping && run.cancellation_requested_at !== null)
+        || (!loopOwnsTerminalOutcome && !stopping && run.cancellation_requested_at !== null)
         || run.lease_expires_at === null
         || (run.lease_expires_at <= input.now && !stoppingRecoveredAttempt)) {
         return { outcome: "ownership_lost" as const };
       }
+      if (!this.#closeLinkedLoopForTerminalReceipt(input.runId, input.loopExecutionFence, input.now)) {
+        return { outcome: "ownership_lost" as const };
+      }
+      this.#closeExecutionActivities(input.runId, input.status, input.now);
 
       this.recordLifecycleEvent({
         eventId: input.lifecycleEventId,
@@ -1529,14 +1760,14 @@ export class WorkstreamHarnessRunStorage {
       });
       this.sql.exec(
         `UPDATE runs
-            SET status = ?2, completed_at = ?3, terminalized_at = ?3, final_part_id = ?4,
+            SET status = ?2, completed_at = ?3, terminalized_at = ?3, final_turn_id = ?4,
                 model = COALESCE(?5, model), usage_json = COALESCE(?6, usage_json),
                 error_json = ?7, lease_owner = NULL, lease_expires_at = NULL, updated_at = ?3
           WHERE run_id = ?1`,
         input.runId,
         input.status,
         input.now,
-        input.finalPartId,
+        input.finalTurnId,
         input.model,
         input.usageJson,
         input.errorJson,
@@ -1549,6 +1780,230 @@ export class WorkstreamHarnessRunStorage {
       });
       return { outcome: "terminalized" as const };
     });
+  }
+
+  /**
+   * Close the exact persistent-loop execution in the receipt terminalization
+   * transaction. Safe-step settlement deliberately keeps this execution owned;
+   * terminal receipt publication is the sole executing-to-idle authority. A
+   * newer cycle can only exist after this transaction has closed the old one.
+   */
+  #closeLinkedLoopForTerminalReceipt(
+    runId: string,
+    fence: TerminalLoopExecutionFence | null,
+    now: number,
+  ): boolean {
+    const receipt = first(this.sql.exec<{
+      substream_loop_id: string | null;
+      loop_cycle_ordinal: number | null;
+      loop_execution_id: string | null;
+      loop_execution_epoch: number | null;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT substream_loop_id, loop_cycle_ordinal, loop_execution_id, loop_execution_epoch
+         FROM runs WHERE run_id = ?`,
+      runId,
+    ));
+    if (!receipt || receipt.substream_loop_id === null) return fence === null;
+    if (!fence
+      || receipt.substream_loop_id !== fence.loopId
+      || receipt.loop_execution_id !== fence.executionId
+      || receipt.loop_execution_epoch !== fence.executionEpoch
+      || fence.executionId !== runId
+      || receipt.loop_cycle_ordinal === null) return false;
+    const loop = first(this.sql.exec<{
+      loop_id: string;
+      status: string;
+      cycle_ordinal: number;
+      active_execution_id: string | null;
+      active_execution_epoch: number | null;
+      lease_owner: string | null;
+    } & Record<string, SqlStorageValue>>(
+      `SELECT loop_id, status, cycle_ordinal, active_execution_id,
+              active_execution_epoch, lease_owner
+         FROM substream_loops WHERE id = 1`,
+    ));
+    if (!loop || loop.loop_id !== fence.loopId) return false;
+    if (loop.status === "idle" || loop.cycle_ordinal > receipt.loop_cycle_ordinal) return true;
+    if (loop.status !== "executing"
+      || loop.cycle_ordinal !== receipt.loop_cycle_ordinal
+      || loop.active_execution_id !== fence.executionId
+      || loop.active_execution_epoch !== fence.executionEpoch
+      || loop.lease_owner !== fence.leaseOwner) return false;
+    const activeReservation = first(this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT turn_id FROM assistant_turn_reservations
+        WHERE loop_id = ? AND cycle_ordinal = ? AND state IN ('reserved', 'streaming')
+        LIMIT 1`,
+      fence.loopId,
+      receipt.loop_cycle_ordinal,
+    ));
+    if (activeReservation) throw new Error("substream_loop_has_unmaterialized_turn");
+    const projection = this.transcript.readBindProjection(fence.loopId);
+    const pendingTools = projection ? pendingBindToolBatch(projection) : null;
+    if (pendingTools) {
+      const placeholders = pendingTools.calls.map(() => "?").join(", ");
+      const elicitationCount = pendingTools.calls.length === 0
+        ? 0
+        : Number(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
+          `SELECT COUNT(*) AS count FROM elicitation_requests
+            WHERE status IN ('pending', 'answered')
+              AND tool_call_id IN (${placeholders})`,
+          ...pendingTools.calls.map((call) => call.receiptToolCallId),
+        ).one().count);
+      if (elicitationCount !== pendingTools.calls.length) {
+        throw new Error("substream_loop_has_unsettled_tool_batch");
+      }
+    }
+    const closed = first(this.sql.exec<{ loop_id: string } & Record<string, SqlStorageValue>>(
+      `UPDATE substream_loops
+          SET status = 'idle', active_execution_id = NULL,
+              active_execution_epoch = NULL, lease_owner = NULL,
+              lease_expires_at = NULL, stop_requested_at = NULL,
+              stop_after_step_ordinal = NULL, stop_reason = NULL,
+              revision = revision + 1, updated_at = ?
+        WHERE id = 1 AND loop_id = ? AND status = 'executing'
+          AND cycle_ordinal = ? AND active_execution_id = ?
+          AND active_execution_epoch = ? AND lease_owner = ?
+        RETURNING loop_id`,
+      now,
+      fence.loopId,
+      receipt.loop_cycle_ordinal,
+      fence.executionId,
+      fence.executionEpoch,
+      fence.leaseOwner,
+    ));
+    return closed?.loop_id === fence.loopId;
+  }
+
+  /**
+   * Close every still-active interval owned by this execution in the same
+   * transaction as its terminal receipt. Normal lifecycle edges have already
+   * closed observed intervals. Anything left active here crossed an isolate or
+   * process boundary, so the receipt timestamp is only the earliest durable
+   * observation by which Rally knows the work had ended: its duration is an
+   * upper bound, never a falsely precise observation.
+   */
+  #closeExecutionActivities(
+    runId: string,
+    status: TerminalRunStatus,
+    terminalizedAt: number,
+  ): void {
+    this.sql.exec(
+      `WITH RECURSIVE execution_activities(activity_id) AS (
+         SELECT activity_id FROM transcript_activities
+          WHERE scope = 'response' AND subject_id = ?
+         UNION ALL
+         SELECT child.activity_id
+           FROM transcript_activities child
+           JOIN execution_activities parent
+             ON child.parent_activity_id = parent.activity_id
+       )
+       UPDATE transcript_activity_intervals
+          SET stopped_at = ?, duration_ms = MAX(0, ? - started_at),
+              boundary_source = 'recovered', timing_accuracy = 'upper_bound',
+              revision = revision + 1
+        WHERE activity_id IN (SELECT activity_id FROM execution_activities)
+          AND stopped_at IS NULL`,
+      runId,
+      terminalizedAt,
+      terminalizedAt,
+    );
+    const lifecycleState = status === "cancelled"
+      ? "cancelled"
+      : status === "failed"
+        ? "failed"
+        : "completed";
+    const closed = this.sql.exec<{ activity_id: string } & Record<string, SqlStorageValue>>(
+      `WITH RECURSIVE execution_activities(activity_id) AS (
+         SELECT activity_id FROM transcript_activities
+          WHERE scope = 'response' AND subject_id = ?
+         UNION ALL
+         SELECT child.activity_id
+           FROM transcript_activities child
+           JOIN execution_activities parent
+             ON child.parent_activity_id = parent.activity_id
+       )
+       UPDATE transcript_activities
+          SET lifecycle_state = CASE
+                WHEN scope = 'tool_call' THEN COALESCE((
+                  SELECT CASE
+                    WHEN block.lifecycle_state = 'completed' THEN 'completed'
+                    WHEN block.lifecycle_state = 'cancelled' THEN 'cancelled'
+                    WHEN block.lifecycle_state = 'ambiguous' THEN 'ambiguous'
+                    ELSE 'failed'
+                  END
+                    FROM participant_transcript_blocks block
+                   WHERE block.tool_call_id = transcript_activities.subject_id
+                ), ?)
+                WHEN scope = 'plugin' THEN CASE
+                  WHEN EXISTS (
+                    SELECT 1
+                      FROM transcript_activities assistant
+                      JOIN participant_transcript_blocks block
+                        ON block.turn_id = assistant.subject_id
+                     WHERE assistant.activity_id = transcript_activities.parent_activity_id
+                       AND block.plugin_id = transcript_activities.subject_id
+                       AND block.lifecycle_state = 'ambiguous'
+                  ) THEN 'ambiguous'
+                  WHEN EXISTS (
+                    SELECT 1
+                      FROM transcript_activities assistant
+                      JOIN participant_transcript_blocks block
+                        ON block.turn_id = assistant.subject_id
+                     WHERE assistant.activity_id = transcript_activities.parent_activity_id
+                       AND block.plugin_id = transcript_activities.subject_id
+                       AND block.lifecycle_state = 'failed'
+                  ) THEN 'failed'
+                  WHEN EXISTS (
+                    SELECT 1
+                      FROM transcript_activities assistant
+                      JOIN participant_transcript_blocks block
+                        ON block.turn_id = assistant.subject_id
+                     WHERE assistant.activity_id = transcript_activities.parent_activity_id
+                       AND block.plugin_id = transcript_activities.subject_id
+                       AND block.lifecycle_state = 'cancelled'
+                  ) THEN 'cancelled'
+                  ELSE 'completed'
+                END
+                WHEN scope = 'assistant_turn' THEN CASE
+                  WHEN EXISTS (
+                    SELECT 1 FROM participant_transcript_blocks block
+                     WHERE block.turn_id = transcript_activities.subject_id
+                       AND block.block_kind = 'tool'
+                       AND block.lifecycle_state = 'ambiguous'
+                  ) THEN 'ambiguous'
+                  WHEN EXISTS (
+                    SELECT 1 FROM participant_transcript_blocks block
+                     WHERE block.turn_id = transcript_activities.subject_id
+                       AND block.block_kind = 'tool'
+                       AND block.lifecycle_state = 'failed'
+                  ) THEN 'failed'
+                  WHEN EXISTS (
+                    SELECT 1 FROM participant_transcript_blocks block
+                     WHERE block.turn_id = transcript_activities.subject_id
+                       AND block.block_kind = 'tool'
+                       AND block.lifecycle_state = 'cancelled'
+                  ) THEN 'cancelled'
+                  ELSE ?
+                END
+                ELSE ?
+              END,
+              revision = revision + 1, updated_at = ?
+        WHERE activity_id IN (SELECT activity_id FROM execution_activities)
+          AND lifecycle_state = 'active'
+        RETURNING activity_id`,
+      runId,
+      lifecycleState,
+      lifecycleState,
+      lifecycleState,
+      terminalizedAt,
+    ).toArray();
+    for (const activity of closed) {
+      enqueueSemanticRealtimeReference(this.sql, {
+        kind: "transcript_activity",
+        activityId: activity.activity_id,
+        snapshotAtUtc: new Date(terminalizedAt).toISOString(),
+      }, terminalizedAt);
+    }
   }
 
   /**
@@ -1767,7 +2222,7 @@ export class WorkstreamHarnessRunStorage {
     attemptId: string;
     owner: string;
     leaseExpiresAt: number;
-    status: string;
+    status: TerminalRunStatus;
     errorJson: string | null;
     childResultJson: string;
     childResultHash: string;
@@ -1775,6 +2230,7 @@ export class WorkstreamHarnessRunStorage {
     lifecycleEventId: string;
     now: number;
   }): { outcome: "reaped" | "not_stale" } {
+    assertTerminalRunStatus(input.status);
     return this.storage.transactionSync(() => {
       const child = this.run({ runId: input.runId });
       if (!child
@@ -1833,9 +2289,9 @@ export class WorkstreamHarnessRunStorage {
   }
 
   /**
-   * Create a root run, optionally superseding whatever is running now.
+   * Create one root execution receipt without changing the substream loop.
    *
-   * Four callers built this out of the same routed batch — a conditional
+   * Four callers formerly built this out of the same routed batch — a legacy
    * supersede, an `INSERT … SELECT … WHERE ? = (SELECT latest.id …)` whose
    * subquery *was* the staleness check, and a sidebar update guarded on
    * `EXISTS (SELECT 1 FROM harness_runs WHERE id = ?)` to ask whether the
@@ -1844,7 +2300,7 @@ export class WorkstreamHarnessRunStorage {
    * is also what a duplicate id does, so the caller could not tell "someone
    * else got here first" from "this is a retry of my own request".
    *
-   * `expectedLatestRunId` is how a caller says which run it believed was
+   * `expectedLatestRunId` is how a caller says which receipt it believed was
    * newest. Null means it does not care — a scheduled or automation run is not
    * racing a member.
    */
@@ -1852,51 +2308,24 @@ export class WorkstreamHarnessRunStorage {
     runId: string;
     origin: string;
     executionPrincipalJson: string;
-    status: string;
+    status: AdmittedRunStatus;
     startedAt: number | null;
     model: string | null;
     triggerPartId: string | null;
     parentRunId: string | null;
-    supersedeActive: boolean;
     expectedLatestRunId: string | null;
     now: number;
   }): AdmitRunOutcome {
+    assertAdmittedRunStatus(input.status);
     return this.storage.transactionSync(() => {
       if (this.run({ runId: input.runId })) return { outcome: "exists" as const };
       if (input.expectedLatestRunId !== null
         && this.latestRootRun()?.run_id !== input.expectedLatestRunId) {
         return { outcome: "stale" as const };
       }
-      if (input.supersedeActive) {
-        this.sql.exec(
-          `UPDATE runs
-              SET cancellation_requested_at = COALESCE(cancellation_requested_at, ?1),
-                  cancellation_reason = COALESCE(cancellation_reason, 'superseded_by_follow_up'),
-                  updated_at = ?1
-            WHERE origin != 'block_dashboard_block'
-              AND parent_tool_call_id IS NULL
-              AND status IN ${OPEN_RUN_STATUSES}
-              AND terminalized_at IS NULL`,
-          input.now,
-        );
-      }
-      // `runs_mutating_substream_uq` allows one mutating run per substream, and
-      // every root run shares substream '0'. Asking first is not defensive
-      // tidiness: the insert would throw, and a throw takes the whole
-      // transaction with it — including the supersede just above, so a
-      // superseding message would neither start its run nor stop the one it
-      // meant to replace.
-      //
-      // A supersede does not clear the way by itself. It stamps
-      // `cancellation_requested_at` and leaves the incumbent `running` until
-      // that run notices and terminalizes, so the collision is *most* likely in
-      // exactly the case supersede exists for. The retired
-      // `_runtime_harness_runs_insert` trigger hid this behind `INSERT OR
-      // IGNORE`, which turned it into a zero-change result the caller reported
-      // as a stale request; this says which of the two it was.
-      if (this.mutatingRunHoldsSubstream(input.status, input.origin)) {
-        return { outcome: "busy" as const };
-      }
+      // Execution receipts do not own substream lifecycle. More than one may
+      // wait while the singleton substream loop executes exactly one receipt;
+      // admitting a successor must never cancel the in-flight execution.
       this.sql.exec(
         `INSERT INTO runs
            (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
@@ -1924,22 +2353,42 @@ export class WorkstreamHarnessRunStorage {
     });
   }
 
-  /**
-   * Whether inserting this run would collide with the one-mutating-run index.
-   *
-   * Mirrors `runs_mutating_substream_uq` exactly, including its
-   * block-dashboard exemption — a block run is outside the index on both
-   * sides, so it neither collides nor blocks.
-   */
-  private mutatingRunHoldsSubstream(status: string, origin: string): boolean {
-    if (origin === "block_dashboard_block") return false;
-    if (!["running", "waiting", "steering"].includes(status)) return false;
-    return (first(this.sql.exec<{ count: number } & Record<string, SqlStorageValue>>(
-      `SELECT COUNT(*) AS count FROM runs
-        WHERE substream_id = '0'
-          AND origin != 'block_dashboard_block'
-          AND status IN ('running', 'waiting', 'steering')`,
-    ))?.count ?? 0) > 0;
+  /** Restore the one checked-in development receipt without a runtime SQL backdoor. */
+  seedDevelopmentRun(input: {
+    runId: string;
+    origin: string;
+    executionPrincipalJson: string;
+    status: PersistedRunStatus;
+    startedAt: number;
+    completedAt: number | null;
+    terminalizedAt: number | null;
+    createdAt: number;
+  }): { outcome: "inserted" | "exists" } {
+    assertPersistedRunStatus(input.status);
+    if (this.run({ runId: input.runId })) return { outcome: "exists" as const };
+    this.sql.exec(
+      `INSERT INTO runs
+         (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+          next_action_cursor, input_fence_seq, revision, started_at,
+          active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+          terminal_reason, origin, execution_principal_json, chain_depth, usage_json,
+          completed_at, terminalized_at, created_at, updated_at)
+       VALUES (?, '0', ?, '{}', 0, 0, '', 0, 0, ?, 0, 0, 0, 0, 0,
+               0, 0, 0, 0, 0, ?, ?, ?, 0, '{}', ?, ?, ?, ?)`,
+      input.runId,
+      input.status,
+      input.startedAt,
+      ["completed", "failed", "cancelled", "needs_input"].includes(input.status)
+        ? input.status : null,
+      input.origin,
+      input.executionPrincipalJson,
+      input.completedAt,
+      input.terminalizedAt,
+      input.createdAt,
+      input.terminalizedAt ?? input.completedAt ?? input.createdAt,
+    );
+    return { outcome: "inserted" as const };
   }
 
   /**
@@ -1978,12 +2427,13 @@ export class WorkstreamHarnessRunStorage {
   terminalizeQueuedRun(input: {
     runId: string;
     attemptId: string;
-    status: string;
+    status: TerminalRunStatus;
     errorJson: string | null;
     memberSafePayloadJson: string;
     lifecycleEventId: string;
     now: number;
   }): { outcome: "terminalized" | "already_terminal" | "ownership_lost" | "not_found" } {
+    assertTerminalRunStatus(input.status);
     return this.storage.transactionSync(() => {
       const run = this.run({ runId: input.runId });
       if (!run || run.parent_tool_call_id !== null) return { outcome: "not_found" as const };
@@ -2042,7 +2492,7 @@ export class WorkstreamHarnessRunStorage {
         WHERE run_id != ?
           AND origin != 'block_dashboard_block'
           AND parent_tool_call_id IS NULL
-          AND status IN ('admitted', 'running', 'waiting', 'steering')
+          AND status IN ('admitted', 'running')
           AND terminalized_at IS NULL
           AND cancellation_requested_at IS NULL`,
       runId,
@@ -2179,7 +2629,7 @@ export class WorkstreamHarnessRunStorage {
     childRunId: string;
     childAttemptId: string;
     childOwner: string;
-    status: string;
+    status: TerminalRunStatus;
     model: string | null;
     usageJson: string | null;
     errorJson: string | null;
@@ -2189,6 +2639,7 @@ export class WorkstreamHarnessRunStorage {
     lifecycleEventId: string;
     now: number;
   }): { outcome: "terminalized" | "already_terminal" | "ownership_lost" } {
+    assertTerminalRunStatus(input.status);
     return this.storage.transactionSync(() => {
       const child = this.run({ runId: input.childRunId });
       const parent = this.run({ runId: input.parentRunId });
@@ -2342,6 +2793,38 @@ export class WorkstreamHarnessRunStorage {
          FROM run_lifecycle_events WHERE run_id = ? AND event_key = ?`,
       input.runId,
       input.eventKey,
+    ));
+  }
+
+  /** The canonical assistant turn a final checkpoint is allowed to name. */
+  finalAssistantTurn(input: { runId: string; turnId: string }): { turn_id: string } | undefined {
+    return first(this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT turn.turn_id
+         FROM participant_transcript_turns turn
+         JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+         LEFT JOIN assistant_turn_reservations reservation ON reservation.turn_id = turn.turn_id
+        WHERE turn.turn_id = ? AND turn.actor = 'assistant'
+          AND turn.entry_kind = 'conversation'
+          AND COALESCE(reservation.execution_id, fact.run_id) = ?`,
+      input.turnId,
+      input.runId,
+    ));
+  }
+
+  /** The participant-visible system notice committed with a host outcome. */
+  hostOutcomeParticipantNotice(input: {
+    runId: string;
+    turnId: string;
+  }): { turn_id: string } | undefined {
+    return first(this.sql.exec<{ turn_id: string } & Record<string, SqlStorageValue>>(
+      `SELECT turn.turn_id
+         FROM participant_transcript_turns turn
+         JOIN transcript_facts fact ON fact.fact_id = turn.root_fact_id
+        WHERE turn.turn_id = ? AND turn.actor = 'system'
+          AND turn.entry_kind = 'conversation' AND turn.message_type = 'system'
+          AND fact.run_id = ?`,
+      input.turnId,
+      input.runId,
     ));
   }
 

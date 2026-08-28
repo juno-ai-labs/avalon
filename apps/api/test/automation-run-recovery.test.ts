@@ -1,4 +1,4 @@
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, type WorkstreamWorkflowInput } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -6,6 +6,7 @@ import type { AuthContext } from "../src/env";
 import { AutomationService } from "../src/services/automation-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import {
+  testHarnessRunStorage,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
   workstreamObjectGet,
@@ -249,28 +250,41 @@ class ManualRunStatement {
  *
  * Every object-owned operation — the provision, the transcript, the runs, the
  * runtime SQL port — runs against a real object database through the shared
- * stub, so this file asserts on what the storage classes actually wrote. Only
- * the two edges that are not the object's own state stand in: run dispatch,
- * which is the recorded launch, and the resource attachment, whose eligibility
+ * stub, so this file asserts on what the storage classes actually wrote. The
+ * activation wrapper forwards through the real object method before optionally
+ * losing its response; the resource attachment remains a stand-in because its eligibility
  * rule is what these tests are about. `executeRuntimeSql` is wrapped rather
  * than replaced so the statements that reach the port stay recorded.
  */
 function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
   const objectStore = testWorkstreamObjectStore();
   openObjectStores.push(objectStore);
-  const dispatchRun = vi.fn(() => {
-    const failure = failures.shift();
-    if (failure) throw failure;
-    return { status: 200, bodyJson: "{}" };
-  });
   const attachRuntimeResource = vi.fn((input: { resourceId: string }) => {
     database.attachedResourceId = input.resourceId;
     return { status: 200, bodyJson: "{}" };
   });
   const base = testSubstreamAgentsBinding(objectStore, {
-    extra: { dispatchRun, attachRuntimeResource },
+    extra: { attachRuntimeResource },
   });
   const baseStub = base.get(base.idFromName("substream-agent"));
+  const activateLoop = vi.fn(async (input: LoopActivationInput) => {
+    const now = Date.now();
+    const workflowInstanceId = `substream-agent:${input.substreamId ?? "0"}:${input.harnessRunId}`;
+    const launched = testHarnessRunStorage(objectStore).launchRun({
+      runId: input.harnessRunId,
+      workflowInstanceId,
+      executionContextJson: JSON.stringify(input),
+      executionAvailableAt: now,
+      startedAt: now,
+      now,
+    });
+    if (launched.outcome !== "launched") {
+      return { status: 409, bodyJson: JSON.stringify({ error: "execution_receipt_not_found" }) };
+    }
+    const failure = failures.shift();
+    if (failure) throw failure;
+    return { status: 202, bodyJson: JSON.stringify({ accepted: true }) };
+  });
   const identityOperations: string[] = [];
   const stub = new Proxy(baseStub, {
     get(target, property, receiver) {
@@ -282,6 +296,7 @@ function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
           return forward(input);
         };
       }
+      if (property === "activateLoop") return activateLoop;
       if (property !== "executeRuntimeSql") return value;
       const forward = value as (input: RuntimeSqlRequest) => unknown;
       return (input: RuntimeSqlRequest) => {
@@ -295,12 +310,14 @@ function agentsBinding(database: ManualRunDatabase, failures: Error[] = []) {
     get: () => stub,
     jurisdiction: () => namespace,
   };
-  return { binding: namespace, dispatchRun, objectStore, identityOperations };
+  return { binding: namespace, activateLoop, objectStore, identityOperations };
 }
 
 interface RuntimeSqlRequest {
   statements: Array<{ sql: string; params: unknown[] }>;
 }
+
+type LoopActivationInput = WorkstreamWorkflowInput;
 
 /** The work stream the object holds, in the columns these tests assert on. */
 function storedWorkstream(objectStore: DatabaseSync) {
@@ -329,8 +346,8 @@ function storedOpeningMessage(objectStore: DatabaseSync) {
     structured_content_json: string | null;
   }>(
     objectStore,
-    `SELECT id, client_message_id, text_content, structured_content_json
-       FROM messages WHERE message_type = 'system'`,
+    `SELECT id, client_message_id, content AS text_content, structured_content_json
+       FROM canonical_conversation_turn_details WHERE message_type = 'system'`,
   );
 }
 
@@ -393,7 +410,7 @@ describe("manual automation run recovery", () => {
     await expect(runWithNote("workspace", true)).resolves.toBeNull();
   });
 
-  it("retries a launch-pending idempotent run after a transient workflow failure", async () => {
+  it("replays the same durable activation receipt after a transient agent failure", async () => {
     const database = new ManualRunDatabase();
     const agents = agentsBinding(database, [new Error("temporary substream agent outage")]);
     const env = createTestEnv({
@@ -417,7 +434,10 @@ describe("manual automation run recovery", () => {
       .rejects.toMatchObject({ status: 503, code: "workflow_unavailable" });
 
     expect(database.run).toMatchObject({ status: "scheduled", workflowInstanceId: null });
-    expect(storedHarnessRun(agents.objectStore)).toMatchObject({ status: "scheduled", workflow_instance_id: null });
+    expect(storedHarnessRun(agents.objectStore)).toMatchObject({
+      status: "running",
+      workflow_instance_id: expect.stringMatching(/^substream-agent:0:/u),
+    });
     expect(storedWorkstream(agents.objectStore)).toMatchObject({ archived_at: null });
     // `archived_at` left regional D1 with migration 0090 — the work-stream
     // object owns it now. Both reads of it on the create path reach the
@@ -440,7 +460,7 @@ describe("manual automation run recovery", () => {
       harnessRunId: originalHarnessRunId,
       reused: true,
     });
-    expect(agents.dispatchRun).toHaveBeenCalledTimes(2);
+    expect(agents.activateLoop).toHaveBeenCalledTimes(2);
     const expectedWorkflowId = `substream-agent:0:${originalHarnessRunId}`;
     expect(database.run).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
     expect(storedHarnessRun(agents.objectStore)).toMatchObject({
@@ -458,7 +478,7 @@ describe("manual automation run recovery", () => {
       runId: originalRunId,
       reused: true,
     });
-    expect(agents.dispatchRun).toHaveBeenCalledTimes(2);
+    expect(agents.activateLoop).toHaveBeenCalledTimes(2);
   });
 
   it("provisions nothing when the run it would belong to loses the idempotency race", async () => {
@@ -560,8 +580,12 @@ describe("manual automation run recovery", () => {
       text_content: opening.textContent,
     });
     expect(JSON.parse(openingMessage?.structured_content_json ?? "null")).toEqual(opening.structuredContent);
-    expect(agents.dispatchRun).toHaveBeenCalledTimes(1);
-    expect(agents.dispatchRun).toHaveBeenCalledWith(expect.objectContaining({
+    // Once the regional projection and object receipt both prove that the
+    // stable activation committed, a duplicate delivery returns that receipt
+    // without asking the loop to activate again. The durable run and
+    // transcript remain singular.
+    expect(agents.activateLoop).toHaveBeenCalledTimes(1);
+    expect(agents.activateLoop).toHaveBeenCalledWith(expect.objectContaining({
       workstreamId: first.workstreamId,
       triggerMessageId: openingMessage?.id,
       automationSubscriptionId: "subscription-1",

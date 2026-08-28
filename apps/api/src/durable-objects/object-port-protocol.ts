@@ -17,8 +17,11 @@ import { z } from "zod";
  */
 
 /** The typed surface a Worker-side caller sees, one round trip per call. */
-export type ObjectPortOf<TStorage> = {
-  [K in keyof TStorage]: TStorage[K] extends (...args: infer A) => infer R
+export type ObjectPortOf<
+  TStorage,
+  TOperation extends keyof TStorage = keyof TStorage,
+> = {
+  [K in TOperation]: TStorage[K] extends (...args: infer A) => infer R
     ? (...args: A) => Promise<Awaited<R>>
     : never;
 };

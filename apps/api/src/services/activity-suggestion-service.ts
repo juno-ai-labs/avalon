@@ -1,9 +1,7 @@
 import type { WorkspaceId, WorkstreamId } from "@rally/contracts";
 import { newId } from "@rally/db";
-import { substreamAgentName } from "../durable-objects/substream-agent";
 import type { Env } from "../env";
 import type { ContentAudience } from "../lib/audience-containment";
-import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { createWorkstreamRuntimeSuggestion } from "./workstream-object-client";
 
@@ -30,25 +28,6 @@ interface CreateActivitySuggestionInput {
   matchedEntities: string[];
   source: ActivitySuggestionSource;
   sourceAudience: ContentAudience;
-}
-
-export async function publishSubstreamAgentEvent(
-  env: Env,
-  region: "global" | "eu",
-  workspaceId: WorkspaceId,
-  workstreamId: WorkstreamId,
-  event: unknown,
-): Promise<void> {
-  const agent = await durableObjectStubForWorkspace(
-    env,
-    env.SUBSTREAM_AGENTS,
-    workspaceId,
-    substreamAgentName(region, workspaceId, workstreamId),
-  );
-  const response = await agent.publishEvent({ workspaceId, workstreamId, event });
-  if (response.status < 200 || response.status >= 300) {
-    throw new Error(`workstream_event_rejected:${response.status}`);
-  }
 }
 
 export async function createActivitySuggestion(

@@ -24,6 +24,7 @@ import {
 } from "./prompts";
 import { toolActivityName } from "./tool-activity";
 import type {
+  BindLoopProjectionState,
   BindLoopTransition,
   BindProviderBoundary,
 } from "./bind-loop-projection";
@@ -32,17 +33,24 @@ export * from "./prompts";
 export { hasAvalonToolProse, toolActivityName, type ToolActivityStatus } from "./tool-activity";
 export {
   applyBindLoopTransition,
+  bindLoopMessageChain,
+  bindLoopNonSystemMessageCount,
+  bindLoopNonSystemMessages,
   BIND_LOOP_PROJECTOR_VERSION,
   BIND_SYSTEM_RENDERER_VERSION,
   canonicalizeBindLoop,
   hashBindLoop,
+  pendingBindToolBatch,
   projectBindLoopMessages,
   verifyBindProviderBoundary,
   type BindLoopMessage,
   type BindLoopMessageOrigin,
+  type BindLoopMessageNode,
   type BindLoopProjectionState,
   type BindLoopTransition,
   type BindProviderBoundary,
+  type PendingBindToolBatch,
+  type PendingBindToolCall,
   type BindSystemProjection,
 } from "./bind-loop-projection";
 export {
@@ -101,11 +109,54 @@ export interface ModelMessage {
   provenance?: ModelMessageProvenance;
 }
 
+/**
+ * Remove host-only provenance before a model message crosses into Bind's
+ * persisted/provider-facing protocol. Constructing the value explicitly keeps
+ * that boundary typed and prevents a newly added wire field from leaking by
+ * object spread.
+ */
+export function modelMessageWithoutProvenance(
+  message: ModelMessage,
+): Readonly<Record<string, unknown>> {
+  return {
+    role: message.role,
+    content: message.content,
+    ...(message.name === undefined ? {} : { name: message.name }),
+    ...(message.tool_call_id === undefined ? {} : { tool_call_id: message.tool_call_id }),
+    ...(message.tool_calls === undefined ? {} : { tool_calls: message.tool_calls }),
+  };
+}
+
 export interface ModelMessageProvenance {
   originKind: "canonical" | "protocol" | "derived";
   sourceKind: string | null;
   sourceId: string | null;
   sourceRevision: number | null;
+}
+
+/**
+ * A model-only user input owned by one logical activation, not by the
+ * participant transcript. The stable identity lets the durable host converge
+ * recovery/takeover without comparing message structure or tying admission to
+ * a particular execution attempt.
+ */
+export interface HarnessActivationInput {
+  activationInputId: string;
+  message: ModelMessage & {
+    role: "user";
+    provenance: ModelMessageProvenance & {
+      originKind: "derived";
+      sourceKind: string;
+      sourceId: string;
+    };
+  };
+}
+
+export interface HarnessActivationBoundaryResult {
+  /** Newly committed appends, in exact Bind state-revision order. */
+  transitions: readonly Extract<BindLoopTransition, { kind: "protocol_user_appended" }>[];
+  /** Inputs durably acknowledged without a new append, including exact receipt replay. */
+  replayedActivationInputIds: readonly string[];
 }
 
 export interface OpenRouterInferencePayload {
@@ -122,6 +173,8 @@ export interface OpenRouterInferencePayload {
 export interface InferenceRequestEvent {
   inferenceRequestId: string;
   turnId: string;
+  /** Participant transcript slot, when this host has a participant transcript. */
+  transcriptSequence?: number;
   model: string;
   providerInvocationModel: string;
   provider: string;
@@ -138,6 +191,8 @@ export interface InferenceAttemptEvent {
   inferenceRequestId: string;
   success: boolean;
   turnId: string;
+  /** Participant transcript slot, when this host has a participant transcript. */
+  transcriptSequence?: number;
   model: string;
   provider: string;
   providerInvocationModel: string;
@@ -1457,6 +1512,8 @@ function automationDiscoveryActivityName(
 export async function compileAutomation(input: {
   apiKey: string;
   model: string;
+  /** Stable automation-draft loop identity supplied by production hosts. */
+  loopId?: string;
   workspaceId?: string;
   userId?: string;
   fallbackModels?: string[];
@@ -1734,6 +1791,7 @@ export async function compileAutomation(input: {
     fallbackAttempt: 0,
     repairAttempt: 0,
   });
+  const compilerExecutionId = crypto.randomUUID();
   const outcome = await runHarness({
     config: {
       apiKey: input.apiKey,
@@ -1753,7 +1811,9 @@ export async function compileAutomation(input: {
     },
     workspaceId: input.workspaceId ?? "00000000-0000-7000-8000-000000000001",
     workstreamId: "00000000-0000-7000-8000-000000000002",
-    harnessRunId: crypto.randomUUID(),
+    loopId: input.loopId
+      ?? `automation-compiler:${input.workspaceId ?? "default"}:${input.userId ?? "default"}:loop`,
+    harnessRunId: compilerExecutionId,
     executionPrincipal: {
       type: "user",
       userId: asUserId(input.userId ?? "00000000-0000-7000-8000-000000000003"),
@@ -1781,6 +1841,9 @@ export async function compileAutomation(input: {
           : {}),
     },
     corePlugins,
+    // The compiler is intentionally ephemeral and has no participant
+    // transcript. Bind still reserves its stable model-turn identity before
+    // provider I/O; there is simply no participant sequence to attach.
     onEvent: async (event) => {
       if (event.type === "stream_started") {
         if (narration.started) return;
@@ -2637,6 +2700,7 @@ export type HarnessEvent =
       type: "stream_started";
       model: string;
       turnId: string;
+      transcriptSequence?: number;
       epoch: number;
       streamSeq: number;
       reset: false;
@@ -2645,6 +2709,7 @@ export type HarnessEvent =
       type: "stream_delta";
       delta: string;
       turnId: string;
+      transcriptSequence?: number;
       epoch: number;
       streamSeq: number;
       reset: boolean;
@@ -2671,7 +2736,13 @@ export type HarnessEvent =
       phase: "validation" | "execution";
       outcome: "definitive_failure" | "timed_out" | "aborted" | "ambiguous_external_write";
     }
-  | { type: "stream_completed"; content: string; usage: Record<string, number> | null }
+  | {
+      type: "stream_completed";
+      content: string;
+      turnId: string;
+      transcriptSequence?: number;
+      usage: Record<string, number> | null;
+    }
   | { type: "needs_input"; toolCallId: string };
 
 export interface HarnessCompactionCheckpoint {
@@ -2783,10 +2854,15 @@ export interface RunHarnessInput {
   };
   workspaceId: string;
   workstreamId: string;
+  /** Stable identity of the one persistent Bind loop owned by this substream. */
+  loopId: string;
+  /** Subordinate execution receipt; never used as loop or turn identity. */
   harnessRunId: string;
   executionPrincipal: ExecutionPrincipal;
   systemPrompt: string;
   messages: ModelMessage[];
+  /** Exact durable head to resume. Absent only when this loop has never started. */
+  bindLoopProjection?: BindLoopProjectionState | null;
   /**
    * Enables provider-measured transcript compaction. The harness compares the
    * latest OpenRouter prompt + completion usage with 80% of the selected
@@ -2826,6 +2902,7 @@ export interface RunHarnessInput {
   onBestEffortEventDropped?: (event: {
     type: "stream_started" | "stream_delta";
     turnId: string;
+    transcriptSequence?: number;
     epoch: number;
     streamSeq: number;
   }) => void | Promise<void>;
@@ -2887,8 +2964,76 @@ export interface RunHarnessInput {
   onBindLoopTransition?: (transition: BindLoopTransition) => void | Promise<void>;
   /** Called after the exact post-validation provider input has been hash-checked. */
   onBindProviderBoundary?: (boundary: BindProviderBoundary) => void | Promise<void>;
+  /**
+   * Reserve the participant transcript position before any provider request for
+   * this model turn. Transcript-aware hosts require this port and must commit
+   * before resolving; generic Bind hosts omit it and receive sequence-less
+   * stream/checkpoint events. In both cases the `assistant_reserved` Bind
+   * transition is accepted before provider I/O.
+   */
+  onAssistantTurnReserved?: (turn: {
+    loopId: string;
+    executionId: string;
+    turnId: string;
+    modelTurnIndex: number;
+  }) => { transcriptSequence: number } | Promise<{ transcriptSequence: number }>;
+  /**
+   * Durable activation boundary for model-only inputs such as a wake-up,
+   * connector activity, digest brief, or recalled memory. The host atomically
+   * deduplicates and commits these inputs under the supplied execution and Bind
+   * head fence before resolving. Bind applies only the exact returned
+   * transitions, requires an immutable-receipt acknowledgement for every
+   * replay, and will not start provider I/O unless every requested ID appears
+   * exactly once across those two result sets.
+   */
+  activationInputs?: readonly HarnessActivationInput[];
+  onActivationBoundary?: (activation: {
+    loopId: string;
+    executionId: string;
+    generation: number;
+    stateRevision: number;
+    inputs: readonly HarnessActivationInput[];
+  }) => HarnessActivationBoundaryResult | Promise<HarnessActivationBoundaryResult>;
+  /**
+   * Atomic safe-boundary delivery for durable steer inputs. The host returns
+   * only transitions it has already committed with the pending-input delivery.
+   * Bind appends those exact messages after every tool batch settles and before
+   * accepting a tool-less turn as final. A delayed elicitation answer may first
+   * close its withheld tool slot, then append the participant response in the
+   * same durable settlement.
+   */
+  onStepSettled?: (step: {
+    loopId: string;
+    executionId: string;
+    assistantTurnId: string;
+    modelTurnIndex: number;
+    generation: number;
+    stateRevision: number;
+    wouldEnd: boolean;
+  }) => {
+    transitions: readonly Extract<BindLoopTransition, {
+      kind: "tool_result_accepted" | "protocol_user_appended";
+    }>[];
+    stop: boolean;
+  } | Promise<{
+    transitions: readonly Extract<BindLoopTransition, {
+      kind: "tool_result_accepted" | "protocol_user_appended";
+    }>[];
+    stop: boolean;
+  }>;
   /** Atomically owns the compaction checkpoint and Bind replacement transition. */
   onBindCompaction?: (commit: BindCompactionCommit) => void | Promise<void>;
+  /**
+   * Last host policy boundary before an assistant turn becomes part of Bind's
+   * durable loop and participant transcript. The returned content is the only
+   * content accepted by either authority. Hosts use this to replace output that
+   * cannot safely cross a participant boundary; it is not a presentation hook.
+   */
+  transformAssistantMessageBeforeAcceptance?: (turn: {
+    turnId: string;
+    content: string;
+    hasToolCalls: boolean;
+  }) => string | Promise<string>;
   onToolCallRejected?: (event: { toolCallId: string; code: string }) => void | Promise<void>;
   onProgress?: (progress: { outputTokens: number; toolCalls: number }) => void | Promise<void>;
   flushProgress?: (progress: {
@@ -3028,7 +3173,7 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
       .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`)
       .join(",")}}`;
   }

@@ -10,6 +10,7 @@ import {
   type TelemetryJourneyDuration,
 } from './product-usage';
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 
 interface CorrelatedRunInput {
   workspaceId: WorkspaceId;
@@ -21,9 +22,9 @@ interface CorrelatedRunInput {
 
 interface RunRow {
   status: string;
-  started_at: string | null;
-  completed_at: string | null;
-  created_at: string;
+  started_at: number;
+  completed_at: number | null;
+  created_at: number;
   origin: string;
   execution_principal_json: string;
   model: string | null;
@@ -31,7 +32,7 @@ interface RunRow {
   automation_id: string | null;
   automation_run_id: string | null;
   automation_trigger_type: string | null;
-  first_inference_started_at: string | null;
+  first_inference_started_at: number | null;
   first_ttft_ms: number | null;
   turn_count: number;
   tool_call_count: number;
@@ -70,7 +71,7 @@ function parseJson(value: string | null): Record<string, unknown> {
 }
 
 function runKind(row: RunRow): 'workstream' | 'automation' | 'hypersight' | 'system' {
-  if (row.origin === 'hypersight_block') return 'hypersight';
+  if (row.origin === 'block_dashboard_block') return 'hypersight';
   if (row.automation_id) return 'automation';
   if (row.origin === 'scheduled_digest') return 'system';
   return 'workstream';
@@ -80,7 +81,7 @@ function triggerType(row: RunRow): 'composer' | 'retry' | 'manual' | 'scheduled'
   if (row.origin === 'human_message') return 'composer';
   if (row.origin === 'manual_retry') return 'retry';
   if (row.origin === 'scheduled_digest') return 'digest';
-  if (row.origin === 'hypersight_block') return 'system';
+  if (row.origin === 'block_dashboard_block') return 'system';
   if (row.automation_trigger_type === 'activity') return 'activity';
   if (row.automation_trigger_type === 'inbound_email') return 'inbound_email';
   if (row.automation_trigger_type === 'scheduled') return 'scheduled';
@@ -109,7 +110,7 @@ function usageTurnCount(row: RunRow): number {
 function timeToFirstOutput(row: RunRow, startedMs: number): TelemetryJourneyDuration {
   if (!row.first_inference_started_at || row.first_ttft_ms == null) return 'unknown';
   return telemetryJourneyDuration(
-    Math.max(0, Date.parse(row.first_inference_started_at) - startedMs) + row.first_ttft_ms,
+    Math.max(0, row.first_inference_started_at - startedMs) + row.first_ttft_ms,
   );
 }
 
@@ -118,29 +119,11 @@ export async function emitCorrelatedRunOutcome(
   env: Env,
   input: CorrelatedRunInput,
 ): Promise<void> {
-  const run = await env.DB.prepare(
-    `SELECT hr.status, hr.started_at, hr.completed_at, hr.created_at, hr.origin,
-            hr.execution_principal_json, hr.model, hr.usage_json,
-            (SELECT ia.started_at FROM inference_attempts ia
-              WHERE ia.harness_run_id = hr.id AND ia.ttft_ms IS NOT NULL
-              ORDER BY ia.started_at, ia.id LIMIT 1) AS first_inference_started_at,
-            (SELECT ia.ttft_ms FROM inference_attempts ia
-              WHERE ia.harness_run_id = hr.id AND ia.ttft_ms IS NOT NULL
-              ORDER BY ia.started_at, ia.id LIMIT 1) AS first_ttft_ms,
-            (SELECT COUNT(DISTINCT ia.turn_id) FROM inference_attempts ia
-              WHERE ia.harness_run_id = hr.id AND ia.outcome = 'success') AS turn_count,
-            (SELECT COUNT(*) FROM tool_effects ti
-              WHERE ti.run_id = hr.id) AS tool_call_count,
-            (SELECT COUNT(*) FROM tool_effects ti
-              WHERE ti.run_id = hr.id
-                AND json_extract(ti.execution_plan_json, '$.mode') = 'write') AS write_tool_call_count,
-            EXISTS(SELECT 1 FROM inference_attempts ia
-              WHERE ia.harness_run_id = hr.id AND ia.fallback_attempt > 0) AS fallback_used
-       FROM harness_runs hr
-      WHERE hr.id = ? AND hr.workspace_id = ? AND hr.workstream_id = ?
-        AND hr.parent_tool_call_id IS NULL`,
-  ).bind(input.harnessRunId, input.workspaceId, input.workstreamId).first<RunRow>();
-  if (!run || !run.completed_at || !['completed', 'needs_input', 'failed', 'stopped'].includes(run.status)) return;
+  const stored = await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId)
+    .runOutcomeTelemetry({ runId: input.harnessRunId });
+  if (!stored || stored.completed_at === null
+    || !['completed', 'needs_input', 'failed', 'stopped'].includes(stored.status)) return;
+  const run: RunRow = { ...stored, automation_id: null, automation_run_id: null, automation_trigger_type: null };
   // The work stream's automation run was a second table in the join, and the
   // only column this needed from it. It is the identity authority's row, asked
   // for after the terminal gate rather than fetched for every run.
@@ -151,7 +134,8 @@ export async function emitCorrelatedRunOutcome(
   // authority, and no database holds both sides of the old JOIN. Both callers
   // swallow telemetry errors, so the joined form did not fail — it silently
   // killed run_terminal telemetry in production.
-  const automation = run.automation_run_id && ["automation", "automation_run"].includes(run.origin)
+  const automation = run.automation_run_id
+    && ["automation", "automation_run", "automation_activity"].includes(run.origin)
     ? await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
       `SELECT automation_subscription_id, trigger_type FROM automation_runs
         WHERE id = ? AND workspace_id = ?`,
@@ -160,8 +144,8 @@ export async function emitCorrelatedRunOutcome(
     : null;
   run.automation_id = automation?.automation_subscription_id ?? null;
   run.automation_trigger_type = automation?.trigger_type ?? null;
-  const started = Date.parse(run.started_at ?? run.created_at);
-  const completed = Date.parse(run.completed_at);
+  const started = run.started_at;
+  const completed = stored.completed_at;
   const operationId = input.telemetryOperationId ?? input.harnessRunId;
   const subjectUserId = userIdForRun(run, input.telemetrySubjectUserId);
 

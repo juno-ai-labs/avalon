@@ -3,6 +3,80 @@ import { describe, expect, it, vi } from "vitest";
 import { __integrationTesting } from "../src/services/integrations";
 
 describe("Bind host durability boundaries", () => {
+  it("requires an explicit protocol turn identity for every durable final response", () => {
+    expect(__integrationTesting.resolveHarnessFinalTurnId("accepted response", "run-1:turn:2"))
+      .toBe("run-1:turn:2");
+    expect(__integrationTesting.resolveHarnessFinalTurnId("", null)).toBeNull();
+    expect(() => __integrationTesting.resolveHarnessFinalTurnId("unowned response", null))
+      .toThrow("harness_final_turn_identity_missing");
+  });
+
+  it("publishes post-run attachment safety text with explicit host provenance", () => {
+    const boundary = "Attachment content unverified. Rally stopped before using it.";
+    expect(__integrationTesting.applyHarnessAttachmentBoundary(
+      { text: "raw provider text", turnId: "turn-1" },
+      boundary,
+      new Set(),
+    )).toEqual({
+      finalTurn: { text: "", turnId: null },
+      participantNotice: boundary,
+    });
+    expect(__integrationTesting.applyHarnessAttachmentBoundary(
+      { text: boundary, turnId: "turn-1" },
+      boundary,
+      new Set(["turn-1"]),
+    )).toEqual({
+      finalTurn: { text: boundary, turnId: "turn-1" },
+      participantNotice: null,
+    });
+    expect(__integrationTesting.applyHarnessAttachmentBoundary(
+      { text: "raw provider text", turnId: null },
+      boundary,
+      new Set(),
+    )).toEqual({
+      finalTurn: { text: "", turnId: null },
+      participantNotice: boundary,
+    });
+    expect(__integrationTesting.applyHarnessAttachmentBoundary(
+      { text: "accepted intermediate text", turnId: "turn-1" },
+      boundary,
+      new Set(["turn-1"]),
+    )).toEqual({
+      finalTurn: { text: "accepted intermediate text", turnId: "turn-1" },
+      participantNotice: boundary,
+    });
+  });
+
+  it("keeps only the current Bind turn when a non-completed run has crossed a tool boundary", () => {
+    let streamed = { text: "", turnId: null as string | null };
+    streamed = __integrationTesting.advanceHarnessStreamText(streamed, {
+      type: "stream_started", turnId: "run-1:turn:1",
+    });
+    streamed = __integrationTesting.advanceHarnessStreamText(streamed, {
+      type: "stream_delta", turnId: "run-1:turn:1", delta: "I will check.", reset: false,
+    });
+    streamed = __integrationTesting.advanceHarnessStreamText(streamed, {
+      type: "stream_started", turnId: "run-1:turn:2",
+    });
+    streamed = __integrationTesting.advanceHarnessStreamText(streamed, {
+      type: "stream_delta", turnId: "run-1:turn:2", delta: "Here is the partial result.", reset: false,
+    });
+
+    expect(streamed).toEqual({
+      text: "Here is the partial result.",
+      turnId: "run-1:turn:2",
+    });
+  });
+
+  it("replaces only the retried current turn before Bind accepts it", () => {
+    let streamed = { text: "discard", turnId: "run-1:turn:2" as string | null };
+    streamed = __integrationTesting.advanceHarnessStreamText(streamed, {
+      type: "stream_delta", turnId: "run-1:turn:2", delta: "recovered", reset: true,
+    });
+
+    expect(streamed).toEqual({ text: "recovered", turnId: "run-1:turn:2" });
+  });
+
   it("reuses the current started receipt for post-start validation failures", async () => {
     const intents = __integrationTesting.createToolEffectIntents();
     intents.record("call-post-start-validation", "invocation-real-input");
@@ -106,6 +180,133 @@ describe("Bind host durability boundaries", () => {
       policy,
       result: { output: {}, summary: "verified" },
     } as never);
+    expect(guard.boundary()).toBeNull();
+  });
+
+  it("replaces the terminal turn before acceptance and suppresses a redundant retry", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-failed",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId: "00000000-0000-7000-8000-000000000778" },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-failed",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "The resource could not be converted",
+      data: { code: "resource_format_unsupported" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+
+    expect(guard.hasUnresolved()).toBe(true);
+    const accepted = guard.sanitizeAssistantContent("The spreadsheet says July is 42.", false);
+    expect(accepted).toContain("Attachment content unverified");
+    expect(accepted).toContain("resource_format_unsupported");
+    expect(accepted).not.toMatch(/July|42|spreadsheet says/iu);
+    expect(guard.consumeTerminalBoundaryApplied()).toBe(true);
+    expect(guard.consumeTerminalBoundaryApplied()).toBe(false);
+  });
+
+  it("settles the content Bind accepted even when a later tool clears the grounding failure", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const policy = { capability: "workstream.resources.read" };
+    const resourceId = "00000000-0000-7000-8000-000000000779";
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-failed-first",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId },
+    } as never);
+    guard.onFailed({
+      type: "tool_failed",
+      toolCallId: "tool-read-failed-first",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      error: "The resource could not be converted",
+      data: { code: "resource_format_unsupported" },
+      phase: "execution",
+      outcome: "definitive_failure",
+    } as never);
+
+    const accepted = __integrationTesting.acceptHarnessAssistantContent(guard, {
+      turnId: "run-one:turn:2",
+      content: "The unverified total is 42; I will try another reader.",
+      hasToolCalls: true,
+    });
+    expect(accepted).toMatchObject({ turnId: "run-one:turn:2" });
+    expect(accepted.text).toContain("Attachment content unverified");
+    expect(accepted.text).not.toContain("42");
+
+    guard.onStarted({
+      type: "tool_started",
+      toolCallId: "tool-read-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      input: { resourceId },
+    } as never);
+    guard.onCompleted({
+      type: "tool_completed",
+      toolCallId: "tool-read-recovery",
+      toolName: "workstream_read_resource",
+      pluginId: "rally_core",
+      policy,
+      result: { output: { resourceId }, summary: "verified" },
+    } as never);
+
+    expect(guard.boundary()).toBeNull();
+    // Settlement owns the accepted copy, not the earlier streamed provider
+    // text and not whatever guard state happens to remain at run completion.
+    expect(accepted.text).toContain("Attachment content unverified");
+  });
+
+  it("rebuilds attachment safety from durable receipts and lets a later verified read clear it", () => {
+    const guard = new __integrationTesting.AttachmentGroundingGuard();
+    const resourceId = "00000000-0000-7000-8000-000000000780";
+    const receipt = (overrides: Record<string, unknown>) => ({
+      effectIntentId: "effect-1",
+      runId: "run-1",
+      toolCallId: "tool-read-1",
+      toolName: "workstream_read_resource",
+      mode: "read",
+      connectionId: null,
+      requestHash: "hash",
+      inputJson: JSON.stringify({ resourceId }),
+      status: "failed",
+      outputRef: null,
+      outputSummary: null,
+      providerOperationId: null,
+      errorJson: JSON.stringify({ code: "resource_format_unsupported" }),
+      executionPlanHash: "plan",
+      executionPlanJson: JSON.stringify({ capability: "workstream.resources.read" }),
+      startedAt: 1,
+      settledAt: 2,
+      checkpointIndex: 0,
+      ...overrides,
+    });
+
+    guard.restoreReceipts([receipt({})] as never);
+    expect(guard.boundary()).toContain(resourceId);
+
+    guard.restoreReceipts([receipt({
+      effectIntentId: "effect-2",
+      toolCallId: "tool-read-2",
+      status: "completed",
+      startedAt: 3,
+      settledAt: 4,
+      errorJson: null,
+    })] as never);
     expect(guard.boundary()).toBeNull();
   });
 
@@ -273,20 +474,20 @@ describe("Bind host durability boundaries", () => {
     const result = __integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "needs_input" },
       streamedText: "",
-      messageId,
+      finalTurnId: messageId,
       ambiguousToolOutcome: false,
       stoppedByUser: false,
     });
 
     expect(result).toEqual({ status: "needs_input" });
-    expect("messageId" in result).toBe(false);
+    expect("finalTurnId" in result).toBe(false);
     expect(__integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "needs_input" },
       streamedText: "I need one detail before continuing.",
-      messageId,
+      finalTurnId: messageId,
       ambiguousToolOutcome: false,
       stoppedByUser: false,
-    })).toEqual({ status: "needs_input", messageId });
+    })).toEqual({ status: "needs_input", finalTurnId: messageId });
   });
 
   it("says why an ambiguous halt stopped the run, which nothing else may record", () => {
@@ -297,12 +498,12 @@ describe("Bind host durability boundaries", () => {
     expect(__integrationTesting.workstreamHarnessTerminalResult({
       outcome: { status: "completed" },
       streamedText: "I will locate the repository.",
-      messageId,
+      finalTurnId: messageId,
       ambiguousToolOutcome: true,
       stoppedByUser: false,
     })).toEqual({
       status: "needs_input",
-      messageId,
+      finalTurnId: messageId,
       error: {
         code: "ambiguous_external_write",
         message: "An external action's outcome could not be confirmed, so Rally stopped instead of repeating it",

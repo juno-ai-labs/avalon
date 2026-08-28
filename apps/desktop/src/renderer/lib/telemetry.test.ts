@@ -24,7 +24,6 @@ import {
   workstreamFeedOpenAttemptId,
   workstreamFeedSourceQueryKey,
   workstreamNavigation,
-  workstreamRecoveryFeedQueryKey,
   workstreamSocketSnapshotGenerationQueryKey,
 } from './telemetry';
 
@@ -38,12 +37,10 @@ afterEach(() => {
 });
 
 describe('renderer semantic telemetry helpers', () => {
-  it('keeps work-stream opening lineage and REST windows in distinct cache keys', () => {
+  it('keeps work-stream opening lineage and socket generations in distinct cache keys', () => {
     const workstreamId = '00000000-0000-4000-8000-000000000200';
     expect(workstreamFeedSourceQueryKey(workstreamId))
       .toEqual(['workstream-feed-source', workstreamId]);
-    expect(workstreamRecoveryFeedQueryKey(workstreamId))
-      .toEqual(['workstream-recovery-feed', workstreamId]);
     expect(workstreamSocketSnapshotGenerationQueryKey(workstreamId))
       .toEqual(['workstream-socket-snapshot-generation', workstreamId]);
   });

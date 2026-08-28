@@ -1,6 +1,6 @@
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RallyApi, mapMessage, mapResource, mapWorkstreamDetail, messagesWithTransientBlocks, redactQuery } from './api';
+import { RallyApi, mapResource, mapWorkstreamDetail, redactQuery } from './api';
 import type { ApiError } from './api';
 import type { DesktopSession } from '../../common/desktop';
 
@@ -100,31 +100,8 @@ const detail = {
     activities: [],
     activeActivities: [],
     activeTurns: [],
+    pendingInputs: [],
   },
-};
-
-const message = {
-  id: messageId,
-  clientMessageId: 'client-message-one',
-  workspaceId,
-  workstreamId,
-  author: { type: 'human' as const, user },
-  messageType: 'text' as const,
-  textContent: `Please ask [@Adam](person:${userId}).`,
-  structuredContent: null,
-  mentions: [{
-    type: 'person' as const,
-    userId,
-    connectorType: null,
-    displayName: 'Adam',
-    avatarUrl: 'https://example.com/adam.png',
-    startOffset: 11,
-    endOffset: 31,
-  }],
-  attachments: [],
-  sequenceNumber: 4,
-  createdAt: timestamp,
-  editedAt: null,
 };
 
 const resource = {
@@ -362,7 +339,7 @@ describe('Rally API wire adapter', () => {
     expect(mapWorkstreamDetail(detail).modelOverride).toBeUndefined();
   });
 
-  it('maps representative work-stream and message wire records into renderer models', () => {
+  it('maps representative work-stream and resource wire records into renderer models', () => {
     expect(mapWorkstreamDetail(detail)).toMatchObject({
       id: workstreamId,
       origin: 'ad_hoc',
@@ -371,22 +348,6 @@ describe('Rally API wire adapter', () => {
       participants: [{ id: userId, role: 'creator' }],
       viewers: [{ id: userId, viewing: true }],
       connections: [{ id: connectionId, scope: 'you', status: 'reconnect_required' }],
-    });
-    expect(mapMessage(message)).toMatchObject({
-      id: messageId,
-      clientMessageId: 'client-message-one',
-      authorType: 'human',
-      author: { id: userId, name: 'Adam' },
-      text: `Please ask [@Adam](person:${userId}).`,
-      mentions: [{
-        type: 'person',
-        personId: userId,
-        displayName: 'Adam',
-        avatarUrl: 'https://example.com/adam.png',
-        startOffset: 11,
-        endOffset: 31,
-      }],
-      sequenceNumber: 4,
     });
     expect(mapResource(resource)).toMatchObject({
       id: resourceId,
@@ -399,32 +360,6 @@ describe('Rally API wire adapter', () => {
   it('preserves a stopped harness status instead of reporting completion', () => {
     expect(mapWorkstreamDetail({ ...detail, harnessStatus: 'stopped' }))
       .toMatchObject({ harnessStatus: 'stopped' });
-  });
-
-  it('preserves externally attributed Slack actors in renderer messages', () => {
-    expect(mapMessage({
-      ...message,
-      author: {
-        type: 'external' as const,
-        actor: {
-          provider: 'slack',
-          providerAccountId: 'T123',
-          providerUserId: 'U456',
-          displayName: 'Taylor',
-          avatarUrl: 'https://example.com/taylor.png',
-        },
-      },
-      textContent: 'Investigate this incident',
-    })).toMatchObject({
-      authorType: 'external',
-      externalActor: {
-        provider: 'slack',
-        providerAccountId: 'T123',
-        providerUserId: 'U456',
-        displayName: 'Taylor',
-      },
-      text: 'Investigate this incident',
-    });
   });
 
   it('lists searchable connector resources with an opaque pagination cursor', async () => {
@@ -469,238 +404,6 @@ describe('Rally API wire adapter', () => {
     });
   });
 
-  it('maps a persisted tool message back into the same inline block used by realtime', () => {
-    expect(mapMessage({
-      ...message,
-      id: taskId,
-      author: { type: 'agent' as const },
-      messageType: 'tool' as const,
-      textContent: '',
-      structuredContent: {
-        invocation: {
-          id: taskId,
-          harnessRunId: messageId,
-          toolCallId: 'turn-1-tool-1',
-          toolName: 'Search evidence',
-          connectionId: null,
-          status: 'completed',
-          inputSummary: '{"query":"invoice failures"}',
-          outputSummary: 'Found the relevant failures.',
-          startedAt: '2026-08-01T12:00:01.000Z',
-          completedAt: '2026-08-01T12:00:04.000Z',
-          error: null,
-        },
-      },
-      sequenceNumber: 5,
-    })).toMatchObject({
-      id: taskId,
-      authorType: 'agent',
-      messageType: 'tool_event',
-      sequenceNumber: 5,
-      toolEvent: {
-        id: taskId,
-        name: 'Search evidence',
-        status: 'completed',
-        summary: 'Found the relevant failures.',
-        durationMs: 3_000,
-      },
-    });
-  });
-
-  it('carries the owning connector onto a work-stream tool row', () => {
-    const mapped = mapMessage({
-      ...message,
-      id: taskId,
-      author: { type: 'agent' as const },
-      messageType: 'tool' as const,
-      textContent: '',
-      structuredContent: {
-        invocation: {
-          id: taskId,
-          harnessRunId: messageId,
-          toolCallId: 'turn-1-tool-1',
-          toolName: 'google_2_drive_search',
-          activityName: 'Reviewed Google Drive · Work',
-          connectionId,
-          plugin: { pluginId: 'plugin_google_2', displayName: 'Google Drive · Work', icon: 'brand-google-drive' },
-          status: 'completed',
-          inputSummary: '{"query":"rally"}',
-          outputSummary: 'Found the authorized Drive folder.',
-          startedAt: '2026-08-01T12:00:01.000Z',
-          completedAt: '2026-08-01T12:00:04.000Z',
-          error: null,
-        },
-      },
-      sequenceNumber: 6,
-    });
-
-    expect(mapped.toolEvent?.plugin).toEqual({
-      pluginId: 'plugin_google_2',
-      displayName: 'Google Drive · Work',
-      icon: 'brand-google-drive',
-    });
-    expect(mapped.toolEvent?.name).toBe('Reviewed Google Drive · Work');
-  });
-
-  it('leaves a work-stream tool row from a Rally-owned tool unattributed', () => {
-    const mapped = mapMessage({
-      ...message,
-      id: taskId,
-      author: { type: 'agent' as const },
-      messageType: 'tool' as const,
-      textContent: '',
-      structuredContent: {
-        invocation: {
-          id: taskId,
-          harnessRunId: messageId,
-          toolCallId: 'turn-1-tool-2',
-          toolName: 'web_search',
-          activityName: 'Searched the public web',
-          connectionId: null,
-          plugin: null,
-          status: 'completed',
-          inputSummary: '{"query":"azure models"}',
-          outputSummary: 'Found eight results.',
-          startedAt: '2026-08-01T12:00:01.000Z',
-          completedAt: '2026-08-01T12:00:04.000Z',
-          error: null,
-        },
-      },
-      sequenceNumber: 7,
-    });
-
-    expect(mapped.toolEvent?.plugin).toBeUndefined();
-    expect(mapped.toolEvent?.name).toBe('Searched the public web');
-  });
-
-  it('gives the durable elicitation answer the same identity as its realtime question', () => {
-    expect(mapMessage({
-      ...message,
-      id: 'durable-elicitation-answer-message',
-      clientMessageId: `elicitation-response:${taskId}`,
-      author: { type: 'human' as const, user },
-      messageType: 'elicitation' as const,
-      textContent: '',
-      structuredContent: {
-        kind: 'elicitation_response',
-        elicitation: {
-          id: taskId,
-          workstreamId,
-          harnessRunId: messageId,
-          prompt: 'Choose one',
-          responseType: 'single_select',
-          options: [{ label: 'Foo', value: 'foo', description: null }],
-          minimumSelections: 1,
-          maximumSelections: 1,
-          targetUserId: null,
-          status: 'answered',
-          answer: 'foo',
-          answeredByUserId: userId,
-          createdAt: timestamp,
-          answeredAt: timestamp,
-        },
-      },
-    })).toMatchObject({
-      id: `elicitation-${taskId}`,
-      messageType: 'elicitation',
-      elicitation: { id: taskId, status: 'answered', answer: 'foo' },
-    });
-  });
-
-  it('replaces a durable open elicitation message with its answered response regardless of order', () => {
-    const elicitation = {
-      id: taskId,
-      workstreamId,
-      harnessRunId: messageId,
-      prompt: 'Choose one',
-      responseType: 'single_select' as const,
-      options: [{ label: 'Foo', value: 'foo', description: null }],
-      minimumSelections: 1,
-      maximumSelections: 1,
-      targetUserId: null,
-      answeredByUserId: null,
-      createdAt: timestamp,
-      answeredAt: null,
-    };
-    const openQuestion = mapMessage({
-      ...message,
-      id: taskId,
-      clientMessageId: `elicitation:${taskId}`,
-      author: { type: 'agent' as const },
-      messageType: 'elicitation' as const,
-      textContent: '',
-      structuredContent: {
-        kind: 'elicitation',
-        elicitation: { ...elicitation, status: 'open' as const, answer: null },
-      },
-      mentions: [],
-      sequenceNumber: 4,
-    });
-    const answeredResponse = mapMessage({
-      ...message,
-      id: 'durable-elicitation-answer-message',
-      clientMessageId: `elicitation-response:${taskId}`,
-      author: { type: 'human' as const, user },
-      messageType: 'elicitation' as const,
-      textContent: '',
-      structuredContent: {
-        kind: 'elicitation_response',
-        elicitation: {
-          ...elicitation,
-          status: 'answered' as const,
-          answer: 'foo',
-          answeredByUserId: userId,
-          answeredAt: timestamp,
-        },
-      },
-      mentions: [],
-      sequenceNumber: 5,
-    });
-
-    expect(messagesWithTransientBlocks(
-      [openQuestion, answeredResponse],
-      mapWorkstreamDetail(detail),
-    )).toEqual([answeredResponse]);
-    expect(messagesWithTransientBlocks(
-      [answeredResponse, openQuestion],
-      mapWorkstreamDetail(detail),
-    )).toEqual([answeredResponse]);
-  });
-
-  it('rebuilds one pending suggestion card and keeps a locally dismissed card hidden', () => {
-    const suggestion = {
-      id: taskId,
-      activityId: resourceId,
-      workstreamId,
-      title: 'A noisy context suggestion',
-      summary: 'This should not be shown in the work stream.',
-      confidence: 0.95,
-      reason: 'The classifier guessed this belonged here.',
-      status: 'pending' as const,
-      createdAt: timestamp,
-      resolvedAt: null,
-    };
-    const mappedDetail = mapWorkstreamDetail({ ...detail, suggestions: [suggestion] });
-    const legacySuggestion = mapMessage({
-      ...message,
-      id: taskId,
-      author: { type: 'system' as const },
-      messageType: 'suggestion' as const,
-      textContent: '',
-      structuredContent: { suggestion },
-      mentions: [],
-      sequenceNumber: 5,
-    });
-
-    const visible = messagesWithTransientBlocks([legacySuggestion], mappedDetail);
-    expect(visible).toHaveLength(1);
-    expect(visible[0]).toMatchObject({
-      messageType: 'activity_suggestion',
-      activitySuggestion: { id: taskId, status: 'pending' },
-    });
-    expect(messagesWithTransientBlocks([legacySuggestion], mappedDetail, [taskId])).toEqual([]);
-  });
-
   it('maps background activity into the durable rail model', () => {
     expect(mapWorkstreamDetail({
       ...detail,
@@ -714,7 +417,7 @@ describe('Rally API wire adapter', () => {
         completedAt: '2026-07-31T20:00:12.000Z',
         tokenCount: 1_250,
         toolUses: 3,
-        transcriptMessageId: messageId,
+        transcriptTurnId: messageId,
       }],
     })).toMatchObject({
       backgroundTasks: [{ id: taskId, type: 'agent', durationMs: 12_000, tokenCount: 1_250, toolUses: 3 }],
@@ -967,7 +670,7 @@ describe('Rally API wire adapter', () => {
   it('creates an attachment-only work stream with its draft resource IDs', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
-      messageId,
+      turnId: messageId,
       harnessRunId: null,
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -977,7 +680,7 @@ describe('Rally API wire adapter', () => {
       openingMessage: '',
       participantIds: [],
       attachmentIds: [resourceId],
-    })).resolves.toMatchObject({ messageId, workstream: { id: workstreamId } });
+    })).resolves.toMatchObject({ turnId: messageId, workstream: { id: workstreamId } });
 
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       openingMessage: '',
@@ -991,7 +694,7 @@ describe('Rally API wire adapter', () => {
     const projectId = '00000000-0000-7000-8000-0000000000a7';
     const fetchMock = vi.fn().mockResolvedValueOnce(json({
       workstream: detail,
-      messageId,
+      turnId: messageId,
       harnessRunId: null,
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -1009,7 +712,7 @@ describe('Rally API wire adapter', () => {
       }))
       .mockResolvedValueOnce(json({
         workstream: detail,
-        messageId,
+        turnId: messageId,
         harnessRunId: null,
       }));
     vi.stubGlobal('fetch', fetchMock);
@@ -1213,70 +916,6 @@ describe('Rally API wire adapter', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ versionId: nextVersionId });
   });
 
-  it('loads transcript pages before, after, and around a sequence cursor', async () => {
-    const older = {
-      ...message,
-      id: '00000000-0000-7000-8000-000000000009',
-      sequenceNumber: 3,
-      textContent: 'Earlier context.',
-    };
-    const dismissedSuggestion = {
-      ...message,
-      id: noteId,
-      author: { type: 'system' as const },
-      messageType: 'suggestion' as const,
-      textContent: '',
-      structuredContent: {
-        suggestion: {
-          id: taskId,
-          activityId: resourceId,
-          workstreamId,
-          title: 'Review the launch plan',
-          summary: 'The launch plan changed.',
-          confidence: 0.93,
-          reason: 'It matches the work stream objective.',
-          status: 'dismissed' as const,
-          createdAt: timestamp,
-          resolvedAt: timestamp,
-        },
-      },
-    };
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('/messages?') && url.includes('before=4')) {
-        return json({ items: [older, dismissedSuggestion], nextCursor: null });
-      }
-      if (url.includes('/messages?') && url.includes('around=4')) {
-        return json({ items: [older, message], nextCursor: '3', newerCursor: '4' });
-      }
-      if (url.includes('/messages?') && url.includes('after=4')) {
-        return json({ items: [], nextCursor: null, newerCursor: null });
-      }
-      if (url.includes('/messages?')) return json({ items: [message], nextCursor: '4' });
-      return json({ error: { message: 'Unexpected request' } }, { status: 500 });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const api = new RallyApi('https://api.rally.test', session);
-
-    const newest = await api.getMessagePage(workstreamId);
-    const earlier = await api.getMessagePage(workstreamId, { before: newest.nextCursor ?? undefined });
-    const anchored = await api.getMessagePage(workstreamId, { around: 4 });
-    const newer = await api.getMessagePage(workstreamId, { after: anchored.newerCursor ?? undefined });
-
-    expect(newest.items.map((item) => item.sequenceNumber)).toEqual([4]);
-    expect(newest.nextCursor).toBe('4');
-    expect(earlier.items.map((item) => item.sequenceNumber)).toEqual([3]);
-    expect(earlier.nextCursor).toBeNull();
-    expect(anchored.items.map((item) => item.sequenceNumber)).toEqual([3, 4]);
-    expect(anchored.newerCursor).toBe('4');
-    expect(newer.items).toEqual([]);
-    expect(newer.newerCursor).toBeNull();
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('before=4'))).toBe(true);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('around=4'))).toBe(true);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('after=4'))).toBe(true);
-    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/workstreams/${workstreamId}`))).toBe(false);
-  });
-
   it('starts and reconciles a durable connector OAuth attempt', async () => {
     const attemptId = 'a'.repeat(43);
     const fetchMock = vi.fn()
@@ -1474,7 +1113,7 @@ describe('request correlation', () => {
     const sent: Array<RequestInit | undefined> = [];
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(init);
-      return json({ workstream: detail, messageId, harnessRunId: null });
+      return json({ workstream: detail, turnId: messageId, harnessRunId: null });
     }));
     const api = new RallyApi('https://api.rally.test', session);
 

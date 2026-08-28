@@ -94,8 +94,8 @@ export class WorkstreamResourceStorage {
    * object, which is why it can be one read of the object's own rows.
    *
    * The `substream_id = '0'` predicate is this class's convention rather than a
-   * live branch — every query over `workstream_message_records` carries it, and only the main child
-   * is ever written. It is uncovered by a spec for that reason: a fixture that
+   * live branch — canonical conversation turns currently project only the main
+   * child. It is uncovered by a spec for that reason: a fixture that
    * exercised it would be asserting on a substream nothing creates.
    */
   resourceIdsOnMessages(input: { resourceIds: readonly string[] }): string[] {
@@ -103,8 +103,8 @@ export class WorkstreamResourceStorage {
     return boundParameterChunks(input.resourceIds).flatMap((chunk) =>
       this.sql.exec<{ resource_id: string } & Record<string, SqlStorageValue>>(
         `SELECT DISTINCT attachment.resource_id
-           FROM workstream_message_attachments attachment
-           JOIN workstream_message_records part ON part.id = attachment.message_id
+           FROM participant_transcript_attachments attachment
+           JOIN canonical_conversation_turn_details part ON part.id = attachment.turn_id
           WHERE part.substream_id = '0'
             AND attachment.resource_id IN (${chunk.map(() => "?").join(", ")})`,
         ...chunk,

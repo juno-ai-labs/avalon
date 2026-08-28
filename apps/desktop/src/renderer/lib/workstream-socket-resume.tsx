@@ -1,7 +1,8 @@
 import { createContext, useContext, useRef, type PropsWithChildren } from 'react';
 
 export interface StreamCursor {
-  readonly aggregateMessageId: string;
+  /** Groups transient model turns emitted by one run; never a durable turn ID. */
+  readonly streamId: string;
   readonly turnId: string;
   readonly epoch: number;
   readonly streamSeq: number;

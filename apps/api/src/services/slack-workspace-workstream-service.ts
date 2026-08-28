@@ -13,14 +13,17 @@ import { z } from "zod";
 
 import type { Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { sha256Hex } from "../lib/crypto";
 import { recordWorkstreamCreatedTelemetry } from "../telemetry/workstream-creation";
 import { publishWorkstreamEvent } from "./integrations";
-import { launchWorkstreamHarness } from "./workstream-service";
+import {
+  admitExternalWorkstreamMessage,
+  answerExternalWorkstreamElicitation,
+} from "./workstream-service";
 import { WorkstreamEmailRoutingService } from "./workstream-email-routing-service";
 import { nameWorkstream, provisionalWorkstreamTitle } from "./workstream-naming-service";
 import { createSchedulingObjectPort } from "../runtime/scheduling-port";
 import { createMessageObjectPort } from "../runtime/message-port";
-import { readMessage } from "../runtime/message-projection";
 import {
   attachWorkstreamOriginResource,
   type OriginResourceDescriptor,
@@ -113,7 +116,7 @@ export class SlackWorkspaceWorkstreamService {
       participantUserIds: [
         ...new Set([...(creatorUserId ? [creatorUserId] : []), ...(input.participantUserIds ?? [])]),
       ],
-      harnessStatus: "running",
+      harnessStatus: "scheduled",
       emailAddress: emailRoute.emailAddress,
       emailRouteStatus: "reserved",
       systemKind: null,
@@ -124,18 +127,6 @@ export class SlackWorkspaceWorkstreamService {
       now: at,
     });
     const openingMessageId = newId();
-    await createMessageObjectPort(this.env, this.workspaceId, workstreamId).appendMessage({
-      messageId: openingMessageId,
-      clientMessageId: input.clientMessageId,
-      authorType: "external",
-      authorUserId: null,
-      externalActorJson: JSON.stringify(actor),
-      messageType: "text",
-      text: input.text,
-      structuredContentJson: null,
-      producedByRunId: null,
-      now: at,
-    });
     const created = { workstream: { id: workstreamId, createdByUserId: creatorUserId } };
     await recordWorkstreamCreatedTelemetry(this.env, {
       workspaceId: this.workspaceId,
@@ -147,24 +138,6 @@ export class SlackWorkspaceWorkstreamService {
         : { type: "workspace" },
     });
     await emailRouting.activateWorkstreamRoute(routeInput);
-    const message = await readMessage(
-      createMessageObjectPort(this.env, this.workspaceId, created.workstream.id),
-      { workspaceId: this.workspaceId, workstreamId: created.workstream.id },
-      input.clientMessageId,
-    );
-    if (message) {
-      await publishWorkstreamEvent(this.env, this.workspaceId, created.workstream.id, {
-        type: "message_created",
-        message,
-      });
-      await this.recordExternalActorAudit(
-        "slack.workspace_workstream.created",
-        created.workstream.id,
-        "message",
-        message.id,
-        actor,
-      );
-    }
     // Before the launch, so the run's first context read already holds the
     // Slack thread it was summoned from. The attribution matches the work
     // stream's: an unmapped Slack member is not an Avalon user and leaves the
@@ -177,20 +150,34 @@ export class SlackWorkspaceWorkstreamService {
         descriptor: input.originResource,
       });
     }
-    const harnessRunId = await launchWorkstreamHarness(this.env, {
+    const admitted = await admitExternalWorkstreamMessage(this.env, {
       workspaceId: this.workspaceId,
       workstreamId: asWorkstreamId(created.workstream.id),
-      triggerMessageId: openingMessageId,
+      messageId: openingMessageId,
+      clientMessageId: input.clientMessageId,
+      actor,
+      messageType: "text",
+      text: input.text,
+      structuredContentJson: null,
       origin: "slack_workspace_opening_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
       slackOrigin: input.slackOrigin,
       ...(input.slackSearchAuthorization
         ? { slackSearchAuthorization: input.slackSearchAuthorization }
         : {}),
+      runMode: "steer",
+      now: at,
     });
+    await this.recordExternalActorAudit(
+      "slack.workspace_workstream.created",
+      created.workstream.id,
+      "message",
+      admitted.turn.turnId,
+      actor,
+    );
     // Slack ingress already runs inside the acknowledgement's `waitUntil`, so
-    // naming is awaited here rather than deferred again — the run has started
-    // and nothing downstream is waiting on the title.
+    // naming is awaited here rather than deferred again. The opening message
+    // is durable pending input by this point; no execution receipt exists yet.
     if (input.title == null) {
       await nameWorkstream(executionEnv, {
         workspaceId: this.workspaceId,
@@ -200,56 +187,39 @@ export class SlackWorkspaceWorkstreamService {
         provisionalTitle: title,
       });
     }
-    return { ...created, harnessRunId };
+    return created;
   }
 
   async createMessage(workstreamId: string, input: SlackExternalMessageInput) {
-    const identity = { workspaceId: this.workspaceId, workstreamId };
-    const messages = createMessageObjectPort(this.env, this.workspaceId, workstreamId);
-    // Slack redelivers. The client message id is the Slack event's, so a
-    // redelivery resolves to the row the first delivery wrote — and the
-    // difference between the two is what decides whether this starts a run.
-    const appended = await messages.appendMessage({
+    const admitted = await admitExternalWorkstreamMessage(this.env, {
+      workspaceId: this.workspaceId,
+      workstreamId: asWorkstreamId(workstreamId),
       messageId: newId(),
       clientMessageId: input.clientMessageId,
-      authorType: "external",
-      authorUserId: null,
-      externalActorJson: JSON.stringify(ExternalActorSchema.parse(input.actor)),
+      actor: ExternalActorSchema.parse(input.actor),
       messageType: "text",
       text: input.text,
       structuredContentJson: null,
-      producedByRunId: null,
-      now: Date.now(),
-    });
-    const message = await readMessage(messages, identity, input.clientMessageId);
-    if (!message) throw new ApiError(500, "message_write_failed", "The message could not be stored");
-    if (appended.outcome === "replayed") {
-      return { message, harnessRunId: null };
-    }
-    await publishWorkstreamEvent(this.env, this.workspaceId, workstreamId, {
-      type: "message_created",
-      message,
-    });
-    await this.recordExternalActorAudit(
-      "slack.workspace_workstream.message_created",
-      workstreamId,
-      "message",
-      message.id,
-      input.actor,
-    );
-    const harnessRunId = await launchWorkstreamHarness(this.env, {
-      workspaceId: this.workspaceId,
-      workstreamId: asWorkstreamId(workstreamId),
-      triggerMessageId: message.id,
       origin: "slack_workspace_message",
       executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
       slackOrigin: input.slackOrigin,
       ...(input.slackSearchAuthorization
         ? { slackSearchAuthorization: input.slackSearchAuthorization }
         : {}),
-      supersedeActiveRun: true,
+      runMode: "steer",
+      now: Date.now(),
     });
-    return { message, harnessRunId };
+    await this.recordExternalActorAudit(
+      "slack.workspace_workstream.message_created",
+      workstreamId,
+      "message",
+      admitted.turn.turnId,
+      input.actor,
+    );
+    return {
+      message: { id: admitted.turn.turnId, clientMessageId: admitted.turn.clientMessageId },
+      deliveryState: admitted.deliveryState,
+    };
   }
 
   async answerOpenElicitation(workstreamId: string, input: SlackExternalMessageInput) {
@@ -258,7 +228,7 @@ export class SlackWorkspaceWorkstreamService {
     // the row rather than a fully assembled message.
     const existing = await createMessageObjectPort(this.env, this.workspaceId, workstreamId)
       .messageByClientId({ clientMessageId });
-    if (existing) return { elicitation: null, harnessRunId: null };
+    if (existing) return { elicitation: null };
     const scheduling = createSchedulingObjectPort(this.env, this.workspaceId, workstreamId);
     const raw = await scheduling.oldestOpenElicitation();
     if (!raw) return null;
@@ -296,40 +266,34 @@ export class SlackWorkspaceWorkstreamService {
       createdAt: elicitation.created_at,
       answeredAt: at,
     };
-    const answered = await scheduling.answerElicitationExternally({
+    await answerExternalWorkstreamElicitation(this.env, {
+      workspaceId: this.workspaceId,
+      workstreamId: asWorkstreamId(workstreamId),
       elicitationId: elicitation.id,
       answerJson: JSON.stringify(answer),
-      externalActorJson: JSON.stringify(actor),
       messageId: responseMessageId,
       clientMessageId,
+      actor,
+      messageType: "elicitation",
+      text: "",
       structuredContentJson: JSON.stringify({
         kind: "elicitation_response",
         elicitation: persistedElicitation,
       }),
+      origin: "slack_workspace_elicitation_answer",
+      executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
+      parentHarnessRunId: elicitation.harness_run_id,
+      slackOrigin: input.slackOrigin,
+      ...(input.slackSearchAuthorization
+        ? { slackSearchAuthorization: input.slackSearchAuthorization }
+        : {}),
+      runMode: "steer",
       now: Date.parse(at),
     });
     // The routed batch fenced its update on `status = 'open'` and read
     // `meta.changes` to find out whether it had won the race; losing it is an
     // ordinary outcome, and the authority names it rather than reporting a
     // row count for the caller to interpret.
-    if (answered.outcome === "already_answered") {
-      throw new ApiError(409, "elicitation_already_answered", "This question was answered by someone else");
-    }
-    const remaining = await scheduling.openElicitationCount();
-    const harnessRunId = remaining === 0
-      ? await launchWorkstreamHarness(this.env, {
-          workspaceId: this.workspaceId,
-          workstreamId: asWorkstreamId(workstreamId),
-          triggerMessageId: responseMessageId,
-          origin: "slack_workspace_elicitation_answer",
-          executionPrincipal: { type: "workspace", workspaceId: this.workspaceId },
-          slackOrigin: input.slackOrigin,
-          ...(input.slackSearchAuthorization
-            ? { slackSearchAuthorization: input.slackSearchAuthorization }
-            : {}),
-          parentHarnessRunId: elicitation.harness_run_id,
-        })
-      : null;
     await publishWorkstreamEvent(this.env, this.workspaceId, workstreamId, {
       type: "elicitation_answered",
       elicitation: persistedElicitation,
@@ -341,7 +305,7 @@ export class SlackWorkspaceWorkstreamService {
       elicitation.id,
       actor,
     );
-    return { elicitation: persistedElicitation, harnessRunId };
+    return { elicitation: persistedElicitation };
   }
 
   private async recordExternalActorAudit(
@@ -352,13 +316,20 @@ export class SlackWorkspaceWorkstreamService {
     actorInput: ExternalActor,
   ): Promise<void> {
     const actor = ExternalActorSchema.parse(actorInput);
+    const auditId = `slack:${await sha256Hex(JSON.stringify([
+      this.workspaceId,
+      workstreamId,
+      action,
+      targetType,
+      targetId,
+    ]))}`;
     await this.env.DB.prepare(
-      `INSERT INTO audit_events
+      `INSERT OR IGNORE INTO audit_events
        (id, workspace_id, actor_type, actor_user_id, workstream_id, action,
         target_type, target_id, metadata_json, created_at)
        VALUES (?, ?, 'connector', NULL, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      newId(),
+      auditId,
       this.workspaceId,
       workstreamId,
       action,

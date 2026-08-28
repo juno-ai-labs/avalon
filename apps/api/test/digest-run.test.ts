@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
 import { WorkspaceDO } from "../src/durable-objects/workspace-do";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   createCloudflareTestBinding,
@@ -20,25 +19,29 @@ import {
   workstreamObjectParticipantRows,
 } from "./helpers/durable-authority";
 
-// The real launcher creates the `harness_runs` row the delivery then points at,
+// The real launcher creates the `runs` receipt the delivery then points at,
 // so the stub creates one too — without it the foreign key would be the only
 // thing these tests were exercising. It admits the row the way the launcher
-// does since the cutover: through the routed execution environment, into the
-// work stream's own object. (Dynamic import because this callback is hoisted
-// above the module's imports.)
+// does since the cutover: through the typed run port. (Dynamic import because
+// this callback is hoisted above the module's imports.)
 const launchWorkstreamHarness = vi.hoisted(() => vi.fn(async (
-  env: { DB: D1Database },
+  env: Env,
   input: { workspaceId: string; workstreamId: string },
 ) => {
-  const { withWorkstreamRuntimeDatabase: route } = await import("../src/services/workstream-runtime-database");
-  const routed = route(env as never, input.workspaceId, input.workstreamId);
+  const { createHarnessRunObjectPort } = await import("../src/runtime/harness-run-port");
   const id = crypto.randomUUID();
-  await routed.DB.prepare(
-    `INSERT INTO harness_runs
-       (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-     VALUES (?, ?, ?, 'scheduled_digest', '{"type":"user","userId":"00000000-0000-7000-8000-000000000002"}',
-             'running', '2026-08-11')`,
-  ).bind(id, input.workspaceId, input.workstreamId).run();
+  await createHarnessRunObjectPort(env, input.workspaceId, input.workstreamId).admitRun({
+    runId: id,
+    origin: "scheduled_digest",
+    executionPrincipalJson: '{"type":"user","userId":"00000000-0000-7000-8000-000000000002"}',
+    status: "running",
+    startedAt: Date.parse("2026-08-11T00:00:00.000Z"),
+    model: null,
+    triggerPartId: null,
+    parentRunId: null,
+    expectedLatestRunId: null,
+    now: Date.parse("2026-08-11T00:00:00.000Z"),
+  });
   return id;
 }));
 
@@ -46,11 +49,11 @@ vi.mock("../src/services/workstream-service", () => ({ launchWorkstreamHarness }
 vi.mock("../src/services/integrations", () => ({ publishWorkstreamEvent: vi.fn(async () => undefined) }));
 
 const { fireDigestSchedule, renderDigestBrief } = await import("../src/services/digest-run-service");
-const { markWorkflowInstanceCreated } = await import("../src/lib/workflow-launch-signal");
+const { markLoopActivationRecorded } = await import("../src/lib/loop-activation-signal");
 
-/** The shape `launchWorkstreamHarness` throws when its instance is already live. */
-function harnessLaunchLeftRunExecutingError(): Error {
-  return markWorkflowInstanceCreated(new Error("workflow_unavailable"));
+/** The shape thrown after the durable loop-activation receipt has committed. */
+function harnessActivationReceiptRecordedError(): Error {
+  return markLoopActivationRecorded(new Error("workflow_unavailable"));
 }
 const { recordActivityEventOrThrow } = await import("../src/services/activity-event-service");
 
@@ -251,7 +254,7 @@ describe("firing a digest occurrence", () => {
     expect(delivery).toEqual({ event_count: 1, cursor_through: 4 });
     const brief = workstreamObjectGet(
       onlyObjectStore(),
-      "SELECT text_content FROM messages WHERE message_type = 'system'",
+      "SELECT content AS text_content FROM canonical_conversation_turn_details WHERE message_type = 'system'",
     ) as { text_content: string };
     expect(brief.text_content).toContain("(1 item)");
     expect(brief.text_content).not.toContain("check run completed");
@@ -366,17 +369,31 @@ describe("firing a digest occurrence", () => {
     // the transcript. It marks its own run row `failed` on the way out, which
     // is exactly why the row cannot be what decides this.
     launchWorkstreamHarness.mockImplementationOnce(async (
-      launchEnv: { DB: D1Database },
+      launchEnv: Env,
       input: { workspaceId: string; workstreamId: string },
     ) => {
-      const routed = withWorkstreamRuntimeDatabase(launchEnv as never, input.workspaceId, input.workstreamId);
-      await routed.DB.prepare(
-        `INSERT INTO harness_runs
-           (id, workspace_id, workstream_id, origin, execution_principal_json, status, created_at)
-         VALUES (?, ?, ?, 'scheduled_digest', '{"type":"user","userId":"${OWNER}"}',
-                 'failed', '2026-08-11')`,
-      ).bind(crypto.randomUUID(), input.workspaceId, input.workstreamId).run();
-      throw harnessLaunchLeftRunExecutingError();
+      const { createHarnessRunObjectPort } = await import("../src/runtime/harness-run-port");
+      const runs = createHarnessRunObjectPort(launchEnv, input.workspaceId, input.workstreamId);
+      const runId = crypto.randomUUID();
+      const now = Date.parse("2026-08-11T00:00:00.000Z");
+      await runs.admitRun({
+        runId,
+        origin: "scheduled_digest",
+        executionPrincipalJson: `{"type":"user","userId":"${OWNER}"}`,
+        status: "running",
+        startedAt: now,
+        model: null,
+        triggerPartId: null,
+        parentRunId: null,
+        expectedLatestRunId: null,
+        now,
+      });
+      await runs.failUnlaunchedRun({
+        runId,
+        errorJson: '{"code":"activation_receipt_recorded"}',
+        now: now + 1,
+      });
+      throw harnessActivationReceiptRecordedError();
     });
 
     await expect(fireDigestSchedule(env, {
@@ -388,7 +405,7 @@ describe("firing a digest occurrence", () => {
     // the run still reading it.
     expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
-    expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM messages"))
+    expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details"))
       .toEqual({ count: 1 });
   });
 
@@ -415,7 +432,7 @@ describe("firing a digest occurrence", () => {
     );
     expect(tombstone.system_kind).toBe("digest");
     expect(tombstone.archived_at).not.toBeNull();
-    expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM messages"))
+    expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details"))
       .toEqual({ count: 1 });
   });
 

@@ -150,10 +150,10 @@ export function isTerminalOperation(value: string): value is TerminalOperation {
  * identity before anything executes, which is the check that matters: a
  * misrouted stub must fail rather than write another work stream's Terminal
  * state. `args` is not re-validated field by field. The caller is this
- * Worker holding a stub for its own object — the same trust boundary that
- * already lets `/internal/runtime-sql` accept arbitrary SQL — and the
- * per-argument shapes are enforced at the call site by `TerminalObjectPort`,
- * where a mismatch is a compile error rather than a runtime rejection.
+ * Worker holding a stub for its own object, and the operation name is a closed
+ * protocol vocabulary. Per-argument shapes are enforced at the call site by
+ * `TerminalObjectPort`, where a mismatch is a compile error rather than a
+ * runtime rejection.
  */
 /**
  * Operations that cannot change what the workspace directory publishes.

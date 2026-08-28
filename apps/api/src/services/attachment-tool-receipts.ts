@@ -38,7 +38,7 @@ export type AttachmentReceiptReplayValidation = "not_attachment" | "valid" | "in
  * folded into the write it compensates for.
  *
  * An earlier version of this file carried a second implementation of all three
- * functions, selected by `regionalDatabase(target) !== target.DB`. That arm read
+ * functions, selected by comparing a routed database to its regional backing. That arm read
  * `model_content_sha256` through `_runtime_resources`, which fabricates it as
  * `NULL` — and was widely believed, including by this repository's own PRD, to
  * mean the comparison always failed. It never ran: the guard is false for every

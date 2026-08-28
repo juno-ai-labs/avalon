@@ -70,11 +70,9 @@ describe("which harness-run operations commit a directory projection", () => {
       "admitRun",
       "claimAttempt",
       "failUnlaunchedRun",
-      "launchRun",
-      // Not a state write, but a transcript one: it appends the run's final
-      // message, which moves the preview and the activity clock the sidebar
-      // renders. The set is "writes the work stream's own row", and this does.
-      "publishFinalMessage",
+      // Not a run-row write, but a transcript one: it can append the final turn
+      // or a host notice, either of which moves the sidebar's rendered clocks.
+      "publishHostOutcome",
       "reapStaleRoot",
       "terminalizeAttempt",
       "terminalizeQueuedRun",

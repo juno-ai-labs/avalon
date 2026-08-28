@@ -31,7 +31,7 @@ necessarily keeps apart.
 | --- | --- |
 | `apps/api/src/observability/tracing.ts` | The whole API-side surface: `inSpan`, `inFlowSpan`, `inDurableObjectPhase`, `requestFlowSpan`, `noFlowSpan`, and `identityAttributes` — the one place a Rally identifier becomes an attribute name. |
 | `apps/api/wrangler.global.jsonc`, `apps/api/wrangler.eu.jsonc` | `observability.traces`, which is what makes any of this reach a trace. Custom spans require it; see [`cloudflare-logging-and-tracing.md`](cloudflare-logging-and-tracing.md). |
-| `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `GET /:id/messages`, `POST /:id/messages`, and both socket-ticket routes. |
+| `apps/api/src/routes/workstreams.ts` | The root span for `POST /workstreams`, `GET /:id`, `POST /:id/messages`, and both socket-ticket routes. |
 | `apps/api/src/services/workstream-object-creation-service.ts` | The create path's steps — every awaited call between the receipt and the activated route. |
 | `apps/api/src/services/socket-service.ts` | `SocketService.upgrade`: the edge half of a socket open. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The room: product operations, socket acceptance, subscription, snapshot assembly. |
@@ -169,9 +169,15 @@ under `avalon.`, so it can never collide with a convention added later:
 | `rally.auth.duration_ms` | What authentication cost, which the flow's own duration excludes. |
 | `rally.socket.ticket_id`, `rally.socket.connection_id` | The two socket joins below. |
 | `rally.message.client_id` | The composer's client message id. |
-| `rally.harness_run.id`, `rally.agent.invoked` | What the write started. |
 | `rally.snapshot.bytes`, `rally.snapshot.message_count`, `rally.snapshot.trims` | What a subscription had to assemble. |
 | `rally.create.path`, `rally.create.receipt_state`, `rally.create.first_naming` | Which create this was. |
+
+A message-send span ends when the immutable turn has been accepted as either
+canonical or pending. It deliberately carries no agent-invocation or harness-run
+attribute: admission may wake the persistent loop, but it does not prove that an
+execution has started or identify which later execution receipt will deliver the
+turn. `rally.harness_run.id` remains valid on work-stream creation and actual
+execution spans, where a real subordinate receipt exists.
 
 `identityAttributes` in `tracing.ts` is the only place a Rally identifier
 becomes an attribute name. Add a name there rather than at a call site, so a
@@ -283,12 +289,12 @@ subscription snapshot also records `rally.subscribe.snapshot_reason` as
 `initial` or `history_unavailable`, so hibernation recovery can be separated
 from a cold open. The trim loop re-serializes the whole frame per dropped
 message, and that count is the only place its cost appears. Normal navigation
-issues neither detail nor transcript REST reads. `GET /:id` and
-`GET /:id/messages` carry the same flow only for explicit recovery after
-`sequence_ahead`, a failed or overflowed `history_unavailable` snapshot, or a
-person choosing Retry after the first connection failure or an unavailable
-state; ordinary lost replay history is repaired by the subscription snapshot
-itself. A first ticket or handshake failure exposes that Retry action as soon
+issues neither detail nor transcript REST reads. Canonical history recovery
+uses snapshot-fenced `load_transcript_range` requests on the admitted
+SubstreamAgent socket; `GET /:id` remains only for explicit metadata recovery
+after an unavailable state or a person choosing Retry. Ordinary lost replay
+history is repaired by the subscription snapshot itself. A first ticket or
+handshake failure exposes that Retry action as soon
 as the socket enters
 `reconnecting`; no guessed fallback timeout is part of the measurement.
 

@@ -149,11 +149,11 @@ inheriting time spent elsewhere. The
 visible outcome accompanies `workstream_feed_visible`, which records exact
 click-to-data-ready and click-to-first-painted-feed milliseconds, the
 pinned/recent section, the detail/transcript cache state, the pooled-socket
-state at click, the feed source (`feed_cache`, `socket_snapshot`, `boot_payload`,
-or `legacy_page`), and only a count bucket for messages. The normal cold path is
+state at click, the feed source (`feed_cache`, `socket_snapshot`, or
+`boot_payload`), and only a count bucket for messages. The normal cold path is
 explicitly
-`socket_snapshot`; `boot_payload` and `legacy_page` identify manual REST
-recovery, while `feed_cache` identifies an already-present transcript. Each
+`socket_snapshot`; `boot_payload` identifies manual REST recovery, while
+`feed_cache` identifies an already-present transcript. Each
 detail request keeps a unique
 `x-request-id`, including React Query retries, and carries the click ID separately
 as `x-rally-operation-id`; the Worker's `workstream.detail.read` span records both.
@@ -666,6 +666,27 @@ the dry-run evidence; change batching or sampling only after measuring those
 signals, never by weakening policy or deadline tests.
 
 ## Changelog
+
+### 2026-08-27 — Feed telemetry drops the retired compatibility source
+
+**What changed:** `workstream_feed_visible.feedSource` now accepts only
+`feed_cache`, `socket_snapshot`, and `boot_payload`. The `legacy_page` source
+was removed with the message-page protocol.
+
+**Why:** Retaining an unreachable source in a strict analytics schema implied a
+runtime recovery path that no longer exists and allowed tests or dashboards to
+keep treating compatibility pages as a valid transcript authority.
+
+**Considered and rejected:** Keeping the enum for old Electron builds. Those
+builds are deliberately incompatible with the ordered-turn protocol, and no
+deployed user population requires a rollout window.
+
+**Consequences:** Every emitted feed source names a current cache writer.
+Historical events keep their stored value, but current code cannot emit
+`legacy_page`.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
 
 ### 2026-08-26 — The packaged Crashpad gate uses its actual run date
 

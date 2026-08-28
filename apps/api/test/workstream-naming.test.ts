@@ -8,15 +8,13 @@ import {
   provisionalWorkstreamTitle,
   refreshWorkstreamName,
 } from "../src/services/workstream-naming-service";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
-  executeWorkstreamObjectSql,
+  seedCanonicalConversationTurn,
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectRun,
   applyWorkstreamObjectRootFields,
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
@@ -304,21 +302,20 @@ describe("work-stream naming", () => {
     // already saw.
     seedMessages(database, 2);
     for (const [index, kind] of (["tool", "tool", "tool"] as const).entries()) {
-      workstreamObjectRun(
-        objectStoreOf(database),
-        `INSERT INTO messages
-         (id, client_message_id, workspace_id, workstream_id, author_type, message_type,
-          text_content, structured_content_json, sequence_number, created_at)
-         VALUES (?, ?, ?, ?, 'agent', ?, '', ?, ?, ?)`,
-        `00000000-0000-7000-8000-00000000d0${String(index).padStart(2, "0")}`,
-        `tool-${index}`,
-        workspaceId,
-        workstreamId,
-        kind,
-        JSON.stringify({ invocation: { toolName: "terminal_run_command", status: "completed" } }),
-        20 + index,
-        at,
-      );
+      const turnId = `00000000-0000-7000-8000-00000000d0${String(index).padStart(2, "0")}`;
+      seedCanonicalConversationTurn(objectStoreOf(database), {
+        turnId,
+        clientMessageId: `tool-${index}`,
+        actor: "assistant",
+        authorSnapshot: null,
+        messageType: kind,
+        text: "",
+        structuredContentJson: JSON.stringify({
+          invocation: { toolName: "terminal_run_command", status: "completed" },
+        }),
+        transcriptSequence: 20 + index,
+        createdAt: at,
+      });
     }
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
@@ -459,10 +456,8 @@ describe("work-stream naming", () => {
 /** Replaces the transcript with `count` alternating messages. */
 function seedMessages(database: DatabaseSync, count: number): void {
   const objectStore = objectStoreOf(database);
-  // The messages compat view has no DELETE trigger — production never deletes
-  // transcript rows — so replacing the transcript clears the normalized parts
-  // rows directly, as test scaffolding.
-  objectStore.prepare("DELETE FROM workstream_message_records WHERE substream_id = '0'").run();
+  objectStore.prepare("DELETE FROM participant_transcript_turns WHERE entry_kind = 'conversation'").run();
+  objectStore.prepare("UPDATE transcript_counters SET next_transcript_sequence = 1 WHERE id = 1").run();
   const texts = [
     objective,
     "Danny bounced — the address on file is his old Mucker one.",
@@ -471,22 +466,18 @@ function seedMessages(database: DatabaseSync, count: number): void {
     "Yes, and include the download link for Mucker.",
   ];
   for (let index = 0; index < count; index += 1) {
-    workstreamObjectRun(
-      objectStore,
-      `INSERT INTO messages
-       (id, client_message_id, workspace_id, workstream_id, author_type, author_user_id,
-        message_type, text_content, sequence_number, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?)`,
-      `00000000-0000-7000-8000-00000000c0${String(index).padStart(2, "0")}`,
-      `seed-${index}`,
-      workspaceId,
-      workstreamId,
-      index % 2 === 0 ? "human" : "agent",
-      index % 2 === 0 ? userId : null,
-      texts[index % texts.length] ?? `Message ${index}`,
-      index + 1,
-      at,
-    );
+    seedCanonicalConversationTurn(objectStore, {
+      turnId: `00000000-0000-7000-8000-00000000c0${String(index).padStart(2, "0")}`,
+      clientMessageId: `seed-${index}`,
+      actor: index % 2 === 0 ? "human" : "assistant",
+      authorUserId: index % 2 === 0 ? userId : null,
+      authorSnapshot: index % 2 === 0
+        ? { displayName: "Test user at posting time", avatarUrl: null }
+        : null,
+      text: texts[index % texts.length] ?? `Message ${index}`,
+      transcriptSequence: index + 1,
+      createdAt: at,
+    });
   }
 }
 
@@ -558,11 +549,7 @@ function environment(
       });
     },
   });
-  // Production hands the naming service a routed environment (the substream
-  // agent's local runtime environment, or the creation service's explicit
-  // wrap); the local executor is that agent-side port over the object store.
-  return withWorkstreamRuntimeDatabase(
-    createTestEnv({
+  return createTestEnv({
       DB: sqliteD1(database),
       APP_ENV: "test",
       AVALON_REGION: "global",
@@ -572,12 +559,7 @@ function environment(
       OPENROUTER_FALLBACK_MODELS: "",
       PUBLIC_API_BASE_URL: "https://api.test.with-avalon.com",
       SUBSTREAM_AGENTS: recorded,
-    }),
-    workspaceId,
-    workstreamId,
-    "0",
-    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-  );
+    });
 }
 
 function seededDatabase(): DatabaseSync {

@@ -24,6 +24,8 @@ import {
   type HarnessRunObjectPort,
 } from "../../src/durable-objects/workstream-harness-run-protocol";
 import { WorkstreamIdentityStorage } from "../../src/durable-objects/workstream-identity-storage";
+import { WorkstreamObjectProductService } from "../../src/durable-objects/workstream-object-product";
+import { WorkstreamObjectStore } from "../../src/durable-objects/workstream-object-storage";
 import { WorkstreamResourceStorage } from "../../src/durable-objects/workstream-resource-storage";
 import {
   RESOURCE_OPERATIONS,
@@ -49,12 +51,8 @@ import {
   type TerminalOperationExecutor,
   type TerminalPortFactory,
 } from "../../src/services/terminal/object-port";
-import {
-  rewriteWorkstreamRuntimeSql,
-  type WorkstreamRuntimeSqlResult,
-} from "../../src/durable-objects/workstream-runtime-sql";
-import { workstreamRuntimeDatabase } from "../../src/services/workstream-runtime-database";
 import { createCloudflareTestBinding, createTestDurableObjectId, createTestEnv } from "./cloudflare-test";
+import { sqliteD1 } from "./sqlite-d1";
 import { createTestSqlStorage } from "./sql-storage";
 
 /**
@@ -65,8 +63,8 @@ import { createTestSqlStorage } from "./sql-storage";
  *
  * The fences exist to abort object-owned statements that leak back to D1. A
  * unit test that pairs this helper with {@link testSubstreamAgentsBinding}
- * carries those statements through the runtime SQL port into a real object
- * database, so the fences would only re-refuse regional bookkeeping writes
+ * carries product operations through typed ports into a real object database,
+ * so the fences would only re-refuse regional bookkeeping writes
  * (`artifacts`, effect receipts) that production performs from inside the
  * objects. Tests that arm the fences on purpose (to prove a statement does not
  * leak) should skip this helper's disarm, as `slack-thread-audience.test.ts`
@@ -113,12 +111,11 @@ function objectSqlStorage(database: DatabaseSync): SqlStorage {
 }
 
 /**
- * A real WorkstreamDO object database: the object schema (normalized tables
- * plus the `_runtime_*` compatibility views) applied over node:sqlite with
- * workerd semantics, including enforced foreign keys. This is the store the
- * runtime SQL port executes against in production; migration 0090 dropped the
- * D1 copies of every table the port serves, so tests can no longer stand a
- * migrated regional database in for it.
+ * A real WorkstreamDO object database: the normalized object schema applied
+ * over node:sqlite with workerd semantics, including enforced foreign keys.
+ * Typed production ports execute against this store; migration 0090 dropped
+ * the regional D1 copies, so tests cannot stand a migrated regional database
+ * in for work-stream product authority.
  *
  * The root identity row is not seeded here — {@link seedWorkstreamObjectRoot}
  * does that, and {@link testSubstreamAgentsBinding} seeds lazily from the ids
@@ -138,120 +135,134 @@ export function testWorkstreamObjectStore(): DatabaseSync {
     "durable-authority-test",
     Date.parse("2026-01-02T00:00:00.000Z"),
   );
-  installMessageSqlFixtureAdapter(database);
   return database;
 }
 
 /**
- * Transitional test-fixture adapter for suites whose setup still states a
- * message as the old runtime SQL shape. Production has no such view: the
- * assertions read the canonical owner, while this trigger only keeps fixture
- * setup terse until those suites move to `testMessagePort`.
+ * Seeds one canonical conversation turn without recreating any retired SQL
+ * vocabulary. This is fixture setup, not a second transcript implementation:
+ * behavioral writes should use {@link testMessagePort}; tests that need a
+ * pre-existing causal turn can state the canonical identity/order directly.
  */
-function installMessageSqlFixtureAdapter(database: DatabaseSync): void {
-  database.exec(`
-    CREATE VIEW _runtime_messages AS
-      SELECT record.id, record.client_message_id, root.parent_workspace_key AS workspace_id,
-             root.workstream_key AS workstream_id,
-             CASE record.author_type WHEN 'member' THEN 'human' WHEN 'agent' THEN 'agent'
-               WHEN 'external' THEN 'external' ELSE 'system' END AS author_type,
-             record.author_user_id, record.message_type,
-             COALESCE(json_extract(payload.payload_json, '$.content'), '') AS text_content,
-             CASE WHEN json_type(payload.payload_json, '$.structuredContent') = 'null' THEN NULL
-               ELSE json_extract(payload.payload_json, '$.structuredContent') END AS structured_content_json,
-             record.sequence_number,
-             strftime('%Y-%m-%dT%H:%M:%fZ', record.created_at / 1000.0, 'unixepoch') AS created_at,
-             CASE WHEN record.edited_at IS NULL THEN NULL ELSE
-               strftime('%Y-%m-%dT%H:%M:%fZ', record.edited_at / 1000.0, 'unixepoch') END AS edited_at,
-             record.produced_by_run_id AS harness_run_id,
-             run.legacy_attempt_id AS harness_attempt_id,
-             record.external_actor_json
-        FROM workstream_message_records record
-        JOIN transcript_facts fact ON fact.fact_id = record.fact_id
-        JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
-        CROSS JOIN workstream root
-        LEFT JOIN runs run ON run.run_id = record.produced_by_run_id
-       WHERE root.id = 1 AND record.substream_id = '0';
-    CREATE TRIGGER _runtime_messages_insert INSTEAD OF INSERT ON _runtime_messages BEGIN
-      INSERT OR IGNORE INTO transcript_payloads
-        (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
-      VALUES (
-        'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at),
-        'shared', 'application/json',
-        json_object(
-          'role', CASE NEW.author_type WHEN 'human' THEN 'user' WHEN 'agent' THEN 'assistant'
-                    WHEN 'external' THEN 'user' ELSE 'system' END,
-          'content', COALESCE(NEW.text_content, ''),
-          'structuredContent', json(NEW.structured_content_json)
-        ),
-        'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at),
-        length(COALESCE(NEW.text_content, '')),
-        CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER)
-      );
-      INSERT OR IGNORE INTO transcript_facts
-        (fact_id, fact_kind, payload_id, origin_kind, run_id, turn_id, created_at)
-      VALUES (
-        NEW.id || ':fixture-message', 'workstream_message',
-        'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at),
-        'canonical', NEW.harness_run_id, NEW.id,
-        CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER)
-      );
-      UPDATE transcript_facts
-         SET payload_id = 'fixture-message:' || NEW.id || ':' || COALESCE(NEW.edited_at, NEW.created_at)
-       WHERE fact_id = NEW.id || ':fixture-message';
-      INSERT OR IGNORE INTO workstream_message_records
-        (id, substream_id, sequence_number, attention_ordinal, fact_id, role, kind,
-         author_type, author_user_id, external_actor_json, client_message_id, effect_intent_id,
-         produced_by_run_id, attempt_epoch, tool_name, tool_mode, tool_status, visibility,
-         pinned, message_type, edited_at, created_at, updated_at)
-      VALUES (
-        NEW.id, '0', NEW.sequence_number,
-        CASE WHEN NEW.message_type = 'tool' THEN NULL ELSE
-          (SELECT next_attention_ordinal FROM workstream WHERE id = 1) END,
-        NEW.id || ':fixture-message',
-        CASE NEW.author_type WHEN 'human' THEN 'user' WHEN 'agent' THEN 'assistant'
-          WHEN 'external' THEN 'user' ELSE 'system' END,
-        CASE WHEN NEW.message_type = 'tool' THEN 'tool_call' ELSE 'text' END,
-        CASE NEW.author_type WHEN 'human' THEN 'member' WHEN 'agent' THEN 'agent'
-          WHEN 'external' THEN 'external' ELSE 'system' END,
-        NEW.author_user_id, NEW.external_actor_json, NEW.client_message_id,
-        CASE WHEN NEW.message_type = 'tool' THEN NEW.id ELSE NULL END,
-        NEW.harness_run_id,
-        (SELECT attempt_epoch FROM runs WHERE run_id = NEW.harness_run_id),
-        json_extract(NEW.structured_content_json, '$.invocation.toolName'),
-        CASE WHEN NEW.message_type = 'tool' THEN 'read' ELSE NULL END,
-        CASE WHEN NEW.message_type = 'tool' THEN
-          CASE json_extract(NEW.structured_content_json, '$.invocation.status')
-            WHEN 'pending' THEN 'pending' WHEN 'started' THEN 'pending'
-            WHEN 'ambiguous' THEN 'ambiguous' WHEN 'failed' THEN 'failed' ELSE 'completed' END
-          ELSE NULL END,
-        CASE WHEN NEW.message_type IN ('text', 'elicitation') THEN 'both' ELSE 'people' END,
-        0, NEW.message_type,
-        CASE WHEN NEW.edited_at IS NULL THEN NULL ELSE
-          CAST((julianday(NEW.edited_at) - 2440587.5) * 86400000 AS INTEGER) END,
-        CAST((julianday(NEW.created_at) - 2440587.5) * 86400000 AS INTEGER),
-        CAST((julianday(COALESCE(NEW.edited_at, NEW.created_at)) - 2440587.5) * 86400000 AS INTEGER)
-      );
-      UPDATE workstream_message_records SET
-        fact_id = NEW.id || ':fixture-message',
-        tool_status = CASE json_extract(NEW.structured_content_json, '$.invocation.status')
-          WHEN 'pending' THEN 'pending' WHEN 'started' THEN 'pending'
-          WHEN 'ambiguous' THEN 'ambiguous' WHEN 'failed' THEN 'failed' ELSE 'completed' END,
-        edited_at = CASE WHEN NEW.edited_at IS NULL THEN edited_at ELSE
-          CAST((julianday(NEW.edited_at) - 2440587.5) * 86400000 AS INTEGER) END,
-        updated_at = CAST((julianday(COALESCE(NEW.edited_at, NEW.created_at)) - 2440587.5)
-                          * 86400000 AS INTEGER)
-       WHERE id = NEW.id AND message_type = 'tool';
-      UPDATE _runtime_statement_changes SET changes = changes + changes() WHERE id = 1;
-      UPDATE workstream SET
-        next_attention_ordinal = next_attention_ordinal +
-          CASE WHEN NEW.message_type = 'tool' THEN 0 ELSE 1 END,
-        next_sequence_number = MAX(next_sequence_number, NEW.sequence_number + 1),
-        updated_at = CAST((julianday(COALESCE(NEW.edited_at, NEW.created_at)) - 2440587.5)
-                          * 86400000 AS INTEGER)
-       WHERE id = 1;
-    END;
-  `);
+interface CanonicalFixtureDatabase {
+  prepare(sql: string): {
+    get(...params: Array<string | number | null>): unknown;
+    run(...params: Array<string | number | null>): unknown;
+  };
+}
+
+export function seedCanonicalConversationTurn(database: CanonicalFixtureDatabase, input: {
+  turnId: string;
+  clientMessageId?: string | null;
+  actor: "human" | "assistant" | "external" | "system";
+  authorUserId?: string | null;
+  authorSnapshot: { displayName: string; avatarUrl: string | null } | null;
+  externalActorJson?: string | null;
+  messageType?: "text" | "system" | "elicitation" | "tool";
+  text: string;
+  structuredContentJson?: string | null;
+  transcriptSequence: number;
+  createdAt: string | number;
+  producedByRunId?: string | null;
+}): void {
+  const createdAt = typeof input.createdAt === "number" ? input.createdAt : Date.parse(input.createdAt);
+  if (!Number.isFinite(createdAt)) throw new Error("canonical_fixture_created_at_invalid");
+  const payloadId = `${input.turnId}:fixture-payload`;
+  const factId = `${input.turnId}:fixture-fact`;
+  const messageType = input.messageType ?? "text";
+  const structuredContent = input.structuredContentJson === null
+    || input.structuredContentJson === undefined
+    ? null
+    : JSON.parse(input.structuredContentJson) as unknown;
+  const payloadJson = JSON.stringify({
+    role: input.actor === "assistant" ? "assistant" : input.actor === "system" ? "system" : "user",
+    content: input.text,
+    structuredContent,
+  });
+  const attentionOrdinal = messageType === "tool"
+    ? null
+    : Number((database.prepare(
+      `SELECT next_attention_ordinal FROM workstream WHERE id = 1`,
+    ).get() as { next_attention_ordinal: number }).next_attention_ordinal);
+  const authorUserId = input.authorUserId ?? null;
+  const authorSnapshot = input.authorSnapshot;
+  if (input.actor === "human" && (!authorUserId || !authorSnapshot?.displayName.trim())) {
+    throw new Error("canonical_fixture_human_author_required");
+  }
+  if (input.actor !== "human" && (authorUserId !== null || authorSnapshot !== null)) {
+    throw new Error("canonical_fixture_nonhuman_author_invalid");
+  }
+  // Fixtures can receive the runtime-routing facade whose individual writes
+  // are already transactional. Keep setup idempotent without pretending a
+  // multi-statement transaction can span that production-shaped boundary.
+  database.prepare(`DELETE FROM transcript_facts WHERE fact_id = ?`).run(factId);
+  database.prepare(`DELETE FROM transcript_payloads WHERE payload_id = ?`).run(payloadId);
+    database.prepare(
+      `INSERT INTO transcript_payloads
+         (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
+       VALUES (?, 'shared', 'application/json', ?, ?, ?, ?)`,
+    ).run(payloadId, payloadJson, payloadId, new TextEncoder().encode(payloadJson).byteLength, createdAt);
+    database.prepare(
+      `INSERT INTO transcript_facts
+         (fact_id, fact_kind, payload_id, origin_kind, run_id, turn_id, created_at)
+       VALUES (?, 'participant_message', ?, 'canonical', ?, ?, ?)`,
+    ).run(factId, payloadId, input.producedByRunId ?? null, input.turnId, createdAt);
+    database.prepare(
+      `INSERT INTO participant_transcript_turns
+         (transcript_sequence, turn_id, entry_kind, actor, author_user_id, root_fact_id,
+          activity_id, attention_ordinal, revision, created_at, updated_at,
+          client_message_id, external_actor_json, message_type,
+          author_name_snapshot, author_avatar_url_snapshot)
+       VALUES (?, ?, 'conversation', ?, ?, ?, NULL, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      input.transcriptSequence,
+      input.turnId,
+      input.actor,
+      authorUserId,
+      factId,
+      attentionOrdinal,
+      createdAt,
+      createdAt,
+      input.clientMessageId ?? null,
+      input.externalActorJson ?? null,
+      messageType,
+      authorSnapshot?.displayName ?? null,
+      authorSnapshot?.avatarUrl ?? null,
+    );
+    const invocation = structuredContent && typeof structuredContent === "object"
+      ? (structuredContent as { invocation?: { toolCallId?: string; toolName?: string; status?: string } }).invocation
+      : undefined;
+    const plannedToolCallId = messageType === "tool"
+      ? (database.prepare(
+        `SELECT tool_call_id FROM tool_effects WHERE effect_intent_id = ?`,
+      ).get(input.turnId) as { tool_call_id: string } | undefined)?.tool_call_id
+      : undefined;
+    database.prepare(
+      `INSERT INTO participant_transcript_blocks
+         (turn_id, block_id, block_index, block_kind, fact_id, tool_call_id,
+          tool_name, lifecycle_state, revision, updated_at)
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, 1, ?)`,
+    ).run(
+      input.turnId,
+      `${input.turnId}:${messageType === "tool" ? "tool" : "text"}:0`,
+      messageType === "tool" ? "tool" : "text",
+      factId,
+      messageType === "tool" ? plannedToolCallId ?? invocation?.toolCallId ?? input.turnId : null,
+      messageType === "tool" ? invocation?.toolName ?? "fixture_tool" : null,
+      messageType === "tool" ? invocation?.status ?? "started" : null,
+      createdAt,
+    );
+    database.prepare(
+      `UPDATE transcript_counters
+          SET next_transcript_sequence = MAX(next_transcript_sequence, ?), updated_at = ?
+        WHERE id = 1`,
+    ).run(input.transcriptSequence + 1, createdAt);
+    database.prepare(
+      `UPDATE workstream
+          SET next_sequence_number = MAX(next_sequence_number, ?),
+              next_attention_ordinal = next_attention_ordinal + ?, updated_at = ?
+        WHERE id = 1`,
+    ).run(input.transcriptSequence + 1, messageType === "tool" ? 0 : 1, createdAt);
 }
 
 /**
@@ -512,19 +523,106 @@ export function seedToolReceipt(
   );
 }
 
+/**
+ * Seed one normalized run receipt for a test whose subject is not run
+ * admission itself. The helper deliberately accepts only current object
+ * vocabulary; a test cannot accidentally depend on the retired
+ * `harness_runs` view's column or status translations.
+ */
+export function seedWorkstreamRun(
+  database: DatabaseSync,
+  run: {
+    id: string;
+    status?: "admitted" | "running" | "needs_input" | "completed" | "failed" | "cancelled";
+    origin?: string;
+    executionPrincipalJson?: string;
+    model?: string | null;
+    triggerPartId?: string | null;
+    attemptId?: string | null;
+    attemptEpoch?: number;
+    leaseOwner?: string | null;
+    leaseExpiresAt?: number | null;
+    heartbeatAt?: number | null;
+    substreamId?: string;
+    parentRunId?: string | null;
+    parentToolCallId?: string | null;
+    chainRootRunId?: string | null;
+    chainDepth?: number;
+    delegatedTaskHash?: string | null;
+    startedAt?: number;
+    completedAt?: number | null;
+    createdAt?: number;
+  },
+): void {
+  const createdAt = run.createdAt ?? Date.parse("2026-01-02T00:00:00.000Z");
+  const startedAt = run.startedAt ?? createdAt;
+  const status = run.status ?? "running";
+  const terminal = ["needs_input", "completed", "failed", "cancelled"].includes(status);
+  const completedAt = run.completedAt ?? (terminal ? createdAt : null);
+  const substreamId = run.substreamId ?? (run.parentToolCallId ? `run:${run.id}` : "0");
+  if (substreamId !== "0") {
+    database.prepare(
+      `INSERT OR IGNORE INTO substreams
+         (id, kind, inherit_mode, inherit_from_substream_id, inherit_fence_seq, depth,
+          return_mode, audience, tool_policy, status, created_at)
+       VALUES (?, 'agent', 'fork', '0', 0, 1, 'tool_result', 'system', 'read_only', 'open', ?)`,
+    ).run(substreamId, createdAt);
+  }
+  database.prepare(
+    `INSERT INTO runs
+       (run_id, substream_id, status, budget, attempt_epoch, model_iteration,
+        next_action_cursor, input_fence_seq, revision, started_at,
+        active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
+        tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
+        terminal_reason, origin, execution_principal_json, parent_run_id,
+        parent_tool_call_id, chain_root_run_id, chain_depth, delegated_task_hash, model,
+        trigger_part_id, legacy_attempt_id, lease_owner, lease_expires_at, heartbeat_at,
+        completed_at, terminalized_at, created_at, updated_at)
+     VALUES (?, ?, ?, '{}', ?, 0, '', 0, 0, ?,
+             0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    run.id,
+    substreamId,
+    status,
+    run.attemptEpoch ?? 0,
+    startedAt,
+    terminal ? status : null,
+    run.origin ?? "test",
+    run.executionPrincipalJson ?? "{}",
+    run.parentRunId ?? null,
+    run.parentToolCallId ?? null,
+    run.chainRootRunId ?? null,
+    run.chainDepth ?? 0,
+    run.delegatedTaskHash ?? null,
+    run.model ?? null,
+    run.triggerPartId ?? null,
+    run.attemptId ?? null,
+    run.leaseOwner ?? null,
+    run.leaseExpiresAt ?? null,
+    run.heartbeatAt ?? null,
+    completedAt,
+    terminal ? completedAt : null,
+    createdAt,
+    completedAt ?? createdAt,
+  );
+}
+
 export interface RuntimeStatement {
   sql: string;
   params: Array<string | number | null>;
 }
 
+export interface RuntimeStatementResult {
+  columns: string[];
+  rows: Array<Record<string, string | number | null>>;
+  changes: number;
+}
+
 /**
- * Execute one runtime SQL port request against an object database — the same
- * conversion `executeWorkstreamRuntimeSql` performs inside the Durable Object:
- * each statement is rewritten onto the `_runtime_*` compatibility views, the
- * batch commits atomically, and per-statement change counts come from the
- * `_runtime_statement_changes` bookkeeping the view triggers maintain (a view
- * write reports zero through the cursor, so `Math.max` with the trigger count
- * is what production reports too).
+ * Execute a fixture batch against the normalized object schema. This is direct
+ * test setup/inspection, not a model of an application transport: production
+ * behavior is exercised through the typed object ports below.
  */
 export function executeWorkstreamObjectSql(
   database: DatabaseSync,
@@ -535,39 +633,32 @@ export function executeWorkstreamObjectSql(
     index: number,
     statements: RuntimeStatement[],
   ) => void,
-): WorkstreamRuntimeSqlResult[] {
+): RuntimeStatementResult[] {
   const sql = objectSqlStorage(database);
-  const results: WorkstreamRuntimeSqlResult[] = [];
+  const results: RuntimeStatementResult[] = [];
   database.exec("BEGIN");
   try {
     for (const [index, statement] of statements.entries()) {
-      sql.exec(`UPDATE _runtime_statement_changes SET changes = 0 WHERE id = 1`);
       let cursor: SqlStorageCursor<Record<string, SqlStorageValue>>;
       try {
         cursor = sql.exec<Record<string, SqlStorageValue>>(
-          rewriteWorkstreamRuntimeSql(statement.sql),
+          statement.sql,
           ...statement.params,
         );
       } catch (error) {
-        // The statement is the diagnosis, exactly as in production: without it
-        // a rewrite or compat-view defect surfaces as a bare SQLite error with
-        // no way to tell which of a batch's statements produced it.
+        // Include the fixture statement in the diagnosis so a batch failure
+        // identifies the exact normalized setup or inspection statement.
         const reason = error instanceof Error ? error.message : String(error);
         throw new Error(
-          `workstream_runtime_statement_failed: ${reason} :: ${statement.sql.slice(0, 300)}`,
+          `workstream_object_fixture_statement_failed: ${reason} :: ${statement.sql.slice(0, 300)}`,
           { cause: error },
         );
       }
       const rows = cursor.toArray() as Array<Record<string, string | number | null>>;
-      const counted = Number(
-        (sql.exec<{ changes: number }>(
-          `SELECT changes FROM _runtime_statement_changes WHERE id = 1`,
-        ).toArray()[0])?.changes ?? 0,
-      );
       results.push({
         columns: rows.length === 0 ? [] : Object.keys(rows[0]!),
         rows,
-        changes: Math.max(cursor.rowsWritten, counted),
+        changes: cursor.rowsWritten,
       });
       afterStatement?.(database, statement, index, statements);
     }
@@ -579,7 +670,7 @@ export function executeWorkstreamObjectSql(
   return results;
 }
 
-/** Read rows from an object database in the legacy table vocabulary. */
+/** Read normalized rows from an object database. */
 export function workstreamObjectAll<T extends Record<string, string | number | null>>(
   database: DatabaseSync,
   sql: string,
@@ -588,7 +679,7 @@ export function workstreamObjectAll<T extends Record<string, string | number | n
   return executeWorkstreamObjectSql(database, [{ sql, params }])[0]!.rows as T[];
 }
 
-/** First row (or null) from an object database in the legacy vocabulary. */
+/** First normalized row (or null) from an object database. */
 export function workstreamObjectGet<T extends Record<string, string | number | null>>(
   database: DatabaseSync,
   sql: string,
@@ -597,7 +688,7 @@ export function workstreamObjectGet<T extends Record<string, string | number | n
   return (workstreamObjectAll<T>(database, sql, ...params)[0]) ?? null;
 }
 
-/** Run one legacy-vocabulary mutation against an object database. */
+/** Run one normalized fixture mutation against an object database. */
 export function workstreamObjectRun(
   database: DatabaseSync,
   sql: string,
@@ -605,30 +696,6 @@ export function workstreamObjectRun(
 ): { changes: number } {
   const [result] = executeWorkstreamObjectSql(database, [{ sql, params }]);
   return { changes: result!.changes };
-}
-
-/**
- * The production work-stream runtime router bound to test databases: regional
- * statements execute on the given D1 binding, object-owned statements travel
- * the local-executor port into the object database — the exact classification
- * and transport `workstreamRuntimeDatabase` gives the harness. Use this for
- * code under test that takes a D1Database directly (the harness runtime, the
- * terminal services); code that takes an Env goes through
- * {@link testSubstreamAgentsBinding} instead.
- */
-export function testWorkstreamRuntimeD1(
-  regional: D1Database,
-  objectStore: DatabaseSync,
-  ids: { workspaceId: string; workstreamId: string; substreamId?: string },
-): D1Database {
-  seedWorkstreamObjectRoot(objectStore, ids);
-  return workstreamRuntimeDatabase(
-    createTestEnv({ DB: regional }),
-    ids.workspaceId,
-    ids.workstreamId,
-    ids.substreamId ?? "0",
-    async (statements) => executeWorkstreamObjectSql(objectStore, statements),
-  );
 }
 
 /**
@@ -709,7 +776,7 @@ export function testWorkstreamContract(
 }
 
 interface SubstreamAgentsStubOptions {
-  /** Every `dispatchRun` payload, in order. */
+  /** Every `activateLoop` payload, in order. */
   dispatches?: RecordedDispatch[];
   /** Every `publishEvent` event, in order. */
   roomEvents?: Array<Record<string, unknown>>;
@@ -769,16 +836,15 @@ export function testIdentityOperationStub(
 }
 
 /**
- * A SUBSTREAM_AGENTS binding whose runtime SQL port mirrors production truth:
- * work-stream authority statements (the request carries a `workstreamId`)
- * execute against a real object database — created by
- * {@link testWorkstreamObjectStore} and root-seeded from the request ids, one
- * per workstream, or the given database itself when it already is an object
- * store — after the same identity and fence checks the Durable Object makes.
- * Workspace-authority requests (no `workstreamId`) execute against the given
- * through-0089 compatibility database so focused repository tests can preserve
- * their frozen SQL dialect. That is a test fixture, not current regional D1.
- * Run dispatch is recorded instead of executed. Pair with
+ * A SUBSTREAM_AGENTS binding whose typed work-stream operations execute against
+ * a real object database — created by {@link testWorkstreamObjectStore} and
+ * root-seeded from the request ids, one per work stream, or the given database
+ * itself when it already is an object store — after the same identity and fence
+ * checks the Durable Object makes. The remaining `executeRuntimeSql` method is
+ * WorkspaceDO-only: it executes against the given through-0089 compatibility
+ * database so focused workspace repository tests can preserve their frozen SQL
+ * dialect. That is a test fixture, not current regional D1. Run dispatch is
+ * recorded instead of executed. Pair with
  * {@link openWorkstreamAuthorityForTest}.
  */
 export function testSubstreamAgentsBinding(
@@ -799,6 +865,23 @@ export function testSubstreamAgentsBinding(
     }
     seedWorkstreamObjectRoot(store, { workstreamId, workspaceId });
     return store;
+  };
+  const externalProductFor = (workstreamId: string, workspaceId: string) => {
+    const store = storeFor(workstreamId, workspaceId);
+    const storage = createCloudflareTestBinding<DurableObjectStorage>({
+      getAlarm: async () => null,
+      setAlarm: async () => undefined,
+      transactionSync: (body: () => unknown) => body(),
+      sql: objectSqlStorage(store),
+    });
+    return new WorkstreamObjectProductService(
+      storage,
+      new WorkstreamObjectStore(storage, "test-substream-binding", "global"),
+      createTestEnv({
+        DB: sqliteD1(database),
+        AVALON_REGION: "global",
+      }),
+    );
   };
   const stub = {
     /**
@@ -1009,35 +1092,14 @@ export function testSubstreamAgentsBinding(
     }),
     executeRuntimeSql: vi.fn((input: {
       workspaceId: string;
-      workstreamId?: string;
       statements: RuntimeStatement[];
     }) => {
-      if (input.workstreamId !== undefined) {
-        const store = storeFor(input.workstreamId, input.workspaceId);
-        const identity = store.prepare(
-          `SELECT workstream_key, parent_workspace_key, authority_mode FROM workstream WHERE id = 1`,
-        ).get() as {
-          workstream_key: string;
-          parent_workspace_key: string;
-          authority_mode: string;
-        } | undefined;
-        if (
-          !identity
-          || identity.workstream_key !== input.workstreamId
-          || identity.parent_workspace_key !== input.workspaceId
-        ) throw new Error("workstream_runtime_identity_mismatch");
-        if (identity.authority_mode !== "authoritative") {
-          throw new Error("workstream_runtime_authority_fenced");
-        }
-        const results = executeWorkstreamObjectSql(store, input.statements);
-        return { status: 200, bodyJson: JSON.stringify({ results }) };
-      }
       if (objectStoreMode) {
         throw new Error("workspace runtime SQL routed to an object-store-backed binding");
       }
       // Workspace authority: those D1 tables were kept, so the migrated
       // regional database is still the store the WorkspaceDO port serves.
-      const results: WorkstreamRuntimeSqlResult[] = [];
+      const results: RuntimeStatementResult[] = [];
       database.exec("BEGIN");
       try {
         for (const { sql, params } of input.statements) {
@@ -1091,11 +1153,63 @@ export function testSubstreamAgentsBinding(
         userIds: participants.map((participant) => participant.user_id),
       };
     }),
-    dispatchRun: vi.fn((input: RecordedDispatch) => {
+    activateLoop: vi.fn((input: RecordedDispatch) => {
       const failure = options.failDispatch?.(input);
       if (failure) return failure;
       options.dispatches?.push(input);
       return { status: 200, bodyJson: "{}" };
+    }),
+    admitExternalMessage: vi.fn(async (input: {
+      workspaceId: string;
+      workstreamId: string;
+    } & Record<string, unknown>) => {
+      try {
+        const result = await externalProductFor(input.workstreamId, input.workspaceId)
+          .admitExternalMessage(input as Parameters<
+            WorkstreamObjectProductService["admitExternalMessage"]
+          >[0]);
+        if (result.activationRequest) options.dispatches?.push({ ...result.activationRequest });
+        return {
+          status: 200,
+          bodyJson: JSON.stringify({
+            turn: result.turn,
+            deliveryState: result.deliveryState,
+          }),
+        };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "external_message_admission_failed",
+          }),
+        };
+      }
+    }),
+    answerExternalElicitation: vi.fn(async (input: {
+      workspaceId: string;
+      workstreamId: string;
+    } & Record<string, unknown>) => {
+      try {
+        const result = await externalProductFor(input.workstreamId, input.workspaceId)
+          .answerExternalElicitation(input as Parameters<
+            WorkstreamObjectProductService["answerExternalElicitation"]
+          >[0]);
+        if (result.activationRequest) options.dispatches?.push({ ...result.activationRequest });
+        return {
+          status: 200,
+          bodyJson: JSON.stringify({
+            turn: result.turn,
+            deliveryState: result.deliveryState,
+          }),
+        };
+      } catch (error) {
+        return {
+          status: 409,
+          bodyJson: JSON.stringify({
+            error: error instanceof Error ? error.message : "external_elicitation_answer_failed",
+          }),
+        };
+      }
     }),
     publishEvent: vi.fn((input: { event: Record<string, unknown> }) => {
       options.roomEvents?.push(input.event);
@@ -1295,8 +1409,8 @@ export function testResourcePort(database: DatabaseSync): ResourceObjectPort {
   );
 }
 
-/** A harness-run port over a real storage instance in this isolate. */
-export function testHarnessRunPort(
+/** A harness-run storage authority over the real object database in this isolate. */
+export function testHarnessRunStorage(
   database: DatabaseSync,
   /**
    * Run inside `transactionSync`, immediately before the operation's body.
@@ -1307,8 +1421,8 @@ export function testHarnessRunPort(
    * a D1 batch has to be staged from here instead.
    */
   beforeTransaction?: () => void,
-): HarnessRunObjectPort {
-  const storage = new WorkstreamHarnessRunStorage(
+): WorkstreamHarnessRunStorage {
+  return new WorkstreamHarnessRunStorage(
     createCloudflareTestBinding<DurableObjectStorage>({
       getAlarm: async () => null,
       setAlarm: async () => undefined,
@@ -1319,6 +1433,14 @@ export function testHarnessRunPort(
       sql: objectSqlStorage(database),
     }),
   );
+}
+
+/** A harness-run RPC port over a real storage instance in this isolate. */
+export function testHarnessRunPort(
+  database: DatabaseSync,
+  beforeTransaction?: () => void,
+): HarnessRunObjectPort {
+  const storage = testHarnessRunStorage(database, beforeTransaction);
   return Object.fromEntries(
     HARNESS_RUN_OPERATIONS.map((operation) => [
       operation,

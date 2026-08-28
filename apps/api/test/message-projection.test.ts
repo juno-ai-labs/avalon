@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { applyWorkstreamObjectSchema } from "../src/durable-objects/workstream-object-schema";
 import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
+import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import type { MessageObjectPort } from "../src/durable-objects/workstream-message-protocol";
 import { MESSAGE_OPERATIONS } from "../src/durable-objects/workstream-message-protocol";
 import { readMessage, transcriptLister } from "../src/runtime/message-projection";
@@ -28,7 +29,12 @@ afterEach(() => {
  * trip carrying it is atomic is the runtime's question and belongs in
  * `test-workers/`.
  */
-function open(): { storage: WorkstreamMessageStorage; port: MessageObjectPort; sql: ReturnType<typeof createTestSqlStorage> } {
+function open(): {
+  storage: WorkstreamMessageStorage;
+  transcript: WorkstreamTranscriptStorage;
+  port: MessageObjectPort;
+  sql: ReturnType<typeof createTestSqlStorage>;
+} {
   const database = new DatabaseSync(":memory:");
   databases.push(database);
   const sql = createTestSqlStorage(database);
@@ -58,7 +64,7 @@ function open(): { storage: WorkstreamMessageStorage; port: MessageObjectPort; s
         (storage[operation] as (...rest: unknown[]) => unknown).apply(storage, args),
     ]),
   ) as MessageObjectPort;
-  return { storage, port, sql };
+  return { storage, transcript: new WorkstreamTranscriptStorage(binding), port, sql };
 }
 
 async function append(
@@ -69,8 +75,8 @@ async function append(
   await storage.appendMessage({
     messageId: `message-${index}`,
     clientMessageId: `client-${index}`,
-    authorType: "human",
-    authorUserId: "user-1",
+    authorType: "agent",
+    authorUserId: null,
     externalActorJson: null,
     messageType: "text",
     text: `line ${index}`,
@@ -123,8 +129,22 @@ describe("the transcript the harness reads", () => {
   });
 
   it("assembles the author, mentions and attachments the query used to aggregate", async () => {
-    const { storage, port, sql } = open();
-    await append(storage, 1);
+    const { transcript, port, sql } = open();
+    await transcript.appendParticipantMessage({
+      turnId: "message-1",
+      actor: "human",
+      authorUserId: "user-1",
+      authorSnapshot: { displayName: "User at posting time", avatarUrl: null },
+      clientMessageId: "client-1",
+      messageType: "text",
+      text: "line 1",
+      structuredContentJson: null,
+      externalActorJson: null,
+      producedByRunId: null,
+      messageSequenceNumber: 1,
+      createdAtUtc: new Date(NOW + 1).toISOString(),
+      attentionOrdinal: 1,
+    });
     sql.exec(
       `INSERT INTO participants
          (user_id, participation_reason, added_by_user_id, status, participant_epoch,
@@ -134,13 +154,13 @@ describe("the transcript the harness reads", () => {
       NOW,
     );
     sql.exec(
-      `INSERT INTO workstream_message_mentions
-         (message_id, mention_index, mention_kind, target_user_id, connector_type,
+      `INSERT INTO participant_transcript_mentions
+         (turn_id, mention_index, mention_kind, target_user_id, connector_type,
           start_offset, end_offset, attention_ordinal)
        VALUES ('message-1', 0, 'person', 'user-2', NULL, 0, 5, 1)`,
     );
     sql.exec(
-      `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+      `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
        VALUES ('message-1', 'resource-1', 0, '{}')`,
     );
     sql.exec(

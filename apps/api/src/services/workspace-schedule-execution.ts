@@ -45,10 +45,11 @@ import type {
 } from "../durable-objects/workspace-notification-intent-protocol";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { uuidV7 } from "../lib/uuid-v7";
+import { substreamLoopId } from "../durable-objects/names";
 import { logStructuredEvent } from "../observability/logger";
 import { automationModelOverride, scheduledWorkstreamModelForExisting } from "./agent-model-flags";
 import { fireDigestSchedule } from "./digest-run-service";
-import { startWorkstreamWorkflow } from "./integrations";
+import { activateWorkstreamLoop } from "./integrations";
 import { processMemoryIndexOutbox } from "./memory-service";
 import { processPendingNotePrivacyNotifications } from "./note-privacy-notification-service";
 import { reapDeletedNoteObjects } from "./note-resource-cleanup";
@@ -69,7 +70,6 @@ import { WorkstreamEmailRoutingService } from "./workstream-email-routing-servic
 import {
   bootstrapWorkstreamRuntimeEnvironment,
   provisionWorkstreamObject,
-  workstreamExecutionEnvironment,
 } from "./workstream-runtime-database";
 import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
 import { SLACK_LINK_CHALLENGE_GRACE_MS } from "./slack-agent-service";
@@ -317,6 +317,8 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
              AND attachment_status = 'draft'
              AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links link
                               WHERE link.resource_id = resources.id)
+             AND NOT EXISTS (SELECT 1 FROM pending_attachment_reservations reservation
+                              WHERE reservation.resource_id = resources.id)
            HAVING COUNT(*) > 0`,
   },
   {
@@ -534,11 +536,7 @@ async function reconcileTerminalSandbox(
   const configuration = parseTerminalRegionConfiguration(ctx.env);
   if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
   const provider = createDaytonaTerminalProvider(configuration);
-  const executionEnv = await workstreamExecutionEnvironment(
-    ctx.workspaceEnv,
-    ctx.workspaceId,
-    workstreamId,
-  );
+  const executionEnv = ctx.workspaceEnv;
   const port = createTerminalPortFactory(executionEnv);
   const result = await reconcileDueTerminalSandbox(
     createHarnessRunPortFactory(executionEnv),
@@ -800,6 +798,7 @@ async function startAutomation(
     region: RegionSchema.parse(ctx.env.AVALON_REGION),
     workspaceId: schedule.workspace_id,
     workstreamId: run.workstream_id,
+    loopId: substreamLoopId(asWorkstreamId(run.workstream_id)),
     harnessRunId,
     triggerMessageId: null,
     automationSubscriptionId: subscriptionId,
@@ -808,22 +807,18 @@ async function startAutomation(
     reason: `Scheduled automation: ${source.template_name}`
   });
 
-  const workflowId = await startWorkstreamWorkflow(workspaceEnv, input);
+  const executionReceiptId = await activateWorkstreamLoop(workspaceEnv, input);
 
   await workspaceEnv.DB.prepare(
     `UPDATE automation_runs
         SET workflow_instance_id = ?1, status = 'running', started_at = COALESCE(started_at, ?2)
       WHERE id = ?3 AND workspace_id = ?4`,
-  ).bind(workflowId, now.toISOString(), run.id, schedule.workspace_id).run();
-  const executionEnv = await workstreamExecutionEnvironment(
-    workspaceEnv,
-    schedule.workspace_id,
-    run.workstream_id,
-  );
+  ).bind(executionReceiptId, now.toISOString(), run.id, schedule.workspace_id).run();
+  const executionEnv = workspaceEnv;
   await createHarnessRunObjectPort(executionEnv, schedule.workspace_id, run.workstream_id)
     .bindWorkflowInstance({
       runId: harnessRunId,
-      workflowInstanceId: workflowId,
+      workflowInstanceId: executionReceiptId,
       now: now.getTime(),
     });
 }
@@ -835,29 +830,14 @@ async function ensureHarnessRun(
   executionPrincipal: ExecutionPrincipal,
   now: Date,
 ): Promise<string> {
-  const executionEnv = await workstreamExecutionEnvironment(
-    ctx.workspaceEnv,
-    workspaceId,
-    workstreamId,
-  );
-  const existing = await executionEnv.DB.prepare(
-    `SELECT id
-       FROM harness_runs
-      WHERE workspace_id = ?1
-        AND workstream_id = ?2
-        AND origin = 'automation'
-        AND parent_tool_call_id IS NULL
-        AND status IN ('scheduled', 'running')
-      ORDER BY started_at DESC
-      LIMIT 1`
-  )
-    .bind(workspaceId, workstreamId)
-    .first<{ id: string }>();
-  if (existing) return existing.id;
+  const executionEnv = ctx.workspaceEnv;
+  const runs = createHarnessRunObjectPort(executionEnv, workspaceId, workstreamId);
+  const existing = await runs.latestActiveRootRun({ origin: "automation" });
+  if (existing) return existing.run_id;
 
   const id = uuidV7(now.getTime());
   const model = await scheduledWorkstreamModelForExisting(executionEnv, { workspaceId, workstreamId });
-  await createHarnessRunObjectPort(executionEnv, workspaceId, workstreamId).admitRun({
+  await runs.admitRun({
     runId: id,
     origin: "automation",
     executionPrincipalJson: JSON.stringify(executionPrincipal),
@@ -866,7 +846,6 @@ async function ensureHarnessRun(
     model,
     triggerPartId: null,
     parentRunId: null,
-    supersedeActive: false,
     expectedLatestRunId: null,
     now: now.getTime(),
   });

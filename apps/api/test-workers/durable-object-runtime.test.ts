@@ -7,6 +7,7 @@ import {
   asUserId,
   asWorkspaceId,
   asWorkstreamId,
+  MESSAGE_MAX_CHARACTERS,
   WORKSTREAM_REALTIME_MAX_FRAME_BYTES,
   WORKSPACE_SOCKET_INVALID_MESSAGE_CODE,
   WORKSPACE_SOCKET_SESSION_INACTIVE_CODE,
@@ -30,18 +31,26 @@ import { WORKSPACE_DO_SCHEMA_MIGRATIONS, WorkspaceDO } from "../src/durable-obje
 import { WORKSTREAM_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-do";
 import { WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS } from "../src/durable-objects/workstream-object-schema";
 import { ScheduledAlarmStore } from "../src/durable-objects/scheduled-alarms";
+import { SubstreamLoopStorage } from "../src/durable-objects/substream-loop-storage";
 import { WorkstreamDO } from "../src/durable-objects/workstream-do";
 import { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import type { WorkstreamObjectStore } from "../src/durable-objects/workstream-object-storage";
+import { WorkstreamMessageStorage } from "../src/durable-objects/workstream-message-storage";
+import {
+  insertPreparedTranscriptFact,
+  prepareTranscriptFact,
+} from "../src/durable-objects/workstream-transcript-storage";
 import type { Env } from "../src/env";
 import { clearFlagTargetingAttributeCache } from "../src/services/flag-targeting-attributes";
-import { withWorkstreamRuntimeDatabase } from "../src/services/workstream-runtime-database";
 import {
+  admitFixturePendingInput,
   seedCanonicalMessageRecord,
   seedParticipantMessage,
+  holdLoopExecuting,
 } from "./helpers/substream-fixture";
 import {
   substreamAgentName,
+  substreamLoopId,
   blockDashboardAgentName,
   workspaceDOName,
   workstreamDOName,
@@ -133,6 +142,17 @@ async function seedOpenAuthority(): Promise<void> {
   await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
 }
 
+async function seedCreatorProfile(): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE users (
+      id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+    )`),
+    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+      VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
+      .bind(USER_ID),
+  ]);
+}
+
 /**
  * Tables this repository's migrations created.
  *
@@ -162,6 +182,26 @@ function nextMessageOfType(socket: WebSocket, type: string): Promise<Record<stri
         if (decoded.type !== type) return;
         socket.removeEventListener("message", onMessage);
         resolve(decoded);
+      } catch {
+        // Heartbeat frames and unrelated messages are not the requested event.
+      }
+    };
+    socket.addEventListener("message", onMessage);
+  });
+}
+
+function nextEncodedMessageOfType(
+  socket: WebSocket,
+  type: string,
+): Promise<{ encoded: string; decoded: Record<string, unknown> }> {
+  return new Promise((resolve) => {
+    const onMessage = (event: MessageEvent) => {
+      try {
+        const encoded = String(event.data);
+        const decoded = JSON.parse(encoded) as Record<string, unknown>;
+        if (decoded.type !== type) return;
+        socket.removeEventListener("message", onMessage);
+        resolve({ encoded, decoded });
       } catch {
         // Heartbeat frames and unrelated messages are not the requested event.
       }
@@ -257,7 +297,10 @@ type TestableBlockDashboardAgent = {
 
 type TestableSubstreamAgent = {
   publishAgentRuntimeEvent(event: Record<string, unknown>): Promise<void>;
-  nextRunDispatchAt(): number | null;
+  drainSemanticRealtimeOutbox(): Promise<void>;
+  scheduleBlockDashboardRefresh(triggerSequence: number): Promise<void>;
+  semanticRealtimeEvent(input: Record<string, unknown>): Record<string, unknown>;
+  nextLoopWorkAt(): number | null;
   agentDrain: { resume(operation: () => Promise<void>, settled: () => void): Promise<void> };
 };
 
@@ -308,6 +351,44 @@ async function seatBootstrapParticipant(
       Date.now(),
     );
   });
+}
+
+/**
+ * Provision the bootstrapped object the way a system producer does, through the
+ * real identity operation. `bootstrapRuntime` alone opens an *empty*
+ * authoritative object — its title is blank — and the socket snapshot's schema
+ * rightly refuses a blank title, so a test that subscribes without this step
+ * hangs on a snapshot that is never sent.
+ */
+async function provisionBootstrappedWorkstream(
+  stub: DurableObjectStub<SubstreamAgent>,
+  userId: string,
+): Promise<void> {
+  const provisioned = await stub.executeIdentityOperation({
+    workspaceId: WORKSPACE_ID,
+    workstreamId: WORKSTREAM_ID,
+    operation: "provision",
+    args: [{
+      title: "Runtime fixture work stream",
+      objective: "Exercise the runtime under test.",
+      scope: "workspace",
+      originType: "ad_hoc",
+      createdByUserId: userId,
+      participantUserIds: [userId],
+      harnessStatus: "idle",
+      emailAddress: null,
+      emailRouteStatus: null,
+      systemKind: null,
+      automationSubscriptionId: null,
+      automationRunId: null,
+      plannedFor: null,
+      modelOverride: null,
+      now: Date.now(),
+    }],
+  });
+  if (provisioned.status !== 200) {
+    throw new Error(`workstream_fixture_provision_failed:${provisioned.status}`);
+  }
 }
 
 describe("Durable Objects in the Workers runtime", () => {
@@ -481,6 +562,7 @@ describe("Durable Objects in the Workers runtime", () => {
 
   it("repairs a missing creation projection when initialize is replayed", async () => {
     await seedOpenAuthority();
+    await seedCreatorProfile();
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -544,6 +626,7 @@ describe("Durable Objects in the Workers runtime", () => {
 
   it("does not read a preparing work stream while resolving its first model", async () => {
     await seedOpenAuthority();
+    await seedCreatorProfile();
     const child = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
@@ -570,23 +653,10 @@ describe("Durable Objects in the Workers runtime", () => {
       const flags = {
         getObjectDetails,
       };
-      const observedAuthorityModes: string[] = [];
-      const runtimeEnv = withWorkstreamRuntimeDatabase(
-        residentProduct.env,
-        WORKSPACE_ID,
-        WORKSTREAM_ID,
-        "0",
-        async () => {
-          observedAuthorityModes.push(state.storage.sql.exec<{ authority_mode: string }>(
-            `SELECT authority_mode FROM workstream WHERE id = 1`,
-          ).one().authority_mode);
-          throw new Error("preparing_workstream_targeting_read");
-        },
-      );
       const product = new WorkstreamObjectProductService(
         state.storage,
         residentProduct.objectStore,
-        new Proxy(runtimeEnv, {
+        new Proxy(residentProduct.env, {
           get(target, property, receiver) {
             if (property === "FLAGS") return flags;
             return Reflect.get(target, property, receiver) as unknown;
@@ -626,7 +696,6 @@ describe("Durable Objects in the Workers runtime", () => {
       });
 
       expect(getObjectDetails).toHaveBeenCalledOnce();
-      expect(observedAuthorityModes).toEqual([]);
     });
   });
 
@@ -826,10 +895,15 @@ describe("Durable Objects in the Workers runtime", () => {
         migrations: WORKSTREAM_OBJECT_SCHEMA_MIGRATIONS.length,
         tables: [
           "_sql_schema_migrations",
-          "workstream_message_records",
-          "agent_run_dispatches",
           "active_agent_compaction",
+          "substream_loops",
+          "pending_attachment_reservation_recovery",
+          "pending_loop_input_mailbox",
+          "pending_loop_inputs",
+          "delivered_loop_inputs",
+          "assistant_turn_reservations",
         ],
+        absentTables: ["agent_run_dispatches", "run_steering"],
       },
       {
         namespace: env.BLOCK_DASHBOARD_AGENTS,
@@ -878,6 +952,7 @@ describe("Durable Objects in the Workers runtime", () => {
           "workspace_workstream_effect_receipts",
           "workspace_workstream_pins",
           "workspace_workstream_resource_links",
+          "pending_attachment_reservations",
           "workspace_workstream_suggestion_feedback",
           "workspace_workstream_viewers",
           "workspace_sync_events",
@@ -933,16 +1008,6 @@ describe("Durable Objects in the Workers runtime", () => {
           && table.strict !== 1
         ));
         expect(nonStrict).toEqual([]);
-        if (instance instanceof SubstreamAgent) {
-          const dispatchColumns = state.storage.sql.exec<{ name: string }>(
-            `PRAGMA table_info(agent_run_dispatches)`,
-          ).toArray().map((column) => column.name);
-          expect(dispatchColumns).toEqual(expect.arrayContaining([
-            "terminal_outcome_json",
-            "settled_at",
-            "last_settlement_error_code",
-          ]));
-        }
         if (instance instanceof WorkstreamDO) {
           const stateColumns = state.storage.sql.exec<{ name: string }>(
             `PRAGMA table_info(workstream_state_changes)`,
@@ -1096,8 +1161,9 @@ describe("Durable Objects in the Workers runtime", () => {
       ).one().payload_json) as { contextFence: { throughSequence: number } };
       expect(pending.contextFence.throughSequence).toBe(1);
       state.storage.sql.exec(
-        `UPDATE workstream_message_records
-            SET tool_status = 'completed', updated_at = 1003 WHERE id = 'tool-2'`,
+        `UPDATE participant_transcript_blocks
+            SET lifecycle_state = 'completed', revision = revision + 1
+          WHERE turn_id = 'tool-2' AND block_kind = 'tool'`,
       );
     });
 
@@ -1474,7 +1540,7 @@ describe("Durable Objects in the Workers runtime", () => {
         ).one().dispatch_json,
       ));
       const checkpoint = {
-        messageId: "00000000-0000-7000-8000-000000000116",
+        streamId: "00000000-0000-7000-8000-000000000116",
         harnessRunId: dispatch.harnessRunId,
         turnId: "turn-runtime-resume",
         epoch: 0,
@@ -1494,7 +1560,7 @@ describe("Durable Objects in the Workers runtime", () => {
       const testable = instance as unknown as TestableBlockDashboardAgent;
       await testable.recordStreamEvent(dispatch, {
         type: "stream_started",
-        messageId: checkpoint.messageId,
+        streamId: checkpoint.streamId,
         harnessRunId: dispatch.harnessRunId,
         turnId: checkpoint.turnId,
         epoch: checkpoint.epoch,
@@ -1503,7 +1569,7 @@ describe("Durable Objects in the Workers runtime", () => {
       });
       await testable.recordStreamEvent(dispatch, {
         type: "stream_delta",
-        messageId: checkpoint.messageId,
+        streamId: checkpoint.streamId,
         harnessRunId: dispatch.harnessRunId,
         turnId: checkpoint.turnId,
         epoch: checkpoint.epoch,
@@ -1585,7 +1651,7 @@ describe("Durable Objects in the Workers runtime", () => {
       ));
       await (instance as unknown as TestableBlockDashboardAgent).recordStreamEvent(dispatch, {
         type: "stream_delta",
-        messageId: "00000000-0000-7000-8000-000000000116",
+        streamId: "00000000-0000-7000-8000-000000000116",
         harnessRunId: dispatch.harnessRunId,
         turnId: "turn-runtime-resume",
         epoch: 0,
@@ -4811,7 +4877,7 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(evictDurableObject(substreamStub)).resolves.toBeUndefined();
   });
 
-  it("shrinks the resume window too when the snapshot frame is over its cap", async () => {
+  it("narrows truthful transcript coverage when an opening socket frame exceeds its cap", async () => {
     await seedOpenAuthority();
     await env.DB.batch([
       env.DB.prepare(`CREATE TABLE users (
@@ -4887,13 +4953,319 @@ describe("Durable Objects in the Workers runtime", () => {
     const frame = JSON.parse(String((await snapshot).data)) as {
       type: string;
       code?: string;
-      resumeFeed: { items: unknown[] } | null;
+      transcript: { ranges: Array<{
+        purpose: string;
+        covered: { startInclusive: number; endExclusive: number };
+        turns: Array<{ transcriptSequence: number }>;
+      }> };
     };
-    // A snapshot, not `snapshot_unavailable`, and one that still carries the
-    // reader's window rather than dropping it wholesale.
     expect(frame.type).toBe("snapshot");
-    expect(frame.resumeFeed).not.toBeNull();
-    expect(frame.resumeFeed!.items.length).toBeGreaterThan(0);
+    const delivered = frame.transcript.ranges.flatMap((range) => range.turns);
+    expect(delivered.map((turn) => turn.transcriptSequence)).toEqual([76, 77, 78, 79, 80]);
+    expect(frame.transcript.ranges).toEqual([
+      expect.objectContaining({
+        purpose: "latest",
+        covered: { startInclusive: 76, endExclusive: 81 },
+      }),
+    ]);
+    expect(frame).not.toHaveProperty("messageFeed");
+    expect(frame).not.toHaveProperty("resumeFeed");
+  });
+
+  // These two tests deliberately hash and persist enough payload to cross the
+  // platform's 1 MB socket boundary in real workerd. Fixture construction is
+  // not a product latency assertion, so it gets an integration-test timeout.
+  it("narrows an oversized transcript range frame and reports only the covered prefix", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    await runInDurableObject(stub, async (_instance, state) => {
+      for (let sequence = 1; sequence <= 16; sequence += 1) {
+        await seedParticipantMessage(state, {
+          id: `00000000-0000-7000-8020-${String(sequence).padStart(12, "0")}`,
+          sequence,
+          text: sequence <= 11 ? "r".repeat(MESSAGE_MAX_CHARACTERS) : `short ${sequence}`,
+          authorType: "agent",
+          now: 20_000 + sequence,
+        });
+      }
+    });
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8020-000000000801",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+
+    try {
+      const snapshotMessage = nextMessageOfType(socket, "snapshot");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+      const snapshot = await snapshotMessage as {
+        sequence: number;
+        transcript: { snapshotId: string };
+      };
+      const rangeMessage = nextEncodedMessageOfType(socket, "transcript_range");
+      socket.send(JSON.stringify({
+        type: "load_transcript_range",
+        requestId: "00000000-0000-7000-8020-000000000802",
+        request: {
+          snapshotId: snapshot.transcript.snapshotId,
+          range: { startInclusive: 1, endExclusive: 12 },
+          resumeAfterEventSequence: snapshot.sequence,
+        },
+      }));
+      const { encoded, decoded } = await rangeMessage;
+      const result = decoded.result as {
+        requested: { startInclusive: number; endExclusive: number };
+        covered: { startInclusive: number; endExclusive: number };
+        turns: Array<{ transcriptSequence: number }>;
+      };
+
+      expect(new TextEncoder().encode(encoded).byteLength)
+        .toBeLessThanOrEqual(WORKSTREAM_REALTIME_MAX_FRAME_BYTES);
+      expect(result.requested).toEqual({ startInclusive: 1, endExclusive: 12 });
+      expect(result.covered.startInclusive).toBe(1);
+      expect(result.covered.endExclusive).toBeLessThan(12);
+      const lastSequence = result.turns.at(-1)?.transcriptSequence;
+      expect(lastSequence).toBeDefined();
+      expect((lastSequence ?? 0) + 1).toBe(result.covered.endExclusive);
+      expect(result.turns.map((turn) => turn.transcriptSequence)).toEqual(
+        Array.from({ length: result.covered.endExclusive - 1 }, (_, index) => index + 1),
+      );
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  }, 15_000);
+
+  it("serves an indivisible oversized turn as a sequence-owning placeholder envelope", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    const prepared = await prepareTranscriptFact({
+      factId: "oversized-turn:block:0:fact:v2",
+      factKind: "participant_message",
+      audience: "participant",
+      payload: {
+        role: "assistant",
+        content: "x".repeat(WORKSTREAM_REALTIME_MAX_FRAME_BYTES),
+        structuredContent: null,
+      },
+      origin: { originKind: "protocol", sourceKind: null, sourceId: null, sourceRevision: null },
+      runId: null,
+      turnId: "oversized-turn",
+      toolCallId: null,
+    });
+    await runInDurableObject(stub, async (_instance, state) => {
+      await seedParticipantMessage(state, {
+        id: "oversized-turn",
+        sequence: 1,
+        text: "placeholder",
+        authorType: "agent",
+        now: 30_000,
+      });
+      insertPreparedTranscriptFact(state.storage.sql, prepared, 30_001);
+      state.storage.sql.exec(
+        `UPDATE participant_transcript_blocks
+            SET fact_id = ?, revision = revision + 1, updated_at = ?
+          WHERE turn_id = 'oversized-turn' AND block_index = 0`,
+        prepared.factId,
+        30_001,
+      );
+      state.storage.sql.exec(
+        `UPDATE participant_transcript_turns
+            SET revision = revision + 1, updated_at = ?
+          WHERE turn_id = 'oversized-turn'`,
+        30_001,
+      );
+    });
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8030-000000000801",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    try {
+      const snapshotMessage = nextEncodedMessageOfType(socket, "snapshot");
+      socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+      const { encoded, decoded } = await snapshotMessage;
+      expect(new TextEncoder().encode(encoded).byteLength)
+        .toBeLessThanOrEqual(WORKSTREAM_REALTIME_MAX_FRAME_BYTES);
+      const snapshot = decoded.transcript as {
+        snapshotId: string;
+        ranges: Array<{ turns: Array<{
+          transcriptSequence: number;
+          blocks: unknown[];
+          blockCount: number;
+          blocksOmitted?: boolean;
+        }> }>;
+      };
+      const snapshotEnvelope = snapshot.ranges[0]!.turns[0]!;
+      // The turn cannot fit a frame, so its envelope owns the exact sequence
+      // with payloads deliberately omitted. There is no hydration protocol:
+      // the placeholder is the whole oversized-turn contract.
+      expect(snapshotEnvelope).toMatchObject({
+        transcriptSequence: 1,
+        blocks: [],
+        blockCount: 1,
+        blocksOmitted: true,
+      });
+
+      const rangeReply = nextEncodedMessageOfType(socket, "transcript_range");
+      socket.send(JSON.stringify({
+        type: "load_transcript_range",
+        requestId: "00000000-0000-7000-8030-000000000800",
+        request: {
+          snapshotId: snapshot.snapshotId,
+          range: { startInclusive: 1, endExclusive: 2 },
+          resumeAfterEventSequence: Number(decoded.sequence),
+        },
+      }));
+      const rangeFrame = await rangeReply;
+      expect(new TextEncoder().encode(rangeFrame.encoded).byteLength)
+        .toBeLessThanOrEqual(WORKSTREAM_REALTIME_MAX_FRAME_BYTES);
+      const rangeResult = rangeFrame.decoded.result as {
+        covered: { startInclusive: number; endExclusive: number };
+        turns: Array<typeof snapshotEnvelope>;
+      };
+      expect(rangeResult.covered).toEqual({ startInclusive: 1, endExclusive: 2 });
+      expect(rangeResult.turns[0]).toEqual(snapshotEnvelope);
+    } finally {
+      socket.close(1000, "test complete");
+    }
+  }, 15_000);
+
+  it("delivers an oversized pending-only snapshot as a complete ordered chunk set", async () => {
+    await seedOpenAuthority();
+    await env.DB.batch([
+      env.DB.prepare(`CREATE TABLE users (
+        id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
+      )`),
+      env.DB.prepare(`CREATE TABLE workstream_pins (
+        workstream_id TEXT NOT NULL, user_id TEXT NOT NULL, position INTEGER,
+        PRIMARY KEY (workstream_id, user_id)
+      )`),
+      env.DB.prepare(`CREATE TABLE connector_connections (
+        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, scope TEXT NOT NULL,
+        owner_user_id TEXT, display_name TEXT NOT NULL
+      )`),
+    ]);
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+    await seatBootstrapParticipant(stub, USER_ID);
+    await provisionBootstrappedWorkstream(stub, USER_ID);
+    await runInDurableObject(stub, async (_instance, state) => {
+      holdLoopExecuting(state, { loopId: substreamLoopId(WORKSTREAM_ID) });
+      for (let index = 1; index <= 10; index += 1) {
+        await admitFixturePendingInput(state, {
+          inputId: `00000000-0000-7000-8010-${String(index).padStart(12, "0")}`,
+          clientMessageId: `pending-snapshot-${index}`,
+          text: `${index}:`.padEnd(100_000, "p"),
+          mode: "queue",
+          loopId: substreamLoopId(WORKSTREAM_ID),
+          now: 10_000 + index,
+        });
+      }
+    });
+    const response = await stub.fetch("https://substream.test/socket", {
+      headers: {
+        Upgrade: "websocket",
+        "x-rally-workspace-id": WORKSPACE_ID,
+        "x-rally-workstream-id": WORKSTREAM_ID,
+        "x-rally-substream-id": "0",
+        "x-rally-user-id": USER_ID,
+        "x-rally-session-id": SESSION_ID,
+        "x-rally-socket-ticket-id": "00000000-0000-7000-8010-000000000801",
+        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
+      },
+    });
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    // One accumulating listener, not eleven concurrent `once` listeners — those
+    // would all resolve with the first frame.
+    const delivered = nextMessages(socket, 11);
+    socket.send(JSON.stringify({ type: "subscribe", afterSequence: 0 }));
+    const frames = (await delivered).map((event) =>
+      JSON.parse(String(event.data)) as Record<string, unknown>);
+    expect(frames[0]).toMatchObject({
+      type: "snapshot",
+      pendingInputChunkCount: 10,
+      transcript: { pendingInputs: [] },
+    });
+    expect(frames.slice(1).map((frame) => frame.type)).toEqual(
+      Array.from({ length: 10 }, () => "pending_inputs_snapshot_chunk"),
+    );
+    expect(frames.slice(1).flatMap((frame) => (frame.inputs as Array<{
+      inputSequence: number;
+    }>).map((input) => input.inputSequence))).toEqual(
+      Array.from({ length: 10 }, (_, index) => index + 1),
+    );
   });
 
   it("sends the newest page and the reader's own position in one snapshot", async () => {
@@ -4960,6 +5332,7 @@ describe("Durable Objects in the Workers runtime", () => {
           sequence,
           text: `message ${sequence}`,
           authorType: "agent",
+          attentionOrdinal: sequence,
           now: 3_000 + sequence,
         });
       }
@@ -4970,25 +5343,20 @@ describe("Durable Objects in the Workers runtime", () => {
     const frame = JSON.parse(String((await snapshot).data)) as {
       type: string;
       workstream: { firstUnreadSequenceNumber: number | null };
-      messageFeed: { items: { sequenceNumber: number }[] };
-      resumeFeed: { items: { sequenceNumber: number }[] } | null;
+      transcript: { ranges: Array<{ turns: Array<{ transcriptSequence: number }> }> };
     };
     expect(frame.type).toBe("snapshot");
     // The newest page is bounded now: a scroll-back buffer is not worth paying
     // for on the frame a person waits to see.
-    const newest = frame.messageFeed.items.map((item) => item.sequenceNumber);
-    expect(newest).toHaveLength(20);
-    expect(newest.at(-1)).toBe(60);
-    expect(newest[0]).toBe(41);
+    const sequences = frame.transcript.ranges.flatMap((range) => range.turns)
+      .map((turn) => turn.transcriptSequence);
+    expect(sequences.at(-1)).toBe(60);
 
     // And the reader's own position arrives with it, so opening on it costs no
     // second request. `around` splits its limit either side of the sequence.
     const resumeAt = frame.workstream.firstUnreadSequenceNumber!;
     expect(resumeAt).toBeLessThan(41);
-    const resume = frame.resumeFeed!.items.map((item) => item.sequenceNumber);
-    expect(resume).toContain(resumeAt);
-    expect(Math.min(...resume)).toBeLessThan(resumeAt);
-    expect(Math.max(...resume)).toBeGreaterThan(resumeAt);
+    expect(sequences).toContain(resumeAt);
   });
 
   it("serves a canonical snapshot on the same socket when hibernation lost replay history", async () => {
@@ -5067,19 +5435,20 @@ describe("Durable Objects in the Workers runtime", () => {
     socket.send(JSON.stringify({ type: "subscribe", afterSequence: 1, publishPresence: false }));
     const frame = JSON.parse(String((await delivered).data)) as {
       type: string;
+      reason: string;
       sequence: number;
       workstream: { viewers: unknown[] };
-      messageFeed: { items: { sequenceNumber: number }[] };
-      resumeFeed: { items: { sequenceNumber: number }[] } | null;
+      transcript: { snapshotThrough: number };
     };
 
-    expect(frame).toMatchObject({ type: "snapshot", sequence: 2 });
+    expect(frame).toMatchObject({
+      type: "snapshot",
+      reason: "history_unavailable",
+      sequence: 2,
+    });
     expect(frame.workstream.viewers).toEqual([]);
-    expect(frame.messageFeed.items.at(-1)?.sequenceNumber).toBe(60);
-    // A repair always installs the newest canonical page. Sending the reader's
-    // older first-unread window here would make a pre-fix desktop treat the
-    // first frame seen by a fresh hook as an arrival and visibly roll back.
-    expect(frame.resumeFeed).toBeNull();
+    expect(frame.transcript.snapshotThrough).toBe(60);
+    expect(frame).not.toHaveProperty("messageFeed");
     await runInDurableObject(stub, async (_instance, state) => {
       expect(state.getWebSockets()[0]!.deserializeAttachment()).toMatchObject({
         afterSequence: 2,
@@ -5237,12 +5606,15 @@ describe("Durable Objects in the Workers runtime", () => {
     socket.send(JSON.stringify({ type: "request_snapshot" }));
     const frame = JSON.parse(String((await snapshot).data)) as {
       type: string;
+      reason: string;
       workstream: { id: string };
-      messageFeed: { items: { sequenceNumber: number }[] };
+      transcript: { ranges: Array<{ turns: Array<{ transcriptSequence: number }> }> };
     };
     expect(frame.type).toBe("snapshot");
+    expect(frame.reason).toBe("reconciliation");
     expect(frame.workstream.id).toBe(WORKSTREAM_ID);
-    expect(frame.messageFeed.items.map((item) => item.sequenceNumber)).toEqual([1, 2, 3]);
+    expect(frame.transcript.ranges.flatMap((range) => range.turns)
+      .map((turn) => turn.transcriptSequence)).toEqual([1, 2, 3]);
 
     // The request holds the socket out of broadcasts while the snapshot is
     // assembled. Leaving it that way would silently stop every later frame, so
@@ -5326,6 +5698,139 @@ describe("Durable Objects in the Workers runtime", () => {
     }
   });
 
+  it("recovers a committed semantic event after the post-commit drain crashes", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const messages = new WorkstreamMessageStorage(state.storage);
+      await messages.appendMessage({
+        messageId: "00000000-0000-7000-8000-00000000014a",
+        clientMessageId: "semantic-crash-window",
+        authorType: "external",
+        authorUserId: null,
+        externalActorJson: JSON.stringify({ provider: "slack", displayName: "Release bot" }),
+        messageType: "text",
+        text: "Canonical before publication",
+        structuredContentJson: null,
+        producedByRunId: null,
+        now: Date.parse("2026-08-26T20:00:00.000Z"),
+      });
+
+      const testable = instance as unknown as TestableSubstreamAgent;
+      const dashboard = vi.spyOn(testable, "scheduleBlockDashboardRefresh")
+        .mockRejectedValueOnce(new Error("forced_dashboard_intent_failure"));
+      await expect(testable.drainSemanticRealtimeOutbox())
+        .rejects.toThrow("forced_dashboard_intent_failure");
+      dashboard.mockRestore();
+
+      // The canonical row and its exact room sequence survive together. The
+      // outbox is not acknowledged until dashboard refresh intent is durable.
+      expect(state.storage.sql.exec(
+        `SELECT turn_id FROM participant_transcript_turns WHERE turn_id = ?`,
+        "00000000-0000-7000-8000-00000000014a",
+      ).one()).toEqual({ turn_id: "00000000-0000-7000-8000-00000000014a" });
+      expect(state.storage.sql.exec(
+        `SELECT source_version, state FROM durable_outbox
+          WHERE channel = 'semantic_realtime_v1'`,
+      ).one()).toEqual({ source_version: 1, state: "pending" });
+      state.storage.sql.exec(
+        `UPDATE durable_outbox SET not_before = 0
+          WHERE channel = 'semantic_realtime_v1'`,
+      );
+    });
+
+    // Simulate the isolate disappearing in the gap before its best-effort
+    // post-commit continuation could re-arm delivery. Construction derives the
+    // alarm from the persisted outbox; the real alarm then drains it.
+    await evictDurableObject(stub);
+    await stub.wake();
+    // An overdue alarm may fire automatically while `wake()` yields. Explicit
+    // delivery is still safe when it remains armed; the durable outbox
+    // assertions below prove either scheduling path completed the same work.
+    await runDurableObjectAlarm(stub);
+    await runInDurableObject(stub, (_instance, state) => {
+      expect(state.storage.sql.exec(
+        `SELECT COUNT(*) AS count FROM durable_outbox
+          WHERE channel = 'semantic_realtime_v1'`,
+      ).one()).toEqual({ count: 0 });
+      expect(state.storage.sql.exec(
+        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
+      ).one()).toEqual({ event_sequence: 1 });
+    });
+  });
+
+  it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {
+    await seedOpenAuthority();
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    expect((await stub.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
+
+    await runInDurableObject(stub, async (instance, state) => {
+      const inputId = "00000000-0000-7000-8000-00000000014b";
+      await new WorkstreamMessageStorage(state.storage).appendMessage({
+        messageId: inputId,
+        clientMessageId: "semantic-overtaken-pending",
+        authorType: "external",
+        authorUserId: null,
+        externalActorJson: JSON.stringify({ provider: "slack", displayName: "Release bot" }),
+        messageType: "text",
+        text: "Canonical before the pending upsert drained",
+        structuredContentJson: null,
+        producedByRunId: null,
+        now: Date.parse("2026-08-26T20:00:00.000Z"),
+      });
+      const turn = state.storage.sql.exec<{
+        attention_ordinal: number;
+      }>(
+        `SELECT attention_ordinal FROM participant_transcript_turns WHERE turn_id = ?`,
+        inputId,
+      ).one();
+      const loops = new SubstreamLoopStorage(state.storage);
+      const loop = loops.loop() ?? loops.ensureLoop({
+        loopId: substreamLoopId(WORKSTREAM_ID),
+        bindStateRevision: 0,
+        now: Date.parse("2026-08-26T20:00:00.001Z"),
+      });
+      state.storage.sql.exec(
+        `INSERT INTO delivered_loop_inputs
+           (input_id, loop_id, input_sequence, delivered_turn_id,
+            delivered_attention_ordinal, delivered_at)
+         VALUES (?, ?, 1, ?, ?, ?)`,
+        inputId,
+        loop.loop_id,
+        inputId,
+        turn.attention_ordinal,
+        Date.parse("2026-08-26T20:00:00.001Z"),
+      );
+
+      const event = (instance as unknown as TestableSubstreamAgent).semanticRealtimeEvent({
+        messageId: "semantic-realtime:1",
+        sequence: 1,
+        occurredAtUtc: "2026-08-26T20:00:00.001Z",
+        reference: { kind: "loop_input_upserted", inputId },
+      });
+      expect(event).toMatchObject({
+        type: "loop_input_removed",
+        sequence: 1,
+        inputId,
+        outcome: "delivered",
+      });
+    });
+  });
+
   it("forces subscribed viewers to resync when a committed runtime event exceeds the frame", async () => {
     await seedOpenAuthority();
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -5371,6 +5876,7 @@ describe("Durable Objects in the Workers runtime", () => {
             entryKind: "conversation",
             actor: "external",
             authorUserId: null,
+            authorSnapshot: null,
             clientMessageId: "oversized-runtime-event",
             externalActor: null,
             attentionOrdinal: null,
@@ -5388,9 +5894,6 @@ describe("Durable Objects in the Workers runtime", () => {
               structuredContent: null,
             }],
             activityId: null,
-            turnManifestRef: null,
-            manifestByteLength: null,
-            manifestSha256: null,
           },
         });
       });
@@ -5403,189 +5906,6 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       socket.close(1000, "test complete");
     }
-  });
-
-  it("pages a subscribed feed in both directions without advancing the shared room cursor", async () => {
-    await seedOpenAuthority();
-    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
-    ));
-    expect((await stub.bootstrapRuntime({
-      workspaceId: WORKSPACE_ID,
-      workstreamId: WORKSTREAM_ID,
-      generation: 1,
-    })).status).toBe(200);
-    await seatBootstrapParticipant(stub, USER_ID);
-    const response = await stub.fetch("https://substream.test/socket", {
-      headers: {
-        Upgrade: "websocket",
-        "x-rally-workspace-id": WORKSPACE_ID,
-        "x-rally-workstream-id": WORKSTREAM_ID,
-        "x-rally-substream-id": "0",
-        "x-rally-user-id": USER_ID,
-        "x-rally-session-id": SESSION_ID,
-        "x-rally-socket-ticket-id": "00000000-0000-7000-8000-000000000121",
-        "x-rally-socket-ticket-expires-at": String(Math.floor(Date.now() / 1_000) + 60),
-      },
-    });
-    expect(response.status).toBe(101);
-    const socket = response.webSocket!;
-    socket.accept();
-    let roomSequence = 0;
-    await runInDurableObject(stub, async (_instance, state) => {
-      const server = state.getWebSockets()[0]!;
-      server.serializeAttachment({
-        ...(server.deserializeAttachment() as Record<string, unknown>),
-        subscribed: true,
-      });
-      for (let sequence = 1; sequence <= 6; sequence += 1) {
-        await seedParticipantMessage(state, {
-          id: `00000000-0000-7000-8000-${String(sequence).padStart(12, "0")}`,
-          sequence,
-          text: `message ${sequence}`,
-          authorType: "agent",
-          now: 1_000 + sequence,
-        });
-      }
-      roomSequence = state.storage.sql.exec<{ event_sequence: number }>(
-        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
-      ).one().event_sequence;
-    });
-
-    const beforeReceipt = nextMessage(socket);
-    socket.send(JSON.stringify({
-      type: "load_message_page",
-      requestId: "00000000-0000-7000-8000-000000000122",
-      limit: 2,
-      cursor: { direction: "before", value: "6" },
-    }));
-    expect(JSON.parse(String((await beforeReceipt).data))).toMatchObject({
-      type: "message_page",
-      requestId: "00000000-0000-7000-8000-000000000122",
-      page: {
-        items: [{ sequenceNumber: 4 }, { sequenceNumber: 5 }],
-        nextCursor: "4",
-        newerCursor: null,
-      },
-    });
-
-    const afterReceipt = nextMessage(socket);
-    socket.send(JSON.stringify({
-      type: "load_message_page",
-      requestId: "00000000-0000-7000-8000-000000000123",
-      limit: 2,
-      cursor: { direction: "after", value: "2" },
-    }));
-    expect(JSON.parse(String((await afterReceipt).data))).toMatchObject({
-      type: "message_page",
-      requestId: "00000000-0000-7000-8000-000000000123",
-      page: {
-        items: [{ sequenceNumber: 3 }, { sequenceNumber: 4 }],
-        nextCursor: null,
-        newerCursor: "4",
-      },
-    });
-    await runInDurableObject(stub, async (_instance, state) => {
-      expect(state.storage.sql.exec<{ event_sequence: number }>(
-        `SELECT event_sequence FROM realtime_state WHERE id = 1`,
-      ).one().event_sequence).toBe(roomSequence);
-      for (let sequence = 7; sequence <= 11; sequence += 1) {
-        await seedParticipantMessage(state, {
-          id: `00000000-0000-7000-8001-${String(sequence).padStart(12, "0")}`,
-          sequence,
-          text: `message ${sequence} ${"x".repeat(240_000)}`,
-          authorType: "agent",
-          now: 1_000 + sequence,
-        });
-      }
-    });
-
-    const cappedReceipt = nextMessage(socket);
-    socket.send(JSON.stringify({
-      type: "load_message_page",
-      requestId: "00000000-0000-7000-8000-000000000125",
-      limit: 5,
-      cursor: { direction: "after", value: "6" },
-    }));
-    const cappedFrame = String((await cappedReceipt).data);
-    expect(new TextEncoder().encode(cappedFrame).byteLength).toBeLessThanOrEqual(900_000);
-    expect(JSON.parse(cappedFrame)).toMatchObject({
-      type: "message_page",
-      requestId: "00000000-0000-7000-8000-000000000125",
-      page: {
-        items: [{ sequenceNumber: 7 }, { sequenceNumber: 8 }, { sequenceNumber: 9 }],
-        newerCursor: "9",
-      },
-    });
-
-    const cappedBeforeReceipt = nextMessage(socket);
-    socket.send(JSON.stringify({
-      type: "load_message_page",
-      requestId: "00000000-0000-7000-8000-000000000139",
-      limit: 5,
-      cursor: { direction: "before", value: "12" },
-    }));
-    const cappedBeforeFrame = String((await cappedBeforeReceipt).data);
-    expect(new TextEncoder().encode(cappedBeforeFrame).byteLength).toBeLessThanOrEqual(900_000);
-    expect(JSON.parse(cappedBeforeFrame)).toMatchObject({
-      type: "message_page",
-      requestId: "00000000-0000-7000-8000-000000000139",
-      page: {
-        items: [{ sequenceNumber: 9 }, { sequenceNumber: 10 }, { sequenceNumber: 11 }],
-        nextCursor: "9",
-      },
-    });
-
-    await runInDurableObject(stub, async (_instance, state) => {
-      const oversizedPartId = "00000000-0000-7000-8001-000000000012";
-      await seedParticipantMessage(state, {
-        id: oversizedPartId,
-        sequence: 12,
-        text: "z".repeat(260_000),
-        authorType: "agent",
-        structuredContentJson: JSON.stringify({ payload: "y".repeat(259_900) }),
-        now: 1_012,
-      });
-      for (let mentionIndex = 0; mentionIndex < 3_000; mentionIndex += 1) {
-        state.storage.sql.exec(
-          `INSERT INTO workstream_message_mentions
-             (message_id, mention_index, mention_kind, target_user_id, connector_type,
-              start_offset, end_offset, attention_ordinal)
-           VALUES (?, ?, 'connector', NULL, ?, 0, 1, ?)`,
-          oversizedPartId,
-          mentionIndex,
-          `connector-${String(mentionIndex).padStart(60, "x")}`,
-          mentionIndex + 1,
-        );
-      }
-    });
-    const oversizedReceipt = nextMessage(socket);
-    socket.send(JSON.stringify({
-      type: "load_message_page",
-      requestId: "00000000-0000-7000-8000-000000000140",
-      cursor: { direction: "after", value: "11" },
-    }));
-    expect(JSON.parse(String((await oversizedReceipt).data))).toMatchObject({
-      type: "message_page_error",
-      requestId: "00000000-0000-7000-8000-000000000140",
-      code: "message_page_too_large",
-    });
-
-    await env.DB.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`)
-      .bind(new Date().toISOString(), SESSION_ID).run();
-    const revokedReceipt = nextMessage(socket);
-    const closed = nextClose(socket);
-    socket.send(JSON.stringify({
-      type: "load_message_page",
-      requestId: "00000000-0000-7000-8000-000000000124",
-      cursor: { direction: "before", value: "4" },
-    }));
-    expect(JSON.parse(String((await revokedReceipt).data))).toMatchObject({
-      type: "message_page_error",
-      requestId: "00000000-0000-7000-8000-000000000124",
-      code: "socket_access_revoked",
-    });
-    expect((await closed).code).toBe(1008);
   });
 
   it("restores active compaction in a hibernating snapshot and suppresses it after terminal state", async () => {
@@ -5757,7 +6077,7 @@ describe("Durable Objects in the Workers runtime", () => {
     second.close(1000, "done");
   });
 
-  it("makes the SubstreamAgent socket read-only for user commands", async () => {
+  it("rejects retired message pages and keeps the SubstreamAgent socket read-only for commands", async () => {
     await seedOpenAuthority();
     const id = env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
@@ -5804,9 +6124,8 @@ describe("Durable Objects in the Workers runtime", () => {
       cursor: { direction: "before", value: "10" },
     }));
     expect(JSON.parse(String((await pageReceipt).data))).toMatchObject({
-      type: "message_page_error",
-      requestId: "00000000-0000-7000-8000-000000000118",
-      code: "subscription_required",
+      type: "error",
+      code: "invalid_event",
     });
     const receipt = nextMessage(socket!);
     socket!.send(JSON.stringify({
@@ -5827,43 +6146,50 @@ describe("Durable Objects in the Workers runtime", () => {
     socket!.close(1000, "done");
   });
   // The production stall in one assertion, against the real objects rather than
-  // the shared helper: `nextRunDispatchAt`/`nextRunAt` once consulted the
+  // the shared helper: `nextLoopWorkAt`/`nextRunAt` once consulted the
   // in-memory drain flag, so a claimed run stopped contributing a due time, the
   // alarm was deleted, and the cancelled drain left nothing to rediscover it.
   // A drain that never settles is exactly the state a cancellation produces.
   it("keeps a claimed run schedulable in both agents while a drain is in flight", async () => {
+    await seedOpenAuthority();
     const wedged = new Promise<void>(() => {});
 
     const substream = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
-      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, CHILD_SUBSTREAM_ID),
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
     ));
-    await fetchAndDrain(substream, "https://object.test/health");
+    expect((await substream.bootstrapRuntime({
+      workspaceId: WORKSPACE_ID,
+      workstreamId: WORKSTREAM_ID,
+      generation: 1,
+    })).status).toBe(200);
     await runInDurableObject(substream, async (instance, state) => {
       const testable = instance as unknown as TestableSubstreamAgent;
-      state.storage.sql.exec(
-        `INSERT INTO substreams
-           (id, kind, inherit_mode, depth, return_mode, audience, tool_policy, status, created_at)
-         VALUES ('0', 'main', 'none', 0, 'none', 'workspace', 'full', 'open', 1)
-         ON CONFLICT(id) DO NOTHING`,
-      );
       state.storage.sql.exec(
         `INSERT INTO runs (
            run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
            model_iteration, next_action_cursor, input_fence_seq, revision, started_at,
            active_elapsed_ms, idle_elapsed_ms, step_count, subrequest_count, retry_count,
            tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
-           created_at, updated_at
+           execution_context_json, execution_available_at, created_at, updated_at
          ) VALUES ('run-wedged', '0', NULL, 'admitted', '{}', 0, 0, '', 0, 0, 1,
-                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1)`,
-      );
-      state.storage.sql.exec(
-        `INSERT INTO agent_run_dispatches
-           (run_id, input_json, state, attempt, available_at, started_at, created_at, updated_at)
-         VALUES ('run-wedged', '{}', 'running', 1, 1, 1, 1, 1)`,
+                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ?, 1, 1, 1)`,
+        JSON.stringify({
+          region: "global",
+          workspaceId: WORKSPACE_ID,
+          workstreamId: WORKSTREAM_ID,
+          substreamId: "0",
+          loopId: substreamLoopId(WORKSTREAM_ID),
+          harnessRunId: "run-wedged",
+          triggerMessageId: null,
+          automationSubscriptionId: null,
+          activityId: null,
+          executionPrincipal: { type: "system" },
+          reason: "user_message",
+        }),
       );
       // Put the drain in the state a cancelled invocation leaves behind.
       void testable.agentDrain.resume(() => wedged, () => undefined);
-      expect(testable.nextRunDispatchAt()).not.toBeNull();
+      expect(testable.nextLoopWorkAt()).not.toBeNull();
     });
 
     const block = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(

@@ -403,14 +403,20 @@ compaction start is durable object-local state included in snapshots and resync
 frames; the matching finish or a terminal run status clears it. No workspace or
 work-stream metadata is inferred from token frames or token silence.
 
-Older/newer transcript pagination is a correlated, viewer-specific request on
-that same SubstreamAgent socket. Electron sends `load_message_page` with an
-opaque before/after cursor, request UUID, and bounded limit (200 by default,
-250 maximum). The agent revalidates the socket's session and product visibility,
-reads its local `parts` authority, and returns `message_page` or a correlated
-error. Page replies do **not** allocate a shared room sequence and are neither
-broadcast nor replayed: they answer one reader's query and must not move every
-other reader's resume cursor.
+Transcript history is a correlated, viewer-specific request on that same
+SubstreamAgent socket. Electron sends `load_transcript_range` with the opening
+snapshot ID, an explicit half-open canonical sequence interval,
+`resumeAfterEventSequence`, and a request UUID. The agent revalidates the
+socket's session and product visibility, requires the snapshot fence still to
+match, reads canonical turns, and returns `transcript_range` or a correlated
+resync/error outcome. Range replies do **not** allocate a shared room sequence
+and are neither broadcast nor replayed: they answer one reader's query and must
+not move every other reader's resume cursor. Returned coverage is authoritative
+even when no turn occupies part of the interval. A range request belongs to the
+exact admitted socket and snapshot fence that sent it. Socket close or
+`resync_required` rejects every outstanding request as
+`workstream_socket_unavailable`, allowing the screen to retry after canonical
+recovery instead of waiting for a timeout that no replacement socket can answer.
 
 Refreshing canonical state is the deliberate opposite. `request_snapshot` takes
 no cursor and is answered with the ordinary sequenced `snapshot` frame rather
@@ -430,15 +436,16 @@ fallback uses `sequence_ahead` when the client's cursor guard cannot accept a
 lower-sequence socket snapshot; [`architecture.md`](architecture.md) owns the
 rest of that behavior.
 
-The initial socket snapshot still carries the newest page and both cursors.
-When a user scrolls within 160 px of the top, Electron requests the preceding
-page, merges by stable message identity, and restores `scrollTop` by the exact
-height inserted above the viewport. Newer-page and jump-to-latest recovery use
-the same socket path. Requests exist only while the user navigates history; an
-idle/background window produces no pagination traffic, and the accepted socket
-continues to hibernate. A page frame is capped at 900 KB; the agent reduces the
-page toward the requested cursor and returns the adjusted continuation cursor
-rather than splitting one message or emitting an oversized frame.
+The initial socket snapshot carries bounded canonical transcript ranges. When a
+user scrolls within 160 px of the top, Electron requests the adjacent half-open
+sequence range, merges it under the snapshot fence, and restores `scrollTop` by
+the exact height inserted above the viewport. Newer-range and jump-to-latest
+recovery use the same socket path. Requests exist only while the user navigates
+history; an idle/background window produces no pagination traffic, and the
+accepted socket continues to hibernate. A transcript frame is capped at the
+shared 1,000,000-byte realtime-frame limit: multi-turn ranges narrow to
+truthful coverage, while an indivisible oversized turn keeps its sequence as a
+payload-free `blocksOmitted` envelope rendered as a placeholder.
 
 ### The deprecated query transport
 
@@ -558,12 +565,12 @@ client message IDs make reconnect resend idempotent.
 | `packages/contracts/src/socket-tickets.test.ts` | `pnpm --filter @rally/contracts test` | The wire format: offers, parsing, refusal of non-tickets, URL stripping. |
 | `apps/api/test/socket-ticket-transport.test.ts` | `pnpm --filter @rally/api test` | Precedence and the negotiation decision, on Node. |
 | `apps/api/test-workers/socket-subprotocol-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | The runtime constraint, on real workerd. |
-| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; bidirectional transcript pagination and revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
+| `apps/api/test-workers/durable-object-runtime.test.ts` | `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts` | Hibernating WorkspaceDO, WorkstreamDO, SubstreamAgent, and BlockDashboardAgent attachments/snapshots; authoritative workspace directory application/page/resource queries; eviction; native-RPC envelopes; workspace protocol/session/access close-code separation and payload-free diagnostics; truthful bounded transcript ranges; indivisible-turn payload-free envelopes; revocation; compaction recovery; block checkpoint recovery/revocation; queued-run coalescing; ticket replay; and read-only feeds on real workerd. |
 | `apps/desktop/src/renderer/lib/workspace-socket.test.tsx`, `use-workstreams-query.test.tsx`, `workstream-state-store.test.ts` | `pnpm --filter @rally/desktop test` | One persistent workspace connection, truthful terminal errors for access/session/protocol closes, correlated directory pages/pagination, immediate offline page rejection, waterline resume, stale/duplicate rejection across both sockets, independent common/viewer ordering, and idempotent command resend. |
 | `apps/desktop/src/renderer/lib/use-workstream-control-socket.test.tsx` | `pnpm --filter @rally/desktop test` | Complete aggregate snapshots, stale waterline rejection, nullable-field clearing, revocation, and reconnect. |
 | `apps/desktop/src/main/realtime-socket-broker.test.ts`, `realtime-socket-ipc.test.ts`, `apps/desktop/src/common/realtime-socket-validation.test.ts` | `pnpm --filter @rally/desktop test` | Ordered PAC fallback, shared frame ceiling, normal-close removal, renderer-owner isolation, shared IPC channels, main-window authorization, and strict main-to-preload events. |
 | `apps/desktop/src/renderer/lib/use-block-dashboard-sockets.test.tsx` | `pnpm --filter @rally/desktop test` | Full-checkpoint replacement without duplicated text, stale revision rejection, ticket and short-lived-socket reconnect backoff, permanent stop on `1008`, offline/online recovery, removed-block closure, and ping/pong timeout. |
-| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial-read admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent feed reconnect/resync, streaming, explicit compaction lifecycle/reconciliation, page merging, direction-neutral errors, scroll thresholds/anchor preservation, and workspace-command routing. |
+| `apps/desktop/src/renderer/lib/workstream-socket-pool.test.tsx`, `use-workstream-socket.test.tsx`, `apps/desktop/src/renderer/screens/workstream.test.tsx` | `pnpm --filter @rally/desktop test` | Initial-read admission for the pooled WorkstreamDO/SubstreamAgent pair, exact-pair reuse for five minutes after switching streams, background/recent overlap, expiry and backward-clock recovery, in-place route reconciliation, direct SubstreamAgent feed reconnect/resync, streaming, explicit compaction lifecycle/reconciliation, range merging, oversized-turn placeholder rendering, scroll thresholds/anchor preservation, and workspace-command routing. |
 | `scripts/smoke-local.mjs` | `pnpm smoke:local` | A real handshake end to end, both transports, and the replay status. |
 
 **The trap, and it has already cost one bug:** Node's `Response` refuses status
@@ -595,6 +602,81 @@ the provider's redirect and cannot move; [`security.md`](security.md) records
 what that leaves exposed.
 
 ## Changelog
+
+### 2026-08-28 — Feed transport carries only canonical turns and typed overlays
+
+**What changed:** The feed socket's transport moved onto the persistent-loop
+cutover's single display authority: snapshots and history reads carry only
+canonical ordered turns, live noncanonical state is a typed overlay, and an
+oversized turn stays a sequence-owning payload-free envelope. The facets
+below are the decisions this change is made of — each carries its own
+rejected alternative and its own invariant.
+
+Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
+the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
+
+#### Oversized canonical turns stay sequence-owning, payload-free envelopes
+
+**What changed:** SubstreamAgent now measures correlated `transcript_range`
+frames in UTF-8 bytes against the shared 1,000,000-byte realtime-frame limit.
+It removes only whole turns from the tail and reports the exact shorter
+covered prefix; the desktop keeps the remaining suffix as a gap under the same
+snapshot fence. When one indivisible turn cannot fit, the range instead
+carries a payload-free envelope — `blocksOmitted: true` plus the true
+`blockCount` — and the desktop renders a "too large to display" placeholder in
+its canonical position.
+
+**Why:** Range replies bypass room replay and were sent directly, so they also
+bypassed the byte check applied to opening snapshots. A valid 20-sequence page
+could exceed the broker's one-frame limit even though each turn was valid.
+
+**Considered and rejected:** Chunking the ordered range frame itself, which
+couples canonical sequence assembly to byte transport; marking an omitted turn
+covered, which loses history; and delivering the oversized payload out of line
+through manifest tables plus chunked, hash-verified byte-range hydration.
+Nothing in the product can produce an indivisible oversized turn today, so
+that transport would serve a row no code writes.
+
+**Consequences:** Pagination may need another adjacent request for unusually
+large groups of turns, but never claims omitted history as loaded and never
+moves the shared room cursor. An envelope advances transcript coverage
+immediately and keeps ordering independent of payload delivery; its content is
+deliberately not delivered. `blocksOmitted` is the whole contract a future
+delivery mechanism would build behind, if a producer of such turns ever
+exists.
+
+#### Canonical ranges and explicit overlays replace message pages
+
+**What changed:** SubstreamAgent snapshots and correlated history reads now
+carry only canonical ordered turns. `load_transcript_range` and
+`transcript_range` exchange snapshot-fenced half-open sequence intervals. Live
+noncanonical UI state crosses the protocol as a typed overlay with its own ID,
+provenance, anchor, and revision; it is never inferred from a persisted message
+page or appended by timestamp. Streaming frames carry `streamId` for transient
+run grouping and `turnId` for the canonical model turn; checkpoints persist the
+same distinction and run completion closes only the transient stream identity.
+Activity-derived duration rows inherit the sequence of their canonical turn,
+and an interrupted correlated range read is released immediately into the
+existing reconnect-and-retry path.
+
+**Why:** A persisted compatibility page, disjoint canonical ranges, and live
+stream state gave the renderer three plausible orders and two identities for
+the same assistant output. A page row outside loaded canonical coverage could
+be mistaken for a newest transient and render below the actual tail.
+
+**Considered and rejected:** Content/timestamp deduplication and a permanent
+message-ID bridge. Both retain ambiguous authority and fail for repeated text,
+clock skew, unloaded gaps, or legitimate same-content turns.
+
+**Consequences:** Retired `load_message_page`, `message_page`, and
+`message_created` feed frames are protocol errors. Old Electron builds are
+deliberately incompatible. Ordering comes only from canonical sequence plus an
+overlay's explicit anchor; derived activity rows cannot fall back to sequence
+zero, and an unpositioned canonical row fails the composition invariant instead
+of being silently invented at the beginning. Reconnect or pagination cannot
+manufacture order. Correlated range promises never outlive the transport and
+snapshot fence capable of answering them. The protocol rejects the former
+ambiguous `messageId` streaming field.
 
 ### 2026-08-26 — Proactive feeds stop publishing legacy presence
 

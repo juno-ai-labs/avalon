@@ -22,9 +22,11 @@ import { env } from "cloudflare:workers";
 import { reset, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { asWorkspaceId, asWorkstreamId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 
+import type { AuthContext } from "../src/env";
 import { substreamAgentName, workspaceDOName, workstreamDOName } from "../src/durable-objects/names";
+import type { WorkstreamObjectProductService } from "../src/durable-objects/workstream-object-product";
 import { WorkstreamTranscriptStorage } from "../src/durable-objects/workstream-transcript-storage";
 import {
   WorkstreamRegionalEffectEnvelopeSchema,
@@ -35,14 +37,14 @@ import { processWorkstreamNotificationIntent } from "../src/services/workstream-
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
 const SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a6");
-const CREATOR_ID = "00000000-0000-7000-8000-0000000006a3";
+const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
 const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
 const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
 
-const AUTH = {
+const AUTH: AuthContext = {
   sessionId: SESSION_ID,
   userId: CREATOR_ID,
   workspaceId: WORKSPACE_ID,
@@ -190,6 +192,25 @@ async function openWorkstream(
  * — so a directory assertion here is read back before that lands rather than
  * guaranteed, and `directoryEffectFor` below waits for it to settle instead.
  */
+/**
+ * Wait for a pending message's promotion to land its canonical turn. Admission
+ * stores immutable pending input; the loop's activation alarm delivers it a
+ * beat later, so canonical rows — the turn, its mentions, the seat a confirmed
+ * target gets — are not observable the instant `create_message` returns.
+ */
+async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Promise<void> {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const present = await runInDurableObject(stub, (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
+        turnId,
+      ).one().count);
+    if (present === 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`canonical turn never landed for ${turnId}`);
+}
+
 async function deliveredEffects(
   stub: DurableObjectStub,
   workstreamId = WORKSTREAM_ID,
@@ -471,7 +492,7 @@ describe("naming somebody when the work stream is created", () => {
         INVITEE_ID,
       ).one().count).toBe(0);
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM workstream_message_mentions WHERE target_user_id = ?`,
+        `SELECT COUNT(*) AS count FROM participant_transcript_mentions WHERE target_user_id = ?`,
         INVITEE_ID,
       ).one().count).toBe(0);
     });
@@ -511,8 +532,8 @@ describe("naming somebody when the work stream is created", () => {
       }>(
         `SELECT part.content, mention.mention_kind, mention.target_user_id,
                 mention.start_offset, mention.end_offset
-           FROM workstream_message_details part
-           JOIN workstream_message_mentions mention ON mention.message_id = part.id
+           FROM canonical_conversation_turn_details part
+           JOIN participant_transcript_mentions mention ON mention.turn_id = part.id
           WHERE part.client_message_id = ?`,
         `participant-open-${WORKSTREAM_ID}`,
       ).one();
@@ -532,7 +553,7 @@ describe("naming somebody when the work stream is created", () => {
         latest_mention_attention_ordinal: 1,
       });
       const partId = state.storage.sql.exec<{ id: string }>(
-        `SELECT id FROM workstream_message_records WHERE client_message_id = ?`,
+        `SELECT turn_id AS id FROM participant_transcript_turns WHERE client_message_id = ?`,
         `participant-open-${WORKSTREAM_ID}`,
       ).one().id;
       state.storage.sql.exec(
@@ -553,7 +574,7 @@ describe("naming somebody when the work stream is created", () => {
         Date.parse("2026-08-26T12:00:00.000Z"),
       );
       state.storage.sql.exec(
-        `INSERT INTO workstream_message_attachments (message_id, resource_id, position, attachment_json)
+        `INSERT INTO participant_transcript_attachments (turn_id, resource_id, position, attachment_json)
          VALUES (?, ?, 0, ?)`,
         partId,
         ATTACHMENT_ID,
@@ -696,6 +717,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       },
     });
     expect(sent.status).toBe(200);
+    await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
 
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
@@ -703,8 +725,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         INVITEE_ID,
       ).one().count).toBe(0);
       expect(state.storage.sql.exec<{ target_user_id: string }>(
-        `SELECT target_user_id FROM workstream_message_mentions WHERE message_id = ?`,
-        (sent.body.message as { id: string }).id,
+        `SELECT target_user_id FROM participant_transcript_mentions WHERE turn_id = ?`,
+        (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
     const envelopes = await deliveredEffects(stub);
@@ -735,14 +757,15 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       },
     });
     expect(sent.status).toBe(200);
+    await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
 
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ status: string }>(
         `SELECT status FROM participants WHERE user_id = ?`, INVITEE_ID,
       ).one().status).toBe("active");
       expect(state.storage.sql.exec<{ target_user_id: string }>(
-        `SELECT target_user_id FROM workstream_message_mentions WHERE message_id = ?`,
-        (sent.body.message as { id: string }).id,
+        `SELECT target_user_id FROM participant_transcript_mentions WHERE turn_id = ?`,
+        (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
     const envelopes = await deliveredEffects(stub);
@@ -777,6 +800,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       },
     });
     expect(sent.status).toBe(200);
+    await waitForCanonicalTurn(stub, (sent.body.turn as { turnId: string }).turnId);
 
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ count: number }>(
@@ -784,7 +808,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         INVITEE_ID,
       ).one().count).toBe(0);
       expect(state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM workstream_message_mentions WHERE target_user_id = ?`,
+        `SELECT COUNT(*) AS count FROM participant_transcript_mentions WHERE target_user_id = ?`,
         INVITEE_ID,
       ).one().count).toBe(0);
     });
@@ -792,7 +816,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
 });
 
 describe("answering an elicitation in the ordered transcript", () => {
-  it("keeps the member response as a typed attributed turn after reload", async () => {
+  it("keeps the attributed response pending until the loop can promote it", async () => {
     const stub = agentStub();
     const opened = await openWorkstream(stub);
     const runId = String(opened.body.harnessRunId);
@@ -809,6 +833,7 @@ describe("answering an elicitation in the ordered transcript", () => {
         args: [{
           elicitationId,
           runId,
+          toolCallId: `${runId}:turn:1:tool:0`,
           prompt: "Which environment?",
           responseType: "text",
           optionsJson: "[]",
@@ -841,25 +866,79 @@ describe("answering an elicitation in the ordered transcript", () => {
     });
     expect(question.status).toBe(200);
 
-    const answered = await product(stub, {
-      operation: "answer_elicitation",
-      auth: AUTH,
-      elicitationId,
-      input: { answer: "staging" },
-    });
-    expect(answered.status).toBe(200);
-
-    await runInDurableObject(stub, (_instance, state) => {
+    await runInDurableObject(stub, async (instance, state) => {
+      const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
+      const before = state.storage.sql.exec<{
+        next_transcript_sequence: number;
+        next_attention_ordinal: number;
+      }>(
+        `SELECT counter.next_transcript_sequence, root.next_attention_ordinal
+           FROM transcript_counters counter CROSS JOIN workstream root
+          WHERE counter.id = 1 AND root.id = 1`,
+      ).one();
+      const answered = await productService.answerElicitation(
+        AUTH,
+        elicitationId,
+        { answer: "staging" },
+      );
+      expect(answered).toMatchObject({
+        elicitation: { id: elicitationId, status: "answered", answer: "staging" },
+        activationRequest: {
+          kind: "activate_substream_loop",
+          cause: "pending_input",
+          inputId: answered.responsePartId,
+        },
+      });
+      const pending = state.storage.sql.exec<{
+        actor: string;
+        author_user_id: string;
+        author_name_snapshot: string;
+        client_message_id: string;
+        message_type: string;
+        prepared_payload_json: string;
+        authorization_json: string;
+      }>(
+        `SELECT actor, author_user_id, author_name_snapshot, client_message_id,
+                message_type, prepared_payload_json, authorization_json
+           FROM pending_loop_inputs WHERE input_id = ?`,
+        answered.responsePartId,
+      ).one();
+      expect(pending).toMatchObject({
+        actor: "human",
+        author_user_id: CREATOR_ID,
+        author_name_snapshot: "Creator",
+        client_message_id: `elicitation-response:${elicitationId}`,
+        message_type: "elicitation",
+      });
+      expect(JSON.parse(pending.prepared_payload_json)).toMatchObject({
+        role: "user",
+        structuredContent: {
+          kind: "elicitation_response",
+          elicitation: { id: elicitationId, status: "answered", answer: "staging" },
+        },
+      });
+      expect(JSON.parse(pending.authorization_json)).toMatchObject({
+        reason: "elicitation_answer",
+        elicitationId,
+        parentHarnessRunId: runId,
+      });
       const transcript = new WorkstreamTranscriptStorage(state.storage)
         .createOpeningSnapshot({ unreadHighWaterAttentionOrdinal: null });
       const response = transcript.ranges[0]!.turns.find(
         (turn) => turn.clientMessageId === `elicitation-response:${elicitationId}`,
       );
-      expect(response).toMatchObject({
-        actor: "human",
-        authorUserId: CREATOR_ID,
-        blocks: [{ type: "text", messageType: "elicitation" }],
-      });
+      expect(response).toBeUndefined();
+      expect(state.storage.sql.exec<{
+        next_transcript_sequence: number;
+        next_attention_ordinal: number;
+      }>(
+        `SELECT counter.next_transcript_sequence, root.next_attention_ordinal
+           FROM transcript_counters counter CROSS JOIN workstream root
+          WHERE counter.id = 1 AND root.id = 1`,
+      ).one()).toEqual(before);
+      expect(state.storage.sql.exec<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM runs WHERE origin = 'elicitation_answer'`,
+      ).one().count).toBe(0);
     });
   });
 });
