@@ -247,6 +247,15 @@ beforeEach(async () => {
   `dispatchWithoutDraining` in `agent-run-lifecycle.test.ts` does by dispatching
   and parking the alarm in a single `runInDurableObject`.
 
+  `runDurableObjectAlarm` adds its own variant of the race when the alarm it is
+  meant to force is already overdue: workerd clears the alarm slot for the whole
+  of a firing invocation, so between an automatic fire and the handler's own
+  re-arm the helper finds no alarm, returns `false`, and runs nothing — while
+  the auto-fired drain is still in flight for the next assertion to interleave
+  with. A test that arms an overdue alarm and must prove its work ran should
+  call `instance.alarm()` and assert in a single `runInDurableObject`, as the
+  semantic-recovery test in `durable-object-runtime.test.ts` does.
+
   **Do not build that fence with `state.blockConcurrencyWhile`.** It is for an
   object initializing itself, and calling it re-entrantly from inside
   `runInDurableObject` holds the very input gate `reset()` needs in order to
