@@ -934,6 +934,55 @@ resource safety, that ceiling and its refusal behavior require the repository's
 separate defensive-limit decision; it cannot appear as an unexplained schema
 number.
 
+For a watched work-stream resource, the intended end-to-end event chain is a
+fixed product contract:
+
+`provider → connector ingress → WorkspaceDO → regional Queue → work-stream
+authority → transcript/WebSocket`
+
+The watch's control path is separate and runs in the other direction:
+WorkstreamDO/SubstreamAgent commits the authoritative resource link and watch
+flag, then its durable projection/outbox supplies WorkspaceDO with the resource
+identity, watch state, source version/hash, and work-stream authority
+generation. WorkspaceDO compiles that intent into the same internal evaluator
+registration used by automation destinations. The work stream does not author
+an evaluator: it owns only “this attached resource is watched,” while
+WorkspaceDO owns the canonical resource-to-connection binding and connector
+manifest needed to derive exact event types and relationships.
+
+Each event-chain hop has one responsibility:
+
+- The provider supplies a webhook event, or is read by connector polling owned
+  and scheduled by WorkspaceDO.
+- Connector ingress verifies provider authenticity, applies any single bounded
+  enrichment, normalizes the event and its audience/resource relationships,
+  and submits it to the regional event path. It never calls a work stream or
+  appends transcript content.
+- WorkspaceDO is the canonical normalized-event authority. It deduplicates the
+  event, parses its closed evaluation context, selects and evaluates exact
+  registrations, and atomically records a destination-specific delivery
+  receipt and outbox row. Its projections can locate a work stream but cannot
+  authorize permanent content injection.
+- The regional Queue carries an ID-only wake-up for the committed delivery. It
+  owns transport retry, not event content, evaluator truth, destination
+  authorization, or delivery completion.
+- The destination adapter reloads the receipt and event from WorkspaceDO, then
+  invokes the named work-stream authority through a typed port. The current
+  WorkstreamDO/SubstreamAgent state must re-prove attachment, enabled watch,
+  authority generation, target lifecycle, and complete participant audience;
+  stale WorkspaceDO registration state can cause a harmless wake-up but never
+  an append.
+- The work-stream authority idempotently commits one `connected_activity`
+  system turn through the ordered-transcript substrate. Only after that commit
+  does it publish the ordinary transcript event over the existing WebSocket;
+  neither Queue acknowledgement nor socket publication is the canonical write.
+
+Webhook and polling connectors converge at connector ingress. A poll handler
+may produce a normalized event but may not bypass WorkspaceDO evaluation or
+append directly to a work stream. Likewise, adding a watched event to the
+transcript does not by itself admit a Bind run; automatic action uses an
+automation evaluator destination through the parallel AutomationAgent branch.
+
 WorkspaceDO owns the evaluation and delivery transaction boundary:
 
 ```text
