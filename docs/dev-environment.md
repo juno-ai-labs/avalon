@@ -83,23 +83,26 @@ between its `SELECT ... FROM workspaces` and `ON CONFLICT`. SQLite otherwise
 parses the `ON` as a possible join clause and rejects the fresh post-retirement
 seed before product fixtures reach the Durable Objects.
 
-**Known broken as of 2026-08-27.** The product-seed step fails with
-`workstream_runtime_sql_not_committed` / `no such table: _runtime_messages`:
-`routes/dev.ts` seeds transcript rows through a compatibility view that
-transcript retirement removed. The authority walk itself still succeeds, so the
-local stack is on the Durable-Object path, and the work streams and their
-descriptions do seed — it is the transcript rows that do not, so a seeded work
-stream opens empty. Create one through the API if you need a populated one.
-
 This walks the **Global** authority to `durable_object_open`, so the local
 stack serves the same post-cutover Durable-Object model production runs, and
 seeds the product fixtures from `packages/db/seed-product.json` into their
 Durable Objects through the Worker's dev-only seed route — which is why the Workers must be up first; run without
-them, the walk completes and the script says to re-run for the import. Local
-EU deliberately stays `legacy_open`. Skipping this step leaves local
-development on the legacy path, where none of the object-authority code
-executes — the gap that once hid a defect failing every production harness
-run. The script is idempotent and re-runs repair partial imports.
+them, the walk completes and the script says to re-run for the import.
+Skipping this step leaves local development on the legacy path, where none of
+the object-authority code executes — the gap that once hid a defect failing
+every production harness run. The script is idempotent and re-runs repair
+partial imports.
+
+**The walk is Global-only, so local EU is unusable.** It stays at
+`legacy_open`, and the only phase that accepts work is `durable_object_open`
+(`acceptsNewWorkstreamWork` in `services/workstream-authority.ts`), so the EU
+Worker answers `503 workstream_maintenance` to everything a member does —
+development sign-in included, which is where you will meet it. That was
+survivable while a legacy execution arm existed; production has since opened
+the authority in both regions and the arm is gone, so what local EU exercises
+now is the maintenance refusal rather than the legacy path. Region-specific
+behaviour has to be checked against a hosted EU Worker until the walk opens
+both.
 
 ## 3. Start the API Workers
 

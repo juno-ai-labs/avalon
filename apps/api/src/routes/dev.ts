@@ -12,8 +12,13 @@ import {
 } from "../services/workstream-runtime-database";
 import { withWorkspaceRuntimeDatabase } from "../services/workspace-runtime-database";
 import { readWorkstreamAuthorityControl } from "../services/workstream-authority";
+import {
+  AppendMessageInputSchema,
+  UpsertToolMessageInputSchema,
+} from "../durable-objects/workstream-message-protocol";
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { createIdentityObjectPort } from "../runtime/identity-port";
+import { createMessageObjectPort } from "../runtime/message-port";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -31,6 +36,15 @@ const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
  * `tool_position` is the row's index rather than a count of what is already
  * there. The trigger used `COUNT(*)`, which stops being injective the moment a
  * receipt is deleted — the defect object schema migration 16 repaired.
+ *
+ * The conflict clause is what makes re-running the seed repair a partial import
+ * rather than fail on it, and its target is the object's own replay-dedup key
+ * for a tool receipt: `tool_effects_run_call_uq`, the unique index object
+ * schema migration 17 adopted so that every routed receipt writer can say
+ * `ON CONFLICT(run_id, tool_call_id) DO NOTHING` and mean it. Naming it rather
+ * than using `INSERT OR IGNORE` is the same choice the workspace tables below
+ * make: a receipt that is already seeded is skipped, while a fixture that
+ * violates a CHECK or a foreign key still fails this route loudly.
  */
 async function insertToolReceipts(
   database: D1Database,
@@ -47,7 +61,8 @@ async function insertToolReceipts(
          (effect_intent_id, run_id, attempt_epoch, tool_position, occurrence_key, tool_name,
           mode, request_hash, authority_revision, status, tool_call_id, connection_id,
           input_json, output_ref, output_summary, execution_plan_json, started_at, settled_at)
-       VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'runtime', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, 'runtime', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(run_id, tool_call_id) DO NOTHING`,
     ).bind(
       id,
       String(receipt.harness_run_id),
@@ -72,6 +87,80 @@ async function insertToolReceipts(
     ).run();
   }
   copied.tool_effects = receipts.length;
+}
+
+/**
+ * Seed one work stream's transcript through the message authority.
+ *
+ * The fixture used to be written as D1-shaped SQL onto `_runtime_messages`,
+ * whose INSTEAD OF trigger assigned each row its sequence number and moved the
+ * work stream's counters. Transcript retirement dropped that view and left this
+ * route as its last caller, so `pnpm db:open-authority` failed with `no such
+ * table: _runtime_messages` and every seeded work stream opened empty.
+ *
+ * The two operations here are what the trigger's branch became, and the split
+ * is not a detail: a tool card carries no author, consumes no attention
+ * ordinal, and refreshes in place under its own id, which is the half
+ * `appendMessage` refuses outright.
+ *
+ * Neither takes the fixture's `sequence_number` — the object numbers its own
+ * transcript — so the recorded numbers are reproduced by writing the rows in
+ * that order into an object whose counter is still where the bootstrap left
+ * it. That is why the caller restores the captured `nextSequenceNumber`
+ * afterwards rather than before.
+ */
+async function seedTranscript(
+  env: Env,
+  workspaceId: string,
+  workstream: z.infer<typeof seedBody>["workstreams"][number],
+  copied: Record<string, number>,
+): Promise<void> {
+  const port = createMessageObjectPort(env, workspaceId, workstream.id);
+  const ordered = [...workstream.messages]
+    .sort((left, right) => Number(left.sequence_number) - Number(right.sequence_number));
+  for (const message of ordered) {
+    const messageId = String(message.id);
+    // `client_message_id` is nullable — only a member's own send fills it — but
+    // replay absorption is keyed on one, and it is what makes a re-run repair a
+    // partial seed rather than write the transcript twice. Deriving it from the
+    // message id keeps that key stable across runs.
+    const clientMessageId = typeof message.client_message_id === "string"
+      ? message.client_message_id
+      : `seed:${messageId}`;
+    const createdAt = Date.parse(String(message.created_at));
+    const structuredContentJson = typeof message.structured_content_json === "string"
+      ? message.structured_content_json
+      : null;
+    if (message.message_type === "tool") {
+      if (!structuredContentJson) {
+        throw new ApiError(422, "seed_tool_message_without_payload",
+          `Tool message ${messageId} carries no structured content`);
+      }
+      await port.upsertToolMessage(UpsertToolMessageInputSchema.parse({
+        messageId,
+        clientMessageId,
+        structuredContentJson,
+        createdAt,
+        editedAt: null,
+      }));
+      continue;
+    }
+    await port.appendMessage(AppendMessageInputSchema.parse({
+      messageId,
+      clientMessageId,
+      authorType: message.author_type,
+      authorUserId: message.author_user_id ?? null,
+      externalActorJson: message.external_actor_json ?? null,
+      messageType: message.message_type,
+      text: message.text_content ?? "",
+      structuredContentJson,
+      producedByRunId: message.harness_run_id ?? null,
+      // The object stamps `created_at` from the append's clock, so the
+      // fixture's timestamp is passed as that clock rather than as a column.
+      now: createdAt,
+    }));
+  }
+  copied.messages = workstream.messages.length;
 }
 
 /**
@@ -205,15 +294,6 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     const copied: Record<string, number> = {};
 
     const identityPort = createIdentityObjectPort(env, workspaceId, workstream.id);
-    await identityPort.seedFromFixture({
-      title: workstream.title,
-      // The fixture speaks the published vocabulary because it was captured
-      // from an API response; the object stores its own.
-      exactState: storedWorkstreamState(workstream.harnessStatus),
-      nextSequenceNumber: workstream.nextSequenceNumber,
-      now: Date.now(),
-    });
-
     const insert = async (
       table: string,
       rows: z.infer<typeof row>[],
@@ -244,7 +324,19 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     copied.workstream_participants = workstream.participants.length;
     await insert("harness_runs", workstream.harnessRuns, scope);
     await insertToolReceipts(routed.DB, workstream.toolInvocations, copied);
-    await insert("messages", workstream.messages, scope);
+    await seedTranscript(env, workspaceId, workstream, copied);
+    // Last, because the transcript above draws its sequence numbers from the
+    // object's own counter, and the captured `nextSequenceNumber` is where that
+    // counter stood *after* the fixture's final message. Restoring it first
+    // numbered every seeded message from there.
+    await identityPort.seedFromFixture({
+      title: workstream.title,
+      // The fixture speaks the published vocabulary because it was captured
+      // from an API response; the object stores its own.
+      exactState: storedWorkstreamState(workstream.harnessStatus),
+      nextSequenceNumber: workstream.nextSequenceNumber,
+      now: Date.now(),
+    });
 
     if (workstream.resourceIds.length > 0) {
       const creator = String(workstream.participants[0]?.user_id ?? "");

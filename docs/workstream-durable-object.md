@@ -1278,6 +1278,40 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-28 — The development seed writes its transcript through the message authority
+
+**What changed:** `routes/dev.ts` no longer inserts the checked-in product
+fixture's messages as D1-shaped SQL. Each row now goes through the message
+object port — `appendMessage` for a participant message, `upsertToolMessage`
+for a tool card — and `seedFromFixture` moved to *after* those writes. Seeded
+tool receipts gained `ON CONFLICT(run_id, tool_call_id) DO NOTHING`.
+
+**Why:** Transcript retirement dropped `_runtime_messages`, and this route was
+its last caller. `pnpm db:open-authority` had been failing since with
+`no such table: _runtime_messages`, so every local stack's seeded work streams
+opened empty — long enough to be recorded in `dev-environment.md` as known
+broken. The receipt clause is a second defect the first one hid: the route
+documents itself as idempotent and `open-local-authority.mjs` tells you to
+re-run it to repair a partial import, but a second run died on
+`tool_effects_run_call_uq` before it could.
+
+**Considered and rejected:** Reinstating the view for this one caller, which
+would have re-created the split authority the retirement removed, for
+development-only code. Also rejected `INSERT OR IGNORE` for the receipts: it
+resolves against all three of the table's constraints and would swallow a
+fixture that violates a CHECK or a foreign key, where the named conflict target
+skips only a receipt that is genuinely already seeded.
+
+**What a future change has to respect.** The ports assign sequence numbers from
+the object's own counter; they do not take the fixture's. The recorded numbers
+survive only because the rows are written in order into an object still at the
+number its bootstrap left, which is why the captured `nextSequenceNumber` is
+restored last. Reordering those two puts every seeded message at the captured
+number and beyond. `test-workers/dev-seed-product.test.ts` holds both that
+ordering and the second-post no-op, and is the first check on this route CI
+runs — `pnpm smoke:local` needs two live Workers and never ran in CI, which is
+how the original breakage reached a documented workaround instead of a fix.
+
 ### 2026-08-27 — Participant removal preserves one reader
 
 **What changed:** `removeParticipant` now treats the room as collaborative:

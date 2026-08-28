@@ -492,8 +492,10 @@ export class WorkstreamIdentityStorage {
    *
    * The `/dev` seed route only, which imports a captured workspace into a local
    * object. It is the one caller that sets a sequence number from outside,
-   * because it is restoring a transcript it is about to insert rather than
-   * appending to one.
+   * because it is restoring a captured transcript rather than appending to one:
+   * the fixture's `nextSequenceNumber` is where the work stream stood after its
+   * last recorded message, and the seed's own writes draw their numbers from
+   * this counter, so the route calls this *after* them.
    */
   seedFromFixture(input: {
     title: string;
