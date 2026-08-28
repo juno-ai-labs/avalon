@@ -260,6 +260,18 @@ client. That seam is where the original defect lived.
 
 ## Changelog
 
+### 2026-08-28 — Automation authoring adopts the shared follow controller
+
+**What changed:** The Automation Draft Wizard uses the same 80-pixel follow
+threshold, programmatic-scroll ownership, range behavior, and **Jump to latest**
+component as WorkstreamScreen.
+
+**Why:** A second wizard-only scrolling loop had already diverged on streaming,
+reconnect, and reader ownership.
+
+**Consequences:** Changes to shared follow behavior are verified against both
+screen adapters; automation-only controls do not enter the shared feed.
+
 ### 2026-08-27 — The smooth jump reads reduced motion in script, because CSS cannot
 
 **What changed:** `scrollToEnd({ smooth: true })` — the **Jump to latest**

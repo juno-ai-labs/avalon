@@ -465,6 +465,18 @@ field.
 
 ## Changelog
 
+### 2026-08-28 — AutomationAgent composes every automation wake reason
+
+**What changed:** Automation timers, compiler and Bind recovery, activation and
+projection retries, generated-run provisioning, inbound-email recovery, and
+maintenance now use independent keys in the shared multi-alarm substrate.
+
+**Why:** A Durable Object has one native alarm, while each of these lanes must
+retain its own due time, retry history, and stall gate.
+
+**Consequences:** WorkspaceDO no longer schedules automation occurrences;
+timer reconciliation and missed-occurrence policy are local to AutomationAgent.
+
 ### 2026-08-28 — A maintenance pass names the resources that have no alias yet
 
 **What changed:** A `resource_slugs` maintenance task joins the workspace
@@ -536,7 +548,6 @@ query or wake.
 unlinked receipts from isolate loss; later exact derivation comes only from
 their owning rows. In-memory drain state remains deduplication, never scheduling
 authority.
-
 ### 2026-08-25 — Phase timing distinguishes slow work from a cancelled queued alarm
 
 **What changed:** Workspace alarms now emit content-free start, completion, and

@@ -854,10 +854,9 @@ describe("connector tools selected for harness runs", () => {
       ],
     );
 
-    const selected = await __integrationTesting.loadHarnessTools(
-      env(database),
-      workflowInput(SUBSCRIPTION_ID),
-    );
+    const automationInput = workflowInput(SUBSCRIPTION_ID);
+    automationInput.automationRunContext = { defaultPluginIds: ["plugin_google"] } as never;
+    const selected = await __integrationTesting.loadHarnessTools(env(database), automationInput);
 
     expect(googleToolNames(selected.tools)).toEqual(GOOGLE_WORKSPACE_TOOLS);
     expect(new Set(selected.connectionByTool.values())).toEqual(new Set([WORKSPACE_CONNECTION_ID]));

@@ -2610,6 +2610,56 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       workstream: null,
     });
+
+    // Automation-owned runs can still be opened directly from their parent,
+    // but their child state must never insert a row into the workspace's
+    // recent-work cache. The same pushed-state path therefore sends a
+    // tombstone even to the execution participant once the authoritative
+    // origin identifies this as automation machinery.
+    const participantAutomationPush = nextMessage(participant);
+    const outsiderAutomationPush = nextMessage(outsider);
+    const automationAccepted = await fetchAndDrain(
+      workstreamStub,
+      "https://workstream.test/internal/substream-effects",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          substreamId: "0",
+          envelopes: [effectEnvelope({
+            kind: "directory_common",
+            title: "Generated automation run",
+            description: "Reachable from the automation only",
+            preview: "completed",
+            scope: "personal",
+            state: "completed",
+            systemKind: null,
+            lastActivityAt: at,
+            completedAt: at,
+            archivedAt: null,
+            originType: "automation",
+            createdByUserId: USER_ID,
+            automationSubscriptionId: "00000000-0000-7000-8000-000000000406",
+            automationRunId: "00000000-0000-7000-8000-000000000407",
+            latestAttentionOrdinal: 3,
+            unreadTrackingStartOrdinal: 0,
+            createdAt: at,
+            updatedAt: at,
+          }, "00000000-0000-7000-8000-000000000408", 2)],
+        }),
+      },
+    );
+    expect(automationAccepted.status).toBe(200);
+    expect(JSON.parse(String((await participantAutomationPush).data))).toMatchObject({
+      type: "workspace_workstream_state",
+      workstreamId: WORKSTREAM_ID,
+      workstream: null,
+    });
+    expect(JSON.parse(String((await outsiderAutomationPush).data))).toMatchObject({
+      type: "workspace_workstream_state",
+      workstreamId: WORKSTREAM_ID,
+      workstream: null,
+    });
   });
 
   it("pushes a generated name to a participant who never opened the work stream", async () => {
@@ -2967,10 +3017,8 @@ describe("Durable Objects in the Workers runtime", () => {
       envelopes: [effectEnvelope(common, "00000000-0000-7000-8000-000000000701")],
     })).resolves.toMatchObject({ directoryChanged: true });
 
-    // The automations and the notes are this object's own tables, which is the
-    // whole reason one message can answer for all three.
-    const templateId = "00000000-0000-7000-8000-000000000702";
-    const versionId = "00000000-0000-7000-8000-000000000703";
+    // Notes remain workspace product state. Automations arrive through a
+    // content-free projection from their named AutomationAgent.
     const subscriptionId = "00000000-0000-7000-8000-000000000704";
     const resourceId = "00000000-0000-7000-8000-000000000705";
     const noteId = "00000000-0000-7000-8000-000000000706";
@@ -2978,29 +3026,6 @@ describe("Durable Objects in the Workers runtime", () => {
       workspaceId: WORKSPACE_ID,
       requestId: "00000000-0000-7000-8000-000000000707",
       statements: [
-        {
-          sql: `INSERT INTO automation_templates
-            (id, workspace_id, owner_user_id, name, description, sharing_state,
-             latest_version_number, created_at, updated_at)
-            VALUES (?, ?, ?, 'Monday brief', 'Every Monday', 'workspace', 1,
-                    '2026-08-21T19:00:00.000Z', '2026-08-21T19:00:00.000Z')`,
-          params: [templateId, WORKSPACE_ID, USER_ID],
-        },
-        {
-          sql: `INSERT INTO automation_template_versions
-            (id, template_id, version_number, instructions, trigger_definitions_json,
-             created_by_user_id, created_at)
-            VALUES (?, ?, 1, 'Summarise the week', '[]', ?, '2026-08-21T19:00:00.000Z')`,
-          params: [versionId, templateId, USER_ID],
-        },
-        {
-          sql: `INSERT INTO automation_subscriptions
-            (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-             execution_principal_json, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'workspace', NULL, '{}', 'active',
-                    '2026-08-21T19:00:00.000Z', '2026-08-21T19:30:00.000Z')`,
-          params: [subscriptionId, WORKSPACE_ID, templateId, versionId],
-        },
         {
           sql: `INSERT INTO resources
             (id, workspace_id, resource_type, provider, title, created_at, updated_at)
@@ -3018,6 +3043,21 @@ describe("Durable Objects in the Workers runtime", () => {
         },
       ],
     })).resolves.toMatchObject({ status: 200 });
+    await expect(stub.applyAutomationProjection({
+      schemaVersion: 1,
+      automationId: subscriptionId,
+      workspaceId: WORKSPACE_ID,
+      authorUserId: USER_ID,
+      authorityGeneration: 1,
+      projectionVersion: 1,
+      payloadHash: "monday-brief-v1",
+      lifecycle: "active",
+      scope: "workspace",
+      title: "Monday brief",
+      description: "Every Monday",
+      nextRunAt: null,
+      attentionCode: null,
+    })).resolves.toEqual({ applied: true });
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -3183,39 +3223,22 @@ describe("Durable Objects in the Workers runtime", () => {
     ));
     await stub.initializeWorkspace(WORKSPACE_ID, "wnam");
 
-    const templateId = "00000000-0000-7000-8000-000000000801";
-    const versionId = "00000000-0000-7000-8000-000000000802";
     const subscriptionId = "00000000-0000-7000-8000-000000000803";
-    await expect(stub.executeRuntimeSql({
+    await expect(stub.applyAutomationProjection({
+      schemaVersion: 1,
+      automationId: subscriptionId,
       workspaceId: WORKSPACE_ID,
-      requestId: "00000000-0000-7000-8000-000000000804",
-      statements: [
-        {
-          sql: `INSERT INTO automation_templates
-            (id, workspace_id, owner_user_id, name, description, sharing_state,
-             latest_version_number, created_at, updated_at)
-            VALUES (?, ?, ?, 'Weekly changelog', 'Every Monday', 'workspace', 1,
-                    '2026-08-21T19:00:00.000Z', '2026-08-21T19:00:00.000Z')`,
-          params: [templateId, WORKSPACE_ID, USER_ID],
-        },
-        {
-          sql: `INSERT INTO automation_template_versions
-            (id, template_id, version_number, instructions, trigger_definitions_json,
-             created_by_user_id, created_at)
-            VALUES (?, ?, 1, 'Summarise', '[]', ?, '2026-08-21T19:00:00.000Z')`,
-          params: [versionId, templateId, USER_ID],
-        },
-        {
-          sql: `INSERT INTO automation_subscriptions
-            (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-             execution_principal_json, status, next_run_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 'workspace', NULL, '{}', 'active',
-                    '2026-08-28T09:00:00.000Z', '2026-08-21T19:00:00.000Z',
-                    '2026-08-21T19:00:00.000Z')`,
-          params: [subscriptionId, WORKSPACE_ID, templateId, versionId],
-        },
-      ],
-    })).resolves.toMatchObject({ status: 200 });
+      authorUserId: USER_ID,
+      authorityGeneration: 1,
+      projectionVersion: 1,
+      payloadHash: "weekly-changelog-v1",
+      lifecycle: "active",
+      scope: "workspace",
+      title: "Weekly changelog",
+      description: "Every Monday",
+      nextRunAt: Date.parse("2026-08-28T09:00:00.000Z"),
+      attentionCode: null,
+    })).resolves.toEqual({ applied: true });
 
     const response = await stub.fetch("https://workspace.test/socket", {
       headers: {
@@ -3237,31 +3260,30 @@ describe("Durable Objects in the Workers runtime", () => {
       socket!.send(JSON.stringify({ type: "subscribe", afterWaterline: 0 }));
       expect(JSON.parse(String((await subscribed).data))).toMatchObject({ type: "workspace_sync" });
 
-      // Exactly the statement WorkspaceScheduler runs after a scheduled run.
-      // It carries no HTTP request, so the REST mutation middleware never sees
-      // it — before the push this left the sidebar's next-run time stale.
+      // The parent projection is the only automation write that reaches the
+      // workspace sidebar; the schedule itself remains agent-owned.
       const pushed = nextMessage(socket!);
-      await expect(stub.executeRuntimeSql({
+      await expect(stub.applyAutomationProjection({
+        schemaVersion: 1,
+        automationId: subscriptionId,
         workspaceId: WORKSPACE_ID,
-        requestId: "00000000-0000-7000-8000-000000000806",
-        statements: [{
-          sql: `UPDATE automation_subscriptions
-                   SET last_run_at = ?1, next_run_at = ?2, updated_at = ?1
-                 WHERE id = ?3 AND workspace_id = ?4`,
-          params: [
-            "2026-08-21T21:00:00.000Z",
-            "2026-09-04T09:00:00.000Z",
-            subscriptionId,
-            WORKSPACE_ID,
-          ],
-        }],
-      })).resolves.toMatchObject({ status: 200 });
+        authorUserId: USER_ID,
+        authorityGeneration: 1,
+        projectionVersion: 2,
+        payloadHash: "weekly-changelog-v2",
+        lifecycle: "active",
+        scope: "workspace",
+        title: "Weekly changelog",
+        description: "Every Monday",
+        nextRunAt: Date.parse("2026-09-04T09:00:00.000Z"),
+        attentionCode: null,
+      })).resolves.toEqual({ applied: true });
 
       const event = JSON.parse(String((await pushed).data)) as {
         type: string;
         list: string;
         waterline: number;
-        items: Array<{ id: string; nextRunAt: string | null; lastRunAt: string | null }>;
+        items: Array<{ id: string; nextRunAt: string | null }>;
       };
       expect(event.type).toBe("workspace_sidebar_list");
       expect(event.list).toBe("automations");
@@ -3269,22 +3291,27 @@ describe("Durable Objects in the Workers runtime", () => {
       expect(event.items[0]).toMatchObject({
         id: subscriptionId,
         nextRunAt: "2026-09-04T09:00:00.000Z",
-        lastRunAt: "2026-08-21T21:00:00.000Z",
       });
 
       // A second write moves the counter again, and a write to the other list
       // leaves this one alone: two lists that change independently keep
       // independent counters, or a note write would hide an automation update.
       const secondPush = nextMessage(socket!);
-      await expect(stub.executeRuntimeSql({
+      await expect(stub.applyAutomationProjection({
+        schemaVersion: 1,
+        automationId: subscriptionId,
         workspaceId: WORKSPACE_ID,
-        requestId: "00000000-0000-7000-8000-000000000807",
-        statements: [{
-          sql: `UPDATE automation_subscriptions SET status = 'paused', updated_at = ?1
-                 WHERE id = ?2 AND workspace_id = ?3`,
-          params: ["2026-08-21T22:00:00.000Z", subscriptionId, WORKSPACE_ID],
-        }],
-      })).resolves.toMatchObject({ status: 200 });
+        authorUserId: USER_ID,
+        authorityGeneration: 1,
+        projectionVersion: 3,
+        payloadHash: "weekly-changelog-v3",
+        lifecycle: "paused",
+        scope: "workspace",
+        title: "Weekly changelog",
+        description: "Every Monday",
+        nextRunAt: Date.parse("2026-09-04T09:00:00.000Z"),
+        attentionCode: "paused",
+      })).resolves.toEqual({ applied: true });
       const second = JSON.parse(String((await secondPush).data)) as {
         waterline: number;
         items: Array<{ status: string }>;

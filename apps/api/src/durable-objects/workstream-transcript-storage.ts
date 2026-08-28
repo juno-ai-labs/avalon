@@ -34,6 +34,11 @@ import {
   type SubstreamLoopRow,
 } from "./substream-loop-storage";
 import { enqueueSemanticRealtimeReference } from "./workstream-semantic-realtime-outbox";
+import {
+  canonicalTranscriptJson,
+  insertPreparedCanonicalTranscriptFact,
+  prepareCanonicalTranscriptFact,
+} from "./ordered-transcript-sqlite/canonical-payload-store";
 
 export interface TranscriptFactMaterial {
   factId: string;
@@ -4079,16 +4084,12 @@ export class WorkstreamTranscriptStorage {
 export async function prepareTranscriptFact(
   fact: TranscriptFactMaterial,
 ): Promise<PreparedTranscriptFact> {
-  const canonical = canonicalJson(fact.payload);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
-  const hash = [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
+  const prepared = await prepareCanonicalTranscriptFact(fact);
   return {
     ...fact,
-    canonical,
-    hash,
-    payloadId: `payload:${fact.audience}:${hash}`,
+    canonical: prepared.canonical,
+    hash: prepared.hash,
+    payloadId: prepared.payloadId,
   };
 }
 
@@ -4097,40 +4098,12 @@ export function insertPreparedTranscriptFact(
   fact: PreparedTranscriptFact,
   now: number,
 ): void {
-  sql.exec(
-    `INSERT INTO transcript_payloads
-       (payload_id, audience, media_type, payload_json, payload_sha256, byte_length, created_at)
-     VALUES (?, ?, 'application/json', ?, ?, ?, ?)
-     ON CONFLICT(audience, payload_sha256, byte_length) DO NOTHING`,
-    fact.payloadId,
-    fact.audience,
-    fact.canonical,
-    fact.hash,
-    new TextEncoder().encode(fact.canonical).byteLength,
-    now,
-  );
-  sql.exec(
-    `INSERT INTO transcript_facts
-       (fact_id, fact_kind, payload_id, origin_kind, source_kind, source_id,
-        source_revision, run_id, turn_id, tool_call_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(fact_id) DO UPDATE SET
-       payload_id = excluded.payload_id,
-       run_id = excluded.run_id,
-       turn_id = excluded.turn_id,
-       tool_call_id = excluded.tool_call_id`,
-    fact.factId,
-    fact.factKind,
-    fact.payloadId,
-    fact.origin.originKind,
-    fact.origin.sourceKind,
-    fact.origin.sourceId,
-    fact.origin.sourceRevision,
-    fact.runId,
-    fact.turnId,
-    fact.toolCallId,
-    now,
-  );
+  insertPreparedCanonicalTranscriptFact(sql, {
+    canonical: fact.canonical,
+    hash: fact.hash,
+    payloadId: fact.payloadId,
+    material: fact,
+  }, now);
 }
 
 export async function prepareConversationTurn(
@@ -4640,7 +4613,7 @@ function sortActivities(activities: TranscriptActivity[]): TranscriptActivity[] 
 }
 
 function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortJson(value));
+  return canonicalTranscriptJson(value);
 }
 
 function bindProvenanceKey(provenance: BindLoopMessageOrigin): string {
@@ -4664,21 +4637,4 @@ function toolInvocationError(invocation: Record<string, unknown> | null): string
   if (!invocation?.error || typeof invocation.error !== "object") return null;
   const message = (invocation.error as Record<string, unknown>).message;
   return typeof message === "string" ? message : null;
-}
-
-function sortJson(value: unknown): unknown {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
-  if (value === undefined) throw new Error("transcript_non_json_value");
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error("transcript_non_finite_number");
-    return value;
-  }
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (typeof value === "object") {
-    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-      .filter(([, nested]) => nested !== undefined)
-      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-      .map(([key, nested]) => [key, sortJson(nested)]));
-  }
-  throw new Error("transcript_non_json_value");
 }

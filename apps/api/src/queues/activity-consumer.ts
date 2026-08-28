@@ -11,6 +11,9 @@ import {
   SlackIngressQueueMessageSchema,
   TriggerDefinitionSchema,
   WorkstreamWorkflowInputSchema,
+  WorkspaceExternalEventDeliveryQueueMessageSchema,
+  asAutomationId,
+  asSubstreamId,
   asWorkspaceId,
   asWorkstreamId,
   asUserId,
@@ -21,7 +24,7 @@ import { z } from "zod";
 
 import { WorkstreamRegionalEffectQueueMessageSchema } from "../durable-objects/workstream-regional-effect";
 import { ProjectDefaultResourceQueueMessageSchema } from "../durable-objects/workspace-project-protocol";
-import { substreamLoopId, workspaceDOName } from "../durable-objects/names";
+import { automationAgentName, substreamAgentName, substreamLoopId, workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceConnectorEventClaimResultSchema,
   WorkspaceConnectorEventProcessQueueMessageSchema,
@@ -238,6 +241,103 @@ export async function recoverPendingActivityQueue(env: Env, limit = 100): Promis
 }
 
 async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
+  const externalDelivery = WorkspaceExternalEventDeliveryQueueMessageSchema.safeParse(message.body);
+  if (externalDelivery.success) {
+    const input = externalDelivery.data;
+    if (input.region !== env.AVALON_REGION) {
+      message.ack();
+      return;
+    }
+    const workspace = await workspaceDirectory(env, input.workspaceId);
+    const leaseId = uuidV7();
+    try {
+      const claim = await workspace.claimExternalEventDelivery({
+        schemaVersion: 1,
+        workspaceId: input.workspaceId,
+        workspaceEventId: input.workspaceEventId,
+        deliveryId: input.deliveryId,
+        payloadHash: input.payloadHash,
+        leaseId,
+      });
+      if (claim.outcome === "delivered") {
+        message.ack();
+        return;
+      }
+      if (claim.outcome === "busy") {
+        message.retry({ delaySeconds: Math.max(1, Math.ceil((claim.retryAt - Date.now()) / 1_000)) });
+        return;
+      }
+      let delivered: boolean;
+      let outcomeCode: string;
+      if (claim.destination.kind === "automation") {
+        const automation = await durableObjectStubForWorkspace(
+          env,
+          env.AUTOMATION_AGENTS,
+          input.workspaceId,
+          automationAgentName(
+            input.region,
+            input.workspaceId,
+            asAutomationId(claim.destination.automationId),
+          ),
+        );
+        const result = await automation.admitExternalEvent({
+          schemaVersion: 1,
+          automationId: claim.destination.automationId,
+          workspaceId: input.workspaceId,
+          authorityGeneration: claim.destination.authorityGeneration,
+          workspaceEventId: input.workspaceEventId,
+          eventSequence: claim.event.eventSequence,
+          eventType: claim.event.eventType,
+          occurredAt: claim.event.occurredAt,
+          payloadHash: input.payloadHash,
+        });
+        delivered = result.admitted || result.outcomeCode === "automation_occurrence_replayed";
+        outcomeCode = result.outcomeCode;
+      } else {
+        const substream = await durableObjectStubForWorkspace(
+          env,
+          env.SUBSTREAM_AGENTS,
+          input.workspaceId,
+          substreamAgentName(
+            input.region,
+            input.workspaceId,
+            asWorkstreamId(claim.destination.workstreamId),
+            asSubstreamId(claim.destination.substreamId),
+          ),
+        );
+        const result = await substream.appendWatchedResourceEvent({
+          schemaVersion: 1,
+          workspaceId: input.workspaceId,
+          workstreamId: claim.destination.workstreamId,
+          substreamId: claim.destination.substreamId,
+          resourceId: claim.destination.resourceId,
+          authorityGeneration: claim.destination.authorityGeneration,
+          deliveryId: input.deliveryId,
+          event: claim.event,
+        });
+        delivered = result.outcome !== "refused";
+        outcomeCode = result.code;
+      }
+      await workspace.settleExternalEventDelivery({
+        schemaVersion: 1,
+        workspaceId: input.workspaceId,
+        deliveryId: input.deliveryId,
+        leaseId,
+        outcome: delivered ? "delivered" : "not_delivered",
+        outcomeCode,
+      });
+      message.ack();
+    } catch (error) {
+      logWarn(env, "external_event_delivery_failed", {
+        workspace_id: input.workspaceId,
+        connector_event_id: input.workspaceEventId,
+        delivery_id: input.deliveryId,
+        reason: diagnosticErrorCode(error, "external_event_delivery_failed"),
+      });
+      message.retry();
+    }
+    return;
+  }
   const projectDefault = ProjectDefaultResourceQueueMessageSchema.safeParse(message.body);
   if (projectDefault.success) {
     const target = projectDefault.data;
@@ -484,7 +584,7 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
             ? claim.retryAt
             : null,
       });
-      if (claim.outcome === "processed") {
+        if (claim.outcome === "processed") {
         logInfo(env, "connector_event_process_terminal", {
           workspace_id: input.workspaceId,
           connector_event_id: input.eventId,
@@ -498,6 +598,19 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
         return;
       }
       if (claim.outcome === "busy") {
+        if (claim.retryAt === null) {
+          logInfo(env, "connector_event_process_terminal", {
+            workspace_id: input.workspaceId,
+            connector_event_id: input.eventId,
+            processing_owner_id: input.processingOwnerId,
+            processing_attempt: processingAttempt,
+            outcome: "skipped",
+            reason: claim.reason,
+            queue_attempts: message.attempts,
+          });
+          message.ack();
+          return;
+        }
         if (claim.retryAt === null) {
           logInfo(env, "connector_event_process_terminal", {
             workspace_id: input.workspaceId,
@@ -529,6 +642,11 @@ async function consumeOne(message: Message<unknown>, env: Env): Promise<void> {
 
       try {
         await processConnectorEvent(env, claim.event);
+        const matched = await workspace.matchExternalEventDestinations({
+          workspaceId: input.workspaceId,
+          eventId: input.eventId,
+        });
+        await Promise.all(matched.deliveries.map((delivery) => env.ACTIVITY_QUEUE.send(delivery)));
       } catch (error) {
         const errorCode = diagnosticErrorCode(error, "connector_event_processing_failed");
         const reason = error instanceof Error
@@ -710,9 +828,9 @@ export async function processConnectorEvent(
 ): Promise<void> {
   const activity = activityRowFromWorkspaceEvent(event);
   env = withWorkspaceRuntimeDatabase(env, activity.workspace_id);
-  const directWorkstreamIds = await routeDirectWatches(env, activity);
-  const automationWorkstreamIds = await runMatchingAutomations(env, activity);
-  for (const workstreamId of automationWorkstreamIds) directWorkstreamIds.add(workstreamId);
+  // WorkspaceDO's typed registration index is the only automation/watch
+  // fan-out. The old D1 scans were a second matcher with stale authority.
+  const directWorkstreamIds = new Set<string>();
   const routedContextually = SUGGESTED_CONTEXT_ENABLED
     ? await routeContextually(env, activity, directWorkstreamIds)
     : false;

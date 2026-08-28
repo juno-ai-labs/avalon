@@ -4,13 +4,18 @@ Rally's regional data is split by declared authority. D1 is the thin regional
 control plane: it owns workspace/member/user identity, object and connector
 ingress routing, migration coordination, global-provider handoff receipts, and
 operational audit/telemetry. `WorkspaceDO` owns every workspace-scoped product
-that is not intrinsically one work stream: connector credentials and local
-handoff state, Terminal egress policy history, automations, digests and
-schedules, resources/notes/watches and R2 lifecycle references, memory,
+that is not intrinsically one work stream or automation: connector credentials
+and local handoff state, Terminal egress policy history, digests and shared
+schedules, resources/notes/watches and R2 lifecycle references, shared memory,
 external-delivery intents/attempts, inbound-email processing receipts,
 dictation socket admission, the cross-work-stream directory,
-first-party activity, and suggested work. D1 keeps no rebuildable workspace
-product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
+first-party activity, and suggested work.
+
+Each accepted or draft automation is authoritative in its own AutomationAgent.
+WorkspaceDO stores only its content-free directory, reader and attention
+projections plus external-event registration and delivery receipts. See
+[`automation-lifecycle.md`](automation-lifecycle.md). D1 keeps no rebuildable
+workspace product serving projection. Serving contract 1 makes each `SubstreamAgent` SQLite database the product authority for
 one independently ordered substream after the guarded regional generation opens;
 its non-agent `WorkstreamDO` parent owns aggregate work-stream metadata and the
 regional effect outbox plus HyperSight configuration/published results. Each
@@ -839,6 +844,21 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-28 — Automation product state moves out of WorkspaceDO
+
+**What changed:** Named AutomationAgents own draft turns, compiled definitions,
+lifecycle, timers, occurrences, generated-run history, delivery, and
+automation-scoped memory. WorkspaceDO owns event fan-in, evaluator/watch
+registrations, destination receipts, and content-free projections. The cutover
+drops the former subscription, run, delivery, resource, and memory tables.
+
+**Why:** One automation needs one transactional authority from first turn
+through deletion; the workspace remains the correct fan-in authority for events
+shared by many destinations.
+
+**Consequences:** D1 and WorkspaceDO cannot reconstruct AutomationAgent state,
+and projections can locate but never authorize automation content.
+
 ### 2026-08-28 — Resource versions carry provenance, and resources carry an alias
 
 **What changed:** WorkspaceDO schema version 18 adds an author kind, its
@@ -1063,7 +1083,6 @@ is about to drop. Migration tests commit the populated old-schema fixture before
 starting the upgrade, matching a real object waking on a newer deployment. The
 fixture seeds every dependent relation whose omission could hide a cascade or
 failed parent removal.
-
 
 ### 2026-08-27 — Participant removal cannot empty a work stream
 

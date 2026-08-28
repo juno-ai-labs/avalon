@@ -550,7 +550,20 @@ export function createGranolaConnector(config: GranolaConnectorConfig): Connecto
           digestible: ["note.generated"],
           operational: ["note.access_granted", "note.edited", "note.regenerated"],
         },
-        {},
+        {
+          "note.generated": {
+            label: "Transcript added",
+            description: "A new Granola transcript was generated.",
+            eventFamilies: ["granola.transcript.created"],
+            filterFields: [{
+              key: "participantPersonIds",
+              label: "Participants",
+              description: "Canonical Rally people participating in the transcript.",
+              valueType: "person_id_array",
+            }],
+            resourceRelationships: [{ relationship: "folder", resourceType: "granola_folder" }],
+          },
+        },
         [{ key: "changedFields", label: "Changed fields", description: "Granola note fields reported as changed.", valueType: "string_array" }],
       ),
       resourceTypes: ["granola_note", "granola_folder"],

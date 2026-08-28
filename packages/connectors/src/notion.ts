@@ -537,7 +537,31 @@ export function createNotionConnector(config: NotionConnectorConfig): ConnectorA
           "notion.file_upload.completed", "notion.file_upload.created", "notion.file_upload.expired", "notion.file_upload.upload_failed",
           "notion.view.created", "notion.view.deleted", "notion.view.updated",
         ],
-      }, {}, [
+      }, {
+        "notion.page.created": {
+          resourceRelationships: [
+            { relationship: "parent", resourceType: "notion_page" },
+            { relationship: "parent", resourceType: "notion_data_source" },
+          ],
+        },
+        "notion.page.content_updated": {
+          eventFamilies: ["notion.page.updated"],
+          resourceRelationships: [{ relationship: "page", resourceType: "notion_page" }],
+        },
+        "notion.page.properties_updated": {
+          eventFamilies: ["notion.page.updated"],
+          resourceRelationships: [{ relationship: "page", resourceType: "notion_page" }],
+        },
+        "notion.comment.created": {
+          filterFields: [{
+            key: "authorPersonIds",
+            label: "Authors",
+            description: "Canonical Rally people who authored the comment.",
+            valueType: "person_id_array",
+          }],
+          resourceRelationships: [{ relationship: "page", resourceType: "notion_page" }],
+        },
+      }, [
         { key: "subscriptionId", label: "Subscription", description: "Notion webhook subscription identifier.", valueType: "string" },
         { key: "integrationId", label: "Integration", description: "Notion integration identifier.", valueType: "string" },
         { key: "notionWorkspaceId", label: "Workspace", description: "Notion workspace identifier.", valueType: "string" },

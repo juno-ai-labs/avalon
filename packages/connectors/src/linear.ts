@@ -466,7 +466,33 @@ export function createLinearConnector(config: LinearConnectorConfig): ConnectorA
           // machinery that writes it.
           "linear.agent_session_event.created", "linear.agent_session_event.prompted",
         ],
-      }, {}, [
+      }, {
+        "linear.project.update": {
+          eventFamilies: ["linear.project.changed"],
+          resourceRelationships: [{ relationship: "project", resourceType: "linear_project" }],
+        },
+        "linear.project.remove": {
+          eventFamilies: ["linear.project.changed"],
+          resourceRelationships: [{ relationship: "project", resourceType: "linear_project" }],
+        },
+        "linear.issue.create": {
+          eventFamilies: ["linear.issue.changed"],
+          resourceRelationships: [{ relationship: "project", resourceType: "linear_project" }],
+        },
+        "linear.issue.update": {
+          eventFamilies: ["linear.issue.changed"],
+          resourceRelationships: [{ relationship: "project", resourceType: "linear_project" }],
+          filterFields: [
+            { key: "changedFields", label: "Changed fields", description: "Linear issue fields changed by this update.", valueType: "string_array" },
+            { key: "previousStateId", label: "Previous state", description: "Canonical Linear state ID before this update.", valueType: "string" },
+            { key: "stateId", label: "Current state", description: "Canonical Linear state ID after this update.", valueType: "string" },
+          ],
+        },
+        "linear.issue.remove": {
+          eventFamilies: ["linear.issue.changed"],
+          resourceRelationships: [{ relationship: "project", resourceType: "linear_project" }],
+        },
+      }, [
         { key: "deliveryId", label: "Delivery ID", description: "Unique Linear webhook delivery identifier.", valueType: "string" },
         { key: "webhookId", label: "Webhook ID", description: "Linear webhook subscription identifier.", valueType: "string" },
         { key: "organizationId", label: "Organization", description: "Linear organization identifier.", valueType: "string" },
@@ -1059,6 +1085,9 @@ export function normalizeLinearWebhook(
       action,
       url,
       updatedFrom: recordValue(event, "updatedFrom") ?? {},
+      changedFields: Object.keys(recordValue(event, "updatedFrom") ?? {}),
+      previousStateId: stringValue(recordValue(event, "updatedFrom") ?? {}, "stateId"),
+      stateId: stringValue(data, "stateId") ?? stringValue(recordValue(data, "state") ?? {}, "id"),
     },
   };
 }

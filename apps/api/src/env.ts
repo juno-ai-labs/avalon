@@ -25,6 +25,7 @@ import type { SubstreamAgent } from "./durable-objects/substream-agent";
 import type { WorkspaceDO } from "./durable-objects/workspace-do";
 import type { WorkstreamDO } from "./durable-objects/workstream-do";
 import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agent";
+import type { AutomationAgent } from "./durable-objects/automation-agent";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
@@ -45,6 +46,7 @@ export interface Env {
   // both. Either way they fall back to the model variables below.
   FLAGS?: Flagship;
   SUBSTREAM_AGENTS: DurableObjectNamespace<SubstreamAgent>;
+  AUTOMATION_AGENTS: DurableObjectNamespace<AutomationAgent>;
   BLOCK_DASHBOARD_AGENTS: DurableObjectNamespace<BlockDashboardAgent>;
   WORKSTREAM_DOS: DurableObjectNamespace<WorkstreamDO>;
   WORKSPACE_DOS: DurableObjectNamespace<WorkspaceDO>;
@@ -292,6 +294,7 @@ const EnvContractSchema = z.object({
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
   TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
+  AUTOMATION_AGENTS: binding<DurableObjectNamespace<AutomationAgent>>(),
   BLOCK_DASHBOARD_AGENTS: binding<DurableObjectNamespace<BlockDashboardAgent>>(),
   WORKSTREAM_DOS: binding<DurableObjectNamespace<WorkstreamDO>>(),
   WORKSPACE_DOS: binding<DurableObjectNamespace<WorkspaceDO>>(),

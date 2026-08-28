@@ -43,6 +43,7 @@ import {
   type HarnessToolResult,
   type HarnessToolPolicyIdentity,
   type RunHarnessInput,
+  type RequestElicitationInput,
   type HarnessTool,
   type ModelMessage,
   type ModelMessageProvenance,
@@ -53,6 +54,7 @@ import {
 } from "@rally/agent-harness";
 import { HttpUrlSchema } from "@rally/contracts/url-schemas";
 import {
+  AutomationMemoryTableSchema,
   ModelPluginIdSchema,
   ToolDefinitionSchema,
   WorkstreamViewResourceOutputSchema,
@@ -64,6 +66,7 @@ import {
   type WorkspaceId,
   type AddressingClassification,
   type AutomationDraft,
+  type AutomationSetEvaluatorRulesInputV1,
   type HarnessFailureCode,
   type AutomationPluginActivity,
   type AutomationPluginIcon,
@@ -230,10 +233,9 @@ import {
   createMemoryTools,
   freezeRunMemoryContext,
 } from "./memory-service";
-import {
-  createMemoryTableTools,
-  loadAutomationMemoryTableContext,
-} from "./memory-table-service";
+import { createMemoryTableTools } from "./memory-table-service";
+import type { loadAutomationMemoryTableContext } from "./memory-table-service";
+import { readAutomationMemoryBootstrapForRun } from "./automation-memory-client";
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { parseTerminalRegionConfiguration, TERMINAL_PLUGIN_ID } from "./terminal/contract";
 import { createAvalonTerminalPlugin } from "./terminal/plugin";
@@ -1601,6 +1603,20 @@ export async function compileAutomationDraft(
     workspaceId: WorkspaceId;
     userId: UserId;
     onStreamEvent?: (event: AutomationCompilerStreamEvent) => void | Promise<void>;
+    draftMutationPort?: {
+      setEvaluatorRules(
+        rules: AutomationSetEvaluatorRulesInputV1,
+        context: HarnessToolContext,
+      ): Promise<{ accepted: true }>;
+      submitDraft(
+        draft: AutomationDraft,
+        context: HarnessToolContext,
+      ): Promise<{ accepted: true }>;
+      requestElicitation(
+        elicitation: RequestElicitationInput,
+        context: HarnessToolContext,
+      ): Promise<{ accepted: true }>;
+    };
     signal?: AbortSignal;
   },
 ): Promise<AutomationDraft> {
@@ -1619,6 +1635,69 @@ export async function compileAutomationDraft(
         frozenResourceIds: draftAttachments.frozenResourceIds,
       })
     : [];
+  const draftResearchPort = {
+    searchPeople: async (query: string) => {
+      const pattern = `%${query}%`;
+      const rows = await env.DB.prepare(
+        `SELECT user.id, user.name, user.email
+           FROM workspace_members member
+           JOIN users user ON user.id = member.user_id
+          WHERE member.workspace_id = ? AND member.status = 'active'
+            AND (user.name LIKE ? OR user.email LIKE ?)
+          ORDER BY user.name, user.id`,
+      ).bind(input.workspaceId, pattern, pattern).all<{
+        id: string;
+        name: string;
+        email: string;
+      }>();
+      return { people: rows.results ?? [] };
+    },
+    searchResources: async (query: string) => {
+      const resources = await env.DB.prepare(
+        `SELECT id, title, resource_type, connection_id
+           FROM resources
+          WHERE workspace_id = ? AND title LIKE ?
+          ORDER BY title, id`,
+      ).bind(input.workspaceId, `%${query}%`).all<{
+        id: string;
+        title: string;
+        resource_type: string;
+        connection_id: string | null;
+      }>();
+      const connections = await env.DB.prepare(
+        `SELECT id, model_plugin_id FROM connector_connections
+          WHERE workspace_id = ? AND status <> 'disabled'`,
+      ).bind(input.workspaceId).all<{ id: string; model_plugin_id: string }>();
+      const pluginsByConnection = new Map(
+        (connections.results ?? []).map((connection) => [connection.id, connection.model_plugin_id]),
+      );
+      const bindingKeysByPlugin = new Map<string, string[]>();
+      for (const trigger of input.currentDraft?.triggers ?? []) {
+        if (
+          (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity" && trigger.type !== "webhook")
+          || !trigger.suggestedSourcePluginId
+          || !trigger.sourceBindingKey
+        ) continue;
+        bindingKeysByPlugin.set(trigger.suggestedSourcePluginId, [
+          ...(bindingKeysByPlugin.get(trigger.suggestedSourcePluginId) ?? []),
+          trigger.sourceBindingKey,
+        ]);
+      }
+      return {
+        resources: (resources.results ?? []).flatMap((resource) => {
+          const pluginId = resource.connection_id ? pluginsByConnection.get(resource.connection_id) : undefined;
+          if (!pluginId) return [];
+          return [{
+            id: resource.id,
+            title: resource.title,
+            resourceType: resource.resource_type,
+            pluginId,
+            sourceBindingKeys: [...new Set(bindingKeysByPlugin.get(pluginId) ?? [])],
+          }];
+        }),
+      };
+    },
+  };
   const webPlugin = createAvalonWebPlugin(createFirecrawlWebTools(env));
   const routing = await resolveAgentModelRouting(env, "automation_compiler", {
     workspaceId: input.workspaceId,
@@ -1643,6 +1722,8 @@ export async function compileAutomationDraft(
       messages: input.messages,
       ...(draftAttachments.parts.length > 0 ? { latestUserAttachmentParts: draftAttachments.parts } : {}),
       ...(architectTools.length > 0 ? { architectTools } : {}),
+      ...(input.draftMutationPort ? { draftMutationPort: input.draftMutationPort } : {}),
+      draftResearchPort,
       currentDraft: input.currentDraft ?? null,
       defaultTimezones: input.defaultTimezones,
       pluginCatalog,
@@ -1938,7 +2019,6 @@ export async function activateWorkstreamLoop(env: Env, input: WorkstreamWorkflow
       substreamId,
     ),
   );
-  const activatedAt = nowIso();
   let response: Awaited<ReturnType<typeof agent.activateLoop>>;
   try {
     response = await agent.activateLoop({ ...input, substreamId });
@@ -1957,33 +2037,13 @@ export async function activateWorkstreamLoop(env: Env, input: WorkstreamWorkflow
       ? body.error
       : `substream_agent_activation_failed:${response.status}`);
   }
-  try {
-    await projectLoopExecutionReceipt(env, input, executionReceiptId, activatedAt);
-    return executionReceiptId;
-  } catch (error) {
-    // Agent activation commits the subordinate receipt launch and its complete
-    // restart context together. A caller may replay that exact admission, but
-    // must not delete the work stream or mint another logical loop after any
-    // later projection boundary fails.
-    throw markLoopActivationRecorded(error instanceof Error ? error : new Error("Loop activation failed"));
-  }
+  // Agent activation commits the subordinate receipt launch and its complete
+  // restart context together; automation lifecycle state is the
+  // AutomationAgent's own projection, so nothing regional remains to update
+  // here.
+  return executionReceiptId;
 }
 
-async function projectLoopExecutionReceipt(
-  env: Env,
-  input: WorkstreamWorkflowInput,
-  executionReceiptId: string,
-  activatedAt: string,
-): Promise<void> {
-  await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
-    `UPDATE automation_runs
-     SET workflow_instance_id = ?,
-         status = CASE WHEN status = 'scheduled' THEN 'running' ELSE status END,
-         started_at = COALESCE(started_at, ?)
-     WHERE workstream_id = ? AND workspace_id = ?
-       AND ? != 'block_dashboard_block'`,
-  ).bind(executionReceiptId, activatedAt, input.workstreamId, input.workspaceId, input.reason).run();
-}
 
 interface SequencedStreamDeltaBatcher {
   push(event: Extract<HarnessEvent, { type: "stream_delta" }>): Promise<void>;
@@ -4999,55 +5059,6 @@ async function loadConnectorTriggerContext(
  * re-rendered on every turn and must be byte-identical across a retry, and
  * SQLite is free to return two rows in either order.
  */
-async function loadAutomationResultDelivery(
-  env: Env,
-  workspaceId: string,
-  automationSubscriptionId: string,
-): Promise<Array<{ channel: "email" | "slack_agent_dm"; destination: string }>> {
-  // Mirrors `sendResendEmail`'s own production guard rather than restating it as
-  // a status: no email is sent outside production, so naming one here would
-  // suppress the run's send and deliver nothing at all.
-  const emailDelivers = env.APP_ENV === "production";
-  const targets = await env.DB.prepare(
-    `SELECT dt.target_type, dt.email_address, dt.slack_user_id
-     FROM automation_delivery_targets dt
-     LEFT JOIN slack_user_links link
-       ON link.connection_id = dt.connection_id AND link.user_id = dt.user_id
-       AND link.slack_user_id = dt.slack_user_id AND link.status = 'active'
-     LEFT JOIN slack_delivery_preferences pref
-       ON pref.connection_id = dt.connection_id AND pref.user_id = dt.user_id
-     WHERE dt.workspace_id = ? AND dt.automation_subscription_id = ?
-       AND ((dt.target_type = 'email' AND dt.status = 'active' AND dt.email_address IS NOT NULL)
-         OR (dt.target_type = 'slack_agent_dm' AND dt.status IN ('active', 'needs_input')
-           AND link.slack_user_id IS NOT NULL
-           AND (COALESCE(pref.notify_automation_completed, 1) = 1
-             OR COALESCE(pref.notify_needs_input, 1) = 1)))`,
-  ).bind(workspaceId, automationSubscriptionId).all<{
-    target_type: "email" | "slack_agent_dm";
-    email_address: string | null;
-    slack_user_id: string | null;
-  }>();
-  type Destination = { channel: "email" | "slack_agent_dm"; destination: string };
-  const destinations = (targets.results ?? []).flatMap<Destination>((target) => {
-    if (target.target_type === "email") {
-      return emailDelivers && target.email_address
-        ? [{ channel: "email", destination: target.email_address }]
-        : [];
-    }
-    // The Slack destination is an id rather than a description, because the
-    // rule the model applies is "does this recipient match one of these" and a
-    // sentence is not something a tool argument can be compared against.
-    return target.slack_user_id
-      ? [{ channel: "slack_agent_dm" as const, destination: target.slack_user_id }]
-      : [];
-  });
-  return destinations.sort((left, right) => {
-    const channelOrder = left.channel < right.channel ? -1 : left.channel > right.channel ? 1 : 0;
-    if (channelOrder !== 0) return channelOrder;
-    return left.destination < right.destination ? -1 : left.destination > right.destination ? 1 : 0;
-  });
-}
-
 /**
  * Whether this run can land a document as a work-stream resource.
  *
@@ -5109,42 +5120,35 @@ async function loadRunPromptContext(
       }
     | undefined;
   if (input.automationSubscriptionId) {
-    const automation = await env.DB.prepare(
-      `SELECT t.name, v.version_number, v.instructions, v.expected_outputs_json,
-              v.default_behavior_json, v.memory_tables_json, s.overrides_json
-       FROM automation_subscriptions s
-       JOIN automation_templates t ON t.id = s.template_id
-       JOIN automation_template_versions v ON v.id = s.template_version_id AND v.template_id = s.template_id
-       WHERE s.id = ? AND s.workspace_id = ?`,
-    ).bind(input.automationSubscriptionId, input.workspaceId).first<{
-      name: string;
-      version_number: number;
-      instructions: string;
-      expected_outputs_json: string;
-      default_behavior_json: string;
-      memory_tables_json: string;
-      overrides_json: string;
-    }>();
-    if (!automation) throw new Error("automation_subscription_context_not_found");
-    // Independent reads, both into WorkspaceDO: awaiting them in sequence put a
-    // second round trip in front of every automation run for no reason.
-    const [resultDelivery, durableTables] = await Promise.all([
-      loadAutomationResultDelivery(env, input.workspaceId, input.automationSubscriptionId),
-      loadAutomationMemoryTableContext(
-        env,
-        input.workspaceId,
-        input.automationSubscriptionId,
-        parseJson<unknown[]>(automation.memory_tables_json, []),
-      ),
-    ]);
+    const frozen = input.automationRunContext;
+    if (
+      !frozen
+      || frozen.automationId !== input.automationSubscriptionId
+      || frozen.workspaceId !== input.workspaceId
+    ) throw new Error("automation_run_context_not_found");
+    AutomationMemoryTableSchema.array().parse(frozen.definition.memoryTables);
+    const durableTables = (await readAutomationMemoryBootstrapForRun(env, input)).tables;
+    type ResultDestination = { channel: "email" | "slack_agent_dm"; destination: string };
+    const resultDelivery = frozen.deliveryTargets.flatMap<ResultDestination>((target) => {
+      // Match the sender's production guard. In development and tests no email
+      // leaves Rally, so claiming that it will would suppress the model's own
+      // requested delivery and leave the result nowhere.
+      if (target.type === "email") {
+        return env.APP_ENV === "production"
+          ? [{ channel: "email", destination: target.emailAddress }]
+          : [];
+      }
+      return [{ channel: "slack_agent_dm", destination: target.slackUserId }];
+    }).sort((left, right) => left.channel.localeCompare(right.channel)
+      || left.destination.localeCompare(right.destination));
     automationContext = {
-      name: automation.name,
-      versionNumber: automation.version_number,
-      instructions: automation.instructions,
-      expectedOutputs: parseJson(automation.expected_outputs_json, []),
+      name: frozen.definition.name,
+      versionNumber: frozen.definitionRevision,
+      instructions: frozen.definition.instructions,
+      expectedOutputs: frozen.definition.expectedOutputs,
       resultDelivery,
-      defaultBehavior: parseJson(automation.default_behavior_json, {}),
-      overrides: parseJson(automation.overrides_json, {}),
+      defaultBehavior: frozen.definition.defaultBehavior,
+      overrides: {},
       durableTables,
     };
   }
@@ -5612,20 +5616,18 @@ async function loadHarnessTools(
   idempotencyByTool: Map<string, "safe" | "provider_key" | "record_before_execute">;
   modeByTool: Map<string, "read" | "write">;
 }> {
-  const [subscriptionDefaults, attachedLinks, connectionRows] = await Promise.all([
-    input.automationSubscriptionId
-      ? env.DB.prepare(
-          `SELECT default_plugins_json FROM automation_subscriptions
-           WHERE id = ? AND workspace_id = ?`,
-        ).bind(input.automationSubscriptionId, input.workspaceId).first<{ default_plugins_json: string }>()
-      : Promise.resolve(null),
+  const [attachedLinks, connectionRows] = await Promise.all([
     createResourceObjectPort(env, input.workspaceId, input.workstreamId).attachedResourceIds(),
     env.DB.prepare(
       `SELECT * FROM connector_connections WHERE workspace_id = ? AND status <> 'disabled'
        ORDER BY created_at ASC`,
     ).bind(input.workspaceId).all<Record<string, unknown>>(),
   ]);
-  const defaultModelPluginIds = new Set(parseJson<string[]>(subscriptionDefaults?.default_plugins_json, []));
+  const defaultModelPluginIds = new Set(
+    input.automationSubscriptionId
+      ? input.automationRunContext?.defaultPluginIds ?? []
+      : [],
+  );
   // Two reads, one per authority, where the retired statement was a join.
   // Which resources this work stream has attached is the object's, and which
   // connection owns each of them is the workspace's — `_runtime_resources`
@@ -6452,76 +6454,17 @@ async function assertRunAuthorityStillValid(
   if (workstream.automation_subscription_id !== input.automationSubscriptionId || !workstream.automation_run_id) {
     throw new ConnectorError("unauthorized", "Automation authority no longer matches this work stream");
   }
-  const automation = await db.prepare(
-    `SELECT s.status AS subscription_status, s.lifecycle_state AS subscription_lifecycle_state,
-            s.template_version_id,
-            t.archived_at AS template_archived_at,
-            r.id AS automation_run_id, r.status AS automation_run_status,
-            r.trigger_type, r.trigger_activity_id,
-            EXISTS (
-              SELECT 1 FROM schedules schedule
-               WHERE schedule.workspace_id = s.workspace_id
-                 AND schedule.automation_subscription_id = s.id
-                 AND schedule.enabled = 1
-            ) AS has_enabled_schedule
-       FROM automation_subscriptions s
-       JOIN automation_templates t ON t.id = s.template_id
-       JOIN automation_runs r ON r.id = ?
-        AND r.workspace_id = s.workspace_id
-        AND r.automation_subscription_id = s.id
-        AND r.workstream_id = ?
-      WHERE s.id = ? AND s.workspace_id = ?`,
-  ).bind(
-    workstream.automation_run_id,
-    input.workstreamId,
-    input.automationSubscriptionId,
-    input.workspaceId,
-  ).first<{
-    subscription_status: string;
-    subscription_lifecycle_state: string;
-    template_version_id: string;
-    template_archived_at: string | null;
-    automation_run_id: string;
-    automation_run_status: string;
-    trigger_type: string;
-    trigger_activity_id: string | null;
-    has_enabled_schedule: number;
-  }>();
+  const frozen = input.automationRunContext;
   if (
-    !automation || automation.subscription_status !== "active" ||
-    automation.subscription_lifecycle_state !== "visible" ||
-    automation.template_archived_at != null ||
-    !["scheduled", "running", "needs_input"].includes(automation.automation_run_status)
-  ) throw new ConnectorError("unauthorized", "Automation is no longer active for this run");
-  if ((automation.trigger_activity_id ?? null) !== (input.activityId ?? null)) {
-    throw new ConnectorError("unauthorized", "Automation trigger evidence changed");
-  }
-  if (automation.trigger_activity_id) {
-    // The regional `activities` fallback beside this is gone with the union
-    // that made it reachable: this function took `Env | D1Database`, and every
-    // caller passes an `Env`. The evidence a connector run was started from is
-    // the WorkspaceDO's, and a second source for it could only disagree.
-    const activity = await loadConnectorTriggerContext(
-      env,
-      input.workspaceId,
-      automation.trigger_activity_id,
-    );
-    if (!activity) throw new ConnectorError("unauthorized", "Automation trigger is no longer available");
-  }
-  if (automation.trigger_type === "schedule" && automation.has_enabled_schedule !== 1) {
-    throw new ConnectorError("unauthorized", "The scheduled trigger was disabled");
-  }
-  if (automation.trigger_type === "inbound_email"
-    && !(automation.subscription_status === "active"
-      && automation.subscription_lifecycle_state === "visible")) {
-    // The subscription's own state, not a mirrored route marker. It is the
-    // same test the inbound resolver applies, so the two cannot disagree.
-    throw new ConnectorError("unauthorized", "The email trigger was disabled");
-  }
+    !frozen
+    || frozen.workspaceId !== input.workspaceId
+    || frozen.automationId !== input.automationSubscriptionId
+    || frozen.runId !== workstream.automation_run_id
+  ) throw new ConnectorError("unauthorized", "Automation run context no longer matches this work stream");
   const snapshot: RunAuthoritySnapshot = {
-    automationRunId: automation.automation_run_id,
-    automationTemplateVersionId: automation.template_version_id,
-    triggerType: automation.trigger_type,
+    automationRunId: frozen.runId,
+    automationTemplateVersionId: `${frozen.automationId}:${frozen.definitionRevision}`,
+    triggerType: frozen.trigger.kind,
   };
   if (expected && (
     expected.automationRunId !== snapshot.automationRunId ||

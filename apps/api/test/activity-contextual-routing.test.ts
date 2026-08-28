@@ -198,6 +198,7 @@ function workspaceNamespace(database: DatabaseSync): Env["WORKSPACE_DOS"] {
       },
       connectorEvent: async (input: { eventId: string }) =>
         connectorEvents.get(input.eventId)?.event ?? null,
+      matchExternalEventDestinations: async () => ({ deliveries: [] }),
       claimConnectorEvent: async (input: {
         eventId: string;
         processingOwnerId: string;

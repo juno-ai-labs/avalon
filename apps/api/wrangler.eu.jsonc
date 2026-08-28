@@ -142,6 +142,7 @@
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "AUTOMATION_AGENTS", "class_name": "AutomationAgent" },
       { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
@@ -170,7 +171,8 @@
       "new_sqlite_classes": ["BlockDashboardAgent", "WorkstreamDO", "WorkspaceDO"]
     },
     { "tag": "v4", "deleted_classes": ["WorkspaceScheduler"] },
-    { "tag": "v5", "new_sqlite_classes": ["SlackReactionTicker"] }
+    { "tag": "v5", "new_sqlite_classes": ["SlackReactionTicker"] },
+    { "tag": "v6", "new_sqlite_classes": ["AutomationAgent"] }
   ],
   "queues": {
     "producers": [
