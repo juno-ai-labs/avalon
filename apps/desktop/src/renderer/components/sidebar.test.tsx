@@ -921,9 +921,9 @@ describe('Sidebar work-stream markers', () => {
     expect(draftRow).toHaveClass('is-draft');
     expect(draftRow.querySelector('.mini-state.draft')).not.toBeNull();
     expect(within(draftRow).getByText('Draft')).toBeVisible();
-    // A draft has no overview worth opening — it has never run. Its row goes
-    // back to the conversation that was left unfinished.
-    expect(draftRow).toHaveAttribute('href', '/automations/new?draft=automation-2');
+    // A draft has no overview worth opening — its stable automation route
+    // restores the conversation that was left unfinished.
+    expect(draftRow).toHaveAttribute('href', '/automations/automation-2');
     expect(screen.getByRole('link', { name: /Daily product brief/u }))
       .toHaveAttribute('href', '/automations/automation-1');
 
@@ -954,7 +954,7 @@ describe('Sidebar work-stream markers', () => {
       updatedAt: '2026-08-02T11:00:00.000Z',
     };
     render(
-      <MemoryRouter initialEntries={['/automations/new?draft=automation-2']}>
+      <MemoryRouter initialEntries={['/automations/automation-2']}>
         <Tooltip.Provider>
           <Sidebar
             {...defaultActions}
@@ -967,8 +967,7 @@ describe('Sidebar work-stream markers', () => {
       </MemoryRouter>,
     );
 
-    // Every draft row shares the builder's path and differs only in the query,
-    // so nothing but the query can tell them apart.
+    // Each durable draft owns the same stable route it keeps after acceptance.
     expect(screen.getByRole('link', { name: /Ad hoc competitor scan/u })).toHaveClass('is-active');
     expect(screen.getByRole('link', { name: /A support escalation digest/u })).not.toHaveClass('is-active');
     expect(screen.getByRole('link', { name: 'New automation' })).not.toHaveClass('is-active');

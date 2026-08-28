@@ -215,15 +215,12 @@ describe('applyPinnedWorkstreams', () => {
 describe('showsAutomation', () => {
   const automationId = '00000000-0000-7000-8000-000000000002';
 
-  it('catches the builder holding a draft, not only the overview', () => {
+  it('catches the stable automation route in either lifecycle state', () => {
     expect(showsAutomation(`/automations/${automationId}`, '', automationId)).toBe(true);
-    // Archiving and deleting both go through this: a draft is read here, and
-    // the builder has no path of its own to match on.
-    expect(showsAutomation('/automations/new', `?draft=${automationId}`, automationId)).toBe(true);
   });
 
   it('leaves a screen showing something else alone', () => {
-    expect(showsAutomation('/automations/new', '?draft=another-draft', automationId)).toBe(false);
+    expect(showsAutomation('/automations/new', `?draft=${automationId}`, automationId)).toBe(false);
     expect(showsAutomation('/automations/new', '', automationId)).toBe(false);
     expect(showsAutomation('/automations/00000000-0000-7000-8000-000000000009', '', automationId)).toBe(false);
     expect(showsAutomation('/workstreams/new', '', automationId)).toBe(false);

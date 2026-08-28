@@ -23,10 +23,9 @@ import {
 import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
-import { AutomationOverviewScreen } from './screens/automation-overview';
+import { AutomationScreen } from './screens/automation';
 import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
-import { NewAutomationScreen } from './screens/new-automation';
 import { NewWorkstreamScreen } from './screens/new-workstream';
 import { ProjectSpaceScreen } from './screens/project-space';
 import { BootScreen, InvitationOnboarding, RegionOnboarding, SignInScreen } from './screens/onboarding';
@@ -236,8 +235,7 @@ function WorkspaceApp(): React.JSX.Element {
               <Route element={<NewWorkstreamScreen workspace={workspace.data} projectId="route" />} path="/projects/:projectId/workstreams/new" />
               <Route element={<WorkstreamScreen />} path="/workstreams/:id" />
               <Route element={<NoteDetailScreen />} path="/notes/:id" />
-              <Route element={<NewAutomationScreen workspace={workspace.data} />} path="/automations/new" />
-              <Route element={<AutomationOverviewScreen />} path="/automations/:id" />
+              <Route element={<AutomationScreen workspace={workspace.data} />} path="/automations/:id" />
               <Route element={<WorkspaceSettingsScreen workspace={workspace.data} />} path="/settings" />
               <Route element={<NotFoundScreen />} path="*" />
             </Routes>

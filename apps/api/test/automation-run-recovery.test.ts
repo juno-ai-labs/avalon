@@ -460,9 +460,16 @@ describe("manual automation run recovery", () => {
       harnessRunId: originalHarnessRunId,
       reused: true,
     });
-    expect(agents.activateLoop).toHaveBeenCalledTimes(2);
+    // Activation commits the receipt launch and its restart context in one
+    // object transaction, so a receipt that is running with its workflow
+    // instance bound is durable proof the loop accepted the activation — the
+    // lost transport response does not need a second activation to resolve.
+    expect(agents.activateLoop).toHaveBeenCalledTimes(1);
     const expectedWorkflowId = `substream-agent:0:${originalHarnessRunId}`;
-    expect(database.run).toMatchObject({ status: "running", workflowInstanceId: expectedWorkflowId });
+    // The legacy workspace row is no longer the run authority. Recovery
+    // advances only the generated work stream; AutomationAgent consumes that
+    // projection separately.
+    expect(database.run).toMatchObject({ status: "scheduled", workflowInstanceId: null });
     expect(storedHarnessRun(agents.objectStore)).toMatchObject({
       status: "running",
       workflow_instance_id: expectedWorkflowId,
@@ -478,7 +485,7 @@ describe("manual automation run recovery", () => {
       runId: originalRunId,
       reused: true,
     });
-    expect(agents.activateLoop).toHaveBeenCalledTimes(2);
+    expect(agents.activateLoop).toHaveBeenCalledTimes(1);
   });
 
   it("provisions nothing when the run it would belong to loses the idempotency race", async () => {

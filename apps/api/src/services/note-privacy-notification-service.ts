@@ -51,30 +51,14 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
     resourceId: transition.resource_id,
     userId: transition.actor_user_id,
   });
-  const subscriptionIds = [...new Set(access.items.flatMap((item) => (
-    item.automationSubscriptionId ? [item.automationSubscriptionId] : []
-  )))];
-  const subscriptions = new Map<string, { scope: string; owner_user_id: string | null }>();
-  if (subscriptionIds.length > 0) {
-    const placeholders = subscriptionIds.map(() => "?").join(",");
-    const rows = await env.DB.prepare(
-      `SELECT id, scope, owner_user_id FROM automation_subscriptions
-        WHERE workspace_id = ? AND id IN (${placeholders})`,
-    ).bind(transition.workspace_id, ...subscriptionIds).all<{
-      id: string;
-      scope: string;
-      owner_user_id: string | null;
-    }>();
-    for (const row of rows.results ?? []) subscriptions.set(row.id, row);
-  }
   const affectedRows: AffectedWorkstreamRow[] = access.items.filter((item) => {
-    if (!item.automationSubscriptionId) {
-      return item.createdByUserId === null || item.createdByUserId !== transition.actor_user_id;
-    }
-    const subscription = subscriptions.get(item.automationSubscriptionId);
-    return subscription?.scope === "workspace"
-      || subscription?.owner_user_id === null
-      || subscription?.owner_user_id !== transition.actor_user_id;
+    // Generated work streams project the accepted automation's scope and
+    // author into the same directory fields as ad-hoc work streams. Those are
+    // the visibility facts needed here; consulting a second subscription
+    // authority only duplicated them and could disagree after cutover.
+    return item.scope === "workspace"
+      || item.createdByUserId === null
+      || item.createdByUserId !== transition.actor_user_id;
   }).map((item) => ({ id: item.workstreamId }));
 
   const clientMessageId = `note-privacy:${transition.id}`;

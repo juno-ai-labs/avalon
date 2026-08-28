@@ -128,6 +128,7 @@ const TICKET_METHODS = new Set([
   "getSocketTicket",
   "getWorkspaceSocketTicket",
   "getWorkstreamControlSocketTicket",
+  "getAutomationAgentSocketTicket",
   "getBlockDashboardBlockSocketTicket",
   "getRealtimeTranscriptionTicket",
   "getTranscriptionSocketTicket",

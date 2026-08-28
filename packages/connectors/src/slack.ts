@@ -421,6 +421,7 @@ export function normalizeSlackActivity(
       ...(memberUserId ? { memberUserId } : {}),
       ...(typeof event.inviter === "string" ? { inviterUserId: event.inviter } : {}),
       ...(creatorUserId ? { creatorUserId } : {}),
+      ...(text ? { messageText: truncateSlackText(text, 4_000) } : {}),
     },
   };
 }
@@ -623,6 +624,14 @@ const SlackMessageActivityFilterFields: ConnectorActivityFilterField[] = [
   { key: "messageTs", label: "Message timestamp", description: "Slack message timestamp identifying the message.", valueType: "string" },
   { key: "threadTs", label: "Thread timestamp", description: "Root Slack timestamp for a thread reply.", valueType: "string" },
   { key: "isThread", label: "Thread message", description: "Whether the message belongs to a thread.", valueType: "boolean" },
+  {
+    key: "messageText",
+    label: "Message text",
+    description: "Bounded text of the human-authored Slack message.",
+    valueType: "string",
+    operators: ["equals", "not_equals", "contains", "starts_with", "ends_with", "in", "not_in", "exists", "not_exists"],
+    sensitive: true,
+  },
 ];
 
 const SlackReactionActivityFilterFields: ConnectorActivityFilterField[] = [
@@ -1913,11 +1922,15 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
           label: "Message posted",
           description: "A human posted a new root message in a Slack channel selected by an automation.",
           filterFields: SlackMessageActivityFilterFields,
+          eventFamilies: ["slack.message.created"],
+          resourceRelationships: [{ relationship: "channel", resourceType: "slack_channel" }],
         },
         "slack.message.replied": {
           label: "Thread reply posted",
           description: "A human replied in a Slack thread selected by an automation.",
           filterFields: SlackMessageActivityFilterFields,
+          eventFamilies: ["slack.message.created"],
+          resourceRelationships: [{ relationship: "channel", resourceType: "slack_channel" }],
         },
         "slack.message.edited": {
           label: "Message edited",
@@ -1972,7 +1985,7 @@ export function createSlackConnector(config: SlackConnectorConfig): ConnectorAda
       }),
       resourceTypes: ["slack_message", "slack_thread", "slack_file", "slack_canvas", "slack_channel"],
       tools: slackTools,
-      supportsWatches: false,
+      supportsWatches: true,
       supportsPolling: false,
       supportsWebhooks: true,
     },

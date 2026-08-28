@@ -27,6 +27,7 @@
   "durable_objects": {
     "bindings": [
       { "name": "SUBSTREAM_AGENTS", "class_name": "SubstreamAgent" },
+      { "name": "AUTOMATION_AGENTS", "class_name": "AutomationAgent" },
       { "name": "BLOCK_DASHBOARD_AGENTS", "class_name": "BlockDashboardAgent" },
       { "name": "WORKSTREAM_DOS", "class_name": "WorkstreamDO" },
       { "name": "WORKSPACE_DOS", "class_name": "WorkspaceDO" },
@@ -39,6 +40,7 @@
       "tag": "v1",
       "new_sqlite_classes": [
         "SubstreamAgent",
+        "AutomationAgent",
         "BlockDashboardAgent",
         "WorkstreamDO",
         "WorkspaceDO",

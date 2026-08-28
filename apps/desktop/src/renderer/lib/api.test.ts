@@ -872,7 +872,18 @@ describe('Rally API wire adapter', () => {
         recommendedPlugins: [],
       },
       nextPlannedWorkstream: null,
-      recentRuns: [],
+      recentRuns: [{
+        id: '00000000-0000-7000-8000-000000000012',
+        automationSubscriptionId: automationId,
+        workstreamId,
+        triggerType: 'calendar',
+        plannedFor: timestamp,
+        startedAt: timestamp,
+        completedAt: timestamp,
+        status: 'completed' as const,
+        resultSummary: null,
+        createdAt: timestamp,
+      }],
     };
     const adopted = {
       ...current,
@@ -903,6 +914,7 @@ describe('Rally API wire adapter', () => {
         expectedOutputs: ['A concise weekly brief'],
         recommendedPlugins: [],
       },
+      runs: [expect.objectContaining({ triggerType: 'scheduled' })],
     });
     await expect(api.adoptAutomationUpdate(automationId, nextVersionId)).resolves.toMatchObject({
       versionNumber: 2,

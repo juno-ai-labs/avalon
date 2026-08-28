@@ -3,6 +3,7 @@ import type {
   AutomationPluginActivity,
   AutomationPluginIcon,
   AutomationDraft,
+  AutomationSetEvaluatorRulesInputV1,
   ConnectorActivityTriggerDescriptor,
   ExecutionPrincipal,
   HarnessFailureCode,
@@ -11,6 +12,7 @@ import type {
 } from "@rally/contracts";
 import {
   AddressingClassificationSchema,
+  AutomationSetEvaluatorRulesInputV1Schema,
   AutomationDraftSchema,
   asUserId
 } from "@rally/contracts";
@@ -1229,8 +1231,9 @@ function renderAutomationActivityTriggerGuidance(
 ): string {
   if (!triggers.length) return "";
   const lines = triggers.map((trigger) => {
-    const filters = trigger.filterFields.length
-      ? ` Filters: ${trigger.filterFields.map((field) =>
+    const filterFields = trigger.filterFields ?? [];
+    const filters = filterFields.length
+      ? ` Filters: ${filterFields.map((field) =>
           `${field.key} (${field.valueType}; ${field.label}): ${field.description}`).join("; ")}`
       : "";
     return `- ${trigger.eventType}: ${trigger.label}. ${trigger.description}${filters}`;
@@ -1526,6 +1529,25 @@ export async function compileAutomation(input: {
   additionalPlugins?: HarnessPlugin[];
   /** Request-scoped tools owned by the preloaded automation architect. */
   architectTools?: HarnessTool[];
+  /** Durable host mutations owned by the AutomationAgent compiler run. */
+  draftMutationPort?: {
+    setEvaluatorRules(
+      rules: AutomationSetEvaluatorRulesInputV1,
+      context: HarnessToolContext,
+    ): Promise<{ accepted: true }>;
+    submitDraft(
+      draft: AutomationDraft,
+      context: HarnessToolContext,
+    ): Promise<{ accepted: true }>;
+    requestElicitation(
+      elicitation: z.infer<typeof RequestElicitationInputSchema>,
+      context: HarnessToolContext,
+    ): Promise<{ accepted: true }>;
+  };
+  draftResearchPort?: {
+    searchPeople(query: string): Promise<unknown>;
+    searchResources(query: string): Promise<unknown>;
+  };
   maxResearchIterations?: number;
   /**
    * The host's transport-retry budget. Threaded in rather than defaulted here
@@ -1599,6 +1621,13 @@ export async function compileAutomation(input: {
   }));
   const draftState: { submitted: AutomationDraft | null } = { submitted: null };
   const loadedAutomationPluginIds = new Set<string>();
+  const inspectedAutomationPluginIds = new Set<string>();
+  const resolvedAutomationPersonIds = new Set<string>();
+  const resolvedAutomationResources = new Map<string, {
+    pluginId: string;
+    resourceType: string;
+    sourceBindingKeys: readonly string[];
+  }>();
   let submissionReminderSent = false;
   let elicitationReminderSent = false;
   let modelTimeMs = 0;
@@ -1625,30 +1654,96 @@ export async function compileAutomation(input: {
   };
   const toolStartedAt = new Map<string, number>();
   const toolLabelPlugins = new Map<string, AutomationPluginActivity[]>();
+  const creatorDefinition = (name: string): HarnessTool["definition"] => {
+    const definition = AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS.find((candidate) => candidate.name === name);
+    if (!definition) throw new Error(`automation_creator_definition_missing:${name}`);
+    return definition;
+  };
   const creatorTools: HarnessTool[] = [
     {
-      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[0]!,
+      definition: creatorDefinition("plugins_list"),
       execute: async () => ({
         output: executeAutomationCreatorDiscoveryTool("plugins_list", {}, catalog),
         summary: "Listed authorized automation plugins",
       }),
     },
     {
-      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[1]!,
+      definition: creatorDefinition("plugins_search"),
       execute: async (raw) => ({
         output: executeAutomationCreatorDiscoveryTool("plugins_search", asRecord(raw), catalog),
         summary: "Searched authorized automation plugins",
       }),
     },
     {
-      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[2]!,
-      execute: async (raw) => ({
-        output: executeAutomationCreatorDiscoveryTool("plugin_inspect", asRecord(raw), catalog),
-        summary: "Inspected an authorized automation plugin",
-      }),
+      definition: creatorDefinition("plugin_inspect"),
+      execute: async (raw) => {
+        const output = executeAutomationCreatorDiscoveryTool("plugin_inspect", asRecord(raw), catalog);
+        const pluginId = String(asRecord(raw).pluginId ?? "");
+        if (pluginId) inspectedAutomationPluginIds.add(pluginId);
+        return { output, summary: "Inspected an authorized automation plugin" };
+      },
     },
     {
-      definition: AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS[3]!,
+      definition: creatorDefinition("people_search"),
+      validateInput: (raw) => {
+        const parsed = z.object({ query: z.string().min(1) }).strict().safeParse(raw);
+        return parsed.success ? null : parsed.error;
+      },
+      execute: async (raw) => {
+        if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
+        const { query } = z.object({ query: z.string().min(1) }).strict().parse(raw);
+        const output = await input.draftResearchPort.searchPeople(query);
+        const people = asRecord(output).people;
+        if (Array.isArray(people)) {
+          for (const person of people) {
+            const id = asRecord(person).id;
+            if (typeof id === "string") resolvedAutomationPersonIds.add(id);
+          }
+        }
+        return {
+          output,
+          summary: "Searched workspace people",
+        };
+      },
+    },
+    {
+      definition: creatorDefinition("resources_search"),
+      validateInput: (raw) => {
+        const parsed = z.object({ query: z.string().min(1) }).strict().safeParse(raw);
+        return parsed.success ? null : parsed.error;
+      },
+      execute: async (raw) => {
+        if (!input.draftResearchPort) throw new Error("automation_draft_research_host_unavailable");
+        const { query } = z.object({ query: z.string().min(1) }).strict().parse(raw);
+        const output = await input.draftResearchPort.searchResources(query);
+        const resources = asRecord(output).resources;
+        if (Array.isArray(resources)) {
+          for (const resource of resources) {
+            const row = asRecord(resource);
+            if (
+              typeof row.id === "string"
+              && typeof row.pluginId === "string"
+              && typeof row.resourceType === "string"
+            ) {
+              resolvedAutomationResources.set(row.id, {
+                pluginId: row.pluginId,
+                resourceType: row.resourceType,
+                sourceBindingKeys: Array.isArray(row.sourceBindingKeys)
+                  ? row.sourceBindingKeys.filter((value): value is string => typeof value === "string")
+                  : [],
+              });
+            }
+          }
+        }
+        return {
+          output,
+          summary: "Searched authorized resources",
+        };
+      },
+    },
+    {
+      definition: creatorDefinition("submit_draft"),
+      serial: true,
       /**
        * The draft's real contract is `AutomationDraftSchema`, and the parts of
        * it that decide whether a submission is accepted — a ready activity
@@ -1673,7 +1768,7 @@ export async function compileAutomation(input: {
         const parsed = parseAutomationSubmission(raw);
         return parsed.success ? null : parsed.error;
       },
-      execute: async (raw) => {
+      execute: async (raw, context) => {
         await input.onDiagnostic?.({
           stage: "normalize",
           schemaName: "automation_draft",
@@ -1706,11 +1801,14 @@ export async function compileAutomation(input: {
               ? trigger.suggestedSourcePluginId ? [trigger.suggestedSourcePluginId] : []
               : []);
           const unloadedPluginId = [...sourcePluginIds, ...parsed.data.recommendedPlugins.map((plugin) => plugin.pluginId)]
-            .find((pluginId) => !loadedAutomationPluginIds.has(pluginId));
+            .find((pluginId) => (
+              !loadedAutomationPluginIds.has(pluginId) || !inspectedAutomationPluginIds.has(pluginId)
+            ));
           if (unloadedPluginId) {
             throw new Error(`Load and inspect ${unloadedPluginId} before submitting it in a ready automation draft`);
           }
         }
+        await input.draftMutationPort?.submitDraft(parsed.data, context);
         draftState.submitted = parsed.data;
         await input.onDiagnostic?.({
           stage: "complete",
@@ -1726,21 +1824,134 @@ export async function compileAutomation(input: {
           ...(draftState.submitted.ready ? { halt: "completed" as const } : {}),
         };
       },
+    },
+    {
+      definition: creatorDefinition("set_evaluator_rules"),
       serial: true,
+      validateInput: (raw) => {
+        const parsed = AutomationSetEvaluatorRulesInputV1Schema.safeParse(raw);
+        if (!parsed.success) return parsed.error;
+        const issues: z.core.$ZodIssue[] = [];
+        for (const [index, evaluator] of parsed.data.evaluators.entries()) {
+          const plugin = catalog.find((candidate) => candidate.pluginId === evaluator.source.suggestedSourcePluginId);
+          if (!plugin || !inspectedAutomationPluginIds.has(plugin.pluginId)) {
+            issues.push({
+              code: "custom",
+              path: ["evaluators", index, "source", "suggestedSourcePluginId"],
+              message: "automation_plugin_not_inspected",
+              input: evaluator.source.suggestedSourcePluginId,
+            });
+            continue;
+          }
+          const event = evaluator.source.event;
+          const eventTypes = event.kind === "event_type"
+            ? [event.eventType]
+            : plugin.activityTriggers
+                .filter((descriptor) => (descriptor.eventFamilies ?? []).includes(event.eventFamily))
+                .map((descriptor) => descriptor.eventType);
+          if (eventTypes.length === 0) {
+            issues.push({
+              code: "custom",
+              path: ["evaluators", index, "source", "event"],
+              message: "automation_evaluator_invalid",
+              input: evaluator.source.event,
+            });
+            continue;
+          }
+          const resolvedResource = evaluator.source.resourceId
+            ? resolvedAutomationResources.get(evaluator.source.resourceId)
+            : undefined;
+          if (
+            evaluator.source.resourceId
+            && (
+              !resolvedResource
+              || resolvedResource.pluginId !== plugin.pluginId
+              || !resolvedResource.sourceBindingKeys.includes(evaluator.source.sourceBindingKey)
+            )
+          ) {
+            issues.push({
+              code: "custom",
+              path: ["evaluators", index, "source", "resourceId"],
+              message: "automation_resource_not_found",
+              input: evaluator.source.resourceId,
+            });
+          }
+          for (const eventType of eventTypes) {
+            const descriptor = plugin.activityTriggers.find((candidate) => candidate.eventType === eventType);
+            if (
+              resolvedResource
+              && !(descriptor?.resourceRelationships ?? []).some(
+                (relationship) => relationship.resourceType === resolvedResource.resourceType,
+              )
+            ) {
+              issues.push({
+                code: "custom",
+                path: ["evaluators", index, "source", "resourceId"],
+                message: "automation_evaluator_resource_relationship_invalid",
+                input: evaluator.source.resourceId,
+              });
+            }
+            if (!descriptor || evaluator.when.kind !== "dnf") continue;
+            for (const [groupIndex, group] of evaluator.when.anyOf.entries()) {
+              for (const [leafIndex, leaf] of group.allOf.entries()) {
+                const field = (descriptor.filterFields ?? []).find((candidate) => candidate.key === leaf.attribute);
+                if (
+                  !field
+                  || !(field.operators ?? []).includes(leaf.operator)
+                  || (leaf.kind !== "presence" && leaf.kind !== field.valueType)
+                ) {
+                  issues.push({
+                    code: "custom",
+                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex],
+                    message: "automation_evaluator_invalid",
+                    input: leaf,
+                  });
+                }
+                if (
+                  (leaf.kind === "person_id" || leaf.kind === "person_id_array")
+                  && (Array.isArray(leaf.value) ? leaf.value : [leaf.value])
+                    .some((personId) => !resolvedAutomationPersonIds.has(personId))
+                ) {
+                  issues.push({
+                    code: "custom",
+                    path: ["evaluators", index, "when", "anyOf", groupIndex, "allOf", leafIndex, "value"],
+                    message: "automation_person_not_found",
+                    input: leaf.value,
+                  });
+                }
+              }
+            }
+          }
+        }
+        return issues.length > 0 ? new z.ZodError(issues) : null;
+      },
+      execute: async (raw, context) => {
+        if (!input.draftMutationPort) throw new Error("automation_draft_mutation_host_unavailable");
+        const rules = AutomationSetEvaluatorRulesInputV1Schema.parse(raw);
+        const result = await input.draftMutationPort.setEvaluatorRules(rules, context);
+        return {
+          output: result,
+          summary: rules.evaluators.length === 0
+            ? "Cleared external event evaluator rules"
+            : `Set ${rules.evaluators.length} external event evaluator rule${rules.evaluators.length === 1 ? "" : "s"}`,
+        };
+      },
     },
   ];
   const timeTool = automationCurrentTimeTool(input.defaultTimezones);
   const requestElicitationTool: HarnessTool = {
     definition: AVALON_REQUEST_ELICITATION_TOOL_DEFINITION,
+    serial: true,
     validateInput: (raw) => {
       const result = RequestElicitationInputSchema.safeParse(raw);
       return result.success ? null : result.error;
     },
-    execute: async (raw) => {
+    execute: async (raw, context) => {
       const args = RequestElicitationInputSchema.parse(raw);
       if (!draftState.submitted) {
         throw new Error("Submit the best current draft with automation_submit_draft before requesting input");
       }
+      await input.draftMutationPort?.requestElicitation(args, context);
       draftState.submitted = {
         ...draftState.submitted,
         followUpQuestion: args.prompt,
@@ -2495,12 +2706,12 @@ export const AVALON_REQUEST_ELICITATION_TOOL_DEFINITION = {
     "Ask a structured blocking question and pause this harness run for human input. Call this only for what no authorized tool can determine: a value a connector, memory, or a durable table could look up is not missing input, so search for it first and ask only if that search comes back empty. Check the plugin catalog as part of that search — a connector listed there can answer even though its tools are absent from the current turn, and the tools in front of you are only the ones already loaded. State in the prompt what you already searched and what it returned.",
   capability: "elicitation.write",
   mode: "write",
-  idempotency: "provider_key",
+  idempotency: "record_before_execute",
   inputSchema: z.toJSONSchema(RequestElicitationInputSchema) as Record<string, unknown>,
 } as const satisfies ToolDefinition;
 
 /**
- * The automation architect's own four tools, as data.
+ * The automation architect's own tools, as data.
  *
  * Split out of `compileAutomation` so the schema guard can reach them: they are
  * authored provider-facing schemas like any other, but they are built inside
@@ -2544,11 +2755,45 @@ export const AVALON_AUTOMATION_CREATOR_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "people_search",
+    description: "Search authorized workspace people and return canonical person IDs for evaluator rules.",
+    capability: "rally.automation.people.search",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { query: { type: "string", minLength: 1 } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "resources_search",
+    description: "Search authorized resources and return canonical resource IDs with their source plugin and binding relationship.",
+    capability: "rally.automation.resources.search",
+    mode: "read",
+    idempotency: "safe",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: { query: { type: "string", minLength: 1 } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "set_evaluator_rules",
+    description: "Replace all external-event evaluator rules for this draft. Search for people and resources and inspect each named plugin first. Pass [] only to clear all rules.",
+    capability: "rally.automation.evaluators.set",
+    mode: "write",
+    idempotency: "record_before_execute",
+    inputSchema: z.toJSONSchema(AutomationSetEvaluatorRulesInputV1Schema) as Record<string, unknown>,
+  },
+  {
     name: "submit_draft",
     description: "Save the best current automation draft. Set ready=false when blocking input remains, then call core_request_elicitation with the structured question.",
     capability: "rally.automation.submit",
-    mode: "read",
-    idempotency: "safe",
+    mode: "write",
+    idempotency: "record_before_execute",
     inputSchema: automationDraftSubmissionJsonSchema,
   },
 ] as const satisfies readonly HarnessTool["definition"][];

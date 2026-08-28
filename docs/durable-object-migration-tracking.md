@@ -811,6 +811,21 @@ it does not shape the cost of any run somebody means to make.
 
 ## Changelog
 
+### 2026-08-28 — The migration queue carries the one-shot automation cutover
+
+**What changed:** Before deployment, the cutover script compares regional D1
+workspace inventory with stored WorkspaceDO inventory and sends ordinary
+WorkspaceDO migration wakes through the old Workers. After both new Workers are
+healthy, the same regional queues carry typed named-workspace cutover commands.
+
+**Why:** The new schema bootstrap must distinguish a fresh object from a legacy
+object, and the destructive authority switch needs retryable per-workspace work
+without a public maintenance endpoint.
+
+**Consequences:** Any inventory mismatch, command DLQ increase, or failed health
+check stops the merge deployment. Completed workspaces roll forward from their
+cutover ledger and never reopen the removed tables.
+
 ### 2026-08-27 — Cleared object identities stop looking live
 
 **What changed:** `hasStoredData=false` is now a first-class `empty` object

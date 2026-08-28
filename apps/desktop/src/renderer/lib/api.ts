@@ -2,6 +2,8 @@ import { RALLY_HEADERS } from '@rally/contracts/http-headers';
 import {
   ActivitySuggestionSchema as WireActivitySuggestionSchema,
   AutomationDetailSchema as WireAutomationDetailSchema,
+  AutomationAgentSnapshotSchema as WireAutomationAgentSnapshotSchema,
+  AutomationDraftTurnAdmissionResultSchema as WireAutomationDraftTurnAdmissionResultSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
   AutomationDraftStateSchema as WireAutomationDraftStateSchema,
   AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
@@ -37,6 +39,8 @@ import {
   WorkstreamSchema as WireWorkstreamSchema,
   WorkOpportunityPageSchema as WireWorkOpportunityPageSchema,
   type AutomationDraft as WireAutomationDraft,
+  type AutomationAgentSnapshot as WireAutomationAgentSnapshot,
+  type AutomationDraftTurnAdmissionResult as WireAutomationDraftTurnAdmissionResult,
   type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
@@ -547,7 +551,9 @@ function mapAutomationRun(run: WireAutomationRun, title: string): AutomationRunS
     workstreamId: run.workstreamId,
     title,
     status: normalizeHarnessStatus(run.status),
-    triggerType: run.triggerType === 'schedule' ? 'scheduled' : run.triggerType,
+    triggerType: ['schedule', 'calendar', 'interval'].includes(run.triggerType)
+      ? 'scheduled'
+      : run.triggerType,
     triggerTime,
     ...(run.resultSummary ? { resultSummary: run.resultSummary } : {}),
     ...(Number.isFinite(start) && Number.isFinite(end) ? { durationMs: end - start } : {}),
@@ -990,11 +996,6 @@ export class RallyApi {
   async setAutomationStatus(id: string, action: 'pause' | 'resume'): Promise<AutomationDetail> {
     await this.requestVoid(`/automations/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
     return this.getAutomation(id);
-  }
-
-  async archiveDraftAutomation(id: string): Promise<void> {
-    await this.requestVoid(`/automations/${encodeURIComponent(id)}/archive`, { method: 'POST' });
-    this.automationDetails.delete(id);
   }
 
   async deleteAutomation(id: string): Promise<void> {
@@ -1769,6 +1770,94 @@ export class RallyApi {
 
   getTranscriptionSocketTicket(): Promise<SocketTicket> {
     return this.request('/realtime/transcription/socket', { schema: socketTicketSchema });
+  }
+
+  admitAutomationDraftTurn(input: {
+    automationId?: string;
+    clientCreationKey?: string;
+    clientMessageId: string;
+    content: string;
+    attachmentIds?: string[];
+    inputMode?: 'typed' | 'suggested_prompt' | 'elicitation_response' | 'edit';
+  }): Promise<WireAutomationDraftTurnAdmissionResult> {
+    const path = input.automationId
+      ? `/automations/${encodeURIComponent(input.automationId)}/agent/draft/turn`
+      : '/automations/agent/draft/turn';
+    return this.request(path, {
+      method: 'POST',
+      body: {
+        ...(!input.automationId ? { clientCreationKey: input.clientCreationKey } : {}),
+        clientMessageId: input.clientMessageId,
+        content: input.content,
+        attachmentIds: input.attachmentIds ?? [],
+        inputMode: input.inputMode ?? 'typed',
+      },
+      schema: WireAutomationDraftTurnAdmissionResultSchema,
+    });
+  }
+
+  getAutomationAgentDraft(id: string, signal?: AbortSignal): Promise<WireAutomationAgentSnapshot> {
+    return this.request(`/automations/${encodeURIComponent(id)}/agent/draft`, {
+      schema: WireAutomationAgentSnapshotSchema,
+      signal,
+    });
+  }
+
+  automationDraftFromAgentSnapshot(snapshot: WireAutomationAgentSnapshot): {
+    draft: AutomationDraftResponse | null;
+    messages: Array<{
+      turnId: string;
+      transcriptSequence: number;
+      clientMessageId: string | null;
+      role: 'user' | 'assistant';
+      content: string;
+      attachmentIds: string[];
+      createdAt: number;
+    }>;
+  } {
+    const messages = snapshot.messages.map((message) => ({
+      turnId: message.turnId,
+      transcriptSequence: message.transcriptSequence,
+      clientMessageId: message.clientMessageId,
+      role: message.role,
+      content: message.content,
+      attachmentIds: message.attachmentIds,
+      createdAt: message.createdAt,
+    }));
+    if (snapshot.definition === null) return { draft: null, messages };
+    const raw = WireAutomationDraftSchema.parse(snapshot.definition);
+    const assistantMessage = [...snapshot.messages].reverse()
+      .find((message) => message.role === 'assistant')?.content ?? '';
+    return {
+      draft: this.automationDraftResponse(
+        snapshot.automationId,
+        raw,
+        assistantMessage,
+        snapshot.pendingElicitation?.id,
+        snapshot.pendingElicitation ? new Date(snapshot.messages.at(-1)?.createdAt ?? Date.now()).toISOString() : undefined,
+      ),
+      messages,
+    };
+  }
+
+  getAutomationAgentSocketTicket(id: string): Promise<SocketTicket> {
+    return this.request(`/automations/${encodeURIComponent(id)}/agent/socket`, {
+      schema: socketTicketSchema,
+    });
+  }
+
+  stopAutomationCompiler(id: string, runId: string): Promise<void> {
+    return this.requestVoid(
+      `/automations/${encodeURIComponent(id)}/agent/draft/${encodeURIComponent(runId)}/stop`,
+      { method: 'POST' },
+    );
+  }
+
+  retryAutomationCompiler(id: string, runId: string): Promise<void> {
+    return this.requestVoid(
+      `/automations/${encodeURIComponent(id)}/agent/draft/${encodeURIComponent(runId)}/retry`,
+      { method: 'POST' },
+    );
   }
 
   async compileAutomation(

@@ -2,6 +2,8 @@ import {
   asHarnessRunId,
   asUserId,
   asWorkspaceId,
+  type AutomationRunContextV1,
+  asAutomationId,
   asWorkstreamId,
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
@@ -29,7 +31,7 @@ const WORKSTREAM = asWorkstreamId("00000000-0000-7000-8000-000000000003");
 const RUN = asHarnessRunId("00000000-0000-7000-8000-000000000004");
 const TEMPLATE = "00000000-0000-7000-8000-000000000005";
 const VERSION = "00000000-0000-7000-8000-000000000006";
-const SUBSCRIPTION = "00000000-0000-7000-8000-000000000007";
+const SUBSCRIPTION = asAutomationId("00000000-0000-7000-8000-000000000007");
 const TARGET = "00000000-0000-7000-8000-000000000008";
 const CONNECTION = "00000000-0000-7000-8000-000000000009";
 const LINK = "00000000-0000-7000-8000-00000000000a";
@@ -46,6 +48,9 @@ function envFor(database: DatabaseSync, appEnv: "production" | "test" = "product
   const base = createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    AUTOMATION_AGENTS: testSubstreamAgentsBinding(database, {
+      extra: { readMemoryBootstrap: async () => ({ tables: [] }) },
+    }),
     AVALON_REGION: "global",
     APP_ENV: appEnv,
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
@@ -162,18 +167,53 @@ function seededDatabase(options: { targets?: string } = {}): DatabaseSync {
   return database;
 }
 
-const workflowInput: WorkstreamWorkflowInput = {
-  region: "global",
-  workspaceId: WORKSPACE,
-  workstreamId: WORKSTREAM,
-  loopId: `workstream:${WORKSTREAM}:substream:0:loop`,
-  harnessRunId: RUN,
-  triggerMessageId: null,
-  automationSubscriptionId: SUBSCRIPTION,
-  activityId: null,
-  executionPrincipal: { type: "user", userId: asUserId(OWNER) },
-  reason: "automation",
-};
+type DeliveryTarget = AutomationRunContextV1["deliveryTargets"][number];
+
+function workflowInput(deliveryTargets: DeliveryTarget[] = [{
+  type: "email",
+  emailAddress: "alex@example.com",
+}]): WorkstreamWorkflowInput {
+  return {
+    region: "global",
+    workspaceId: WORKSPACE,
+    workstreamId: WORKSTREAM,
+    loopId: `workstream:${WORKSTREAM}:substream:0:loop`,
+    harnessRunId: RUN,
+    triggerMessageId: null,
+    automationSubscriptionId: SUBSCRIPTION,
+    activityId: null,
+    executionPrincipal: { type: "user", userId: asUserId(OWNER) },
+    reason: "automation",
+    automationRunContext: {
+      schemaVersion: 1,
+      automationId: SUBSCRIPTION,
+      workspaceId: WORKSPACE,
+      runId: "00000000-0000-7000-8000-00000000000b",
+      authorityGeneration: 1,
+      definitionRevision: 1,
+      definition: {
+        name: "Daily competitor briefing",
+        description: "Brief",
+        overview: "Produce the daily competitor briefing.",
+        instructions: "Write the briefing.",
+        requiredCapabilities: [],
+        expectedOutputs: ["Competitor briefing"],
+        defaultBehavior: {},
+        recommendedPlugins: [],
+        memoryTables: [],
+      },
+      defaultPluginIds: [],
+      activitySourcePluginIds: {},
+      connectorBindings: {},
+      deliveryTargets,
+      modelOverride: null,
+      executionPrincipal: { type: "user", userId: asUserId(OWNER) },
+      trigger: { kind: "manual", requestedByUserId: asUserId(OWNER) },
+      opening: null,
+      memoryScope: { automationId: SUBSCRIPTION, authorityGeneration: 1 },
+    },
+  };
+}
 
 const lease = { attemptId: ATTEMPT, owner: LEASE_OWNER } as Parameters<typeof loadRunPromptContext>[2];
 const workstream = {
@@ -185,7 +225,7 @@ describe("what an automation run is told about its own delivery", () => {
   it("names the frozen destination Avalon will mail the result to", async () => {
     const env = envFor(seededDatabase());
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
 
     // The whole defect this test exists for: a run that is not told Avalon
     // delivers the result sends it itself through the mail connector, and the
@@ -201,7 +241,7 @@ describe("what an automation run is told about its own delivery", () => {
   it("is not told to write its result as a document", async () => {
     const env = envFor(seededDatabase());
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
 
     // Rally delivers this run's final message to the frozen destinations; a
     // document published to the rail is not in that message, so the owner
@@ -212,7 +252,7 @@ describe("what an automation run is told about its own delivery", () => {
   it("lists nothing when the automation has no destination beyond Avalon", async () => {
     const env = envFor(seededDatabase({ targets: "" }));
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput([]), lease, workstream);
 
     // A run with no frozen destination is free to do the sending the task asks
     // for, so the context must not imply somebody else already sent it.
@@ -229,7 +269,12 @@ describe("what an automation run is told about its own delivery", () => {
                 '${OWNER}', 'T1', 'U1', 'active', '2026-01-01', '2026-01-01');`,
     }));
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput([{
+      type: "slack_agent_dm",
+      connectionId: CONNECTION,
+      slackTeamId: "T1",
+      slackUserId: "U1",
+    }]), lease, workstream);
 
     // The rule the run applies is "does this recipient match one of these", so
     // a description is not something a tool argument can be compared against.
@@ -247,7 +292,12 @@ describe("what an automation run is told about its own delivery", () => {
                 '${OWNER}', 'T1', 'U1', 'needs_input', '2026-01-01', '2026-01-01');`,
     }));
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput([{
+      type: "slack_agent_dm",
+      connectionId: CONNECTION,
+      slackTeamId: "T1",
+      slackUserId: "U1",
+    }]), lease, workstream);
 
     // The Slack sender deliberately attempts a `needs_input` target rather than
     // trusting a stale belief. Filtering it out here would tell the run nothing
@@ -270,7 +320,7 @@ describe("what an automation run is told about its own delivery", () => {
         VALUES ('${CONNECTION}', '${OWNER}', 'U1', 0, 0, '2026-01-01');`,
     }));
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput([]), lease, workstream);
 
     // Avalon sends nothing to it, so telling the run to stand down on its
     // account would deliver the result nowhere.
@@ -292,7 +342,10 @@ describe("what an automation run is told about its own delivery", () => {
                 'alex@example.com', 'active', '2026-01-01', '2026-01-01');`,
     }));
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput([
+      { type: "slack_agent_dm", connectionId: CONNECTION, slackTeamId: "T1", slackUserId: "U1" },
+      { type: "email", emailAddress: "alex@example.com" },
+    ]), lease, workstream);
 
     // The prefix is re-rendered every turn and must survive a retry unchanged,
     // and nothing constrains the order two rows come back in.
@@ -306,7 +359,7 @@ describe("what an automation run is told about its own delivery", () => {
   it("does not claim an email destination outside production", async () => {
     const env = envFor(seededDatabase(), "test");
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
 
     // `sendResendEmail` refuses to send outside production, so a run told
     // Avalon has the email covered stands down and nobody gets the briefing —
@@ -326,7 +379,7 @@ describe("what an automation run is told about its own delivery", () => {
                 'alex@example.com', 'disabled', '2026-01-01', '2026-01-01');`,
     }));
 
-    const context = await loadRunPromptContext(env, workflowInput, lease, workstream);
+    const context = await loadRunPromptContext(env, workflowInput([]), lease, workstream);
 
     // A disabled or failed target sends nothing, so the run must not be told to
     // stand down on its account.

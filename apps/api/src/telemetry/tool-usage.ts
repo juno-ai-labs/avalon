@@ -1,6 +1,5 @@
 import { asUserId, type ExecutionPrincipal, type WorkspaceId } from '@rally/contracts';
 import type { Env, IdentityAuthContext } from '../env';
-import { withWorkspaceRuntimeDatabase } from '../services/workspace-runtime-database';
 import {
   apiTelemetryEnvelope,
   emitAuthenticatedApiTelemetry,
@@ -160,18 +159,15 @@ export async function emitAgentToolTerminalTelemetry(
   // The work stream's automation run was a third table in the join, and the
   // only column this needed from it. It is the identity authority's row, asked
   // for after the status gate rather than fetched for every receipt.
-  row.automation_run_id = (await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
-    .identity())?.automation_run_id ?? null;
-  // The automation lookup is workspace authority (the WorkspaceDO); the rows
-  // above are work-stream authority, and no database holds both sides of the
-  // old JOIN — which the swallowed telemetry errors hid.
-  row.automation_id = row.automation_run_id
-    && ["automation", "automation_run", "automation_activity"].includes(row.origin)
-    ? (await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
-      `SELECT automation_subscription_id FROM automation_runs WHERE id = ? AND workspace_id = ?`,
-    ).bind(row.automation_run_id, input.workspaceId)
-      .first<{ automation_subscription_id: string | null }>())?.automation_subscription_id ?? null
-    : null;
+  const workstreamIdentity = await createIdentityObjectPort(
+    env,
+    input.workspaceId,
+    input.workstreamId,
+  ).identity();
+  row.automation_run_id = workstreamIdentity?.automation_run_id ?? null;
+  // The generated work stream owns its immutable back-link. Reading both IDs
+  // from that authority avoids reconstructing a cross-object JOIN in telemetry.
+  row.automation_id = workstreamIdentity?.automation_subscription_id ?? null;
 
   const plan = objectJson(row.execution_plan_json);
   const toolName = typeof plan.canonicalToolName === 'string' ? plan.canonicalToolName : '';

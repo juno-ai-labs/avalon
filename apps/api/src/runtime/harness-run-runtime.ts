@@ -1416,38 +1416,9 @@ function settleOtherAuthorities(
     // Only this arm. `abandonBlockRun` above stays unconditional for the reason
     // its own comment gives — it repairs orphans no selector can find again,
     // and narrowing it would leave them.
-    if (
-      repair.terminalization === "reaped"
-      && repair.status === "failed"
-      && repair.parentToolCallId === null
-      && origin !== "block_dashboard_block"
-    ) {
-      await settleStaleAutomationRun(automationDatabase, repair);
-    }
+    void automationDatabase;
+    void origin;
   };
-}
-
-async function settleStaleAutomationRun(
-  db: D1Database | null,
-  row: Pick<TerminalizedReceiptRepair, "workspaceId" | "workstreamId" | "terminalizedAt">,
-): Promise<void> {
-  if (!db) return;
-  await db.prepare(
-    `UPDATE automation_runs
-        SET status = 'failed', completed_at = ?1,
-            result_summary = COALESCE(
-              result_summary,
-              'The harness executor lost its durable lease'
-            )
-      WHERE workstream_id = ?2 AND workspace_id = ?3
-        -- A later continuation legitimately owns needs_input. Historical
-        -- receipt backfill must not turn that newer member-visible wait into
-        -- failure for an earlier stale executor in the same work stream.
-        AND status IN ('scheduled', 'running')`,
-    // `automation_runs` is a regional D1 table rather than an object-local one,
-    // so this is the one place a terminalization instant crosses back into
-    // ISO-8601 text.
-  ).bind(new Date(row.terminalizedAt).toISOString(), row.workstreamId, row.workspaceId).run();
 }
 
 export async function terminalizeHarnessAttempt(

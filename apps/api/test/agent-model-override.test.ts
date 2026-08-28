@@ -212,9 +212,9 @@ describe("automation model override", () => {
     warn.mockRestore();
   });
 
-  // A scheduled run is the common automation shape, and it never passes through
-  // `createRun` — the scheduler Durable Object writes the work stream itself.
-  it("carries the pin into a run the scheduler alarm creates", async () => {
+  // AutomationAgent owns automation timers. WorkspaceDO's scheduler must not
+  // accept a restored legacy automation target after the cutover.
+  it("refuses a legacy automation target in the workspace scheduler", async () => {
     const fixture = seededDatabase();
     fixture.database.exec(`
       UPDATE automation_subscriptions
@@ -228,19 +228,10 @@ describe("automation model override", () => {
         ('00000000-0000-7000-8000-000000000009', '${WORKSPACE_ID}', '${PINNED_SUBSCRIPTION_ID}', 'calendar', 'FREQ=DAILY', 'America/Los_Angeles',
          '2026-01-02T16:00:00.000Z', 1, 1, '2026-01-01', '2026-01-01');
     `);
-    await scheduleRunnerFor(fixture).runDue();
-
-    const workstream = runWorkstream(fixture.objectStore, PINNED_SUBSCRIPTION_ID);
-    expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
-    expect(workstream).toMatchObject({
-      scope: "workspace",
-      created_by_user_id: USER_ID,
-      participant_user_id: USER_ID,
-    });
-    // The scheduler creates the harness run after the work stream exists, so
-    // it resolves the model from the row rather than being handed the value.
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
-      .toEqual({ model: "openai/gpt-5.6-terra" });
+    await expect(scheduleRunnerFor(fixture).runDue()).rejects.toThrow("unsupported_schedule_target");
+    expect(fixture.database.prepare(
+      "SELECT COUNT(*) AS count FROM automation_runs",
+    ).get()).toEqual({ count: 0 });
   });
 
   // Connector-activity runs are the third path that writes a work stream

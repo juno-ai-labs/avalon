@@ -49,6 +49,46 @@ export interface AutomationResultEmail {
 
 export type AutomationEmailDelivery = "sent" | "skipped";
 
+/**
+ * Deliver from an AutomationRunContextV1 destination. The child owns the
+ * result bytes; the parent receives only the receipt after this call settles.
+ */
+export async function deliverFrozenAutomationResultEmail(
+  env: Env,
+  input: AutomationResultEmail & {
+    automationRunId: string;
+    recipientEmail: string;
+    recipientUserId: string;
+  },
+  request: typeof fetch = fetch,
+): Promise<AutomationEmailDelivery> {
+  if (shouldSuppressAutomationResult(input.text)) return "skipped";
+  const recipient = await workspaceRegionalDatabase(env).prepare(
+    `SELECT user.timezone
+       FROM users user
+       JOIN workspace_members member ON member.user_id = user.id
+      WHERE member.workspace_id = ? AND member.user_id = ? AND member.status = 'active'`,
+  ).bind(input.workspaceId, input.recipientUserId).first<RecipientRow>();
+  if (!recipient) return "skipped";
+  const name = singleLine(input.title) || "Rally automation";
+  const ran = runDate(recipient.timezone);
+  const subject = `${OUTCOME_PREFIX[input.outcomeStatus] ?? ""}${name} · ${ran}`;
+  const body = resultBody(input.text);
+  const workstreamUrl = workstreamCanonicalUrl(env.PUBLIC_WEB_BASE_URL, input.workstreamId);
+  const delivery = await sendResendEmail(env, {
+    recipientEmail: input.recipientEmail,
+    subject,
+    html: renderedWithinBudget({ name, heading: name, ran, outcomeStatus: input.outcomeStatus, body, workstreamUrl }),
+    text: [subject, "", markdownToEmailText(body), "", `Open in Rally: ${workstreamUrl}`].join("\n"),
+    idempotencyKey: `rally-automation-result/${input.automationSubscriptionId}/${input.automationRunId}/email`,
+    category: "automation_result",
+    region: env.AVALON_REGION,
+    sender: "notification",
+    errors: EMAIL_ERRORS,
+  }, request);
+  return delivery === "skipped" ? "skipped" : "sent";
+}
+
 interface EmailDeliveryTargetRow {
   id: string;
   user_id: string;

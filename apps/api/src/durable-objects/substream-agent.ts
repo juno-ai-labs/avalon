@@ -16,6 +16,7 @@ import {
   type WorkstreamId,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
+  asAutomationId,
   asSubstreamId,
   asHarnessRunId,
   asUserId,
@@ -45,6 +46,7 @@ import {
 
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
+import { sha256 } from "../lib/crypto";
 import {
   WorkstreamReaderAudienceSchema,
   type WorkstreamReaderAudience,
@@ -94,7 +96,7 @@ import {
   runWorkstreamHarness,
   type WorkstreamHarnessResult,
 } from "../services/integrations";
-import { deliverAutomationResultEmail } from "../services/automation-email-service";
+import { deliverFrozenAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
@@ -123,7 +125,7 @@ import {
   WorkstreamRegionalEffectAckSchema,
   type WorkstreamRegionalEffectEnvelope,
 } from "./workstream-regional-effect";
-import { substreamAgentName, substreamLoopId, workstreamDOName } from "./names";
+import { automationAgentName, substreamAgentName, substreamLoopId, workstreamDOName } from "./names";
 import {
   BlockDashboardSourceRefreshRequestSchema,
   type BlockDashboardContextFence,
@@ -1178,6 +1180,99 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
   async attachRuntimeResource(input: SubstreamRuntimeResourceRequest): Promise<DurableObjectRpcResult> {
     await this.initialized;
     return responseToRpcResult(await this.acceptRuntimeResource(this.rpcRequest(input)));
+  }
+
+  /**
+   * Recheck a projected watched link and complete audience before appending one
+   * connector update. WorkspaceDO discovers the destination; this object owns
+   * the final disclosure decision and transcript idempotency.
+   */
+  async appendWatchedResourceEvent(input: unknown): Promise<{
+    outcome: "appended" | "replayed" | "refused";
+    code: string;
+  }> {
+    await this.initialized;
+    const request = z.object({
+      schemaVersion: z.literal(1),
+      workspaceId: z.string().min(1),
+      workstreamId: z.string().min(1),
+      substreamId: z.union([z.literal("0"), z.string().min(1)]),
+      resourceId: z.string().min(1),
+      authorityGeneration: z.number().int().positive(),
+      deliveryId: z.string().min(1),
+      event: z.object({
+        id: z.string().min(1),
+        eventType: z.string().min(1),
+        title: z.string().min(1),
+        summary: z.string(),
+        occurredAt: z.number().int().nonnegative(),
+        audienceKind: z.enum(["workspace", "restricted"]),
+        audienceUserIds: z.array(z.string().min(1)),
+      }).strict(),
+    }).strict().parse(input);
+    const clientMessageId = `resource-update:${request.deliveryId}`;
+    const identity = this.objectStore.identity();
+    if (!identity
+      || identity.workspaceId !== request.workspaceId
+      || identity.workstreamId !== request.workstreamId
+      || this.externalSubstreamId() !== request.substreamId) {
+      return { outcome: "refused", code: "workstream_destination_mismatch" };
+    }
+    if (this.messages.messageByClientId({ clientMessageId })) {
+      return { outcome: "replayed", code: "resource_update_replayed" };
+    }
+    const prepared = await this.messages.prepareMessage({
+      messageId: uuidV7(request.event.occurredAt),
+      clientMessageId,
+      authorType: "system",
+      authorUserId: null,
+      externalActorJson: null,
+      messageType: "system",
+      text: request.event.summary
+        ? `${request.event.title}\n\n${request.event.summary}`
+        : request.event.title,
+      structuredContentJson: JSON.stringify({
+        type: "resource_update",
+        eventId: request.event.id,
+        eventType: request.event.eventType,
+        resourceId: request.resourceId,
+      }),
+      producedByRunId: null,
+      now: request.event.occurredAt,
+    });
+    return this.product.commitRuntimeMutation(() => {
+      const authority = this.ctx.storage.sql.exec<{
+        authority_generation: number;
+        archived_at: number | null;
+      }>(`SELECT authority_generation, archived_at FROM workstream WHERE id = 1`).toArray()[0];
+      if (!authority || authority.authority_generation !== request.authorityGeneration) {
+        return { outcome: "refused" as const, code: "workstream_authority_generation_stale" };
+      }
+      if (authority.archived_at !== null) {
+        return { outcome: "refused" as const, code: "workstream_archived" };
+      }
+      const watched = this.ctx.storage.sql.exec<{ watch_enabled: number }>(
+        `SELECT watch_enabled FROM workstream_resource_links WHERE resource_id = ?`,
+        request.resourceId,
+      ).toArray()[0];
+      if (watched?.watch_enabled !== 1) {
+        return { outcome: "refused" as const, code: "resource_watch_not_active" };
+      }
+      if (request.event.audienceKind === "restricted") {
+        const audience = new Set(request.event.audienceUserIds);
+        const participants = this.ctx.storage.sql.exec<{ user_id: string }>(
+          `SELECT user_id FROM participants WHERE status = 'active'`,
+        ).toArray();
+        if (participants.some((participant) => !audience.has(participant.user_id))) {
+          return { outcome: "refused" as const, code: "resource_update_audience_insufficient" };
+        }
+      }
+      const appended = this.messages.appendPreparedMessage(prepared);
+      return {
+        outcome: appended.outcome === "replayed" ? "replayed" as const : "appended" as const,
+        code: appended.outcome === "replayed" ? "resource_update_replayed" : "resource_update_appended",
+      };
+    }, true);
   }
 
   /** Authoritative current readers for privacy decisions made outside this object. */
@@ -3473,23 +3568,82 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       outcome.status,
     );
     if (!input.automationSubscriptionId) return;
-    const automation = await workspaceEnv.DB.prepare(
-      `SELECT template.name FROM automation_subscriptions subscription
-        JOIN automation_templates template ON template.id = subscription.template_id
-       WHERE subscription.id = ? AND subscription.workspace_id = ?`,
-    ).bind(input.automationSubscriptionId, input.workspaceId).first<{ name: string }>();
-    const result = {
-      workspaceId: input.workspaceId,
-      automationSubscriptionId: input.automationSubscriptionId,
-      workstreamId: input.workstreamId,
-      title: automation?.name ?? "Avalon automation result",
-      text,
+    const frozen = input.automationRunContext;
+    if (!frozen || frozen.automationId !== input.automationSubscriptionId) {
+      throw new Error("automation_run_context_not_found");
+    }
+    const payloadHash = await sha256(JSON.stringify({
+      runId: frozen.runId,
       outcomeStatus: outcome.status,
-    };
-    const failures = (await Promise.allSettled([
-      slack.deliverAutomationResult(result),
-      deliverAutomationResultEmail(workspaceEnv, result),
-    ])).flatMap((settled) => settled.status === "rejected" ? [settled.reason as unknown] : []);
+      text,
+    }));
+    const automation = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.AUTOMATION_AGENTS,
+      asWorkspaceId(input.workspaceId),
+      automationAgentName(
+        input.region,
+        asWorkspaceId(input.workspaceId),
+        asAutomationId(frozen.automationId),
+      ),
+    );
+    const failures: unknown[] = [];
+    for (const target of frozen.deliveryTargets) {
+      const targetKey = target.type === "email"
+        ? `email:${target.emailAddress.toLocaleLowerCase()}`
+        : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`;
+      try {
+        const state = target.type === "email"
+          ? await deliverFrozenAutomationResultEmail(workspaceEnv, {
+              workspaceId: input.workspaceId,
+              automationSubscriptionId: frozen.automationId,
+              automationRunId: frozen.runId,
+              workstreamId: input.workstreamId,
+              recipientEmail: target.emailAddress,
+              recipientUserId: frozen.executionPrincipal.userId,
+              title: frozen.definition.name,
+              text,
+              outcomeStatus: outcome.status,
+            })
+          : await slack.deliverFrozenAutomationResult({
+              workspaceId: input.workspaceId,
+              automationId: frozen.automationId,
+              automationRunId: frozen.runId,
+              workstreamId: input.workstreamId,
+              recipientUserId: frozen.executionPrincipal.userId,
+              connectionId: target.connectionId,
+              slackTeamId: target.slackTeamId,
+              slackUserId: target.slackUserId,
+              title: frozen.definition.name,
+              text,
+              outcomeStatus: outcome.status,
+            });
+        await automation.recordDeliveryReceipt({
+          schemaVersion: 1,
+          automationId: frozen.automationId,
+          workspaceId: input.workspaceId,
+          runId: frozen.runId,
+          workstreamId: input.workstreamId,
+          targetKey,
+          payloadHash,
+          state: state === "skipped" ? "skipped" : "delivered",
+          outcomeCode: state === "skipped" ? "delivery_suppressed" : "delivery_completed",
+        });
+      } catch (failure) {
+        failures.push(failure);
+        await automation.recordDeliveryReceipt({
+          schemaVersion: 1,
+          automationId: frozen.automationId,
+          workspaceId: input.workspaceId,
+          runId: frozen.runId,
+          workstreamId: input.workstreamId,
+          targetKey,
+          payloadHash,
+          state: "failed",
+          outcomeCode: "delivery_failed",
+        }).catch(() => undefined);
+      }
+    }
     for (const failure of failures) {
       logWarn(this.env, "automation_result_delivery_failed", {
         workspace_id: input.workspaceId,
@@ -3506,6 +3660,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     outcome: AgentTerminalOutcome,
   ): Promise<void> {
     if (!input.automationSubscriptionId) return;
+    // The run is an object-local execution receipt; the regional `harness_runs`
+    // table this fence once read is retired. The receipt port is the same
+    // authority the rest of settlement trusts.
     const receipt = await createHarnessRunObjectPort(
       executionEnv,
       input.workspaceId,
@@ -3515,22 +3672,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     if (!receipt || receipt.terminalized_at === null || receiptStatus !== outcome.status) {
       throw new Error("automation_run_terminal_fence_missing");
     }
-    const automationStatus = outcome.status === "stopped" ? "failed" : outcome.status;
-    const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-    await workspaceEnv.DB.prepare(
-      `UPDATE automation_runs
-          SET status = ?1,
-              completed_at = CASE WHEN ?1 IN ('completed', 'failed') THEN ?2 ELSE completed_at END,
-              result_summary = COALESCE(result_summary, ?3)
-        WHERE workstream_id = ?4 AND automation_subscription_id = ?5 AND workspace_id = ?6`,
-    ).bind(
-      automationStatus,
-      new Date().toISOString(),
-      outcome.error?.message.slice(0, 500) ?? null,
-      input.workstreamId,
-      input.automationSubscriptionId,
-      input.workspaceId,
-    ).run();
+    // The full, content-free child projection travels through the existing
+    // WorkstreamDO outbox and WorkspaceDO effect path. Updating a parent table
+    // from the child would recreate the split authority this lifecycle removes.
   }
 
   private localRuntimeEnvironment(

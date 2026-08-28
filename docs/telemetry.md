@@ -667,6 +667,19 @@ signals, never by weakening policy or deadline tests.
 
 ## Changelog
 
+### 2026-08-28 — Automation telemetry follows the parent run envelope
+
+**What changed:** Compiler and generated-run signals carry content-free
+automation, occurrence, trigger, run, and region attribution through a shared
+run envelope. Tool usage and terminal outcomes use that envelope rather than
+reading removed WorkspaceDO subscription or run rows.
+
+**Why:** Telemetry must remain attributable after legacy tables are gone without
+becoming a shadow authority or copying evaluator and transcript content.
+
+**Consequences:** Projection lag cannot change lifecycle or delivery decisions,
+and EU automation payloads remain absent from Global analytics exports.
+
 ### 2026-08-27 — Feed telemetry drops the retired compatibility source
 
 **What changed:** `workstream_feed_visible.feedSource` now accepts only
@@ -687,7 +700,6 @@ Historical events keep their stored value, but current code cannot emit
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
 the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
-
 ### 2026-08-26 — The packaged Crashpad gate uses its actual run date
 
 **What changed:** The two packaged Crashpad fixture launches now derive their

@@ -145,16 +145,22 @@ function fixture(options: { openAuthority?: boolean } = {}): {
               ).get(input.resourceId);
               if (!linked) return [];
               const workstream = database.prepare(
-                `SELECT created_by_user_id, automation_subscription_id
-                   FROM workstreams WHERE id = ? AND workspace_id = ? AND archived_at IS NULL`,
+                `SELECT workstream.created_by_user_id, workstream.automation_subscription_id,
+                        COALESCE(subscription.scope, 'personal') AS scope
+                   FROM workstreams workstream
+                   LEFT JOIN automation_subscriptions subscription
+                     ON subscription.id = workstream.automation_subscription_id
+                  WHERE workstream.id = ? AND workstream.workspace_id = ?
+                    AND workstream.archived_at IS NULL`,
               ).get(linkedWorkstreamId, input.workspaceId) as {
                 created_by_user_id: string | null;
                 automation_subscription_id: string | null;
+                scope: "personal" | "workspace";
               } | undefined;
               if (!workstream) return [];
               return [{
                 workstreamId: linkedWorkstreamId,
-                scope: "workspace",
+                scope: workstream.scope,
                 createdByUserId: workstream.created_by_user_id,
                 automationSubscriptionId: workstream.automation_subscription_id,
                 isParticipant: false,

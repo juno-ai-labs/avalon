@@ -7,6 +7,12 @@ subordinate execution receipt for one activation of that loop; it never creates
 or identifies the loop. The loop is not a participant, separate persona,
 terminal, or general code-execution environment.
 
+Automation authoring is a second host of the shared durable Bind capability,
+not a SubstreamAgent. AutomationAgent owns its compiler admission, ordered
+turns, checkpoints, receipts, elicitation, stop/retry, and draft-only architect
+tools; accepted generated runs continue to execute in private SubstreamAgents.
+See [`automation-lifecycle.md`](automation-lifecycle.md).
+
 The user-facing dashboard is **HyperSight**. Its harness role, plugin wire
 prefix, durable owner, persistence rows, and terminal error codes use the
 internal `block_dashboard` / `BlockDashboardAgent` name.
@@ -999,6 +1005,20 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-28 — AutomationAgent hosts the durable compiler loop
+
+**What changed:** The exact Bind reconstruction, ordered transcript, dispatch,
+checkpoint, receipt, cancellation, and repair capabilities are reusable modules
+hosted by both SubstreamAgent and draft-state AutomationAgent. The automation
+architect adds strict evaluator staging, definition submission, and structured
+elicitation while exposing connector reads but no provider write executor.
+
+**Why:** The authoring loop needs the same recovery invariants as a work stream
+without inheriting child-run identity, participants, or work-stream controls.
+
+**Consequences:** Changes to shared loop semantics require conformance tests in
+both hosts; BlockDashboardAgent remains independent.
+
 ### 2026-08-28 — The harness serves one persistent loop per substream
 
 **What changed:** The workflow host executes activations of one persistent
@@ -1340,7 +1360,6 @@ stream turn ID. Host-authored terminal guidance cannot borrow that ID and uses
 a system-notice identity instead. Inline child callers receive the terminal
 assistant response as their tool result; they do not concatenate narration from
 earlier tool-bearing turns into that response.
-
 ### 2026-08-27 — A third standing policy: an answer cites what it rests on
 
 **What changed:** `CITATION_POLICY` joins the work-stream system prompt,
