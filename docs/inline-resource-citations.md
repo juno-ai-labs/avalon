@@ -208,6 +208,7 @@ evaluation suite, evals — not a verification pipeline.
 pnpm --filter @rally/contracts exec vitest run src/citations.test.ts
 pnpm --filter @rally/desktop exec vitest run --project renderer src/renderer/components/citations.test.tsx
 pnpm --filter @rally/desktop exec vitest run --project renderer src/renderer/components/workstream-blocks-streaming-cost.test.tsx
+pnpm --filter @rally/desktop exec vitest run --project renderer src/renderer/components/citation-resolution.test.tsx
 pnpm --filter @rally/desktop exec vitest run --project renderer src/renderer/components/inspector-rail.test.tsx
 pnpm --filter @rally/desktop exec vitest run --project main src/main/message-export.test.ts
 pnpm --filter @rally/connectors exec vitest run src/slack-markdown.test.ts
