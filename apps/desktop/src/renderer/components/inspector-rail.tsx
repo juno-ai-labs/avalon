@@ -397,7 +397,11 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
         if (!controller.signal.aborted) setState({ failed: true });
       });
     return () => controller.abort();
-  }, [loadResourceContent, resource.id]);
+    // `currentVersion` as well as the id: a watched source re-ingested in place
+    // keeps its id, and the metadata above this preview shows the new version
+    // number. Without it the panel put version 3's number over version 2's
+    // text, which is a citation substantiating a claim with the wrong revision.
+  }, [loadResourceContent, resource.currentVersion, resource.id]);
 
   if (state.failed) {
     return <p className="inspector-detail-preview-status">This preview is not available.</p>;

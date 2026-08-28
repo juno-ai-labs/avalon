@@ -337,14 +337,15 @@ that stylesheet and the reasoning behind not deriving it from this one.
 
 ## Failure modes and limits
 
-**The footnote reference scan reads indented code blocks as prose.** It skips
-fenced blocks and inline spans, and the delivery rewrite skips exactly the same
-two, so the transcript and the delivered copy agree — but GFM does not read a
-four-space-indented block as prose at all. A `[^1]` inside one is counted here
-and numbered, where GFM shows it verbatim. It misnumbers rather than deletes,
-and an indented code block is rare in model output beside a fenced one, so it is
-named rather than fixed; the fix is for whoever shares one code splitter across
-the three passes.
+**The citation grammar approximates CommonMark's link syntax with a regex.** It
+matches the inline forms — balanced brackets in a label, an angle-bracketed
+target, a title, one level of balanced parentheses in a destination — but not a
+reference-style link (`[label][ref]` with a separate `[ref]: resource://…`),
+which remark-gfm resolves and this leaves alone. The desktop draws that as a
+chip and the delivery rewrite ships its raw target. No model has been seen to
+write one, and the guidance teaches the inline form, so the gap is named rather
+than closed with a second Markdown parser inside `@rally/contracts`. Whoever
+needs it should parse rather than widen the pattern again.
 
 - **A language Prism does not know** renders as `plain`. No error, no missing
   block.
@@ -411,6 +412,32 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-28 — One answer about what is code, indented blocks included
+
+**What changed:** The three passes over a document in `@rally/contracts/citations`
+— the reference scan, the definition strip, and the body rewrite — read one
+`codeLines` classifier instead of carrying a fence state machine each. It
+recognises indented code blocks as well as fences, under CommonMark's rule that
+an indented chunk cannot interrupt a paragraph. The link pattern also accepts one
+level of balanced parentheses in a destination.
+
+**Why:** An indented block is the other ordinary way a model shows this syntax,
+and the rewrite was deleting it — `    See [the deck](resource://abc).` arrived
+in an inbox as `    See the deck.`, silently editing the example being taught.
+The scan had the matching half of it: a `[^1]` inside an indented block earned a
+number, so a real footnote beside it was renumbered against the transcript. That
+is the same defect the inline-span fix closed a commit earlier, one syntax over,
+which is the argument for the three passes reading one answer rather than three
+agreeing ones. The paragraph rule is the part that cannot be skipped: without it
+a lazily-indented continuation line reads as code and a real `resource://` target
+leaves Rally, which is the failure the module exists to prevent.
+
+**What a future change has to respect:** `codeLines` is the only place that
+decides what code is, and a pass that grows its own copy reintroduces the class
+of bug this removed. Erring toward "this is code" is safe for the *rewrite* and
+unsafe for nothing else — except the paragraph rule, where it inverts: a
+continuation wrongly called code is a leak, not a redundancy.
 
 ### 2026-08-28 — A citation keys on the id GFM wrote, and a section is never deleted blind
 

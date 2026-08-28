@@ -335,6 +335,32 @@ describe('resource detail content preview', () => {
     expect(screen.getByText('Version')).toBeInTheDocument();
   });
 
+  it('re-reads the content when the resource is revised in place', async () => {
+    // A watched source re-ingested keeps its id, and the metadata beside this
+    // preview shows the new version number — so keying the read on the id alone
+    // put version 3's number over version 2's text, which is a citation
+    // substantiating a claim with the wrong revision.
+    let revision = 2;
+    const loadResourceContent = vi.fn(async () => new Blob([`## Findings\n\nRevenue grew ${revision}0%.`]));
+    const { rerender } = render(
+      <Tooltip.Provider>
+        <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [note] }} />
+      </Tooltip.Provider>,
+    );
+    act(() => { useUiStore.getState().inspect({ type: 'resource', id: note.id }); });
+    await waitFor(() => expect(screen.getByText('Revenue grew 20%.')).toBeInTheDocument());
+
+    revision = 3;
+    const revised = { ...note, currentVersion: note.currentVersion + 1 };
+    rerender(
+      <Tooltip.Provider>
+        <InspectorRail loadResourceContent={loadResourceContent} workstream={{ ...workstream, resources: [revised] }} />
+      </Tooltip.Provider>,
+    );
+
+    await waitFor(() => expect(screen.getByText('Revenue grew 30%.')).toBeInTheDocument());
+  });
+
   it('renders a document\'s bytes as written, never through the model-text repair', async () => {
     // The repair rewrites what a *model* wrote. A stored document is a file, and
     // rewriting its bytes on the way to a reader is not this app's business.

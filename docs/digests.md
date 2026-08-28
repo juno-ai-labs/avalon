@@ -684,6 +684,23 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-28 — The reduction leaves indented code alone too
+
+**What changed:** The shared grammar's three passes read one `codeLines`
+classifier, which recognises indented code blocks as well as fenced ones. A
+destination may also carry one level of balanced parentheses.
+
+**Why:** An indented example is the other ordinary way a model shows this
+syntax, and the reduction was rewriting it — a taught `[the deck](resource://abc)`
+arrived here as `the deck`, editing the sample. The parenthesis half is narrower
+and just as visible: stopping at the first `)` truncated
+`…/Function_(mathematics)` in the delivered source list, naming a URL that goes
+nowhere.
+
+**What a future change has to respect:** What counts as code is `codeLines`'
+decision and nothing else's; a caller that grows its own fence tracking is how
+the transcript and the delivered copy start disagreeing about numbering again.
+
 ### 2026-08-28 — The reduction is written for the surface that renders it
 
 **What changed:** `rewriteCitationsAsPlainText` takes a `sources` option:

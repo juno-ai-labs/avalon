@@ -151,11 +151,82 @@ const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/gu;
  * ordinary CommonMark that remark-gfm reads as a link, and all three used to
  * pass through the rewrite untouched.
  *
- * The label alternation is unambiguous on its first character — a bracket or
- * not — so it cannot backtrack over a long label.
+ * A destination may carry one level of balanced parentheses, which CommonMark
+ * allows and Wikipedia URLs use constantly: stopping at the first `)` cut
+ * `…/Function_(mathematics)` in half, and the delivered source list then named
+ * a URL that goes nowhere.
+ *
+ * Both alternations are unambiguous on their first character — a bracket or a
+ * parenthesis, or not — so neither can backtrack over a long label or target.
  */
-const INLINE_LINK = /!?\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?([^\s)<>]*)>?(?:\s+"[^"]*"|\s+'[^']*')?\s*\)/gu;
+const INLINE_LINK = /!?\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?((?:[^\s()<>]|\([^\s()<>]*\))*)>?(?:\s+"[^"]*"|\s+'[^']*')?\s*\)/gu;
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})/u;
+/** The indent that opens an indented code block: four spaces, or a tab. */
+const INDENTED_CODE_LINE = /^(?: {4}|\t)/u;
+
+/**
+ * Which lines of a document are code — fenced or indented.
+ *
+ * Three passes in this module ask this, and they cannot answer it differently:
+ * one decides which footnote identifiers earn a number, one removes the
+ * definitions, and one rewrites the body. Two of them disagreeing is not a
+ * visible bug in either — it is a number in an email that does not match the
+ * number in the transcript, or a citation reduced in one copy and not the
+ * other.
+ *
+ * Indented blocks are here because a model showing somebody this syntax uses
+ * one as readily as a fence, and rewriting it deletes the very thing being
+ * shown. The paragraph rule is what keeps that from going too far: an indented
+ * chunk cannot interrupt a paragraph, so a lazily-indented continuation line is
+ * prose and is still rewritten. Reading it as code instead would leave a real
+ * `resource://` target in somebody's inbox, which is the failure this module
+ * exists to prevent and the reason the rule is not simply "four spaces".
+ *
+ * The fence tracking is deliberately looser than CommonMark: a closing fence is
+ * any run of the opener's character at least as long, whatever follows it, where
+ * the spec wants the rest of the line bare. Reaching the difference means
+ * writing ```` ```more ```` inside a fenced block, and erring loose fails in the
+ * safe direction — a line wrongly read as code is left alone, never rewritten.
+ */
+function codeLines(lines: readonly string[]): boolean[] {
+  const code: boolean[] = [];
+  let fence: string | null = null;
+  let indented = false;
+  let paragraph = false;
+  for (const line of lines) {
+    const fenceMark = FENCE_LINE.exec(line)?.[1];
+    if (fence !== null) {
+      if (fenceMark?.startsWith(fence[0]!) && fenceMark.length >= fence.length) fence = null;
+      code.push(true);
+      continue;
+    }
+    if (fenceMark) {
+      fence = fenceMark;
+      indented = false;
+      paragraph = false;
+      code.push(true);
+      continue;
+    }
+    const blank = line.trim() === "";
+    const isIndented = INDENTED_CODE_LINE.test(line);
+    if (indented) {
+      // A blank line does not end an indented block — an indented line after it
+      // continues the same block — but a line at the margin does.
+      if (blank || isIndented) {
+        code.push(true);
+        continue;
+      }
+      indented = false;
+    } else if (isIndented && !blank && !paragraph) {
+      indented = true;
+      code.push(true);
+      continue;
+    }
+    code.push(false);
+    paragraph = !blank;
+  }
+  return code;
+}
 /**
  * An inline code span, as every read in this module has to agree one looks.
  *
@@ -186,21 +257,15 @@ export function citationFootnotes(markdown: string): CitationFootnotes {
   const citations = new Map<string, FootnoteCitation>();
   const referenced: string[] = [];
   const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
+  // Consulted only where no definition is open: inside one, an indented line is
+  // the definition's own second block, which is what disqualifies it as a
+  // citation — not an indented code block at the document's level.
+  const code = codeLines(lines);
 
-  let fence: string | null = null;
   /** The identifier whose definition the following indented lines continue. */
   let open: string | null = null;
-  for (const line of lines) {
-    const fenceMark = FENCE_LINE.exec(line)?.[1];
-    if (fence !== null) {
-      if (fenceMark?.startsWith(fence[0]!) && fenceMark.length >= fence.length) fence = null;
-      continue;
-    }
-    if (fenceMark) {
-      fence = fenceMark;
-      open = null;
-      continue;
-    }
+  for (const [index, line] of lines.entries()) {
+    if (open === null && code[index]) continue;
 
     const definition = FOOTNOTE_DEFINITION.exec(line);
     if (definition) {
@@ -366,19 +431,14 @@ function sourceLine(label: string, target: CitationTarget, plain: boolean): stri
 
 /** The definitions themselves, now that their content lives in the source list. */
 function stripFootnoteDefinitions(markdown: string): string {
+  const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
+  const code = codeLines(lines);
   const kept: string[] = [];
-  let fence: string | null = null;
   let dropping = false;
-  for (const line of markdown.replace(/\r\n/gu, "\n").split("\n")) {
-    const fenceMark = FENCE_LINE.exec(line)?.[1];
-    if (fence !== null) {
-      if (fenceMark?.startsWith(fence[0]!) && fenceMark.length >= fence.length) fence = null;
-      kept.push(line);
-      continue;
-    }
-    if (fenceMark) {
-      fence = fenceMark;
-      dropping = false;
+  for (const [index, line] of lines.entries()) {
+    // Same rule as the scan: a `[^1]:` line inside code is the syntax being
+    // shown, not a definition to remove.
+    if (!dropping && code[index]) {
       kept.push(line);
       continue;
     }
@@ -425,33 +485,20 @@ const SPAN_PLACEHOLDER = "\u0000";
  *
  * A message that teaches this syntax — a Rally answer explaining how to cite
  * something, which is an ordinary thing for it to be asked — shows the citation
- * inside a fence or a span. Rewriting that would delete the very thing being
- * shown, and it is the one input where the rewrite is certainly wrong.
+ * inside a fence, an indented block, or a span. Rewriting that would delete the
+ * very thing being shown, and it is the one input where the rewrite is
+ * certainly wrong. Whole lines are `codeLines`' business; this adds the spans.
  *
  * Inline spans are parked whole, the way the email renderer parks them, behind a
  * character the input cannot contain: it is stripped from the line first, so a
  * model writing a NUL cannot forge a placeholder and splice a span of its own
  * choosing back in.
- *
- * The fence tracking is deliberately looser than CommonMark: a closing fence is
- * any run of the opener's character at least as long, whatever follows it, where
- * the spec wants the rest of the line bare. Reaching the difference means
- * writing ```` ```more ```` inside a fenced block, and erring loose fails in the
- * safe direction — a line wrongly read as code is left alone, never rewritten.
  */
 function mapOutsideCode(markdown: string, rewrite: (segment: string) => string): string {
   const lines = markdown.replace(/\r\n/gu, "\n").split("\n");
-  let fence: string | null = null;
-  return lines.map((line) => {
-    const fenceMark = FENCE_LINE.exec(line)?.[1];
-    if (fence !== null) {
-      if (fenceMark?.startsWith(fence[0]!) && fenceMark.length >= fence.length) fence = null;
-      return line;
-    }
-    if (fenceMark) {
-      fence = fenceMark;
-      return line;
-    }
+  const code = codeLines(lines);
+  return lines.map((line, index) => {
+    if (code[index]) return line;
     const spans: string[] = [];
     const parked = line.split(SPAN_PLACEHOLDER).join("").replace(INLINE_CODE_SPAN, (span) => {
       spans.push(span);
