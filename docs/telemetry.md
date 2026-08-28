@@ -672,13 +672,22 @@ signals, never by weakening policy or deadline tests.
 **What changed:** Compiler and generated-run signals carry content-free
 automation, occurrence, trigger, run, and region attribution through a shared
 run envelope. Tool usage and terminal outcomes use that envelope rather than
-reading removed WorkspaceDO subscription or run rows.
+reading removed WorkspaceDO subscription or run rows. On the client,
+`telemetrySurfaceForPath` now takes whether the automation at that path is still
+a draft, and reports `automation_builder` or `automation_detail` accordingly.
 
 **Why:** Telemetry must remain attributable after legacy tables are gone without
-becoming a shadow authority or copying evaluator and transcript content.
+becoming a shadow authority or copying evaluator and transcript content. The
+client half is a consequence of the same cutover: a draft and an accepted
+automation share one durable route now, so the pathname alone cannot say which
+screen is showing. Every draft after its first turn was reporting as
+`automation_detail`, which made authoring an automation indistinguishable from
+reading one — and authoring is the funnel this surface exists to measure.
 
 **Consequences:** Projection lag cannot change lifecycle or delivery decisions,
-and EU automation payloads remain absent from Global analytics exports.
+and EU automation payloads remain absent from Global analytics exports. A
+`surface_viewed` comparison that spans the cutover is not comparing like with
+like: before it, `automation_builder` meant `/automations/new` only.
 
 ### 2026-08-27 — Feed telemetry drops the retired compatibility source
 

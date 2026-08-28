@@ -205,7 +205,13 @@ Slack's Agent DM is the one shipped today.
 
 Email delivery resolves the author's account address at the moment the set is
 written and stores that literal address, so a later account change cannot silently
-redirect results. **Every edit re-resolves the whole set** — `PATCH /automations/:id`
+redirect results. **The send re-checks that address as well as the membership**:
+if the recipient's account email no longer matches the frozen one, the result is
+skipped rather than re-targeted. An automation outlives the address it was
+accepted with, and a corporate mailbox reassigned to a different person is the
+case that matters — the run was authorized to mail a named address, and quietly
+sending its contents somewhere else is not the smaller surprise.
+**Every edit re-resolves the whole set** — `PATCH /automations/:id`
 takes the complete destination list and rewrites it, so a Slack link that has gone
 stale or an account address that has changed is picked up by the next edit, and a
 destination whose connection is disabled or whose identity link is gone refuses
@@ -544,7 +550,10 @@ so a receipt cannot be attributed to a work stream the run no longer owns.
 **Considered and rejected:** Keeping a separate `activateAutomationRoute` gate.
 It existed to make the answer to "can this automation receive mail" agree with
 what happens when mail arrives, by reading the same row. With one object owning
-both, a second reader can only disagree.
+both, a second reader can only disagree. On the outbound side, re-targeting a
+result to the author's *current* account address instead of skipping it. A frozen
+destination is a decision somebody made about a named address; following an
+account change is a different decision that nobody made.
 
 **Consequences:** Two behaviors did not survive the move and are recorded above
 rather than quietly lost. The result email no longer carries a `Reply-To` back to
