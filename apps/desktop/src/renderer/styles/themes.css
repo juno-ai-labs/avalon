@@ -99,13 +99,20 @@
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
 
-  /* Rally's own colour. `ink` is the brand drawn as a mark or a label on an
-   * ordinary surface, which is a different question from `base`: the
-   * chartreuse is a fine fill on white and an illegible label on it. */
+  /* Rally's own colour. `ink` is the brand read as a legible label or accent
+   * on an ordinary surface, which is a different question from `base`: the
+   * chartreuse is a fine fill on white and an illegible label on it. `mark` is
+   * narrower still — it is the logo, everywhere the logo is drawn. It takes
+   * only two values across every theme, the pair the brand is built on: the
+   * volt chartreuse on a dark ground, and near-black on a light one. It is not
+   * a theme's own reading of the brand, so a light theme does not get to warm
+   * it and a dark one does not get to mute it; a theme picks the side its
+   * background puts it on and nothing else. */
   --av-sys-color-brand-base: #cedc00;
   --av-sys-color-brand-strong: #e0ec25;
   --av-sys-color-brand-soft: #aab96a;
   --av-sys-color-brand-ink: #cedc00;
+  --av-sys-color-brand-mark: #ccff00;
   --av-sys-color-brand-wash: #25291f;
   --av-sys-color-brand-edge: #3f4932;
   --av-sys-color-brand-on: #11140f;
@@ -510,6 +517,7 @@
   --av-sys-color-brand-strong: #b96c1e;
   --av-sys-color-brand-soft: #c4762a;
   --av-sys-color-brand-ink: #a2691f;
+  --av-sys-color-brand-mark: #111210;
   --av-sys-color-brand-wash: #fdf4e8;
   --av-sys-color-brand-edge: #eccfa8;
   --av-sys-color-brand-on: #ffffff;
@@ -816,6 +824,7 @@
   --av-sys-color-brand-strong: #f0a55a;
   --av-sys-color-brand-soft: #d29757;
   --av-sys-color-brand-ink: #e08c3a;
+  --av-sys-color-brand-mark: #ccff00;
   --av-sys-color-brand-wash: #1d1409;
   --av-sys-color-brand-edge: #3a2812;
   --av-sys-color-brand-on: #140c04;
@@ -1122,6 +1131,7 @@
   --av-sys-color-brand-strong: #dbe834;
   --av-sys-color-brand-soft: #6b7500;
   --av-sys-color-brand-ink: #67700a;
+  --av-sys-color-brand-mark: #111210;
   --av-sys-color-brand-wash: #f6f8e2;
   --av-sys-color-brand-edge: #dde4a8;
   --av-sys-color-brand-on: #1d2000;

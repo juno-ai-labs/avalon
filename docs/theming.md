@@ -663,6 +663,45 @@ Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-27 — The logo draws from the brand pair, not from each theme's brand
+
+**What changed:** `sys.color.brand.mark` joins the brand group, and it takes only
+two values across all four themes: `#ccff00` on the dark ones and `#111210` on
+the light ones. Every drawing of the logo paints from it — the turning mark on
+the sign-in card, the home heading and the new-automation intro, and the still
+`.rally-mark` everywhere else. `brand.ink` keeps its value and is still what
+every other brand-coloured thing in the stylesheet uses: eyebrows, mention chips,
+selected indicators, the streaming caret.
+
+**Why:** `brand.ink` is each theme's reading of the brand *as a legible label*,
+which is why Terra Light darkens it to olive and both Air themes make it orange.
+That is right for an eyebrow or a mention chip and wrong for the logo, which the
+brand draws two ways and only two: chartreuse on a dark ground, near-black on a
+light one. Reusing `ink` gave the sign-in screen an olive logo on one theme and
+an orange one on another.
+
+**Considered and rejected:** Chartreuse in every theme, which is what this token
+held first and what was reverted before it shipped. On the light themes' cream
+`#ccff00` is lower contrast than the olive it replaced, and the 13px marks in
+settings and automation rows came out looking faded rather than bright. Also
+rejected: changing `brand.ink` itself, which carries about thirty rules that are
+not the logo — eyebrow text, the mention chip, the region check, the streaming
+caret — where chartreuse as label text on a light surface is close to invisible,
+the case the brand group's own prose already warns about. Splitting the logo out
+is what lets the mark follow the brand without taking the label rules with it.
+And rejected: writing either hex into `app.css` beside the mark rules, which is
+the one thing this engine exists to prevent and which a test refuses.
+
+**What a future change has to respect:** a theme picks one of the two brand
+values by whether its background is light or dark, and does not invent a third.
+The completeness rule already forces every theme to state this token; what this
+entry adds is that its *value* is not a per-theme design choice. A theme that
+wants a third value is deciding the logo is wrong in its world, which is allowed
+and should be deliberate. Both Air themes now draw the mark in the brand pair
+rather than in their own orange.
+
+Shipped in TBD.
+
 ### 2026-08-27 — Projects add a closed semantic color palette
 
 **What changed:** Added twelve `--av-sys-color-project-*` tokens used by the
