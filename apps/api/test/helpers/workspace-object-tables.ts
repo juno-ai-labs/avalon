@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
+import type { DurableObjectSqliteMigration } from "../../src/durable-objects/sqlite-migrations";
 import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../../src/durable-objects/workspace-do";
 
 /**
@@ -52,14 +53,22 @@ export function workspaceObjectSqliteDatabase(workspaceId: string): DatabaseSync
 }
 
 /**
- * The WorkspaceDO ledger versions that grew `resources` past what D1 left it.
+ * The ledger versions that grew `resources` past what D1 left it, derived.
  *
- * A migration that adds to `resource_versions`, its capture triggers, the
- * provenance staged on `resources`, or the alias beside its UUID belongs here,
- * or a fixture below applies the shape before it and passes over behaviour
- * production no longer has.
+ * A hand-written list would go stale silently: the migration that forgot to
+ * register itself is exactly the one whose shape the fixtures would then stop
+ * applying, and every test over them would keep passing against a schema
+ * production no longer has. Reading the ledger means a new resource migration
+ * is picked up by the fixtures the day it lands.
  */
-const RESOURCE_SCHEMA_MIGRATIONS = new Set([13, 18, 19]);
+const RESOURCE_TABLE = /\b(?:resources|resource_versions)\b/u;
+
+function resourceSchemaMigrations(): readonly DurableObjectSqliteMigration[] {
+  return WORKSPACE_DO_SCHEMA_MIGRATIONS.filter((migration) =>
+    // Version 1 creates the whole object; a snapshot already has `resources`
+    // from D1, so what the fixtures need is everything the object added after.
+    migration.version > 1 && migration.statements.some((statement) => RESOURCE_TABLE.test(statement)));
+}
 
 /**
  * Give a database that already holds `resources` the shape WorkspaceDO grew on
@@ -82,8 +91,7 @@ export function applyWorkspaceResourceSchema(database: DatabaseSync, workspaceId
        (id, workspace_id, region, placement_affinity, created_at, updated_at)
      VALUES (1, ?, 'global', 'wnam', 0, 0)`,
   ).run(workspaceId);
-  for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
-    if (!RESOURCE_SCHEMA_MIGRATIONS.has(migration.version)) continue;
+  for (const migration of resourceSchemaMigrations()) {
     for (const statement of migration.statements) database.exec(statement);
   }
 }

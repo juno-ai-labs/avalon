@@ -6,7 +6,8 @@
  * test over invented tables would prove the service wrote provenance columns
  * and nothing about whether capture carried them into history.
  */
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { asUserId, asWorkspaceId, ResourceRevisionSchema } from "@rally/contracts";
+import { z } from "zod";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -154,5 +155,31 @@ describe("resource version provenance", () => {
       { version: 1, cause: "created" },
       { version: 2, author_kind: "connector", author_connection_id: connectionId, cause: "refetched" },
     ]);
+  });
+
+  it("projects a history the route's own contract accepts, unattributed rows included", async () => {
+    const database = fixture();
+    seedConnectorResource(database);
+    database.exec("UPDATE resource_versions SET author_kind = NULL, author_connection_id = NULL, cause = NULL");
+    const service = new ResourceService(environmentFor(database), auth);
+
+    // `GET /resources/:id/versions` parses what this returns before answering.
+    // A projection the contract rejects is not a missing field on one row — it
+    // is a 500 for the whole history, which is the surface the rail reads.
+    const projected = await service.versions(resourceId);
+    expect(() => z.array(ResourceRevisionSchema).parse(projected)).not.toThrow();
+  });
+
+  it("reports one unreadable identity as unattributed rather than failing the whole history", async () => {
+    const database = fixture();
+    seedConnectorResource(database);
+    // Not reachable through the fence, which refuses this on insert — reachable
+    // through a row that predates it. One bad row must not take the history
+    // the rail is asking for down with it.
+    database.exec("UPDATE resource_versions SET author_connection_id = 'not-an-id' WHERE version = 1");
+    const service = new ResourceService(environmentFor(database), auth);
+
+    const projected = await service.versions(resourceId);
+    expect(z.array(ResourceRevisionSchema).parse(projected)).toMatchObject([{ version: 1, author: null }]);
   });
 });
