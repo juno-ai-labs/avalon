@@ -1,7 +1,7 @@
 import { Building2, Check, ExternalLink, Globe2, LoaderCircle, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { RallyDesktopBridge } from '../../common/desktop';
-import { RallyMark, RallySeam, Button, InlineError } from '../components/primitives';
+import { RallyMark, Button, InlineError } from '../components/primitives';
 import { useAppSession } from '../lib/app-session';
 import { isComposingKeyEvent } from '../lib/ime';
 import { desktopBridge } from '../lib/platform';
@@ -122,7 +122,7 @@ export function SignInScreen(): React.JSX.Element {
   return (
     <main className="onboarding-shell window-drag">
       <section className="signin-card window-no-drag" aria-labelledby="signin-heading">
-        <RallySeam className="signin-mark" />
+        <RallyMark className="signin-mark" />
         <h1 id="signin-heading">Welcome to Rally</h1>
         <p>Sign in first. Rally will then open your workspace, show invitations, or help you create an organization.</p>
 
