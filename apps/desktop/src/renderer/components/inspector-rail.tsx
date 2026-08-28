@@ -421,8 +421,13 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
  * How long one mounted preview keeps re-asking `/resources/:id/preview` while
  * the route answers `409 resource_processing`.
  *
- * Bounds: wall clock from the first attempt, covering the requests and the
- *   waits between them alike.
+ * Bounds: wall clock from the first attempt, spent by the requests as much as by
+ *   the waits between them. It is not a request timeout: it decides whether to
+ *   ask *again*, and never cancels an attempt already in flight. A single read
+ *   that never settles leaves the panel loading — which is what it did before
+ *   this loop existed, and what every other read in `lib/api.ts` does, none of
+ *   which carries a deadline. Bounding that is a different limit on a path this
+ *   change does not touch.
  * Derived: `ATTACHMENT_PROCESSING_LEASE_MS` + `ATTACHMENT_CONVERTER_TIMEOUT_MS`
  *   — the server's own two numbers, read from `@rally/contracts` rather than
  *   copied, so raising either on the server does not silently leave this client
