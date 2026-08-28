@@ -421,13 +421,17 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
  * How long one mounted preview keeps re-asking `/resources/:id/preview` while
  * the route answers `409 resource_processing`.
  *
- * Bounds: wall clock from the first attempt, spent by the requests as much as by
- *   the waits between them. It is not a request timeout: it decides whether to
- *   ask *again*, and never cancels an attempt already in flight. A single read
- *   that never settles leaves the panel loading — which is what it did before
- *   this loop existed, and what every other read in `lib/api.ts` does, none of
- *   which carries a deadline. Bounding that is a different limit on a path this
- *   change does not touch.
+ * Bounds: elapsed time from the first attempt, spent by the requests as much as
+ *   by the waits between them. It is not a request timeout: it decides whether
+ *   to ask *again*, and never cancels an attempt already in flight. A single
+ *   read that never settles leaves the panel loading — which is what it did
+ *   before this loop existed, and what every other read in `lib/api.ts` does,
+ *   none of which carries a deadline. Bounding that is a different limit on a
+ *   path this change does not touch.
+ * Measured on `performance.now()`, not `Date.now()`: the sleeps between attempts
+ *   are `setTimeout`, which a system clock adjustment does not move, so a budget
+ *   read off the wall clock would be the one part of this loop an NTP step could
+ *   shorten or stretch. Monotonic time is the same base the waits already keep.
  * Derived: `ATTACHMENT_PROCESSING_LEASE_MS` + `ATTACHMENT_CONVERTER_TIMEOUT_MS`
  *   — the server's own two numbers, read from `@rally/contracts` rather than
  *   copied, so raising either on the server does not silently leave this client
@@ -482,7 +486,7 @@ export async function readResourcePreviewText(
   signal: AbortSignal,
   maxWaitMs: number,
 ): Promise<string> {
-  const deadline = Date.now() + maxWaitMs;
+  const deadline = performance.now() + maxWaitMs;
   for (;;) {
     try {
       const blob = await loadResourceContent(resourceId, signal);
@@ -491,7 +495,7 @@ export async function readResourcePreviewText(
       const retryAfterMs = processingRetryDelayMs(error);
       // A wait that would end past the deadline is not started at all, so the
       // panel gives up on time rather than one whole delay late.
-      if (retryAfterMs === null || signal.aborted || Date.now() + retryAfterMs > deadline) throw error;
+      if (retryAfterMs === null || signal.aborted || performance.now() + retryAfterMs > deadline) throw error;
       await wait(retryAfterMs, signal);
       if (signal.aborted) throw error;
     }
