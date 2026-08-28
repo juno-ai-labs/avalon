@@ -13,6 +13,7 @@ import {
   WorkstreamSocketCommandResultSchema,
   type WorkstreamId,
   type WorkstreamMessageAdmissionReceipt,
+  type WorkstreamSocketCommandResult,
   type WorkspaceSidebar,
   type WorkspaceSocketClientEvent,
   type WorkspaceSyncTopic,
@@ -47,6 +48,32 @@ type CreateMessageCommand = Extract<WorkspaceSocketClientEvent, { type: 'create_
 type ListWorkstreamsCommand = Extract<WorkspaceSocketClientEvent, { type: 'list_workstreams' }>;
 type WorkspaceSocketApi = Pick<RallyApi, 'getWorkspaceSocketTicket'>;
 export type WorkspaceSocketState = 'connecting' | 'connected' | 'reconnecting' | 'unavailable';
+
+/** Accept the immediately previous WorkstreamDO receipt during a staggered deployment. */
+export function parseWorkspaceSocketCommandResult(value: unknown): WorkstreamSocketCommandResult | null {
+  const current = WorkstreamSocketCommandResultSchema.safeParse(value);
+  if (current.success) return current.data;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const previous = value as Record<string, unknown>;
+  const message = previous['message'];
+  if (previous['type'] !== 'client_command_succeeded'
+    || previous['command'] !== 'create_message'
+    || typeof previous['clientMessageId'] !== 'string'
+    || message === null || typeof message !== 'object' || Array.isArray(message)) return null;
+  const previousMessage = message as Record<string, unknown>;
+  const candidate = WorkstreamSocketCommandResultSchema.safeParse({
+    type: 'client_command_succeeded',
+    command: 'create_message',
+    clientMessageId: previous['clientMessageId'],
+    turn: {
+      turnId: previousMessage['transcriptTurnId'] ?? previousMessage['id'],
+      clientMessageId: previous['clientMessageId'],
+      createdAt: previousMessage['createdAt'],
+    },
+    deliveryState: 'canonical',
+  });
+  return candidate.success ? candidate.data : null;
+}
 
 /** One page of the work-stream directory, as every caller here receives it. */
 export interface WorkstreamPage {
@@ -531,20 +558,20 @@ export function WorkspaceSocketProvider({
             applyVersionedProjectSnapshot(queryClient, projectSnapshot.data.projects);
             return;
           }
-          const result = WorkstreamSocketCommandResultSchema.safeParse(decoded);
-          if (!result.success) return;
-          const entry = pending.get(result.data.clientMessageId);
+          const result = parseWorkspaceSocketCommandResult(decoded);
+          if (!result) return;
+          const entry = pending.get(result.clientMessageId);
           if (!entry) return;
-          pending.delete(result.data.clientMessageId);
+          pending.delete(result.clientMessageId);
           if (entry.timeout !== null) window.clearTimeout(entry.timeout);
-          if (result.data.type === 'client_command_succeeded') {
-            entry.resolve({ ...result.data.turn, deliveryState: result.data.deliveryState });
+          if (result.type === 'client_command_succeeded') {
+            entry.resolve({ ...result.turn, deliveryState: result.deliveryState });
           } else {
             entry.reject(new ApiError(
-              result.data.error.message,
-              result.data.error.status,
-              result.data.error.code,
-              result.data.error.details,
+              result.error.message,
+              result.error.status,
+              result.error.code,
+              result.error.details,
             ));
           }
         });

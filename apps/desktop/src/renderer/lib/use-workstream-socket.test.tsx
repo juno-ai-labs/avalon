@@ -20,6 +20,7 @@ import {
   SOCKET_STABLE_CONNECTION_MS,
   socketHeartbeatDelay,
   socketReconnectDelay,
+  parseWorkstreamServerSocketEvent,
   useWorkstreamSocket,
   type WorkstreamSocketApi,
 } from './use-workstream-socket';
@@ -424,6 +425,106 @@ describe('useWorkstreamSocket', () => {
     expect(queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
       ['ordered-transcript', workstreamId],
     )?.pendingInputs).toEqual([first, second]);
+  });
+
+  it('installs the previous release snapshot while the API deployment catches up', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const queryClient = new QueryClient();
+    const workstreamId = '00000000-0000-7000-8000-000000000630';
+    const api = socketApiWith({
+      getSocketTicket: vi.fn(async () => ({
+        url: `wss://api.rally.test/workstreams/${workstreamId}`,
+        ticket: 'socket-ticket',
+        protocols: socketTicketProtocols('socket-ticket'),
+      })),
+    });
+    renderHook(() => useWorkstreamSocket(api, workstreamId, true), {
+      wrapper: createWrapper(queryClient),
+    });
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0]!;
+    act(() => socket.open());
+    const memberId = '00000000-0000-7000-8000-000000000631';
+    const previousSnapshot = snapshotFrame({
+      sequence: 4,
+      workstream: {
+        id: workstreamId,
+        title: 'Previous Worker snapshot',
+        participants: [{
+          user: {
+            id: memberId,
+            email: 'member@example.com',
+            name: 'Previous Member',
+            avatarUrl: null,
+            timezone: 'UTC',
+            createdAt: '2026-07-31T19:00:00.000Z',
+          },
+          participationReason: 'creator',
+          joinedAt: '2026-07-31T19:00:00.000Z',
+        }],
+      },
+    });
+    delete previousSnapshot['reason'];
+    delete previousSnapshot['pendingInputChunkCount'];
+    previousSnapshot['messageFeed'] = { items: [], nextCursor: null, newerCursor: null };
+    previousSnapshot['resumeFeed'] = null;
+    const previousTurn = {
+      ...transcriptTurn(1, 'Previous transcript'),
+      actor: 'human',
+      authorUserId: memberId,
+    } as Record<string, unknown>;
+    delete previousTurn['authorSnapshot'];
+    const previousInterval = {
+      intervalId: 'interval-one',
+      startedAtUtc: '2026-07-31T19:00:00.000Z',
+      stoppedAtUtc: '2026-07-31T19:00:01.000Z',
+      durationMs: 1_000,
+      elapsedMsAtSnapshot: null,
+      revision: 1,
+    };
+    const previousActivity = {
+      activityId: 'activity-one',
+      parentActivityId: null,
+      scope: 'response',
+      subjectId: 'subject-one',
+      callIndex: null,
+      label: 'Responding',
+      state: 'completed',
+      intervals: [previousInterval],
+      revision: 1,
+    };
+    const previousTranscript = {
+      ...emptyTranscriptSnapshot(),
+      snapshotThrough: 1,
+      ranges: [{
+        purpose: 'latest',
+        requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [previousTurn],
+        activities: [previousActivity],
+      }],
+      activities: [previousActivity],
+    } as Record<string, unknown>;
+    delete previousTranscript['pendingInputs'];
+    previousSnapshot['transcript'] = previousTranscript;
+
+    expect(parseWorkstreamServerSocketEvent(previousSnapshot)).toMatchObject({
+      type: 'snapshot',
+      transcript: {
+        pendingInputs: [],
+        ranges: [{
+          turns: [{ authorSnapshot: { userId: memberId, displayName: 'Previous Member' } }],
+          activities: [{ intervals: [{ boundarySource: 'rally', timingAccuracy: 'observed' }] }],
+        }],
+      },
+    });
+    act(() => socket.message(previousSnapshot));
+
+    expect(queryClient.getQueryData<WorkstreamDetail>(['workstream', workstreamId]))
+      .toMatchObject({ id: workstreamId, title: 'Previous Worker snapshot' });
+    expect(queryClient.getQueryData<WorkstreamTranscriptSnapshot>(
+      ['ordered-transcript', workstreamId],
+    )?.ranges[0]?.turns[0]?.authorSnapshot?.displayName).toBe('Previous Member');
   });
 
   it('reuses the same socket when returning to a recently viewed work stream', async () => {
