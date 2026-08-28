@@ -255,10 +255,14 @@ function FootnotePill({ footnote, label, labelText, target }: CitationInput): Re
   const navigable = target.kind === 'resource' || target.kind === 'external';
   const pill = (
     <button
+      // `aria-disabled`, not `disabled`: a disabled button is not focusable and
+      // dispatches no pointer events, so the tooltip wrapped around it can
+      // never open — and for an identity pill that popover is the only thing
+      // that says what the number refers to.
+      aria-disabled={navigable ? undefined : true}
       aria-label={navigable ? `Open ${citation.label}` : citation.label}
       className="citation-pill"
-      disabled={!navigable}
-      onClick={() => openCitationTarget(target)}
+      onClick={() => { if (navigable) openCitationTarget(target); }}
       type="button"
     >
       {marker}
