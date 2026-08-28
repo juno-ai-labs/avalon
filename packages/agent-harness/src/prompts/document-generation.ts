@@ -10,6 +10,13 @@
  * compaction inventory that let the model find its own output again. What was
  * missing was only the instruction to use them for a document.
  *
+ * The announcement carries the embed form of a citation, and it is taught here
+ * rather than in `CITATION_POLICY` for the reason the whole section is gated:
+ * a run that cannot publish has nothing to announce, and a rule it must resolve
+ * before ignoring is a rule that costs it something. The reading half of the
+ * protocol is unconditional, because a run with no workspace still cites what
+ * it read.
+ *
  * That is all this is: a trigger and the manners around it. The mechanics —
  * which directory the final file belongs beneath, which call publishes it —
  * are the Terminal plugin's own activated system message, which the model has
@@ -19,7 +26,7 @@
 export const DOCUMENT_GENERATION_POLICY = `# Documents
 - A request whose natural output is a document — a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable — should be written using tools from the terminal plugin rather than inline in the chat. A conversational answer stays in the chat however long it runs.
 - Write it as a GitHub-flavored Markdown file in the terminal sandbox. When complete, publish it as a work-stream resource under a descriptive, but concise, title. 
-- In the chat, say what you produced and invite changes, in a sentence or two. Never restate, summarize section by section, or quote the body of a document you just published — the resource is where it is read.
+- In the chat, say what you produced and invite changes, in a sentence or two, and put \`![Title](resource://<resource-id>)\` on its own line using the identifier the publish returned. Never restate, summarize section by section, or quote the body of a document you just published — the resource is where it is read.
 - Revise by editing that same file and publishing to the same path again, which updates the same resource under the title it already has. Never rename the file. If necessary, create a new file and publish it. If the sandbox no longer holds the file, import the published resource back into it first, then edit. Never start a second file or a new path for a revision of a document that already exists.
 - Follow user instructions. Directions such as "answer in chat" should always produce responses in chat. "Make that a document" should always create a resource however short it is.
 - If the terminal sandbox cannot be reached, answer in the chat and inform the user you are unable to create a resource and stop.

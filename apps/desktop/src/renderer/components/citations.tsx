@@ -3,6 +3,7 @@ import {
   type CitationTarget,
   collectFootnoteCitations,
   type FootnoteCitation,
+  footnoteReferenceOrder,
   parseCitationTarget,
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
@@ -49,8 +50,7 @@ import { useUiStore } from '../lib/ui-store';
 
 /** What the renderer knows about a cited resource beyond the model's own label. */
 export interface CitationResource {
-  id: string;
-  title: string;
+  /** The kind, which is all the chip and the card read: the label is the model's. */
   resourceType: string;
 }
 
@@ -112,12 +112,15 @@ function useCitationResource(resourceId: string): CitationResolution {
 /** The footnote citations of the message being rendered, keyed by identifier. */
 export interface MessageCitations {
   footnotes: Map<string, FootnoteCitation>;
+  /** Every footnote's identifier in the order a renderer numbers them. */
+  order: string[];
   /** The per-mount prefix GFM writes into footnote ids and fragment hrefs. */
   clobberPrefix: string;
 }
 
 export const MessageCitationContext = createContext<MessageCitations>({
   footnotes: new Map(),
+  order: [],
   clobberPrefix: 'user-content-',
 });
 
@@ -141,13 +144,23 @@ function asText({ label }: CitationInput): React.JSX.Element {
   return <span className="citation-text-fallback">{label}</span>;
 }
 
-function ResourceIcon({ resourceType }: { resourceType?: string }): React.JSX.Element {
+/**
+ * The icon for a resource kind, shared with the rail's own resource rows.
+ *
+ * One function rather than two that agree today: a chip in the transcript and
+ * the row it opens are the same resource, and a reader who saw a document icon
+ * in a sentence should not find a generic file icon in the rail.
+ */
+export function ResourceIcon({ resourceType, size = 13 }: {
+  resourceType?: string;
+  size?: number;
+}): React.JSX.Element {
   const normalized = resourceType?.toLowerCase() ?? '';
-  if (normalized.includes('url') || normalized.includes('web')) return <Link2 aria-hidden="true" size={13} />;
+  if (normalized.includes('url') || normalized.includes('web')) return <Link2 aria-hidden="true" size={size} />;
   if (normalized === '' || normalized.includes('doc') || normalized.includes('text')) {
-    return <FileText aria-hidden="true" size={13} />;
+    return <FileText aria-hidden="true" size={size} />;
   }
-  return <File aria-hidden="true" size={13} />;
+  return <File aria-hidden="true" size={size} />;
 }
 
 /**
@@ -174,6 +187,11 @@ function ResourceChip({ label, labelText, target }: CitationInput): React.JSX.El
   const resource = resolution.status === 'resolved' ? resolution.resource : undefined;
   return (
     <button
+      // The action, not just the label, the way the footnote pill already
+      // names it. Omitted when the label is not plain text — the name then
+      // comes from the button's own contents, which is never worse than an
+      // invented one.
+      {...(labelText ? { 'aria-label': `Open ${labelText}` } : {})}
       className="citation-chip"
       data-resource-id={resourceId}
       onClick={() => openCitationTarget(target)}
@@ -192,6 +210,7 @@ function ResourceCard({ label, labelText, target }: CitationInput): React.JSX.El
   const resource = resolution.status === 'resolved' ? resolution.resource : undefined;
   return (
     <button
+      {...(labelText ? { 'aria-label': `Open ${labelText}` } : {})}
       className="citation-card"
       data-resource-id={resourceId}
       onClick={() => openCitationTarget(target)}
@@ -305,15 +324,24 @@ export function renderCitation(input: {
   footnote?: { marker: React.ReactNode; citation: FootnoteCitation };
 }): React.JSX.Element | null {
   const target = parseCitationTarget(input.href);
-  const renderer = CITATION_RENDERERS[input.position][target.kind];
-  if (!renderer) return null;
+  const Renderer = CITATION_RENDERERS[input.position][target.kind];
+  if (!Renderer) return null;
   const labelText = typeof input.label === 'string' ? input.label : '';
-  return renderer({
-    target,
-    label: input.label,
-    labelText,
-    ...(input.footnote ? { footnote: input.footnote } : {}),
-  });
+  // Rendered as an element, never called as a function. Two cells of the same
+  // row use different numbers of hooks — a chip resolves its resource, an
+  // external link uses none — and calling them inline would run those hooks in
+  // *the caller's* slots, so a link whose scheme changes between renders at the
+  // same position would change the hook count of one component instance. As
+  // elements they are separate types, and React unmounts one and mounts the
+  // other, which is the contract rather than an accident of reconciliation.
+  return (
+    <Renderer
+      label={input.label}
+      labelText={labelText}
+      target={target}
+      {...(input.footnote ? { footnote: input.footnote } : {})}
+    />
+  );
 }
 
 /**
@@ -353,10 +381,15 @@ export function useMessageCitations(): MessageCitations {
  *
  * Two filters, and both are degradations rather than omissions. A definition
  * that is not a citation under the pinned grammar was never in the map. A
- * definition whose one link names a scheme the registry does not dispatch is
- * dropped here, so its reference keeps its ordinary superscript and its content
- * keeps its place in the trailing footnote list — the source stays readable,
- * which lifting it into a pill that opens nothing would not achieve.
+ * definition whose one link cannot be opened — a scheme this protocol does not
+ * own, or a citation scheme with a target that is not one — is dropped here, so
+ * its reference keeps its ordinary superscript and its content keeps its place
+ * in the trailing footnote list. The source stays readable, which lifting it
+ * would not achieve: a lifted definition the registry then renders as text puts
+ * the *source's title* where the reference marker belongs and drops the
+ * definition from the bottom, so the sentence reads "Revenue grew 40%.Q3 board
+ * deck" and the source is gone. A model echoing the guidance's own
+ * `<resource-id>` placeholder writes exactly that input.
  *
  * One function, because four component overrides have to agree about which
  * definitions were lifted: the reference that becomes a pill, the list item
@@ -366,8 +399,26 @@ export function useMessageCitations(): MessageCitations {
 export function liftableFootnoteCitations(markdown: string): Map<string, FootnoteCitation> {
   const lifted = new Map<string, FootnoteCitation>();
   for (const [identifier, citation] of collectFootnoteCitations(markdown)) {
-    if (parseCitationTarget(citation.href).kind === 'unknown') continue;
+    const kind = parseCitationTarget(citation.href).kind;
+    if (kind === 'unknown' || kind === 'invalid') continue;
     lifted.set(identifier.toLowerCase(), citation);
   }
   return lifted;
+}
+
+/**
+ * The number a footnote's reference shows, from the shared ordering.
+ *
+ * Restated on the list items that survive because dropping the lifted ones
+ * renumbers what is left: a reference reading "2" in the prose would otherwise
+ * sit above a source list reading "1.".
+ */
+export function footnoteOrdinal(order: string[], identifier: string): number | undefined {
+  const index = order.indexOf(identifier);
+  return index < 0 ? undefined : index + 1;
+}
+
+/** The footnote ordering of `markdown`, for the renderer's own numbering. */
+export function messageFootnoteOrder(markdown: string): string[] {
+  return footnoteReferenceOrder(markdown);
 }

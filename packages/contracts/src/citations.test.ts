@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectFootnoteCitations,
+  footnoteReferenceOrder,
   parseCitationTarget,
   rewriteCitationsForPlainDelivery,
 } from "./citations";
@@ -140,6 +141,37 @@ describe("rewriteCitationsForPlainDelivery", () => {
     expect(rewriteCitationsForPlainDelivery(source)).toBe(source);
   });
 
+  it("cuts the right bytes when a code block contains an astral character", () => {
+    // The mask is walked line by line and its offsets are used to slice the
+    // original, so a mask one character short per emoji mis-cuts the definition
+    // and leaves raw `resource://` syntax in the delivered copy.
+    const source = [
+      "Here is the fix.",
+      "",
+      "```js",
+      "console.log(\"done 🚀\");",
+      "```",
+      "",
+      "Revenue grew 40%.[^1]",
+      "",
+      "[^1]: [Q3 board deck](resource://deck-01)",
+    ].join("\n");
+
+    expect(rewriteCitationsForPlainDelivery(source)).toBe([
+      "Here is the fix.",
+      "",
+      "```js",
+      "console.log(\"done 🚀\");",
+      "```",
+      "",
+      "Revenue grew 40%.[1]",
+      "",
+      "Sources:",
+      "",
+      "1. Q3 board deck",
+    ].join("\n"));
+  });
+
   it("turns footnotes into a numbered marker and a plain trailing source list", () => {
     const source = [
       "Revenue grew 40%.[^1] Costs held flat.[^2]",
@@ -156,6 +188,28 @@ describe("rewriteCitationsForPlainDelivery", () => {
       "1. Q3 board deck",
       "2. The filing (https://sec.gov/x)",
     ].join("\n"));
+  });
+
+  it("does not close up blank lines inside a code block while tidying the body", () => {
+    // Cutting definition lines leaves blank runs behind, and closing them up is
+    // right — in prose. A fenced block's blank lines are part of the code, and
+    // this is the copy a reader pastes into an editor.
+    const source = [
+      "Run this.[^1]",
+      "",
+      "```python",
+      "def a():",
+      "    pass",
+      "",
+      "",
+      "def b():",
+      "    pass",
+      "```",
+      "",
+      "[^1]: [The runbook](resource://run-1)",
+    ].join("\n");
+
+    expect(rewriteCitationsForPlainDelivery(source)).toContain("    pass\n\n\ndef b():");
   });
 
   it("numbers by first reference, not by the order the definitions were written", () => {
@@ -188,6 +242,28 @@ describe("rewriteCitationsForPlainDelivery", () => {
     ].join("\n"));
   });
 
+  it("keeps a source-list entry on one line, however the definition was wrapped", () => {
+    // A numbered list item with a raw newline in it is two list items to the
+    // next renderer along, and both delivery surfaces render this as Markdown.
+    const source = [
+      "A claim.[^1] Another.[^2]",
+      "",
+      "[^1]: A free-form note",
+      "    that continues on a second line.",
+      "[^2]: [The plan](resource://plan-7)",
+      "    as published.",
+    ].join("\n");
+
+    expect(rewriteCitationsForPlainDelivery(source)).toBe([
+      "A claim.[1] Another.[2]",
+      "",
+      "Sources:",
+      "",
+      "1. A free-form note that continues on a second line.",
+      "2. as published. The plan",
+    ].join("\n"));
+  });
+
   it("drops a definition nothing referenced, exactly as a markdown renderer would", () => {
     expect(rewriteCitationsForPlainDelivery("A plain answer.\n\n[^1]: [Deck](resource://d)"))
       .toBe("A plain answer.");
@@ -202,9 +278,47 @@ describe("rewriteCitationsForPlainDelivery", () => {
       .toBe("See A doc.");
   });
 
+  it("reads a definition written with CRLF, which is what a forwarded body carries", () => {
+    // Slack normalises line endings before calling this; the email path does
+    // not, so the grammar normalises for both rather than trusting a caller.
+    expect(rewriteCitationsForPlainDelivery(
+      ["A claim.[^1]", "", "[^1]: [Deck](resource://d)", "", "Tail."].join("\r\n"),
+    )).toBe("A claim.[1]\n\nTail.\n\nSources:\n\n1. Deck");
+  });
+
+  it("reduces the link forms a parser accepts but a naive regex misses", () => {
+    // Each of these renders as a chip or a card in the desktop, so each of them
+    // leaves Rally as raw `resource://` syntax if the rewrite cannot read it.
+    expect(rewriteCitationsForPlainDelivery('Published [Deck](resource://d "The deck").'))
+      .toBe("Published Deck.");
+    expect(rewriteCitationsForPlainDelivery('![Deck](resource://d "The deck")')).toBe("Deck");
+    expect(rewriteCitationsForPlainDelivery("Published [Q3 [draft] deck](resource://d)."))
+      .toBe("Published Q3 [draft] deck.");
+  });
+
   it("is a no-op on an answer that cites nothing", () => {
     const source = "# Heading\n\nA plain paragraph with **bold** text.\n";
 
     expect(rewriteCitationsForPlainDelivery(source)).toBe(source);
+  });
+});
+
+describe("footnoteReferenceOrder", () => {
+  it("numbers by first reference and drops what nothing references", () => {
+    expect(footnoteReferenceOrder([
+      "Second.[^b] First.[^a] Again.[^b]",
+      "",
+      "[^a]: [A](resource://a)",
+      "[^b]: [B](resource://b)",
+      "[^c]: [C](resource://c)",
+    ].join("\n"))).toEqual(["b", "a"]);
+  });
+
+  it("does not count a definition's own marker as a reference to itself", () => {
+    expect(footnoteReferenceOrder("Plain answer.\n\n[^1]: [A](resource://a)")).toEqual([]);
+  });
+
+  it("ignores a reference inside code, which is syntax being shown", () => {
+    expect(footnoteReferenceOrder("Write `[^1]` like this.\n\n[^1]: [A](resource://a)")).toEqual([]);
   });
 });

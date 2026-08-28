@@ -17,11 +17,12 @@ one of them silently missed the others; the changelog records what that cost.
 | --- | --- |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `MarkdownBody` — the only place `react-markdown` is mounted — and its component overrides: `MarkdownCode`, `MarkdownCodeBlock`, `MarkdownTable`, the `a` renderer that turns mention links into chips, and the `img`, `li`, `section` and `sup` overrides that citations are decided in. |
 | `apps/desktop/src/renderer/components/citations.tsx` | The (position × scheme) citation registry the overrides above dispatch into. [`inline-resource-citations.md`](inline-resource-citations.md) owns it. |
+| `apps/desktop/src/renderer/components/document-preview.tsx` | The one loader and renderer for a stored document's own bytes, shared by the attachment lightbox and the rail's resource detail. |
 | `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guard that `react-markdown` stays mounted in one place. |
 
-Eight call sites, all passing a markdown string as `children`:
+The call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
@@ -30,7 +31,7 @@ Eight call sites, all passing a markdown string as `children`:
 | An automation's overview while it is being set up | `new-automation.tsx` |
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
-| A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
+| A Markdown or converted document, in the full-window lightbox and in the rail's resource detail | `document-preview.tsx`, which both surfaces render |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -327,7 +328,7 @@ this renderer reads rather than an implementation detail. And a class added for 
 citation form needs a rule in the exported card's stylesheet in the same change,
 the same as every other class here.
 
-Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
+Shipped in #382. Design: `docs/PRDs/2026-08-27_inline-resource-citations/prd.md`.
 
 
 ### 2026-08-23 — A code block gets a header bar instead of a floating button

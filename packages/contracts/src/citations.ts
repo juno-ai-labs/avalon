@@ -110,8 +110,16 @@ const FOOTNOTE_DEFINITION = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*)$/u;
 /** A footnote reference in prose. */
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/gu;
 
-/** An inline link, with its label and target. Images are matched separately. */
-const INLINE_LINK = /(!?)\[([^\][]*)\]\(([^\s)]*)\)/gu;
+/**
+ * An inline link or image, with its label and target.
+ *
+ * Wider than the obvious pattern, because the renderer's parser is: a label may
+ * carry one level of balanced brackets (`[Q3 [draft] deck]`), a target may be
+ * angle-bracketed, and a title may follow it. Every form this misses is one the
+ * desktop renders as a chip and this rewrite then leaves as raw `resource://`
+ * syntax in an inbox — the exact leak it exists to close.
+ */
+const INLINE_LINK = /(!?)\[((?:[^\][]|\[[^\][]*\])*)\]\(\s*<?([^\s)<>]*)>?(?:\s+"[^"]*"|\s+'[^']*')?\s*\)/gu;
 
 /**
  * The definitions in `markdown` that qualify as citations, keyed by identifier.
@@ -225,6 +233,33 @@ function citationFrom(definition: FootnoteDefinition): FootnoteCitation | undefi
 }
 
 /**
+ * The identifiers of `markdown`'s footnotes, in the order a renderer numbers
+ * them: first reference wins, and a definition nothing references is dropped.
+ *
+ * Shared because two surfaces must agree about which source is `[1]`. The
+ * desktop lifts some definitions out of the trailing list and has to restate
+ * the number GFM gave the ones that remain; the delivery rewrite builds its
+ * own source list. A reader comparing the transcript to the email is comparing
+ * these two, so they cannot each have their own rule.
+ */
+export function footnoteReferenceOrder(markdown: string): string[] {
+  const source = markdown.replace(/\r\n/gu, "\n");
+  const definitions = footnoteDefinitions(source);
+  const defined = new Set(definitions.map((definition) => definition.identifier));
+  const order: string[] = [];
+  // Definition lines are cut first, or `[^1]:` at the start of one counts as a
+  // reference to itself and every footnote appears to be referenced.
+  mapMarkdownProse(cutDefinitionLines(source, definitions), (prose) => {
+    for (const match of prose.matchAll(FOOTNOTE_REFERENCE)) {
+      const identifier = match[1] ?? "";
+      if (defined.has(identifier) && !order.includes(identifier)) order.push(identifier);
+    }
+    return prose;
+  });
+  return order;
+}
+
+/**
  * The same answer, readable on a surface that renders none of this.
  *
  * Applied by outbound email and by Slack delivery before either sends. Chips
@@ -237,7 +272,13 @@ function citationFrom(definition: FootnoteDefinition): FootnoteCitation | undefi
  * Deliberately *not* applied to the transcript copy of the same answer: the
  * desktop renders citations fully, and only the copy leaving Rally is rewritten.
  */
-export function rewriteCitationsForPlainDelivery(markdown: string): string {
+export function rewriteCitationsForPlainDelivery(value: string): string {
+  // Normalised here rather than trusted from a caller: the Slack path already
+  // does it and the email path does not, and a definition line ending in a
+  // carriage return matches no rule below — so a CRLF body would keep its
+  // literal `[^1]` markers and its definition paragraph, silently, on one of
+  // the two surfaces.
+  const markdown = value.replace(/\r\n/gu, "\n");
   const definitions = footnoteDefinitions(markdown);
   const withoutDefinitions = cutDefinitionLines(markdown, definitions);
   const byIdentifier = new Map(definitions.map((definition) => [definition.identifier, definition]));
@@ -256,19 +297,27 @@ export function rewriteCitationsForPlainDelivery(markdown: string): string {
 
   const reduced = mapMarkdownProse(numbered, reduceResourceLinks);
   // Only a document that lost definition lines gets its blank runs closed up:
-  // an answer that cites nothing must come back byte-identical, trailing
-  // newline included, because both callers hand this every message they send.
-  const body = definitions.length === 0 ? reduced : reduced.replace(/\n{3,}/gu, "\n\n").trim();
+  // an answer that cites nothing comes back byte-identical, trailing newline
+  // included, because both callers hand this every message they send. A cited
+  // one is normalised where the cut left gaps, and its trailing whitespace goes
+  // because the source list is appended straight after it.
+  //
+  // The collapse runs through the prose splitter for the same reason every
+  // other rewrite here does: a fenced block's blank lines are part of the code,
+  // and this is the copy a reader pastes into an editor.
+  const body = definitions.length === 0
+    ? reduced
+    : mapMarkdownProse(reduced, (prose) => prose.replace(/\n{3,}/gu, "\n\n")).trimEnd();
   if (order.length === 0) return body;
 
   const sources = order.map((identifier, index) => {
     const definition = byIdentifier.get(identifier);
     const content = reduceResourceLinks(definition?.content ?? "");
     const citation = definition ? citationFrom(definition) : undefined;
-    if (!citation) return `${index + 1}. ${content.trim()}`;
+    if (!citation) return `${index + 1}. ${oneLine(content)}`;
     const target = parseCitationTarget(citation.href);
     const source = target.kind === "external" ? `${citation.label} (${citation.href})` : citation.label;
-    return `${index + 1}. ${citation.note ? `${citation.note} ` : ""}${source}`.trim();
+    return oneLine(`${index + 1}. ${citation.note ? `${citation.note} ` : ""}${source}`);
   });
   return `${body}\n\nSources:\n\n${sources.join("\n")}`;
 }
@@ -288,6 +337,17 @@ function reduceResourceLinks(value: string): string {
     // is the exact leak this rewrite exists to close.
     return kind === "resource" || kind === "invalid" ? (label || "") : match;
   });
+}
+
+/**
+ * One entry of the source list, on one line.
+ *
+ * A definition may be wrapped across continuation lines, and both surfaces
+ * render this list as Markdown: a numbered item with a newline inside it is two
+ * items to the next renderer along, and the second one has no number.
+ */
+function oneLine(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
 }
 
 /** The source with every footnote definition line removed. */
