@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AutomationRunContextV1Schema } from "./automation-agent";
 import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
@@ -13,6 +14,21 @@ import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
 import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
+import {
+  ActivitySourceBindingKeySchema,
+  HarnessRunIdSchema,
+  IdSchema,
+  ModelPluginIdSchema,
+  SubstreamIdSchema,
+  UserIdSchema,
+  WorkspaceIdSchema,
+  WorkstreamIdSchema,
+} from "./identifiers";
+import type { BlockIdSchema } from "./identifiers";
+
+export * from "./automation-evaluators";
+export * from "./automation-agent";
+export * from "./identifiers";
 
 export * from "./attachment-contracts";
 export * from "./resource-relationships";
@@ -73,7 +89,6 @@ export {
   workstreamDeepLink,
 } from "./workstream-links";
 
-export const IdSchema = z.string().uuid();
 export const TimestampSchema = z.string().datetime({ offset: true });
 export const RegionSchema = z.enum(["global", "eu"]);
 
@@ -93,25 +108,12 @@ export const RegionSchema = z.enum(["global", "eu"]);
  * only the boundary's claim about meaning, made in one greppable place
  * instead of implicitly everywhere.
  */
-export const WorkspaceIdSchema = IdSchema.brand<"WorkspaceId">();
 export type WorkspaceId = z.infer<typeof WorkspaceIdSchema>;
-export const WorkstreamIdSchema = IdSchema.brand<"WorkstreamId">();
 export type WorkstreamId = z.infer<typeof WorkstreamIdSchema>;
-export const HarnessRunIdSchema = IdSchema.brand<"HarnessRunId">();
 export type HarnessRunId = z.infer<typeof HarnessRunIdSchema>;
-export const UserIdSchema = IdSchema.brand<"UserId">();
 export type UserId = z.infer<typeof UserIdSchema>;
-export const SubstreamIdSchema = z.union([z.literal("0"), IdSchema]).brand<"SubstreamId">();
 export type SubstreamId = z.infer<typeof SubstreamIdSchema>;
-export const BlockIdSchema = IdSchema.brand<"BlockId">();
 export type BlockId = z.infer<typeof BlockIdSchema>;
-
-export const asWorkspaceId = (value: string): WorkspaceId => WorkspaceIdSchema.parse(value);
-export const asWorkstreamId = (value: string): WorkstreamId => WorkstreamIdSchema.parse(value);
-export const asHarnessRunId = (value: string): HarnessRunId => HarnessRunIdSchema.parse(value);
-export const asUserId = (value: string): UserId => UserIdSchema.parse(value);
-export const asSubstreamId = (value: string): SubstreamId => SubstreamIdSchema.parse(value);
-export const asBlockId = (value: string): BlockId => BlockIdSchema.parse(value);
 export const ScopeSchema = z.enum(["personal", "workspace"]);
 export const HarnessStatusSchema = z.enum([
   "scheduled",
@@ -838,8 +840,6 @@ export const UpdateGitHubRepositoryAccessSettingsSchema = z.object({
   repositories: z.array(GitHubRepositoryAccessEntrySchema).max(1_000),
 }).strict();
 
-export const ModelPluginIdSchema = z.string().regex(/^plugin_[a-z][a-z0-9_]{0,62}$/u);
-export const ActivitySourceBindingKeySchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/u);
 export const ActivitySourcePluginIdsSchema = z.record(ActivitySourceBindingKeySchema, ModelPluginIdSchema);
 export const AutomationPluginIconSchema = z.enum([
   "brand-github",
@@ -1370,6 +1370,23 @@ export const AutomationDraftStateSchema = z.object({
   draft: AutomationDraftSchema
 });
 
+/**
+ * Why an automation needs a person to look at it, when its status alone cannot
+ * say. `unsupported_trigger` is the load-bearing one: the automation's trigger
+ * has no equivalent in the runtime that replaced the one it was built on, so it
+ * will not start on its own again.
+ *
+ * The wire carries the reason and not a sentence. The words a person reads are
+ * the client's — that keeps the copy rewritable without reprojecting every
+ * automation that already carries a reason, and keeps a server-side string that
+ * was written for an operator out of a product surface.
+ */
+export const AutomationAttentionReasonSchema = z.enum([
+  "unsupported_trigger",
+  "legacy_runtime_error",
+  "run_projection_integrity_conflict",
+]);
+
 export const AutomationSummarySchema = z.object({
   id: IdSchema,
   name: z.string(),
@@ -1377,6 +1394,8 @@ export const AutomationSummarySchema = z.object({
   emailAddress: z.string().email().nullable().default(null),
   scope: ScopeSchema,
   status: z.enum(["draft", "active", "paused", "error"]),
+  /** Null for every automation nothing is wrong with, which is nearly all. */
+  attention: AutomationAttentionReasonSchema.nullable().default(null),
   nextRunAt: TimestampSchema.nullable(),
   lastRunAt: TimestampSchema.nullable(),
   /** Last time the subscription itself changed. It is the only activity a draft
@@ -2737,6 +2756,12 @@ export const WorkstreamWorkflowInputSchema = z.object({
    */
   compactionFence: WorkstreamCompactionFenceSchema.nullable().optional(),
   automationSubscriptionId: IdSchema.nullable(),
+  /**
+   * The occurrence snapshot frozen by AutomationAgent before the child exists.
+   * Automation runs must use this value instead of reconstructing effective
+   * settings from WorkspaceDO catalog tables after dispatch.
+   */
+  automationRunContext: AutomationRunContextV1Schema.optional(),
   activityId: IdSchema.nullable(),
   /**
    * Set when the workspace scheduler started this run from a due wake-up. The
@@ -2914,6 +2939,8 @@ export const ConnectorActivityFilterValueTypeSchema = z.enum([
   "number",
   "boolean",
   "string_array",
+  "person_id",
+  "person_id_array",
 ]);
 
 export const ConnectorActivityFilterFieldSchema = z.object({
@@ -2921,13 +2948,41 @@ export const ConnectorActivityFilterFieldSchema = z.object({
   label: z.string().min(1).max(120),
   description: z.string().min(1).max(500),
   valueType: ConnectorActivityFilterValueTypeSchema,
-});
+  /** Old manifests described equality-only filters; preserve exactly that
+   * behavior until a connector explicitly advertises a broader operator. */
+  operators: z.array(z.enum([
+    "equals",
+    "not_equals",
+    "contains",
+    "starts_with",
+    "ends_with",
+    "in",
+    "not_in",
+    "greater_than",
+    "less_than",
+    "greater_than_or_equals",
+    "less_than_or_equals",
+    "has",
+    "has_any",
+    "has_all",
+    "has_none",
+    "exists",
+    "not_exists",
+  ])).min(1).default(["equals"]),
+  sensitive: z.boolean().default(false),
+}).strict();
 
 export const ConnectorActivityTriggerDescriptorSchema = z.object({
   eventType: z.string().min(1).max(200),
   label: z.string().min(1).max(160),
   description: z.string().min(1).max(800),
+  /** Authoring-only families. Accepted rules expand these to exact event types. */
+  eventFamilies: z.array(z.string().min(1).max(200)).default([]),
   filterFields: z.array(ConnectorActivityFilterFieldSchema).default([]),
+  resourceRelationships: z.array(z.object({
+    relationship: z.enum(["channel", "folder", "parent", "project", "repository", "page", "application"]),
+    resourceType: z.string().min(1).max(200),
+  }).strict()).default([]),
   /**
    * Whether a person should be told about this activity in a digest.
    *
@@ -2944,7 +2999,7 @@ export const ConnectorActivityTriggerDescriptorSchema = z.object({
    * It just does not interrupt a person on a schedule.
    */
   digestible: z.boolean(),
-});
+}).strict();
 
 /**
  * A connector that can hand a finished automation result to the person who
@@ -3199,6 +3254,7 @@ export type AutomationCompilerMessage = z.infer<typeof AutomationCompilerMessage
 export type AutomationDraftState = z.infer<typeof AutomationDraftStateSchema>;
 export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
 export type AutomationDetail = z.infer<typeof AutomationDetailSchema>;
+export type AutomationAttentionReason = z.infer<typeof AutomationAttentionReasonSchema>;
 export type AutomationRun = z.infer<typeof AutomationRunSchema>;
 export type AutomationTemplateUpdate = z.infer<typeof AutomationTemplateUpdateSchema>;
 export type ActivitySourcePluginIds = z.infer<typeof ActivitySourcePluginIdsSchema>;
@@ -3312,8 +3368,12 @@ export type MessagingAgentSurface = z.infer<typeof MessagingAgentSurfaceSchema>;
 export type ConnectorCapabilityKind = z.infer<typeof ConnectorCapabilityKindSchema>;
 export type ConnectorCapability = z.infer<typeof ConnectorCapabilitySchema>;
 export type ConnectorActivityFilterValueType = z.infer<typeof ConnectorActivityFilterValueTypeSchema>;
-export type ConnectorActivityFilterField = z.infer<typeof ConnectorActivityFilterFieldSchema>;
-export type ConnectorActivityTriggerDescriptor = z.infer<typeof ConnectorActivityTriggerDescriptorSchema>;
+/** Input shape used while authoring manifests; parsing fills safe defaults. */
+export type ConnectorActivityFilterField = z.input<typeof ConnectorActivityFilterFieldSchema>;
+/** Authoring shape keeps V2 additions optional so existing connector manifests remain source-compatible. */
+export type ConnectorActivityTriggerDescriptor = z.input<typeof ConnectorActivityTriggerDescriptorSchema>;
+export type ConnectorActivityTriggerDescriptorInput = z.input<typeof ConnectorActivityTriggerDescriptorSchema>;
+export type ParsedConnectorActivityTriggerDescriptor = z.output<typeof ConnectorActivityTriggerDescriptorSchema>;
 /** Input permits legacy manifests that omit `surfaces`; parsing normalizes them. */
 export type ConnectorManifestInput = z.input<typeof ConnectorManifestSchema>;
 export type ConnectorManifest = z.infer<typeof ConnectorManifestSchema>;

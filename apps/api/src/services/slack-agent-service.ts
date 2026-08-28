@@ -26,12 +26,12 @@ import {
   type SlackIngressEnvelope,
 } from "@rally/connectors";
 import {
+  AutomationSummarySchema,
   ExternalActorSchema,
   SlackIngressQueueMessageSchema,
   LEGACY_WORKSTREAM_LINK_ORIGINS,
   SlackOriginContextSchema,
   SlackSearchAuthorizationSchema,
-  TriggerDefinitionSchema,
   asUserId,
   asWorkspaceId,
   isWorkstreamId,
@@ -255,21 +255,6 @@ const SLACK_AUTHORIZATION_ERROR_CODES = [
   "token_revoked",
   "unauthorized",
 ] as const;
-/**
- * The automations App Home shows a linked person, newest activity first.
- *
- * Drafts are excluded rather than merely ordered after. A draft's `updated_at`
- * moves on every compile turn, so the ones being written right now would take
- * the whole of this short list and push out the automations that actually run —
- * and App Home offers nothing that can be done with a draft anyway, since a
- * draft is finished in the desktop builder.
- */
-const PERSONAL_AUTOMATIONS_FOR_HOME_SQL =
-  `SELECT s.id, t.name, s.status, s.next_run_at FROM automation_subscriptions s
-   JOIN automation_templates t ON t.id = s.template_id
-   WHERE s.workspace_id = ? AND s.owner_user_id = ? AND s.lifecycle_state = 'visible'
-     AND s.status <> 'draft'
-   ORDER BY s.updated_at DESC LIMIT 5`;
 const SLACK_RETRY_PROMPT_MISSING_TEXT = "I couldn’t find the original request for this retry. Mention `@Rally` again and restate what you want me to do.";
 const SLACK_RETRYABLE_DENIAL_PREFIXES = [
   "Rally needs updated Slack permissions before it can start workspace tasks here",
@@ -302,16 +287,6 @@ const SlackCommandFormSchema = z.object({
   trigger_id: z.string().min(1),
   response_url: HttpsUrlSchema.optional(),
 }).catchall(z.string());
-const SlackAutomationTargetSchema = z.object({
-  id: z.string().min(1),
-  workspace_id: z.string().min(1),
-  connection_id: z.string().min(1),
-  slack_user_id: z.string().min(1),
-  connection_status: z.string().min(1),
-  encrypted_credentials: z.string().min(1),
-  credential_iv: z.string().min(1),
-  last_delivered_workstream_id: z.string().nullable().optional(),
-}).passthrough();
 
 /** The prefix every Slack action id and modal callback id is minted with. */
 const SLACK_INTERACTION_PREFIX = "rally_";
@@ -1396,74 +1371,86 @@ export class SlackAgentService {
     if (deliveryError) throw deliveryError;
   }
 
-  async deliverAutomationResult(input: {
+  /** Deliver to the concrete identity frozen in AutomationRunContextV1. */
+  async deliverFrozenAutomationResult(input: {
     workspaceId: string;
-    automationSubscriptionId: string;
+    automationId: string;
+    automationRunId: string;
     workstreamId: string;
+    recipientUserId: string;
+    connectionId: string;
+    slackTeamId: string;
+    slackUserId: string;
     title: string;
     text: string;
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped";
-  }): Promise<void> {
-    if (shouldSuppressAutomationResult(input.text)) return;
+  }): Promise<"delivered" | "skipped"> {
+    if (shouldSuppressAutomationResult(input.text)) return "skipped";
     this.env = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-    const rawTarget = await this.env.DB.prepare(
-      `SELECT dt.*, cc.encrypted_credentials, cc.credential_iv, cc.status AS connection_status
-       FROM automation_delivery_targets dt
-       JOIN connector_connections cc ON cc.id = dt.connection_id
-       JOIN slack_user_links link ON link.connection_id = dt.connection_id AND link.user_id = dt.user_id
-         AND link.slack_user_id = dt.slack_user_id AND link.status = 'active'
-       LEFT JOIN slack_delivery_preferences pref
-         ON pref.connection_id = dt.connection_id AND pref.user_id = dt.user_id
-       WHERE dt.workspace_id = ? AND dt.automation_subscription_id = ?
-         AND dt.target_type = 'slack_agent_dm' AND dt.status IN ('active', 'needs_input')
-         AND CASE WHEN ? = 'needs_input'
-           THEN COALESCE(pref.notify_needs_input, 1)
-           ELSE COALESCE(pref.notify_automation_completed, 1)
-         END = 1`,
-    ).bind(input.workspaceId, input.automationSubscriptionId, input.outcomeStatus).first<Record<string, unknown>>();
-    if (!rawTarget) return;
-    const membership = await workspaceRegionalDatabase(this.env).prepare(
-      `SELECT 1 FROM workspace_members
-        WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
-    ).bind(input.workspaceId, rawTarget.user_id).first();
-    if (!membership) return;
-    const target = SlackAutomationTargetSchema.parse(rawTarget);
-    if (target.last_delivered_workstream_id === input.workstreamId) return;
-    // Not gated on the stored status. Marking the target `needs_input` without
-    // attempting the send turned one stale belief into a delivery a member
-    // never received and a target they then had to repair by hand. The attempt
-    // below marks it on a real failure, from Slack's answer.
-    try {
-      const token = await this.tokenFromEncrypted(target);
-      const opened = await slackApi(token, "conversations.open", { users: target.slack_user_id }, AbortSignal.timeout(10_000));
-      const channelId = opened.channel.id;
-      const title = input.outcomeStatus === "needs_input" ? `Action needed · ${input.title}` : input.title;
-      const deliveryKey = `${target.id}:${input.workstreamId}`;
-      // The title is a `header` block rather than a line of body text above the
-      // content, which is what it was when the body was posted as raw mrkdwn.
-      const threadTs = await postSlackTextChunks(token, channelId, input.text, undefined, `${deliveryKey}:result`, title);
-      await slackApi(token, "chat.postMessage", {
-        channel: channelId,
-        thread_ts: threadTs,
-        client_msg_id: await stableUuid(`${deliveryKey}:controls`),
-        text: "Open the full Rally result",
-        blocks: automationActionBlocks(title, input.workstreamId, this.env.PUBLIC_WEB_BASE_URL),
-      }, AbortSignal.timeout(10_000));
-      await this.env.DB.prepare(
-        `UPDATE automation_delivery_targets SET status = 'active', last_delivered_at = ?,
-           last_delivered_workstream_id = ?, last_error_json = NULL, updated_at = ? WHERE id = ?`,
-      ).bind(nowIso(), input.workstreamId, nowIso(), target.id).run();
-      try {
-        await slackApi(token, "assistant.threads.setTitle", { channel_id: channelId, thread_ts: threadTs, title: input.title }, AbortSignal.timeout(5_000));
-      } catch (error) {
-        logWarn(this.env, "slack_automation_thread_title_failed", { target_id: target.id, reason: error instanceof Error ? error.message : "unknown" });
-      }
-    } catch (error) {
-      const reconnectRequired = (error instanceof ConnectorError && error.code === "unauthorized")
-        || (error instanceof ApiError && error.status === 401);
-      await this.markAutomationDelivery(target, reconnectRequired ? "needs_input" : "active", error);
-      if (!reconnectRequired) throw error;
-    }
+    const [rawConnection, membership, link, preferences] = await Promise.all([
+      this.env.DB.prepare(
+        `SELECT id, workspace_id, connector_type, encrypted_credentials, credential_iv, status
+           FROM connector_connections WHERE id = ? AND workspace_id = ?`,
+      ).bind(input.connectionId, input.workspaceId).first<Record<string, unknown>>(),
+      workspaceRegionalDatabase(this.env).prepare(
+        `SELECT 1 FROM workspace_members
+          WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
+      ).bind(input.workspaceId, input.recipientUserId).first(),
+      this.env.DB.prepare(
+        `SELECT 1 FROM slack_user_links
+          WHERE workspace_id = ? AND connection_id = ? AND user_id = ?
+            AND slack_team_id = ? AND slack_user_id = ? AND status = 'active'`,
+      ).bind(
+        input.workspaceId,
+        input.connectionId,
+        input.recipientUserId,
+        input.slackTeamId,
+        input.slackUserId,
+      ).first(),
+      this.env.DB.prepare(
+        `SELECT notify_needs_input, notify_automation_completed
+           FROM slack_delivery_preferences WHERE connection_id = ? AND user_id = ?`,
+      ).bind(input.connectionId, input.recipientUserId).first<{
+        notify_needs_input: number;
+        notify_automation_completed: number;
+      }>(),
+    ]);
+    if (
+      !rawConnection
+      || rawConnection.connector_type !== "slack"
+      || rawConnection.status !== "healthy"
+      || !membership
+      || !link
+      || (input.outcomeStatus === "needs_input"
+        ? preferences?.notify_needs_input === 0
+        : preferences?.notify_automation_completed === 0)
+    ) return "skipped";
+    const token = await this.tokenFromEncrypted({ ...rawConnection, connection_id: input.connectionId });
+    const opened = await slackApi(
+      token,
+      "conversations.open",
+      { users: input.slackUserId },
+      AbortSignal.timeout(10_000),
+    );
+    const channelId = opened.channel.id;
+    const title = input.outcomeStatus === "needs_input" ? `Action needed · ${input.title}` : input.title;
+    const deliveryKey = `${input.automationId}:${input.automationRunId}:slack_agent_dm`;
+    const threadTs = await postSlackTextChunks(
+      token,
+      channelId,
+      input.text,
+      undefined,
+      `${deliveryKey}:result`,
+      title,
+    );
+    await slackApi(token, "chat.postMessage", {
+      channel: channelId,
+      thread_ts: threadTs,
+      client_msg_id: await stableUuid(`${deliveryKey}:controls`),
+      text: "Open the full Rally result",
+      blocks: automationActionBlocks(title, input.workstreamId, this.env.PUBLIC_WEB_BASE_URL),
+    }, AbortSignal.timeout(10_000));
+    return "delivered";
   }
 
   /**
@@ -1515,12 +1502,6 @@ export class SlackAgentService {
       `digest:${input.targetId}:${input.deliveryId}`,
       input.title,
     );
-  }
-
-  private async markAutomationDelivery(target: Record<string, unknown>, status: "active" | "needs_input", error: unknown): Promise<void> {
-    await this.env.DB.prepare(
-      `UPDATE automation_delivery_targets SET status = ?, last_error_json = ?, updated_at = ? WHERE id = ?`,
-    ).bind(status, JSON.stringify({ code: "slack_delivery_failed", message: error instanceof Error ? error.message : "Slack delivery failed" }), nowIso(), target.id).run();
   }
 
   private async dispatchEvent(teamId: string, envelope: SlackIngressEnvelope, bodyHash: string): Promise<void> {
@@ -2402,40 +2383,18 @@ export class SlackAgentService {
     connection: SlackConnectionRow,
     eventType: string,
   ): Promise<boolean> {
-    const subscriptions = await this.env.DB.prepare(
-      `SELECT s.connector_bindings_json, s.activity_trigger_bindings_json,
-              v.trigger_definitions_json
-       FROM automation_subscriptions s
-       JOIN automation_template_versions v ON v.id = s.template_version_id
-       WHERE s.workspace_id = ? AND s.status = 'active' AND s.lifecycle_state = 'visible'
-         AND EXISTS (
-           SELECT 1 FROM json_each(s.connector_bindings_json)
-           WHERE json_each.value = ?
-         )`,
-    ).bind(connection.workspace_id, connection.id).all<{
-      connector_bindings_json: string;
-      activity_trigger_bindings_json: string;
-      trigger_definitions_json: string;
-    }>();
-    return subscriptions.results.some((subscription) => {
-      const parsed = z.array(TriggerDefinitionSchema).safeParse(parseSlackJson(subscription.trigger_definitions_json, []));
-      if (!parsed.success) return false;
-      const connectorBindings = parseSlackJson<Record<string, string>>(subscription.connector_bindings_json, {});
-      const sourceBindings = parseSlackJson<Record<string, string>>(subscription.activity_trigger_bindings_json, {});
-      return parsed.data.some((trigger) => {
-        if (trigger.type !== "connector_activity" && trigger.type !== "semantic_activity") return false;
-        if (trigger.connectorType !== "slack") return false;
-        if (trigger.sourceBindingKey) {
-          const pluginId = sourceBindings[trigger.sourceBindingKey];
-          if (!pluginId || connectorBindings[pluginId] !== connection.id) return false;
-        } else if (!Object.values(connectorBindings).includes(connection.id)) {
-          return false;
-        }
-        if (trigger.type === "connector_activity") return trigger.eventTypes.includes(eventType);
-        const prefilterEventType = trigger.deterministicPrefilter.eventType;
-        return typeof prefilterEventType === "string" && prefilterEventType === eventType;
-      });
-    });
+    // Focused unit tests construct partial Worker environments. Production
+    // cannot take this path because the environment contract requires the
+    // WorkspaceDO binding; a partial environment simply has no durable
+    // registration authority to report a subscriber.
+    if (!this.env.WORKSPACE_DOS) return false;
+    const result = await this.workspaceDirectory(connection.workspace_id)
+      .then((workspace) => workspace.hasActiveExternalEventRegistration({
+        workspaceId: connection.workspace_id,
+        connectionId: connection.id,
+        eventType,
+      }));
+    return result.active;
   }
 
   private async loadPendingPrompt(
@@ -2896,9 +2855,12 @@ export class SlackAgentService {
         }));
       const [tasks, automations, personalSlack] = await Promise.all([
         tasksPromise,
-        this.env.DB.prepare(
-          PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
-        ).bind(connection.workspace_id, link.user_id).all<Record<string, unknown>>(),
+        this.workspaceDirectory(connection.workspace_id)
+          .then((workspace) => workspace.listAutomationDirectory({
+            workspaceId: connection.workspace_id,
+            userId: link.user_id,
+          }))
+          .then((page) => ({ results: personalAutomationsForHome(page.items) })),
         this.env.DB.prepare(
           `SELECT display_name, status FROM connector_connections
            WHERE workspace_id = ? AND connector_type = 'slack' AND scope = 'personal'
@@ -3664,15 +3626,6 @@ function slackChannelType(value: unknown): SlackPromptSource["channelType"] {
   return "unknown";
 }
 
-function parseSlackJson<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string") return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 function isDirectSlackMessageEvent(event: Record<string, unknown>): boolean {
   return slackChannelType(event.channel_type) === "im"
     || (typeof event.channel === "string" && event.channel.startsWith("D"));
@@ -3988,6 +3941,19 @@ function linkedHome(env: LogEnv, name: string, tasks: Record<string, unknown>[],
   return blocks;
 }
 
+/** The personal, accepted automations App Home can act on. */
+function personalAutomationsForHome(items: unknown): Record<string, unknown>[] {
+  return z.array(AutomationSummarySchema).parse(items)
+    .filter((automation) => automation.scope === "personal" && automation.status !== "draft")
+    .slice(0, 6)
+    .map((automation) => ({
+      id: automation.id,
+      name: automation.name,
+      status: automation.status,
+      next_run_at: automation.nextRunAt,
+    }));
+}
+
 function responseActionBlocks(workstreamId: string, webBase: string): Record<string, unknown>[] {
   return [{ type: "actions", elements: [
     { type: "button", text: { type: "plain_text", text: "Open task" }, url: workstreamCanonicalUrl(webBase, workstreamId), action_id: "rally_open_task" },
@@ -4268,7 +4234,6 @@ function recordableUnfurlLinks(
 }
 
 export const __slackAgentTesting = {
-  PERSONAL_AUTOMATIONS_FOR_HOME_SQL,
   SLACK_AUTHORIZATION_ERROR_CODES,
   isDirectSlackMessageEvent,
   isSlackRetryPrompt,
@@ -4283,6 +4248,7 @@ export const __slackAgentTesting = {
   slackChannelResolutionDenial,
   slackChannelType,
   linkedHome,
+  personalAutomationsForHome,
   recordableUnfurlLinks,
   slackIngressRetryable,
   slackReconnectRequired,

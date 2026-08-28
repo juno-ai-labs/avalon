@@ -7,6 +7,12 @@ per independently addressable model context, and one `BlockDashboardAgent`
 per stable configured HyperSight block. The main conversation is external
 substream `0`.
 
+AutomationAgent is a sibling product authority rather than another node in this
+work-stream hierarchy. It installs the same
+[ordered transcript schema](ordered-transcript-sqlite.md) for its draft
+conversation, and provisions private SubstreamAgent-backed work streams for
+accepted runs. See [`automation-lifecycle.md`](automation-lifecycle.md).
+
 `BlockDashboard` is the internal architecture and protocol name for the
 user-facing **HyperSight** feature. Durable Object classes, bindings, object
 names, SQL tables, RPC contracts, socket audiences, and `/block-dashboard`
@@ -801,7 +807,7 @@ those rows so cross-work-stream queries are one local SQLite query rather than a
 fan-out to every child. Electron requests cursor-paged rows over its existing
 WorkspaceDO socket, and receives the sidebar itself on the answer to
 `subscribe` — the first page together with the viewer's
-`automation_subscriptions` and `notes` rows, since all three are this object's
+`automation_directory` and `notes` rows, since all three are this object's
 tables. Opening the sidebar therefore costs no request at all.
 [`realtime-sockets.md`](realtime-sockets.md) holds the protocol and its bounds. Common and viewer rows retain separate monotonic waterlines,
 because Queue is at-least-once and unordered. Electron keeps one shared
@@ -1167,12 +1173,13 @@ already have committed across the object boundary.
 | `connector_connections`, `external_user_identities` | Workspace connector credentials, cursor/configuration/health, model plugin identity, refresh lease, and verified provider-user mappings. Global/provider ingress routes retain only the opaque fields needed to find this object. |
 | `slack_agent_*`, `slack_delivery_preferences`, `slack_user_links`, `slack_ingress_jobs`, `slack_link_challenges`, `slack_unfurled_links` | Workspace-local Slack policy, allowlist, identity, execution session, queued handoff, delivery preference, and shared-link state. Global Slack installation routing remains outside the object because the workspace is not known at initial ingress. |
 | `workspace_sandbox_network_policies`, `workspace_sandbox_network_domains`, `workspace_sandbox_network_policy_mutations` | Terminal network/egress authority, current verified revision, domain set, and complete preview/confirm/result history. Substream terminal state stores only the applied revision and rechecks this object before reuse. |
-| `automation_templates`, `automation_template_versions`, `automation_subscriptions`, `automation_runs`, `automation_resources`, `automation_delivery_targets`, `automation_email_receipts`, `automation_email_rate_windows` | Complete workspace automation definition, immutable versions, draft/active lifecycle, trigger/run state, resource links, inbound-email receipts/rate windows, and frozen delivery configuration. Work-stream IDs are opaque references into child authority. |
-| `digest_schedules`, `digest_schedule_times`, `digest_delivery_targets`, `digest_deliveries`, `schedules` | User digest configuration/cursor/history plus the canonical due-work index for digests, automations, and connector polling. This object's own alarm reads them directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). |
-| `resources`, `resource_versions`, `resource_watches`, `automation_resources` | Workspace resource metadata, monotonic semantic history, and workspace-level attachment/watch relationships. Every numbered version retains its original and derivative regional R2 refs; each SubstreamAgent separately owns its work-stream link and resource inventory revision. |
+| `automation_templates`, `automation_template_versions` | Shared, publishable automation templates and their immutable versions. Adopting one copies its definition into an independent `AutomationAgent`; nothing subscribes to a version, and no automation's own state lives here. |
+| `automation_directory`, `automation_creation_claims`, `workspace_external_event_registrations`, `workspace_external_event_deliveries`, `automation_cutover_campaign` | The workspace's whole remaining automation surface: a content-free directory row per automation (id, author, generation/version coordinate, lifecycle, scope, title, next run, attention) that can locate an object but never authorize a read of one; the creation-key claim that keeps a retried first authoring send from minting a second automation; the typed external-event registration index and its leased delivery ledger, shared with work-stream resource watches; and the one-shot import ledger. Every automation's definition, runs, memory, schedules, and receipts live in its own `AutomationAgent` — see [`automation-lifecycle.md`](automation-lifecycle.md). |
+| `digest_schedules`, `digest_schedule_times`, `digest_delivery_targets`, `digest_deliveries`, `schedules` | User digest configuration/cursor/history plus the canonical due-work index for digests and connector polling — automations left `schedules` in the durable-lifecycle cutover and arm their own object's alarm. This object's own alarm reads them directly and mirrors each due time into `_internal_durable_alarms`; see [`durable-object-alarms.md`](durable-object-alarms.md). |
+| `resources`, `resource_versions`, `resource_watches` | Workspace resource metadata, monotonic semantic history, and workspace-level attachment/watch relationships. Every numbered version retains its original and derivative regional R2 refs; each SubstreamAgent separately owns its work-stream link and resource inventory revision. |
 | `resource_object_deletion_outbox`, `note_resource_deletion_outbox` | Durable lifecycle ownership for original, derivative, receipt, and note-linked R2 refs. Deletion bytes is a regional side effect performed only after an object-owned outbox claim. |
 | `notes`, `note_transcript_segments`, `note_privacy_change_outbox` | Note authority, transcript segments and privacy-delivery intent. A note's linked resource is a real local foreign key. |
-| `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/automation/work-stream memory facts, immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys — so this object validates no scope owner, and migration 0036's four owner rules, dropped by 0090 along with the D1 tables, are now held only by `resolveMemoryAccess`. |
+| `memory_scopes`, `memory_items`, `memory_mutations`, `memory_index_outbox` | Workspace/user/work-stream memory facts — automation memory moved into each `AutomationAgent` — immutable mutation receipts and vector-index side effects. Work-stream/run IDs are opaque provenance, not foreign keys — so this object validates no scope owner, and migration 0036's four owner rules, dropped by 0090 along with the D1 tables, are now held only by `resolveMemoryAccess`. |
 | `memory_tables`, `memory_table_columns`, `memory_table_rows`, `memory_table_cells`, `memory_table_mutations` | Typed relational memory tables with local FTS indexes, schema/data revisions and durable mutation history. |
 | `workstream_notification_intents` | Causally fenced person-notification intents, `notification_kind` in (`mention`, `participant_added`). Claim, defer, failure, terminal settlement, retention due time, and reap are typed WorkspaceDO RPCs; the generic SQL port refuses this table. Automation and digest transports keep their idempotency receipts on their own target/receipt rows; all variants are WorkspaceDO-owned. Terminal shells are reaped by this object's `notification_intents` maintenance alarm after 30 days. |
 | `workstream_email_receipts` | Inbound-email processing idempotency keyed `(resend_email_id, workstream_id)` with the expiring exclusive lease a Worker holds while it fetches, stores, and posts one email. Claim, renewal, settlement, and failure all serialize in this object once the route is open; the legacy pre-cutover branch settles the same shape in one regional D1 batch instead. |
@@ -1409,6 +1416,40 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-28 — Automations leave WorkspaceDO, and their runs become hidden child work streams
+
+**What changed:** `AutomationAgent` provisions each occurrence as a private
+generated work stream carrying an immutable run context. Workspace directories
+exclude it from the global sidebar; the parent exposes only content-free paged
+history, and opening the child rechecks its own current audience. Every generated
+child is `personal` with the automation's author as its only participant,
+whatever the automation's scope. On this object's side, migration 22 adds
+`automation_directory`, `automation_creation_claims`, the external-event
+registration and delivery tables, and the cutover ledger; the cutover then drops
+the whole `automation_subscriptions` family, rebuilds `schedules` without its
+automation column, and deletes automation memory scopes. Shared
+`automation_templates` and their versions stay.
+
+**Why:** Runs need the proven work-stream execution loop, but most people care
+about the automation rather than implementation work streams in navigation. And
+an automation's own state needed one transactional authority, which a workspace
+shared by every automation could not be.
+
+**Considered and rejected:** Making the generated child inherit the automation's
+scope, which is what the previous producers did. That made a workspace
+automation's every run readable by every member, including runs over a
+connection they cannot otherwise see, and gave the run's audience a second
+answer that could drift from the automation's own.
+
+**Consequences:** SubstreamAgent remains the child execution authority and
+AutomationAgent never stores child transcript or participant payloads. This
+object's table inventory above is now the *whole* of the workspace's automation
+surface — a directory row, a creation claim, an event index and its delivery
+ledger — and none of it can authorize a read. A fresh WorkspaceDO still creates
+the retired tables from its frozen migration 1 and drops them when it writes its
+identity row, so `sqlite_master` rather than the migration list is the honest
+answer to whether an object still has them.
 
 ### 2026-08-28 — Persistent substream loops over a canonical ordered transcript
 
@@ -2020,7 +2061,6 @@ run-final adoption, hibernation recovery, and deletion/FK integrity.
 
 Shipped in [#378](https://github.com/juno-ai-labs/avalon/pull/378) and implements
 the [ordered work-stream transcript PRD](PRDs/2026-08-26_ordered-workstream-turn-transcripts/prd.md).
-
 ### 2026-08-27 — Participant removal preserves one reader
 
 **What changed:** `removeParticipant` now treats the room as collaborative:

@@ -910,6 +910,7 @@ describe("agent harness", () => {
     }));
     const responses = [
       automationToolResponse("load_plugin", { pluginId: "plugin_google_2" }),
+      automationToolResponse("plugin_inspect", { pluginId: "plugin_google_2" }),
       automationToolResponse("google_2_drive_search", { query: "avalon" }),
       automationSubmitResponse(valid),
     ];
@@ -962,7 +963,7 @@ describe("agent harness", () => {
       onStreamEvent: (event) => { compilerEvents.push(event); },
     })).resolves.toMatchObject({ name: "Drive folder brief", ready: true });
 
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher).toHaveBeenCalledTimes(4);
     const firstSystem = String((bodies[0]!.messages as Array<{ content: string }>)[0]!.content);
     expect(firstSystem).toContain("Available to load:\n- plugin_google_2 (Google Drive · Work; aliases: drive, files)");
     const firstToolNames = (bodies[0]!.tools as Array<{ function: { name: string } }>)
@@ -1243,6 +1244,7 @@ describe("agent harness", () => {
     const bodies: Array<Record<string, unknown>> = [];
     const responses = [
       automationToolResponse("load_plugin", { pluginId: "plugin_google_2" }),
+      automationToolResponse("plugin_inspect", { pluginId: "plugin_google_2" }),
       // A ready semantic trigger whose prefilter declares no event type. The
       // shape matches the schema the model was shown; only `AutomationDraftSchema`'s
       // refinement rejects it, which is exactly the case the runtime used to
@@ -1286,8 +1288,8 @@ describe("agent harness", () => {
       triggers: [{ type: "semantic_activity", deterministicPrefilter: { eventType: "drive.file_changed" } }],
     });
 
-    expect(fetcher).toHaveBeenCalledTimes(3);
-    const toolMessages = (bodies[2]!.messages as Array<{ role: string; content: unknown }>)
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    const toolMessages = (bodies[3]!.messages as Array<{ role: string; content: unknown }>)
       .filter((message) => message.role === "tool");
     const rejection = JSON.parse(String(toolMessages.at(-1)!.content)) as {
       success: boolean;

@@ -7,7 +7,6 @@ import type { AutomationDetail } from '../lib/types';
 import { AutomationOverviewScreen } from './automation-overview';
 
 const api = vi.hoisted(() => ({
-  adoptAutomationUpdate: vi.fn(),
   deleteAutomation: vi.fn(),
   getAutomation: vi.fn(),
   getConnections: vi.fn(),
@@ -106,15 +105,6 @@ describe('Automation template updates', () => {
     api.getAutomation.mockResolvedValue(detail);
     api.getConnections.mockResolvedValue([]);
     api.deleteAutomation.mockResolvedValue(undefined);
-    api.adoptAutomationUpdate.mockResolvedValue({
-      ...detail,
-      statusMessage: undefined,
-      versionNumber: 2,
-      instructions: 'Summarize changes and decisions.',
-      triggerSummary: 'Every Monday',
-      scheduleSummary: 'Every Monday',
-      templateUpdate: undefined,
-    });
   });
 
   it('hides publishing and update adoption while Automation Workspace Templates Enabled is false', async () => {
@@ -134,81 +124,6 @@ describe('Automation template updates', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Opening automation…');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-state', 'connecting');
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-size', '64');
-  });
-
-  it('keeps the pinned version until the user reviews and explicitly adopts the update', async () => {
-    renderScreen();
-
-    expect(await screen.findByText('Version 2 is available')).toBeVisible();
-    expect(screen.getByText('Your automation stays on version 1 until you choose to update.')).toBeVisible();
-    expect(api.adoptAutomationUpdate).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Review update' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Review template update' });
-    expect(within(dialog).getByText('Summarize changes.')).toBeVisible();
-    expect(within(dialog).getByText('Summarize changes and decisions.')).toBeVisible();
-    expect(within(dialog).getByText('Every Friday')).toBeVisible();
-    expect(within(dialog).getByText('Every Monday')).toBeVisible();
-    expect(within(dialog).getByText('A short weekly brief')).toBeVisible();
-    expect(within(dialog).getByText('A concise weekly brief')).toBeVisible();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Adopt version 2' }));
-
-    await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(automationId, nextVersionId, {}));
-    await waitFor(() => expect(screen.queryByText('Version 2 is available')).not.toBeInTheDocument());
-    expect(screen.getByText('Summarize changes and decisions.')).toBeVisible();
-  });
-
-  it('preselects only workspace connections when adopting a workspace template update', async () => {
-    api.getAutomation.mockResolvedValue({
-      ...detail,
-      scope: 'workspace',
-      executionScope: 'Workspace',
-      activitySourcePluginIds: { github_source: 'plugin_github_personal' },
-      templateUpdate: {
-        ...detail.templateUpdate!,
-        activitySources: [{
-          bindingKey: 'github_source',
-          connectorType: 'github',
-          suggestedPluginId: 'plugin_github_personal',
-        }],
-      },
-    });
-    api.getConnections.mockResolvedValue([
-      {
-        id: 'connection-github-personal',
-        modelPluginId: 'plugin_github_personal',
-        connectorType: 'github',
-        displayName: 'GitHub · Personal',
-        scope: 'personal',
-        status: 'healthy',
-        capabilities: [],
-      },
-      {
-        id: 'connection-github-workspace',
-        modelPluginId: 'plugin_github_workspace',
-        connectorType: 'github',
-        displayName: 'GitHub · Workspace',
-        scope: 'workspace',
-        status: 'healthy',
-        capabilities: [],
-      },
-    ]);
-    renderScreen();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Review update' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Review template update' });
-    const select = within(dialog).getByRole('combobox', { name: 'Connector for github_source' });
-    await waitFor(() => expect(select).toHaveValue('plugin_github_workspace'));
-    expect(within(select).queryByRole('option', { name: 'GitHub · Personal' })).not.toBeInTheDocument();
-
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Adopt version 2' }));
-    await waitFor(() => expect(api.adoptAutomationUpdate).toHaveBeenCalledWith(
-      automationId,
-      nextVersionId,
-      { github_source: 'plugin_github_workspace' },
-    ));
   });
 
   it('turns a delivery destination off from the automation itself', async () => {
@@ -367,7 +282,9 @@ describe('Automation template updates', () => {
   it('shows only supported run filters and omits connected capabilities', async () => {
     renderScreen();
 
-    expect(await screen.findByRole('heading', { name: 'Runs' })).toBeVisible();
+    // "Recent runs", not "Runs": the API returns the newest
+    // page rather than every run there has ever been.
+    expect(await screen.findByRole('heading', { name: 'Recent runs' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Connected capabilities' })).not.toBeInTheDocument();
 
     const filters = screen.getByRole('group', { name: 'Filter automation runs' });
@@ -378,6 +295,70 @@ describe('Automation template updates', () => {
     ]);
     expect(within(filters).queryByRole('button', { name: 'Activity' })).not.toBeInTheDocument();
     expect(within(filters).queryByRole('button', { name: 'Webhook' })).not.toBeInTheDocument();
+  });
+
+  it('separates one run from the next by what started it and how it ended', async () => {
+    api.getAutomation.mockResolvedValue({
+      ...detail,
+      runs: [
+        {
+          id: 'run-1',
+          workstreamId: 'workstream-1',
+          // Every run of an automation is titled after the
+          // automation, so the title cannot tell two apart.
+          title: 'Weekly brief',
+          status: 'failed',
+          triggerType: 'scheduled',
+          triggerTime: '2026-08-01T09:00:00.000Z',
+        },
+        {
+          id: 'run-2',
+          workstreamId: 'workstream-2',
+          title: 'Weekly brief',
+          status: 'completed',
+          triggerType: 'manual',
+          triggerTime: '2026-07-25T09:00:00.000Z',
+          resultSummary: 'Three merged PRs.',
+        },
+      ],
+    });
+    renderScreen();
+
+    await screen.findByRole('heading', { name: 'Recent runs' });
+    const rows = document.querySelectorAll('.automation-run-row');
+    expect([...rows].map((row) => row.querySelector('strong')?.textContent))
+      .toEqual(['On schedule', 'Run now']);
+    // A failed run said "No result summary", which reads as an
+    // absence rather than as the thing that happened.
+    expect([...rows].map((row) => row.querySelector('small')?.textContent))
+      .toEqual(['Failed', 'Three merged PRs.']);
+    // The compact dot carries no visible label, so without a
+    // tooltip its colour is the only thing saying how a run ended.
+    expect(rows[0]?.querySelector('.status-indicator')).toHaveClass('status-compact');
+    // Tooltip-wrapped, so the colour is explained on hover
+    // rather than being the only thing that carries it.
+    expect(rows[0]?.querySelector('.status-indicator')).toHaveAttribute('data-state');
+    expect(screen.getByText('Last 2')).toBeVisible();
+  });
+
+  it('says in words why a carried-over automation stopped, and that it will not run again', async () => {
+    api.getAutomation.mockResolvedValue({ ...detail, status: 'paused', attention: 'unsupported_trigger' });
+    renderScreen();
+
+    // Before this, the whole account of what happened was the word "Paused"
+    // beside a dot — for an automation that is not waiting for anything.
+    expect(await screen.findByText('This automation will not run')).toBeVisible();
+    expect(screen.getByText(
+      'Rally was upgraded, and the trigger that used to start this automation did not survive the move. '
+      + 'It will not run again on its own. Create it again with a trigger Rally supports to bring it back.',
+    )).toBeVisible();
+  });
+
+  it('says nothing extra about an automation nothing is wrong with', async () => {
+    renderScreen();
+
+    await screen.findByRole('heading', { name: 'Weekly brief' });
+    expect(screen.queryByLabelText('Automation needs attention')).not.toBeInTheDocument();
   });
 
   it('explains that workspace automation mail must come from a workspace member', async () => {

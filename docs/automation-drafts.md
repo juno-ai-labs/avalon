@@ -1,5 +1,11 @@
 # Automation drafts
 
+> Historical design record. The subscription-row authority described below was
+> retired by the durable automation lifecycle cutover. Current implementation
+> guidance is [`automation-lifecycle.md`](automation-lifecycle.md): a draft is a
+> state of AutomationAgent, begins only on first send, and is deleted rather
+> than archived.
+
 An automation that someone has begun setting up but has not created is a
 **draft**: a real `automation_subscriptions` row, listed in the sidebar under
 Automations, that never runs. It carries no schedule, holds no email address, and
@@ -329,6 +335,20 @@ conversation grants authority: connector bindings are validated and frozen at
 creation, not at draft time.
 
 ## Changelog
+
+### 2026-08-28 — Draft authority moves into AutomationAgent
+
+**What changed:** New automation navigation creates no server state. First-turn
+admission creates one AutomationAgent whose draft conversation, compiler state,
+and later accepted lifecycle share one ID. Legacy draft rows are discarded by
+the one-shot cutover; draft deletion tombstones the object and removes its
+projection.
+
+**Why:** A resumable draft needs durable ownership, but a separate subscription
+row and conversation authority made acceptance a cross-authority promotion.
+
+**Consequences:** The remainder of this document is retained as historical
+reasoning only. Use `automation-lifecycle.md` before changing the current path.
 
 ### 2026-08-25 — A rejected submission tells the compiler which field to fix
 

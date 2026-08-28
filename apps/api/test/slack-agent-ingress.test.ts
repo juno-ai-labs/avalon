@@ -5,8 +5,12 @@ import type { Env } from "../src/env";
 import { ApiError } from "../src/lib/api-error";
 import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-agent-service";
 import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
-import { preRetirementProductSqliteDatabase } from "./helpers/sqlite-d1";
-import { createCloudflareTestBinding, createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestDurableObjectId,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 
 // The logger only reads the observability bindings off the environment.
 const logEnv = createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error" });
@@ -27,7 +31,7 @@ class IngressStatement {
   constructor(private readonly database: IngressDatabase, private readonly sql: string) {}
   bind(...values: unknown[]) { this.values = values; return this; }
   first<T>() { return this.database.first(this.sql, this.values) as Promise<T | null>; }
-  all<T>() { return this.database.all(this.sql) as Promise<D1Result<T>>; }
+  all<T>() { return this.database.all(this.sql, this.values) as Promise<D1Result<T>>; }
   run<T>() { return this.database.run(this.sql, this.values) as Promise<D1Result<T>>; }
 }
 
@@ -70,37 +74,13 @@ class IngressDatabase {
     throw new Error(`Unexpected first query: ${sql}`);
   }
 
-  async all(sql: string) {
-    if (sql.includes("FROM automation_subscriptions")) {
-      const triggers = [
-        ...(this.activityEventTypes.size === 0 ? [] : [{
-          type: "connector_activity",
-          connectorType: "slack",
-          sourceBindingKey: "slack_source",
-          suggestedSourcePluginId: "plugin_slack",
-          eventTypes: [...this.activityEventTypes],
-          deterministicFilters: {},
-        }]),
-        ...this.semanticActivityEventTypes.map((eventType) => ({
-          type: "semantic_activity",
-          connectorType: "slack",
-          sourceBindingKey: "slack_source",
-          suggestedSourcePluginId: "plugin_slack",
-          deterministicPrefilter: eventType ? { eventType } : {},
-          condition: "The activity needs a response.",
-        })),
-      ];
-      return {
-        success: true,
-        results: triggers.length === 0 ? [] : [{
-          connector_bindings_json: JSON.stringify({ plugin_slack: "11111111-1111-4111-8111-111111111111" }),
-          activity_trigger_bindings_json: JSON.stringify({ slack_source: "plugin_slack" }),
-          trigger_definitions_json: JSON.stringify(triggers),
-        }],
-        meta: {} as D1Meta & Record<string, unknown>,
-      };
-    }
-    throw new Error(`Unexpected all query: ${sql}`);
+  async all(sql: string, values: unknown[]) {
+    const row = await this.first(sql, values);
+    return {
+      success: true,
+      results: row ? [row] : [],
+      meta: {} as D1Meta & Record<string, unknown>,
+    };
   }
 
   async run(sql: string, values: unknown[]) {
@@ -576,9 +556,35 @@ function channelMessagePayload(
 }
 
 function environment(database: IngressDatabase, send: (body: unknown) => Promise<void>): Env {
+  const workspaceStub = {
+    executeRuntimeSql: async (input: {
+      statements: Array<{ sql: string; params: Array<string | number | null> }>;
+    }) => ({
+      status: 200,
+      bodyJson: JSON.stringify({
+        results: await Promise.all(input.statements.map(async ({ sql, params }) => {
+          if (/^\s*SELECT/iu.test(sql)) {
+            const row = await database.first(sql, params) as Record<string, string | number | null> | null;
+            return { columns: row ? Object.keys(row) : [], rows: row ? [row] : [], changes: 0 };
+          }
+          const result = await database.run(sql, params);
+          return { columns: [], rows: [], changes: Number(result.meta.changes ?? 0) };
+        })),
+      }),
+    }),
+    hasActiveExternalEventRegistration: async (input: { eventType: string }) => ({
+      active: database.activityEventTypes.has(input.eventType)
+        || database.semanticActivityEventTypes.includes(input.eventType),
+    }),
+  };
+  const workspaceNamespace = createCloudflareTestBinding<DurableObjectNamespace>({
+    idFromName: (name: string) => createTestDurableObjectId(name),
+    get: () => workspaceStub,
+  });
   return createTestEnv({
     DB: createTestD1Database(database),
     ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send }),
+    WORKSPACE_DOS: workspaceNamespace,
     AVALON_REGION: "global",
     SLACK_APP_ID: "A1",
   });
@@ -741,42 +747,22 @@ describe("App Home task rows", () => {
     expect(rendered).not.toContain("Unlinkable");
   });
 
-  it("leaves drafts out of the automations it lists", () => {
-    const database = preRetirementProductSqliteDatabase();
-    const workspaceId = "00000000-0000-7000-8000-000000000001";
-    const userId = "00000000-0000-7000-8000-000000000002";
-    database.exec(`
-      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
-      VALUES ('${userId}', 'home-subject', 'ada@example.com', 'Ada', '2026-01-01', '2026-01-01');
-      INSERT INTO workspaces (id, name, slug, region, created_by_user_id, created_at, updated_at)
-      VALUES ('${workspaceId}', 'Avalon Studio', 'avalon-studio', 'global', '${userId}', '2026-01-01', '2026-01-01');
-      INSERT INTO automation_templates
-        (id, workspace_id, owner_user_id, name, description, sharing_state, latest_version_number, created_at, updated_at)
-      VALUES
-        ('00000000-0000-7000-8000-00000000000a', '${workspaceId}', '${userId}', 'Daily brief', 'Brief', 'private', 1, '2026-01-01', '2026-01-01'),
-        ('00000000-0000-7000-8000-00000000000b', '${workspaceId}', '${userId}', 'Half-written monitor', 'Monitor', 'private', 1, '2026-01-01', '2026-01-01');
-      INSERT INTO automation_template_versions
-        (id, template_id, version_number, instructions, trigger_definitions_json, created_by_user_id, created_at)
-      VALUES
-        ('00000000-0000-7000-8000-00000000000c', '00000000-0000-7000-8000-00000000000a', 1, 'Write the brief', '[]', '${userId}', '2026-01-01'),
-        ('00000000-0000-7000-8000-00000000000d', '00000000-0000-7000-8000-00000000000b', 1, 'Watch the page', '[]', '${userId}', '2026-01-01');
-      INSERT INTO automation_subscriptions
-        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-         execution_principal_json, status, created_at, updated_at)
-      VALUES
-        ('00000000-0000-7000-8000-00000000000e', '${workspaceId}', '00000000-0000-7000-8000-00000000000a', '00000000-0000-7000-8000-00000000000c',
-         'personal', '${userId}', '{"type":"user","userId":"${userId}"}', 'active', '2026-01-01', '2026-01-01'),
-        -- Written moments ago, which is exactly why it would otherwise win the
-        -- newest-first ordering and take the whole list.
-        ('00000000-0000-7000-8000-00000000000f', '${workspaceId}', '00000000-0000-7000-8000-00000000000b', '00000000-0000-7000-8000-00000000000d',
-         'personal', '${userId}', '{"type":"user","userId":"${userId}"}', 'draft', '2026-08-11', '2026-08-11');
-    `);
-
-    const rows = database.prepare(__slackAgentTesting.PERSONAL_AUTOMATIONS_FOR_HOME_SQL)
-      .all(workspaceId, userId) as Array<{ name: string }>;
+  it("leaves drafts and workspace automations out of the App Home list", () => {
+    const common = {
+      description: "Brief",
+      emailAddress: null,
+      nextRunAt: null,
+      lastRunAt: null,
+      updatedAt: "2026-08-11T00:00:00.000Z",
+      updateAvailable: false,
+    };
+    const rows = __slackAgentTesting.personalAutomationsForHome([
+      { ...common, id: "00000000-0000-7000-8000-00000000000e", name: "Daily brief", scope: "personal", status: "active" },
+      { ...common, id: "00000000-0000-7000-8000-00000000000f", name: "Half-written monitor", scope: "personal", status: "draft" },
+      { ...common, id: "00000000-0000-7000-8000-000000000010", name: "Team brief", scope: "workspace", status: "active" },
+    ]);
 
     expect(rows.map((row) => row.name)).toEqual(["Daily brief"]);
-    database.close();
   });
 });
 

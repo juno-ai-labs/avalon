@@ -1,6 +1,5 @@
 import { asUserId, type UserId, type WorkspaceId } from '@rally/contracts';
 import type { Env, IdentityAuthContext } from '../env';
-import { withWorkspaceRuntimeDatabase } from '../services/workspace-runtime-database';
 import { apiTelemetryEnvelope, emitAuthenticatedApiTelemetry } from './api-emitter';
 import {
   emitProductUsageTelemetry,
@@ -11,6 +10,7 @@ import {
 } from './product-usage';
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
+import { automationRunTelemetryEnvelope } from "./automation-run-envelope";
 
 interface CorrelatedRunInput {
   workspaceId: WorkspaceId;
@@ -127,23 +127,24 @@ export async function emitCorrelatedRunOutcome(
   // The work stream's automation run was a second table in the join, and the
   // only column this needed from it. It is the identity authority's row, asked
   // for after the terminal gate rather than fetched for every run.
-  run.automation_run_id = (await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
-    .identity())?.automation_run_id ?? null;
+  const workstreamIdentity = await createIdentityObjectPort(env, input.workspaceId, input.workstreamId)
+    .identity();
+  run.automation_run_id = workstreamIdentity?.automation_run_id ?? null;
+  run.automation_id = workstreamIdentity?.automation_subscription_id ?? null;
   // The automation lookup is workspace authority (the WorkspaceDO — the D1
   // copy was scrubbed at cutover); the run rows above are work-stream
   // authority, and no database holds both sides of the old JOIN. Both callers
   // swallow telemetry errors, so the joined form did not fail — it silently
   // killed run_terminal telemetry in production.
-  const automation = run.automation_run_id
-    && ["automation", "automation_run", "automation_activity"].includes(run.origin)
-    ? await withWorkspaceRuntimeDatabase(env, input.workspaceId).DB.prepare(
-      `SELECT automation_subscription_id, trigger_type FROM automation_runs
-        WHERE id = ? AND workspace_id = ?`,
-    ).bind(run.automation_run_id, input.workspaceId)
-      .first<{ automation_subscription_id: string | null; trigger_type: string | null }>()
+  const automation = run.automation_run_id && run.automation_id
+    && ["automation", "automation_run"].includes(run.origin)
+    ? await automationRunTelemetryEnvelope(env, {
+        workspaceId: input.workspaceId,
+        automationId: run.automation_id,
+        runId: run.automation_run_id,
+      })
     : null;
-  run.automation_id = automation?.automation_subscription_id ?? null;
-  run.automation_trigger_type = automation?.trigger_type ?? null;
+  run.automation_trigger_type = automation?.triggerType ?? null;
   const started = run.started_at;
   const completed = stored.completed_at;
   const operationId = input.telemetryOperationId ?? input.harnessRunId;

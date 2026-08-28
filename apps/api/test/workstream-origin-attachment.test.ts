@@ -51,7 +51,6 @@ vi.mock("../src/services/workstream-email-routing-service", () => ({
   },
 }));
 
-import { __testing as activityConsumerTesting } from "../src/queues/activity-consumer";
 import { SlackWorkspaceWorkstreamService } from "../src/services/slack-workspace-workstream-service";
 import { WorkstreamService } from "../src/services/workstream-service";
 import {
@@ -65,9 +64,6 @@ const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const memberId = asUserId("00000000-0000-7000-8000-000000000002");
 const connectionId = "00000000-0000-7000-8000-000000000003";
 const strangerId = "00000000-0000-7000-8000-000000000004";
-const templateId = "00000000-0000-7000-8000-000000000005";
-const templateVersionId = "00000000-0000-7000-8000-000000000006";
-const subscriptionId = "00000000-0000-7000-8000-000000000007";
 const activityId = "00000000-0000-7000-8000-000000000008";
 const opportunityId = "00000000-0000-7000-8000-000000000009";
 const activityNodeId = "00000000-0000-7000-8000-00000000000a";
@@ -262,86 +258,6 @@ describe("attaching a work stream's origin", () => {
   });
 });
 
-describe("a work stream a connector activity created", () => {
-  it("attaches the object an automation fired on, ownerless", async () => {
-    const database = seededDatabase();
-    seedActivityAutomation(database);
-
-    await activityConsumerTesting.runMatchingAutomations(
-      automationEnvironment(database),
-      linearActivityRow() as never,
-    );
-
-    // The directory anchor carries no product columns since the cutover; the
-    // regional automation_runs row is what names the created work stream.
-    const workstream = database.prepare(
-      "SELECT workstream_id AS id FROM automation_runs WHERE automation_subscription_id = ?",
-    ).get(subscriptionId) as { id: string };
-    expect(attachments(database, workstream.id)).toEqual([{
-      relationship_type: "origin",
-      attached_by_user_id: null,
-      watch_enabled: 0,
-      resource_type: "linear_issue",
-      provider: "linear",
-      provider_resource_id: "ISS-42",
-      title: "Assigned ISS-42",
-      canonical_url: "https://linear.app/avalon/issue/ISS-42",
-    }]);
-  });
-
-  it("attaches the origin on a redelivery that finds the run already created", async () => {
-    // A queue invocation killed after the D1 batch commits leaves the run
-    // durable and the origin missing. The redelivery takes the existing-run
-    // branch, and if the attachment only lived on the create path the Workflow
-    // would launch permanently without it.
-    const database = seededDatabase();
-    seedActivityAutomation(database);
-    const env = automationEnvironment(database);
-    await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
-    // The directory anchor carries no product columns since the cutover; the
-    // regional automation_runs row is what names the created work stream.
-    const workstream = database.prepare(
-      "SELECT workstream_id AS id FROM automation_runs WHERE automation_subscription_id = ?",
-    ).get(subscriptionId) as { id: string };
-    storesFor(database).get(workstream.id)!
-      .prepare("DELETE FROM workstream_resource_links").run();
-
-    await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
-
-    expect(attachments(database, workstream.id)).toEqual([expect.objectContaining({
-      relationship_type: "origin",
-      provider_resource_id: "ISS-42",
-    })]);
-  });
-
-  it("still records the object when that connector is not configured in this region", async () => {
-    // A registry that cannot be built is one absent credential taking every
-    // connector down with it. An activity needs no adapter to be described, so
-    // the base derivation keeps the provenance rather than losing it to a
-    // signing secret that was never set here.
-    const database = seededDatabase();
-    seedActivityAutomation(database);
-    const env = createTestEnv({
-      ...automationEnvironment(database),
-      LINEAR_OAUTH_CLIENT_ID: undefined,
-      LINEAR_OAUTH_CLIENT_SECRET: undefined,
-    });
-
-    await activityConsumerTesting.runMatchingAutomations(env, linearActivityRow() as never);
-
-    // The directory anchor carries no product columns since the cutover; the
-    // regional automation_runs row is what names the created work stream.
-    const workstream = database.prepare(
-      "SELECT workstream_id AS id FROM automation_runs WHERE automation_subscription_id = ?",
-    ).get(subscriptionId) as { id: string };
-    expect(attachments(database, workstream.id)).toEqual([expect.objectContaining({
-      resource_type: "linear_issue",
-      provider_resource_id: "ISS-42",
-      canonical_url: "https://linear.app/avalon/issue/ISS-42",
-    })]);
-  });
-});
-
 describe("reconciling the shared resource row", () => {
   it("fills a missing link on a row an earlier activity created without one", async () => {
     // A Slack activity carries no permalink in its metadata, so the row it
@@ -398,25 +314,6 @@ describe("reconciling the shared resource row", () => {
       .toEqual({ canonical_url: "https://avalon.slack.com/first" });
   });
 
-  it("stores no content reference for an origin", async () => {
-    // `payload_ref` addresses the raw verified webhook body in R2, and
-    // `workstream_read_resource` serves whatever `content_ref` points at to the
-    // model with no connector authorization of its own. An origin records where
-    // something is, never what it said.
-    const database = seededDatabase();
-    seedActivityAutomation(database);
-    database.prepare("UPDATE activities SET payload_ref = ? WHERE id = ?")
-      .run("global/provider-webhooks/linear/abc.json", activityId);
-
-    await activityConsumerTesting.runMatchingAutomations(
-      automationEnvironment(database),
-      { ...linearActivityRow(), payload_ref: "global/provider-webhooks/linear/abc.json" } as never,
-    );
-
-    expect(database.prepare(
-      "SELECT content_ref FROM resources WHERE provider = 'linear'",
-    ).get()).toEqual({ content_ref: null });
-  });
 });
 
 describe("a work stream started from a suggestion", () => {
@@ -715,55 +612,6 @@ function opportunityRequest() {
     idempotencyKey: "start-the-suggestion",
     audienceScope: "workspace" as const,
   };
-}
-
-function linearActivityRow() {
-  return {
-    id: activityId,
-    workspace_id: workspaceId,
-    workspace_region: "global",
-    connection_id: connectionId,
-    connection_scope: "workspace",
-    connector_type: "linear",
-    provider: "linear",
-    event_type: "linear.issue.assigned",
-    resource_type: "linear_issue",
-    provider_resource_id: "ISS-42",
-    payload_ref: null,
-    title: "Assigned ISS-42",
-    summary: "",
-    text_snippet: "",
-    metadata_json: JSON.stringify({ url: "https://linear.app/avalon/issue/ISS-42" }),
-    visibility_json: "{}",
-  };
-}
-
-function automationEnvironment(database: DatabaseSync): Env {
-  return environment(database);
-}
-
-/** A subscription bound to the connection the activity arrives on. */
-function seedActivityAutomation(database: DatabaseSync): void {
-  database.exec(`
-    INSERT INTO automation_templates
-      (id, workspace_id, owner_user_id, name, description, sharing_state,
-       latest_version_number, created_at, updated_at)
-    VALUES ('${templateId}', '${workspaceId}', '${memberId}', 'Issue triage', 'Triage', 'private', 1, '${at}', '${at}');
-    INSERT INTO automation_template_versions
-      (id, template_id, version_number, instructions, trigger_definitions_json, created_by_user_id, created_at)
-    VALUES ('${templateVersionId}', '${templateId}', 1, 'Triage the issue',
-            '[{"type":"connector_activity","connectorType":"linear","eventTypes":["linear.issue.assigned"],"deterministicFilters":{}}]',
-            '${memberId}', '${at}');
-    INSERT INTO automation_subscriptions
-      (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-       execution_principal_json, connector_bindings_json, status, email_address,
-       email_route_status, created_at, updated_at)
-    VALUES ('${subscriptionId}', '${workspaceId}', '${templateId}', '${templateVersionId}', 'workspace', NULL,
-            '{"type":"workspace","workspaceId":"${workspaceId}"}',
-            '{"plugin_linear":"${connectionId}"}', 'active',
-            'quiet-amber-steady-heron@automation.with-avalon.com', 'active', '${at}', '${at}');
-  `);
-  seedActivity(database);
 }
 
 function seedActivity(database: DatabaseSync): void {

@@ -36,6 +36,7 @@ const RevocationTargetSchema = z.discriminatedUnion("scope", [
     substreamId: z.union([z.literal("0"), IdSchema]),
   }).strict(),
   z.object({ scope: z.literal("block"), workstreamId: IdSchema, blockId: IdSchema }).strict(),
+  z.object({ scope: z.literal("automation"), automationId: IdSchema }).strict(),
 ]);
 
 export const AccessRevocationMessageSchema = z.object({

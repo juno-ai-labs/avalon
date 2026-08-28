@@ -8,11 +8,12 @@ covers the shared capability that makes that decision once: a SQLite-backed list
 of scheduled alarms per object, and a base class that keeps the object's single
 alarm pointed at the earliest thing on it.
 
-Read this before adding a wake reason to `WorkspaceDO`, `WorkstreamDO`, or
-`SubstreamAgent`, before changing when any of them fires, and before giving a
-fourth object its own alarm. The objects themselves — their hierarchy, schemas,
-sockets, and effects — belong to
-[`workstream-durable-object.md`](workstream-durable-object.md).
+Read this before adding a wake reason to `WorkspaceDO`, `WorkstreamDO`,
+`SubstreamAgent`, or `AutomationAgent`, before changing when any of them fires,
+and before giving a fifth object its own alarm. The objects themselves — their
+hierarchy, schemas, sockets, and effects — belong to
+[`workstream-durable-object.md`](workstream-durable-object.md) and, for
+automations, [`automation-lifecycle.md`](automation-lifecycle.md).
 
 ## Where the code lives
 
@@ -23,9 +24,10 @@ sockets, and effects — belong to
 | `apps/api/src/durable-objects/migratable-durable-object.ts` | The base `ScheduledDurableObject` itself extends. It owns the schema half — the migration pass, its report, and `migrationsReady()`, which every method here awaits before touching `_internal_durable_alarms`. See [`durable-object-migration-tracking.md`](durable-object-migration-tracking.md). |
 | `apps/api/src/durable-objects/workspace-do.ts` | Adopts it for a workspace: due schedules, resource watches, maintenance passes, Terminal deadlines, and the opportunity/ranking product pass. Owns `refreshSchedule`. |
 | `apps/api/src/durable-objects/workspace-alarm-instrumentation.ts` | Content-free WorkspaceDO alarm phase spans and structured rows: fixed phase/kind enums, elapsed times, and the slowest-phase summary. |
-| `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — automations, connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. |
+| `apps/api/src/services/workspace-schedule-execution.ts` | What a workspace target actually *does* when it fires — connector polls, digests, watch polls, maintenance, Terminal lifecycle — as plain functions over a context. Automations are no longer among them; each has its own alarm. |
 | `apps/api/src/durable-objects/substream-agent.ts` | Adopts it for a work stream's agent: `agent_timer` entries index `workstream_wakeups`, so a wake-up a run scheduled fires from the object that owns it. |
 | `apps/api/src/durable-objects/workstream-do.ts` | Adopts it for regional-effect and block-dashboard outboxes, all of which stay derived. |
+| `apps/api/src/durable-objects/automation-agent.ts` | Adopts it for one automation: two stored kinds — `compiler_dispatch` and `automation_schedule` — and two derived lanes, the effect outbox and the next run awaiting provisioning. |
 
 ## How it works
 
@@ -37,7 +39,7 @@ takes the earliest of both:
 - **A stored entry** — a row in `_internal_durable_alarms`, keyed by `(kind, alarm_key)`,
   with a due instant, an optional repeat interval, and its own retry gate. Use
   this when the thing being scheduled has an identity that can succeed or fail
-  on its own: one automation, one resource watch, one agent timer.
+  on its own: one resource watch, one agent timer, one automation schedule.
 - **Derived instants** — `nextDerivedAlarmCandidates(now)`, computed from the
   object's own tables. Use these when due times already live in tables with
   their own writers and no separate identity is needed: each outbox's
@@ -109,7 +111,7 @@ before a full re-arm.
    object's local executor, which does not pass the auto-refresh in
    `executeRuntimeSql`. Without a reconcile here, the drain settles the entry it
    just ran and nothing arms the occurrence that replaced it: a recurring
-   automation fires exactly once.
+   workspace schedule fires exactly once.
 6. Gate whatever ran and **came back due at the same instant** — the stall
    check described below the settle rules.
 7. Re-arm through `armAlarmAfterDueWork()`.
@@ -198,6 +200,37 @@ opportunity and ranking pass wants its instant computed differently depending on
 the caller (an enqueue wants a past-due instant honoured; the alarm that
 launched nothing wants past-due rows left parked behind a dormant member), and a
 derived source has no way to carry that distinction.
+
+### An automation's wake reasons
+
+`AutomationAgent` is the fourth adopter and the smallest. It stores two kinds and
+derives two lanes:
+
+| Reason | Kind | Source |
+| --- | --- | --- |
+| Run the draft compiler for one admitted turn | `compiler_dispatch` (stored) | the compiler run id |
+| Fire one calendar or interval occurrence | `automation_schedule` (stored) | the schedule id |
+| Deliver the next workspace projection or child-archive effect | derived | `MIN(not_before)` over `automation_outbox` |
+| Provision the next claimed occurrence into a child work stream | derived | the oldest pending `automation_runs` row |
+
+The two stored kinds are entries rather than derived instants because each can
+fail on its own: a compiler run that a provider refuses must back off without
+holding a due schedule, and a broken schedule must not hold the compiler. Neither
+is reconciled from a canonical table the way `WorkspaceDO.refreshSchedule` works
+— acceptance, pause, resume, and delete schedule and cancel them explicitly, and
+`executeSchedule` writes its own next occurrence and re-arms before it returns.
+
+`runDueAlarmWork` runs the two derived lanes **independently and collects their
+failures** rather than awaiting them in sequence. Sequential, a run that could not
+be provisioned — a disabled connector, a deleted resource — threw before the
+outbox lane ever ran, so workspace projections stopped and the child-archive
+effects a deletion depends on stopped with them. Each lane now gets its pass and
+the first failure is rethrown afterwards, so the alarm still retries.
+
+An automation's alarm failures log `diagnosticErrorCode(error)` rather than the
+thrown message. This lane runs the compiler and connector tools, so the error
+reaching the hook can carry a provider's prose and, through it, the workspace's
+own retrieved content.
 
 ### Workspace phase instrumentation
 
@@ -376,7 +409,7 @@ time moved, go reconcile" entry points.
 
 ## Data model
 
-`_internal_durable_alarms`, identical in all three objects:
+`_internal_durable_alarms`, identical in all four objects:
 
 | Column | Meaning |
 | --- | --- |
@@ -466,6 +499,38 @@ emitted, and `$workers.durableObjectId` is the platform-owned correlation
 field.
 
 ## Changelog
+
+### 2026-08-28 — AutomationAgent adopts the base, with two stored kinds and two derived lanes
+
+**What changed:** `AutomationAgent` is the fourth object to extend
+`ScheduledDurableObject`. It stores `compiler_dispatch` per compiler run and
+`automation_schedule` per schedule, and derives two lanes — the effect outbox and
+the next occurrence awaiting provisioning. `runDueAlarmWork` runs those two lanes
+independently and rethrows the first failure only after both have had a pass. The
+workspace alarm no longer has an automation target at all: the cutover rebuilt
+`schedules` without `automation_subscription_id`, so `refreshSchedule` reconciles
+connector polls and digests and nothing else.
+
+**Why:** A Durable Object has one native alarm, and an automation has several
+reasons to wake that must fail independently — a provider refusing a compiler run
+must not hold a due schedule. Running the two derived lanes in sequence turned out
+to be the same mistake one level down: a run that could not be provisioned threw
+before the outbox lane ran, so workspace projections and the child-archive effects
+a deletion depends on stopped behind it.
+
+**Considered and rejected:** A stored entry per lane, including provisioning and
+the outbox. Both are "the earliest row in this table" with their own writers and
+no identity that can fail on its own, which is exactly the derived case; giving
+them keys would have added a reconcile with nothing to reconcile.
+
+**Consequences:** WorkspaceDO no longer schedules automation occurrences; timer
+arithmetic, daylight-saving behavior, and missed-occurrence policy are local to
+`AutomationAgent`, and a resumed automation recomputes each schedule's next
+occurrence from now rather than firing what it slept through. A new automation
+wake reason that can fail on its own is a stored kind; one that is the earliest
+row of one of its tables goes in `nextDerivedAlarmCandidates` — and if it is a
+third lane in `runDueAlarmWork`, it collects its failure like the other two rather
+than throwing past them.
 
 ### 2026-08-28 — Resource cleanup schedules only actionable ownership
 
@@ -560,7 +625,6 @@ query or wake.
 unlinked receipts from isolate loss; later exact derivation comes only from
 their owning rows. In-memory drain state remains deduplication, never scheduling
 authority.
-
 ### 2026-08-25 — Phase timing distinguishes slow work from a cancelled queued alarm
 
 **What changed:** Workspace alarms now emit content-free start, completion, and

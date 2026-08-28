@@ -1362,10 +1362,8 @@ export class WorkstreamObjectProductService {
     ).bind(root.workstream_key, userId).first<{ position: number }>();
     const subscription = root.automation_subscription_id
       ? await workspaceDatabase.prepare(
-        `SELECT template.name AS name
-           FROM automation_subscriptions subscription
-           JOIN automation_templates template ON template.id = subscription.template_id
-          WHERE subscription.id = ? AND subscription.workspace_id = ?`,
+        `SELECT title AS name FROM automation_directory
+          WHERE automation_id = ? AND workspace_id = ? AND lifecycle <> 'deleted'`,
       ).bind(root.automation_subscription_id, root.parent_workspace_key).first<{ name: string }>()
       : null;
     const wakeup = first(this.storage.sql.exec<{ due_at: number; prompt: string }>(

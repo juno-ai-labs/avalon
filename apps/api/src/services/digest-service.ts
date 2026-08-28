@@ -103,10 +103,10 @@ function digestScheduleRowStatements(
     if (!nextRunAt) return [];
     return [env.DB.prepare(
       `INSERT INTO schedules
-         (id, workspace_id, automation_subscription_id, connector_connection_id,
+         (id, workspace_id, connector_connection_id,
           digest_schedule_id, schedule_type, rrule, interval_seconds, timezone,
           next_run_at, last_run_at, enabled, version, created_at, updated_at)
-       VALUES (?, ?, NULL, NULL, ?, 'calendar', ?, NULL, ?, ?, NULL, 1, 1, ?, ?)`,
+       VALUES (?, ?, NULL, ?, 'calendar', ?, NULL, ?, ?, NULL, 1, 1, ?, ?)`,
     ).bind(
       newId(), input.workspaceId, input.digestScheduleId, rrule, input.timezone,
       nextRunAt.toISOString(), input.at, input.at,
