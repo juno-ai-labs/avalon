@@ -22,7 +22,7 @@ drawing it uses.
 | --- | --- |
 | `apps/desktop/src/renderer/lib/rally-seam.ts` | The seam curve and its projection. `seamPath(spin, tilt, scale, segments)` is the only place the geometry is decided, and the rate constants live beside it. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `RallySeam`, the frame loop and the reduced-motion decision — and `RallyMark` above it, the still masked image every other surface uses. |
-| `apps/desktop/src/renderer/styles/app.css` | `.rally-seam` holds the drawing's own contract and no size. `.signin-mark`, `.new-workstream-welcome-mark`, and `.automation-builder-mark` each choose a size and the stroke weight that goes with it. |
+| `apps/desktop/src/renderer/styles/app.css` | `.rally-seam` holds the drawing's own contract, including the stroke weight, and no size. `.signin-mark`, `.new-workstream-welcome-mark`, and `.automation-builder-mark` each name a size and nothing else. |
 | `apps/desktop/src/renderer/assets/rally-mark.png` | The still master, behind `.rally-mark`'s mask. Not what the turning mark draws — see below. |
 
 ## How it works
@@ -123,18 +123,29 @@ instead of settling it.
 
 ## Invariants
 
-- **A host of `.rally-seam` names its height, width, and stroke weight
-  together.** The curve fills its box, so a size chosen without its stroke comes
-  out spindly at large sizes and clotted shut at the crossings at small ones, and
-  a box that is not square stretches the drawing along one axis — which, as it
-  turns, reads as the mark being squashed rather than as the box being wrong.
-  `.rally-seam` deliberately declares none of the three so there is no default to
-  inherit by accident. `app.css.node.test.ts` asserts it for all three hosts.
+- **A host names a size and nothing else; the stroke weight lives on
+  `.rally-seam`.** `stroke-width` is in the viewBox's user units, so it scales
+  with the box exactly as every other coordinate does — the same 6 units renders
+  3.4px at 56px and 10.8px at 180px. A host therefore cannot leave the weight
+  behind by changing only its size, and restating the shared value is
+  duplication rather than care. A host may still override it, but only to make a
+  deliberate optical adjustment, and only to a *different* number.
+  `app.css.node.test.ts` asserts both halves for all three hosts.
+
+  An earlier version of this document asserted the opposite — that the weight
+  had to travel with the size, and that a non-square box would stretch the
+  drawing. Both were wrong, and both were written into the stylesheet, the node
+  test, and this list before review caught them. A non-square box letterboxes:
+  with no `preserveAspectRatio` the default `xMidYMid meet` scales uniformly and
+  centres, so a 200×100 box draws the mark 92×92 with empty space either side.
+  Nothing here is a rendering hazard; the hazard was three hosts sizing against
+  a constraint that did not exist.
 - **`scale` and the stroke weight are chosen against the viewBox together.** At
   `scale` 46 the drawing reaches within 4 units of the edge, which leaves room
   for a stroke of 8. Raising one without the other reintroduces clipping at some
   angles of the turn only, which is invisible in a screenshot taken at the wrong
-  moment.
+  moment. This is about the two numbers *inside* the 100×100 viewBox, and is a
+  different question from the host's pixel size above, which scales both.
 - **Two axes are for display sizes only.** A tilted frame is asymmetric about
   the vertical, and below roughly 40px that reads as a wobble. A smaller host has
   to pass no tilt.

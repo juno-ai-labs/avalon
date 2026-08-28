@@ -145,9 +145,12 @@ pre {
 }
 
 /* The solved mark. Everything here is the drawing's own contract and belongs to
-   no one surface; a host sets `height`, `width`, and `stroke-width` together,
-   because the curve fills the box and its crossings close up if the weight does
-   not move with the size.
+   no one surface; a host gives it a size and nothing else.
+
+   `stroke-width` is in the viewBox's user units, so it scales with the box the
+   way every other coordinate does — 6 units is 3.4px at 56px and 10.8px at
+   180px, the same drawing at both. A host names one only to make a deliberate
+   optical adjustment, never to keep the weight in step with a size change.
 
    `brand-mark` is the logo's colour, shared with `.rally-mark` above so the two
    drawings of the mark are at least the same colour. */
@@ -159,6 +162,7 @@ pre {
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
+  stroke-width: 6;
 }
 
 .button,
@@ -1133,9 +1137,8 @@ pre {
 
 .signin-card { text-align: center; width: min(400px, 100%); }
 /* `.rally-seam` is a block, so it needs the margin the card's `text-align`
-   cannot give it. Size and stroke weight travel together — see the seam's
-   own rule. */
-.signin-mark { height: 180px; margin: 0 auto 30px; stroke-width: 6; width: 180px; }
+   cannot give it. The stroke weight comes from the seam's own rule. */
+.signin-mark { height: 180px; margin: 0 auto 30px; width: 180px; }
 .signin-card h1 { margin-bottom: 8px; }
 .signin-button { margin-top: 24px; width: 100%; }
 .signin-button + .signin-button { margin-top: 8px; }
@@ -2330,7 +2333,7 @@ pre {
 /* Sized against the heading's cap height rather than its font size: the seam
    fills its box, where the still mark carried its own margin inside the image,
    so the two are not the same number for the same apparent size. */
-.new-workstream-welcome-mark { height: 56px; stroke-width: 6; width: 56px; }
+.new-workstream-welcome-mark { height: 56px; width: 56px; }
 .waiting-workstreams { margin-top: 48px; }
 .waiting-workstreams h2 { color: var(--av-sys-color-text-muted); font-size: 11px; font-weight: 520; margin: 0 0 10px; }
 .waiting-workstream-list { display: grid; gap: 5px; }
@@ -3137,9 +3140,8 @@ pre {
 .automation-builder-intro { margin: auto 0; padding: 30px 0 95px; text-align: center; }
 /* A display mark, like the sign-in card's: this section is the whole screen
    while it is up, and the mark is what is on it. `.rally-seam` is a block, so
-   the auto margin is what the section's `text-align` cannot give it. Size and
-   stroke weight travel together — see the seam's own rule. */
-.automation-builder-intro > .automation-builder-mark { height: 150px; margin: 0 auto 18px; stroke-width: 6; width: 150px; }
+   the auto margin is what the section's `text-align` cannot give it. */
+.automation-builder-intro > .automation-builder-mark { height: 150px; margin: 0 auto 18px; width: 150px; }
 .automation-builder-intro h1 { font-size: 26px; letter-spacing: -0.035em; margin: 7px 0 7px; }
 .automation-builder-intro > p:not(.eyebrow) { color: var(--av-sys-color-text-muted); margin: 0; }
 .suggested-prompt-list { display: grid; gap: 5px; margin: 28px auto 0; max-width: 620px; width: 100%; }
