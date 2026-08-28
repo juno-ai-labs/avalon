@@ -1,15 +1,12 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import type { AuthContext, Env } from "../src/env";
 import {
   runWorkspaceScheduleTarget,
   workspaceScheduleTargets,
   type WorkspaceScheduleContext,
 } from "../src/services/workspace-schedule-execution";
-import { AutomationService } from "../src/services/automation-service";
-import { __testing } from "../src/queues/activity-consumer";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { applyWorkspaceResourceSchema, createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import { createTestEnv } from "./helpers/cloudflare-test";
@@ -17,63 +14,18 @@ import {
   openWorkstreamAuthorityForTest,
   testSubstreamAgentsBinding,
   testWorkstreamObjectStore,
-  workstreamObjectGet,
-  workstreamObjectParticipantRows,
-  workstreamObjectRootRow,
 } from "./helpers/durable-authority";
-
-vi.mock("../src/services/workstream-email-routing-service", () => ({
-  WorkstreamEmailRoutingService: class {
-    async reserve() {
-      return { emailAddress: "calm-bright-gentle-otter@with-avalon.com" };
-    }
-    async activateWorkstreamRoute() {
-      return undefined;
-    }
-    async ensureWorkstreamAddress() {
-      return undefined;
-    }
-  },
-}));
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const USER_ID = asUserId("00000000-0000-7000-8000-000000000002");
 const PINNED_SUBSCRIPTION_ID = "00000000-0000-7000-8000-000000000007";
 const UNPINNED_SUBSCRIPTION_ID = "00000000-0000-7000-8000-000000000008";
-const ACTIVITY_ID = "00000000-0000-7000-8000-00000000000a";
-
-const auth: AuthContext = {
-  sessionId: "session-1",
-  userId: USER_ID,
-  workspaceId: WORKSPACE_ID,
-  region: "global",
-  role: "member",
-};
 
 const databases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
-
-function serviceFor(fixture: Fixture, logLevel: Env["LOG_LEVEL"] = "error"): AutomationService {
-  const { database, objectStore } = fixture;
-  const env = createTestEnv({
-    DB: sqliteD1(database),
-    AVALON_REGION: "global",
-    APP_ENV: "test",
-    LOG_LEVEL: logLevel,
-    // No FLAGS binding, so an unpinned run resolves to the Worker variables —
-    // which is exactly the value a pinned run has to differ from.
-    OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-    OPENROUTER_FALLBACK_MODELS: "google/gemini-3.6-flash",
-    SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
-    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
-    }),
-  });
-  return new AutomationService(env, auth);
-}
 
 /**
  * The workspace's schedule execution, wired to the fixture's databases.
@@ -118,100 +70,7 @@ function scheduleRunnerFor(fixture: Fixture) {
   };
 }
 
-interface RunWorkstreamRow {
-  id: string;
-  model_override: string | null;
-  scope: string;
-  created_by_user_id: string | null;
-  participant_user_id: string | null;
-}
-
-function runWorkstream(objectStore: DatabaseSync, subscriptionId: string): RunWorkstreamRow {
-  // One object holds one work stream, so the retired view's
-  // `WHERE automation_subscription_id = ? ORDER BY created_at DESC LIMIT 1`
-  // is an assertion about which store this is rather than a row to pick.
-  const root = workstreamObjectRootRow<{
-    workstream_key: string;
-    automation_subscription_id: string | null;
-    model_override: string | null;
-    scope: string;
-    created_by_user_id: string | null;
-  }>(
-    objectStore,
-    "workstream_key, automation_subscription_id, model_override, scope, created_by_user_id",
-  );
-  expect(root.automation_subscription_id).toBe(subscriptionId);
-  const seated = workstreamObjectParticipantRows<{ user_id: string }>(objectStore, "user_id");
-  return {
-    id: root.workstream_key,
-    model_override: root.model_override,
-    scope: root.scope,
-    created_by_user_id: root.created_by_user_id,
-    participant_user_id: seated[0]?.user_id ?? null,
-  };
-}
-
 describe("automation model override", () => {
-  it("copies the automation's pinned model onto every run it creates", async () => {
-    const fixture = seededDatabase();
-    fixture.database.exec(`
-      UPDATE automation_subscriptions
-         SET scope = 'workspace', owner_user_id = NULL,
-             execution_principal_json = '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}'
-       WHERE id = '${PINNED_SUBSCRIPTION_ID}'
-    `);
-
-    await serviceFor(fixture).runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-1");
-
-    expect(workstreamObjectRootRow(fixture.objectStore, "model_override, scope"))
-      .toEqual({ model_override: "openai/gpt-5.6-terra", scope: "workspace" });
-    // The run's expected model is recorded at schedule time, so the pin has to
-    // reach the subordinate run receipt in the same object transaction.
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
-      .toEqual({ model: "openai/gpt-5.6-terra" });
-  });
-
-  it("leaves an unpinned automation's runs to the flag and its Worker-variable default", async () => {
-    const fixture = seededDatabase();
-
-    await serviceFor(fixture).runNow(UNPINNED_SUBSCRIPTION_ID, "idempotency-key-2");
-
-    expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
-      .toEqual({ model_override: null });
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
-      .toEqual({ model: "x-ai/grok-4.3" });
-  });
-
-  // Retiring a model from `AGENT_MODEL_OVERRIDES` drops the pins naming it. The
-  // work-stream read path says so; these paths write the column, so without
-  // their own log a retirement would move every pinned automation in silence.
-  it("says so when a run drops a pin naming a model that has left the list", async () => {
-    const fixture = seededDatabase();
-    fixture.database.exec(`
-      UPDATE automation_subscriptions SET model_override = 'anthropic/claude-opus-4.6'
-       WHERE id = '${PINNED_SUBSCRIPTION_ID}';
-    `);
-    // Workers Logs indexes object properties, so the diagnostic is logged as a
-    // structured entry rather than a string — assert on the fields.
-    const warnings: Array<Record<string, unknown>> = [];
-    const warn = vi.spyOn(console, "warn").mockImplementation((entry: unknown) => {
-      warnings.push(entry as Record<string, unknown>);
-    });
-
-    await serviceFor(fixture, "warn").runNow(PINNED_SUBSCRIPTION_ID, "idempotency-key-3");
-
-    expect(workstreamObjectRootRow(fixture.objectStore, "model_override"))
-      .toEqual({ model_override: null });
-    expect(workstreamObjectGet(fixture.objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
-      .toEqual({ model: "x-ai/grok-4.3" });
-    expect(warnings).toContainEqual(expect.objectContaining({
-      event: "workstream_model_override_unknown",
-      automation_subscription_id: PINNED_SUBSCRIPTION_ID,
-      stored_model: "anthropic/claude-opus-4.6",
-    }));
-    warn.mockRestore();
-  });
-
   // AutomationAgent owns automation timers. WorkspaceDO's scheduler must not
   // accept a restored legacy automation target after the cutover.
   it("refuses a legacy automation target in the workspace scheduler", async () => {
@@ -232,74 +91,6 @@ describe("automation model override", () => {
     expect(fixture.database.prepare(
       "SELECT COUNT(*) AS count FROM automation_runs",
     ).get()).toEqual({ count: 0 });
-  });
-
-  // Connector-activity runs are the third path that writes a work stream
-  // directly, in the queue consumer rather than in either of the above.
-  it("carries the pin into a run a matching connector activity creates", async () => {
-    const fixture = seededDatabase();
-    const { database, objectStore } = fixture;
-    database.exec(`
-      UPDATE automation_template_versions
-         SET trigger_definitions_json = '[{"type":"connector_activity","connectorType":"github","eventTypes":["github.pull_request.merged"],"deterministicFilters":{}}]'
-       WHERE id = '00000000-0000-7000-8000-000000000005';
-      -- Workspace-scoped and bound to the connection the activity arrives on:
-      -- both are what the consumer requires before a trigger is even consulted.
-      UPDATE automation_subscriptions
-         SET scope = 'workspace', owner_user_id = NULL,
-             execution_principal_json = '{"type":"workspace","workspaceId":"${WORKSPACE_ID}"}',
-             connector_bindings_json = '{"plugin_github_acme":"connection-github-acme"}'
-       WHERE id = '${PINNED_SUBSCRIPTION_ID}';
-      -- The run row references the activity, which references its connection,
-      -- so both have to be real rows rather than a hand-built activity object.
-      INSERT INTO connector_connections
-        (id, workspace_id, connector_type, scope, owner_user_id, display_name, model_plugin_id, status, created_at, updated_at)
-      VALUES
-        ('connection-github-acme', '${WORKSPACE_ID}', 'github', 'workspace', NULL, 'GitHub', 'plugin_github_acme', 'healthy', '2026-01-01', '2026-01-01');
-      INSERT INTO activities
-        (id, workspace_id, connection_id, connection_scope, provider, provider_event_id, event_type,
-         resource_type, provider_resource_id, occurred_at, received_at, title, dedupe_key)
-      VALUES
-        ('${ACTIVITY_ID}', '${WORKSPACE_ID}', 'connection-github-acme', 'workspace', 'github', 'event-42',
-         'github.pull_request.merged', 'github_pull_request', 'juno-ai-labs/avalon#42',
-         '2026-01-02', '2026-01-02', 'Merged #42', 'dedupe-42');
-    `);
-    const env = createTestEnv({
-      DB: sqliteD1(database),
-      AVALON_REGION: "global",
-      APP_ENV: "test",
-      LOG_LEVEL: "error",
-      OPENROUTER_PRIMARY_MODEL: "x-ai/grok-4.3",
-      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
-    });
-
-    await __testing.runMatchingAutomations(env, {
-      id: ACTIVITY_ID,
-      workspace_id: WORKSPACE_ID,
-      workspace_region: "global",
-      connection_id: "connection-github-acme",
-      connection_scope: "workspace",
-      connector_type: "github",
-      provider: "github",
-      event_type: "github.pull_request.merged",
-      resource_type: "github_pull_request",
-      provider_resource_id: "juno-ai-labs/avalon#42",
-      title: "Merged #42",
-      summary: "",
-      text_snippet: "",
-      metadata_json: "{}",
-      visibility_json: "{}",
-    } as never);
-
-    const workstream = runWorkstream(objectStore, PINNED_SUBSCRIPTION_ID);
-    expect(workstream.model_override).toBe("openai/gpt-5.6-terra");
-    expect(workstream).toMatchObject({
-      scope: "workspace",
-      created_by_user_id: USER_ID,
-      participant_user_id: USER_ID,
-    });
-    expect(workstreamObjectGet(objectStore, "SELECT model FROM runs ORDER BY created_at DESC LIMIT 1"))
-      .toEqual({ model: "openai/gpt-5.6-terra" });
   });
 });
 

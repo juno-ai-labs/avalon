@@ -13,11 +13,9 @@ import {
   highestVisibleAttentionSequence,
   blockDashboardHoldsSidebar,
   initialTranscriptAnchorIndex,
-  JumpToLatestButton,
   manualElicitationResponse,
   preservedPrependScrollTop,
   RunFailureNotice,
-  RunStoppedNotice,
   orderedTranscriptOwnsRunTiming,
   shouldLoadEarlierFromScroll,
   WorkstreamErrorState,
@@ -29,6 +27,7 @@ import {
   resourceVersionsQueryKey,
   workspaceMemberFromSession,
 } from './workstream';
+import { JumpToLatestButton, RunStoppedNotice } from '../components/conversation-follow';
 import { WorkstreamComposer } from '../components/workstream-composer';
 
 describe('workspace foreground presence', () => {

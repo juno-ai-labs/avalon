@@ -1,5 +1,6 @@
 import type {
   AgentModelOverride,
+  AutomationAttentionReason as ContractAutomationAttentionReason,
   AutomationPluginActivity,
   NoteDetail as ContractNoteDetail,
   NoteSummary as ContractNoteSummary,
@@ -33,6 +34,12 @@ export type Scope = 'you' | 'workspace';
 export type VisibilityScope = ContractScope;
 export type HarnessStatus = 'scheduled' | 'running' | 'needs_input' | 'completed' | 'failed' | 'stopped';
 export type AutomationStatus = 'active' | 'paused' | 'draft' | 'error';
+/**
+ * Why an automation needs a person to look at it. Absent on the ones nothing is
+ * wrong with, which is nearly all of them. `automationAttentionNotice` in
+ * `automation-attention.ts` owns the words each reason is shown as.
+ */
+export type AutomationAttentionReason = ContractAutomationAttentionReason;
 export type NoteSummary = ContractNoteSummary;
 export type NoteDetail = ContractNoteDetail;
 export type NoteTranscriptSegment = ContractNoteTranscriptSegment;
@@ -101,6 +108,8 @@ export interface AutomationSummary {
   emailAddress?: string;
   scope: Scope;
   status: AutomationStatus;
+  /** Set only when something is wrong that the status cannot say on its own. */
+  attention?: AutomationAttentionReason;
   nextRunAt?: string;
   lastRunAt?: string;
   /** Last time the automation itself changed — a draft's only activity. */

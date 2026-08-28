@@ -39,6 +39,7 @@ export const LEGACY_RALLY_HEADER_PREFIXES: readonly string[] = Object.freeze([
 
 /** Every product header name a request may carry, canonical spelling. */
 export const RALLY_HEADERS = Object.freeze({
+  AUTOMATION_ID: "x-rally-automation-id",
   BLOCK_DASHBOARD_BLOCK_ID: "x-rally-block-dashboard-block-id",
   DEV_USER_ID: "x-rally-dev-user-id",
   DEV_WORKSPACE_ID: "x-rally-dev-workspace-id",

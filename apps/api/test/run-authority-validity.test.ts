@@ -39,6 +39,17 @@ type AuthorityState = {
   hasEnabledSchedule: number;
   emailRouteStatus: string;
   activityExists: boolean;
+  /**
+   * What the automation's own durable object says about the run right now.
+   *
+   * Separate from the legacy `subscription*` fields above, and deliberately so:
+   * those are the D1 rows the revalidation must *not* re-read, while this is
+   * the one live fact it does — whether the automation still consents to the
+   * run it admitted.
+   */
+  agentLifecycle: string;
+  agentAuthorityGeneration: number;
+  agentRunPresent: boolean;
 };
 
 /** The connector event the WorkspaceDO answers a trigger lookup with. */
@@ -114,6 +125,18 @@ class AuthorityDatabase {
           connectorEvent: async () => (this.state.activityExists
             ? { connectorType: "github", activity: connectorActivity() }
             : null),
+        }),
+      }),
+      // The automation's own object, which is the only authority on whether it
+      // still wants this run finished.
+      AUTOMATION_AGENTS: createCloudflareTestBinding<Env["AUTOMATION_AGENTS"]>({
+        idFromName: (name: string) => createTestDurableObjectId(name),
+        get: () => ({
+          readRunAuthority: async () => ({
+            lifecycle: this.state.agentLifecycle,
+            authorityGeneration: this.state.agentAuthorityGeneration,
+            runPresent: this.state.agentRunPresent,
+          }),
         }),
       }),
     });
@@ -194,6 +217,9 @@ function state(overrides: Partial<AuthorityState> = {}): AuthorityState {
     hasEnabledSchedule: 1,
     emailRouteStatus: "active",
     activityExists: true,
+    agentLifecycle: "active",
+    agentAuthorityGeneration: 1,
+    agentRunPresent: true,
     ...overrides,
   };
 }
@@ -329,6 +355,25 @@ describe("durable run authority revalidation", () => {
       .resolves.toEqual(snapshot);
     expect(database.legacyActivityReads).toBe(0);
     expect(connectorEvent).not.toHaveBeenCalled();
+  });
+
+  it("stops a run whose automation was paused after it was admitted", async () => {
+    const database = new AuthorityDatabase(state());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
+    database.state.agentLifecycle = "paused";
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+      .rejects.toThrow(/no longer running/i);
+  });
+
+  it("stops a run left behind by a newer authority generation", async () => {
+    const database = new AuthorityDatabase(state());
+    const snapshot = await __integrationTesting.assertRunAuthorityStillValid(database.env, input());
+    // What a pause-and-resume, or a re-accepted definition, looks like from
+    // here: the automation is running again, but not the run this tool belongs
+    // to. Lifecycle alone would read as consent.
+    database.state.agentAuthorityGeneration = 2;
+    await expect(__integrationTesting.assertRunAuthorityStillValid(database.env, input(), snapshot))
+      .rejects.toThrow(/no longer running/i);
   });
 
   it("rejects an archived work stream before a tool can run", async () => {

@@ -253,7 +253,7 @@ Configure the regional Worker with an Azure OpenAI realtime deployment backed by
 8. Open a work stream that has run and confirm its composer shows the same control in the same place, chevron and all, and that it is disabled: no menu on click or on Enter, skipped by Tab, reported as disabled to assistive technology, and carrying the run's full model id in its accessible name. Confirm it stays legible at its dimmed opacity, and that hovering still raises the tooltip with that same id — the disable stops the menu, not the tooltip. Check it against `harness_runs.model` for that work stream's latest parent run — on a pinned one that is the pinned id, on an unpinned one it is whatever the flag served, which must be named rather than shown as **Default**. Point the flag at a variation serving a model outside `AGENT_MODEL_OVERRIDES`, start a work stream, and confirm the pill names it (shortened past the vendor prefix) rather than falling back to **Default**. Confirm the two work streams make different claims: the pinned one's tooltip says every run uses that model, the unpinned one's says the flag decides each run and a later run may differ. Then move the flag to another variation, send a message to the unpinned work stream, and confirm the pill follows the new run — proving the unpinned wording rather than the pinned one.
 9. Pin a work stream and make its run fail before it streams a token — an invalid `OPENROUTER_API_KEY` does it — so `harness_runs.model` settles as `NULL`. Confirm the pill still names the pinned model rather than **Default**: a pinned work stream never consults the flag, so describing it as following one is wrong rather than merely vague.
 10. Create a work stream with a model pinned and confirm the pill on the work-stream screen it opens onto already reads that model, without a **Default** frame in between as the screens change hands.
-11. Repeat in **New automation**: choose a model and create the automation. Exercise all three run paths — **Run now**, a scheduled run fired by the workspace scheduler, and a run triggered by matching connector activity — and confirm each one's work stream carries the override and each run uses it. Only the first goes through `AutomationService.createRun`; the other two build the work stream themselves. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
+11. Repeat in **New automation**: choose a model and create the automation. Exercise every trigger — **Run now**, a scheduled run, a run triggered by matching connector activity, and a run started by mail to the automation's address — and confirm each one's work stream carries the override and each run uses it. All four now go through the one producer, `AutomationAgent.provisionNextRun`, reading the pin from the run's frozen `AutomationRunContextV1`; the point of exercising all four is that the freeze happened at acceptance, so a pin chosen on the create screen has to survive into a trigger that fires days later. Confirm the drafting conversation above the composer still runs on the automation architect's own flag.
 
 ## Durable automation lifecycle acceptance
 
@@ -284,9 +284,12 @@ the Automation home page.
    absent from the global sidebar, appears once in the automation's paged run
    list, opens only after current child-audience authorization, and survives a
    retry without creating another child.
-7. Delete the automation and accept the confirmation that generated runs are
-   deleted. Confirm its parent, children, route, attention item, automation-home
-   row, and email/evaluator registrations no longer resolve.
+7. Delete the automation. Confirm its evaluator registrations are withdrawn, its
+   schedules stop, its directory row goes to `deleted` and leaves the sidebar,
+   and each generated child work stream is **archived** — archived, not deleted:
+   the run record survives the automation that produced it. Confirm the Global
+   email claim still stands (it is a permanent tombstone) and that mail to the
+   address is refused rather than routed.
 8. In a real Electron window, compare settled, streaming, failed, elicitation,
    attachment, follow, and **Jump to latest** behavior with a work stream. Confirm
    work-stream-only participant/resource/unread controls and automation-only

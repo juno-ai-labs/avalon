@@ -1,3 +1,4 @@
+import { AutomationAgentSnapshotSchema, type AutomationAgentSnapshot } from '@rally/contracts';
 import { socketTicketProtocols } from '@rally/contracts/socket-tickets';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RallyApi, mapResource, mapWorkstreamDetail, redactQuery } from './api';
@@ -134,28 +135,112 @@ const session: DesktopSession = {
   workspace: { id: workspaceId, name: 'Rally Studio', region: 'global', role: 'owner' },
 };
 
+const turnId = '00000000-0000-7000-8000-000000000015';
+const assistantTurnId = '00000000-0000-7000-8000-000000000016';
+const clientMessageId = '00000000-0000-7000-8000-000000000017';
+const elicitationId = '00000000-0000-7000-8000-000000000018';
+
+/** A finished definition, as AutomationAgent stores it. */
+const readyDraft = {
+  name: 'Blog monitor',
+  description: 'Check a blog for new posts.',
+  overview: 'Checks the configured blog every day.',
+  instructions: 'Check the configured blog and report new posts.',
+  triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
+  requiredCapabilities: [],
+  expectedOutputs: ['New post summary'],
+  requestedDelivery: [] as string[],
+  defaultBehavior: {},
+  recommendedPlugins: [],
+  memoryTables: [],
+  suggestedScope: 'personal' as const,
+  followUpQuestion: null,
+  elicitation: null,
+  ready: true,
+};
+
+/**
+ * The durable frame the draft socket and `GET .../agent/draft` both
+ * carry, parsed through the shared schema so a fixture cannot drift
+ * into a shape the wire could never deliver.
+ */
+function agentSnapshot(overrides: Record<string, unknown>): AutomationAgentSnapshot {
+  return AutomationAgentSnapshotSchema.parse({
+    schemaVersion: 1,
+    automationId,
+    workspaceId,
+    authorUserId: userId,
+    region: 'global',
+    lifecycle: 'draft',
+    authorityGeneration: 1,
+    title: 'Blog monitor',
+    definitionRevision: 2,
+    definition: readyDraft,
+    messages: [
+      {
+        turnId,
+        transcriptSequence: 1,
+        role: 'user',
+        authorUserId: userId,
+        clientMessageId,
+        content: 'Check this blog every 24 hours.',
+        attachmentIds: [resourceId],
+        createdAt: 1_760_000_000_000,
+      },
+      {
+        turnId: assistantTurnId,
+        transcriptSequence: 2,
+        role: 'assistant',
+        authorUserId: null,
+        clientMessageId: null,
+        content: 'Which blog should I monitor?',
+        attachmentIds: [],
+        createdAt: 1_760_000_000_001,
+      },
+    ],
+    activeCompilerRun: null,
+    compilerCheckpoint: null,
+    pendingElicitation: null,
+    eventSequence: 7,
+    ...overrides,
+  });
+}
+
+const wireAutomationDetail = {
+  id: automationId,
+  name: 'Blog monitor',
+  description: 'Check a blog for new posts.',
+  emailAddress: null,
+  scope: 'personal' as const,
+  status: 'active' as const,
+  nextRunAt: null,
+  lastRunAt: null,
+  updatedAt: timestamp,
+  updateAvailable: false,
+  templateId,
+  templateVersionId: currentVersionId,
+  versionNumber: 1,
+  instructions: 'Check the configured blog and report new posts.',
+  overview: 'Checks the configured blog every day.',
+  triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
+  requiredCapabilities: [],
+  expectedOutputs: ['New post summary'],
+  executionPrincipal: { type: 'user', userId },
+  recommendedPlugins: [],
+  memoryTables: [],
+  defaultPluginIds: [],
+  activitySourcePluginIds: {},
+  deliveryTargets: [],
+  templateUpdate: null,
+  nextPlannedWorkstream: null,
+  recentRuns: [],
+};
+
 function json(value: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(value), {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init.headers },
   });
-}
-
-function sse(events: unknown[], splitAt?: number): Response {
-  const encoded = new TextEncoder();
-  const body = events.map((event) => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`).join('');
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      if (splitAt === undefined) {
-        controller.enqueue(encoded.encode(body));
-      } else {
-        controller.enqueue(encoded.encode(body.slice(0, splitAt)));
-        controller.enqueue(encoded.encode(body.slice(splitAt)));
-      }
-      controller.close();
-    },
-  });
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
 }
 
 afterEach(() => {
@@ -170,153 +255,114 @@ describe('Rally API wire adapter', () => {
     [['slack_agent_dm'], false, true],
     [['email', 'slack_agent_dm'], true, true],
     [[], false, false],
-  ])('carries the compiler\'s own %j through to the destination choices', async (requested, email, slack) => {
-    const draft = {
-      name: 'Morning briefing',
-      description: 'Summarizes the morning.',
-      overview: 'Runs every morning.',
-      instructions: 'Write the briefing.',
-      triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
-      requiredCapabilities: [],
-      // Deliberately prose that a regex would read as a delivery request: the
-      // point of the structured field is that this no longer decides anything.
-      expectedOutputs: ['A ranked list of your five most important emails'],
-      requestedDelivery: requested,
-      defaultBehavior: {},
-      recommendedPlugins: [],
-      suggestedScope: 'personal' as const,
-      followUpQuestion: null,
-      elicitation: null,
-      ready: true,
-    };
-    vi.stubGlobal('fetch', vi.fn(async () => sse([
-      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft, assistantMessage: 'Ready.' },
-    ], 47)));
+  ])('carries the compiler\'s own %j through to the destination choices', (requested, email, slack) => {
     const api = new RallyApi('https://api.rally.test', session);
 
-    const result = await api.compileAutomation({ message: 'Brief me.' });
+    const result = api.automationDraftFromAgentSnapshot(agentSnapshot({
+      definition: {
+        ...readyDraft,
+        requestedDelivery: requested,
+        // Deliberately prose that a regex would read as a delivery
+        // request: the point of the structured field is that this no
+        // longer decides anything.
+        expectedOutputs: ['A ranked list of your five most important emails'],
+      },
+    }));
 
-    expect(result.summary?.requiresEmailDelivery).toBe(email);
-    expect(result.summary?.requiresSlackDelivery).toBe(slack);
+    expect(result.draft?.summary?.requiresEmailDelivery).toBe(email);
+    expect(result.draft?.summary?.requiresSlackDelivery).toBe(slack);
   });
 
-  it('streams automation assistant tokens and returns the final typed draft', async () => {
-    const draft = {
-      name: 'Blog monitor',
-      description: 'Check a blog for new posts.',
-      overview: 'Checks the configured blog every day.',
-      instructions: 'Check the configured blog and report new posts.',
-      triggers: [{ type: 'interval' as const, intervalSeconds: 86_400, summary: 'Every 24 hours' }],
-      requiredCapabilities: [],
-      expectedOutputs: ['New post summary'],
-      defaultBehavior: {},
-      recommendedPlugins: [],
-      suggestedScope: 'personal' as const,
-      followUpQuestion: 'Which blog should I monitor?',
-      elicitation: {
-        responseType: 'free_text' as const,
-        prompt: 'Paste the full blog URL.',
-        placeholder: 'https://example.com/blog',
-        options: [],
-        minimumSelections: 1,
-        maximumSelections: null,
-        allowOther: false,
-      },
-      ready: false,
-    };
-    const events = [
-      { type: 'started' },
-      {
-        type: 'thinking',
-        inferenceRequestId: 'inference-1',
-        status: 'started',
-        durationMs: 0,
-      },
-      {
-        type: 'thinking',
-        inferenceRequestId: 'inference-1',
-        status: 'completed',
-        durationMs: 1_234,
-      },
-      {
-        type: 'tool',
-        toolCallId: 'tool-1',
-        name: 'Reviewing connected tools',
-        summary: 'Checking the authorized plugin catalog…',
-        status: 'started',
-        plugin: { pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' },
-      },
-      {
-        type: 'tool',
-        toolCallId: 'tool-1',
-        name: 'Reviewing connected tools',
-        summary: 'Reviewed the authorized plugin catalog',
-        status: 'completed',
-        plugin: { pluginId: 'plugin_github', displayName: 'GitHub', icon: 'brand-github' },
-        durationMs: 42,
-      },
-      { type: 'delta', delta: 'Which blog ', reset: false },
-      { type: 'delta', delta: 'should I monitor?', reset: false },
-      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft, assistantMessage: 'Which blog should I monitor?' },
-    ];
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      void input;
-      void init;
-      return sse(events, 47);
-    });
-    vi.stubGlobal('fetch', fetchMock);
+  it('turns an agent snapshot into the conversation the builder renders', () => {
     const api = new RallyApi('https://api.rally.test', session);
-    const streamed: unknown[] = [];
 
-    const result = await api.compileAutomation(
-      { message: 'Check this blog every 24 hours.', attachmentIds: [resourceId] },
-      (event) => streamed.push(event),
-    );
-    // The draft's identity comes back from the API, which is what makes it the
-    // id of the draft automation now sitting in the sidebar.
-    expect(result).toMatchObject({
-      draftId: '00000000-0000-7000-8000-000000000042',
+    const result = api.automationDraftFromAgentSnapshot(agentSnapshot({
+      definition: {
+        ...readyDraft,
+        ready: false,
+        followUpQuestion: 'Which blog should I monitor?',
+        elicitation: {
+          responseType: 'free_text',
+          prompt: 'Paste the full blog URL.',
+          placeholder: 'https://example.com/blog',
+          options: [],
+          minimumSelections: 1,
+          maximumSelections: null,
+          allowOther: false,
+        },
+      },
+      pendingElicitation: {
+        id: elicitationId,
+        definitionRevision: 2,
+        payload: {},
+      },
+    }));
+
+    // The draft's identity is the automation's own id, which is what
+    // makes it the row already sitting in the sidebar.
+    expect(result.draft).toMatchObject({
+      draftId: automationId,
       assistantMessage: 'Which blog should I monitor?',
       question: {
+        id: elicitationId,
         prompt: 'Paste the full blog URL.',
         placeholder: 'https://example.com/blog',
+        responseType: 'free_text',
       },
     });
+    // A draft still asking a question is not offerable for creation.
+    expect(result.draft?.summary).toBeUndefined();
+    expect(result.messages).toEqual([
+      {
+        turnId: turnId,
+        transcriptSequence: 1,
+        clientMessageId: clientMessageId,
+        role: 'user',
+        content: 'Check this blog every 24 hours.',
+        attachmentIds: [resourceId],
+        createdAt: 1_760_000_000_000,
+      },
+      {
+        turnId: assistantTurnId,
+        transcriptSequence: 2,
+        clientMessageId: null,
+        role: 'assistant',
+        content: 'Which blog should I monitor?',
+        attachmentIds: [],
+        createdAt: 1_760_000_000_001,
+      },
+    ]);
+  });
 
-    expect(streamed).toEqual(events.slice(0, -1));
-    const request = fetchMock.mock.calls[0]!;
-    expect(String(request[0])).toBe('https://api.rally.test/automations/draft/stream');
-    expect(new Headers(request[1]?.headers).get('Accept')).toBe('text/event-stream');
-    const opening = JSON.parse(String(request[1]?.body));
-    expect(opening).toMatchObject({
-      messages: [{ role: 'user', content: 'Check this blog every 24 hours.' }],
-      currentDraft: null,
-      attachmentIds: [resourceId],
-    });
-    expect(opening).not.toHaveProperty('draftId');
+  it('records the snapshot definition so creation can send it back', async () => {
+    const api = new RallyApi('https://api.rally.test', session);
+    api.automationDraftFromAgentSnapshot(agentSnapshot({}));
+    const fetchMock = vi.fn(async () => json(wireAutomationDetail));
+    vi.stubGlobal('fetch', fetchMock);
 
-    await api.compileAutomation({ message: 'Only report meaningful changes.', draftId: result.draftId });
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
-      draftId: '00000000-0000-7000-8000-000000000042',
-      attachmentIds: [resourceId],
-      messages: [
-        { role: 'user', content: 'Check this blog every 24 hours.' },
-        { role: 'assistant', content: 'Which blog should I monitor?' },
-        { role: 'user', content: 'Only report meaningful changes.' },
-      ],
+    await api.createAutomation(automationId, [], {}, { scope: 'you' });
+
+    // The agent compares the posted definition against its own and
+    // refuses the creation when they differ, so the snapshot read is
+    // the only thing that can supply it.
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toMatchObject({
+      draftId: automationId,
+      draft: readyDraft,
     });
   });
 
-  it('tells the person to restart Rally when a stream event does not match its own schema', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => sse([
-      { type: 'completed', draftId: '00000000-0000-7000-8000-000000000042', draft: { name: 'Missing every other field' }, assistantMessage: 'Ready.' },
-    ])));
+  it('tells the person to restart Rally when a snapshot definition does not match its schema', () => {
     const api = new RallyApi('https://api.rally.test', session);
 
-    await expect(api.compileAutomation({ message: 'Brief me.' })).rejects.toMatchObject({
+    // Thrown as an ApiError rather than a raw ZodError: this runs
+    // inside the builder's render effect, where an unhandled throw
+    // takes the screen down instead of showing the failure.
+    expect(() => api.automationDraftFromAgentSnapshot(agentSnapshot({
+      definition: { name: 'Missing every other field' },
+    }))).toThrowError(expect.objectContaining({
       code: 'invalid_response',
       message: expect.stringContaining('Restarting Rally'),
-    } satisfies Partial<ApiError>);
+    }));
   });
 
   it('tells the person to restart Rally when a plain response does not match its schema', async () => {

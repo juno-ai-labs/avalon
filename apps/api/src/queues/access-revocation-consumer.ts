@@ -1,6 +1,7 @@
-import { asBlockId, asWorkspaceId, asWorkstreamId, type SubstreamId } from "@rally/contracts";
+import { asAutomationId, asBlockId, asWorkspaceId, asWorkstreamId, type SubstreamId } from "@rally/contracts";
 
 import {
+  automationAgentName,
   blockDashboardAgentName,
   substreamAgentName,
   workspaceDOName,
@@ -50,12 +51,28 @@ export async function applyAccessRevocation(env: Env, message: AccessRevocationM
       workspaceDOName(env.AVALON_REGION, workspaceId),
       placementAffinity,
     );
-    const { workstreamIds } = await workspace.revokeSocketAccess(revocation);
-    await publishDescendantRevocations(
-      env,
-      workstreamIds.map((workstreamId) =>
+    const { workstreamIds, automationIds } = await workspace.revokeSocketAccess(revocation);
+    await publishDescendantRevocations(env, [
+      ...workstreamIds.map((workstreamId) =>
         descendantRevocation(revocation, { scope: "workstream", workstreamId })),
+      // AutomationAgent holds its own socket room, so losing workspace access
+      // has to reach it the same way it reaches every other socket-holding
+      // object — the room never re-authorizes on its own.
+      ...automationIds.map((automationId) =>
+        descendantRevocation(revocation, { scope: "automation", automationId })),
+    ]);
+    return;
+  }
+
+  if (target.scope === "automation") {
+    const agent = await durableObjectStubForWorkspace(
+      env,
+      env.AUTOMATION_AGENTS,
+      workspaceId,
+      automationAgentName(env.AVALON_REGION, workspaceId, asAutomationId(target.automationId)),
+      placementAffinity,
     );
+    await agent.revokeSocketAccess(revocation);
     return;
   }
 

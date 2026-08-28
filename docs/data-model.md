@@ -229,12 +229,14 @@ SQL joins.
   scope inherits that row's, so the default has to be the narrow one for the
   omission to be safe. A thread in a public Slack channel states `workspace`
   outright because its room is the channel rather than a participant list.
-  **Every automation-generated work stream copies its automation's scope**: a
-  personal automation produces a participant-readable personal run, while a
-  workspace automation produces a workspace-readable run. A manual or
-  inbound-email run seats the member who started it, while scheduled and
-  activity-triggered runs seat the automation owner (falling back to the template
-  owner). A suggestion carries its own
+  **Every automation-generated work stream is `personal`, whatever its
+  automation's scope**, and seats exactly one participant: the automation's
+  author, for every trigger — manual, scheduled, connector-event, and
+  inbound-email alike. A generated run is a nested execution record rather than a
+  room, and the audience question is answered once, by the automation's own scope,
+  rather than twice.
+  [`automation-lifecycle.md`](automation-lifecycle.md) owns that rule and the
+  changelog entry that reversed the earlier copy-the-scope behavior. A suggestion carries its own
   `audience_scope` across the same
   way: a `workspace` one was shown to every member before anyone started it, and
   the work stream it becomes stays readable by the people it was offered to. A `system_kind` row — a digest occurrence — is the other
@@ -407,59 +409,75 @@ no projection fallback when that object is unavailable.
 
 ### Automations and execution
 
-- `automation_templates` and immutable `automation_template_versions` separate
-  shared behavior from credentials. The one exception to that immutability is a
-  draft's own version, which the compiler rewrites in place on every turn rather
-  than leaving twenty versions behind for a template nobody has run; it is safe
-  only because a draft's template is `private` and cannot be shared until the
-  automation is created, so nothing else is ever pinned to that row.
-  `AutomationService.draftVersionUpdate` is the only writer, and it takes a
-  required condition bounding it to a version its own subscription still pins —
-  see [`automation-drafts.md`](automation-drafts.md).
-- `automation_subscriptions` pins one version and owns scope, principal, connector
-  bindings, activity-source bindings, overrides, and schedule state.
-  `connector_bindings_json` maps model-facing plugin IDs to frozen connection IDs;
-  `activity_trigger_bindings_json` independently maps reusable trigger source slots
-  to those plugin IDs so an activity can match only the selected installation.
-  `status` is the run state (`draft`, `active`, `paused`, `error`);
-  `lifecycle_state` is the separate question of whether the subscription is still
-  present (`visible`, `archived`, `deleted`), so a dismissed draft and a deleted
-  automation share one enum instead of a flag each, and `updated_at` records when
-  the transition happened. A `draft` row is an automation someone is still setting
-  up: the compiler writes one on its first turn and updates it on every turn after,
-  `draft_conversation_json` holds the conversation so it can be picked back up, and
-  creating the automation promotes that same row to `active` and clears the column
-  rather than inserting a second one — [`automation-drafts.md`](automation-drafts.md)
-  owns that lifecycle and the reasons a draft carries no schedule, no address, and
-  no workspace scope. Archiving is restricted to drafts; deleting is allowed at any
-  status and also disables the schedules. The address is not released — the
-  Global ledger records only that the full email address is taken — so nothing is written
-  there. A deleted row is
-  kept, never removed: automation runs, generated work streams, the memory scope,
-  and the permanent email tombstone all reference it. Every path that starts a run
-  — scheduler alarm, activity matching, inbound email — requires
-  `status = 'active' AND lifecycle_state = 'visible'`, so a hidden automation cannot
-  run. `model_override` is the same pin as the work-stream column above, held here
-  because the runs it applies to do not exist yet; every path that creates a run
-  copies it and the subscription's scope onto the work stream it creates rather
-  than joining back, so a run reads its model and audience from its own row and a
-  run that already happened keeps describing the model and scope it was created
-  with. Three separate places build that row —
-  `AutomationService.createRun`, the workspace schedule runner's `startAutomation`, and
-  the activity consumer's `startActivityAutomation` — so a column added to one and
-  not the others is honoured by manual runs while scheduled and activity-triggered
-  runs silently ignore it.
-- `memory_scopes` owns durable work-stream, automation, user, and workspace memory
-  authority. `memory_items` stores compact prose facts; `memory_tables`,
+**An automation's own state is not here.** Each accepted or draft automation is a
+named `AutomationAgent` Durable Object that owns its definition revisions,
+lifecycle, schedules, occurrences, run history, memory, inbound-email receipts,
+and delivery receipts. [`automation-lifecycle.md`](automation-lifecycle.md) is
+that schema's map; what follows is only what WorkspaceDO still holds.
+
+- `automation_templates` and immutable `automation_template_versions` remain
+  WorkspaceDO tables, and they are what is left of the old family: a **shared**
+  template is a versioned artifact several people can build an automation from,
+  and adopting one copies its definition into an independent AutomationAgent
+  rather than creating a live link. `AutomationService` publishes and validates
+  them; nothing subscribes to one. Private templates were deleted by the
+  automation cutover, and with them the in-place draft-version rewrite and the
+  "update available" behavior a subscriber used to see —
+  [`automation-drafts.md`](automation-drafts.md) is the historical record.
+- `automation_directory` is the content-free projection the sidebar and the
+  connector fan-out find an automation by: id, workspace, author, authority
+  generation, projection version, payload hash, lifecycle, scope, title,
+  description, next run time, attention code. It holds no definition, no
+  instructions, and no run content, and a row can locate an automation but never
+  authorize a read of one. Writes are accepted only when
+  `(authority_generation, projection_version)` is strictly newer; equal
+  coordinates carrying a different `payload_hash` are a conflict.
+- `automation_creation_claims` maps `(workspace, author, client creation key)` to
+  one minted automation id, so a retried first authoring send resolves to the
+  automation it already created rather than a second one.
+- `workspace_external_event_registrations` holds one row per active trigger
+  route — an automation's typed evaluator document, or a work stream's watched
+  resource — indexed on `(connection, event type, resource, state)` for
+  candidate selection and on `(destination kind, destination key, generation,
+  version)` for replacement. `effective_after_event_sequence` is the activation
+  boundary: an event at or below it belongs to a generation that had not yet
+  installed this route.
+- `workspace_external_event_deliveries` is the outbox behind that: one row per
+  `(canonical event, registration, generation, destination)`, carrying the
+  processing lease and its expiry, the attempt count, and a terminal outcome
+  code. It is the reason a duplicated or reordered Queue delivery cannot admit an
+  occurrence twice.
+- `automation_cutover_campaign` is a one-row ledger recording whether this
+  workspace has imported its legacy automations, deliberately kept outside the
+  schema the cutover removes so a retry rolls forward from a durable receipt.
+- `schedules` no longer carries automations at all. The cutover rebuilt it
+  without `automation_subscription_id`, so a row now names exactly one of a
+  connector connection or a digest schedule, and an automation's timers are alarm
+  entries inside its own object.
+- The retired tables, dropped by the cutover, are `automation_subscriptions`,
+  `automation_runs`, `automation_delivery_targets`, `automation_resources`,
+  `automation_email_receipts`, and `automation_email_rate_windows`; `memory_scopes`
+  rows of kind `automation` are deleted with them. A fresh WorkspaceDO still
+  *creates* them, because they are inside the frozen migration 1 and a released
+  migration is never edited — it drops them in the same statement that writes its
+  identity row.
+
+- `memory_scopes` owns durable work-stream, user, and workspace memory authority.
+  `memory_items` stores compact prose facts; `memory_tables`,
   `memory_table_columns`, `memory_table_rows`, and `memory_table_cells` store typed
-  collections with natural-key deduplication and targeted queries. Automation
-  template versions declare table schemas, while every subscription owns an
-  independent materialized automation scope and shares it across its generated work
-  streams.
-- `automation_runs.workstream_id` is unique, enforcing the one-run/one-work-stream
-  contract.
-- The partial unique index on `(automation_subscription_id, planned_for)` converges
-  early-open and alarm-driven scheduled-run creation.
+  collections with natural-key deduplication and targeted queries. **Automation
+  memory is no longer among them**: an accepted automation materializes its
+  definition's table schemas into its own object at acceptance, and its generated
+  runs reach items and tables through a generation-fenced RPC to the parent rather
+  than through a workspace scope. A generated run still resolves the workspace
+  scope here like any other work stream.
+- `automation_runs` and its unique `workstream_id` are gone from WorkspaceDO. The
+  one-run/one-work-stream contract is now enforced by that object's own
+  `automation_runs`, which is `UNIQUE` on `workstream_id` and on
+  `harness_run_id`. Convergence moved to its `occurrence_key`, unique per
+  automation and derived per trigger: `schedule:<scheduleId>:<dueAt>` for a
+  timer, `inbound_email:<resendEmailId>` for mail, `manual:<idempotencyKey>` for
+  a **Run now**, and `external:<workspaceEventId>` for a connector event.
 - Object-local `runs` records each bounded model loop. `tool_effects` is unique on
   `(run_id, tool_call_id)` and stores input hashes plus side-effect state.
 - `transcript_compaction_checkpoints` references the model-only fact that owns
@@ -607,12 +625,13 @@ no projection fallback when that object is unavailable.
 - `slack_installation_routes` is the opaque Global team-to-region directory;
   `slack_user_links`, `slack_agent_sessions`, and durable `slack_ingress_jobs`
   remain regional.
-- `automation_delivery_targets` freezes each destination a personal automation
-  copies its results to, one row per `target_type`. A `slack_agent_dm` row carries
-  the selected Slack installation and linked Slack user; an `email` row carries the
-  owner's account address as it stood when the automation was saved and no
-  connector connection. A per-type `CHECK` keeps the two shapes from mixing. Rally
-  itself is never a row — every run already owns a work stream.
+- `automation_delivery_targets` is gone from WorkspaceDO. The destinations a
+  personal automation copies its results to are now the acceptance row's frozen
+  `deliveryTargets` inside that automation's own object, re-resolved on every
+  edit and copied into each occurrence's run context; a `slack_agent_dm` entry
+  carries the selected installation and the linked Slack user, an `email` entry
+  the author's account address as it stood when the set was written. Rally itself
+  is never a destination — every run already owns a work stream.
 - `slack_unfurled_links` records which Slack message carries which work-stream
   link, plus a hash of the attachment posted on it, so a posted unfurl card is
   rewritten exactly when it would render differently. Slack reports a shared link
@@ -759,7 +778,8 @@ has a document, and the column notes above point at it rather than restating it:
 | Which region a row lives in and what crosses | [`regionalization.md`](regionalization.md) |
 | The description refresh loop | [`workstream-descriptions.md`](workstream-descriptions.md) |
 | Pinning and the pinned sidebar section | [`workstream-pinning.md`](workstream-pinning.md) |
-| The draft automation lifecycle | [`automation-drafts.md`](automation-drafts.md) |
+| The automation lifecycle and every table `AutomationAgent` owns | [`automation-lifecycle.md`](automation-lifecycle.md) |
+| The retired WorkspaceDO draft-row design | [`automation-drafts.md`](automation-drafts.md) |
 | The activity log's semantics and the digest that reads it | [`digests.md`](digests.md) |
 | Model pinning and the flags it overrides | [`feature-flags.md`](feature-flags.md) |
 | Telemetry routing, identities, lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
@@ -783,9 +803,11 @@ has a document, and the column notes above point at it rather than restating it:
 - **`workspace_workstream_pins.position` is not uniquely indexed**, because any intermediate
   state of the dense rewrite collides with itself. Uniqueness is a property the
   rewrite maintains, not one the database enforces.
-- **A deleted `automation_subscriptions` row is kept forever.** Automation runs,
-  generated work streams, the memory scope, and the permanent email tombstone all
-  reference it, so a hard delete would orphan four things at once.
+- **A deleted automation's object is kept forever.** Its lifecycle moves to
+  `deleted` and its directory row records that; the object itself is never
+  destroyed, because its run history, its generated work streams, its memory, and
+  the permanent Global email tombstone all still name it. Its generated children
+  are archived, not deleted, for the same reason.
 - **A `system_kind` or automation-generated work stream refuses a scope change**
   with `scope_change_unsupported`. That is deliberate, not a missing case.
 - **A migration deployed ahead of the code that needs it is the safe order; the
@@ -846,18 +868,44 @@ perform the regional audit/control write explicitly through
 
 ### 2026-08-28 — Automation product state moves out of WorkspaceDO
 
-**What changed:** Named AutomationAgents own draft turns, compiled definitions,
-lifecycle, timers, occurrences, generated-run history, delivery, and
-automation-scoped memory. WorkspaceDO owns event fan-in, evaluator/watch
-registrations, destination receipts, and content-free projections. The cutover
-drops the former subscription, run, delivery, resource, and memory tables.
+**What changed:** Named `AutomationAgent` objects own draft turns, compiled
+definitions, lifecycle, timers, occurrences, generated-run history, delivery
+receipts, inbound-email receipts, and automation-scoped memory. WorkspaceDO
+migration 21 adds what is left of the workspace's side — `automation_directory`,
+`automation_creation_claims`, `workspace_external_event_registrations`,
+`workspace_external_event_deliveries`, and `automation_cutover_campaign` — and a
+one-shot cutover then drops `automation_subscriptions`, `automation_runs`,
+`automation_delivery_targets`, `automation_resources`,
+`automation_email_receipts`, and `automation_email_rate_windows`, rebuilds
+`schedules` without `automation_subscription_id`, deletes private
+`automation_templates` rows, and deletes `memory_scopes` of kind `automation`.
+Shared templates and their immutable versions stay. Two audience rules changed
+with it: every automation-generated work stream is now `personal` with the
+automation's author as its only participant regardless of the automation's scope,
+and automation memory is no longer a workspace memory scope at all.
 
 **Why:** One automation needs one transactional authority from first turn
 through deletion; the workspace remains the correct fan-in authority for events
-shared by many destinations.
+shared by many destinations. Automation state in WorkspaceDO also meant a
+generated run's audience was answered twice — once by the automation's scope and
+once by the work stream's — and the two could disagree.
+
+**Considered and rejected:** Keeping the subscription tables as a read fallback,
+which is what makes a dual-authority migration reversible and also what makes its
+failure modes irreducible; there are no customer automations to carry through a
+compatibility window. Deleting the automation memory rows rather than importing
+them, which would have lost accepted behavior during an authority move.
 
 **Consequences:** D1 and WorkspaceDO cannot reconstruct AutomationAgent state,
-and projections can locate but never authorize automation content.
+and a projection can locate an automation but never authorize a read of one — a
+stale directory row is a wrong sidebar, never an access decision. A fresh
+WorkspaceDO still creates the retired tables, because they live in the frozen
+migration 1 and a released migration is never edited; it drops them in the same
+statement that writes its identity row, so `sqlite_master` is the only honest
+answer to "does this object still have them". `automation_directory.author_user_id`
+became security-relevant on the way: the
+[access-revocation](access-revocation.md) walk reads it to find the rooms a
+person holds.
 
 ### 2026-08-28 — Resource versions carry provenance, and resources carry an alias
 

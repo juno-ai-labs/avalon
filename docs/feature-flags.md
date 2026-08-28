@@ -167,17 +167,24 @@ pinned work stream with it.
 
 A pin comes from one place — the model selector in the composers that start work,
 which appears only while Application → Developer → **Debug enabled** is on. A new
-work stream carries the choice directly; a new automation holds it on the
-subscription, and **every** path that creates a run copies it onto that run's
-work stream, so a run resolves its model from its own row like every other work
-stream. There are three such paths and they are easy to miss: `createRun` in
-`automation-service.ts` (manual runs and inbound email), `startAutomation` in
-the workspace scheduler (scheduled runs), and `startActivityAutomation` in the
-activity queue consumer (connector-activity runs). The last two build the work
-stream row inline rather than going through the service, so a new column on it
-has to be added to each by hand — a pin that reaches only `createRun` looks
-correct under **Run now** and is silently ignored by every scheduled run, which
-is how this shipped in review.
+work stream carries the choice directly; a new automation carries it into
+acceptance, where it is frozen on the automation's acceptance row and copied into
+every occurrence's `AutomationRunContextV1`. There is now exactly one path that
+creates a run — `AutomationAgent.provisionNextRun`, which serves manual,
+scheduled, connector-event, and inbound-email triggers alike — and it copies
+`modelOverride` from that frozen context onto the run's work stream, so a run
+resolves its model from its own row like every other work stream.
+
+That used to be three paths — `createRun` in `automation-service.ts`, the
+scheduler's `startAutomation`, and the activity consumer's
+`startActivityAutomation` — two of which built the work-stream row inline, so a
+pin that reached only `createRun` looked correct under **Run now** and was
+silently ignored by every scheduled run. That is how this shipped in review, and
+it is the concrete reason
+[`automation-lifecycle.md`](automation-lifecycle.md) now has one producer. A new
+field a run needs is added to `AutomationRunContextV1`; a field added to the
+work-stream row without going through the context is a field an automation run
+does not get.
 
 Nothing else writes the column, and choosing nothing writes nothing, so an
 ordinary work stream is unpinned and reads exactly as this document describes
@@ -210,6 +217,17 @@ retired from the list without a migration: the work streams still naming it log
 `workstream_model_override_unknown` and return to the flag. `resolveWorkstreamModelRouting`
 is the resolver that applies all of this; `resolveAgentModelRouting` stays purely
 about flags.
+
+**An automation's pin is the exception, and it is narrower than it was.**
+`CreateAutomationRequestSchema` validates it on write, at acceptance, and it is
+then frozen into the run context every occurrence carries. Nothing re-validates
+it on read: `AutomationRunContextV1` types `modelOverride` as a plain nullable
+string, and `provisionNextRun` uses it as given. A model retired from
+`AGENT_MODEL_OVERRIDES` after an automation was accepted therefore keeps being
+requested by that automation's runs, silently — `automationModelOverride`, the
+helper written to log and drop exactly that case, is no longer called by
+anything. Retiring a model now means checking accepted automations as well as
+work streams.
 
 #### Reading it back inside the work stream
 
@@ -370,8 +388,8 @@ carve-out.
   would otherwise all miss and all read — and a single request now resolves
   several flags at once. The pending read is dropped as soon as it settles, so
   it de-duplicates rather than adding a second cache with its own staleness.
-- A **miss is not cached.** The automation paths resolve a model for a work
-  stream id one statement before they insert the row, so remembering "no such
+- A **miss is not cached.** A scheduled-creation path resolves a model for a work
+  stream id whose product facts are not populated yet, so remembering "no such
   work stream" would leave those work streams unattributed through their first
   runs. They are unattributed for that first evaluation either way — a fact the
   rows do not yet hold cannot be sent.
@@ -382,11 +400,12 @@ carve-out.
   it crosses the authority fence, logs an operational error, and suppresses the
   now-readable row for ten seconds. Later runs load the complete work-stream
   attributes normally.
-- Scheduled creation uses the same resolver. The activity consumer selects its
-  model before runtime bootstrap, when a work-stream read would hit the fence;
-  automation creation selects after bootstrap but before its product insert,
-  when the authoritative shell still carries placeholder facts. Neither state
-  is a valid targeting subject.
+- Scheduled creation uses the same resolver. `AutomationAgent.provisionNextRun`
+  calls `scheduledWorkstreamModel` after the child object is provisioned but
+  before its harness run is admitted, when the authoritative shell still carries
+  placeholder facts — which is not a valid targeting subject, so that resolver
+  deliberately loads workspace attributes only. A pinned automation skips the
+  call entirely: `context.modelOverride ?? scheduledWorkstreamModel(...)`.
 - A **failed read is held down for ten seconds**, keyed by entity and subject.
   That is the one case where retrying immediately helps nobody: while D1 is
   unhealthy, every agent path would otherwise re-issue its reads and warn again
@@ -610,18 +629,21 @@ choice *and* the flag, computed once in `desktopApplicationSettings()`:
 - **A malformed variation is rejected whole, never merged field by field.**
 - **A work stream's pin wins and the flag is not consulted at all.** A rollout
   reaching the workspace must not quietly take a pinned work stream with it.
-- **Every path that creates a run copies `model_override` onto that run's work
-  stream.** There are three, and two of them build the row inline rather than
-  going through the service: `createRun`, the scheduler's `startAutomation`, and
-  the activity consumer's `startActivityAutomation`. A pin that reaches only
-  `createRun` looks correct under **Run now** and is silently ignored by every
-  scheduled run — which is how it shipped in review.
+- **The one path that creates a run copies `model_override` onto that run's work
+  stream.** `AutomationAgent.provisionNextRun` reads it from the run's frozen
+  `AutomationRunContextV1`, which acceptance filled from the automation's
+  acceptance row. The invariant used to read "every path", because there were
+  three and two of them built the row inline; a pin that reached only `createRun`
+  looked correct under **Run now** and was silently ignored by every scheduled
+  run. A second producer brings that failure straight back.
 - **A pin carries no fallbacks.** It is a request to observe one specific model,
   and routing onward would answer a question nobody asked. A provider fault on a
   pinned run is recovered by retrying that same model, never by widening the
   route — see [`agent-harness.md`](agent-harness.md#failure-modes-and-limits).
 - **The set of pinnable ids is closed** (`AGENT_MODEL_OVERRIDES`), validated on
-  write *and* on read, which is what lets a model be retired without a migration.
+  write *and* on read for a work stream, which is what lets a model be retired
+  without a migration. An automation's frozen pin is validated on write only, so
+  retiring a model does not reach the automations already pinned to it.
 - **Identity is spread over the loaded attributes, never under them**, so nothing
   read from D1 can redefine the id a percentage rollout buckets on.
 - **An attribute whose fact is unknown is omitted rather than sent empty**, so a
@@ -1068,6 +1090,41 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-28 — An automation's pin is frozen at acceptance, and read back unvalidated
+
+**What changed:** The three producers that copied `model_override` onto an
+automation run's work stream are gone. Acceptance validates the pin against
+`AGENT_MODEL_OVERRIDES`, freezes it on the automation's acceptance row, and
+copies it into every occurrence's `AutomationRunContextV1`;
+`AutomationAgent.provisionNextRun` is the single reader. Nothing re-validates it
+afterwards, so a model retired from the closed list is still requested by the
+automations already pinned to it, and `automationModelOverride` — the helper that
+logged and dropped that case — has no caller.
+
+**Why:** The three-producer arrangement is what let a pin reach **Run now** and
+silently miss every scheduled and activity-triggered run, and no shared helper
+had stopped it, because each producer still wrote the work-stream row itself. The
+durable automation lifecycle collapsed run creation to one path, which removes
+that whole class of drift. Freezing the pin in the run context follows from the
+same rule the rest of that context follows: a run executes what it was admitted
+with, not what the automation says now.
+
+**Considered and rejected:** Re-resolving the pin per occurrence against the live
+acceptance row, which would let a rollout or an edit change the model of a run
+that was already claimed — the exact thing a pin exists to prevent.
+
+**Consequences:** Adding a field a run needs means adding it to
+`AutomationRunContextV1`, not to the work-stream row; a field added only to the
+row does not reach an automation run. And the read-side validation this document
+promised for pins now applies to work streams only: **retiring a model from
+`AGENT_MODEL_OVERRIDES` no longer reaches accepted automations**, and there is no
+log line that would surface one. Restoring it means validating
+`context.modelOverride` where `provisionNextRun` reads it, which is where
+`automationModelOverride` was meant to be called.
+
+Shipped in the pull request for this change. Design:
+[the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
 
 ### 2026-08-26 — Ace owns the ordinary default-route edit
 

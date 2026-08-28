@@ -4,6 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { IconDots, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import {
+  AlertTriangle,
   Archive,
   ChevronDown,
   ChevronsLeft,
@@ -42,6 +43,7 @@ import {
   workstreamMarkerStatus,
   type RecencyGroup,
 } from '../lib/format';
+import { automationAttentionNotice } from '../lib/automation-attention';
 import { useNamingSkeleton } from '../lib/naming-skeleton';
 import { desktopBridge } from '../lib/platform';
 import { useWorkstreamSocketHoverWarmup, useWorkstreamSocketOpenContext } from '../lib/workstream-socket-pool';
@@ -74,8 +76,6 @@ interface SidebarProps {
   onLoadMoreWorkstreams?: () => void;
   loading?: boolean;
   meetingRecordingAvailable?: boolean;
-  automationWorkspaceTemplatesAvailable?: boolean;
-  onArchiveDraftAutomation: (automation: AutomationSummary) => Promise<void>;
   onArchiveNote: (note: NoteSummary) => Promise<void>;
   onArchiveWorkstream: (workstream: WorkstreamSummary) => Promise<void>;
   onApplyWorkstreamBatch: (
@@ -329,21 +329,20 @@ function useOpenDraftId(): string | null {
 
 function AutomationRow({
   automation,
-  automationWorkspaceTemplatesAvailable,
   debugEnabled,
-  onArchiveDraft,
   onDelete,
   onRunNow,
 }: {
   automation: AutomationSummary;
-  automationWorkspaceTemplatesAvailable: boolean;
   debugEnabled: boolean;
-  onArchiveDraft: (automation: AutomationSummary) => void;
   onDelete: (automation: AutomationSummary) => void;
   onRunNow: (automation: AutomationSummary) => void;
 }): React.JSX.Element {
   const isDraft = automation.status === 'draft';
   const draftActive = useOpenDraftId() === automation.id;
+  // A row is one line, so it carries the fact and not the reason: the words for
+  // why are on the automation's own screen, which is one click away.
+  const attention = automation.attention ? automationAttentionNotice(automation.attention) : null;
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
@@ -355,14 +354,23 @@ function AutomationRow({
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
-            <span className="sidebar-row-icon" aria-hidden="true">
-              {automation.status === 'paused' ? <CirclePause size={13} /> : <span className={clsx('mini-state', automation.status)} />}
+            <span className={clsx('sidebar-row-icon', attention && 'is-attention')} aria-hidden="true">
+              {attention
+                ? <AlertTriangle size={13} />
+                : automation.status === 'paused'
+                  ? <CirclePause size={13} />
+                  : <span className={clsx('mini-state', automation.status)} />}
             </span>
             <span className="sidebar-row-main">
               <span className="sidebar-row-title">{automation.name}</span>
-              {isDraft
-                ? <span className="sidebar-row-hint">Draft</span>
-                : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
+              {/* The attention hint outranks the schedule: an automation that
+                  will not run has no next run worth naming, and one that was
+                  paused after a failure is not "next Tuesday" either. */}
+              {attention
+                ? <span className="sidebar-row-hint is-attention">{attention.shortLabel}</span>
+                : isDraft
+                  ? <span className="sidebar-row-hint">Draft</span>
+                  : automation.nextRunAt && <span className="sidebar-row-hint">Next {formatRelative(automation.nextRunAt)}</span>}
             </span>
             <Badge className="scope-badge">{automation.scope === 'you' ? 'You' : 'Workspace'}</Badge>
           </NavLink>
@@ -377,11 +385,11 @@ function AutomationRow({
           >
             <Play aria-hidden="true" size={16} /> Run now
           </ContextMenu.Item>
-          {automationWorkspaceTemplatesAvailable && (
-            <ContextMenu.Item className="menu-item">
-              <FileStack aria-hidden="true" size={16} /> Turn into template
-            </ContextMenu.Item>
-          )}
+          {/* "Turn into template" is deliberately absent: it had no
+              `onSelect`, so it closed the menu and did nothing.
+              Publishing a template is offered on the automation's
+              own overview, which is where the API for it is
+              wired. */}
           {debugEnabled && (
             <CopyResourceIdItem
               contentType="automation_id"
@@ -391,13 +399,13 @@ function AutomationRow({
             />
           )}
           <ContextMenu.Separator className="menu-separator" />
-          {isDraft && (
-            <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onArchiveDraft(automation)}>
-              <Archive aria-hidden="true" size={16} /> Archive draft
-            </ContextMenu.Item>
-          )}
+          {/* Named and iconed for what the API actually does. It calls
+              `deleteAutomation` — a tombstone nothing can undo — so
+              labelling it "Archive draft" beside a confirmed "Delete
+              automation" offered the irreversible one as the softer
+              choice, and fired it straight off the right-click. */}
           <ContextMenu.Item className="menu-item menu-item-danger" onSelect={() => onDelete(automation)}>
-            <Trash2 aria-hidden="true" size={16} /> Delete automation
+            <Trash2 aria-hidden="true" size={16} /> {isDraft ? 'Delete draft' : 'Delete automation'}
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
@@ -839,8 +847,6 @@ export function Sidebar({
   workstreams,
   loading,
   meetingRecordingAvailable = false,
-  automationWorkspaceTemplatesAvailable = false,
-  onArchiveDraftAutomation,
   onArchiveNote,
   onArchiveWorkstream,
   onApplyWorkstreamBatch,
@@ -884,7 +890,6 @@ export function Sidebar({
   const [renameTitle, setRenameTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
   // The note actions and a work stream's visibility apply straight from the
   // menu, so a rejection has nowhere to land unless it is raised here: the row
   // simply stays as it was.
@@ -1591,15 +1596,8 @@ export function Sidebar({
                 {orderedAutomations.map((automation) => (
                   <AutomationRow
                     automation={automation}
-                    automationWorkspaceTemplatesAvailable={automationWorkspaceTemplatesAvailable}
                     debugEnabled={debugEnabled}
                     key={automation.id}
-                    onArchiveDraft={(target) => {
-                      void onArchiveDraftAutomation(target)
-                        .catch((error: unknown) => {
-                          setArchiveError(error instanceof Error ? error.message : 'The draft could not be archived.');
-                        });
-                    }}
                     onDelete={setDeleteTarget}
                     onRunNow={(target) => {
                       void onRunAutomation(target)
@@ -1880,17 +1878,6 @@ export function Sidebar({
         {renameError && <InlineError>{renameError}</InlineError>}
       </Modal>
       <Modal
-        footer={<Button onClick={() => setArchiveError(null)}>Close</Button>}
-        onOpenChange={(open) => {
-          if (!open) setArchiveError(null);
-        }}
-        open={Boolean(archiveError)}
-        title="Draft could not be archived"
-      >
-        <p className="modal-copy">The draft is still in the sidebar. Try again in a moment.</p>
-        {archiveError && <InlineError>{archiveError}</InlineError>}
-      </Modal>
-      <Modal
         footer={(
           <>
             <Button disabled={archivingNote} onClick={closeArchiveNote}>Cancel</Button>
@@ -1989,11 +1976,25 @@ export function Sidebar({
           if (!open) closeDelete();
         }}
         open={Boolean(deleteTarget)}
-        title="Delete automation"
+        title={deleteTarget?.status === 'draft' ? 'Delete draft' : 'Delete automation'}
       >
         <p className="modal-copy">
-          <strong>{deleteTarget?.name}</strong> stops running and leaves the sidebar for good. Its past
-          runs and the work streams it created stay where they are.
+          {deleteTarget?.status === 'draft' ? (
+            <>
+              <strong>{deleteTarget.name}</strong> and the conversation that was writing it are
+              deleted for good. Rally has no way to bring a draft back.
+            </>
+          ) : (
+            <>
+              {/* What the API does, rather than the reassurance this
+                  said before it: deleting enqueues an archive for
+                  every work stream the automation's runs created, so
+                  the runs leave with it. */}
+              <strong>{deleteTarget?.name}</strong> stops running and leaves the sidebar for good.
+              Every past run — and the work stream each one created — is archived with it, and
+              Rally has no way to bring them back.
+            </>
+          )}
         </p>
         {deleteError && <InlineError>{deleteError}</InlineError>}
       </Modal>

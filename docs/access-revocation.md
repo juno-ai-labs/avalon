@@ -22,7 +22,7 @@ the thing this module replaced, and it is not to come back.
 | `apps/api/src/services/workspace-service.ts` | `removeMember` — deletes the D1 row and publishes in the same request. |
 | `apps/api/src/services/auth-service.ts` | `logout` — publishes for each session row it revoked. |
 | `apps/api/src/index.ts` | Queue dispatch by name — ahead of the work-stream maintenance gate, so a retraction is never held by it — and `reapExpiredSessions` on the five-minute cron. |
-| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent}.ts` | `revokeSocketAccess` on each of the four socket-holding objects. |
+| `apps/api/src/durable-objects/{workspace-do,workstream-do,substream-agent,block-dashboard-agent,automation-agent}.ts` | `revokeSocketAccess` on each of the five socket-holding objects. |
 | `apps/api/wrangler.{global,eu,test}.jsonc` | The `ACCESS_REVOCATION_QUEUE` producer binding and the consumer settings. |
 | `packages/db/migrations/0091_seed_expired_session_revocations.sql` | Marks the expired-session backlog older than seven days revoked so the sweep starts clean, and indexes the query it runs every five minutes. The cutoff matters: marking a row suppresses its announcement forever, and migrations run before the Worker deploys, so anything recent is left for the sweep to announce properly. |
 
@@ -56,10 +56,11 @@ calls `revokeSocketAccess`, and receives back the children that object knows
 about; each child becomes its own message on the same queue.
 
 ```
-workspace  ──▶ WorkspaceDO        ──▶ [workstreamIds]
+workspace  ──▶ WorkspaceDO        ──▶ [workstreamIds] + [automationIds]
 workstream ──▶ WorkstreamDO       ──▶ [substreamIds] + [blockIds]
 substream  ──▶ SubstreamAgent     ──▶ (leaf)
 block      ──▶ BlockDashboardAgent ──▶ (leaf)
+automation ──▶ AutomationAgent    ──▶ (leaf)
 ```
 
 The fan-out is queue-driven rather than one long call chain for three reasons: a
@@ -67,7 +68,15 @@ hop that fails is retried alone rather than restarting the walk; no single
 invocation holds the whole hierarchy open while a hundred objects wake; and the
 objects stay ignorant of the transport — they return lists, and the consumer
 decides what carries them onward. An object that later needs a different carrier,
-or a fifth object type, changes the consumer and nothing else.
+or a sixth object type, changes the consumer and nothing else.
+
+An automation is a *sibling* of the work streams under a workspace rather than a
+child of one: its room belongs to the workspace, so it hangs off the workspace
+hop and is a leaf of its own. Its list comes from `automation_directory` — the
+one place the workspace knows an automation exists — filtered to the person's own
+authored automations when the message names a user, and unfiltered when a
+membership ended and carries none. Only the author can hold an automation socket,
+so authorship is the exact list rather than a generous one.
 
 **Only the object knows its own children.** A work stream's participants and a
 dashboard's blocks live in that object's SQL storage, not in D1, so no query the
@@ -83,9 +92,9 @@ alongside the directory rows. A hop that finds nothing to close costs one call.
 
 ### What each object does
 
-Each `revokeSocketAccess` walks `state.getWebSockets()`, reads the hibernation
-attachment, and asks `revocationClosesSocket` — one shared predicate, not four
-inline copies. The four roles disagree about their own attachments:
+Four of the five `revokeSocketAccess` methods walk `state.getWebSockets()`, read
+the hibernation attachment, and ask `revocationClosesSocket` — one shared
+predicate rather than an inline copy each. Those four roles disagree about their own attachments:
 `SubstreamAgent` alone makes `sessionId` optional, because a socket accepted
 before the command gateway carries none. Written out per role, the natural
 `attachment.sessionId !== request.sessionId` reads as *skip* for `undefined`,
@@ -94,6 +103,16 @@ in the first place. Shared, a schema change on one role cannot silently diverge
 from the rule. Close code
 `WORKSTREAM_SOCKET_ACCESS_REVOKED_CODE` tells the desktop this was a retraction
 rather than a network drop.
+
+`AutomationAgent` is the fifth, and it does **not** use the shared predicate: it
+compares the attachment inline. The two agree on every socket the room can
+actually hold, because an automation attachment always carries a `sessionId`,
+and they disagree on the one case that predicate exists for — an attachment with
+no session, which the shared rule closes and the inline copy skips. Nothing
+produces such an attachment here today. It should be reading
+`revocationClosesSocket` like its four siblings; a schema change that made
+`sessionId` optional would otherwise exempt automation rooms from every logout
+and expiry, which is precisely the bug that made the shared predicate exist.
 
 `SubstreamAgent` re-broadcasts presence afterwards, because `webSocketClose`
 fires only for a *client*-initiated close: without it the people still in the
@@ -125,7 +144,11 @@ room would go on seeing an evicted reader listed as present.
   re-published list is a list of hops that each find nothing to do. Retries are
   therefore free of consequence, which is what lets the consumer retry at all.
 - **An object returns lists; it does not publish.** Keeping the transport in the
-  consumer is what keeps the four objects independent of the queue.
+  consumer is what keeps the five objects independent of the queue.
+- **Every object that accepts a socket is on this walk.** A room admits on a
+  ticket and never re-authorizes, so an object added to the tree without a
+  `revokeSocketAccess` and a hop to reach it keeps serving somebody who has lost
+  access, and nothing will report it.
 - **Publishing never fails the request that wrote the fact.** The removal
   committed; failing the response would tell the operator it did not. A producer
   that *can* still retry — the expiry sweep, which owns its own schedule — reads
@@ -149,7 +172,9 @@ own:
 - **What flows over a socket while it is open.** That is
   [`choosing-sockets-or-rest.md`](choosing-sockets-or-rest.md).
 - **The object hierarchy itself.** [`workstream-durable-object.md`](workstream-durable-object.md)
-  owns the four objects; this module adds one method to each.
+  owns the work-stream-down objects and
+  [`automation-lifecycle.md`](automation-lifecycle.md) owns `AutomationAgent`;
+  this module adds one method to each.
 - **Choosing a queue over RPC for a new hop.** [`choosing-queues-or-rpc.md`](choosing-queues-or-rpc.md)
   owns that decision and records this one.
 
@@ -230,7 +255,7 @@ Callers: any Worker code that ends access calls `publishAccessRevocation`. The
 
 | Suite | What it proves |
 | --- | --- |
-| `pnpm --filter @rally/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children, and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
+| `pnpm --filter @rally/api exec vitest run test/access-revocation.test.ts` | The producers write and publish, the guards refuse, the route refuses a foreign workspace, the consumer's fan-out publishes the right children — one message per automation the workspace names, and the automation hop stopping as a leaf — and a failed hop retries while an unreadable one is acknowledged. Runs against the checked-in migrations through `sqlite-d1`. |
 | `pnpm --filter @rally/api test:workers` | `revokeSocketAccess` on real workerd: sockets actually close, a session-scoped revocation closes only the windows that presented it, and each object names its children. `test-workers/queue-dispatch.test.ts` covers the Worker's own queue entry point, which cannot be imported in the Node suite because it pulls in `cloudflare:workers`. |
 
 Traps:
@@ -280,6 +305,42 @@ would be a way into somebody else's workspace.
   somebody kept access they should have lost.
 
 ## Changelog
+
+### 2026-08-28 — AutomationAgent joins the walk as a sibling of the work streams
+
+**What changed:** The revocation target union gains an `automation` scope.
+`WorkspaceDO.revokeSocketAccess` now returns `automationIds` alongside
+`workstreamIds` — the person's own authored automations when the message names a
+user, every non-deleted one when a membership ended and it names none — and the
+consumer publishes one hop per automation, which `AutomationAgent.revokeSocketAccess`
+answers by closing that person's rooms. It is a leaf.
+
+**Why:** `AutomationAgent` holds its own hibernating socket, and like every other
+room here it admits on a ticket and never re-authorizes. Without this hop, a
+member removed from a workspace kept a live draft feed — snapshots and compiler
+narration included — until their client happened to reconnect. This is the
+failure the module exists to prevent, and a new socket-holding object is exactly
+where it comes back.
+
+**Considered and rejected:** Hanging automations off the work-stream hop, which
+is where a generated run's work stream already is. An automation is a workspace
+sibling, not a child of any one work stream, and threading it through the
+work-stream walk would have made a draft with no runs unreachable. Deriving the
+list from the Durable Object namespace instead of `automation_directory`, which
+is the enumeration rule the automation cutover deliberately refused — the
+administrative namespace is not a product index.
+
+**Consequences:** `automation_directory` is now load-bearing for revocation, so a
+row that is missing or stale by author is a room the walk does not reach; the
+directory's own author column is a security-relevant field, not just a filter.
+The next socket-holding object has to be added here too, and there is no test
+that would fail if it were not. One rough edge is deliberately left in place and
+recorded above: `AutomationAgent` compares the attachment inline rather than
+through `revocationClosesSocket`, which is safe only while its attachments always
+carry a session.
+
+Shipped in the pull request for this change. Design:
+[the durable automation lifecycle PRD](PRDs/2026-08-25_durable-automation-lifecycle/prd.md).
 
 ### 2026-08-22 — Review pass: the queue owns workspace access, the object owns its own
 

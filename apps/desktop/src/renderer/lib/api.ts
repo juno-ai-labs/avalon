@@ -5,8 +5,6 @@ import {
   AutomationAgentSnapshotSchema as WireAutomationAgentSnapshotSchema,
   AutomationDraftTurnAdmissionResultSchema as WireAutomationDraftTurnAdmissionResultSchema,
   AutomationDraftSchema as WireAutomationDraftSchema,
-  AutomationDraftStateSchema as WireAutomationDraftStateSchema,
-  AutomationDraftStreamEventSchema as WireAutomationDraftStreamEventSchema,
   AutomationSummarySchema as WireAutomationSummarySchema,
   WorkstreamBatchAcceptedSchema as WireWorkstreamBatchAcceptedSchema,
   WorkstreamBatchPreviewSchema as WireWorkstreamBatchPreviewSchema,
@@ -41,7 +39,6 @@ import {
   type AutomationDraft as WireAutomationDraft,
   type AutomationAgentSnapshot as WireAutomationAgentSnapshot,
   type AutomationDraftTurnAdmissionResult as WireAutomationDraftTurnAdmissionResult,
-  type AutomationDraftStreamEvent as WireAutomationDraftStreamEvent,
   type AutomationRun as WireAutomationRun,
   type BackgroundTask as WireBackgroundTask,
   type ClientFeatureFlags,
@@ -143,7 +140,7 @@ function networkApiError(message: string, cause?: unknown): ApiError {
 }
 
 /**
- * For a schema shared with the server — `WireAutomationDraftStreamEventSchema`
+ * For a schema shared with the server — `WireAutomationAgentSnapshotSchema`
  * below is one — a response that fails the client's own copy is not a network
  * failure or a server bug report: the server built and validated the same
  * bytes against the same shared schema, so the two copies disagreeing is best
@@ -200,55 +197,6 @@ interface DraftState {
   attachmentIds: string[];
   messages: Array<{ role: 'user' | 'assistant'; content: string }>;
   draft: WireAutomationDraft | null;
-}
-
-export type AutomationAssistantStreamEvent = Extract<
-  WireAutomationDraftStreamEvent,
-  { type: 'started' | 'thinking' | 'delta' | 'tool' }
->;
-
-async function readSseData(
-  response: Response,
-  onData: (data: string) => void | Promise<void>,
-): Promise<void> {
-  if (!response.body) throw new ApiError('The service returned no response body.', 502, 'unexpected_empty_response');
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  const consume = async (flush = false): Promise<void> => {
-    buffer = buffer.replaceAll('\r\n', '\n');
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary >= 0) {
-      const frame = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      const data = frame
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).replace(/^ /u, ''))
-        .join('\n');
-      if (data) await onData(data);
-      boundary = buffer.indexOf('\n\n');
-    }
-    if (flush && buffer.trim()) {
-      const data = buffer
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).replace(/^ /u, ''))
-        .join('\n');
-      if (data) await onData(data);
-      buffer = '';
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    await consume();
-  }
-  buffer += decoder.decode();
-  await consume(true);
 }
 
 export interface MentionIdentity {
@@ -568,6 +516,7 @@ export function mapAutomationSummary(automation: z.infer<typeof WireAutomationSu
     ...(automation.emailAddress ? { emailAddress: automation.emailAddress } : {}),
     scope: automation.scope === 'personal' ? 'you' : 'workspace',
     status: automation.status,
+    ...(automation.attention ? { attention: automation.attention } : {}),
     ...(automation.nextRunAt ? { nextRunAt: automation.nextRunAt } : {}),
     ...(automation.lastRunAt ? { lastRunAt: automation.lastRunAt } : {}),
     updatedAt: automation.updatedAt,
@@ -1825,7 +1774,27 @@ export class RallyApi {
       createdAt: message.createdAt,
     }));
     if (snapshot.definition === null) return { draft: null, messages };
-    const raw = WireAutomationDraftSchema.parse(snapshot.definition);
+    // Thrown as an `ApiError`, never as a raw `ZodError`: this runs
+    // inside the builder's render effect, where a thrown parse takes
+    // the whole screen down instead of showing the failure. The
+    // sibling stream path already answers this shape the same way.
+    const parsed = WireAutomationDraftSchema.safeParse(snapshot.definition);
+    if (!parsed.success) {
+      throw new ApiError(STALE_BUILD_RESPONSE_MESSAGE, 502, 'invalid_response', {
+        issues: parsed.error.issues,
+        path: `/automations/${snapshot.automationId}/agent/draft`,
+      });
+    }
+    const raw = parsed.data;
+    // The one place a socket-driven draft is recorded for `createAutomation`,
+    // which sends the exact definition back and is rejected by the agent
+    // when the two disagree. Before the draft moved onto the socket this
+    // was written by the compile stream instead.
+    this.drafts.set(snapshot.automationId, {
+      attachmentIds: [...new Set(snapshot.messages.flatMap((message) => message.attachmentIds))],
+      messages: snapshot.messages.map((message) => ({ role: message.role, content: message.content })),
+      draft: raw,
+    });
     const assistantMessage = [...snapshot.messages].reverse()
       .find((message) => message.role === 'assistant')?.content ?? '';
     return {
@@ -1857,101 +1826,6 @@ export class RallyApi {
     return this.requestVoid(
       `/automations/${encodeURIComponent(id)}/agent/draft/${encodeURIComponent(runId)}/retry`,
       { method: 'POST' },
-    );
-  }
-
-  async compileAutomation(
-    input: {
-      message: string;
-      draftId?: string;
-      templateId?: string;
-      attachmentIds?: string[];
-      inputMode?: 'typed' | 'suggested_prompt' | 'elicitation_response' | 'edit';
-      connectorMentionCount?: number;
-      resolvedElicitation?: {
-        id: string;
-        responseType: 'free_text' | 'single_select' | 'multi_select';
-        resolution: 'answered' | 'skipped';
-        customResponseUsed: boolean;
-        presentedAt: string;
-      };
-    },
-    onAssistantStream?: (event: AutomationAssistantStreamEvent) => void,
-  ): Promise<AutomationDraftResponse> {
-    // The first turn has no draft to continue. Every later one names the draft
-    // subscription the API wrote, which is the automation's real id — the
-    // renderer never mints one, because a key only this process knows could not
-    // put the draft in the sidebar or bring it back after a restart.
-    const previous = input.draftId
-      ? this.drafts.get(input.draftId) ?? { attachmentIds: [], messages: [], draft: null }
-      : { attachmentIds: [], messages: [], draft: null };
-    const messages = [...previous.messages, { role: 'user' as const, content: input.message }];
-    const attachmentIds = [...new Set([...previous.attachmentIds, ...(input.attachmentIds ?? [])])];
-    const response = await this.execute('/automations/draft/stream', {
-      method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ...(input.draftId ? { draftId: input.draftId } : {}),
-        messages,
-        currentDraft: previous.draft,
-        attachmentIds,
-        inputMode: input.inputMode ?? 'typed',
-        connectorMentionCount: input.connectorMentionCount ?? 0,
-        ...(input.resolvedElicitation ? { resolvedElicitation: input.resolvedElicitation } : {}),
-      }),
-    });
-    if (!response.ok) return this.throwResponseError(response);
-    const streamState: {
-      completed?: Extract<WireAutomationDraftStreamEvent, { type: 'completed' }>;
-    } = {};
-    await readSseData(response, (data) => {
-      let payload: unknown;
-      try {
-        payload = JSON.parse(data);
-      } catch (error) {
-        throw new ApiError('Rally received an invalid automation stream.', 502, 'invalid_response', error);
-      }
-      const parsed = WireAutomationDraftStreamEventSchema.safeParse(payload);
-      if (!parsed.success) {
-        throw new ApiError(STALE_BUILD_RESPONSE_MESSAGE, 502, 'invalid_response', {
-          issues: parsed.error.issues,
-          path: '/automations/draft/stream',
-        });
-      }
-      const event = parsed.data;
-      if (event.type === 'error') {
-        throw new ApiError(
-          event.error.message,
-          event.error.status,
-          event.error.code,
-          event.error.details,
-          event.error.requestId ?? undefined,
-        );
-      }
-      if (event.type === 'completed') streamState.completed = event;
-      else onAssistantStream?.(event);
-    });
-    const completed = streamState.completed;
-    if (!completed) {
-      throw new ApiError('The automation stream ended before the draft was complete.', 502, 'unexpected_empty_response');
-    }
-    const raw = WireAutomationDraftSchema.parse(completed.draft);
-    const assistantMessage = completed.assistantMessage;
-    const draftId = completed.draftId;
-    this.drafts.set(draftId, {
-      attachmentIds,
-      messages: [...messages, { role: 'assistant', content: assistantMessage }],
-      draft: raw,
-    });
-    return this.automationDraftResponse(
-      draftId,
-      raw,
-      assistantMessage,
-      completed.elicitationId ?? undefined,
-      completed.elicitationPresentedAt ?? undefined,
     );
   }
 
@@ -2009,36 +1883,6 @@ export class RallyApi {
             },
           }
         : {}),
-    };
-  }
-
-  /** Reopens a draft left in the sidebar. The conversation comes back from the
-   * API rather than from this process's memory, which is the whole point: the
-   * draft outlived the screen it was written on. */
-  async resumeAutomationDraft(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<{ draft: AutomationDraftResponse; messages: Array<{ role: 'user' | 'assistant'; content: string }> }> {
-    const state = await this.request(`/automations/${encodeURIComponent(id)}/draft`, {
-      schema: WireAutomationDraftStateSchema,
-      signal,
-    });
-    this.drafts.set(state.draftId, {
-      attachmentIds: state.attachmentIds,
-      messages: state.messages,
-      draft: state.draft,
-    });
-    const assistantMessage = [...state.messages].reverse()
-      .find((message) => message.role === 'assistant')?.content ?? '';
-    return {
-      draft: this.automationDraftResponse(
-        state.draftId,
-        state.draft,
-        assistantMessage,
-        state.elicitationId ?? undefined,
-        state.elicitationPresentedAt ?? undefined,
-      ),
-      messages: state.messages,
     };
   }
 

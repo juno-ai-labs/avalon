@@ -173,4 +173,3 @@ templateRoutes.post("/", zValidator("json", publishTemplateBody), async (c) => {
 templateRoutes.post("/:id/versions", zValidator("param", templateParam), zValidator("json", versionBody), async (c) =>
   c.json(TemplateVersionSchema.parse(
     await new AutomationService(c.env, getAuth(c)).addTemplateVersion(c.req.valid("param").id, c.req.valid("json").draft)), 201));
-export const subscriptionRoutes = new Hono<HonoAppEnv>();
