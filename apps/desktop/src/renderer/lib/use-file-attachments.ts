@@ -80,6 +80,7 @@ function resourceFromLocalDraft(attachment: PendingAttachment): WorkstreamResour
     resourceType: 'uploaded_file',
     provider: 'rally_upload',
     mimeType: attachment.file.type || 'application/octet-stream',
+    refreshSupported: false,
     watchEnabled: false,
     watchStatus: 'unsupported',
     contentAvailable: true,

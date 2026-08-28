@@ -206,18 +206,13 @@ it.
   the row would mean a contract field, a disabled control, and a refusal that
   nobody has asked for. Revisit it together with those three, not on its own.
 
-  The rail's resource detail now carries two more controls, and the same
-  contract gap puts both on an origin: **Refresh from source**, which is offered
-  for any `source` resource on a connection, and the version list, which is
-  offered for any resource with more than one version. Neither changes what an
-  origin *is* — the version list is empty because nothing swaps an origin's
-  pointers, and `POST /resources/:id/hydrate`, which the button calls, was
-  already reachable for an origin before there was a button. What the button
-  does change is that a participant can now reach it in one click, and a
-  connector whose `hydrateResource` returns channel content would store it on a
-  row this document says carries none. That is the same missing
-  `relationship_type` again, and it belongs in the same revisit rather than in a
-  second one-off guard.
+  The rail's resource detail carries two more controls. The version list is
+  offered for any resource with more than one version. **Refresh from source**
+  additionally requires the server's `refreshSupported` capability, which is
+  true only when the deployed connector adapter implements `hydrateResource`.
+  An origin can therefore be refreshed only when its connector can fulfill the
+  same `POST /resources/:id/hydrate` request; a Slack channel origin never shows
+  a button whose endpoint would answer `hydration_not_supported`.
 - **An origin carries no provider content.** It records where something is, not
   what it said. Slack Agent policy makes this explicit — durably storing provider
   content gathered for surrounding context is forbidden — and the rule is the
@@ -370,27 +365,26 @@ step the ingress has to remember.
 
 ## Changelog
 
-### 2026-08-28 — The rail's new resource controls reach origins too
+### 2026-08-28 — Re-fetch is advertised only when the connector implements it
 
 **What changed:** The inspector rail's resource detail gained **Refresh from
-source** and a version list. Both are gated on the resource contract alone, so
-both appear on an origin.
+source** and a version list. Resource projections now carry
+`refreshSupported`, computed from the deployed adapter's `hydrateResource`
+method, and the rail requires that capability before showing re-fetch.
 
-**Why:** `WorkstreamDetail` still does not carry `relationship_type`, which is
-the same reason **Remove** has always been offered on an origin. Adding a guard
-for one control while the other two stay open would spend a contract field on a
-third of the problem.
+**Why:** Watch state describes whether Avalon is listening for changes; it does
+not say whether the connector can retrieve current content. Slack resources
+have a connection and a valid paused watch state but no hydration method, so the
+old inference advertised an action the endpoint always refused.
 
-**Considered and rejected:** Gating the new controls by inferring an origin from
-its provider or its null `content_ref`. Both are guesses that a legitimate
-attachment can also satisfy, and a control that disappears for the wrong reason
-is worse than one that appears for a knowable one.
+**Considered and rejected:** A provider allowlist and inference from
+`watchStatus`. The first duplicates connector behavior and drifts when an
+adapter changes; the second conflates two independent capabilities.
 
-**Consequences:** An origin's version list is empty, because nothing swaps its
-pointers. A refresh calls `hydrate`, which was already reachable for an origin
-before there was a button; a connector that returns content for one would now
-store it on a row this document says carries none. That is the missing
-`relationship_type`, and it is on the same revisit as **Remove**.
+**Consequences:** An origin's version list is empty because nothing swaps its
+pointers. An origin on a hydration-capable connector may still be refreshed;
+one on Slack cannot. The contract defaults the capability to false so a new
+desktop paired with an older regional response fails closed during rollout.
 
 ### 2026-08-27 — Origin relationships render as sources
 

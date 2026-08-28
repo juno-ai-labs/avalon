@@ -1134,6 +1134,7 @@ describe('AddResourceDialog', () => {
       resourceType: 'github_pull_request',
       provider: 'github',
       canonicalUrl: 'https://github.com/juno-ai-labs/rally/pull/42',
+      refreshSupported: true,
       watchEnabled: false,
       watchStatus: 'paused',
       currentVersion: 1,
