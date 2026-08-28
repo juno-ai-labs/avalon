@@ -273,6 +273,23 @@ cannot be written this way is a sign it is not a typography override.
   GFM writes the DOM id as `normalizeUri(id.toLowerCase())`, so `[^café]`
   arrives as `fn-caf%C3%A9`. The renderer undoes the escape rather than assuming
   every identifier a model writes is ASCII.
+- **The rail's preview waits the delay the route names, and invents none of its
+  own.** `409 resource_processing` is the preview route saying a derivative is
+  still being materialized, and it carries a `retryAfterMs`: the route knows
+  whether it is waiting on a claim, a hash write or a conversion, and answers
+  250ms or 1s accordingly. A backoff schedule written in the renderer would be a
+  second opinion about something only the server can see. What the renderer does
+  own is *how long it keeps asking*, and that is a wall-clock budget rather than
+  a count of attempts, because the same count means 100 seconds or 6½ minutes
+  depending on which delay it meets.
+- **The preview poll is what performs the conversion, not just what observes
+  it.** `ResourceService.preview` calls `materializeAttachmentDerivative` inside
+  the request, and its only other caller is the agent's attachment tool — there
+  is no queue, workflow, or alarm doing this in the background. So a
+  `processing` answer means another in-flight request holds the claim, and the
+  attempt that wins the claim is the one that converts. Replacing the poll with
+  a subscription would deadlock the case where nobody else is asking; a push
+  model needs a durable owner of the conversion first.
 - **Every divergence between this grammar and remark-gfm degrades toward showing
   too much.** A definition this module does not recognise keeps classic GFM
   rendering; a footnote section it recognised nothing in still renders. The one
@@ -380,6 +397,13 @@ needs it should parse rather than widen the pattern again.
   demand a bare closer. Transient by construction: the commit that ends the
   stream re-renders the source whole. The rule and the argument for its
   looseness are in [`markdown-code.md`](markdown-code.md).
+- **A preview the server is still preparing** is waited out rather than
+  reported. Every *other* rejection from `GET /resources/:id/preview` — content
+  that was never hydrated, an object that has since gone, a format the server
+  will not convert — is terminal, and the panel says "This preview is not
+  available." with the metadata above it untouched. A `resource_processing`
+  answer carrying no usable delay is read as terminal too: the alternative is a
+  retry cadence nobody chose, driving a route that converts documents.
 - **A very long markdown string** is rendered in full. Nothing here truncates;
   the surfaces that need a cap impose it themselves, as the system-message clamp
   in `app.css` does.
@@ -420,6 +444,48 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-28 — A preview still being prepared is not a preview that failed
+
+**What changed:** `ResourceContentPreview` in `inspector-rail.tsx` keeps the
+typed `ApiError` its `.catch` used to discard, and on `409 resource_processing`
+re-asks the preview route after the `retryAfterMs` the response named, under the
+effect's existing `AbortSignal`. Every other rejection lands where it always did.
+The read moved into `readResourcePreviewText`, which gives up once a wall-clock
+budget derived from the server's own lease and converter timeouts would be
+overspent.
+
+**Why:** The preview route does not only fail terminally. A PDF or an Office file
+attached moments ago has no text derivative yet, and the route says so with a 409
+and a delay rather than a verdict — but the rail mapped every rejection to "This
+preview is not available." So opening a citation to a freshly attached document
+landed on the failed state and stayed there for the life of that mount, seconds
+after the derivative was ready, and the reader had to close the rail and reopen
+it to discover the preview existed. The whole point of dressing a citation is
+that clicking it is worth doing; a dead end that is *wrong* is worse than the
+metadata-only card the preview replaced. The wait is read off the response
+because the route is the only party that knows what it is waiting for, and a
+schedule invented in the renderer would be a guess wearing a constant's name.
+
+**What a future change has to respect:** The `.catch` is the whole defect — a
+rejection collapsed to a boolean cannot tell a verdict from a "come back in
+250ms", and that is what made the failed state permanent. Anything added to this
+path keeps the typed error until it has been read. `MAX_RESOURCE_PREVIEW_WAIT_MS`
+is not a number this module chose: it is
+`ATTACHMENT_PROCESSING_LEASE_MS + ATTACHMENT_CONVERTER_TIMEOUT_MS`, computed from
+the two constants the derivative service enforces, which moved into
+`@rally/contracts` in the same change so the client cannot drift from the server
+that defines them. Their sum is the slowest case that still *converges* —
+another request's claim running out its whole lease without publishing, then this
+client's next attempt taking the stale claim and converting — and the lifecycle
+half of that argument, including what happens past it, belongs to
+[`agent-attachments.md`](agent-attachments.md), which owns the route. Read it
+before changing the bound. It is wall clock rather than an attempt count
+deliberately — the route's two cadences differ fourfold, so a count bounds
+nothing a reader can feel — and enforcement takes the budget as a parameter so
+the deadline stays provable without a test spending it. The tempting rewrite is a
+socket subscription in place of the poll; read the second invariant above before
+attempting it.
 
 ### 2026-08-28 — The streaming splitter stopped deciding where a fence ends
 
