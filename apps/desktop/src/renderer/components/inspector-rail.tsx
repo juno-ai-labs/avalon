@@ -8,6 +8,7 @@ import {
   Eye,
   LoaderCircle,
   Plus,
+  RefreshCcw,
   Trash2,
   UserPlus,
   X,
@@ -20,6 +21,7 @@ import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import type {
   AutomationRunSummary,
+  ResourceVersion,
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
@@ -46,6 +48,22 @@ interface InspectorRailProps {
   onAddResource?: () => void;
   onDetachResource?: (resource: WorkstreamResource) => void;
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
+  /** History for whichever resource the detail is showing, newest first. */
+  resourceVersions?: ResourceVersion[];
+  /** Set when the history could not be loaded, so absence is not read as none. */
+  resourceVersionsError?: string | undefined;
+  /**
+   * Opens a prior version read-only. Carries the control that opened it so the
+   * preview can hand focus back, the way every other opener on this surface
+   * does — closing to `<body>` loses a keyboard reader's place in the rail.
+   */
+  onOpenResourceVersion?: (
+    resource: WorkstreamResource,
+    version: ResourceVersion,
+    returnFocus: HTMLElement,
+  ) => void;
+  onRefreshResource?: (resource: WorkstreamResource) => void;
+  refreshingResourceId?: string | null;
   onOpenRun?: (run: AutomationRunSummary) => void;
   /** True while the inspector is fading out under HyperSight taking the slot. */
   leaving?: boolean;
@@ -571,12 +589,119 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   );
 }
 
-function InspectorDetail({ loadResourceContent, workstream, onDetachResource }: Pick<InspectorRailProps, 'loadResourceContent' | 'workstream' | 'onDetachResource'>): React.JSX.Element | null {
+/**
+ * Who a version row names, in the words the rail can actually show.
+ *
+ * A run and a connection are ids nothing in the rail resolves to a name, so
+ * the agent reads as Rally and a connector as the provider the resource came
+ * from. A version nothing attributed says so rather than picking someone.
+ */
+function versionAuthorLabel(
+  version: ResourceVersion,
+  resource: WorkstreamResource,
+  participants: WorkstreamDetail['participants'],
+): string {
+  const author = version.author;
+  switch (author?.kind) {
+    case 'agent':
+    case 'system':
+      return 'Rally';
+    case 'member':
+      return participants.find((person) => person.id === author.userId)?.name ?? 'A teammate';
+    case 'connector':
+      return resource.provider ?? 'Connector';
+    default:
+      return 'Unattributed';
+  }
+}
+
+/**
+ * Whether the preview surface can show this version from its stored bytes.
+ *
+ * The version routes serve the object as written, with none of the conversion
+ * the current-content preview route performs — so a PDF or a Word file has no
+ * readable prior version to open, and offering one would render binary noise
+ * under a title that says it is the document.
+ */
+function versionIsOpenable(version: ResourceVersion): boolean {
+  if (!version.contentAvailable) return false;
+  const kind = classifyAttachmentKind({ fileName: version.title, mimeType: version.mimeType });
+  return kind === 'image' || kind === 'markdown' || kind === 'text';
+}
+
+function ResourceVersions({ resource, versions, error, onOpenResourceVersion, participants }: {
+  resource: WorkstreamResource;
+  versions: ResourceVersion[];
+  error?: string | undefined;
+  onOpenResourceVersion?: InspectorRailProps['onOpenResourceVersion'];
+  participants: WorkstreamDetail['participants'];
+}): React.JSX.Element | null {
+  // One entry is not history — it is the resource, which the detail above
+  // already describes. The section appears the moment something changes, and
+  // whenever the history is owed but could not be read: a resource that never
+  // changed and a resource whose history failed to load are different answers,
+  // and collapsing them tells the reader the wrong one.
+  if (!error && versions.length < 2) return null;
+  return (
+    <section className="rail-section inspector-versions">
+      <header className="rail-section-header"><h3>Versions</h3></header>
+      {error
+        ? <p className="inspector-detail-preview-status">{error}</p>
+        : (
+          <ul>
+            {versions.map((version, index) => (
+              <li key={version.version}>
+                <span className="inspector-version-label">V{version.version}</span>
+                <span className="inspector-version-meta">
+                  <span className="inspector-version-author">{versionAuthorLabel(version, resource, participants)}</span>
+                  <time dateTime={version.capturedAt}>{formatDateTime(version.capturedAt)}</time>
+                </span>
+                {/* The list is newest-first and authoritative about itself. The
+                    detail's version number comes from another cache, and the
+                    two disagree exactly while a swap is settling — which is
+                    when putting "Current" on a superseded row does most harm. */}
+                {index === 0
+                  ? <Badge>Current</Badge>
+                  : versionIsOpenable(version) && (
+                    <IconButton
+                      label={`Open version ${version.version}`}
+                      onClick={(event) => onOpenResourceVersion?.(resource, version, event.currentTarget)}
+                      tooltipSide="left"
+                    >
+                      <Eye size={14} />
+                    </IconButton>
+                  )}
+              </li>
+            ))}
+          </ul>
+        )}
+    </section>
+  );
+}
+
+function InspectorDetail({
+  loadResourceContent,
+  workstream,
+  onDetachResource,
+  onOpenResourceVersion,
+  onRefreshResource,
+  refreshingResourceId,
+  resourceVersions,
+  resourceVersionsError,
+}: Pick<
+  InspectorRailProps,
+  'loadResourceContent' | 'workstream' | 'onDetachResource' | 'onOpenResourceVersion'
+  | 'onRefreshResource' | 'refreshingResourceId' | 'resourceVersions' | 'resourceVersionsError'
+>): React.JSX.Element | null {
   const inspector = useUiStore((state) => state.inspector);
   if (!inspector || !workstream) return null;
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
 
   if (resource) {
+    // Direction says whether this work stream consumed or produced the
+    // resource; the server-computed adapter capability says whether its
+    // connector can actually fulfill a re-fetch.
+    const refreshable = resource.direction === 'source' && resource.refreshSupported;
     return (
       <div className="inspector-detail">
         <span className="inspector-hero-icon"><ResourceIcon type={resource.resourceType} /></span>
@@ -594,8 +719,23 @@ function InspectorDetail({ loadResourceContent, workstream, onDetachResource }: 
         )}
         <div className="inspector-detail-actions">
           {resource.canonicalUrl && <Button onClick={() => void window.rally?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
+          {refreshable && onRefreshResource && (
+            <Button
+              disabled={refreshingResourceId === resource.id}
+              onClick={() => onRefreshResource(resource)}
+            >
+              <RefreshCcw size={14} /> Refresh from source
+            </Button>
+          )}
           {onDetachResource && <Button onClick={() => onDetachResource(resource)}><Trash2 size={14} /> Remove</Button>}
         </div>
+        <ResourceVersions
+          error={resourceVersionsError}
+          onOpenResourceVersion={onOpenResourceVersion}
+          participants={workstream.participants}
+          resource={resource}
+          versions={resourceVersions ?? []}
+        />
       </div>
     );
   }
@@ -648,6 +788,11 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <InspectorDetail
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
             onDetachResource={props.onDetachResource}
+            onOpenResourceVersion={props.onOpenResourceVersion}
+            onRefreshResource={props.onRefreshResource}
+            refreshingResourceId={props.refreshingResourceId}
+            resourceVersions={props.resourceVersions}
+            resourceVersionsError={props.resourceVersionsError}
             workstream={props.workstream}
           />
         ) : railVariant === 'context' ? (

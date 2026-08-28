@@ -35,7 +35,6 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/resource-service.ts` | Creates, hydrates, and deletes original resource objects, and serves authorized person-facing previews from the original image/text or the reusable document derivative. |
 | `packages/contracts/src/workstream-transcript.ts` | Defines the attachment descriptor carried by a participant transcript text block. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | Maps canonical transcript descriptors back into the existing attachment-tile view model. |
-| `apps/desktop/src/renderer/components/inspector-rail.tsx` | Consumes the person-facing preview route in the rail's resource detail, and holds the client half of the `resource_processing` retry contract below. |
 | `packages/db/migrations/0073_attachment_derivative_lifecycle.sql` | Adds source identity, derivative lifecycle, tenant-scoped receipts/object cleanup, principal-scoped checkpoints, and the monotonic work-stream inventory revision. |
 | `packages/agent-harness/src/tool-activity.ts` | Human-facing transcript prose for attachment tool wire names. |
 
@@ -210,7 +209,7 @@ itself is documented in [`terminal-workspaces.md`](terminal-workspaces.md).
 Generated Terminal publications attach with relationship `generated`, so the
 work-stream contract exposes them as `direction: artifact`. A subsequent
 semantic update to an existing resource advances its WorkspaceDO version rather
-than replacing the only readable state.
+than replacing the only readable state, attributed to the run that published it.
 
 ### Regional lifecycle
 
@@ -266,25 +265,6 @@ a resource ID as authority and never creates a second display-only conversion.
 Presentation remains a desktop concern: Markdown derivatives go through the
 shared renderer, while plain source text stays literal monospace text.
 
-A preview is often asked for while its derivative is still being built — the
-route materializes on demand, so the first person to open a document attached
-moments ago routinely arrives mid-conversion. That answer is 409
-`resource_processing`, carrying the delay the derivative service named: 250 ms
-after a lost compare-and-set, one second while another caller holds a live
-claim. It is a *not yet*, not a *no*, and every named path out of it is
-terminal: the holder publishes, its conversion records `conversion_timeout` or a
-failure — both cached against the extractor version, so the next caller is told
-no rather than asked to wait — or its lease goes stale and the next caller
-converts. A surface showing a preview therefore waits out the delay the response
-carried and reads again, cancelling that wait when the reader moves on; it does
-not invent an interval of its own, and it does not extend the same treatment to
-a 404 or a 422, which are answers. What the client does own is when to stop,
-which is the invariant below. The inspector rail's resource detail does this
-today. The lightbox does not — it renders the processing message as terminal —
-and it is reached from three places: the message feed, and the composer in both
-creation flows, so a document previewed before it is ever sent hits the same
-mid-conversion window as a cited one.
-
 Search derives UTF-16-safe ranges and section labels directly from the bounded
 versioned derivative, so it needs no second R2 object or lifecycle. Tool reads
 and searches check offsets against the same hash and extractor version. At the
@@ -330,6 +310,20 @@ character envelope.
   bounds, never authorization semantics.
 - `nextCursor: null` is the only evidence that a filtered listing is exhausted,
   while zero characters on both sides is the only whole-resource read.
+- A version row's author identity matches its author kind, or the write that
+  would have created it aborts. A wrong attribution is worse than none, because
+  the rail renders it as fact.
+- Provenance is staged on the resource row and consumed by the capture trigger,
+  so the pointer swap and the account of who made it are one statement. A swap
+  that stages nothing captures an unattributed version rather than inheriting
+  the previous swap's author.
+- A resource's alias is allocated once and never rewritten, is unique within a
+  workspace, and is never an identifier anything resolves by internally. The
+  UUID remains the primary key in every storage key, receipt, tool argument, and
+  cross-object reference.
+- A resource may have no alias. `slug IS NULL` is the durable record that one is
+  owed, and every model-facing listing carries the field as nullable rather than
+  waiting for one.
 - `resource_processing` is the only preview rejection that is a *not yet*: it
   names the delay to wait, and a client that renders it as permanent
   unavailability is wrong. Every other preview rejection is final, and re-asking
@@ -379,8 +373,16 @@ generic tool execution/receipt loop is owned by
   most twenty bounded strings.
 - Transcript projection fetches no non-image source or derivative bytes. One
   manifest entry is emitted even when the source is missing or conversion fails.
-- Object cleanup reads at most 100 outbox rows per pass. Failures keep their row
-  and store only a bounded machine error code.
+- Object cleanup reads at most 100 outbox rows per pass, and the alias backfill
+  shares that same bound rather than declaring a second one. Failures keep their
+  row and store only a bounded machine error code.
+- Alias allocation retries a colliding candidate at most 1,024 times before
+  giving up and leaving the row unaliased; a failure at creation costs the alias
+  and a delay, never the resource. A backfill row that fails is skipped rather
+  than stopping its batch.
+- Version rows and the objects they retain grow without bound by design. No
+  retention ceiling, version cap, or re-fetch cooldown ships here — those are
+  numbers for the team to set, not for this layer to guess.
 - Derivative conversion admits at most 8 MiB of source bytes, 12 MiB of selected
   expanded Office XML, 3 MiB per selected XML part, 200 PDF pages, two million
   UTF-16 output characters. Async PDF/OCR work has a
@@ -436,19 +438,36 @@ generic tool execution/receipt loop is owned by
   receipt invalidation, cleanup retry, and convergence.
 - `apps/desktop/src/renderer/components/attachments.test.tsx` covers lazy
   message-feed opening plus image, Markdown, literal text, and converted-document
-  presentation.
+  presentation, and the paired superseded notice a prior version is previewed
+  behind.
+- `apps/api/test/resource-version-provenance.test.ts` covers the author and
+  cause staged by every swap path and captured from it, the released staging,
+  the unattributed projection of a pre-provenance row, and the fence that aborts
+  a swap whose identity its kind cannot have.
+  `apps/api/test-workers/resource-version-capture.test.ts` proves the same
+  capture on real workerd, where the triggers actually run.
+- `apps/api/test/resource-slug.test.ts` covers allocate-once, collision retry,
+  the backfill's progress count and its per-row isolation, and the creation path
+  that survives a failed allocation.
+  `apps/api/test/workspace-schedule-targets.test.ts` proves the maintenance arm
+  is scheduled for a table the alarm does not otherwise watch.
+- `apps/api/test/activity-watch-routing.test.ts` proves a watch-routed
+  notification names the stale resource in both the text a participant reads and
+  the structured content a surface could read.
 - `apps/desktop/src/renderer/components/inspector-rail.test.tsx` covers the
-  rail's half of the processing contract: a `resource_processing` rejection is
-  re-read only once the delay the response carried has elapsed, an answer that
-  never stops saying `processing` is given up on once the budget would be
-  overspent and not re-read afterwards, a processing answer naming no delay or a
-  zero delay stays terminal, a rejection carrying any other code stays terminal
-  *even when it names a `retryAfterMs`*, and a pending wait is dropped when the
-  panel unmounts or its resource is revised. The delay is pinned to the exact
-  millisecond the response named, under fake timers, so a rail waiting on any
-  other cadence fails; and the budget is asserted against the two contract
-  constants rather than a literal, so it fails the day either moves without the
-  client following.
+  version list's author labels, the current badge, which rows are openable, and
+  the error the list renders rather than hides. It also covers the rail's half
+  of the processing contract: a `resource_processing` rejection is re-read only
+  once the delay the response carried has elapsed, an answer that never stops
+  saying `processing` is given up on once the budget would be overspent and not
+  re-read afterwards, a processing answer naming no delay or a zero delay stays
+  terminal, a rejection carrying any other code stays terminal *even when it
+  names a `retryAfterMs`*, and a pending wait is dropped when the panel unmounts
+  or its resource is revised. The delay is pinned to the exact millisecond the
+  response named, under fake timers, and the budget is asserted against the two
+  contract constants rather than a literal;
+  `apps/desktop/src/renderer/lib/use-citations.test.tsx` proves a citation
+  resolves by alias as well as by id.
 - `apps/api/test-workers/participant-notification.test.ts` proves a real object
   snapshot hydrates message-local attachment descriptors from the durable part
   relationship; `apps/desktop/src/renderer/lib/transcript.test.ts` proves those
@@ -466,7 +485,25 @@ bounded error code, fenced claim ID/time, and the current semantic version.
 WorkspaceDO `resource_versions` owns numbered snapshots and every historical
 original/model R2 ref. `GET /resources/:id/versions` lists them; the version and
 its original or model content remain addressable through the corresponding
-version endpoints after current content advances.
+version endpoints after current content advances. Each snapshot also carries
+provenance — an author kind (`agent`, `member`, `connector`, `system`) with the
+one identity that kind can have, and a cause (`created`, `published`,
+`refetched`, `replaced`) — plus a `storage_kind` naming what its refs point at.
+Provenance is staged on the resource row (`revision_author_*`, `revision_cause`)
+and copied into the version by the capture trigger, so a swap and the
+attribution of that swap are one statement. History captured before provenance
+existed reports no author rather than an invented one, and an insert whose
+identity does not match its kind is refused outright.
+
+Each resource also carries a `slug`: a short alias minted by the work-stream
+address generator over the resource's own coordinates, unique per workspace
+under a partial index, with a regenerate-on-conflict allocator. It appears in
+model-facing listings beside the UUID, which remains the primary key in every
+internal reference, storage key, receipt, and tool argument. A resource that
+predates the column, or whose creation path could not finish its allocation,
+has `slug IS NULL` — the durable record that the `resource_slugs` maintenance
+pass reads.
+
 WorkspaceDO `resource_object_deletion_outbox` owns failed, superseded, and deleted regional
 objects until bounded cleanup succeeds.
 SubstreamAgent `attachment_tool_receipts` maps completed read, search, view, and summary
@@ -503,6 +540,14 @@ The shared session secret is not used directly as a cursor MAC key: a fixed
 purpose-separation derivation produces the attachment-cursor signing key. Cursor
 payloads contain identifiers and offsets, never credentials, file contents, or
 resource bytes.
+
+The alias allocator derives its key the same way and for the same reason: a
+fixed `resource-slug:` prefix over the shared session secret, hashed once per
+call rather than per candidate. The separation is what keeps a resource's alias
+independent of the work-stream email address the same generator would mint from
+the same coordinates — neither reveals the other. It is not secrecy for the
+alias itself, which is shown to participants and handed to the model by design;
+an alias is a label, and nothing resolves a resource by one.
 
 ## Operations
 
@@ -588,6 +633,45 @@ are already final, which is what the narrow check in `processingRetryDelayMs`
 exists to prevent. The rail's own half of this — how the wait is rendered and
 where the loop lives — is in
 [`markdown-rendering.md`](markdown-rendering.md).
+
+### 2026-08-28 — Versions say who moved the pointers, and the rail shows them
+
+**What changed:** Version rows gained provenance (author kind, its matching
+identity, a cause) and a `storage_kind`, staged on the resource row so capture
+carries them; resources gained a short `slug` alias for model-facing listings;
+the right rail's resource detail lists a resource's versions and opens a prior
+one read-only; re-fetch is offered only when the server reports that the
+resource's deployed connector implements hydration; and a watch-routed change
+notification names the resources it matched — in the text a participant reads
+and in the message's structured content — so the re-fetch it invites can be
+asked for.
+
+**Why:** History that cannot say who wrote a state is half a record — "what did
+we read last Tuesday" has an answer, "who changed it" did not. The alias is the
+other half of the same argument from the model's side: a UUID costs about
+thirteen tokens every time one is mentioned and is easy to copy wrong, which
+the citations work does constantly. And history had been accumulating
+invisibly since capture landed, which was harmless only for as long as nobody
+needed to read it.
+
+**Considered and rejected:** Passing provenance to capture rather than staging
+it on the row — capture is a trigger, so the alternative is a second statement
+that a crash can separate from the swap it describes. A `CHECK` on
+`storage_kind` — SQLite cannot alter one on a STRICT table, so the constraint
+would charge a table rebuild for the future editor snapshot the column exists
+to admit. Replacing the primary key with the alias — a cross-cutting identity
+migration for a benefit the alias delivers beside the UUID. Re-fetching
+automatically when a watch fires — synchronization by another name, spending
+provider quota on changes nobody asked about. Inferring manual re-fetch support
+from watch state — watching for changes and retrieving content are independent
+adapter capabilities.
+
+**Consequences:** Every swap site sets provenance in the same statement as its
+swap, and a mismatched identity aborts the swap rather than storing a wrong
+attribution the rail would render as fact. A resource with one version shows no
+history section. Agent-decided re-fetch still has no path: `hydrate` is
+reachable only from its endpoint and a tool for it is a separate decision, so
+the loop closes today through the participant.
 
 ### 2026-08-27 — Message attachments use the canonical transcript relationship
 

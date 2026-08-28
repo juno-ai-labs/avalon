@@ -165,11 +165,18 @@ export interface Participant extends WorkspaceMember {
 
 export interface WorkstreamResource {
   id: string;
+  /**
+   * The short alias the model reads in its tool results, or null before one is
+   * allocated. Citations may name a resource by it; everything else — the
+   * rail's detail, every tool argument — uses `id`.
+   */
+  slug?: string | null;
   title: string;
   resourceType: string;
   provider?: string;
   mimeType?: string;
   canonicalUrl?: string;
+  refreshSupported: boolean;
   watchEnabled: boolean;
   watchStatus: 'watching' | 'paused' | 'unsupported' | 'error';
   updatedAt?: string;
@@ -178,6 +185,26 @@ export interface WorkstreamResource {
   currentVersion: number;
   relationshipType: ResourceRelationshipType;
   direction: ResourceDirection;
+}
+
+/**
+ * Who moved a resource's content into the state a version holds.
+ *
+ * Null where the version predates provenance or its producer records none;
+ * the rail says a version is unattributed rather than naming someone.
+ */
+export type { ResourceVersionAuthor, ResourceVersionCause } from '@rally/contracts';
+import type { ResourceVersionAuthor, ResourceVersionCause } from '@rally/contracts';
+
+export interface ResourceVersion {
+  version: number;
+  capturedAt: string;
+  author: ResourceVersionAuthor | null;
+  cause: ResourceVersionCause | null;
+  contentAvailable: boolean;
+  /** The title and type this version held, which a later one may have changed. */
+  title: string;
+  mimeType: string | null;
 }
 
 export interface MessageAttachment {

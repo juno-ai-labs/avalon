@@ -172,6 +172,34 @@ describe("the expired-drafts due time", () => {
   });
 });
 
+describe("the resource-alias backfill", () => {
+  it("is due for the oldest unnamed resource, and stops being due once every one is named", async () => {
+    const database = workspaceObjectDatabase();
+    const seed = (id: string, createdAt: string): void => {
+      database.prepare(
+        `INSERT INTO resources
+           (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
+         VALUES (?, ?, 'document', 'notion', 'Spec', '{}', ?, ?)`,
+      ).run(id, WORKSPACE_ID, createdAt, createdAt);
+    };
+    seed("00000000-0000-7000-8000-0000000000e1", "2026-01-01T00:00:00.000Z");
+    seed("00000000-0000-7000-8000-0000000000e2", "2026-02-01T00:00:00.000Z");
+
+    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "resource_slugs"))
+      .toEqual([{ kind: "maintenance", id: "resource_slugs", dueAt: "2026-01-01T00:00:00.000Z" }]);
+
+    await expect(runMaintenance(database, "resource_slugs")).resolves.toEqual({ progressed: true });
+
+    // Nothing left to name, so the entry drops out rather than re-deriving the
+    // same instant and being held as a stall.
+    expect(maintenance(await workspaceScheduleTargets(scheduleContext(database)), "resource_slugs"))
+      .toEqual([]);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM resources WHERE slug IS NULL",
+    ).get()).toEqual({ count: 0 });
+  });
+});
+
 describe("the Slack unfurl sweep's due time", () => {
   it("counts only links the sweep will load, so a disabled connection cannot pin the pass", async () => {
     // The sweep loads a link through a connection that is not disabled. A link

@@ -36,16 +36,27 @@ export function useCitations({ resources }: {
   const inspect = useUiStore((state) => state.inspect);
   const openRail = useUiStore((state) => state.openRail);
 
+  /**
+   * Both spellings of a resource's identity, mapped to the one resource.
+   *
+   * `list_resources` hands the model a UUID *and* a short alias, and the
+   * citation grammar accepts either — so the alias is what a model writes once
+   * it has seen one. Indexing only the UUID would drop those chips silently,
+   * which is the degradation this feature exists to avoid rather than a
+   * degradation it can lean on.
+   */
   const local = useMemo(() => {
-    const byId = new Map<string, CitationResource>();
+    const byToken = new Map<string, CitationResource>();
     for (const resource of resources) {
-      byId.set(resource.id, { id: resource.id, resourceType: resource.resourceType, title: resource.title });
+      const citation = { id: resource.id, resourceType: resource.resourceType, title: resource.title };
+      byToken.set(resource.id, citation);
+      if (resource.slug) byToken.set(resource.slug, citation);
     }
-    return byId;
+    return byToken;
   }, [resources]);
 
   const resolve = useCallback(
-    (resourceId: string): CitationResource | undefined => local.get(resourceId),
+    (token: string): CitationResource | undefined => local.get(token),
     [local],
   );
 
@@ -57,11 +68,17 @@ export function useCitations({ resources }: {
     // An identity names somebody, not something openable, and an unknown target
     // names nothing — neither navigates, in any position.
     if (target.scheme !== 'resource') return;
+    // Through the resolver rather than straight from the citation: the rail's
+    // detail is keyed by the resource's own id, and a citation may name it by
+    // its alias instead. An unresolved target opens nothing — the renderer
+    // already leaves it as label text, and this is the same answer.
+    const resource = local.get(target.resourceId);
+    if (!resource) return;
     // The order is the contract. `openRail` clears the inspector deliberately,
     // so selecting the resource first would leave the rail showing its list.
     openRail('context');
-    inspect({ type: 'resource', id: target.resourceId });
-  }, [inspect, openRail]);
+    inspect({ type: 'resource', id: resource.id });
+  }, [inspect, local, openRail]);
 
   return useMemo(() => ({ open, resolve }), [open, resolve]);
 }

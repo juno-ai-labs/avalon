@@ -3,7 +3,14 @@ import { truncateUtf16Safe } from "../lib/text";
 import { logWarn } from "../observability/logger";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 
-const MAXIMUM_CLEANUP_BATCH = 100;
+/**
+ * How many rows one workspace maintenance pass over resources takes.
+ *
+ * Exported because the alias backfill is the same alarm doing the same kind of
+ * bounded work over the same table; two literals would be two decisions
+ * nobody had made.
+ */
+export const MAXIMUM_CLEANUP_BATCH = 100;
 const DRAFT_ATTACHMENT_TTL_HOURS = 24;
 
 interface PendingResourceObject {

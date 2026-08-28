@@ -129,6 +129,7 @@ const message = {
 
 const resource = {
   id: resourceId,
+  slug: 'luminous-tidal-structured-curie',
   workspaceId,
   connectionId,
   resourceType: 'document',
@@ -137,6 +138,7 @@ const resource = {
   title: 'Launch brief',
   mimeType: 'application/pdf',
   canonicalUrl: 'https://drive.google.com/file/d/drive-1',
+  refreshSupported: true,
   watchEnabled: false,
   watchStatus: 'unsupported' as const,
   lastHydratedAt: null,
@@ -388,6 +390,7 @@ describe('Rally API wire adapter', () => {
     });
     expect(mapResource(resource)).toMatchObject({
       id: resourceId,
+      refreshSupported: true,
       watchEnabled: false,
       watchStatus: 'unsupported',
     });

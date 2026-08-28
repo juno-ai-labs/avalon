@@ -11,6 +11,7 @@ const DECK: WorkstreamResource = {
   id: 'board-deck',
   title: 'Q3 board deck',
   resourceType: 'document',
+  refreshSupported: false,
   watchEnabled: false,
   watchStatus: 'unsupported',
   currentVersion: 1,
@@ -32,6 +33,27 @@ describe('useCitations', () => {
       title: 'Q3 board deck',
       resourceType: 'document',
     });
+  });
+
+  it('resolves the alias the model actually reads, and opens the resource it names', () => {
+    // `list_resources` hands the model both the UUID and the short alias, and
+    // the citation grammar accepts either spelling — so the alias is what a
+    // model writes when it writes one. Resolving only the UUID would drop the
+    // chip silently and leave bare label text where a citation was meant.
+    const aliased = { ...DECK, slug: 'amber-crisp-lucid-lantern' };
+    const { result } = renderHook(() => useCitations({ resources: [aliased] }));
+
+    expect(result.current.resolve('amber-crisp-lucid-lantern')).toEqual({
+      id: 'board-deck',
+      title: 'Q3 board deck',
+      resourceType: 'document',
+    });
+
+    act(() => { result.current.open({ scheme: 'resource', resourceId: 'amber-crisp-lucid-lantern' }); });
+
+    // The rail resolves its detail by the resource's own id, so a citation
+    // written with the alias has to arrive there as the id it stands for.
+    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'board-deck' });
   });
 
   it('resolves nothing for a resource outside the loaded work stream', () => {
