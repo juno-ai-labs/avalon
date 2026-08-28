@@ -1387,6 +1387,21 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
            FROM resources WHERE id = NEW.id;
        END`,
   ],
+}, {
+  version: 19,
+  description: "give every resource a short token-friendly alias beside its UUID",
+  statements: [
+    // Nothing in SQL can mint one — the generator is an HMAC over the
+    // resource's coordinates — so existing rows start without an alias and a
+    // bounded maintenance pass fills them in. Null is not a placeholder here:
+    // a resource without an alias is addressed by UUID, which every internal
+    // reference, storage key, and receipt uses regardless.
+    `ALTER TABLE resources ADD COLUMN slug TEXT`,
+    // Partial, so the rows still waiting on the pass do not collide with each
+    // other. The object is one workspace, so unique here is unique per
+    // workspace; a collision costs the allocator one more attempt.
+    `CREATE UNIQUE INDEX resources_slug_idx ON resources(slug) WHERE slug IS NOT NULL`,
+  ],
 }];
 
 function json(body: unknown, status = 200): Response {

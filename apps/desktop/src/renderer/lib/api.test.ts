@@ -129,6 +129,7 @@ const message = {
 
 const resource = {
   id: resourceId,
+  slug: 'luminous-tidal-structured-curie',
   workspaceId,
   connectionId,
   resourceType: 'document',

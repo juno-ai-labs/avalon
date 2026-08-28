@@ -7,7 +7,7 @@ import { reapDeletedResourceObjects } from '../src/services/resource-object-clea
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from '../src/services/attachment-derivative-service';
 import { sha256Hex } from '../src/lib/crypto';
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
-import { applyWorkspaceResourceVersioning } from "./helpers/workspace-object-tables";
+import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
 const userId = asUserId('00000000-0000-7000-8000-000000000002');
@@ -312,7 +312,7 @@ function attachmentDatabase(): DatabaseSync {
   // Version capture is WorkspaceDO's, and a hydrate or upload here is a write
   // that capture observes — so the history side comes from the object's own
   // ledger rather than from a stub that could not record anything.
-  applyWorkspaceResourceVersioning(database, workspaceId);
+  applyWorkspaceResourceSchema(database, workspaceId);
   return database;
 }
 
