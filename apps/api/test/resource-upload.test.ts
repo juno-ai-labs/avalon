@@ -7,6 +7,7 @@ import { reapDeletedResourceObjects } from '../src/services/resource-object-clea
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from '../src/services/attachment-derivative-service';
 import { sha256Hex } from '../src/lib/crypto';
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { applyWorkspaceResourceVersioning } from "./helpers/workspace-object-tables";
 
 const workspaceId = asWorkspaceId('00000000-0000-7000-8000-000000000001');
 const userId = asUserId('00000000-0000-7000-8000-000000000002');
@@ -236,6 +237,7 @@ describe('uploaded attachment drafts', () => {
 
 function attachmentDatabase(): DatabaseSync {
   const database = new DatabaseSync(':memory:');
+  database.exec('PRAGMA foreign_keys = ON');
   database.exec(`
     CREATE TABLE connector_connections (
       id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connector_type TEXT NOT NULL,
@@ -256,9 +258,6 @@ function attachmentDatabase(): DatabaseSync {
       metadata_json TEXT NOT NULL DEFAULT '{}', last_hydrated_at TEXT,
       uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL DEFAULT 'attached',
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-    );
-    CREATE TABLE resource_versions (
-      resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, content_ref TEXT, model_content_ref TEXT
     );
     CREATE TABLE automation_subscriptions (id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_user_id TEXT);
     CREATE TABLE workstreams (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, automation_subscription_id TEXT);
@@ -310,6 +309,10 @@ function attachmentDatabase(): DatabaseSync {
       WHERE OLD.model_content_ref IS NOT NULL AND OLD.model_content_ref IS NOT NEW.model_content_ref;
     END;
   `);
+  // Version capture is WorkspaceDO's, and a hydrate or upload here is a write
+  // that capture observes — so the history side comes from the object's own
+  // ledger rather than from a stub that could not record anything.
+  applyWorkspaceResourceVersioning(database, workspaceId);
   return database;
 }
 

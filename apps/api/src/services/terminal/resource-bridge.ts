@@ -125,6 +125,7 @@ async function swapPublishedContent(input: {
   attachmentKind: string;
   contentMode: string;
   derivativeStatus: string;
+  harnessRunId: string;
 }): Promise<PublishedRow> {
   const { workspace, env, workspaceId, existing, bytes, digest } = input;
   const timestamp = nowIso();
@@ -166,7 +167,10 @@ async function swapPublishedContent(input: {
               model_metadata_json = NULL, model_content_status = ?,
               model_content_extractor_version = NULL, model_content_character_count = NULL,
               model_content_extracted_at = NULL, model_content_claimed_at = NULL,
-              model_content_claim_id = NULL, model_content_error_code = NULL
+              model_content_claim_id = NULL, model_content_error_code = NULL,
+              revision_author_kind = 'agent', revision_author_run_id = ?,
+              revision_author_user_id = NULL, revision_author_connection_id = NULL,
+              revision_cause = 'published'
         WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?
       RETURNING id, title, mime_type, content_ref, content_sha256, metadata_json,
                 model_content_status, created_at`,
@@ -178,6 +182,7 @@ async function swapPublishedContent(input: {
       metadata,
       timestamp,
       input.derivativeStatus,
+      input.harnessRunId,
       existing.id,
       workspaceId,
       existing.content_ref,
@@ -499,6 +504,7 @@ export function createTerminalResourceBridge(
           attachmentKind,
           contentMode,
           derivativeStatus,
+          harnessRunId: context.harnessRunId,
         });
         await relink();
         return publishedOutput(updated, bytes.byteLength);
@@ -529,8 +535,10 @@ export function createTerminalResourceBridge(
             `INSERT INTO resources
              (id, workspace_id, resource_type, provider, provider_resource_id, title, mime_type,
               content_ref, content_sha256, metadata_json, last_hydrated_at, uploaded_by_user_id,
-              attachment_status, model_content_status, created_at, updated_at)
-             VALUES (?, ?, 'generated_file', 'avalon_generated', ?, ?, ?, ?, ?, ?, ?, ?, 'attached', ?, ?, ?)`,
+              attachment_status, model_content_status, created_at, updated_at,
+              revision_author_kind, revision_author_run_id, revision_cause)
+             VALUES (?, ?, 'generated_file', 'avalon_generated', ?, ?, ?, ?, ?, ?, ?, ?, 'attached', ?, ?, ?,
+                     'agent', ?, 'created')`,
           ).bind(
             resourceId,
             context.workspaceId,
@@ -545,6 +553,7 @@ export function createTerminalResourceBridge(
             derivativeStatus,
             timestamp,
             timestamp,
+            context.harnessRunId,
           ).run();
         await attachResource({
           workspaceId: context.workspaceId,
