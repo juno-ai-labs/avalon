@@ -160,7 +160,10 @@ export function markdownToEmailText(markdown: string): string {
  * anything.
  */
 export function markdownToEmailPreheader(markdown: string, limit = 160): string {
-  const plain = normalizeModelText(rewriteCitationsAsPlainText(markdown))
+  // Reduced, but with no source list: this is the 160 characters an inbox shows
+  // beside the subject, and appending the bibliography before truncating spent
+  // them on `Sources 1. Q3 board deck` for any answer short enough to reach it.
+  const plain = normalizeModelText(rewriteCitationsAsPlainText(markdown, { sources: "none" }))
     .replace(/\r\n/gu, "\n")
     .replace(/^\s{0,3}(?:```|~~~).*$/gmu, " ")
     .replace(/^\s{0,3}(?:[-*_]\s*){3,}$/gmu, " ")

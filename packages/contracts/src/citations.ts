@@ -49,7 +49,11 @@ export type CitationTarget =
  */
 const CITATION_ID = /^[A-Za-z0-9_-]+$/u;
 
-const RESOURCE_SCHEME = /^resource:(?:\/\/)?/u;
+// Case-insensitive, like every other scheme test in this module. A model that
+// writes `Resource://abc` is emptied by the desktop's URL transform and so
+// never leaks there — but the reduction read it as an unknown scheme and left
+// it alone, which put the raw target in an inbox.
+const RESOURCE_SCHEME = /^resource:(?:\/\/)?/iu;
 
 /**
  * Which scheme a link target names — the allowlist that decides navigation.
@@ -66,7 +70,7 @@ export function parseCitationHref(href: string | undefined): CitationTarget {
   if (href === undefined) return { scheme: "unknown" };
   if (/^https?:\/\//iu.test(href)) return { scheme: "external", url: href };
   if (/^person:/iu.test(href)) return { scheme: "person" };
-  if (/^connector:/u.test(href)) return { scheme: "connector" };
+  if (/^connector:/iu.test(href)) return { scheme: "connector" };
   if (!RESOURCE_SCHEME.test(href)) return { scheme: "unknown" };
   // Stripped before the alphabet test, not after, so the test sees only the
   // opaque segment: `resource://abc?v=3` is a citation of `abc`, while
@@ -98,7 +102,7 @@ export function citationScheme(href: string | undefined): CitationScheme {
   if (href === undefined) return "unknown";
   if (/^https?:\/\//iu.test(href)) return "external";
   if (/^person:/iu.test(href)) return "person";
-  if (/^connector:/u.test(href)) return "connector";
+  if (/^connector:/iu.test(href)) return "connector";
   return RESOURCE_SCHEME.test(href) ? "resource" : "unknown";
 }
 
@@ -276,7 +280,22 @@ function asCitation(content: string): FootnoteCitation | null {
  * The transcript copy of the same answer keeps its citations. Only what leaves
  * Rally is rewritten.
  */
-export function rewriteCitationsAsPlainText(markdown: string): string {
+export interface CitationRewriteOptions {
+  /**
+   * How the trailing source list is written, and whether there is one at all.
+   *
+   * The default, `markdown`, is for a caller that hands its output to a Markdown
+   * renderer — outbound email and Slack's `markdown` block. `plain` is for one
+   * that does not: Slack's `text` field is mrkdwn, which has no `**bold**` and
+   * no `[label](url)`, so the Markdown form arrives there as literal syntax —
+   * a different leak from the one the reduction was added to close, not none.
+   * `none` reduces the body and appends nothing, for a caller with no room for
+   * a bibliography: a one-line mention excerpt, an inbox preheader.
+   */
+  readonly sources?: "markdown" | "plain" | "none";
+}
+
+export function rewriteCitationsAsPlainText(markdown: string, options: CitationRewriteOptions = {}): string {
   const { citations, definitions, referenced } = citationFootnotes(markdown);
   // GFM's own numbering contract: a number is earned by being *referenced*, in
   // the order of first reference, and only by an identifier something defines.
@@ -318,17 +337,31 @@ export function rewriteCitationsAsPlainText(markdown: string): string {
       return number === undefined ? match : `[${number}]`;
     }));
 
-  if (numbers.size === 0) return rewritten;
+  // `none` still reduces the body — the markers and the label text are the
+  // point — and simply has nowhere to put a list. The body is returned as it
+  // stands, trailing whitespace included, exactly as an uncited one is.
+  if (numbers.size === 0 || options.sources === "none") return rewritten;
+  const plain = options.sources === "plain";
   const body = rewritten.replace(/\s+$/u, "");
   const sources = [...numbers].map(([identifier, number]) => {
     const citation = citations.get(identifier);
-    if (!citation) return `${number}. ${plainInline(definitions.get(identifier) ?? "")}`;
-    const source = citation.target.scheme === "external"
-      ? `[${citation.label}](${citation.target.url})`
-      : citation.label;
+    if (!citation) return `${number}. ${plainInline(definitions.get(identifier) ?? "", plain)}`;
+    const source = sourceLine(citation.label, citation.target, plain);
     return `${number}. ${source}${citation.text ? ` ${citation.text}` : ""}`;
   });
-  return `${body}\n\n**Sources**\n\n${sources.join("\n")}`;
+  return `${body}\n\n${plain ? "Sources" : "**Sources**"}\n\n${sources.join("\n")}`;
+}
+
+/**
+ * One source, named so a reader can follow it on the surface it lands on.
+ *
+ * An external source has to carry its URL — it is the only way a reader outside
+ * Rally reaches it — and the two shapes below are the same fact written for a
+ * renderer that reads Markdown links and one that does not.
+ */
+function sourceLine(label: string, target: CitationTarget, plain: boolean): string {
+  if (target.scheme !== "external") return label;
+  return plain ? `${label} — ${target.url}` : `[${label}](${target.url})`;
 }
 
 /** The definitions themselves, now that their content lives in the source list. */
@@ -363,10 +396,13 @@ function stripFootnoteDefinitions(markdown: string): string {
 }
 
 /** A footnote's own words, with the marks a plain list would show verbatim removed. */
-function plainInline(content: string): string {
+function plainInline(content: string, plain: boolean): string {
   return content
-    .replace(INLINE_LINK, (match, label: string, href: string) =>
-      (parseCitationHref(href).scheme === "external" ? match : label))
+    .replace(INLINE_LINK, (match, label: string, href: string) => {
+      const target = parseCitationHref(href);
+      if (target.scheme !== "external") return label;
+      return plain ? sourceLine(label, target, true) : match;
+    })
     .trim();
 }
 

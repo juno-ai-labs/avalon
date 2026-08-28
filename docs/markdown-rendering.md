@@ -267,6 +267,16 @@ cannot be written this way is a sign it is not a typography override.
   the transcript that is the pill's popover, which is why the trailing list can
   go; in a still it is the list, because a picture cannot be hovered. A surface
   that has neither is a surface where the sources were lost.
+- **A footnote identifier is keyed as GFM keys it, percent-encoding included.**
+  GFM writes the DOM id as `normalizeUri(id.toLowerCase())`, so `[^café]`
+  arrives as `fn-caf%C3%A9`. The renderer undoes the escape rather than assuming
+  every identifier a model writes is ASCII.
+- **Every divergence between this grammar and remark-gfm degrades toward showing
+  too much.** A definition this module does not recognise keeps classic GFM
+  rendering; a footnote section it recognised nothing in still renders. The one
+  case that degraded the other way — an empty map satisfying the section guard's
+  equality vacuously — is now guarded, because a redundant source list is a
+  blemish and a missing one is content loss.
 
 ## Boundary
 
@@ -326,6 +336,15 @@ the first card anyone looks at. [`message-export.md`](message-export.md) owns
 that stylesheet and the reasoning behind not deriving it from this one.
 
 ## Failure modes and limits
+
+**The footnote reference scan reads indented code blocks as prose.** It skips
+fenced blocks and inline spans, and the delivery rewrite skips exactly the same
+two, so the transcript and the delivered copy agree — but GFM does not read a
+four-space-indented block as prose at all. A `[^1]` inside one is counted here
+and numbered, where GFM shows it verbatim. It misnumbers rather than deletes,
+and an indented code block is rare in model output beside a fenced one, so it is
+named rather than fixed; the fix is for whoever shares one code splitter across
+the three passes.
 
 - **A language Prism does not know** renders as `plain`. No error, no missing
   block.
@@ -392,6 +411,29 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-28 — A citation keys on the id GFM wrote, and a section is never deleted blind
+
+**What changed:** The renderer derives a footnote identifier by undoing GFM's
+percent-encoding before it looks one up, and the trailing section's guard gained
+a `numbers.size > 0` term. `resource:` and `connector:` scheme tests are now
+case-insensitive, like `person:` and `https:` already were.
+
+**Why:** GFM writes `${clobberPrefix}fn-${normalizeUri(id.toLowerCase())}` and
+this module keyed by the plain text, so the two agreed only while every
+identifier stayed ASCII. `[^café]` and `[^100%]` are ordinary model output — the
+guidance teaches numeric identifiers without constraining them — and the
+disagreement did not merely lose the pill: the reference fell through to a
+classic anchor while the section guard, reading the unencoded keys that *did*
+match each other, dropped the whole footnote section. The source left the
+message. That is the same content loss the saved-card fix closed, still open in
+the transcript, and it is why the guard now refuses to fire on an empty map at
+all: the next divergence should cost a redundant list, not a vanished one.
+
+**What a future change has to respect:** The identifier in the DOM and the
+identifier in the grammar are two spellings of one thing, and remark-gfm owns
+the transform between them. A change that reads an id out of the DOM without
+undoing that transform reintroduces this exact bug in whatever it reads.
 
 ### 2026-08-28 — A saved card keeps its sources, and the grammar reads what GFM reads
 

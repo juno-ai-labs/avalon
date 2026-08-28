@@ -329,10 +329,32 @@ const FOOTNOTE_CELLS: Matrix<FootnoteArgs> = {
   unknown: (args) => <sup>{args.number}</sup>,
 };
 
-/** `#<prefix>fn-<identifier>` — the target GFM gives a footnote reference. */
-function footnoteIdentifier(href: string | undefined, prefix: string): string | undefined {
-  const marker = `#${prefix}fn-`;
-  return href?.startsWith(marker) ? href.slice(marker.length) : undefined;
+/**
+ * The identifier behind `<prefix>fn-<id>`, keyed the way this module keys one.
+ *
+ * GFM does not write the identifier into the DOM verbatim: it writes
+ * `normalizeUri(id.toLowerCase())`, which percent-encodes anything a URI cannot
+ * carry — every non-ASCII character, and `%`, `` ` ``, `"`, `<`, `>`, `\`, `{`,
+ * `}`, `|`, `^`. The grammar keys by the plain text, so without undoing the
+ * escape here the two agree only for as long as every identifier a model writes
+ * happens to be ASCII. `[^café]` and `[^100%]` are not, and both are ordinary
+ * output: the guidance teaches numeric identifiers without constraining them.
+ *
+ * The cost of the disagreement was not a missing pill. The reference fell
+ * through to a classic anchor while the section guard — reading the *unencoded*
+ * keys, which did match each other — dropped the whole footnote section, so the
+ * source left the message entirely.
+ */
+function footnoteIdentifier(value: string | undefined, marker: string): string | undefined {
+  if (value === undefined || !value.startsWith(marker)) return undefined;
+  const encoded = value.slice(marker.length);
+  try {
+    return decodeURIComponent(encoded).toLowerCase();
+  } catch {
+    // A model writes footnote identifiers, so a malformed escape is reachable
+    // input: it is simply not an identifier this message defines.
+    return encoded.toLowerCase();
+  }
 }
 
 /**
@@ -352,7 +374,7 @@ export function CitationLink({ anchor, children, footnoteRef, href, identity }: 
 }): React.JSX.Element {
   const render = useCitationRender();
   if (footnoteRef) {
-    const identifier = footnoteIdentifier(href, render.prefix);
+    const identifier = footnoteIdentifier(href, `#${render.prefix}fn-`);
     const citation = identifier === undefined ? undefined : render.footnotes.get(identifier);
     if (citation) {
       const cell = FOOTNOTE_CELLS[citation.target.scheme];
@@ -403,7 +425,13 @@ export function CitationFootnoteSection({ children, section }: {
   const render = useCitationRender();
   if (render.still) return <section {...section}>{children}</section>;
   const lifted = [...render.numbers.keys()].filter((identifier) => render.footnotes.has(identifier));
-  if (lifted.length === render.numbers.size) return null;
+  // `numbers.size > 0` is the fail-safe half, and it is about the future rather
+  // than about any footnote today: an empty map means this module recognised
+  // nothing in a section GFM did build, and without the guard that equality
+  // holds vacuously and deletes it. Every other divergence between this grammar
+  // and remark-gfm degrades toward showing too much; this one degraded toward
+  // showing nothing, which is the one direction a source must never go.
+  if (render.numbers.size > 0 && lifted.length === render.numbers.size) return null;
   return <section {...section}>{children}</section>;
 }
 
@@ -421,8 +449,7 @@ export function CitationFootnoteItem({ children, item }: {
   item: React.ComponentPropsWithoutRef<'li'>;
 }): React.JSX.Element | null {
   const render = useCitationRender();
-  const marker = `${render.prefix}fn-`;
-  const identifier = item.id?.startsWith(marker) ? item.id.slice(marker.length) : undefined;
+  const identifier = footnoteIdentifier(item.id, `${render.prefix}fn-`);
   if (identifier === undefined) return <li {...item}>{children}</li>;
   if (render.footnotes.has(identifier) && !render.still) return null;
   return <li {...item} value={render.numbers.get(identifier)}>{children}</li>;

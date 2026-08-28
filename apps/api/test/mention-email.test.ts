@@ -124,7 +124,12 @@ describe("work-stream mention email", () => {
 
   it("reduces a citation, which a mail client shows verbatim just like a mention", async () => {
     const resend = successfulResend();
-    const messageText = "Revenue grew 40%.[^1] See [the deck](resource://board-deck).\n\n[^1]: [Q3 deck](resource://board-deck)";
+    // The external source is the part that matters: the excerpt is HTML-escaped
+    // into a table cell and quoted into the plain-text body, so a Markdown
+    // source list would arrive as literal `**Sources**` and a literal bracketed
+    // link. A fixture whose only source is internal reduces to a bare title and
+    // never shows that.
+    const messageText = "Revenue grew 40%.[^1] See [the deck](resource://board-deck).\n\n[^1]: [The memo](https://example.com/memo)";
 
     await sendWorkstreamMentionEmail(environment(), { ...input, messageText }, resend);
 
@@ -133,6 +138,11 @@ describe("work-stream mention email", () => {
     expect(text).not.toContain("resource:");
     expect(text).not.toContain("[^1]");
     expect(text).toContain("See the deck.");
+    // A "you were mentioned" excerpt is one line and quotes the sentence, not
+    // the bibliography — which would compete with its length budget and be
+    // truncated mid-entry on anything long.
+    expect(text).not.toContain("Sources");
+    expect(text).not.toContain("](https://example.com/memo)");
   });
 
   it("never sends email outside production", async () => {

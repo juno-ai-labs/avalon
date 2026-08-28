@@ -380,21 +380,21 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
   resource: WorkstreamResource;
 }): React.JSX.Element | null {
-  const [state, setState] = useState<{ id: string; text?: string; failed?: boolean }>({ id: resource.id });
+  const [state, setState] = useState<{ text?: string; failed?: boolean }>({});
 
   useEffect(() => {
     const controller = new AbortController();
-    setState({ id: resource.id });
+    setState({});
     void loadResourceContent(resource.id, controller.signal)
       .then((blob) => blob.text())
       .then((text) => {
-        if (!controller.signal.aborted) setState({ id: resource.id, text });
+        if (!controller.signal.aborted) setState({ text });
       })
       .catch(() => {
         // A resource whose content was never hydrated, or whose object has since
         // gone, is not an error the reader can act on — the metadata above is
         // still true, and saying so beats an empty panel.
-        if (!controller.signal.aborted) setState({ failed: true, id: resource.id });
+        if (!controller.signal.aborted) setState({ failed: true });
       });
     return () => controller.abort();
   }, [loadResourceContent, resource.id]);

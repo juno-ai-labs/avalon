@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import type { CitationTarget } from '@rally/contracts/citations';
 import { describe, expect, it, vi } from 'vitest';
+import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
 import type { CitationContext, CitationResource } from './markdown-citations';
 import { MarkdownBody } from './workstream-blocks';
 
@@ -199,6 +200,42 @@ describe('footnote citations', () => {
     expect(list).not.toBeNull();
     expect(list).toHaveTextContent('Q3 board deck');
     expect(list).toHaveTextContent('Margin memo');
+  });
+
+  it('keeps a pill and its source when GFM percent-encodes the identifier', () => {
+    // GFM writes the DOM id as `normalizeUri(id.toLowerCase())`, so a non-ASCII
+    // identifier reaches the renderer escaped. Keying by the plain text lost
+    // the pill *and* — because the section guard read the unencoded keys, which
+    // still matched — the whole footnote section, so the source left the
+    // message. Both `[^café]` and `[^100%]` are ordinary model output.
+    render(
+      <MarkdownBody citations={context()}>
+        {'Revenue grew 40%.[^café] Margin held.[^100%]\n\n[^café]: [Q3 board deck](resource://board-deck)\n[^100%]: [Margin memo](https://example.com/memo)\n'}
+      </MarkdownBody>,
+    );
+
+    expect([...document.querySelectorAll('.citation-pill')].map((pill) => pill.textContent)).toEqual(['1', '2']);
+    expect(screen.getByRole('button', { name: /Q3 board deck/u })).toBeInTheDocument();
+  });
+
+  it('leaves a footnote section it recognised nothing in alone', () => {
+    // Driven through the provider rather than through markdown, because the
+    // state this guards is one no input produces *today*: an empty `numbers`
+    // beneath a section GFM did build, which is what any future divergence
+    // between this grammar and remark-gfm would look like. The guard is an
+    // equality, and an empty map satisfies it vacuously — so without the size
+    // check that divergence deletes the section instead of leaving a redundant
+    // one. Every other degradation here errs toward showing too much; this one
+    // has to as well.
+    render(
+      <CitationsProvider value={{ footnotes: new Map(), numbers: new Map(), prefix: 'c1-' }}>
+        <CitationFootnoteSection section={{ className: 'footnotes' }}>
+          <p>A source this module never recognised.</p>
+        </CitationFootnoteSection>
+      </CitationsProvider>,
+    );
+
+    expect(document.querySelector('.footnotes')).toHaveTextContent('A source this module never recognised.');
   });
 
   it('names the source in a popover, and says where opening it goes', async () => {
