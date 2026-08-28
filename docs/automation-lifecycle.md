@@ -33,7 +33,7 @@ retired WorkspaceDO subscription-row design and is not implementation guidance.
 | `packages/contracts/src/automation-agent.ts` | Lifecycle, admission, snapshot, and `AutomationRunContextV1` contracts. |
 | `packages/contracts/src/automation-evaluators.ts` | The strict, versioned external-event evaluator grammar. |
 | `packages/agent-harness/src/prompts/automation-compiler.ts` | The architect's standing policy and its draft-only tool surface. |
-| `apps/api/src/durable-objects/workspace-do.ts` | Migration 21: `automation_creation_claims`, `automation_directory`, `workspace_external_event_registrations`, `workspace_external_event_deliveries`, `automation_cutover_campaign` — plus the matcher and the delivery lease. |
+| `apps/api/src/durable-objects/workspace-do.ts` | Migration 22: `automation_creation_claims`, `automation_directory`, `workspace_external_event_registrations`, `workspace_external_event_deliveries`, `automation_cutover_campaign` — plus the matcher and the delivery lease. |
 | `apps/api/src/queues/activity-consumer.ts` | Carries a canonical event into matching and each ID-only delivery out to its destination object. |
 | `apps/api/src/services/resend-inbound-email-service.ts` | Screens inbound mail against the agent before storing anything, then admits it. |
 | `apps/desktop/src/renderer/screens/automation.tsx` | The stable `/automations/:id` route; `new-automation.tsx` is its draft adapter and `automation-overview.tsx` its accepted one. |
@@ -449,7 +449,7 @@ the work, as [`durable-object-alarms.md`](durable-object-alarms.md) describes.
 | 6 | Fenced memory items and complete mutation receipts. |
 | 7 | One-time socket ticket receipts, the monotonic `projection_version`, and the per-turn projection coordinate. |
 
-`WorkspaceDO` migration 21 adds `automation_creation_claims`,
+`WorkspaceDO` migration 22 adds `automation_creation_claims`,
 `automation_directory`, `workspace_external_event_registrations`,
 `workspace_external_event_deliveries`, and `automation_cutover_campaign`. The
 cutover then drops `automation_subscriptions`, `automation_runs`,

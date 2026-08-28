@@ -221,6 +221,80 @@ describe("the Slack unfurl sweep's due time", () => {
 });
 
 describe("what a maintenance pass tells the stall check", () => {
+  it("arms cleanup for an eligible row with no resource pointer", async () => {
+    const database = workspaceObjectDatabase();
+    database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, created_at, updated_at)
+       VALUES ('regional/eligible', ?, '00000000-0000-7000-8000-0000000000d7',
+               'original', '2026-01-01', '2026-01-01')`,
+    ).run(WORKSPACE_ID);
+
+    expect(maintenance(
+      await workspaceScheduleTargets(scheduleContext(database)),
+      "resource_objects",
+    )).toEqual([{ kind: "maintenance", id: "resource_objects", dueAt: "2026-01-01" }]);
+  });
+
+  it("does not arm cleanup for an inactive publication still owned by its writer", async () => {
+    const database = workspaceObjectDatabase();
+    database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES ('regional/staged', ?, '00000000-0000-7000-8000-0000000000d8',
+               'original', 0, '2026-01-01', '2026-01-01')`,
+    ).run(WORKSPACE_ID);
+
+    expect(maintenance(
+      await workspaceScheduleTargets(scheduleContext(database)),
+      "resource_objects",
+    )).toEqual([]);
+
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, content_ref,
+          metadata_json, attachment_status, created_at, updated_at)
+       VALUES ('00000000-0000-7000-8000-0000000000d8', ?, 'generated_file',
+               'avalon_generated', 'Staged', 'regional/staged', '{}', 'attached',
+               '2026-01-01', '2026-01-01')`,
+    ).run(WORKSPACE_ID);
+    expect(maintenance(
+      await workspaceScheduleTargets(scheduleContext(database)),
+      "resource_objects",
+    )).toEqual([{
+      kind: "maintenance",
+      id: "resource_objects",
+      dueAt: "2026-01-01",
+    }]);
+  });
+
+  it("arms cleanup when only resource history references staged bytes", async () => {
+    const database = workspaceObjectDatabase();
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, content_ref,
+          metadata_json, attachment_status, created_at, updated_at)
+       VALUES ('00000000-0000-7000-8000-0000000000d6', ?, 'generated_file',
+               'avalon_generated', 'Historical', 'regional/current', '{}', 'attached',
+               '2026-01-01', '2026-01-01')`,
+    ).run(WORKSPACE_ID);
+    database.prepare(
+      `UPDATE resource_versions SET content_ref = 'regional/historical'
+        WHERE resource_id = '00000000-0000-7000-8000-0000000000d6' AND version = 1`,
+    ).run();
+    database.prepare(
+      `INSERT INTO resource_object_deletion_outbox
+         (object_ref, workspace_id, resource_id, object_kind, cleanup_eligible, created_at, updated_at)
+       VALUES ('regional/historical', ?, '00000000-0000-7000-8000-0000000000d6',
+               'original', 0, '2026-01-01', '2026-01-01')`,
+    ).run(WORKSPACE_ID);
+
+    expect(maintenance(
+      await workspaceScheduleTargets(scheduleContext(database)),
+      "resource_objects",
+    )).toEqual([{ kind: "maintenance", id: "resource_objects", dueAt: "2026-01-01" }]);
+  });
+
   it("reports progress from a reap by the rows it retired, and nothing when there were none", async () => {
     const database = workspaceObjectDatabase();
 

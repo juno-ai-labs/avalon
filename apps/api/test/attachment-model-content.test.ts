@@ -1,8 +1,17 @@
+import type { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import * as UTIF from "utif2";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import { buildAttachmentManifestPart, buildAttachmentModelParts } from "../src/services/attachment-model-content";
-import { createCloudflareTestBinding, createTestD1Database } from "./helpers/cloudflare-test";
+import { reapDeletedResourceObjects } from "../src/services/resource-object-cleanup";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestD1PreparedStatement,
+  createTestD1Result,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
+import { workspaceObjectSqliteDatabase } from "./helpers/workspace-object-tables";
 
 const encoder = new TextEncoder();
 
@@ -174,6 +183,66 @@ describe("attachment model content", () => {
     expect(bucket.puts[0]?.bytes).toEqual(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
     expect(updates.at(-1)?.[0]).toBe(bucket.puts[0]?.key);
     expect(updates.at(-1)?.[1]).toBe("image/jpeg");
+  });
+
+  it("keeps a model-image generation when cleanup runs between its put and pointer update", async () => {
+    const workspaceId = "00000000-0000-7000-8000-0000000008a0";
+    const resourceId = "00000000-0000-7000-8000-0000000008a1";
+    const database = workspaceObjectSqliteDatabase(workspaceId);
+    const d1 = sqliteD1(database);
+    const original = pngHeader(32, 24, 5 * 1_024 * 1_024 + 8_000);
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+          content_sha256, model_content_status, metadata_json, attachment_status,
+          created_at, updated_at)
+       VALUES (?, ?, 'uploaded_file', 'avalon_upload', 'large.png', 'image/png',
+               'original', ?, 'pending', '{}', 'attached', '2026-08-28', '2026-08-28')`,
+    ).run(resourceId, workspaceId, "a".repeat(64));
+    const objects = new Map<string, Uint8Array>([["original", original]]);
+    const deleted: string[] = [];
+    let cleanupDuringPut: number | null = null;
+    const bucket = createCloudflareTestBinding<R2Bucket>({
+      async get(key: string) {
+        const bytes = objects.get(key);
+        if (!bytes) return null;
+        return {
+          size: bytes.byteLength,
+          async arrayBuffer() { return exactTestArrayBuffer(bytes); },
+        };
+      },
+      async put(key: string, value: ArrayBuffer) {
+        objects.set(key, new Uint8Array(value));
+        cleanupDuringPut = await reapDeletedResourceObjects(createTestEnv({ DB: d1, PAYLOADS: bucket }));
+      },
+      async delete(key: string) {
+        deleted.push(key);
+        objects.delete(key);
+      },
+    });
+
+    await buildAttachmentModelParts(bucket, [{
+      id: resourceId,
+      workspaceId,
+      fileName: "large.png",
+      mimeType: "image/png",
+      contentRef: "original",
+      contentSha256: "a".repeat(64),
+    }], {
+      database: d1,
+      images: fakeImagesBinding(new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
+    });
+
+    const current = database.prepare(
+      "SELECT model_content_ref FROM resources WHERE id = ?",
+    ).get(resourceId) as { model_content_ref: string };
+    expect(cleanupDuringPut).toBe(0);
+    expect(deleted).toEqual([]);
+    expect(objects.has(current.model_content_ref)).toBe(true);
+    expect(database.prepare(
+      "SELECT COUNT(*) AS count FROM resource_object_deletion_outbox WHERE object_ref = ?",
+    ).get(current.model_content_ref)).toEqual({ count: 0 });
+    database.close();
   });
 
   it.each([
@@ -385,6 +454,33 @@ function trackedBucket(initial: Record<string, Uint8Array>): {
     },
   });
   return { binding, objects, puts };
+}
+
+function sqliteD1(database: DatabaseSync): D1Database {
+  const prepare = (sql: string): D1PreparedStatement => {
+    let values: unknown[] = [];
+    const statement = {
+      bind(...next: unknown[]) { values = next; return statement; },
+      async first<T>() { return (database.prepare(sql).get(...values as never[]) ?? null) as T | null; },
+      async all<T>() {
+        return createTestD1Result<T>({
+          results: database.prepare(sql).all(...values as never[]) as T[],
+          success: true,
+          meta: {},
+        });
+      },
+      async run<T>() {
+        const result = database.prepare(sql).run(...values as never[]);
+        return createTestD1Result<T>({
+          results: [],
+          success: true,
+          meta: { changes: Number(result.changes) },
+        });
+      },
+    };
+    return createTestD1PreparedStatement(statement);
+  };
+  return createTestD1Database({ prepare });
 }
 
 function fakeImagesBinding(output: Uint8Array): ImagesBinding {
