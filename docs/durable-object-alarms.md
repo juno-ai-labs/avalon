@@ -188,7 +188,7 @@ statement touches one of the alarm-source tables. It reconciles four kinds:
 | --- | --- | --- |
 | `schedule` | schedule id | `schedules`, enabled with a `next_run_at` |
 | `watch` | watch id | `resource_watches`, enabled with a `next_poll_at` |
-| `maintenance` | task name | the oldest row of whichever tables that task reaps |
+| `maintenance` | task name | the oldest row of whichever tables that task still owes work on |
 | `terminal` | work-stream id | `workspace_workstream_directory.next_terminal_action_at` |
 
 A fifth kind, `product`, is scheduled directly rather than reconciled: the
@@ -268,11 +268,13 @@ that a particular target was interrupted.
   sweep would load. An arm that counts what its pass leaves behind is the stall
   gate's steady customer — a drip and a report rather than a loop, but a
   defect all the same.
-- **A bounded pass reports the rows it retired.** Every maintenance reap
-  answers the stall check with its count, because a backlog sharing one second
-  re-derives the same instant until it is gone; the two Slack sweeps answer
-  nothing, because neither moves the rows its query counts and either would
-  claim progress forever. A wait that is not a positive finite number is not a
+- **A bounded pass reports the rows it took off its own due query.** Every
+  maintenance pass that moves those rows answers the stall check with its
+  count — whether it retires them, as the reaps do, or writes the column whose
+  absence made them due, as the alias backfill does — because a backlog sharing
+  one second re-derives the same instant until it is gone; the two Slack sweeps
+  answer nothing, because neither moves the rows its query counts and either
+  would claim progress forever. A wait that is not a positive finite number is not a
   wait; the entry takes the stall rule.
 - **Entries sharing an instant are totally ordered.** The due query and
   `nextDueAt` order by `MAX(due_at, retry_at)` and then by the primary key, so a
