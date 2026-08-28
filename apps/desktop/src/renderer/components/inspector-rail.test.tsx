@@ -301,6 +301,18 @@ describe('InspectorRail details', () => {
 });
 
 describe('resource detail content preview', () => {
+  // This block used to inherit `railOpen` from the suite above it, which held
+  // only in source order: shuffled, the rail rendered nothing and every test
+  // here failed against an empty document (7 of 12 runs under
+  // `--sequence.shuffle`). A describe block owns its own store state.
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    useUiStore.setState({ railOpen: true, railVariant: 'context', railWidth: 360, inspector: null });
+  });
+
   const note: WorkstreamResource = {
     id: 'resource-note',
     title: 'Q3 board deck',
