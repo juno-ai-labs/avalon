@@ -326,9 +326,18 @@ character envelope.
 - `nextCursor: null` is the only evidence that a filtered listing is exhausted,
   while zero characters on both sides is the only whole-resource read.
 - `resource_processing` is the only preview rejection that is a *not yet*: it
-  names the delay to wait, the state behind it ends on its own, and a client
-  that renders it as permanent unavailability is wrong. Every other preview
-  rejection is final, and re-asking cannot change it.
+  names the delay to wait, and a client that renders it as permanent
+  unavailability is wrong. Every other preview rejection is final, and re-asking
+  cannot change it.
+- **A client waits out `resource_processing` for at most one claim lease.**
+  `ATTACHMENT_PROCESSING_LEASE_MS` is the server's own definition of an
+  abandoned conversion, which makes it the point where "still preparing" stops
+  describing work in progress: a conversion killed without recording an outcome
+  leaves the row saying `processing` with nobody processing it, and the caller
+  that inherits it after the lease turns over is killed the same way. Waiting
+  past that is a question whose answer cannot change, and every lease boundary
+  re-triggers the doomed conversion. The constant is shared for this reason
+  rather than server-private.
 
 ## Boundary
 
@@ -425,9 +434,10 @@ generic tool execution/receipt loop is owned by
   presentation.
 - `apps/desktop/src/renderer/components/inspector-rail.test.tsx` covers the
   rail's half of the processing contract: a `resource_processing` rejection is
-  re-read only once the delay the response carried has elapsed, a 404 stays
-  terminal and is never re-read, and a pending wait is dropped when the panel
-  unmounts or its resource is revised. Its fixture delay is deliberately unlike
+  re-read only once the delay the response carried has elapsed, an answer that
+  never stops saying `processing` is given up on after one claim lease and not
+  re-read afterwards, a 404 stays terminal and is never re-read, and a pending
+  wait is dropped when the panel unmounts or its resource is revised. Its fixture delay is deliberately unlike
   the service's own 250 ms and one second, so a delay hard-coded in the rail
   cannot pass.
 - `apps/api/test-workers/participant-notification.test.ts` proves a real object
@@ -505,6 +515,30 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-28 — The wait is bounded by the lease that defines it
+
+**What changed:** `ATTACHMENT_PROCESSING_LEASE_MS` moved from a private constant
+in `attachment-derivative-service.ts` into `@rally/contracts`, and the desktop
+rail stops re-reading a `resource_processing` answer once it has been waiting
+longer than that. The panel then shows the failure state it would have shown
+immediately before this pair of changes.
+
+**Why:** The entry below argued no bound was needed because the processing state
+is self-terminating. That is true when a conversion finishes or fails — both
+write a terminal state — and false when one is *killed*: nothing is recorded,
+the row still says `processing`, and after the lease expires the next caller
+picks up the same document and dies the same way. A client with no bound waits
+through that forever, and worse, its retries are what re-trigger the doomed
+conversion at each lease boundary. So the client's bound is the same number that
+defines the server's own abandonment, which is why the constant is now shared
+rather than duplicated with a comment hoping the two stay equal.
+
+**What a future change has to respect:** The bound belongs to the server's
+lifecycle, not to the client's patience. If the lease changes, both sides change
+together because there is one constant; if a *terminal* state is ever recorded
+for a killed conversion, this bound becomes belt-and-braces rather than the only
+thing ending the loop, and the client should still keep it.
 
 ### 2026-08-28 — A preview still being prepared is a wait, not a dead panel
 

@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopApplicationSettings } from '../../common/desktop';
+import { ATTACHMENT_PROCESSING_LEASE_MS } from '@rally/contracts';
 import { ApiError } from '../lib/api';
 import type { WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
@@ -461,6 +462,33 @@ describe('resource detail content preview', () => {
 
       expect(loadResourceContent).toHaveBeenCalledOnce();
       expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops waiting once the server has had longer than its own claim lease', async () => {
+    // A conversion killed without recording an outcome leaves the row saying
+    // "processing" with nobody processing it, and the next caller inherits the
+    // same fate when the lease turns over — so this answer can repeat forever.
+    // Waiting through it is a question whose answer cannot change, and every
+    // lease boundary re-triggers the doomed conversion.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loadResourceContent = vi.fn<LoadResourceContent>().mockRejectedValue(stillPreparing(1_000));
+      openDetail(note, loadResourceContent);
+
+      await waitFor(() => expect(loadResourceContent).toHaveBeenCalledOnce());
+      // Well inside the lease, it is still waiting — the spinner is the point.
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(screen.queryByText(/preview is not available/iu)).not.toBeInTheDocument();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(ATTACHMENT_PROCESSING_LEASE_MS); });
+
+      await waitFor(() => expect(screen.getByText(/preview is not available/iu)).toBeInTheDocument());
+      const asked = loadResourceContent.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(300_000); });
+      expect(loadResourceContent).toHaveBeenCalledTimes(asked);
     } finally {
       vi.useRealTimers();
     }
