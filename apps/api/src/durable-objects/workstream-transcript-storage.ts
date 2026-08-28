@@ -538,6 +538,41 @@ export class WorkstreamTranscriptStorage {
       return sequence;
   }
 
+  /**
+   * Whether an accepted assistant turn already shows this exact text.
+   *
+   * The question a run's aggregate final message has to answer before it takes
+   * a feed row of its own. Usually the answer is yes: `streamedText` is the
+   * closing turn's `stream_completed` content, and that turn is already a
+   * canonical entry at the sequence it was accepted on. But not always — the
+   * attachment-grounding guard replaces the text with the host's own words, and
+   * a run cut short mid-stream never accepted a closing turn at all. In both of
+   * those the aggregate is the only thing carrying what the member needs to
+   * read.
+   *
+   * So this is asked rather than assumed, and it fails safe: anything short of
+   * proof that the text is already on that turn leaves the aggregate its row.
+   * Comparing the text is the point — the defect being closed is one answer
+   * rendered twice — and it is one lookup by the turn's primary key, not a
+   * scan.
+   */
+  acceptedTurnAlreadyCarries(input: { turnId: string; text: string }): boolean {
+    const block = this.sql.exec<{ payload_json: string } & Record<string, SqlStorageValue>>(
+      `SELECT payload.payload_json
+         FROM participant_transcript_turns turn
+         JOIN participant_transcript_blocks block ON block.turn_id = turn.turn_id
+         JOIN transcript_facts fact ON fact.fact_id = block.fact_id
+         JOIN transcript_payloads payload ON payload.payload_id = fact.payload_id
+        WHERE turn.turn_id = ? AND turn.entry_kind = 'conversation'
+          AND turn.actor = 'assistant' AND block.block_kind = 'text'
+        ORDER BY block.block_index LIMIT 1`,
+      input.turnId,
+    ).toArray()[0];
+    if (!block) return false;
+    const payload = JSON.parse(block.payload_json) as { content?: unknown };
+    return payload.content === input.text;
+  }
+
   async upsertToolLifecycle(input: {
     toolCallId: string;
     pluginId: string | null;

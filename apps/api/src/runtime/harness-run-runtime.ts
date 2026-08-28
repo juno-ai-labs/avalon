@@ -715,7 +715,7 @@ export async function persistHarnessFinalMessage(
   messages: MessageObjectPort,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "workstreamId" | "harnessRunId">,
   lease: AttemptLease,
-  message: { id: string; text: string },
+  message: { id: string; text: string; answeredByTurnId: string | null },
   hostOutcome: Pick<TerminalOutcome, "status" | "error">,
 ): Promise<void> {
   const published = await runs.publishFinalMessage({
@@ -738,6 +738,9 @@ export async function persistHarnessFinalMessage(
     // written. The routed statement made the same exemption, and for the same
     // reason `assertHarnessToolSettlementOwned` does.
     allowCancellationRequested: hostOutcome.status === "stopped",
+    // Which accepted turn is expected to already show this text, so the object
+    // can check rather than guess whether the aggregate would be a second copy.
+    answeredByTurnId: message.answeredByTurnId,
   });
   if (published.outcome === "ownership_lost") throw new RunOwnershipLostError();
   // Read back through the same pair a recovery would, rather than trusting the

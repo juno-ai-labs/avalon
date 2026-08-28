@@ -25,7 +25,10 @@
 
 import { boundParameterChunks } from "./bound-parameters";
 import { WorkstreamMessageStorage } from "./workstream-message-storage";
-import type { PreparedWorkstreamMessageRecord } from "./workstream-transcript-storage";
+import {
+  type PreparedWorkstreamMessageRecord,
+  WorkstreamTranscriptStorage,
+} from "./workstream-transcript-storage";
 
 /** What a caller proved before it was allowed to write. */
 export interface AttemptFence {
@@ -44,6 +47,12 @@ export interface PublishFinalMessageInput extends AttemptFence {
   lifecycleEventId: string;
   /** A stopped run may still publish: the member asked it to stop, not to vanish. */
   allowCancellationRequested: boolean;
+  /**
+   * The accepted assistant turn this aggregate is expected to repeat, or null
+   * when the run accepted none. Checked rather than trusted — see
+   * `acceptedTurnAlreadyCarries`.
+   */
+  answeredByTurnId: string | null;
 }
 
 /** Why a fenced operation refused, or that it did not. */
@@ -425,8 +434,16 @@ export class WorkstreamHarnessRunStorage {
    */
   private readonly messages: WorkstreamMessageStorage;
 
+  /**
+   * The turn projection, over that same object storage, for the one question
+   * publishing an aggregate has to ask of it: is this answer already in the
+   * feed?
+   */
+  private readonly transcript: WorkstreamTranscriptStorage;
+
   constructor(private readonly storage: DurableObjectStorage) {
     this.messages = new WorkstreamMessageStorage(storage);
+    this.transcript = new WorkstreamTranscriptStorage(storage);
   }
 
   private get sql(): SqlStorage {
@@ -1441,7 +1458,18 @@ export class WorkstreamHarnessRunStorage {
         || run.lease_expires_at <= input.now) {
         return { outcome: "ownership_lost" as const };
       }
-      const appended = this.messages.appendPreparedMessage(prepared);
+      // Two different rows, chosen by whether the feed already shows this
+      // answer. When the closing turn carries it, the aggregate is bookkeeping
+      // and takes no feed row; when nothing carries it — a grounding-guard
+      // notice, a run cut short before any turn was accepted — the aggregate is
+      // the only copy the member gets, and keeps its own.
+      const appended = input.answeredByTurnId !== null
+        && this.transcript.acceptedTurnAlreadyCarries({
+          turnId: input.answeredByTurnId,
+          text: input.text,
+        })
+        ? this.messages.appendPreparedRunAggregateMessage(prepared)
+        : this.messages.appendPreparedMessage(prepared);
       this.recordLifecycleEvent({
         eventId: input.lifecycleEventId,
         runId: input.runId,
