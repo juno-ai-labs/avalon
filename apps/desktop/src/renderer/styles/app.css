@@ -3164,7 +3164,7 @@ pre {
 .run-rail-copy small { color: var(--av-ref-color-neutral-9); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-detail { padding: 30px 18px; }
 .inspector-hero-icon { align-items: center; background: var(--av-ref-color-neutral-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-subtle); display: flex; height: 38px; justify-content: center; margin-bottom: 13px; width: 38px; }
-.inspector-detail h3 { font-size: 14px; margin: 0; }
+.inspector-detail > h3 { font-size: 14px; margin: 0; }
 .inspector-detail > p { color: var(--av-sys-color-text-muted); font-size: 10.5px; margin: 3px 0 20px; }
 .inspector-detail .detail-list { margin-bottom: 18px; }
 /* The readable half of a resource detail. It is capped and scrolls inside its
@@ -3178,7 +3178,7 @@ pre {
    and the time line up down the column rather than per row. */
 .inspector-versions { margin-top: 22px; }
 .inspector-versions ul { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
-.inspector-versions li { align-items: center; display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) 26px; min-height: 36px; }
+.inspector-versions li { align-items: center; display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) auto; min-height: 36px; }
 .inspector-version-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .inspector-version-meta > .inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspector-version-meta > time { color: var(--av-sys-color-text-muted); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3188,7 +3188,7 @@ pre {
 /* A notice, not a caption: a superseded version renders in the same surface as
    the current one, and reading a stale draft as current is the failure the
    whole versioning layer exists to prevent. */
-.attachment-lightbox-superseded { align-items: center; background: var(--av-sys-color-warning-wash); border: 1px solid var(--av-sys-color-warning-edge); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: flex; font-size: 11px; gap: 7px; justify-self: end; margin-right: 12px; padding: 4px 5px 4px 11px; }
+.attachment-lightbox-superseded { align-items: center; background: var(--av-sys-color-warning-wash); border: 1px solid var(--av-sys-color-warning-edge); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-warning-soft); display: flex; font-size: 11px; gap: 7px; justify-self: end; margin-right: 12px; padding: 4px 5px 4px 11px; }
 .attachment-lightbox-superseded button { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-13); font-size: 10.5px; min-height: 24px; padding: 3px 9px; }
 
 /* Conversational automation creation */

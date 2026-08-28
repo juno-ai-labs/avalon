@@ -87,13 +87,21 @@ export function AttachmentLightbox({ preview, onClose }: {
           }}
         >
           <header className="attachment-lightbox-header">
-            <Dialog.Title asChild><h2 aria-label={`Preview of ${preview.name}`}>{preview.name}</h2></Dialog.Title>
-            {preview.supersededLabel && (
-              <span className="attachment-lightbox-superseded">
-                <History aria-hidden="true" size={14} /> {preview.supersededLabel}
-                {preview.onReturnToCurrent && (
-                  <button onClick={preview.onReturnToCurrent} type="button">Return to current</button>
-                )}
+            {/* The label carries the notice, not just the name: the pill beside
+                it is the only thing distinguishing history from the live
+                document, and a screen reader hears none of it otherwise. */}
+            <Dialog.Title asChild>
+              <h2 aria-label={preview.superseded
+                ? `Preview of ${preview.name} — ${preview.superseded.label}`
+                : `Preview of ${preview.name}`}
+              >
+                {preview.name}
+              </h2>
+            </Dialog.Title>
+            {preview.superseded && (
+              <span className="attachment-lightbox-superseded" role="status">
+                <History aria-hidden="true" size={14} /> {preview.superseded.label}
+                <button onClick={preview.superseded.onReturnToCurrent} type="button">Return to current</button>
               </span>
             )}
             <Dialog.Close asChild>
