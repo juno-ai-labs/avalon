@@ -2595,12 +2595,21 @@ pre {
    rendered. The popover is positioned against the wrap rather than the pill so
    that a pill at the end of a line does not drag it off the edge. */
 .citation-pill-wrap { display: inline; position: relative; white-space: nowrap; }
-.citation-pill { background: color-mix(in srgb, var(--av-sys-color-brand-base) 16%, transparent); border: 0; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-brand-ink); cursor: pointer; display: inline-block; font: inherit; font-size: 0.7em; font-weight: 640; line-height: 1.5; margin: 0 1px; min-width: 1.5em; padding: 0 0.35em; text-align: center; vertical-align: super; }
-button.citation-pill:hover { background: color-mix(in srgb, var(--av-sys-color-brand-base) 30%, transparent); }
+/* Sized up from the first capture, where it read as a coloured speck rather
+   than a number. A marker has to be legible at a glance or the reader cannot
+   tell two sources apart, and it sits at superscript size on top of that — so
+   it takes a heavier weight and the brand's own on-colour rather than a wash:
+   `brand-ink` is written for a tinted ground and washed out on a solid one,
+   and `brand-on` is the pairing the token set defines for exactly this. It
+   hugs its
+   digits: a `min-width` wide enough for two left a single digit floating in
+   the middle of its own box, which read as a stray space before the marker. */
+.citation-pill { background: var(--av-sys-color-brand-base); border: 0; border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-brand-on); cursor: pointer; display: inline-block; font: inherit; font-size: 0.74em; font-weight: 680; line-height: 1.45; padding: 0 0.4em; text-align: center; vertical-align: super; }
+button.citation-pill:hover { background: var(--av-sys-color-brand-hover); }
 /* Not a button: a source with nowhere to go still shows that the claim was
    sourced, and loses only the click. */
 span.citation-pill { cursor: default; }
-.citation-pill-popover { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-sys-color-border-default); border-radius: var(--av-sys-size-radius-sm); bottom: calc(100% + 6px); box-shadow: var(--av-sys-elevation-shadow-lg); color: var(--av-sys-color-text-default); display: none; flex-direction: column; font-size: 12px; gap: 3px; left: 0; line-height: 1.45; max-width: 280px; padding: 8px 10px; position: absolute; white-space: normal; width: max-content; z-index: 5; }
+.citation-pill-popover { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-sys-color-border-strong); border-radius: var(--av-sys-size-radius-sm); bottom: calc(100% + 6px); box-shadow: var(--av-sys-elevation-shadow-lg); color: var(--av-sys-color-text-default); display: none; flex-direction: column; font-size: 12px; gap: 3px; left: 0; line-height: 1.45; max-width: 280px; padding: 8px 10px; position: absolute; white-space: normal; width: max-content; z-index: 5; }
 /* Hover and focus both, because the pill is a real control and a keyboard
    reader tabs to it. `:focus-visible` alone would leave a pointer user who
    clicked one with the popover still open under their cursor. */

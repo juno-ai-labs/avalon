@@ -356,6 +356,12 @@ ${syntax}
     padding: 0 7px;
   }
   .mention-chip-avatar { display: none; }
+  /* GFM titles its footnote section with a heading it expects the host to hide.
+     This document loads none of the application stylesheet, so without a rule
+     here the card printed a bare "Footnotes" above the list — a word out of the
+     renderer's plumbing, in the middle of a saved picture. Hidden outright
+     rather than clipped the way the app does it: nothing here is read aloud. */
+  .sr-only { display: none; }
   /* Citations, drawn for a still card rather than an application.
 
      What the card cannot have is the part that makes a citation useful: the
