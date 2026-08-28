@@ -64,12 +64,18 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
 
     let frame = 0;
     let began: number | null = null;
+    // Whether this mount has already started its one turn. Set the moment the
+    // turn is kicked off, not when it finishes, because what it guards against
+    // is a second *start* — a reduced-motion toggle landing mid-turn, or after
+    // the turn has already settled, must never schedule the loop again.
+    let turnStarted = false;
 
     // The held frame at the end of the turn, and what reduced motion shows
     // instead of turning at all — the still master's own angle, so the mark
     // never settles on some other point of the rotation.
     const rest = (): void => {
       cancelAnimationFrame(frame);
+      frame = 0;
       element.setAttribute('d', SEAM_RESTING_PATH);
     };
 
@@ -89,13 +95,20 @@ export function RallySeam({ className }: { className?: string }): React.JSX.Elem
 
     // Reduced motion holds the resting frame rather than playing the turn at
     // all: the still master is a specific angle, and any other one reads as a
-    // drawing that came out wrong.
+    // drawing that came out wrong. This also runs on every later preference
+    // change, and past the turn's start it may only stop the loop or hold the
+    // resting frame — never schedule a fresh one. Without that guard, toggling
+    // the preference off, then on, then off again after the turn had already
+    // settled would restart the whole turn, which is exactly the "spin once"
+    // contract this component exists to keep.
     const sync = (): void => {
       cancelAnimationFrame(frame);
       if (prefersReducedMotion()) {
         rest();
         return;
       }
+      if (turnStarted) return;
+      turnStarted = true;
       began = null;
       frame = requestAnimationFrame(draw);
     };

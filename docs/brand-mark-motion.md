@@ -265,8 +265,6 @@ rather than a steady state — a mounted seam runs its loop for about 4.8
 seconds and then draws nothing further until unmount, rather than for as long
 as the screen is up.
 
-Shipped in TBD.
-
 ### 2026-08-27 — The mark turns wherever it is the subject rather than a label
 
 **What changed:** The sign-in card, the home screen's welcome heading, and the
