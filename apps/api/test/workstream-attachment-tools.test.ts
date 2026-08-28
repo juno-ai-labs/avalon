@@ -22,6 +22,8 @@ import {
   seedToolReceipt,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { ensureResourceSlug } from "../src/services/resource-slug";
+import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const OTHER_USER_ID = "00000000-0000-4000-8000-000000000009";
@@ -53,6 +55,9 @@ afterEach(() => { for (const database of openDatabases.splice(0)) database.close
 function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
   const database = legacyProductSqliteDatabase();
   openDatabases.push(database);
+  // The model's listing reads the alias beside each resource's UUID, and the
+  // column is WorkspaceDO's — take it from the ledger rather than assume it.
+  applyWorkspaceResourceSchema(database, WORKSPACE_ID);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at) VALUES
       ('${USER_ID}', 'owner', 'owner@example.test', 'Owner', '2026-01-01', '2026-01-01'),
@@ -515,6 +520,22 @@ describe("work-stream attachment tools", () => {
     const search = workspaceTools.find((tool) => tool.definition.name === "search_resource")!;
     await expect(search.execute({ resourceId: privateResourceId, query: "private" }, context(workspacePrincipal)))
       .rejects.toMatchObject({ code: "resource_not_found" });
+  });
+
+  it("hands the model each resource's alias beside the UUID its tools take", async () => {
+    const { database, objectStore, bucket, env } = fixture();
+    const resourceId = insertReadyResource(database, objectStore, bucket, 1);
+    const alias = await ensureResourceSlug(env, WORKSPACE_ID, resourceId);
+    const list = __integrationTesting.createAvalonTools(env, input())
+      .find((tool) => tool.definition.name === "list_resources")!;
+
+    const result = await list.execute({}, context());
+
+    // The UUID stays the argument every other tool takes; the alias rides
+    // beside it so a citation the model writes costs a fraction of the tokens.
+    expect((result.output as { items: Array<{ resourceId: string; slug: string | null }> }).items)
+      .toEqual([expect.objectContaining({ resourceId, slug: alias })]);
+    expect(alias).toMatch(/^[a-z]+-[a-z]+-[a-z]+-[a-z]+$/u);
   });
 
   it("views ordered image batches with ephemeral parts and self-heals mixed wrong kinds", async () => {

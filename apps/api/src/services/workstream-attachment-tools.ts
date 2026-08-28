@@ -776,6 +776,7 @@ function resourceListItem(row: VisibleWorkstreamResourceRow) {
   const relationshipType = ResourceRelationshipTypeSchema.parse(row.relationship_type);
   return {
     resourceId: row.id,
+    slug: row.slug,
     title: row.title,
     resourceType: row.resource_type,
     provider: row.provider,

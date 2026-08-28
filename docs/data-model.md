@@ -326,9 +326,20 @@ hash-checked RPCs rather than cross-object SQL joins.
   attachments may also carry a signature-validated model derivative and bounded
   metadata; animated GIF metadata records dimensions, frame count, duration,
   approximate frame rate, loop behavior, and storyboard timestamps.
+  `slug` is a short workspace-unique alias minted from the work-stream address
+  generator, allocated once and never rewritten; it is `NULL` until the
+  allocator or the `resource_slugs` maintenance pass reaches the row, and the
+  UUID is the primary key regardless.
   `current_version` identifies the latest semantic state and `resource_versions`
   retains every state from version 1 onward, including its original and
-  model-readable R2 refs. Inserts create version 1. Writes to identity, display,
+  model-readable R2 refs, its provenance (`author_kind` with the one identity
+  column that kind admits, and `cause`), and a `storage_kind` naming the shape
+  of the refs — one value today, deliberately unconstrained so a later storage
+  shape needs no table rebuild. Provenance reaches a version through
+  `revision_author_*` and `revision_cause` on `resources`, set by the same
+  statement that swaps the pointers; a trigger refuses a version whose identity
+  does not match its kind, which aborts that swap rather than storing a wrong
+  attribution. Rows captured before provenance existed carry none. Inserts create version 1. Writes to identity, display,
   content, hash, or hydration fields increment it; derivative claim/processing
   writes enrich that same version. A successful external refresh increments the
   version through `last_hydrated_at`, even when the provider returns the same bytes.
@@ -812,6 +823,31 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-28 — Resource versions carry provenance, and resources carry an alias
+
+**What changed:** WorkspaceDO schema version 18 adds an author kind, its
+matching identity, a cause, and a storage kind to `resource_versions`, staged on
+`resources` as `revision_author_*`/`revision_cause` and copied by the capture
+triggers, with a fence refusing an identity its kind cannot have. Version 19
+adds `resources.slug` under a partial unique index.
+
+**Why:** A version row said which pointers a state held and nothing about who
+moved them, so the history the rail lists could not be attributed. The alias is
+for the surfaces a model reads and writes identifiers on, where a UUID costs
+about thirteen tokens per mention.
+
+**Considered and rejected:** Passing provenance into capture instead of staging
+it — capture is a trigger, so anything not on the row needs a second statement
+a crash can separate from the swap. A `CHECK` on `storage_kind` — SQLite cannot
+alter one on a STRICT table, and the column exists precisely to admit a shape
+nobody has built yet. Backfilling provenance for existing rows with `system` —
+inventing an author the migration cannot know.
+
+**Consequences:** Every swap site sets provenance in the statement that swaps,
+and a mismatch aborts the swap. Nothing in SQL can mint an alias, so existing
+rows start without one and a bounded maintenance pass fills them in; `slug IS
+NULL` is the durable record that one is owed.
 
 ### 2026-08-27 — Participant removal cannot empty a work stream
 

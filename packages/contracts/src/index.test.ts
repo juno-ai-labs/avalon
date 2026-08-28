@@ -33,6 +33,8 @@ import {
   RESOURCE_RELATIONSHIP_TYPES,
   RefreshRequestSchema,
   ResourceRelationshipTypeSchema,
+  ResourceRevisionSchema,
+  ResourceSchema,
   resourceDirectionForRelationship,
   PersonalSocketEventSchema,
   ServerSocketEventSchema,
@@ -1239,5 +1241,73 @@ describe("automation delivery destinations", () => {
     // `invalid_response` on a draft the person is still editing.
     expect(AutomationDraftSchema.parse(beforeTheField).requestedDelivery).toEqual([]);
     expect(AutomationDraftSchema.safeParse({ ...beforeTheField, requestedDelivery: ["sms"] }).success).toBe(false);
+  });
+});
+
+describe("resource version provenance", () => {
+  const revision = {
+    resourceId: "00000000-0000-7000-8000-0000000000a1",
+    version: 2,
+    title: "Launch plan",
+    resourceType: "document",
+    provider: "notion",
+    providerResourceId: "notion-1",
+    mimeType: "text/markdown",
+    canonicalUrl: null,
+    lastHydratedAt: null,
+    createdAt: "2026-08-28T02:00:00.000Z",
+    contentAvailable: true,
+    modelContentAvailable: true,
+    sizeBytes: 12,
+    author: { kind: "agent" as const, runId: "00000000-0000-7000-8000-0000000000a2" },
+    cause: "published" as const,
+    storageKind: "object",
+  };
+
+  it("admits one identity per author kind and refuses another kind's", () => {
+    // A run, a member and a connection are all UUIDs. The union is what stops
+    // one being read as another by the surfaces that resolve them, so it has
+    // to refuse the shape that would let it happen.
+    expect(ResourceRevisionSchema.parse(revision).author)
+      .toEqual({ kind: "agent", runId: "00000000-0000-7000-8000-0000000000a2" });
+    expect(ResourceRevisionSchema.safeParse({
+      ...revision,
+      author: { kind: "agent", userId: "00000000-0000-7000-8000-0000000000a2" },
+    }).success).toBe(false);
+    expect(ResourceRevisionSchema.safeParse({
+      ...revision,
+      author: { kind: "system", runId: "00000000-0000-7000-8000-0000000000a2" },
+    }).success).toBe(false);
+  });
+
+  it("carries history that recorded no author rather than refusing it", () => {
+    // Versions captured before provenance existed, and producers that record
+    // none. The surfaces say "unattributed"; the contract must let them.
+    expect(ResourceRevisionSchema.parse({ ...revision, author: null, cause: null }))
+      .toMatchObject({ author: null, cause: null });
+  });
+
+  it("defaults rollout-safe resource fields when an older response omits them", () => {
+    // A resource row read before the backfill reaches it has no alias, and a
+    // response written before the column existed has no key at all — neither
+    // may fail the read. The model's listing always says, including with null.
+    const resource = ResourceSchema.parse({
+      id: "00000000-0000-7000-8000-0000000000a1",
+      workspaceId: "00000000-0000-7000-8000-0000000000a3",
+      connectionId: null,
+      resourceType: "document",
+      provider: "notion",
+      providerResourceId: null,
+      title: "Launch plan",
+      mimeType: null,
+      canonicalUrl: null,
+      watchEnabled: false,
+      watchStatus: "unsupported",
+      lastHydratedAt: null,
+      createdAt: "2026-08-28T02:00:00.000Z",
+      updatedAt: "2026-08-28T02:00:00.000Z",
+    });
+    expect(resource).toMatchObject({ slug: null, refreshSupported: false });
+    expect(ResourceSchema.parse({ ...resource, refreshSupported: true }).refreshSupported).toBe(true);
   });
 });

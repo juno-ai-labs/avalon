@@ -56,6 +56,7 @@ import {
   reapDeletedResourceObjects,
   reapExpiredDraftResources,
 } from "./resource-object-cleanup";
+import { backfillResourceSlugs } from "./resource-slug";
 import { SlackAgentService } from "./slack-agent-service";
 import { refreshSlackWorkstreamUnfurls } from "./slack-unfurl-refresh";
 import { createTerminalPortFactory } from "./terminal/object-port";
@@ -242,6 +243,7 @@ const progressedIf = (retired: number): ScheduledAlarmOutcome => (retired > 0 ? 
 const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promise<ScheduledAlarmOutcome>> = {
   resource_objects: async (ctx) => progressedIf(await reapDeletedResourceObjects(ctx.workspaceEnv, ctx.workspaceId)),
   expired_drafts: async (ctx) => progressedIf(await reapExpiredDraftResources(ctx.workspaceEnv, ctx.workspaceId)),
+  resource_slugs: async (ctx) => progressedIf(await backfillResourceSlugs(ctx.workspaceEnv, ctx.workspaceId)),
   note_objects: async (ctx) => progressedIf(await reapDeletedNoteObjects(ctx.workspaceEnv, ctx.workspaceId)),
   note_privacy: async (ctx) => progressedIf(await processPendingNotePrivacyNotifications(ctx.workspaceEnv)),
   memory_index: async (ctx) => progressedIf(await processMemoryIndexOutbox(ctx.workspaceEnv, 50, ctx.workspaceId)),
@@ -316,6 +318,14 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
              AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links link
                               WHERE link.resource_id = resources.id)
            HAVING COUNT(*) > 0`,
+  },
+  {
+    scoped: true,
+    // Aliases cannot be minted in SQL, so a resource created before the column
+    // existed — or whose creation path could not finish its own allocation —
+    // waits here. Counts exactly the rows the pass names.
+    sql: `SELECT 'maintenance' AS target_kind, 'resource_slugs' AS id, MIN(created_at) AS due_at
+            FROM resources WHERE workspace_id = ?1 AND slug IS NULL HAVING COUNT(*) > 0`,
   },
   {
     scoped: false,

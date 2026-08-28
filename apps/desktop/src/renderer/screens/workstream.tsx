@@ -90,7 +90,7 @@ import { useRetainedWorkstreamSocket, useWorkstreamSocketOpenContext } from '../
 import { useWorkspaceSocket } from '../lib/workspace-socket';
 import { WORKSTREAMS_QUERY_KEY } from '../lib/use-workstreams-query';
 import { setCachedWorkstreams } from '../lib/workstreams-cache';
-import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, Participant, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
+import type { ElicitationData, HarnessRunMetadata, HarnessStatus, BlockDashboard, BlockDashboardPreference, Message, MessagePage, Participant, ResourceVersion, WorkspaceMember, WorkstreamBoot, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { AgentCompactionIndicator, AgentWorkTiming, type AgentWorkTimingProps } from '../components/agent-work-timing';
 import { InspectorRail } from '../components/inspector-rail';
 import { AttachmentLightbox } from '../components/attachment-lightbox';
@@ -100,6 +100,23 @@ import { MessageBlock, type SystemRowDisclosure } from '../components/workstream
 import { WorkstreamComposer } from '../components/workstream-composer';
 import { BlockDashboardPanel, BlockDashboardRail } from '../components/block-dashboard-panel';
 import { useRailCrossFade } from '../components/rail-surface';
+
+/**
+ * The cache key for one resource's version history.
+ *
+ * Keyed on the version the detail is showing as well as the resource, for the
+ * same reason the preview beside it is: a republish or a watch-driven
+ * re-ingest keeps the resource's id and arrives over the socket, so a key made
+ * of the id alone leaves the rail showing a history missing its newest entry
+ * while presenting itself as the whole record. Only the participant's own
+ * re-fetch invalidates explicitly; every other writer moves this number.
+ */
+export function resourceVersionsQueryKey(
+  resourceId: string | null,
+  currentVersion: number | null,
+): readonly [string, string | null, number | null] {
+  return ['resource-versions', resourceId, currentVersion];
+}
 
 export function workspaceMemberFromSession(session: DesktopSession | null): WorkspaceMember | undefined {
   if (!session?.workspace) return undefined;
@@ -919,6 +936,7 @@ export function WorkstreamScreen(): React.JSX.Element {
   const featureFlags = useClientFeatureFlags(api);
   const queryClient = useQueryClient();
   const closeRail = useUiStore((state) => state.closeRail);
+  const inspector = useUiStore((state) => state.inspector);
   const openRail = useUiStore((state) => state.openRail);
   const railOpen = useUiStore((state) => state.railOpen);
   const setBlockDashboardOpen = useUiStore((state) => state.setBlockDashboardOpen);
@@ -1694,6 +1712,65 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
   });
 
+  // The rail's detail shows one resource at a time, so its history is fetched
+  // for that one rather than for every attachment the work stream carries.
+  const inspectedResourceId = inspector?.type === 'resource' ? inspector.id : null;
+  const inspectedResourceVersion = workstream.data?.resources
+    .find((resource) => resource.id === inspectedResourceId)?.currentVersion ?? null;
+  const resourceVersions = useQuery({
+    queryKey: resourceVersionsQueryKey(inspectedResourceId, inspectedResourceVersion),
+    queryFn: ({ signal }) => api!.getResourceVersions(inspectedResourceId!, signal),
+    // `closeRail` deliberately keeps the inspector's selection, so without the
+    // rail's own state here the query keeps refetching for a panel nobody can
+    // see.
+    enabled: Boolean(api && inspectedResourceId && railOpen),
+  });
+
+  const refreshResource = useMutation({
+    mutationFn: (resource: WorkstreamResource) => api!.refreshResource(resource.id),
+    onSuccess: (refreshed) => {
+      queryClient.setQueryData<WorkstreamDetail>(['workstream', id], (current) => current ? {
+        ...current,
+        resources: current.resources.map((item) => item.id === refreshed.id
+          ? { ...item, ...refreshed, relationshipType: item.relationshipType, direction: item.direction }
+          : item),
+      } : current);
+      // The re-fetch is exactly the pointer swap that writes a version, so the
+      // list the rail is showing is one entry out of date the moment it lands.
+      // Prefix-matched, because the key carries the version this resource was
+      // at: the swap moves that number and would refetch on its own, and this
+      // covers the re-fetch the provider answered without changing anything.
+      void queryClient.invalidateQueries({ queryKey: ['resource-versions', refreshed.id] });
+    },
+  });
+
+  const openResourceVersion = useCallback((
+    resource: WorkstreamResource,
+    version: ResourceVersion,
+    returnFocus: HTMLElement,
+  ) => {
+    setAttachmentPreview({
+      // The version's own title and type. A rename is itself what captured the
+      // version being opened, so the current name over old bytes would name
+      // the wrong thing in the one surface built to keep them apart.
+      name: version.title,
+      ...(version.mimeType ? { mimeType: version.mimeType } : {}),
+      loadContent: (signal?: AbortSignal) => api!.getResourceVersionContent(resource.id, version.version, signal),
+      returnFocus,
+      superseded: {
+        // Says which version and that it is not the live one, in that order:
+        // "of N" alone leaves a reader to work out that V2 of 3 is history.
+        label: `Version ${version.version} · not current`,
+        onReturnToCurrent: () => setAttachmentPreview({
+          name: resource.title,
+          ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+          loadContent: (signal?: AbortSignal) => loadAttachmentContent(resource.id, signal),
+          returnFocus,
+        }),
+      },
+    });
+  }, [api, loadAttachmentContent]);
+
   const activeElicitation = transcript.find((message) =>
     message.messageType === 'elicitation' && message.elicitation?.status === 'open')?.elicitation;
 
@@ -2200,13 +2277,19 @@ export function WorkstreamScreen(): React.JSX.Element {
         error={deferredContext.error?.message
           ?? watchResource.error?.message
           ?? detachResource.error?.message
+          ?? refreshResource.error?.message
           ?? attachResource.error?.message}
         leaving={railLeaving === 'inspector'}
         onAddParticipant={() => setParticipantDialogOpen(true)}
         onAddResource={() => setResourceDialogOpen(true)}
         onDetachResource={(resource) => detachResource.mutate(resource)}
+        onOpenResourceVersion={openResourceVersion}
         onOpenRun={(run) => void navigate(`/workstreams/${run.workstreamId}`)}
+        onRefreshResource={(resource) => refreshResource.mutate(resource)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
+        refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
+        resourceVersions={resourceVersions.data ?? []}
+        resourceVersionsError={resourceVersions.error?.message}
         workstream={displayedDetail}
       />
 

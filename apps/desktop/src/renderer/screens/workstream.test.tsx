@@ -26,6 +26,7 @@ import {
   workstreamPresenceViewers,
   workstreamRunTiming,
   workstreamShowsReadyState,
+  resourceVersionsQueryKey,
   workspaceMemberFromSession,
 } from './workstream';
 
@@ -65,6 +66,25 @@ function transcriptMessage(
     createdAt: new Date(Date.UTC(2026, 7, 18, 12, 0, sequenceNumber)).toISOString(),
   };
 }
+
+describe('a resource history follows swaps the rail did not make', () => {
+  it('keys the history on the version the detail shows, not on the resource alone', () => {
+    // An agent republish or a watch-driven re-ingest arrives over the socket
+    // and advances `currentVersion` without this cache being touched. Keyed on
+    // the id alone, the rail then shows a history missing its newest entry
+    // while presenting itself as the whole record.
+    expect(resourceVersionsQueryKey('resource-1', 3))
+      .not.toEqual(resourceVersionsQueryKey('resource-1', 4));
+    expect(resourceVersionsQueryKey('resource-1', 3))
+      .toEqual(resourceVersionsQueryKey('resource-1', 3));
+    expect(resourceVersionsQueryKey('resource-1', 3))
+      .not.toEqual(resourceVersionsQueryKey('resource-2', 3));
+  });
+
+  it('is a stable key while nothing is inspected', () => {
+    expect(resourceVersionsQueryKey(null, null)).toEqual(resourceVersionsQueryKey(null, null));
+  });
+});
 
 describe('transcript cursor pagination', () => {
   it('starts an upward page only near the top with a cursor and no request in flight', () => {
@@ -1114,6 +1134,7 @@ describe('AddResourceDialog', () => {
       resourceType: 'github_pull_request',
       provider: 'github',
       canonicalUrl: 'https://github.com/juno-ai-labs/rally/pull/42',
+      refreshSupported: true,
       watchEnabled: false,
       watchStatus: 'paused',
       currentVersion: 1,

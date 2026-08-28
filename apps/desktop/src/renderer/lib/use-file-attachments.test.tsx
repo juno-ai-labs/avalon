@@ -27,6 +27,7 @@ const resource: WorkstreamResource = {
   resourceType: 'uploaded_file',
   provider: 'rally_upload',
   mimeType: 'text/plain',
+  refreshSupported: false,
   watchEnabled: false,
   watchStatus: 'unsupported',
   contentAvailable: true,

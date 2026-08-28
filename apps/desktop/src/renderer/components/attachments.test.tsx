@@ -65,6 +65,31 @@ describe('attachment presentation', () => {
     await waitFor(() => expect(button).toHaveFocus());
   });
 
+  it('says plainly that a prior version is not current, and offers the way back', async () => {
+    const onReturnToCurrent = vi.fn();
+    render(
+      <AttachmentLightbox
+        onClose={vi.fn()}
+        preview={{
+          name: 'Launch plan',
+          mimeType: 'text/markdown',
+          superseded: { label: 'Version 1 · not current', onReturnToCurrent },
+          loadContent: async () => new Blob(['# Draft'], { type: 'text/markdown' }),
+        }}
+      />,
+    );
+
+    // A prior version renders in the same surface as the current one, so
+    // nothing but this notice distinguishes what a reader is looking at.
+    expect(await screen.findByText('Version 1 · not current')).toBeVisible();
+    // The pill is the only thing separating history from the live document, so
+    // it has to reach a reader who is hearing the dialog rather than seeing it.
+    expect(screen.getByRole('dialog', { name: 'Preview of Launch plan — Version 1 · not current' }))
+      .toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Return to current' }));
+    expect(onReturnToCurrent).toHaveBeenCalledOnce();
+  });
+
   it('can open an image when its eager thumbnail preload fails', async () => {
     const attachment: MessageAttachment = {
       id: 'resource-retry-image',

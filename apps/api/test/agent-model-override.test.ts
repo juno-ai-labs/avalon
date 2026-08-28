@@ -11,7 +11,7 @@ import {
 import { AutomationService } from "../src/services/automation-service";
 import { __testing } from "../src/queues/activity-consumer";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
+import { applyWorkspaceResourceSchema, createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import {
   openWorkstreamAuthorityForTest,
@@ -327,6 +327,7 @@ function seededDatabase(): Fixture {
   // The alarm's draft arm reads the object's links table, which no regional
   // snapshot has ever carried.
   createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
+  applyWorkspaceResourceSchema(database, WORKSPACE_ID);
   const objectStore = testWorkstreamObjectStore();
   databases.push(objectStore);
   database.exec(`
