@@ -25,12 +25,15 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import type { Env } from "../src/env";
 import { createMessageObjectPort } from "../src/runtime/message-port";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import { seedOpenWorkstreamAuthority } from "./helpers/substream-fixture";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-0000000005d1";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000005d2";
 const USER_ID = "00000000-0000-7000-8000-0000000005d3";
 const RUN_ID = "00000000-0000-7000-8000-0000000005d4";
+const RESOURCE_ID = "00000000-0000-7000-8000-0000000005d6";
+const RESOURCE_TEXT = "ENG-142 incident status\n\nOpen question\nWiden the retry spacing.\n";
 
 /**
  * The route refuses to run anywhere but a development Worker, and the workerd
@@ -52,7 +55,24 @@ function developmentEnv(): Env {
 function fixture(overrides: Record<string, unknown> = {}) {
   return {
     workspaceId: WORKSPACE_ID,
-    workspaceTables: {},
+    workspaceTables: {
+      resources: [{
+        id: RESOURCE_ID,
+        workspace_id: WORKSPACE_ID,
+        resource_type: "text",
+        provider: "fixture",
+        provider_resource_id: "seed-doc",
+        title: "Seeded incident status",
+        mime_type: "text/plain",
+        // Null exactly as the checked-in fixture leaves it: the route mints the
+        // key, because the key embeds the region the seed cannot know.
+        content_ref: null,
+        metadata_json: "{}",
+        created_at: "2026-07-31T19:15:00.000Z",
+        updated_at: "2026-07-31T19:15:00.000Z",
+      }],
+    },
+    resourcePayloads: { [RESOURCE_ID]: RESOURCE_TEXT },
     workstreams: [{
       id: WORKSTREAM_ID,
       title: "Seeded work stream",
@@ -234,6 +254,25 @@ describe("the development product seed", () => {
     // had reached. Restoring it before the transcript would have numbered the
     // seeded messages 7 and 8 and left this append at 9.
     expect(appended).toMatchObject({ outcome: "appended", sequenceNumber: 7 });
+  });
+
+  it("hydrates a seeded resource into R2 and points its row at the object", async () => {
+    // The fixture's resource has no `content_ref`, and
+    // `materializeAttachmentDerivative` refuses that source outright with
+    // `source_unavailable` — which is why the one attached resource in the
+    // local seed was unreadable by the agent that could see it listed.
+    const database = withWorkspaceRuntimeDatabase(developmentEnv(), WORKSPACE_ID).DB;
+    const stored = await database.prepare(
+      `SELECT content_ref, content_sha256 FROM resources WHERE id = ? AND workspace_id = ?`,
+    ).bind(RESOURCE_ID, WORKSPACE_ID).first<{ content_ref: string | null; content_sha256: string | null }>();
+    expect(stored?.content_ref).toMatch(
+      new RegExp(`^global/${WORKSPACE_ID}/resources/${RESOURCE_ID}/[0-9a-f]{64}/seed$`),
+    );
+    expect(stored?.content_sha256).toMatch(/^[0-9a-f]{64}$/u);
+    // The key embeds the hash, so a ref that does not resolve to the fixture's
+    // own bytes is the failure this is really about.
+    const object = await env.PAYLOADS.get(stored!.content_ref!);
+    expect(await object?.text()).toBe(RESOURCE_TEXT);
   });
 
   it("adds nothing when the seed is posted a second time", async () => {

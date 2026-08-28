@@ -101,18 +101,25 @@ Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should
 not move the other.
 
-The description loop is the one role whose default is most likely to want
-raising. It reads a window of up to 600 messages and decides whether a work
-stream's purpose has moved, which is a harder judgment than the classifiers it
-shares a default with — see
+**Every variable in that column currently holds the same model id**,
+`openai/gpt-5.6-terra`, and `OPENROUTER_FALLBACK_MODELS` is empty. The
+variables stay distinct because the *roles* are distinct and each is separately
+retargetable; one shared value is the configuration they happen to hold, not a
+collapse of the five slots into one. A retarget still moves exactly the roles
+that name the variable being changed.
+
+The description loop is the role whose default is most likely to want raising.
+It reads a window of up to 600 messages and decides whether a work stream's
+purpose has moved, which is a harder judgment than the classifiers it shares a
+variable with — see
 [`workstream-descriptions.md`](workstream-descriptions.md). Retarget the flag
 rather than changing the shared `OPENROUTER_STRUCTURED_MODEL` variable, which
 would move the classifiers with it.
 
 Naming sits at the other end: it relabels one request in a single turn, runs
-while somebody watches for the result, and asks for no reasoning at all, so the
-smallest classifier model is the right default and latency is the thing a
-retarget would spend.
+while somebody watches for the result, and asks for no reasoning at all, so it
+is the role a cheaper, faster model would suit first, and latency is what a
+retarget there would buy.
 
 **Adding an agent means adding a flag.** The set above is the whole of what
 `agent-model-flags.ts` knows about; an agent that reads `OPENROUTER_*` directly
@@ -1068,6 +1075,36 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-28 — Every model slot defaults to `openai/gpt-5.6-terra`
+
+**What changed:** All five `OPENROUTER_*` model variables in both regional
+Wrangler configs, `.env.example`, and `scripts/sync-dev-env.mjs`'s defaults now
+name `openai/gpt-5.6-terra`, as does the hard-coded `BLOCK_DASHBOARD_MODEL`.
+`OPENROUTER_FALLBACK_MODELS` is empty. `OPENROUTER_AUTOMATION_MODEL` was also
+added to the sync script's `workerKeys`, which had never carried it — an
+`.env.local` naming it was silently dropped and the automation compiler ran on
+whatever the regional Wrangler config said.
+
+**Why:** The team's decision that all model inference runs on one model. The
+fallback list is empty as a consequence rather than as a separate choice: a
+fallback names a *different* model, so any non-empty chain is a route on which
+some inference does not run on the chosen one.
+
+**Considered and rejected:** Keeping the previous chain as a resilience net.
+It would have left every agent's failure path on a model the decision excludes.
+Also rejected collapsing the five variables into one: the roles stay separately
+retargetable, and one shared value today is configuration, not structure.
+
+**What a future change has to respect.** The empty fallback list is not a
+default a stale `.env.local` may override — the sync script forces it, and the
+comment there says why. Bind now has no second model to classify a failure
+onto, so a provider outage on this model surfaces as a failed run rather than a
+slower one; restoring a chain is a one-line change in the same four places.
+**This moves the checked-in defaults only.** Deployed regions resolve through
+Flagship first, so an `agent-model-*` flag still serving an older model
+overrides all of it until that flag is retargeted — which is the point of the
+flags and cannot be done from this repository.
 
 ### 2026-08-26 — Ace owns the ordinary default-route edit
 

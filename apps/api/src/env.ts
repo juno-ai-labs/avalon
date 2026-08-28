@@ -28,7 +28,7 @@ import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agen
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
 
-export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
+export const BLOCK_DASHBOARD_MODEL = "openai/gpt-5.6-terra";
 
 export interface Env {
   DB: D1Database;

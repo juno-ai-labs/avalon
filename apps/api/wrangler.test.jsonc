@@ -17,6 +17,9 @@
     // distinguishable. The fetch fails either way.
     "OPENROUTER_API_KEY": "test-not-a-real-key"
   },
+  "r2_buckets": [
+    { "binding": "PAYLOADS", "bucket_name": "avalon-do-runtime-test-payloads" }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

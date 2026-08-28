@@ -140,6 +140,9 @@
       }
     ]
   },
+  "resourcePayloads": {
+    "00000000-0000-7000-8000-000000000041": "ENG-142 — invoice retry failures\n\nStatus: investigating\nOpened: 2026-07-29\n\nSymptom\nInvoice delivery retries fail for a subset of workspaces. The failure is\nconcentrated in the third retry attempt and clears on a manual replay.\n\nEvidence so far\n- 18 related failure events across three deploys.\n- The third retry is scheduled 30s after the second, and the downstream\n  billing call has a 30s timeout, so the two windows overlap exactly.\n- No failures observed for workspaces whose invoices settle on attempt one.\n\nOpen question\nWhether to widen the retry spacing or shorten the downstream timeout. Both\nremove the overlap; only the first keeps the existing delivery deadline.\n"
+  },
   "workstreams": [
     {
       "id": "00000000-0000-7000-8000-000000000020",

@@ -19,6 +19,7 @@ import {
 import { WorkstreamObjectClient } from "../services/workstream-object-client";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createMessageObjectPort } from "../runtime/message-port";
+import { sha256Hex } from "../lib/crypto";
 
 const row = z.record(z.string(), z.union([z.string(), z.number(), z.null()]));
 
@@ -87,6 +88,60 @@ async function insertToolReceipts(
     ).run();
   }
   copied.tool_effects = receipts.length;
+}
+
+/**
+ * Hydrate a seeded resource's body into R2 and point its row at it.
+ *
+ * A resource row with a null `content_ref` has no source to convert, and
+ * `materializeAttachmentDerivative` says exactly that — `source_unavailable` —
+ * which every agent read of the fixture then surfaces as
+ * `resource_conversion_failed`. The seed shipped that way, so the one attached
+ * resource in the local fixture was unreadable by the model that could see it
+ * listed.
+ *
+ * The key is derived rather than carried in the fixture, for the reason the
+ * upload path derives its own: it embeds the region and the content hash, so a
+ * fixture cannot name a key that belongs to another region, and re-running the
+ * seed writes the same object rather than orphaning the last one. The upload
+ * path's trailing random segment is a deliberate omission — it exists so a
+ * re-uploaded draft cannot collide with a stale conversion claim, and a fixture
+ * whose content is fixed wants the opposite, which is what makes this
+ * idempotent.
+ *
+ * `content_sha256` is written with the ref because the derivative claim is
+ * fenced on the pair; leaving it null makes the first read spend a round trip
+ * re-deriving a hash this already computed.
+ */
+async function hydrateResourcePayloads(
+  env: Env,
+  database: D1Database,
+  workspaceId: string,
+  payloads: Record<string, string>,
+): Promise<number> {
+  let hydrated = 0;
+  for (const [resourceId, text] of Object.entries(payloads)) {
+    const bytes = new TextEncoder().encode(text);
+    const contentSha256 = await sha256Hex(bytes);
+    const key = `${env.AVALON_REGION}/${workspaceId}/resources/${resourceId}/${contentSha256}/seed`;
+    const mimeType = await database.prepare(
+      `SELECT mime_type FROM resources WHERE id = ? AND workspace_id = ?`,
+    ).bind(resourceId, workspaceId).first<{ mime_type: string | null }>();
+    if (!mimeType) {
+      throw new ApiError(422, "seed_resource_missing",
+        `Resource ${resourceId} has a payload but no seeded row`);
+    }
+    await env.PAYLOADS.put(key, bytes, {
+      httpMetadata: { contentType: mimeType.mime_type ?? "text/plain" },
+    });
+    await database.prepare(
+      `UPDATE resources
+          SET content_ref = ?, content_sha256 = ?, last_hydrated_at = ?, updated_at = ?
+        WHERE id = ? AND workspace_id = ?`,
+    ).bind(key, contentSha256, new Date().toISOString(), new Date().toISOString(), resourceId, workspaceId).run();
+    hydrated += 1;
+  }
+  return hydrated;
 }
 
 /**
@@ -176,6 +231,10 @@ const WORKSPACE_SEED_TABLES = new Set([
 const seedBody = z.object({
   workspaceId: z.string().uuid(),
   workspaceTables: z.record(z.string(), z.array(row)),
+  // Resource body text, keyed by the resource's id. Held beside the table rows
+  // rather than as a column on one, because it is not a column: it becomes an
+  // R2 object, and the row's `content_ref` is the key this route mints for it.
+  resourcePayloads: z.record(z.string().uuid(), z.string().max(200_000)).default({}),
   workstreams: z.array(z.object({
     id: z.string().uuid(),
     title: z.string().min(1),
@@ -194,6 +253,7 @@ const seedBody = z.object({
 const SeedProductResultSchema = z.object({
   seeded: z.boolean(),
   workspaceTables: z.record(z.string(), z.number()),
+  resourcePayloads: z.number(),
   workstreams: z.array(z.object({
     workstreamId: z.string().uuid(),
     copied: z.record(z.string(), z.number()),
@@ -287,6 +347,12 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     }
     workspaceCounts[table] = rows.length;
   }
+  const resourcePayloads = await hydrateResourcePayloads(
+    env,
+    workspaceDatabase.DB,
+    workspaceId,
+    body.resourcePayloads,
+  );
 
   const results = [];
   for (const workstream of body.workstreams) {
@@ -359,5 +425,5 @@ async function seedProduct(env: Env, body: z.infer<typeof seedBody>) {
     }
     results.push({ workstreamId: workstream.id, copied });
   }
-  return { seeded: true, workspaceTables: workspaceCounts, workstreams: results };
+  return { seeded: true, workspaceTables: workspaceCounts, resourcePayloads, workstreams: results };
 }

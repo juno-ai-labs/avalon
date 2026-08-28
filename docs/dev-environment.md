@@ -83,26 +83,25 @@ between its `SELECT ... FROM workspaces` and `ON CONFLICT`. SQLite otherwise
 parses the `ON` as a possible join clause and rejects the fresh post-retirement
 seed before product fixtures reach the Durable Objects.
 
-This walks the **Global** authority to `durable_object_open`, so the local
+This walks each region's authority to `durable_object_open`, so the local
 stack serves the same post-cutover Durable-Object model production runs, and
 seeds the product fixtures from `packages/db/seed-product.json` into their
 Durable Objects through the Worker's dev-only seed route — which is why the Workers must be up first; run without
 them, the walk completes and the script says to re-run for the import.
+It expects Global on 8787 and EU on 8788, the ports `dev:api:local` uses;
+`AVALON_E2E_BASE_URL` and `AVALON_E2E_BASE_URL_EU` override them.
 Skipping this step leaves local development on the legacy path, where none of
 the object-authority code executes — the gap that once hid a defect failing
 every production harness run. The script is idempotent and re-runs repair
 partial imports.
 
-**The walk is Global-only, so local EU is unusable.** It stays at
-`legacy_open`, and the only phase that accepts work is `durable_object_open`
-(`acceptsNewWorkstreamWork` in `services/workstream-authority.ts`), so the EU
-Worker answers `503 workstream_maintenance` to everything a member does —
-development sign-in included, which is where you will meet it. That was
-survivable while a legacy execution arm existed; production has since opened
-the authority in both regions and the arm is gone, so what local EU exercises
-now is the maintenance refusal rather than the legacy path. Region-specific
-behaviour has to be checked against a hosted EU Worker until the walk opens
-both.
+**Both regions are walked**, and both are seeded, so local EU serves the same
+product Global does. It was Global-only until 2026-08-28, on the reasoning that
+EU could stay on the legacy path; that stopped being true when the pre-cutover
+execution arms were removed. `acceptsNewWorkstreamWork` admits
+`durable_object_open` and nothing else, so the region left behind was not a
+legacy stack but one answering `503 workstream_maintenance` to every member
+call, development sign-in included.
 
 ## 3. Start the API Workers
 

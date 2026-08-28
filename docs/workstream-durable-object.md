@@ -1278,6 +1278,36 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-28 — The local bootstrap opens both regions and hydrates its resource
+
+**What changed:** `scripts/open-local-authority.mjs` walks and seeds EU as well
+as Global. The development seed route gained `resourcePayloads`: fixture text
+written into R2 under a key the route derives, with the resource row's
+`content_ref` and `content_sha256` set to match.
+
+**Why:** Two things a local stack claimed to have and did not. EU was left at
+`legacy_open` deliberately, back when a legacy execution arm existed; once the
+pre-cutover arms were removed, `acceptsNewWorkstreamWork` admitted
+`durable_object_open` alone, so the region was not on the legacy path but
+answering `503 workstream_maintenance` to everything including development
+sign-in. And the seeded resource carried a null `content_ref`, which
+`materializeAttachmentDerivative` refuses as `source_unavailable` — so the one
+attached resource in the fixture was listed to the agent and unreadable by it.
+
+**Considered and rejected:** Carrying the R2 key in `seed-product.json`. The
+key embeds the region and the content hash, and a fixture is seeded into both
+regions, so a checked-in key would be wrong in one of them. Deriving it also
+drops the upload path's random trailing segment on purpose: that segment exists
+so a re-uploaded draft cannot collide with a stale conversion claim, and a
+fixture whose bytes are fixed wants the opposite.
+
+**What a future change has to respect.** The walk's region list and the region
+list `scripts/dev-regional-api.mjs` starts must agree; a region started but not
+walked is one that 503s, and `scripts/open-local-authority.test.mjs` holds the
+two together. The seed's R2 key is content-addressed, so changing the fixture
+text writes a new object and leaves the old one behind in local state —
+harmless locally, and the reason this route is not an import tool.
+
 ### 2026-08-28 — The development seed writes its transcript through the message authority
 
 **What changed:** `routes/dev.ts` no longer inserts the checked-in product

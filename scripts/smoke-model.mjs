@@ -1,5 +1,5 @@
 const baseUrl = process.env.AVALON_SMOKE_BASE_URL ?? "http://127.0.0.1:8787";
-const expectedModel = "x-ai/grok-4.3";
+const expectedModel = process.env.AVALON_SMOKE_MODEL ?? "openai/gpt-5.6-terra";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
