@@ -24,3 +24,8 @@ __pycache__/
 
 # Streaming-smoothness measurement output (scripts/measure-stream-smoothness.mjs)
 .stream-measurements/
+
+# Worktrees an agent session checks out for isolated work. Each one is a second
+# full checkout of this repository, created and removed by the harness — never
+# something to commit.
+.claude/worktrees/

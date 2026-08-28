@@ -1,6 +1,37 @@
 import { z } from "zod";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 
+/**
+ * How long a derivative conversion may hold its claim before it is abandoned.
+ *
+ * The preview route answers `resource_processing` while a claim is live and
+ * fresh; once a claim is older than this, the next caller stops waiting and
+ * converts the document itself. So this is the server's own definition of "that
+ * conversion is not coming back".
+ *
+ * It is shared rather than server-private because a client that waits out a
+ * `resource_processing` answer derives how long that wait can still be worth
+ * making from this number and the one below. The pair is the arithmetic, and
+ * splitting them across packages is how the client ends up giving up early,
+ * silently, the day either is changed here.
+ */
+export const ATTACHMENT_PROCESSING_LEASE_MS = 5 * 60_000;
+
+/**
+ * How long one conversion attempt may run inside its request.
+ *
+ * Past it the attempt records `conversion_timeout` as a terminal state, which
+ * is cached against the extractor version — the next caller is told the
+ * conversion failed rather than being asked to wait again.
+ *
+ * Shared for the same reason as the lease: the longest a `resource_processing`
+ * answer can precede a *ready* one is another caller's whole lease running out
+ * without publishing, then this caller taking the claim and spending this
+ * timeout converting. A client that waits out `processing` needs both halves of
+ * that sum.
+ */
+export const ATTACHMENT_CONVERTER_TIMEOUT_MS = 30_000;
+
 export const ATTACHMENT_KIND_ENTRIES = [
   { kind: "image", description: "an image the agent can view" },
   { kind: "markdown", description: "a Markdown file" },
