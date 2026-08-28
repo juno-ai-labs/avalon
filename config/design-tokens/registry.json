@@ -8,7 +8,7 @@
     "sys.color.surface": "The named surfaces. Declared outright by each theme because their relationship inverts between light and dark \u2014 a dark theme makes a control recede by darkening it, a light theme by greying it.",
     "sys.color.text": "Text tones, strongest to faintest.",
     "sys.color.border": "The three borders the stylesheet names directly; each resolves to a step on the line ramp.",
-    "sys.color.brand": "Rally's own colour. `ink` is the brand drawn as a mark or a label on an ordinary surface, which is a different question from `base`: the chartreuse is a fine fill on white and an illegible label on it.",
+    "sys.color.brand": "Rally's own colour, split by whether it is being *filled* or *read*. `base` is the fill — a button, a swatch, and the logo mark, which is a mask over a fill rather than text — and a light theme keeps the chartreuse there, because a fill carries no text-contrast obligation and a logo carries none at all. `ink` is the brand as a legible label or accent on an ordinary surface: an eyebrow, a mention chip, a selected indicator, the streaming caret. The two diverge on light themes, where the chartreuse is a fine fill on white and an illegible label on it, so `ink` darkens and `base` does not.",
     "sys.color.accent": "The hue for links, focus and selection.",
     "sys.color.success": "Positive state. `fill` and `fill-edge` are a filled control \u2014 a switch that is on, a selected preset \u2014 which is neither the vivid hue nor the wash.",
     "sys.color.warning": "Attention short of failure.",

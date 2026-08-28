@@ -99,9 +99,15 @@
   --av-sys-color-border-subtle: var(--av-ref-color-line-1);
   --av-sys-color-border-strong: var(--av-ref-color-line-3);
 
-  /* Rally's own colour. `ink` is the brand drawn as a mark or a label on an
-   * ordinary surface, which is a different question from `base`: the
-   * chartreuse is a fine fill on white and an illegible label on it. */
+  /* Rally's own colour, split by whether it is being *filled* or *read*.
+   * `base` is the fill — a button, a swatch, and the logo mark, which is a
+   * mask over a fill rather than text — and a light theme keeps the chartreuse
+   * there, because a fill carries no text-contrast obligation and a logo
+   * carries none at all. `ink` is the brand as a legible label or accent on an
+   * ordinary surface: an eyebrow, a mention chip, a selected indicator, the
+   * streaming caret. The two diverge on light themes, where the chartreuse is
+   * a fine fill on white and an illegible label on it, so `ink` darkens and
+   * `base` does not. */
   --av-sys-color-brand-base: #cedc00;
   --av-sys-color-brand-strong: #e0ec25;
   --av-sys-color-brand-soft: #aab96a;
@@ -1294,7 +1300,7 @@
   --av-cmp-row-leading: 1.25;
   --av-cmp-row-hint-gap: 2px;
   --av-cmp-row-height-dense: 30px;
-  --av-cmp-row-background-hover: var(--av-sys-color-surface-subtle);
+  --av-cmp-row-background-hover: var(--av-sys-color-surface-raised-hover);
   --av-cmp-row-background-selected: var(--av-ref-color-neutral-4);
 
   --av-cmp-group-label-height: 26px;

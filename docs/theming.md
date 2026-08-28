@@ -663,6 +663,60 @@ Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-28 — The brand group splits fill from label, and Terra Light gets a real row hover
+
+**What changed:** Two independent repairs to Terra Light, plus the vocabulary
+change that makes the first one statable.
+
+`sys.color.brand` is now explicitly two halves. `base` is the brand as a *fill* —
+a button, a swatch ring, and the logo mark, which is a mask over a fill rather
+than text — and both Terra themes keep the chartreuse there. `ink` is the brand
+as a *legible label or accent*: an eyebrow, a mention chip, the streaming caret.
+Only the prose changed; no token value moved. Four rules that paint a shape
+rather than text moved from `ink` to `base`: `.rally-mark`, the welcome mark's
+size-only override, and the selected theme card's ring.
+
+Separately, `terra-light.json` now declares `cmp.row.background-hover` as
+`{sys.color.surface.raised-hover}` instead of inheriting Terra's
+`{sys.color.surface.subtle}` alias.
+
+**Why:** Terra Light's `brand.ink` is `#67700a`, a dark olive. That is correct
+for label text on white — `#cedc00` is 1.51:1 there against a 4.5:1 floor — and
+wrong for every *shape* that was borrowing the same token, which came out muddy
+olive where the brand should read. The logo mark and the selected theme card's
+ring were the two people actually noticed. A fill carries no text-contrast
+obligation and a logo carries none at all, so the split is not a loosening of
+the rule; it is the rule finally being stated at the right granularity.
+
+The hover was a different fault with the same shape. Terra Light never declared
+`cmp.row.background-hover`, so it inherited Terra's alias and resolved it against
+*its own* `surface.subtle` — `#faf9f6`, which sits 3 units of luminance from the
+`#f7f6f2` sidebar it paints on. That is a 1.0271 contrast step where Terra's own
+is 1.1237: about four times weaker, and invisible on a real screen. An alias is
+inherited as a *name*, and a name that means "one step off the ground" on a dark
+theme means "indistinguishable from white" on a light one.
+
+**Considered and rejected:** changing Terra Light's `brand.ink` to something
+greener, which moves about thirty label rules into contrast failure to repair
+four shapes. Also rejected: a `brand.mark` token holding a two-value light/dark
+pair — that shipped as #379, made the logo near-black on both light themes, and
+was reverted. The lesson kept from it is that the logo wants one answer; the
+lesson added here is that the answer is the *fill*, not a third value. Also
+rejected: giving Terra Light a bespoke hover hex, when `surface.raised-hover`
+already sits at 1.1337 against the sidebar and is the value the theme reaches
+for elsewhere.
+
+**What a future change has to respect:** a rule that paints text takes `ink`; a
+rule that paints a shape takes `base`. When adding a token that a light theme
+will darken for legibility, check every reader — a shape borrowing a label
+colour is the bug this entry exists to close. And a theme that leaves an alias
+undeclared inherits a *name*, not a value: verify what it resolves to against
+that theme's own surfaces, which is what the per-theme completeness rule cannot
+catch on its own.
+
+Shipped in TBD.
+
+
 ### 2026-08-27 — Projects add a closed semantic color palette
 
 **What changed:** Added twelve `--av-sys-color-project-*` tokens used by the
