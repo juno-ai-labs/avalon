@@ -34,6 +34,7 @@ import type { AuthContext } from "../env";
 import { contentAudienceContainsWorkstream } from "../lib/audience-containment";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { SUGGESTED_CONTEXT_ENABLED } from "../lib/suggested-context";
+import { truncateUtf16Safe } from "../lib/text";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { uuidV7 } from "../lib/uuid-v7";
 import {
@@ -922,7 +923,14 @@ async function routeDirectWatches(env: Env, activity: ActivityRow): Promise<Set<
     });
     for (const workstreamId of resolved.workstreamIds) {
       const stale = staleByWorkstream.get(workstreamId) ?? [];
-      stale.push({ resourceId: resource.id, slug: resource.slug, title: resource.title });
+      // Truncated at the same bound the resource projections use: the column
+      // has no length constraint, and this title is provider-controlled and
+      // lands in a durable message row that is broadcast to every client.
+      stale.push({
+        resourceId: resource.id,
+        slug: resource.slug,
+        title: truncateUtf16Safe(resource.title, 300),
+      });
       staleByWorkstream.set(workstreamId, stale);
     }
   }
@@ -971,7 +979,16 @@ async function injectActivityMessage(
     // notification marks staleness and nothing here re-fetches anything.
     ...(staleResources.length > 0 ? { staleResources } : {}),
   };
-  const text = [activity.title, activity.summary].filter(Boolean).join(" — ");
+  const text = [
+    [activity.title, activity.summary].filter(Boolean).join(" — "),
+    // Named in the text and not only in the structured content above: the
+    // transcript renders text, no surface reads that field yet, and a
+    // participant who cannot tell which attached document went stale cannot
+    // ask for the re-fetch this notification exists to invite.
+    ...(staleResources.length > 0
+      ? [`Attached here and now out of date: ${staleResources.map((resource) => resource.title).join(", ")}`]
+      : []),
+  ].join("\n");
   const now = Date.now();
   const messages = createMessageObjectPort(env, activity.workspace_id, workstreamId);
   // Four routed statements: a replay check, a sequence claim with `RETURNING`,
