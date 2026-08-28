@@ -518,9 +518,15 @@ async function workspaceBotToken(
  * prints a `resource://` URL or a bare `[^1]` marker. This is a third
  * outbound surface beside the digest email and the agent's own delivery, and it
  * quotes the same message text they render — so it owes the same reduction.
+ *
+ * In its plain shape, though: this text goes to `chat.postMessage`'s `text`
+ * field, which is Slack mrkdwn and has neither `**bold**` nor `[label](url)`.
+ * The Markdown shape the digest gets would arrive here as a literal `**Sources**`
+ * over a literal bracketed link — a different leak from the one this call site
+ * was added to close, rather than none.
  */
 function humanReadableMessage(value: string): string {
-  return rewriteCitationsAsPlainText(value).replace(
+  return rewriteCitationsAsPlainText(value, { sources: "plain" }).replace(
     /\[@((?:\\.|[^\]])+)\]\(person:[0-9a-f-]{36}\)/giu,
     (_match, label: string) => `@${label.replace(/\\([\\\]])/gu, "$1")}`,
   );

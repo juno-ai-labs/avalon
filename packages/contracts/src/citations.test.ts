@@ -272,6 +272,28 @@ describe("rewriteCitationsAsPlainText", () => {
       .toBe("See the deck.");
   });
 
+  it("writes the source list for a surface that renders no Markdown", () => {
+    // Slack's `text` field is mrkdwn: no `**bold**`, no `[label](url)`. The
+    // Markdown shape arrives there as literal syntax, which is a different leak
+    // from the one the reduction closes rather than none.
+    const source = "Revenue grew.[^a] Margin held.[^b]\n\n[^a]: [Q3 deck](resource://abc)\n[^b]: [The memo](https://example.com/memo)\n";
+    expect(rewriteCitationsAsPlainText(source, { sources: "plain" }))
+      .toBe("Revenue grew.[1] Margin held.[2]\n\nSources\n\n1. Q3 deck\n2. The memo — https://example.com/memo");
+  });
+
+  it("reduces the body and appends nothing when the caller has no room for a list", () => {
+    // A one-line mention excerpt and a 160-character preheader both reduce for
+    // the same reason and have nowhere to put a bibliography.
+    expect(rewriteCitationsAsPlainText("Revenue grew.[^a] See [the deck](resource://abc).\n\n[^a]: [Q3 deck](resource://abc)\n", { sources: "none" }))
+      .toBe("Revenue grew.[1] See the deck.\n");
+  });
+
+  it("reduces a citation whose scheme a model capitalised", () => {
+    // The desktop empties `Resource://` through its URL transform, so it never
+    // leaks there — this was the one path that read it as an unknown scheme.
+    expect(rewriteCitationsAsPlainText("See [the deck](Resource://abc).")).toBe("See the deck.");
+  });
+
   it("reduces an angle-bracketed target and a label carrying brackets", () => {
     expect(rewriteCitationsAsPlainText("See [the deck](<resource://abc>).")).toBe("See the deck.");
     expect(rewriteCitationsAsPlainText("See [Q3 [draft] deck](resource://abc).")).toBe("See Q3 [draft] deck.");
