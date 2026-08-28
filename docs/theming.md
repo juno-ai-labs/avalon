@@ -718,7 +718,6 @@ project hues, and project components must address them by registry key.
 
 Design: `docs/PRDs/2026-08-26_projects/prd.md`.
 
-
 ### 2026-08-26 — Raised popovers use the raised hover state
 
 **What changed:** Ordinary highlighted dropdown and command rows now paint with

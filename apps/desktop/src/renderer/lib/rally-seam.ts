@@ -50,7 +50,9 @@ export const SEAM_TILT_RATE = 0.00079;
  * @param spin Rotation about the vertical, in radians.
  * @param tilt Rotation about the horizontal, in radians.
  * @param scale Radius in viewBox units; the viewBox is `0 0 100 100`.
- * @param segments Polyline resolution. 168 is smooth to about 200px.
+ * @param segments Polyline resolution. 168 is smooth to about 200px. The loop
+ *   stops one short of a full turn because `Z` closes the polyline back onto the
+ *   start point; emitting it again first would add a zero-length segment.
  */
 export function seamPath(spin: number, tilt = 0, scale = 46, segments = 168): string {
   const spinCos = Math.cos(spin);
@@ -59,7 +61,7 @@ export function seamPath(spin: number, tilt = 0, scale = 46, segments = 168): st
   const tiltSin = Math.sin(tilt);
 
   let d = '';
-  for (let step = 0; step <= segments; step++) {
+  for (let step = 0; step < segments; step++) {
     const t = (step / segments) * Math.PI * 2;
     const x = SPAN * Math.cos(t) + LOBE_DEPTH * Math.cos(3 * t);
     const y = CROSS * Math.sin(2 * t);
@@ -73,3 +75,13 @@ export function seamPath(spin: number, tilt = 0, scale = 46, segments = 168): st
   }
   return `${d}Z`;
 }
+
+/**
+ * The frame the mark rests at: the angle the still master is drawn at, and what
+ * a reader who asked for less motion sees.
+ *
+ * A constant rather than a call at each site, so the JSX default, the
+ * reduced-motion branch, and both test files are the same value by construction
+ * instead of by four copies of one expression agreeing.
+ */
+export const SEAM_RESTING_PATH = seamPath(SEAM_START_RADIANS);
