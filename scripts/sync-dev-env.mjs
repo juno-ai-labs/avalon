@@ -154,11 +154,11 @@ const safeDefaults = {
   DESKTOP_DEEP_LINK_URI: "rallywithai://auth/complete",
   TERMINAL_REGION_CAPABILITY: "unsupported",
   TERMINAL_EMERGENCY_DISABLED: "false",
-  OPENROUTER_PRIMARY_MODEL: "openai/gpt-5.6-terra",
-  OPENROUTER_FALLBACK_MODELS: "",
-  OPENROUTER_CLASSIFIER_MODEL: "openai/gpt-5.6-terra",
+  OPENROUTER_PRIMARY_MODEL: "google/gemini-3.7-flash",
+  OPENROUTER_FALLBACK_MODELS: "openai/gpt-5.6-terra,x-ai/grok-4.6",
+  OPENROUTER_CLASSIFIER_MODEL: "google/gemini-3.7-flash",
   OPENROUTER_STRUCTURED_MODEL: "openai/gpt-5.6-terra",
-  OPENROUTER_AUTOMATION_MODEL: "openai/gpt-5.6-terra",
+  OPENROUTER_AUTOMATION_MODEL: "google/gemini-3.7-flash",
   RESEND_FROM_EMAIL: "Rally <invites@rallywith.ai>",
   RESEND_NOTIFICATION_FROM_EMAIL: "Rally <notifications@rallywith.ai>",
   WORKSTREAM_EMAIL_DOMAIN: "automation.rallywith.ai",
@@ -258,10 +258,10 @@ for (const region of ["global", "eu"]) {
     AVALON_REGION: region,
     PUBLIC_API_BASE_URL: local[`PUBLIC_API_BASE_URL_${region.toUpperCase()}`]
       || (region === "global" ? "http://127.0.0.1:8787" : "http://127.0.0.1:8788"),
-    // Deliberately not overridable from `.env.local`. Every model slot resolves
-    // to one model, and an `.env.local` copied from an older `.env.example`
-    // still names the two-model chain that used to be the default — which would
-    // route a failed call to a different model than the one the team chose.
+    // Deliberately not overridable from `.env.local`. This value mirrors what
+    // Flagship serves in production, and an `.env.local` copied from an older
+    // `.env.example` names a chain that has since been retargeted — which would
+    // route a failed local call somewhere production would not send it.
     OPENROUTER_FALLBACK_MODELS: safeDefaults.OPENROUTER_FALLBACK_MODELS
   };
   for (const key of regionalizableKeys) {

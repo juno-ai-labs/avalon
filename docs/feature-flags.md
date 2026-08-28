@@ -101,12 +101,41 @@ Admission and ranking get separate flags because admission turns connector
 activity into prompts while ranking orders them per user, and pinning one should
 not move the other.
 
-**Every variable in that column currently holds the same model id**,
-`openai/gpt-5.6-terra`, and `OPENROUTER_FALLBACK_MODELS` is empty. The
-variables stay distinct because the *roles* are distinct and each is separately
-retargetable; one shared value is the configuration they happen to hold, not a
-collapse of the five slots into one. A retarget still moves exactly the roles
-that name the variable being changed.
+The checked-in values of those variables mirror what Flagship serves, as read
+on 2026-08-28:
+
+| Variable | Value |
+| --- | --- |
+| `OPENROUTER_PRIMARY_MODEL` | `google/gemini-3.7-flash` |
+| `OPENROUTER_AUTOMATION_MODEL` | `google/gemini-3.7-flash` |
+| `OPENROUTER_CLASSIFIER_MODEL` | `google/gemini-3.7-flash` |
+| `OPENROUTER_STRUCTURED_MODEL` | `openai/gpt-5.6-terra` |
+| `BLOCK_DASHBOARD_MODEL` | `openai/gpt-5.6-terra` |
+| `OPENROUTER_FALLBACK_MODELS` | `openai/gpt-5.6-terra,x-ai/grok-4.6` |
+
+**The mirror is approximate, and cannot be exact.** A variable is shared by
+every role in its row of the table above, while Flagship targets each role
+separately, so a variable has one value where the flags may serve several:
+
+- `OPENROUTER_PRIMARY_MODEL` covers three roles. Work-stream and inline
+  subagent are served `google/gemini-3.7-flash`; **meeting notes is served
+  `openai/gpt-5.6-terra`**, which no value of this variable can also express.
+- `OPENROUTER_CLASSIFIER_MODEL` covers two, and they disagree: addressing is
+  served `google/gemini-3.7-flash` and **work-stream naming
+  `openai/gpt-5.6-terra`**. The variable takes the addressing value, the role it
+  is named for.
+- `OPENROUTER_FALLBACK_MODELS` is one variable for all eleven roles, and
+  Flagship serves four distinct chains. The value above is the one served to the
+  largest group — work-stream, inline subagent, automation, and addressing. The
+  structured roles are served `google/gemini-3.7-flash,x-ai/grok-4.6` (three of
+  them with a trailing `openai/gpt-5.6-terra` that repeats their own primary and
+  would retry the same model), and HyperSight
+  `x-ai/grok-4.3,google/gemini-3.7-flash,openai/gpt-5.6-terra`.
+
+These divergences only matter when Flagship is unreachable, which is when the
+variables are read at all — but that is exactly when a difference is least
+welcome, so narrowing them means either retargeting the flags onto the shared
+values or giving the diverging roles their own variables.
 
 The description loop is the role whose default is most likely to want raising.
 It reads a window of up to 600 messages and decides whether a work stream's
@@ -1075,6 +1104,48 @@ add it to the attribute table here. If it needs a read of its own, it needs a
 cache entry of its own — three reads is the standing budget for an evaluation.
 
 ## Changelog
+
+### 2026-08-28 — The checked-in defaults are read back from Flagship
+
+**What changed:** The five `OPENROUTER_*` variables in both regional Wrangler
+configs, `.env.example` and the dev-env sync defaults, plus
+`BLOCK_DASHBOARD_MODEL`, were set from the values Flagship actually serves,
+read with `wrangler flagship flags get` against app
+`bec01d3a-d6b6-4d8c-b89a-37440ed63b8c`. This supersedes the same-day entry
+below that set every slot to `openai/gpt-5.6-terra`.
+
+**Why:** These variables exist so the deployed configuration is readable in the
+repository and so an agent still runs when Flagship is unreachable. Both
+purposes fail silently when they have drifted, and they had: every checked-in
+value named a model no role was being served, and nothing in the repository
+could have shown that.
+
+**Considered and rejected:** Giving the diverging roles their own variables so
+the mirror could be exact. That grows the deployment surface to fix a
+readability problem, and the roles are separately retargetable *through the
+flags* by design — the variables are deliberately the coarser layer. Also
+rejected leaving the fallback list empty: no role is served an empty chain.
+
+**What a future change has to respect.** The mirror is approximate and the
+section above says exactly where. Three facts about the served values are worth
+carrying: `OPENROUTER_PRIMARY_MODEL` cannot express meeting notes, which is
+served a different model from the other two roles it covers; the classifier
+variable takes the addressing value and diverges from work-stream naming; and
+four distinct fallback chains collapse into one. Nothing here is enforced —
+re-reading the flags is a manual step, and a drift check would be the thing that
+makes it not one.
+
+Three oddities were read out of Flagship and left alone, because this change
+mirrors the flags rather than edits them: `agent-model-activity-structured`,
+`-work-opportunity-admission`, `-work-opportunity-ranking` and
+`-block-dashboard` each list their own primary again inside `fallbackModels`,
+which retries the model that just failed; `agent-model-hypersight` is described
+as "pinned, no fallback" and carries three; and `agent-model-hypersight` is not
+in `AGENT_MODEL_FLAG_KEYS` at all, so nothing reads it — HyperSight resolves
+through `agent-model-block-dashboard`. The models being served,
+`google/gemini-3.7-flash` and `x-ai/grok-4.6`, are also absent from
+`AGENT_MODEL_OVERRIDES`, so a member cannot pin a work stream to what their
+work stream already runs on.
 
 ### 2026-08-28 — Every model slot defaults to `openai/gpt-5.6-terra`
 
