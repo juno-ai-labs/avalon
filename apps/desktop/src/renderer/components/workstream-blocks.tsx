@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { Children, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
-import { citationFootnotes, citationScheme } from '@rally/contracts/citations';
+import { citationFootnotes, citationScheme, rewriteCitationsAsPlainText } from '@rally/contracts/citations';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -797,7 +797,10 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
   const exportsAvailable = desktopServicesAvailable();
 
   const copyResponse = async (): Promise<void> => {
-    await desktopBridge().copyText(text);
+    // The clipboard is an outbound, non-Rally renderer just like email and
+    // Slack: keep the words and sources, but never hand it a private scheme the
+    // destination cannot resolve.
+    await desktopBridge().copyText(rewriteCitationsAsPlainText(text));
     if (telemetry) reportTelemetryProductIntent({
       kind: 'content_copied', contentType: 'message_response', resourceType: 'message',
       resourceId: telemetry.messageId, workstreamId: telemetry.workstreamId,
@@ -818,7 +821,7 @@ function AssistantMessageActions({ citations, mentions, telemetry, text }: {
         content: <MarkdownBody citations={citations} mentions={mentions} still>{text}</MarkdownBody>,
         // The file name slugs the first line the way the card *shows* it — a
         // saved image named `…-backlog-rightarrow-done` outlives the render
-        // that repaired the text it pictures. Copy stays the stored bytes.
+        // that repaired the text it pictures.
         fileName: messageExportFileName(normalizeModelText(text), messageExportDate(new Date())),
         format,
       });

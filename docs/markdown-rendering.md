@@ -445,6 +445,24 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-08-28 — Copy reduces private citation targets before leaving Rally
+
+**What changed:** The finished-turn Copy action now sends its Markdown through
+the shared citation rewrite before placing it on the clipboard. Resource links
+become their model-authored labels, while grounded footnotes become ordinary
+numbered markers and a trailing source list, matching email and Slack delivery.
+
+**Why:** A transcript citation is interactive only because Rally resolves its
+`resource://` target against the loaded work stream. The clipboard crosses that
+renderer boundary: pasted text previously exposed an internal URI that no
+destination could open, even though the other outbound paths already reduced
+the same protocol. Reusing the contracts rewrite keeps all non-Rally renderers
+on one interpretation instead of adding a clipboard-only parser.
+
+**What a future change has to respect:** Copy is an outbound citation surface.
+It may preserve the message's Markdown, but it must reduce private schemes with
+the same shared grammar as email and Slack before the text leaves the app.
+
 ### 2026-08-28 — A preview still being prepared is not a preview that failed
 
 **What changed:** `ResourceContentPreview` in `inspector-rail.tsx` keeps the
