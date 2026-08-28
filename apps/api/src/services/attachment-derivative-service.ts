@@ -1,4 +1,4 @@
-import { classifyAttachmentKind } from "@rally/contracts";
+import { ATTACHMENT_PROCESSING_LEASE_MS, classifyAttachmentKind } from "@rally/contracts";
 import { unzipSync } from "fflate";
 
 export const ATTACHMENT_TEXT_EXTRACTOR_VERSION = "attachment-text-v2";
@@ -12,7 +12,6 @@ const MAX_OFFICE_XML_BYTES = 3 * 1_024 * 1_024;
 const MAX_DERIVATIVE_CHARACTERS = 2_000_000;
 const MAX_PDF_PAGES = 200;
 const CONVERTER_TIMEOUT_MS = 30_000;
-const PROCESSING_LEASE_MS = 5 * 60_000;
 
 export interface AttachmentPdfText {
   pageCount: number;
@@ -159,7 +158,7 @@ export async function materializeAttachmentDerivative(
 ): Promise<MaterializedAttachmentDerivative> {
   const now = (options.now ?? (() => new Date()))();
   const at = now.toISOString();
-  const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS).toISOString();
+  const staleBefore = new Date(now.getTime() - ATTACHMENT_PROCESSING_LEASE_MS).toISOString();
   const claimId = crypto.randomUUID();
   if (!resource.contentRef) return updateTerminalState(database, resource, "failed", "source_unavailable", options);
   if (isReadyCurrentVersion(resource)) {

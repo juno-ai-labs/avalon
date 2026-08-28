@@ -1,6 +1,25 @@
 import { z } from "zod";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 
+/**
+ * How long a derivative conversion may hold its claim before it is abandoned.
+ *
+ * The preview route answers `resource_processing` while a claim is live and
+ * fresh; once a claim is older than this, the next caller stops waiting and
+ * converts the document itself. So this is the server's own definition of "that
+ * conversion is not coming back".
+ *
+ * It is shared rather than server-private because a client that waits out a
+ * `resource_processing` answer needs the same number to know when waiting has
+ * stopped meaning anything. A conversion that dies without recording an
+ * outcome — killed rather than timed out — leaves the row saying "processing"
+ * with nobody processing it, and the next caller inherits the same fate five
+ * minutes later. Waiting through that forever is a client asking a question
+ * whose answer cannot change, and re-triggering the doomed conversion each
+ * time the lease turns over.
+ */
+export const ATTACHMENT_PROCESSING_LEASE_MS = 5 * 60_000;
+
 export const ATTACHMENT_KIND_ENTRIES = [
   { kind: "image", description: "an image the agent can view" },
   { kind: "markdown", description: "a Markdown file" },

@@ -12,7 +12,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { classifyAttachmentKind } from '@rally/contracts';
+import { ATTACHMENT_PROCESSING_LEASE_MS, classifyAttachmentKind } from '@rally/contracts';
 import { useEffect, useState } from 'react';
 import { ApiError } from '../lib/api';
 import { formatDateTime, formatRelative } from '../lib/format';
@@ -420,6 +420,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
     // One handle, reassigned by each wait. The cleanup below closes over this
     // binding rather than a copy, so it clears whichever wait is outstanding.
     let pendingRetry: number | undefined;
+    const startedAt = Date.now();
     setState({});
     const read = (): void => {
       void loadResourceContent(resource.id, controller.signal)
@@ -437,12 +438,23 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
             setState({ failed: true });
             return;
           }
-          // The state is left alone, so the panel goes on saying “Loading
-          // preview…” — which is what is happening. There is no ceiling on the
-          // number of waits and deliberately so: the server's own processing
-          // state is self-terminating, the delay is its to name, and a count
-          // invented here would end the wait with the same dead panel this
-          // change exists to remove. See `processingRetryDelayMs`.
+          // Waiting stops meaning anything after the server's own claim lease.
+          // Inside it, "still preparing" means a conversion is running and the
+          // panel should keep its spinner. Past it, the honest reading is that
+          // nothing is: a conversion killed without recording an outcome leaves
+          // the row saying `processing` with nobody processing it, and the next
+          // caller inherits the same fate when the lease turns over. Asking
+          // through that forever is a question whose answer cannot change, and
+          // every lease boundary re-triggers the doomed conversion. So the
+          // bound is the server's number rather than one invented here, and
+          // what the reader gets is the failure state they would have had
+          // anyway — only after the wait that was worth having.
+          if (Date.now() - startedAt >= ATTACHMENT_PROCESSING_LEASE_MS) {
+            setState({ failed: true });
+            return;
+          }
+          // Otherwise the state is left alone, so the panel goes on saying
+          // “Loading preview…” — which is what is happening.
           pendingRetry = window.setTimeout(read, retryAfterMs);
         });
     };
