@@ -640,9 +640,39 @@ export const WorkstreamResourceSchema = ResourceSchema.extend({
   direction: ResourceDirectionSchema,
 });
 
+/**
+ * Who moved a resource's pointers into the state a version holds.
+ *
+ * One shape per kind rather than a kind plus a shared identifier: a run, a
+ * member and a connection are all UUIDs, and the surfaces that render
+ * attribution resolve them against different authorities.
+ */
+export const ResourceVersionAuthorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("agent"), runId: IdSchema }),
+  z.object({ kind: z.literal("member"), userId: IdSchema }),
+  z.object({ kind: z.literal("connector"), connectionId: IdSchema }),
+  z.object({ kind: z.literal("system") }),
+]);
+
+/** Why the pointers moved. `created` is a resource's own first state. */
+export const ResourceVersionCauseSchema = z.enum(["created", "published", "refetched", "replaced"]);
+
 export const ResourceRevisionSchema = z.object({
   resourceId: IdSchema,
   version: z.number().int().positive(),
+  /**
+   * Null where history predates provenance, or a producer records none. The
+   * surfaces say a version is unattributed rather than inventing an author.
+   */
+  author: ResourceVersionAuthorSchema.nullable(),
+  cause: ResourceVersionCauseSchema.nullable(),
+  /**
+   * What kind of thing the version's refs name — an immutable object in the
+   * region's bucket for everything written so far. Deliberately not an enum:
+   * a later storage shape joins this history by writing a new value, and a
+   * client that does not know the value still lists and opens the version.
+   */
+  storageKind: z.string().min(1).max(40),
   title: z.string().min(1).max(300),
   resourceType: z.string().min(1).max(80),
   provider: z.string().min(1).max(80),
@@ -3153,6 +3183,8 @@ export type Message = z.infer<typeof MessageSchema>;
 export type ExternalActor = z.infer<typeof ExternalActorSchema>;
 export type Resource = z.infer<typeof ResourceSchema>;
 export type WorkstreamResource = z.infer<typeof WorkstreamResourceSchema>;
+export type ResourceVersionAuthor = z.infer<typeof ResourceVersionAuthorSchema>;
+export type ResourceVersionCause = z.infer<typeof ResourceVersionCauseSchema>;
 export type ResourceRevision = z.infer<typeof ResourceRevisionSchema>;
 export type NoteRecordingStatus = z.infer<typeof NoteRecordingStatusSchema>;
 export type NoteTranscriptSegment = z.infer<typeof NoteTranscriptSegmentSchema>;
