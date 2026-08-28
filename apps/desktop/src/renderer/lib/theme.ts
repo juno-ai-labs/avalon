@@ -31,7 +31,6 @@ import { desktopBridge, desktopServicesAvailable } from './platform';
  */
 
 const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
-const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 export interface ThemeState {
   choice: ThemeChoice;
@@ -49,40 +48,6 @@ const listeners = new Set<(state: ThemeState) => void>();
 function systemPrefersDark(): boolean {
   if (typeof window.matchMedia !== 'function') return false;
   return window.matchMedia(SYSTEM_DARK_QUERY).matches;
-}
-
-/**
- * Whether the reader has asked for less motion.
- *
- * Absent `matchMedia` — jsdom implements none, and neither does an Electron
- * window early enough to be certain of — means *no preference*, which is the
- * answer Chromium gives when the platform expresses none. Treating unreadable
- * as "reduce" would silently still every animation on a window that had merely
- * not finished starting.
- *
- * The stylesheet answers this question for itself: `app.css` ends with a global
- * cut that flattens every CSS animation and transition. This exists for the
- * motion CSS cannot see — a `requestAnimationFrame` loop is neither, and a
- * scroll whose behaviour is chosen in script.
- */
-export function prefersReducedMotion(): boolean {
-  if (typeof window.matchMedia !== 'function') return false;
-  return window.matchMedia(REDUCED_MOTION_QUERY).matches;
-}
-
-/**
- * Calls back when that preference changes, so motion already running can stop
- * without waiting for a remount. The returned function detaches the listener.
- *
- * `addEventListener` is called optionally for the same reason the query is read
- * optionally: a `MediaQueryList` that exists but predates the modern listener
- * API would otherwise throw where a missing `matchMedia` merely opts out.
- */
-export function onReducedMotionChange(listener: () => void): () => void {
-  if (typeof window.matchMedia !== 'function') return () => undefined;
-  const query = window.matchMedia(REDUCED_MOTION_QUERY);
-  query.addEventListener?.('change', listener);
-  return () => query.removeEventListener?.('change', listener);
 }
 
 export function readThemeChoice(): ThemeChoice {
