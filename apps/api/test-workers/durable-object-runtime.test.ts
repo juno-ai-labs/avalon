@@ -5749,24 +5749,24 @@ describe("Durable Objects in the Workers runtime", () => {
 
     // Simulate the isolate disappearing in the gap before its best-effort
     // post-commit continuation could re-arm delivery. Construction derives the
-    // alarm from the persisted outbox; the real alarm then drains it.
+    // alarm from the persisted outbox and the platform alarm then drains it —
+    // nothing else wakes this object, so synchronize with that delivery
+    // rather than forcing it: a `runDurableObjectAlarm` call is a no-op in
+    // the window where an auto-fired overdue alarm has not yet re-armed, and
+    // a direct `alarm()` invocation would keep this test green even if
+    // construction stopped arming the alarm. The poll only reads, so it
+    // cannot interleave with the drain it is waiting for, and it fails by
+    // timeout if the reconstructed object never armed or never delivered.
     await evictDurableObject(stub);
     await stub.wake();
-    // An overdue alarm may fire automatically while `wake()` yields, and the
-    // platform clears the alarm slot for the whole of that invocation — so
-    // `runDurableObjectAlarm` can find nothing armed while the auto-fired
-    // drain is still in flight, and an assertion made from a separate
-    // invocation would interleave into it and read the row it has not yet
-    // acknowledged. Run the handler and the check inside one invocation
-    // instead: the drain converges under a concurrent auto-fired alarm, and
-    // once `alarm()` returns the outbox row is acknowledged whichever
-    // invocation delivered it.
-    await runInDurableObject(stub, async (instance, state) => {
-      await instance.alarm();
-      expect(state.storage.sql.exec(
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) => Number(state.storage.sql.exec(
         `SELECT COUNT(*) AS count FROM durable_outbox
           WHERE channel = 'semantic_realtime_v1'`,
-      ).one()).toEqual({ count: 0 });
+      ).one().count)),
+      { timeout: 4_000, interval: 50 },
+    ).toBe(0);
+    await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec(
         `SELECT event_sequence FROM realtime_state WHERE id = 1`,
       ).one()).toEqual({ event_sequence: 1 });
