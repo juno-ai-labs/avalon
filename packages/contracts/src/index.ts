@@ -9,7 +9,7 @@ import {
 export * from "./workstream-transcript";
 import { ConnectorOAuthProviders } from "./connector-oauth-providers";
 import { HttpUrlSchema, httpUrlSchema } from "./url-schemas";
-import { AttachmentKindSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
+import { AttachmentKindSchema, ResourceSlugSchema, SuggestedAttachmentToolCallSchema } from "./attachment-contracts";
 import { ResourceDirectionSchema, ResourceRelationshipTypeSchema } from "./resource-relationships";
 import { ProjectIdSchema, ProjectSnapshotSchema } from "./projects";
 
@@ -615,12 +615,6 @@ export const MessageSchema = z.object({
   editedAt: TimestampSchema.nullable()
 });
 
-/**
- * A resource's short alias: four lowercase words, or null while the resource
- * still only has its UUID. Every internal reference is the UUID regardless.
- */
-export const ResourceSlugSchema = z.string().min(3).max(80);
-
 export const ResourceSchema = z.object({
   id: IdSchema,
   slug: ResourceSlugSchema.nullable().default(null),
@@ -655,10 +649,13 @@ export const WorkstreamResourceSchema = ResourceSchema.extend({
  * attribution resolve them against different authorities.
  */
 export const ResourceVersionAuthorSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("agent"), runId: IdSchema }),
-  z.object({ kind: z.literal("member"), userId: IdSchema }),
-  z.object({ kind: z.literal("connector"), connectionId: IdSchema }),
-  z.object({ kind: z.literal("system") }),
+  // Strict, like the attachment shapes: the union's whole claim is one
+  // identity per kind, and a non-strict variant would quietly accept — and
+  // then drop — an identity belonging to another one.
+  z.object({ kind: z.literal("agent"), runId: IdSchema }).strict(),
+  z.object({ kind: z.literal("member"), userId: IdSchema }).strict(),
+  z.object({ kind: z.literal("connector"), connectionId: IdSchema }).strict(),
+  z.object({ kind: z.literal("system") }).strict(),
 ]);
 
 /** Why the pointers moved. `created` is a resource's own first state. */
