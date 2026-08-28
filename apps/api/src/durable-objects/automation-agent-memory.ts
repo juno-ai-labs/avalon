@@ -524,7 +524,15 @@ export function importLegacyAutomationMemory(
            (row_id, table_id, data_json, revision, last_mutation_id,
             created_at, updated_at, invalidated_at, invalidation_reason)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        text(payload.memory_table_row_id, record.recordId), text(payload.memory_table_id),
+        // Identity comes from the natural key, not the legacy row UUID. The
+        // write path computes `${table_id}:row:${natural key hash}` and treats
+        // a row as already present only when that id matches, so a row that
+        // kept its legacy id was invisible to it: inserting a key the
+        // automation had already recorded before the cutover wrote a second
+        // row rather than recognising the first. The legacy table stored the
+        // hash itself, so nothing is recomputed here.
+        `${text(payload.memory_table_id)}:row:${text(payload.natural_key_hash, record.recordId)}`,
+        text(payload.memory_table_id),
         text(payload.data_json, "{}"), Number(payload.revision ?? 1),
         text(payload.last_mutation_id, `legacy:${record.recordId}`),
         epoch(payload.created_at) ?? now, epoch(payload.updated_at) ?? now,
@@ -777,7 +785,16 @@ export async function executeAutomationMemoryTool(
     const table = loadTable(storage, parsed.memoryTableId);
     const prepared = await Promise.all(parsed.rows.map(async (row) => {
       const values = normalizeValues(row, table);
-      const naturalKeyHash = await sha256(stableJson(table.keyColumns.map((column) => values[column.name])));
+      // `[name, value]` pairs, matching what the legacy memory-table service
+      // hashed into `memory_table_rows.natural_key_hash`. The import reuses
+      // that stored hash verbatim rather than recomputing it, so the two
+      // derivations have to agree: a row carried through the cutover must land
+      // on the same identity this path would compute for the same key, or
+      // re-inserting an imported key writes a second row instead of matching
+      // the one already there.
+      const naturalKeyHash = await sha256(stableJson(
+        table.keyColumns.map((column) => [column.name, values[column.name]]),
+      ));
       return { rowId: `${table.table.table_id}:row:${naturalKeyHash}`, naturalKeyHash, values };
     }));
     const inserted: Array<{ memoryTableRowId: string; revision: number; values: Record<string, unknown> }> = [];
