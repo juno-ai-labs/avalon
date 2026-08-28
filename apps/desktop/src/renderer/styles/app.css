@@ -2868,7 +2868,7 @@ pre {
 .human-message .message-attachments { justify-content: var(--av-cmp-turn-align); }
 .attachment-lightbox-overlay { background: var(--av-sys-color-scrim-solid); inset: 0; position: fixed; z-index: 1000; }
 .attachment-lightbox { background: var(--av-sys-color-scrim-solid); display: grid; grid-template-rows: 58px minmax(0, 1fr); inset: 0; position: fixed; z-index: 1001; }
-.attachment-lightbox-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 0 16px 0 22px; }
+.attachment-lightbox-header { align-items: center; border-bottom: 1px solid var(--av-ref-color-line-2); display: grid; grid-template-columns: minmax(0, 1fr) auto auto; padding: 0 16px 0 22px; }
 .attachment-lightbox-header h2 { color: var(--av-ref-color-neutral-13); font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment-lightbox-content { min-height: 0; overflow: auto; }
 .attachment-lightbox-content.is-image { align-items: center; display: flex; justify-content: center; overflow: hidden; padding: 32px; }
@@ -3173,6 +3173,23 @@ pre {
 .inspector-detail-preview { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-sys-color-border-subtle); border-radius: var(--av-sys-size-radius-md); font-size: 12.5px; margin-bottom: 18px; max-height: 42vh; overflow-y: auto; padding: 12px 14px; }
 .inspector-detail-preview-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 11.5px; gap: 6px; margin-bottom: 18px; }
 .inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+/* History under the actions: what the resource is comes first, what it was
+   comes after. The rows are their own grid so the version number, the author
+   and the time line up down the column rather than per row. */
+.inspector-versions { margin-top: 22px; }
+.inspector-versions ul { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.inspector-versions li { align-items: center; display: grid; gap: 9px; grid-template-columns: 22px minmax(0, 1fr) 26px; min-height: 36px; }
+.inspector-version-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.inspector-version-meta > .inspector-version-author { color: var(--av-ref-color-neutral-12); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-version-meta > time { color: var(--av-sys-color-text-muted); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-version-label { color: var(--av-sys-color-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.inspector-versions li > .icon-button { height: 26px; justify-self: end; width: 26px; }
+.inspector-versions li > .badge { justify-self: end; }
+/* A notice, not a caption: a superseded version renders in the same surface as
+   the current one, and reading a stale draft as current is the failure the
+   whole versioning layer exists to prevent. */
+.attachment-lightbox-superseded { align-items: center; background: var(--av-sys-color-warning-wash); border: 1px solid var(--av-sys-color-warning-edge); border-radius: var(--av-sys-size-radius-pill); color: var(--av-sys-color-text-default); display: flex; font-size: 11px; gap: 7px; justify-self: end; margin-right: 12px; padding: 4px 5px 4px 11px; }
+.attachment-lightbox-superseded button { background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-13); font-size: 10.5px; min-height: 24px; padding: 3px 9px; }
 
 /* Conversational automation creation */
 

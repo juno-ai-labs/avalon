@@ -48,6 +48,8 @@ import {
   type Elicitation as WireElicitation,
   type Message as WireMessage,
   type Resource as WireResource,
+  ResourceRevisionSchema as WireResourceRevisionSchema,
+  type ResourceRevision as WireResourceRevision,
   type WorkstreamResource as WireWorkstreamResource,
   type User as WireUser,
   type Workstream as WireWorkstream,
@@ -111,6 +113,7 @@ import type {
   WorkstreamDeferredContext,
   WorkstreamBoot,
   WorkstreamDetail,
+  ResourceVersion,
   WorkstreamResource,
   WorkstreamSummary,
   WorkOpportunity,
@@ -338,6 +341,16 @@ export function mapParticipant(participant: z.infer<typeof WireParticipantSchema
 
 export function mapViewer(viewer: z.infer<typeof WireViewerSchema>): Participant {
   return { ...mapUser(viewer.user), viewing: true };
+}
+
+function mapResourceVersion(revision: WireResourceRevision): ResourceVersion {
+  return {
+    version: revision.version,
+    capturedAt: revision.createdAt,
+    author: revision.author,
+    cause: revision.cause,
+    contentAvailable: revision.contentAvailable,
+  };
 }
 
 export function mapResource(resource: WireResource | WireWorkstreamResource): WorkstreamResource {
@@ -1845,6 +1858,39 @@ export class RallyApi {
       method: 'POST',
       schema: z.object({ suggestion: WireActivitySuggestionSchema.optional(), resourceId: z.string().nullable() }),
     });
+  }
+
+  /**
+   * A resource's history, newest first, including its current state.
+   *
+   * The rail shows the list only when there is more than one entry: a
+   * resource that has never changed is its own history, which the detail
+   * above already says.
+   */
+  async getResourceVersions(resourceId: string, signal?: AbortSignal): Promise<ResourceVersion[]> {
+    const versions = await this.request(`/resources/${encodeURIComponent(resourceId)}/versions`, {
+      schema: z.array(WireResourceRevisionSchema),
+      ...(signal ? { signal } : {}),
+    });
+    return versions.map(mapResourceVersion);
+  }
+
+  /** One prior version's original bytes, through the authorized preview route. */
+  async getResourceVersionContent(resourceId: string, version: number, signal?: AbortSignal): Promise<Blob> {
+    const response = await this.execute(
+      `/resources/${encodeURIComponent(resourceId)}/versions/${version}/content`,
+      { method: 'GET', ...(signal ? { signal } : {}) },
+    );
+    if (!response.ok) return this.throwResponseError(response);
+    return response.blob();
+  }
+
+  /** Re-fetch a connector-owned resource; the superseded state becomes a version. */
+  async refreshResource(resourceId: string): Promise<WorkstreamResource> {
+    return mapResource(await this.request(`/resources/${encodeURIComponent(resourceId)}/hydrate`, {
+      method: 'POST',
+      schema: WireResourceSchema,
+    }));
   }
 
   async setResourceWatch(workstreamId: string, resourceId: string, enabled: boolean): Promise<{ enabled: boolean }> {

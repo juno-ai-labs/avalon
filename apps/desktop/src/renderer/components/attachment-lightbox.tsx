@@ -1,6 +1,6 @@
 import { classifyAttachmentKind } from '@rally/contracts';
 import * as Dialog from '@radix-ui/react-dialog';
-import { LoaderCircle, X } from 'lucide-react';
+import { History, LoaderCircle, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { AttachmentPreview } from './attachments';
 import { MarkdownBody } from './workstream-blocks';
@@ -88,6 +88,14 @@ export function AttachmentLightbox({ preview, onClose }: {
         >
           <header className="attachment-lightbox-header">
             <Dialog.Title asChild><h2 aria-label={`Preview of ${preview.name}`}>{preview.name}</h2></Dialog.Title>
+            {preview.supersededLabel && (
+              <span className="attachment-lightbox-superseded">
+                <History aria-hidden="true" size={14} /> {preview.supersededLabel}
+                {preview.onReturnToCurrent && (
+                  <button onClick={preview.onReturnToCurrent} type="button">Return to current</button>
+                )}
+              </span>
+            )}
             <Dialog.Close asChild>
               <button aria-label="Close preview" className="attachment-lightbox-close" type="button"><X size={20} /></button>
             </Dialog.Close>

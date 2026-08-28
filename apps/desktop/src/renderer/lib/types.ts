@@ -180,6 +180,28 @@ export interface WorkstreamResource {
   direction: ResourceDirection;
 }
 
+/**
+ * Who moved a resource's content into the state a version holds.
+ *
+ * Null where the version predates provenance or its producer records none;
+ * the rail says a version is unattributed rather than naming someone.
+ */
+export type ResourceVersionAuthor =
+  | { kind: 'agent'; runId: string }
+  | { kind: 'member'; userId: string }
+  | { kind: 'connector'; connectionId: string }
+  | { kind: 'system' };
+
+export type ResourceVersionCause = 'created' | 'published' | 'refetched' | 'replaced';
+
+export interface ResourceVersion {
+  version: number;
+  capturedAt: string;
+  author: ResourceVersionAuthor | null;
+  cause: ResourceVersionCause | null;
+  contentAvailable: boolean;
+}
+
 export interface MessageAttachment {
   id: string;
   fileName: string;
