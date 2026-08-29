@@ -320,10 +320,37 @@ export default tseslint.config(
     }
   },
   {
+    // Type-aware parsing, and the only place in the tree that has it.
+    //
+    // `projectService` opens each linted file in a TypeScript language service,
+    // which loads that file's whole tsconfig program — every `.d.ts` its types
+    // reach, for the life of the process. Nothing releases a program once it is
+    // open, so a repo-wide `projectService` costs the *sum* of every package's
+    // program: measured at 4.5 GB of peak RSS on a cold single-threaded run,
+    // against 0.9 GB with no type information at all.
+    //
+    // One rule in the tree reads types: `rally/durable-object-sync-transaction`
+    // asks the checker whether a callback handed to a synchronous Durable Object
+    // transaction returns a Promise, which the callee's own signature decides
+    // rather than this file's syntax. It is enabled on `apps/api/src` below, so
+    // those 323 files are what get typed, and the other ~730 in the tree are
+    // parsed syntactically.
+    //
+    // **Enabling a type-aware rule outside `apps/api/src` means widening this
+    // block to cover the same files.** A `@typescript-eslint` type-aware rule
+    // says so — `getParserServices` throws when no program is available — and
+    // `durable-object-sync-transaction` was changed to throw for the same reason
+    // rather than quietly passing every file it cannot type, which is what a
+    // narrower block would otherwise turn into silent coverage loss.
+    files: ["apps/api/src/**/*.{ts,tsx}"],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
+    }
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
-      globals: { ...globals.browser, ...globals.node },
-      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
+      globals: { ...globals.browser, ...globals.node }
     },
     rules: {
       "@typescript-eslint/consistent-type-imports": "error",

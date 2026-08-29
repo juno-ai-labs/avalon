@@ -295,10 +295,14 @@ contents and nothing else:
   of the key. Rewriting one to report on every file flagged 889 files cold and 1
   warm — the one being the rule file itself, which had changed. **Run
   `pnpm lint:fresh` after touching a rule.**
-- **A type-aware verdict that depends on another file is too**, more narrowly.
-  `consistent-type-imports` reads whether an imported symbol is a type, which
-  lives in the file it came from, so turning an export from a value into a type
-  does not re-lint its importers.
+- **A cross-file verdict would be too**, if any rule reached for one. Only
+  `rally/durable-object-sync-transaction` reads types, and it is confined to
+  `apps/api/src` — see [below](#what-pnpm-lint-costs-in-memory). This section
+  previously named `consistent-type-imports` as a second unsound case, on the
+  belief that it asks the exporting file whether a symbol is a type. It does not:
+  the rule reads only how the import is used in the importing file, and flipping
+  an export from `const Thing` to `type Thing` leaves its verdict unchanged.
+  There is no known second case.
 
 Both were accepted deliberately: the p90 run changes neither, and CI runs cold.
 When a local green looks implausible, `pnpm lint:fresh` is the first thing to
@@ -315,6 +319,41 @@ typecheck that proves less than it says. CI runs cold, so the merge gate is
 unaffected; locally, give the second session
 [its own worktree](#working-in-a-second-checkout-or-worktree) rather than
 sharing the clone.
+
+## What `pnpm lint` costs in memory
+
+**A cold `pnpm lint` peaks at about 4 GB of resident memory, and almost none of
+that is work — it is TypeScript programs the run never releases and a heap
+ceiling nothing bounds.** Two things decide the number:
+
+- **Type-aware parsing is per tsconfig, and nothing frees it.**
+  `parserOptions.projectService` opens each linted file in a TypeScript language
+  service, which loads that file's whole tsconfig program and keeps it for the
+  life of the process. So the cost is the *sum* over every package the run
+  touches: `apps/api` alone measured 2.6 GB, `apps/desktop` 1.8 GB, `packages/*`
+  1.1 GB, and a repo-wide `projectService` 4.5 GB against 0.9 GB with no type
+  information at all. `eslint.config.mjs` therefore scopes it to
+  `apps/api/src`, the only files a type-aware rule is enabled on.
+- **V8's default heap limit is half of physical memory, so RSS tracks the
+  machine rather than the workload.** The live set is far smaller than the peak:
+  the same run completes under `--max-old-space-size=1536` at 1.6 GB, and only
+  fails below about 1 GB. Everything above that is a garbage collector with no
+  reason to run yet.
+
+**`--concurrency` multiplies both.** ESLint's parallelism is worker threads, and
+each thread builds its own programs *and* gets its own copy of the heap ceiling —
+so on a four-core machine the repo-wide config peaked at 6.5 GB and bought 12
+seconds. `pnpm lint` runs single-threaded for that reason, and CI is the case
+that forced it: Node sets its default ceiling at roughly half of physical memory
+(8.2 GB of a 16 GB sandbox, measured), so on a 7 GB runner two worker threads at
+about 3.5 GB each are the whole machine before the first program is even built.
+That arithmetic is why the fix is structural rather than a larger runner.
+
+Nothing here pins a heap ceiling. `--max-old-space-size` is the lever if a
+runner still runs out — it is worth roughly another 2 GB — but the number it
+takes is a cap on how large this repository's lint may grow, so it belongs to
+whoever is willing to own the day it starts failing, not to the measurement
+above.
 
 ## How many test workers to run
 
