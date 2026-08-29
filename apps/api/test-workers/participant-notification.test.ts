@@ -227,6 +227,40 @@ async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Pr
   ).toBe(1);
 }
 
+/**
+ * Wait for the substream loop to have nothing left to run.
+ *
+ * `answerElicitation` returns an activation request only when the loop it
+ * would activate is at rest (`workstream-object-product.ts`: `remaining === 0
+ * && after.status === "idle" ? … : null`), and the run `openWorkstream`
+ * starts drives that loop through `executing` and back. Nothing in these
+ * tests made the precondition true — it just usually was by the time the
+ * answer ran, and sometimes was not.
+ *
+ * Waiting on the loop's status alone is not enough, and finding that out is
+ * what this shape is for: a status-only poll caught the loop still `idle`
+ * *before* the opening run was admitted, and by the time the answer ran it
+ * was `executing` — the instrumented reproduction reported exactly that
+ * (`loopBefore.status = "executing"`, no pending elicitation left). So this
+ * waits on both: no run still admitted or running, and a loop back at rest.
+ * Together they are a state the loop cannot leave on its own. Read-only, so
+ * the probe cannot advance what it is waiting on.
+ */
+async function waitForQuietLoop(stub: DurableObjectStub): Promise<void> {
+  await expect.poll(
+    () => runInDurableObject(stub, (_instance, state) => {
+      const active = Number(state.storage.sql.exec<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM runs WHERE status IN ('admitted', 'running')`,
+      ).one().n);
+      const status = state.storage.sql.exec<{ status: string }>(
+        `SELECT status FROM substream_loops WHERE id = 1`,
+      ).toArray()[0]?.status ?? "idle";
+      return `${status}:${active}`;
+    }),
+    { timeout: POLL_BUDGET_MS, interval: 50 },
+  ).toBe("idle:0");
+}
+
 async function deliveredEffects(
   stub: DurableObjectStub,
   workstreamId = WORKSTREAM_ID,
@@ -881,6 +915,10 @@ describe("answering an elicitation in the ordered transcript", () => {
       }),
     });
     expect(question.status).toBe(200);
+
+    // The activation request below exists only for a loop at rest with nothing
+    // left to run, and the run `openWorkstream` started may still be settling.
+    await waitForQuietLoop(stub);
 
     await runInDurableObject(stub, async (instance, state) => {
       const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
