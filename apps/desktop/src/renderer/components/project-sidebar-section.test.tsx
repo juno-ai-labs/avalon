@@ -131,7 +131,14 @@ describe('the Projects sidebar section', () => {
     expect(scope).toHaveClass('dropdown-select-trigger-primary');
     fireEvent.click(scope);
     expect(screen.getByRole('option', { name: 'Project participants' })).toBeVisible();
-  });
+    // 30s rather than the suite's 15s `testTimeout`. Naming every choice means
+    // about ninety accessible-name lookups over the open dialog — bounded and
+    // deterministic, but by far the most expensive test in this file (1.6s here
+    // against 20-400ms for its siblings), and on a CPU-loaded machine it is the
+    // one that overruns. Measured at 10x oversubscription on 4 cores: 20s, and
+    // the only failure in the file. There is no `waitFor` here to widen; the
+    // wall clock is the whole budget.
+  }, 30_000);
 
   it('given project creation is pending, when it succeeds, then the dialog waits before opening and selecting the project', async () => {
     const created = project('00000000-0000-7000-8000-0000000000f5', 'Planning');

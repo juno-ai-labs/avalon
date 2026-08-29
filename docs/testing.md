@@ -39,6 +39,14 @@ includes workerd. CI splits them: `api-tests-2-of-2` appends
 `pnpm --filter @rally/api test:workers`, and the container and release suites
 are their own matrix jobs.
 
+A test in any of these that fails once and passes on a rerun is a defect to fix
+in the change that met it —
+[the flaky-test rule](../AGENTS.md#flaky-tests) is binding for every suite in the
+table, and it is where the reproduction levers live: the bulk loop, plus
+`--sequence.shuffle` for a test that depends on another in its own file having
+run first and `--no-file-parallelism` for interference between files. A `retry`
+in a Vitest config is never the answer, here or anywhere below.
+
 ## Where a new test goes
 
 Pick the highest rung the behavior can actually be exercised on. Dropping a rung
@@ -117,6 +125,27 @@ and nothing else, and type it per
 the subject consumes, `satisfies` or `implements`, `createTestEnv` and friends
 for platform bindings.
 
+**A clock is one of those collaborators, and no real wall-clock timer decides a
+test's outcome.** A deadline a helper mints — `AbortSignal.timeout(…)`,
+`maxWallClockMs`, `toolTimeoutMs`, `idleTimeoutMilliseconds` — is set far above
+any legitimate run; a small one appears only in a test whose subject *is* the
+deadline, and says so at that call site. These hide behind helper names that read
+as inert setup, which is why a fixture that mints a deadline is worth reading
+rather than reusing: the connectors suite alone reaches `AbortSignal.timeout`
+about 150 times through such helpers.
+
+Double it or leave it alone, but never half-way. A pinned fake clock reading a
+fixture epoch that was itself taken from the real one is worse than no double at
+all: it looks deterministic and is not, so its failures arrive as flakes in
+whichever test the drift happened to reach.
+
+**Where the interleaving is the point, stage it causally** — hold the
+collaborator on a promise the test resolves, assert the intermediate state, then
+release — rather than sizing a sleep to win the race. `test/slack-account-link.test.ts`
+parks both `views.open` calls on one barrier until each has arrived, so both
+modals provably exist before either click retires anything; a sleep would have
+asserted the same thing only on a machine that was fast enough.
+
 ### 4. `vi.mock` on a module
 
 The last resort, and rare on purpose — seventeen of the API suite's 183 files
@@ -125,6 +154,57 @@ but that helper only types a value that is already mocked). Mocking a module
 replaces code the change is supposed to protect, and the mock keeps passing after
 the real module's contract moves. If the subject's dependencies are all mocked,
 the test covers the wiring of the mocks.
+
+## Timeouts and waiting
+
+**Every new or edited `vi.waitFor(…)` and `expect.poll(…)` passes an explicit
+`timeout`.** The number is the author's to choose, but it has to be chosen: both
+default to one second with a 50ms interval, which is sized for nothing in
+particular. Most existing `vi.waitFor` sites still ride that default — the rule
+is binding for the code you touch, and the backlog converts as files are
+edited, not in one sweep.
+`packages/agent-harness`, `packages/connectors`, `apps/ace` and `apps/site` raise
+the `expect.poll` default in their configs; `apps/api`, `apps/desktop` and
+`packages/db` do not. No config raises `vi.waitFor` anywhere, because Vitest
+exposes `expect.poll.{timeout,interval}` and no knob at all for `vi.waitFor` —
+the call site is the only place its budget can live. The desktop renderer's
+`configure({ asyncUtilTimeout: 5_000 })` reaches @testing-library's `waitFor`
+only, and only in the `renderer` project.
+
+**The poll's budget sits comfortably below the enclosing test's.** That ordering
+is the whole reason to write a poll: it fails with `expected 1 to be +0` and a
+line number, where a harness timeout names no assertion at all. A poll budgeted
+at the test budget is a poll whose message nobody will ever read.
+
+One thing not to over-correct for: a poll does not falsely expire because the box
+is loaded. Node fires the 50ms interval timer ahead of the one-second timeout
+timer when both come due together, so a stall alone cannot expire a poll — only
+real work outlasting the budget does.
+
+**A per-test or per-hook timeout argument may only widen the project default,
+never narrow it, and it carries a comment naming the wait it is budgeting for.**
+Every example in this document widens, which is exactly why a narrowing reads as
+deliberate when it is almost always a number that was typed before the config had
+one. The project defaults are floors sized for contention from the sibling suites
+`pnpm test` starts at the same time — see
+[how many test workers to run](dev-environment.md#how-many-test-workers-to-run) —
+not ceilings anyone measured a single test against.
+
+**Never install fake timers mid-test, after a setup path has already armed real
+ones.** Vitest's switch does not migrate timers that are already pending, so
+anything the setup armed keeps running on the real clock while the test advances
+a fake one. Where a late switch has to stay, the test names in a comment the
+armed timer it depends on having already been cleared — otherwise the next change
+to that path silently removes the reason it works.
+
+Two @testing-library interactions follow from the same area, and neither is
+visible in the failure it causes. Under Vitest there is no global `jest`, so
+`jestFakeTimersAreEnabled()` is hard-wired false: @testing-library's `waitFor`
+under a plain `vi.useFakeTimers()` cannot poll at all, and hangs to the full test
+timeout unless its condition is already true on the first synchronous check. And
+`shouldAdvanceTime: true` advances the fake clock by a fixed 20ms per firing of a
+real 20ms interval, so on a contended box a faked timeout quietly becomes more
+patient in real seconds while the harness timeout around it does not.
 
 ## Writing a workerd test
 
@@ -187,10 +267,26 @@ beforeEach(async () => {
   never calls one can still be made to wait for a sibling's. That surfaces as a
   `beforeAll`/`beforeEach` timing out on its *first* test and passing when the
   file is run alone — which reads as flakiness and is not. Two things fix it,
-  and `workspace-directory-reads.test.ts` does both: set up in `beforeEach`
-  rather than `beforeAll`, so a wipe that lands mid-file is repaired rather than
-  inherited; and give that hook an explicit timeout well above the work it does,
-  with a comment saying the budget is for the interleave and not for the query.
+  and `workspace-directory-reads.test.ts` does both: the `beforeEach` rule
+  below, and a hook budget well above the work the hook does. The suite-wide
+  budget in `vitest.workers.config.ts` is now that budget, 30 seconds for every
+  test and hook in the directory, so a hook writes its own only to ask for
+  *more* — with a comment saying the wait is the interleave and not the query.
+- **Set up in `beforeEach`. No `beforeAll` in this directory.** A `beforeAll`
+  that opens an object while a sibling file is resetting waits until it times
+  out, and a wipe landing mid-file is then inherited by every test after it
+  rather than repaired. Paying for setup per test costs milliseconds, because
+  every seed here is already idempotent — `CREATE TABLE IF NOT EXISTS`,
+  `INSERT OR REPLACE`, `ON CONFLICT DO UPDATE`.
+  `workspace-directory-reads.test.ts`'s `establishWorkspace` is the worked
+  example. The directory holds no `beforeAll` today; the rule is what keeps the
+  next one from being reintroduced as an optimization.
+- **Object names are not isolated per file — storage is.** Two files naming the
+  same object are two files queueing on one input gate, and the symptom is again
+  a hook timing out in whichever lost the race rather than a failure anyone can
+  read. `scripts/check-durable-object-test-names.mjs` fails
+  `pnpm test:scripts` when two files spell out the same workspace id, so give a
+  new file its own rather than copying a neighbour's.
 - **Bindings come from `apps/api/wrangler.test.jsonc`**, not from the production
   configs. A new Durable Object class needs both a binding and its name in the
   `new_sqlite_classes` migration tag, or the object has no SQLite storage.
@@ -211,8 +307,9 @@ beforeEach(async () => {
   pass; the contract is what stops a half-configured Worker serving traffic.
 - **The first call into the Worker costs about 14 seconds** while its module
   graph is instantiated; later calls in the same file take milliseconds. That
-  overruns Vitest's 5-second default and reads as a hang, so give the first
-  route-level test in a file an explicit `timeout`.
+  overran Vitest's 5-second default and read as a hang, which is part of what the
+  suite-wide 30-second budget in `vitest.workers.config.ts` is sized for; a test
+  that needs longer than that floor still asks for it explicitly.
 - **One file at a time** needs the config named, and the path is
   package-relative:
 
@@ -279,10 +376,11 @@ beforeEach(async () => {
   the drain has synchronously settled the state it asserts on. And unlike a direct
   `instance.alarm()` call, it still fails when construction stops arming the
   alarm, which is half of what such a test exists to prove. Letting the poll's
-  timeout be the failure requires that it actually gets to fire: the suite's
-  default `testTimeout` is 5 seconds and covers the test's setup too, so give
-  the `it()` its own wider timeout — otherwise a loaded machine turns the
-  poll's legible `expected 1 to be +0` into an opaque harness timeout.
+  timeout be the failure requires that it actually gets to fire: the test budget
+  covers the test's setup too, so the poll's own `timeout` has to sit
+  comfortably under it (see [Timeouts and waiting](#timeouts-and-waiting)) —
+  otherwise a loaded machine turns the poll's legible `expected 1 to be +0` into
+  an opaque harness timeout.
 - **Budget about 30 seconds** for the whole suite from cold; most of that is
   transform and import, not the tests.
 
@@ -323,6 +421,13 @@ is usually one of these:
   on either end passes for any self-consistent format, including a broken one.
 - **A snapshot of a stub**, which pins the fixture and re-baselines the moment it
   is wrong.
+- **The test's own elapsed setup time.** An assertion never budgets wall clock it
+  did not mean to include: a bound built from a `Date.now()` the test captured
+  before its own setup ran, or one wide enough to swallow whatever the call did
+  in between, is asserting on the machine, and it passes for the wrong reason far
+  more often than it fails. Compare two timestamps the *subject* wrote
+  adjacently — `test-workers/scheduled-alarms.test.ts` reads the object's own
+  pair — rather than the subject's answer against the test's clock.
 - **The source text.** `expect(source(file)).toContain("SELECT … WHERE …")` reads
   a module off disk and asserts a string is in it. It cannot fail for the reason
   it is named after — only for the string having moved — and the repair, every
@@ -350,6 +455,25 @@ one. Several schemas refine on the version nibble (`value[14] === "7"` in
 `packages/contracts/src/index.ts` and `telemetry.ts`), so a `test-id` placeholder
 fails validation for a reason that has nothing to do with the behavior under
 test.
+
+### Installing and restoring state
+
+**Global and timer state is installed and restored in hooks, never in a test
+body.** `vi.useFakeTimers()` is paired with `vi.useRealTimers()` in an
+`afterEach`; `vi.stubGlobal` with `vi.unstubAllGlobals()` or the config's
+`unstubGlobals`; a database opened during a test is closed by an `afterEach`
+rather than by the last line of the body. `test/agent-model-flags.test.ts` states
+the reason where it does it — "Closed by `afterEach` rather than by the caller: a
+failing assertion throws past any close at the end of a case and leaks the handle
+into the rest of the file." A restore that a throwing assertion can skip is not a
+restore, and the test it leaks into is the one that gets blamed.
+
+The configs cover half of this and only half. Most package configs now set
+`restoreMocks`, `unstubGlobals` and `unstubEnvs`, which closes the stub leak —
+but `restoreMocks` does not restore timers, and Vitest's default
+`fakeTimers.toFake` includes `setImmediate`, so a file that installs fake timers
+and never restores them hands the next file in that worker a clock that does not
+advance.
 
 ### The migrated database fixtures
 
@@ -412,7 +536,15 @@ touch this area or a change worth making that has not been made.
   isolation only holds if every storage operation is awaited, response bodies
   from `fetch()` and `R2.get()` are fully consumed, and non-primitive RPC
   returns are held with `using`. A dangling promise or an unread body leaks
-  state into the next file and surfaces as a flake somewhere else.
+  state into the next file and surfaces as a flake somewhere else. So **every
+  `Response` a Durable Object stub hands back is drained before the test moves
+  on**, through `helpers/substream-fixture.ts`'s `boot()` or
+  `durable-object-runtime.test.ts`'s `fetchAndDrain` rather than a fourth private
+  copy — three files arrived at that helper independently and one missed the
+  precondition entirely, which is what an invariant everybody assumes and nothing
+  checks looks like. The `using` half needs nothing today only because no stub
+  here returns a non-primitive across RPC; the first helper that does has to hold
+  it.
 - **Mock outbound HTTP with `fetchMock`, not by replacing `globalThis.fetch`.**
   The documented recipes are `fetchMock` (an undici `MockAgent`) or MSW; both
   leave the runtime's request path intact, where a swapped global does not and

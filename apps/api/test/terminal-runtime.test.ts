@@ -251,7 +251,8 @@ describe("Daytona Terminal runtime", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    // The budget covers forking a real python3 on a contended machine, not the assertion.
+  }, 30_000);
 
   it("maps an oversized text line to an actionable limit error", async () => {
     const { provider, runtime } = fixture();
@@ -374,7 +375,6 @@ describe("Daytona Terminal runtime", () => {
 
   it("retires a sandbox before handoff when a submitting command has no provider session", async () => {
     let clockNow = Date.now();
-    const admittedAt = clockNow;
     const acquisitionObserved = vi.fn(async () => undefined);
     const { objectStore, provider, runtime } = fixture(
       { now: () => new Date(clockNow) },
@@ -409,11 +409,16 @@ describe("Daytona Terminal runtime", () => {
     });
     const submitting = workstreamObjectGet(
       objectStore,
-      "SELECT command_deadline_at FROM terminal_tasks WHERE effect_intent_id = ?",
+      "SELECT command_deadline_at, started_at FROM terminal_tasks WHERE effect_intent_id = ?",
       I,
-    ) as { command_deadline_at: number };
-    expect(submitting.command_deadline_at)
-      .toBeLessThan(admittedAt + DAYTONA_REQUEST_TIMEOUT_MS + 3_000);
+    ) as { command_deadline_at: number; started_at: number };
+    // Both timestamps are written from adjacent reads of the same real clock, so
+    // their difference is the submitting window itself: the request timeout, not
+    // the request timeout plus the command's own 3s budget.
+    expect(submitting.command_deadline_at - submitting.started_at)
+      .toBeGreaterThanOrEqual(DAYTONA_REQUEST_TIMEOUT_MS);
+    expect(submitting.command_deadline_at - submitting.started_at)
+      .toBeLessThan(DAYTONA_REQUEST_TIMEOUT_MS + 1_000);
     workstreamObjectRun(
       objectStore,
       `UPDATE runs SET status = 'needs_input', terminalized_at = ? WHERE run_id = ?`,

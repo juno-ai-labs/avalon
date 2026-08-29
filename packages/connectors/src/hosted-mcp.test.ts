@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { neverAborts } from "./test-signals";
 import {
   createHostedMcpPassthrough,
   hostedMcpToolDefinitions,
@@ -112,14 +113,14 @@ describe("hosted MCP abstraction", () => {
       fetch: fetcher,
     });
 
-    const definitions = await passthrough.dynamicAgentTools.discover(connection, AbortSignal.timeout(1_000));
+    const definitions = await passthrough.dynamicAgentTools.discover(connection, neverAborts());
     expect(definitions.map((definition) => definition.name)).toEqual(["live-search", "future_tool"]);
     expect(definitions[1]?.providerOperationName).toBe("Future.Tool");
     await expect(passthrough.execute(
       connection,
       definitions[1]!.providerOperationName!,
       { value: 42 },
-      AbortSignal.timeout(1_000),
+      neverAborts(),
     )).resolves.toMatchObject({ output: { accepted: 42 } });
     const initializeRequests = requests.filter((request) => request.method === "initialize");
     expect(initializeRequests.length).toBeGreaterThan(0);
@@ -178,12 +179,12 @@ describe("hosted MCP abstraction", () => {
       fetch: fetcher,
     });
 
-    const definitions = await passthrough.dynamicAgentTools.discover(connection, AbortSignal.timeout(1_000));
+    const definitions = await passthrough.dynamicAgentTools.discover(connection, neverAborts());
     await expect(passthrough.execute(
       connection,
       definitions[0]!.providerOperationName!,
       {},
-      AbortSignal.timeout(1_000),
+      neverAborts(),
     )).rejects.toThrow(/collide/iu);
     expect(called).toBe(false);
   });
@@ -253,7 +254,7 @@ describe("hosted MCP abstraction", () => {
     await expect(passthrough.authorization.refresh(
       authorization.state,
       "refresh-1",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
     )).resolves.toMatchObject({ access_token: "access-2", refresh_token: "refresh-2" });
     expect(calls.map((call) => call.url.pathname)).toEqual([
       "/.well-known/oauth-protected-resource/mcp",

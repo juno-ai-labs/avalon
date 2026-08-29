@@ -553,7 +553,8 @@ describe("Terminal repository publication", () => {
       await expect(publication).resolves.toMatchObject({ outcome: "created", publishedSha: HEAD });
     }
     expect(publicationPushes(scenario.provider)).toHaveLength(1);
-  });
+    // The budget covers forking a real bash up to four times on a contended machine, not the assertion.
+  }, 30_000);
 
   it("publishes later commits from the same authorized run to the existing open PR", async () => {
     const { objectStore, env, gateway, provider, context } = fixture();

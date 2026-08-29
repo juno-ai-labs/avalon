@@ -136,7 +136,12 @@ describe('the remote font cache', () => {
     const cache = new ThemeFontCache({ directory: await directory(), fetch, fonts });
 
     const asks = [cache.respond(url), cache.respond(url), cache.respond(url)];
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    // `waitFor`'s one-second default bets on the machine rather than on the
+    // code: reaching the fetch costs three real filesystem round trips, and a
+    // loaded runner can leave an already-resolved continuation waiting longer
+    // than that — failing as an assertion that never came true. The `main`
+    // project has no setup file to widen this globally, so it is widened here.
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled(), { timeout: 5_000 });
     release(ok(bytes(16)));
     const responses = await Promise.all(asks);
 

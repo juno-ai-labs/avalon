@@ -213,6 +213,10 @@ describe("realtime transcription proxy", () => {
   });
 
   it("closes both sockets and releases the lease when the frame-rate policy is exceeded", async () => {
+    // Only Date is faked: the limiter's window must not advance between the
+    // upgrade and the 31st frame, while releaseAndReport's retry setTimeout
+    // has to stay real for `await Promise.all(deferred)` to settle.
+    vi.useFakeTimers({ toFake: ["Date"] });
     const database = new SqliteD1Database();
     const upstream = new FakeSocket();
     const { pairs } = installSocketRuntime(upstream);

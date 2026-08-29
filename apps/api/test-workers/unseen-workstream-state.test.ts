@@ -105,7 +105,12 @@ beforeEach(async () => {
     workspaceDOName("global", WORKSPACE_ID),
   ));
   await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
-});
+  // Generous, and only because of the interleave: a sibling file's `reset()`
+  // holds every object's gate, so this hook can wait out a full reset before it
+  // gets to run at all. The work itself — reset, the D1 seed, and the
+  // `initializeWorkspace` RPC — takes milliseconds, so a failure here is a hang,
+  // never a slow query.
+}, 30_000);
 
 function agentStub(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -412,5 +417,10 @@ describe("a work stream nobody has shown this person yet", () => {
       userId: INVITEE_ID,
     });
     creatorSocket.close(1000, "test complete");
+    // The suite's 30s budget covers two real WebSocket handshake-plus-
+    // subscribe round trips and three product ops under contended
+    // parallel-file load, not a slow object. `nextClose` and
+    // `nextEvent` deliberately never reject: the convention here is to let the
+    // harness timeout be the failure and size the budget for the work.
   });
 });

@@ -378,24 +378,34 @@ describe('Workspace settings', () => {
   it('previews and confirms full Terminal internet access before applying it', async () => {
     renderSettings();
     openSettingsSection('Workspace');
-    expect(await screen.findByText('Terminal network access')).toBeVisible();
+    // 10s rather than the suite's 5s `asyncUtilTimeout` (src/renderer/test/setup.ts),
+    // and 30s rather than its 15s `testTimeout` on the `it` below. These panes
+    // settle several queries deep, and on a CPU-loaded machine — a CI runner, or
+    // `pnpm test` running nine packages at once — they have exhausted both while
+    // the code under them was fine. Measured at 10x oversubscription on 4 cores:
+    // 18-20s per test, of which no single await exceeded 10s, so the per-test
+    // budget is the binding one and the two have to move together. 30s keeps the
+    // 3:1 ratio the shared config already sets between them, which is what makes
+    // a condition that never settles fail as the assertion rather than as a bare
+    // test timeout. Same pair on every named test below.
+    expect(await screen.findByText('Terminal network access', undefined, { timeout: 10_000 })).toBeVisible();
     // The heading and the radio group settle on different ticks, so the sync
     // query raced the render and failed under full-suite load. The same query
     // is already awaited below.
-    const fullInternet = await screen.findByRole('radio', { name: /^Full internet/ });
+    const fullInternet = await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 });
     fireEvent.click(fullInternet);
-    await waitFor(() => expect(fullInternet).toBeChecked());
+    await waitFor(() => expect(fullInternet).toBeChecked(), { timeout: 10_000 });
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
 
-    expect(await screen.findByText(/arbitrary public destinations/u)).toBeVisible();
+    expect(await screen.findByText(/arbitrary public destinations/u, undefined, { timeout: 10_000 })).toBeVisible();
     expect(api.previewTerminalNetworkPolicy).toHaveBeenCalledWith({
       expectedRevision: 1, mode: 'full_internet', customDomains: [],
     });
     fireEvent.click(screen.getByRole('button', { name: 'Confirm network change' }));
     await waitFor(() => expect(api.applyTerminalNetworkPolicy).toHaveBeenCalledWith({
       mutationId: '00000000-0000-7000-8000-000000000090', expectedRevision: 1, confirmed: true,
-    }));
-  });
+    }), { timeout: 10_000 });
+  }, 30_000);
 
   it('keeps Rally-managed Trusted-only domains out of the settings surface', async () => {
     api.previewTerminalNetworkPolicy.mockResolvedValueOnce({
@@ -408,7 +418,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Workspace');
 
-    expect(await screen.findByText('Workspace-approved domains')).toBeVisible();
+    expect(await screen.findByText('Workspace-approved domains', undefined, { timeout: 10_000 })).toBeVisible();
     expect(screen.queryByText('Required targets')).not.toBeInTheDocument();
     for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
       expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
@@ -417,13 +427,13 @@ describe('Workspace settings', () => {
       target: { value: 'packages.example.com' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
-    fireEvent.click(await screen.findByText('Review exact before and after targets'));
-    expect(await screen.findAllByText('packages.example.com')).not.toHaveLength(0);
+    fireEvent.click(await screen.findByText('Review exact before and after targets', undefined, { timeout: 10_000 }));
+    expect(await screen.findAllByText('packages.example.com', undefined, { timeout: 10_000 })).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Download workspace domains' })).toBeVisible();
     for (const managedDomain of ['github.com', 'deb.debian.org', 'pypi.org', 'registry.npmjs.org']) {
       expect(screen.queryByText(managedDomain)).not.toBeInTheDocument();
     }
-  });
+  }, 30_000);
 
   it('reports stopped and quarantined work streams after provider verification fails', async () => {
     api.applyTerminalNetworkPolicy.mockRejectedValueOnce(new ApiError(
@@ -439,14 +449,14 @@ describe('Workspace settings', () => {
     ));
     renderSettings();
     openSettingsSection('Workspace');
-    fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /^Full internet/ }, { timeout: 10_000 }));
     fireEvent.click(screen.getByRole('button', { name: 'Review network change' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm network change' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm network change' }, { timeout: 10_000 }));
 
-    expect(await screen.findByText('Sandbox outcomes')).toBeVisible();
+    expect(await screen.findByText('Sandbox outcomes', undefined, { timeout: 10_000 })).toBeVisible();
     expect(screen.getByText('Customer export: stopped')).toBeVisible();
     expect(screen.getByText('Weekly report: quarantined')).toBeVisible();
-  });
+  }, 30_000);
 
   it('opens the exact section requested by a native settings-window URL', async () => {
     window.history.replaceState({}, '', '/?surface=settings&settingsSection=workspace#/settings');
@@ -621,7 +631,7 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Connections');
 
-    const mailCard = (await screen.findByText('Google Mail + Calendar')).closest('article');
+    const mailCard = (await screen.findByText('Google Mail + Calendar', undefined, { timeout: 10_000 })).closest('article');
     expect(mailCard).not.toBeNull();
     expect(within(mailCard!).queryByRole('button', { name: 'Connect workspace' })).not.toBeInTheDocument();
     fireEvent.click(within(mailCard!).getByRole('button', { name: 'Connect for me' }));
@@ -629,19 +639,22 @@ describe('Workspace settings', () => {
       'google',
       'you',
       ['gmail.read', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write'],
-    ));
+    ), { timeout: 10_000 });
 
     const driveCard = screen.getByText('Google Drive + Docs + Sheets').closest('article');
     expect(driveCard).not.toBeNull();
-    await waitFor(() => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled());
+    await waitFor(
+      () => expect(within(driveCard!).getByRole('button', { name: 'Connect workspace' })).toBeEnabled(),
+      { timeout: 10_000 },
+    );
     fireEvent.click(within(driveCard!).getByRole('button', { name: 'Connect workspace' }));
     await waitFor(() => expect(api.startProviderConnection).toHaveBeenLastCalledWith(
       'google',
       'workspace',
       ['drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write'],
-    ));
+    ), { timeout: 10_000 });
     expect(openExternal).toHaveBeenCalledTimes(2);
-  });
+  }, 30_000);
 
   it('explains personal and workspace connector scope from each connect action', async () => {
     renderSettings();
@@ -1399,10 +1412,10 @@ describe('Workspace settings', () => {
     renderSettings();
     openSettingsSection('Workspace');
 
-    expect(await screen.findByText('Data region')).toBeVisible();
+    expect(await screen.findByText('Data region', undefined, { timeout: 10_000 })).toBeVisible();
     expect(screen.getByText('European Union')).toBeVisible();
     expect(screen.getByText('Locked')).toBeVisible();
-    expect(await screen.findByText('Sam')).toBeVisible();
+    expect(await screen.findByText('Sam', undefined, { timeout: 10_000 })).toBeVisible();
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Email address' }), {
       target: { value: 'new-admin@example.com' },
@@ -1410,14 +1423,20 @@ describe('Workspace settings', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Role' }), { target: { value: 'admin' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
 
-    await waitFor(() => expect(api.createWorkspaceInvitation).toHaveBeenCalledWith('new-admin@example.com', 'admin'));
-    expect(await screen.findByText('Invitation emailed')).toBeVisible();
-    fireEvent.click(await screen.findByRole('button', { name: 'Copy link' }));
-    await waitFor(() => expect(copyText).toHaveBeenCalledWith(inviteUrl));
+    await waitFor(
+      () => expect(api.createWorkspaceInvitation).toHaveBeenCalledWith('new-admin@example.com', 'admin'),
+      { timeout: 10_000 },
+    );
+    expect(await screen.findByText('Invitation emailed', undefined, { timeout: 10_000 })).toBeVisible();
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy link' }, { timeout: 10_000 }));
+    await waitFor(() => expect(copyText).toHaveBeenCalledWith(inviteUrl), { timeout: 10_000 });
 
     fireEvent.click(screen.getByRole('button', { name: `Revoke invitation for ${invitation.email}` }));
-    await waitFor(() => expect(api.revokeWorkspaceInvitation).toHaveBeenCalledWith(invitation.id));
-  });
+    await waitFor(
+      () => expect(api.revokeWorkspaceInvitation).toHaveBeenCalledWith(invitation.id),
+      { timeout: 10_000 },
+    );
+  }, 30_000);
 
   it('does not expose invitation management to regular members', async () => {
     renderSettings({ ...workspace, currentUser: member });
@@ -1913,7 +1932,10 @@ describe('Workspace settings', () => {
     const client = createTestQueryClient();
     renderSettings(workspace, client, true);
     openSettingsSection('Digest');
-    await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Digest'));
+    await waitFor(
+      () => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Digest'),
+      { timeout: 10_000 },
+    );
 
     // The production path for this is the workspace socket writing a
     // `workspace_feature_flags` push into this same query key, not a
@@ -1923,9 +1945,12 @@ describe('Workspace settings', () => {
     });
 
     const navigation = screen.getByRole('navigation', { name: 'Settings sections' });
-    await waitFor(() => expect(within(navigation).queryByRole('button', { name: 'Digest' })).toBeNull());
+    await waitFor(
+      () => expect(within(navigation).queryByRole('button', { name: 'Digest' })).toBeNull(),
+      { timeout: 10_000 },
+    );
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Account');
-  });
+  }, 30_000);
 
   it('keeps the Digest pane from painting when a live flip and a non-matching search both strand activeSection on it', async () => {
     api.getDigestSchedule.mockResolvedValue({
