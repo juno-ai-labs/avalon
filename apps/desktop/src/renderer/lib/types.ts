@@ -323,8 +323,15 @@ export interface PluginActivityData {
 
 export interface ThoughtEventData {
   status: 'started' | 'completed';
-  /** Completed model-inference time accumulated across this turn. */
-  durationMs: number;
+  /**
+   * Completed model-inference time accumulated across this turn.
+   *
+   * Nullable for the same reason a plugin row's is: null is an unknown
+   * duration, not a zero one, and a row that cannot prove a time renders
+   * without one. Today's producers always supply a number; the type admits the
+   * unknown case so a caller cannot quietly turn it into `0ms` later.
+   */
+  durationMs: number | null;
   /** Client receipt time for the currently streaming inference attempt. */
   startedAt?: number;
   monotonicStartedAt?: number;
