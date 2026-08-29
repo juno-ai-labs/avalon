@@ -685,6 +685,58 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-29 — The digest tables answer to typed WorkspaceDO methods, not routed SQL
+
+**What changed:** Every digest statement the services sent through the
+workspace runtime facade — the settings read and wholesale save, the
+reconciler's on-by-default insert and derived-row repair, the timezone rebuild,
+the occurrence claim and its lifecycle transitions, settlement, and the
+per-destination delivery records — is now a typed method on `WorkspaceDO`
+(`workspace-digests-protocol.ts` for the contracts,
+`workspace-digests-storage.ts` for the SQL). Three read-then-write sequences
+became single object transactions with returned witnesses: the first save
+decides create-versus-update inside the write, the reconciler's default answers
+`created` from the branch it took rather than from a physical write counter,
+and settlement is a compare-and-set whose loser is told `already_settled`. One
+routed statement deliberately remains: the settings read that joins
+`digest_delivery_targets` to `connector_connections` for display names, which
+is the connectors domain's conversion to make. The digest names stay on
+`WORKSPACE_LOCAL_TABLES` so an accidental generic statement still routes to the
+object rather than failing as D1's `no such table`.
+
+**Why:** the facade classifies each statement by the table names in it, and a
+WorkspaceDO table missing from its list is silently answered by regional D1 —
+the routing defect that took automation run work streams down in production
+(PR #401). A typed method cannot be routed to the wrong database, because its
+tables are named inside the object that has them. The round trips were also
+live races, not just latency: two concurrent first saves both read "no digest
+yet" and `UNIQUE (workspace_id, user_id)` 500ed the loser, and two settlement
+attempts of one retried workflow step could both read `running`, both settle,
+and both emit the terminal telemetry and append the delivery note.
+
+**Considered and rejected:** converting the delivery-targets display-name join
+by splitting it into two typed reads. Both tables live in this object, so the
+split is possible — but `connector_connections` belongs to the connectors
+domain, whose conversion lands separately in this stack, and carving one of its
+reads out here would leave that domain's boundary drawn in two places. Also
+rejected: moving the RRULE derivation into the object with the write it feeds.
+The recurrence policy is the service's; the object writes exactly the derived
+rows it is handed, so *when* a digest fires never becomes a storage question.
+
+**Consequences:** digest state in a Node test now lives in the object database
+`createTestWorkspaceDO` stands up, not in the regional fixture — a test that
+seeds or asserts digest rows must use the object store, and the suites in
+`apps/api/test/digest-*.test.ts` are the worked examples. Settlement side
+effects (terminal telemetry, the transcript delivery note) belong to the
+attempt whose settle returned `settled`; a new settlement branch must check
+that witness rather than assume it won. The methods that rewrite derived
+`schedules` rows re-arm the workspace alarm themselves, mirroring the generic
+SQL path's backstop, so a future caller that forgets `refreshWorkspaceSchedule`
+degrades to a late alarm rather than a dark one.
+
+Shipped in the facade-to-RPC stack (PR 6 of 9), on top of
+[#401](https://github.com/juno-ai-labs/avalon/pull/401)'s routing repair.
+
 ### 2026-08-28 — Both email passes read one shared answer for where a fence ends
 
 **What changed:** `email-markdown.ts` no longer tracks fenced blocks itself.

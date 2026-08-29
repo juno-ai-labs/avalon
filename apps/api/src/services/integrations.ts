@@ -145,6 +145,7 @@ import {
   telemetryJourneyDuration,
 } from "../telemetry/product-usage";
 import { createAutomationDraftAttachmentTools } from "./automation-draft-attachment-tools";
+import { WorkspaceDigestDeliveryContextSchema } from "../durable-objects/workspace-digests-protocol";
 import {
   withWorkspaceRuntimeDatabase,
 } from "./workspace-runtime-database";
@@ -5244,10 +5245,18 @@ async function loadRunPromptContext(
     // client-message id, so this cannot pick up a later message in the same
     // work stream, and one occurrence's run can never be handed another's
     // window.
-    const digestWindow = await env.DB.prepare(
-      `SELECT planned_for, event_count FROM digest_deliveries WHERE id = ? AND workspace_id = ?`,
-    ).bind(input.digestDeliveryId, input.workspaceId)
-      .first<{ planned_for: string; event_count: number }>();
+    const digestWorkspace = await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      input.workspaceId,
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
+    );
+    const digestWindow = WorkspaceDigestDeliveryContextSchema.parse(
+      await digestWorkspace.digestDeliveryContext({
+        workspaceId: input.workspaceId,
+        deliveryId: input.digestDeliveryId,
+      }),
+    ).delivery;
     const digestMessage = await createMessageObjectPort(env, input.workspaceId, input.workstreamId)
       .messageByClientId({ clientMessageId: `digest:${input.digestDeliveryId}` });
     // Failing the attempt rather than running without the window: a digest with
@@ -5260,8 +5269,8 @@ async function loadRunPromptContext(
     // trigger message, so the branch above already added its text.
     triggerMessage = modelDerivative(renderScheduledDigestBriefMessage({
       brief: digestMessage.text_content,
-      plannedFor: digestWindow.planned_for,
-      eventCount: Number(digestWindow.event_count),
+      plannedFor: digestWindow.plannedFor,
+      eventCount: digestWindow.eventCount,
     }), "digest_delivery", input.digestDeliveryId);
   }
   const frozenMemory = await freezeRunMemoryContext(
