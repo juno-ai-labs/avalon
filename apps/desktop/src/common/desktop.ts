@@ -325,6 +325,15 @@ export interface DesktopSystemAudioCaptureInfo {
   sampleRate: number;
 }
 
+/**
+ * One refused deep link, with the identity its acknowledgement is matched
+ * against. The id rises with every failure the main process is asked to show.
+ */
+export interface DesktopDeepLinkErrorNotice {
+  id: number;
+  message: string;
+}
+
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
@@ -414,6 +423,35 @@ export interface RallyDesktopBridge {
   openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
   onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
+  /**
+   * Raise the deep-link failure window in front of whatever is on screen.
+   *
+   * A refused deep link is reported by whichever renderer was handed it, and
+   * for a connector completion that is the settings window — which raises and
+   * focuses itself, and renders no shell to put a message in. Anything drawn
+   * inside a single renderer is therefore either in a window nobody is looking
+   * at or in one with nowhere to draw it, which is why this leaves the renderer
+   * entirely and asks main for a window of its own.
+   *
+   * Both renderers are handed the same connector completion and both report it.
+   * The window is a singleton keyed on nothing: the second report re-shows the
+   * same window with the same message, so a duplicate costs a redundant focus
+   * rather than a second dialog.
+   */
+  showDeepLinkError: (message: string) => Promise<void>;
+  /** The notice to show, read by the failure window once it has mounted. */
+  getDeepLinkError: () => Promise<DesktopDeepLinkErrorNotice | null>;
+  /** A later failure replacing the one already on screen in that window. */
+  onDeepLinkErrorChanged: (listener: (notice: DesktopDeepLinkErrorNotice | null) => void) => () => void;
+  /**
+   * Acknowledged: close the failure window. Only that window may call this.
+   *
+   * Takes the id of the notice being acknowledged rather than closing whatever
+   * is open. A newer failure can replace the text between the person reading it
+   * and their click landing — duplicate reports are the normal case here — and
+   * a bare close would then discard a notice nobody has seen.
+   */
+  dismissDeepLinkError: (noticeId: number) => Promise<void>;
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;

@@ -46,6 +46,7 @@ const bridge = vi.hoisted(() => ({
   openExternal: vi.fn(),
   openSettings: vi.fn(),
   refreshSession: vi.fn(),
+  showDeepLinkError: vi.fn<RallyDesktopBridge['showDeepLinkError']>(async () => undefined),
   reportTelemetryProductIntent: vi.fn(),
 }) satisfies AppSessionDesktopBridge & Pick<RallyDesktopBridge, 'reportTelemetryProductIntent'>);
 
@@ -116,6 +117,19 @@ function renderProvider(): QueryClient {
  * had already run and left the bridge configured — an ordering the runner
  * happens to give it today and is under no obligation to keep.
  */
+/**
+ * The message the failure window was last asked to show.
+ *
+ * Once there is a workspace a refused link leaves the renderer entirely — the
+ * window that handled it is not reliably the one in front — so this, and not
+ * the `deep-link-error` output, is where a signed-in failure now shows up.
+ * Signed-out failures still render inline and are still asserted there.
+ */
+function lastDeepLinkFailure(): string | null {
+  const calls = bridge.showDeepLinkError.mock.calls;
+  return calls.at(-1)?.[0] ?? null;
+}
+
 function resetDesktopBridge(): void {
   vi.clearAllMocks();
   window.localStorage.clear();
@@ -602,7 +616,7 @@ describe('single-platform desktop identity routing', () => {
       `rallywithai://auth/complete?provider=linear&region=eu&attempt=${'a'.repeat(43)}&status=denied&error=oauth_denied`,
     );
 
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('Linear authorization was cancelled');
+    expect(lastDeepLinkFailure()).toContain('Linear authorization was cancelled');
   });
 
   it('rejects malformed connector UUIDs in legacy and server-owned completion links', async () => {
@@ -621,12 +635,12 @@ describe('single-platform desktop identity routing', () => {
     await dispatchDeepLink(
       'rallywithai://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected',
     );
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+    expect(lastDeepLinkFailure()).toContain('invalid connector completion');
 
     await dispatchDeepLink(
       `rallywithai://auth/complete?connection=00000000-0000-7000-8000-0000000000-4&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     );
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+    expect(lastDeepLinkFailure()).toContain('invalid connector completion');
   });
 
   it('rejects a connector result from a different regional server', async () => {
@@ -640,7 +654,7 @@ describe('single-platform desktop identity routing', () => {
       `rallywithai://auth/complete?connection=1ba39221-dac7-40cc-8f77-a88132740f16&status=connected&region=global&attempt=${'a'.repeat(43)}&provider=linear`,
     );
 
-    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('invalid connector completion');
+    expect(lastDeepLinkFailure()).toContain('invalid connector completion');
   });
 
   it('consumes a Slack link token only through the authenticated regional session', async () => {
@@ -723,7 +737,7 @@ describe('single-platform desktop identity routing', () => {
 
     await dispatchDeepLink(`rallywithai://slack/link?token=${'a'.repeat(43)}`);
 
-    await waitFor(() => expect(screen.getByTestId('deep-link-error')).toHaveTextContent(
+    await waitFor(() => expect(lastDeepLinkFailure()).toMatch(
       /Slack was linked, but personal Slack tools could not be connected/u,
     ));
     fetchRequest.mockRestore();
@@ -833,8 +847,7 @@ describe('single-platform desktop identity routing', () => {
 
     // Signing in again does nothing about a link that names no note, so saying
     // so would send someone to a remedy that cannot work.
-    await waitFor(() => expect(screen.getByTestId('deep-link-error'))
-      .toHaveTextContent('Rally could not open that note link.'));
+    await waitFor(() => expect(lastDeepLinkFailure()).toBe('Rally could not open that note link.'));
     expect(window.location.hash).toBe(before);
   });
 
@@ -848,6 +861,22 @@ describe('single-platform desktop identity routing', () => {
     await waitFor(() => expect(screen.getByTestId('deep-link-error'))
       .toHaveTextContent('Sign in before opening this note.'));
     expect(window.location.hash).toBe(before);
+  });
+
+  it('gives a signed-in person without a workspace the window, not the inline message', async () => {
+    // `SignInScreen` is the only surface that renders the inline message, and
+    // `SessionGate` shows it only when there is no session at all. Someone who
+    // has signed in but not joined a workspace is on `WorkspaceOnboardingGate`,
+    // which renders neither — so routing them inline files the failure where
+    // nothing draws it.
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
+    renderProvider();
+    expect(await screen.findByText('global:signed-out')).toBeVisible();
+
+    await dispatchDeepLink('rallywithai://notes/not-a-note');
+
+    await waitFor(() => expect(lastDeepLinkFailure()).toBe('Rally could not open that note link.'));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
 
   it('opens the new work stream screen, which is how the menu bar starts one', async () => {
@@ -890,7 +919,7 @@ describe('single-platform desktop identity routing', () => {
     expect(await screen.findByText('global:Juno Labs')).toBeVisible();
     await dispatchDeepLink(rawUrl);
 
-    await waitFor(() => expect(screen.getByTestId('deep-link-error')).toHaveTextContent('unexpected sign-in link'));
+    await waitFor(() => expect(lastDeepLinkFailure()).toContain('unexpected sign-in link'));
     expect(bridge.openSettings).not.toHaveBeenCalled();
   });
 });
