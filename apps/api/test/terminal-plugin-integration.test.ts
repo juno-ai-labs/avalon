@@ -13,6 +13,10 @@ import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-p
 import { createAvalonTerminalPlugin } from "../src/services/terminal/plugin";
 import type { TerminalGitHubReadGateway } from "../src/services/terminal/repository";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createTestWorkspaceDO,
+  workspaceObjectRpcs,
+} from "./helpers/workspace-object-rpcs";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import type { DatabaseSync } from "node:sqlite";
 import {
@@ -37,9 +41,11 @@ const BASE = "a".repeat(40);
 const HEAD_REF = "rally/workstream-30000000";
 
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
+const objectDatabases: DatabaseSync[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
   for (const database of openDatabases.splice(0)) database.close();
+  for (const database of objectDatabases.splice(0)) database.close();
 });
 
 function fixture(capability: "supported" | "unsupported", emergencyDisabled = false) {
@@ -70,6 +76,17 @@ function fixture(capability: "supported" | "unsupported", emergencyDisabled = fa
   const env = createTestEnv({
     DB: sqliteD1(database), AVALON_REGION: "global",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    // The plugin reads the workspace's Terminal egress mode on every turn, and
+    // reads it from a real WorkspaceDO: the guidance the model is given should
+    // come from the object that decides the policy, not from a fixture's idea
+    // of it.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: workspaceObjectRpcs(createTestWorkspaceDO({
+        workspaceId: W,
+        regionalDatabase: database,
+        register: (created) => { objectDatabases.push(created); },
+      }).instance, ["terminalNetworkMode", "terminalNetworkSettings"]),
+    }),
     PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
     TERMINAL_REGION_CAPABILITY: capability,
     DAYTONA_API_KEY: "daytona-key", DAYTONA_API_URL: "https://app.daytona.io/api",
