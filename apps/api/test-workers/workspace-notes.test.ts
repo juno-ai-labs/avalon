@@ -36,7 +36,7 @@ import {
 } from "../src/durable-objects/workspace-notes-protocol";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ca0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000da0");
 const OWNER = asUserId("00000000-0000-7000-8000-000000000ca1");
 const OTHER_MEMBER = asUserId("00000000-0000-7000-8000-000000000ca2");
 const NOTE = "00000000-0000-7000-8000-000000000cb0";
@@ -351,7 +351,7 @@ describe("workspace notes", () => {
     // `rejects.toThrow` reads through it a second time, which surfaces the
     // same rejection again as an unhandled error and fails the run.
     const outcome = await workspace().noteWithSegments({
-      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000cae"),
+      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000dae"),
       noteId: NOTE,
       userId: OWNER,
       access: "view",
