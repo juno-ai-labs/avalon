@@ -12,6 +12,7 @@ import {
   createTestEnv,
 } from "./helpers/cloudflare-test";
 import { workspaceObjectSqliteDatabase } from "./helpers/workspace-object-tables";
+import { workspaceResourceMaintenanceBinding } from "./helpers/workspace-object-rpcs";
 
 const encoder = new TextEncoder();
 
@@ -213,7 +214,15 @@ describe("attachment model content", () => {
       },
       async put(key: string, value: ArrayBuffer) {
         objects.set(key, new Uint8Array(value));
-        cleanupDuringPut = await reapDeletedResourceObjects(createTestEnv({ DB: d1, PAYLOADS: bucket }));
+        // The reaper's decisions are typed WorkspaceDO methods, run here over
+        // the same object-schema database the generation is writing into.
+        cleanupDuringPut = await reapDeletedResourceObjects(createTestEnv({
+          DB: d1,
+          PAYLOADS: bucket,
+          AVALON_REGION: "global",
+          APP_ENV: "test",
+          WORKSPACE_DOS: workspaceResourceMaintenanceBinding(database),
+        }), workspaceId);
       },
       async delete(key: string) {
         deleted.push(key);

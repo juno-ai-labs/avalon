@@ -28,8 +28,8 @@ import {
 } from "../src/durable-objects/workspace-transcription-storage";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009e0");
-const USER = asUserId("00000000-0000-7000-8000-0000000009e1");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ea0");
+const USER = asUserId("00000000-0000-7000-8000-000000000ea1");
 const NOW_S = 1_800_000_000;
 
 function workspace() {
@@ -162,7 +162,7 @@ describe("dictation admission", () => {
     // `rejects.toThrow` reads through it a second time, which surfaces the same
     // rejection again as an unhandled error and fails the run.
     const outcome = await workspace().admitTranscriptionSession({
-      workspaceId: asWorkspaceId("00000000-0000-7000-8000-0000000009ee"),
+      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000eae"),
       userId: USER,
       ticketId: nextId(),
       ticketExpiresAtSeconds: NOW_S + 60,

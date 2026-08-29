@@ -23,6 +23,8 @@ source of truth for retry, replay, and compaction recovery.
 | `apps/api/src/services/attachment-derivative-service.ts` | Converts authorized originals into complete, versioned text/Office/PDF derivatives, then atomically selects their regional objects. |
 | `apps/api/src/services/attachment-summary-service.ts` | Runs one isolated bounded reader over server-identified source ranges and reports honest complete or sampled coverage. |
 | `apps/api/src/services/resource-object-cleanup.ts` | Retries regional object deletion without logging object keys or provider bodies. |
+| `apps/api/src/durable-objects/workspace-resources-protocol.ts` | The typed request/result contracts for every resource-domain WorkspaceDO method, with refusals as outcomes rather than throws. |
+| `apps/api/src/durable-objects/workspace-resources-storage.ts` | The resource domain's SQL against the object's own storage: upload commit, draft delete, connector resolve, hydration swaps, watches, version reads, cleanup claims, alias claims, inbound-email receipts, webhook resource upserts, and the maintenance bounds beside them. |
 | `apps/api/src/services/workstream-resource-visibility.ts` | Defines the shared principal-visibility SQL and provides full sidebar, bounded point lookup, keyset page, and aggregate inventory queries. |
 | `apps/api/src/services/workstream-resource-inventory.ts` | Renders the bounded current-principal inventory appended to live and replayed compaction checkpoints. |
 | `apps/api/src/services/workstream-attachment-tools.ts` | Implements pageable discovery plus bounded, versioned text reads and local search. |
@@ -612,6 +614,61 @@ terms rather than duplicating attachment text. Future changes must preserve thos
 cheap discovery and continuation paths.
 
 ## Changelog
+
+### 2026-08-29 — Resource statements become typed WorkspaceDO methods
+
+**What changed:** Every statement that named only resource-owned tables —
+`resources`, `resource_versions`, `resource_watches`,
+`pending_attachment_reservations`, `resource_object_deletion_outbox`,
+`workstream_email_receipts` — moved out of the workspace runtime facade and
+into typed methods on `WorkspaceDO`, declared in
+`workspace-resources-protocol.ts` and implemented in
+`workspace-resources-storage.ts`. The upload commit adopts its staged cleanup
+row in the same transaction and answers a duplicate draft id as an outcome; the
+connector resolve is one critical section instead of read, insert-or-ignore and
+re-read; both hydration writes return a fence witness via `RETURNING`; the
+reaper's reference check and staging retirement are one transaction; the alias
+claim answers exactly why it refused; and the expired-draft reap is a single
+statement. The draft TTL and the maintenance batch bound moved beside the
+statements that enforce them. `putStagedResourceObject` and
+`releaseStagedResourceObject` stay on the facade, deliberately — see below.
+
+**Why:** The facade classifies SQL by the table names in it and sends anything
+it does not recognise to the regional database, which is how a missing entry
+turned into `no such table` in production (#401) — and, from the other
+direction, how a service handed an unrouted environment sent object-owned
+writes to a regional database that dropped those tables in migration `0090`. A
+typed method cannot be routed to the wrong database, because its tables are
+named inside the object that has them. Two latent read-then-write defects fell
+out of making each decision one critical section: two concurrent uploads of
+the same draft id both passed the separate existence check and the loser
+surfaced as a bare primary-key 500 rather than the 409 the check existed to
+produce, and the interleaving in which a draft deletion landed between the
+upload's insert and its staged-row adoption can no longer occur at all.
+
+**Considered and rejected:** Converting the staged put/release helpers too.
+They are the shared staging primitive of the attachment-derivative,
+model-content and Terminal publication writers, whose own `resources`
+statements are later parts of this same facade-to-RPC stack; converting the
+helpers alone would force an environment parameter through modules this change
+does not own, so they follow when those domains convert. Also rejected:
+splitting the statements that join `resources` to `connector_connections`,
+`notes` or `workspace_connector_events` — a join across two of this stack's
+domains stays on the facade until its other side has an owner to talk to.
+
+**Consequences:** The listing and visibility joins (`ResourceService.list`,
+`loadResource`, the work-stream object's attach/inventory joins) still ride
+the facade, so the six table names stay on `WORKSPACE_LOCAL_TABLES`; do not
+remove them when those joins convert — an accidental generic statement must
+reach the object's refusal rather than D1's misleading `no such table`. The
+fresh-insert path of the inbound-email resource upsert no longer runs the
+follow-up refresh, so a first ingestion records one version instead of a
+phantom second (the unconditional `UPDATE` re-assigned versioned columns,
+which fires the semantic-version trigger even when nothing changed). Node
+suites reach these tables through `createTestWorkspaceDO` — a real object over
+its real schema — rather than hand-written fixture tables, and
+`test-workers/workspace-resources-inventory.test.ts` proves the object's
+decisions on workerd.
 
 ### 2026-08-28 — Publication staging closes the R2 cleanup race
 
