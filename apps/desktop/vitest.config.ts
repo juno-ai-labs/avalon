@@ -15,8 +15,12 @@ const shared = {
   silent: 'passed-only' as const,
   // Must stay above the `asyncUtilTimeout` configured in the setup file, so a
   // condition that never settles is reported as the assertion that failed
-  // rather than as a bare test timeout.
+  // rather than as a bare test timeout. `hookTimeout` is a separate option and
+  // takes the same number: a hook that builds a fixture does the same work as
+  // the test body it prepares, so giving it a third less budget only produces a
+  // failure that names no test.
   testTimeout: 15_000,
+  hookTimeout: 15_000,
   // A test that stubs a global, an env var, or a mock must not hand it to
   // whichever test runs next. Vitest restores spies by default but leaves
   // `vi.stubGlobal` and `vi.stubEnv` in place, which is the leak most likely
@@ -48,7 +52,15 @@ export default defineConfig({
     // That was measured and it costs nothing: capping every run at two workers
     // came out at 233s against 234s uncapped, and capping at one at 358s. The
     // scheduler handles the oversubscription, so there is no budget to split.
-    // `VITEST_MAX_WORKERS` overrides this if a machine ever disagrees.
+    //
+    // That measurement was of one session on the machine. `VITEST_MAX_WORKERS`
+    // is the lever when that stops being true — Vitest applies it after this
+    // config resolves, so it overrides the value here — and a machine hosting
+    // several agent sessions at once is the case to reach for it in: the total
+    // suite runtime barely moves, but the maximum stall one thread sees between
+    // schedules grows with the oversubscription, and that stall is what every
+    // fixed timeout in the suites is measured against. See
+    // `docs/dev-environment.md`.
     maxWorkers: availableParallelism(),
     projects: [
       {
