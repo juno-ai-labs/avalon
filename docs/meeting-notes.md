@@ -22,7 +22,9 @@ at the transcript text the client already holds.
 | `apps/desktop/src/renderer/screens/meeting-notes.tsx` | The recording screen and the only clock in the system. Reads the served cadence when it opens, commits each segment, requests each refresh, and drives finalization. `DEFAULT_MEETING_NOTES_INTERVAL_MS` is the fallback for a device that could not ask. |
 | `apps/desktop/src/renderer/lib/use-realtime-dictation.ts` | Audio capture and the provider socket. `commit()` closes a segment without ending the session; `stop()` ends it and returns the last buffered text. |
 | `apps/api/src/routes/notes.ts` | `POST /notes/:id/segments` appends a segment; `POST /notes/:id/generate` runs a `live` or `final` pass. |
-| `apps/api/src/services/note-service.ts` | Segment sequencing, the transcript windows handed to the model, the compare-and-set that lands a briefing, and materialization of the note resource. |
+| `apps/api/src/services/note-service.ts` | The transcript windows handed to the model, generation orchestration and its final-pass retry, and materialization of the note resource. Reaches the note rows as typed WorkspaceDO methods; its one remaining facade write is the create batch that spans `notes` and `resources`. |
+| `apps/api/src/durable-objects/workspace-notes-protocol.ts` | The Zod request and result schemas for the note methods on WorkspaceDO, including the row contracts that used to be asserted in the service. |
+| `apps/api/src/durable-objects/workspace-notes-storage.ts` | The note SQL, against the object's own storage: segment sequencing, the archive classification, the briefing compare-and-set, the privacy-transition outbox write, and the sidebar read shared with the workspace socket. |
 | `apps/api/src/services/meeting-notes-service.ts` | Both system prompts, both example sets, and the harness configuration each pass runs under. `CONTROL_TOWER_SYSTEM_PROMPT` is the live briefing; `FINAL_MEETING_SUMMARY_SYSTEM_PROMPT` is the end-of-meeting one. |
 | `apps/api/src/services/control-tower-flags.ts` | The one resolver for the refresh cadence, read by both the client's `GET /feature-flags` answer and the live prompt. Clamps and logs what Flagship serves. |
 | `packages/contracts/src/index.ts` | `CONTROL_TOWER_REFRESH_SECONDS` — the cadence default and its bounds, defined once for every reader — plus `GenerateNoteNotesRequest`, `NoteDetail`, `NoteTranscriptSegment`, and the `recentTranscript` bound. |
@@ -300,7 +302,14 @@ workspace note is an explicit, notified transition rather than a silent widening
 - `pnpm --filter @rally/api exec vitest run test/meeting-notes-service.test.ts`
   — prompt selection, the shape of each request, and the safe error on failure.
 - `pnpm --filter @rally/api exec vitest run test/note-service.test.ts` — segment
-  sequencing, the recent-window slice, and the final-summary race retry.
+  sequencing, the recent-window slice, and the final-summary race retry, driven
+  through a real `WorkspaceDO` over its own schema via
+  `test/helpers/workspace-object-rpcs.ts`.
+- `pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts
+  test-workers/workspace-notes.test.ts` — what the object itself decides, on
+  workerd: concurrent segment appends, replay idempotency, the archive
+  classification, the privacy-transition outbox, the briefing compare-and-set,
+  and the per-viewer read fences.
 - `pnpm --filter @rally/api exec vitest run test/client-feature-flags.test.ts` —
   the served cadence, its clamp, and the fallback shared with every other reader.
 - `pnpm --filter @rally/desktop exec vitest run src/renderer/screens/meeting-notes.test.tsx`
@@ -390,6 +399,49 @@ already reads it, so that step is a scheduler and a budget rather than a new
 knob.
 
 ## Changelog
+
+### 2026-08-29 — Note statements become typed WorkspaceDO methods, and the privacy outbox is written by the update itself
+
+**What changed:** The note reads and writes `NoteService`, the privacy
+notifier, the cleanup pass, and the Terminal revoked-import check sent as SQL
+through the workspace runtime facade are now typed methods on `WorkspaceDO`
+(`workspace-notes-protocol.ts`, `workspace-notes-storage.ts`). Appending a
+segment — fence, duplicate check, sequence allocation, insert, recorded-time
+bump — is one `transactionSync` instead of five round trips; archiving decides
+`not_found` versus `recording` in the same transaction as the write instead of
+classifying from a follow-up read; and the briefing compare-and-set returns a
+`committed`/`stale` outcome witnessed by `RETURNING`. A note going
+workspace-to-personal now writes its `note_privacy_change_outbox` row inside
+the update's own transaction.
+
+**Why:** The facade routes by table name, and a table missing from its list is
+answered by the regional database as `no such table` — the defect class that
+took automation run work streams down in production. A typed method cannot be
+misrouted. The outbox write moved because the D1 trigger that used to produce
+it (`notes_enqueue_public_to_private_change`, migration 0045) never travelled
+to the object's schema at cutover, so since notes became WorkspaceDO-owned the
+transition was recorded nowhere and the "now private" work-stream notices had
+silently stopped; the Node fixture carried the legacy trigger and hid it.
+
+**Considered and rejected:** Converting the create path too. It inserts the
+`resources` row and the `notes` row as one atomic batch, and `resources`
+belongs to another domain in this conversion; splitting the batch across a
+typed method and a facade statement would open a partial-failure window the
+batch does not have, so it stays on the facade until the resources domain
+converts. Adding the missing trigger as a schema migration was also rejected:
+the explicit write in the same transaction is equally atomic and keeps the
+decision readable in the storage function rather than in DDL.
+
+**Consequences:** The note tables stay on `WORKSPACE_LOCAL_TABLES` so an
+accidental generic statement still routes to the object rather than failing as
+a misleading regional `no such table`. Typed note mutations must do what
+`executeRuntimeSql` did for facade writes: advance the `notes` sidebar
+waterline inside the transaction, publish the list after it, and re-derive the
+alarm after touching either note outbox. One finding to know:
+`note_resource_deletion_outbox` has no writer left — its D1 trigger fed it,
+0090 dropped the D1 source, and the object's schema routes deleted resource
+refs through the generic `resource_object_deletion_outbox` — so the
+`note_objects` maintenance pass only drains whatever the cutover imported.
 
 ### 2026-08-23 — Both meeting prompts state what a written answer is made of
 

@@ -2,6 +2,22 @@ import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 
 import { WorkspaceDO } from "../../src/durable-objects/workspace-do";
+import {
+  claimWorkspaceResourceObjectRemoval,
+  claimWorkspaceResourceSlug,
+  listWorkspaceReapableResourceObjects,
+  listWorkspaceResourcesAwaitingSlug,
+  reapWorkspaceExpiredDraftResources,
+  recordWorkspaceResourceObjectCleanupFailure,
+  retireWorkspaceResourceObjectStaging,
+} from "../../src/durable-objects/workspace-resources-storage";
+import {
+  WorkspaceExpiredDraftReapRequestSchema,
+  WorkspaceResourceObjectFailureRequestSchema,
+  WorkspaceResourceObjectRefRequestSchema,
+  WorkspaceResourceSlugBacklogRequestSchema,
+  WorkspaceResourceSlugClaimRequestSchema,
+} from "../../src/durable-objects/workspace-resources-protocol";
 import type { Env } from "../../src/env";
 import {
   createCloudflareTestBinding,
@@ -57,6 +73,9 @@ export function createTestWorkspaceDO(input: {
       blockConcurrencyWhile: async <T,>(body: () => Promise<T>) => body(),
       setWebSocketAutoResponse: () => undefined,
       waitUntil: () => undefined,
+      // A method that writes a sidebar-visible table publishes the list to
+      // every subscribed socket afterwards; here there are none to publish to.
+      getWebSockets: () => [],
       storage,
     }),
     createTestEnv({
@@ -103,6 +122,62 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
   "claimSlackThread",
   "releaseSlackThreadClaim",
 ] as const satisfies readonly (keyof WorkspaceDO)[];
+
+/**
+ * The typed resource-maintenance methods, over an existing fixture database.
+ *
+ * For a suite whose subject still writes `resources` through the D1-shaped
+ * port into its own fixture database: a second, real WorkspaceDO could not
+ * see those rows, so the maintenance passes run the object's own storage
+ * functions over the same database. The SQL and the decisions are
+ * production's; only the object shell — input parsing and the identity fence
+ * — is out of the loop, and the workerd suite covers that shell.
+ */
+export function workspaceResourceMaintenanceRpcs(database: DatabaseSync): Record<string, unknown> {
+  const storage = createCloudflareTestBinding<DurableObjectStorage>({
+    transactionSync: <T,>(body: () => T) => body(),
+    sql: createTestSqlStorage(database),
+  });
+  return {
+    listReapableResourceObjects: async (input: { workspaceId: string }) =>
+      listWorkspaceReapableResourceObjects(storage, input.workspaceId),
+    claimResourceObjectRemoval: async (input: unknown) => {
+      const request = WorkspaceResourceObjectRefRequestSchema.parse(input);
+      return claimWorkspaceResourceObjectRemoval(storage, request.workspaceId, request.objectRef);
+    },
+    retireResourceObjectStaging: async (input: unknown) => {
+      const request = WorkspaceResourceObjectRefRequestSchema.parse(input);
+      return retireWorkspaceResourceObjectStaging(storage, request.workspaceId, request.objectRef);
+    },
+    recordResourceObjectCleanupFailure: async (input: unknown) => {
+      recordWorkspaceResourceObjectCleanupFailure(
+        storage,
+        WorkspaceResourceObjectFailureRequestSchema.parse(input),
+      );
+    },
+    reapExpiredDraftResources: async (input: unknown) => reapWorkspaceExpiredDraftResources(
+      storage,
+      WorkspaceExpiredDraftReapRequestSchema.parse(input).workspaceId,
+    ),
+    claimResourceSlug: async (input: unknown) =>
+      claimWorkspaceResourceSlug(storage, WorkspaceResourceSlugClaimRequestSchema.parse(input)),
+    listResourcesAwaitingSlug: async (input: unknown) => listWorkspaceResourcesAwaitingSlug(
+      storage,
+      WorkspaceResourceSlugBacklogRequestSchema.parse(input).workspaceId,
+    ),
+  };
+}
+
+/** {@link workspaceResourceMaintenanceRpcs} as a whole WORKSPACE_DOS binding. */
+export function workspaceResourceMaintenanceBinding(database: DatabaseSync): Env["WORKSPACE_DOS"] {
+  const stub = workspaceResourceMaintenanceRpcs(database);
+  const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+    idFromName: (name: string) => createTestDurableObjectId(name),
+    get: () => stub,
+    jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
+  });
+  return binding;
+}
 
 /**
  * Expose named methods of a real `WorkspaceDO` as stub RPCs.
