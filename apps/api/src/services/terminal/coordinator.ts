@@ -14,7 +14,6 @@ import {
 import {
   compileTerminalNetworkPolicy,
   TERMINAL_NETWORK_MANIFEST_VERSION,
-  type TerminalNetworkMode,
 } from "./network-policy";
 import type { ResourcePortFactory } from "../../runtime/resource-port";
 import type { TerminalPortFactory } from "./object-port";
@@ -26,6 +25,14 @@ import type {
   TerminalObjectPort,
 } from "../../durable-objects/workstream-terminal-protocol";
 import { TerminalToolError } from "./tools";
+import { asWorkspaceId } from "@rally/contracts";
+import type { Env } from "../../env";
+import { workspaceDOName } from "../../durable-objects/names";
+import {
+  WorkspaceTerminalNetworkSettingsSchema,
+  type WorkspaceTerminalNetworkPolicy,
+} from "../../durable-objects/workspace-terminal-network-protocol";
+import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 
 const WARM_STOP_MINUTES = 5;
 const ARCHIVE_MINUTES = 60;
@@ -36,13 +43,6 @@ export interface TerminalClock {
 }
 
 const systemClock: TerminalClock = { now: () => new Date() };
-
-interface NetworkPolicyRow {
-  mode: TerminalNetworkMode;
-  revision: number;
-  verification_state: "pending" | "verified" | "failed";
-  effective_domains_json: string;
-}
 
 interface RepositoryAuthorityRow {
   connection_id: string;
@@ -110,13 +110,8 @@ function providerStateError(state: TerminalSandboxState): TerminalToolError {
   );
 }
 
-function parseEffectiveDomains(row: NetworkPolicyRow): string[] {
-  try {
-    const value = JSON.parse(row.effective_domains_json) as unknown;
-    if (Array.isArray(value) && value.every((domain) => typeof domain === "string")) return value;
-  } catch {
-    // A malformed durable policy is a fail-closed configuration fault below.
-  }
+function parseEffectiveDomains(policy: WorkspaceTerminalNetworkPolicy): string[] {
+  if (policy.effectiveDomains.length > 0) return policy.effectiveDomains;
   throw new TerminalToolError(
     "network_policy_unverified",
     "The workspace Terminal network policy is invalid. Ask a workspace owner to save and verify it again.",
@@ -127,11 +122,18 @@ function parseEffectiveDomains(row: NetworkPolicyRow): string[] {
 export class TerminalSandboxCoordinator {
   constructor(
     /**
-     * Workspace-scoped and cross-authority reads only: the network policy and
-     * connector rows in WorkspaceDO, and the resource/note visibility joins.
+     * Workspace-scoped and cross-authority reads: connector rows in
+     * WorkspaceDO and the resource/note visibility joins still go through the
+     * runtime port on `env.DB`; the network policy is a typed method.
      * Terminal's own tables are reached through `terminalPort`.
      */
-    private readonly database: D1Database,
+    /**
+     * The Worker environment, for the regional reads below and for the
+     * WorkspaceDO that owns the Terminal network policy. It used to be the
+     * D1-shaped runtime port alone, which is how a policy read reached a
+     * router rather than the object that holds the table.
+     */
+    private readonly env: Env,
     private readonly terminalPort: TerminalPortFactory,
     /** The work stream's attachment authority, for the revoked-import check. */
     private readonly resourcePort: ResourcePortFactory,
@@ -202,11 +204,11 @@ export class TerminalSandboxCoordinator {
       this.loadOrCreatePolicy(context.workspaceId, nowIso),
       this.loadRepositoryAuthority(context.workspaceId, context.workstreamId),
     ]);
-    if (policy.verification_state !== "verified") {
+    if (policy.verificationState !== "verified") {
       throw new TerminalToolError(
         "network_policy_unverified",
         "The workspace Terminal network policy is not verified. Ask a workspace owner to retry the policy verification before using Terminal.",
-        { reason: policy.verification_state === "pending"
+        { reason: policy.verificationState === "pending"
           ? "Wait for policy verification to finish, then retry."
           : "Ask a workspace owner to save and verify the Terminal network policy." },
       );
@@ -260,7 +262,7 @@ export class TerminalSandboxCoordinator {
     }
 
     const currentPolicy = await this.loadOrCreatePolicy(context.workspaceId, nowIso);
-    if (currentPolicy.verification_state !== "verified" || currentPolicy.revision !== policy.revision) {
+    if (currentPolicy.verificationState !== "verified" || currentPolicy.revision !== policy.revision) {
       if (row.sandboxId) await this.provider.stopSandbox(row.sandboxId).catch(() => undefined);
       throw new TerminalToolError(
         "network_policy_unverified",
@@ -288,28 +290,30 @@ export class TerminalSandboxCoordinator {
     };
   }
 
-  private async loadOrCreatePolicy(workspaceId: string, timestamp: string): Promise<NetworkPolicyRow> {
-    const compiled = compileTerminalNetworkPolicy("trusted_only", []);
-    await this.database.prepare(
-      `INSERT INTO workspace_sandbox_network_policies
-       (workspace_id, mode, revision, verification_state, baseline_manifest_version,
-        effective_domains_json, last_verified_at, created_at, updated_at)
-       VALUES (?, 'trusted_only', 1, 'verified', ?, ?, ?, ?, ?)
-       ON CONFLICT(workspace_id) DO NOTHING`,
-    ).bind(
+  /**
+   * The workspace's Terminal network policy, from the object that owns it.
+   *
+   * This was an insert-if-absent and a select through the workspace runtime
+   * facade — two round trips whose only atomicity came from `ON CONFLICT DO
+   * NOTHING`. The object does both in one transaction and returns the policy
+   * with the allow-list it published.
+   */
+  private async loadOrCreatePolicy(
+    workspaceId: string,
+    timestamp: string,
+  ): Promise<WorkspaceTerminalNetworkPolicy> {
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
+    );
+    return WorkspaceTerminalNetworkSettingsSchema.parse(await workspace.terminalNetworkSettings({
       workspaceId,
-      TERMINAL_NETWORK_MANIFEST_VERSION,
-      JSON.stringify(compiled.effectiveDomains),
-      timestamp,
-      timestamp,
-      timestamp,
-    ).run();
-    const policy = await this.database.prepare(
-      `SELECT mode, revision, verification_state, effective_domains_json
-         FROM workspace_sandbox_network_policies WHERE workspace_id = ?`,
-    ).bind(workspaceId).first<NetworkPolicyRow>();
-    if (!policy) throw new Error("Unable to initialize the Terminal network policy");
-    return policy;
+      baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+      defaultEffectiveDomains: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+      at: timestamp,
+    })).policy;
   }
 
   private terminal(context: HarnessToolContext): TerminalObjectPort {
@@ -512,7 +516,7 @@ export class TerminalSandboxCoordinator {
   ): Promise<RepositoryAuthorityRow | null> {
     const repository = await this.terminalPort(workspaceId, workstreamId).selectedRepository();
     if (!repository) return null;
-    const connection = await this.database.prepare(
+    const connection = await this.env.DB.prepare(
       `SELECT id FROM connector_connections
         WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
     ).bind(repository.connectionId, workspaceId).first<{ id: string }>();
@@ -541,7 +545,7 @@ export class TerminalSandboxCoordinator {
       return true;
     }
     const placeholders = links.map(() => "?").join(", ");
-    const resources = await this.database.prepare(
+    const resources = await this.env.DB.prepare(
       `SELECT id, provider FROM resources
         WHERE workspace_id = ? AND id IN (${placeholders})`,
     ).bind(context.workspaceId, ...links.map((candidate) => candidate.resourceId))
@@ -551,7 +555,7 @@ export class TerminalSandboxCoordinator {
       .map((candidate) => candidate.id);
     if (noteIds.length === 0) return false;
     const notePlaceholders = noteIds.map(() => "?").join(", ");
-    const notes = await this.database.prepare(
+    const notes = await this.env.DB.prepare(
       `SELECT resource_id FROM notes
         WHERE workspace_id = ? AND resource_id IN (${notePlaceholders})
           AND archived_at IS NULL AND (scope = 'workspace' OR owner_user_id = ?)`,
