@@ -1887,6 +1887,7 @@ async function loadAutomationCreatorPluginCatalog(
           capability: definition.capability,
           mode: definition.mode,
           idempotency: definition.idempotency,
+          ...(definition.timeoutMs === undefined ? {} : { timeoutMs: definition.timeoutMs }),
           inputSchema: definition.inputSchema,
           execute: (toolInput, context) => executeAutomationCreatorConnectorTool(
             env,
