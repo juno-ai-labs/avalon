@@ -199,7 +199,10 @@ function settleThought(turns: Message[], thoughtId: string): Message[] {
       ...message,
       thoughtEvent: {
         status: 'completed',
-        durationMs: message.thoughtEvent.durationMs + activeDuration,
+        // The wizard's own thinking rows are always timed, so an unknown
+        // duration here would be a defect rather than a state to render; it
+        // settles to the active portion alone rather than to nothing.
+        durationMs: (message.thoughtEvent.durationMs ?? 0) + activeDuration,
       },
     };
   });
