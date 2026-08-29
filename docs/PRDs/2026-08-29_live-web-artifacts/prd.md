@@ -3,13 +3,17 @@
 > Created 2026-08-29.
 >
 > A work stream's participants can ask Rally for a working web page or small
-> web application — a landing page, a dashboard, a calculator — and
+> web application — a landing page, a dashboard, a calculator, a poll — and
 > get a hosted, openable, revisable site rather than a code listing. The model
 > builds the site in the Terminal sandbox and publishes it with the existing
-> Terminal publish tool — widened to accept a directory, no new tool — and
+> Terminal publish tool — widened to accept a directory, no new publish
+> tool; the agent reads a stateful site's data through one new two-tool
+> read family — and
 > Rally serves it from an isolated per-artifact origin on Cloudflare's Worker
 > Loader (Dynamic Workers), statically or with model-written server code as
-> the request demands. Companions:
+> the request demands — statefully, when the site exports a storage class
+> Rally runs as a Durable Object facet with its own isolated SQLite.
+> Companions:
 > [state](state.md),
 > [site authoring skill draft](site-authoring-skill.md) (the complete
 > loadable-skill text the Agent behavior section commissions). Siblings:
@@ -30,7 +34,7 @@
 Today a document-shaped request becomes a published Markdown resource. This
 PRD gives the same treatment to a *site-shaped* request: "make a landing
 page for the launch", "build a little dashboard over these numbers", "put
-up a searchable page of the beta signups". The model writes the site's
+up a poll for the offsite date". The model writes the site's
 files in the work
 stream's Terminal sandbox exactly as it writes a document, then publishes the
 directory with the same `terminal_publish_resource` call that publishes a
@@ -45,13 +49,21 @@ drift out of agreement with the files. An `index.js` at the directory root
 publishes an **active** artifact: that module is model-written JavaScript
 Rally executes per request as a Cloudflare Dynamic Worker inside a
 capability-fenced sandbox — no network egress, no ambient bindings, only an
-asset binding Rally hands it. An active artifact computes its responses per
-request — routing, search and filtering over data bundled at publish, a
-small API the page calls — and is deliberately **stateless** in V1: it
-holds nothing between requests. Artifact-visible persistent state is
-removed from this PRD's scope and held in the Future research section, so
-that when storage arrives it ties back into the platform — agent-readable,
-product-visible — rather than shipping as an opaque side pocket. No
+asset binding Rally hands it. An active artifact that only computes —
+routing, search and filtering over data bundled at publish, a small API
+the page calls — exports nothing else and stays **stateless**. An active
+artifact that must **remember between visits** — a poll, an RSVP list, a
+sign-up sheet — additionally exports one storage class, and Rally runs it
+as a **Durable Object facet** of the artifact's supervisor object: the
+model's class gets its own isolated SQLite database, storage survives
+across requests and versions, and two participants opening the same poll
+see and move the same tally. This is the architecture Cloudflare's own
+platform runs in production — every Cloudflare OS gadget is a dynamic
+worker whose class runs as a facet of its workspace's Durable Object —
+and the data is never an opaque side pocket: Rally wraps the model's
+class so the same rows back a **Data** view and CSV export in the rail
+and two read-only agent tools, which is how "who hasn't voted?" is
+answerable in chat. No
 `index.js` but an `index.html` at the root publishes a **static** artifact —
 assets only, served from the region's bucket. A directory with neither entry
 publishes as one downloadable **archive** resource rather than failing, with
@@ -116,14 +128,21 @@ motivation is structural, and stated as such.
    republish the same directory, update the same artifact and URL in place,
    and record history through the existing resource versioning layer.
 4. Every participant with visibility of the work stream, and only such a
-   person, can open the artifact; all viewers see the current version.
-5. Any participant can revise the artifact by asking in the work stream;
+   person, can open the artifact; all viewers see the current version, and
+   a stateful artifact's stored data is one dataset shared across its
+   viewers.
+5. A stateful artifact's data is platform data, not a side pocket: it is
+   visible in the rail (a **Data** view and CSV export) and readable by
+   the agent through two read-only tools, so questions about what the
+   artifact collected are answerable in chat.
+6. Any participant can revise the artifact by asking in the work stream;
    concurrent asks serialize through the run loop that already serializes
-   the work stream's agent work.
-6. Model-authored site content is never same-origin with the Rally
+   the work stream's agent work — and a revision never destroys stored
+   data: the facet's database survives every republish.
+7. Model-authored site content is never same-origin with the Rally
    application, with the regional API, or with any other artifact.
-7. The serving surface is regional from day one: an artifact's bytes and
-   execution stay in its workspace's region.
+8. The serving surface is regional from day one: an artifact's bytes,
+   stored data, and execution stay in its workspace's region.
 
 ## Non-goals
 
@@ -149,7 +168,8 @@ motivation is structural, and stated as such.
    npm installs at serve time, no frameworks resolved server-side, no
    Python modules (the platform supports them; they are slow to start and
    nothing needs them), no per-artifact Cloudflare resources, no
-   Workers-for-Platforms dispatch namespaces. One loader, one asset store.
+   Workers-for-Platforms dispatch namespaces. One loader, one asset
+   store, one facet per stateful artifact.
 6. **Background execution.** Rejected, and load-bearing for the product
    contract: artifact code runs only inside a viewer's request. No alarms,
    no cron, no timers that outlive a response, no artifact-initiated model
@@ -170,57 +190,72 @@ motivation is structural, and stated as such.
    to both regions in parity (staged, like the EU Daytona bindings), and
    EU artifacts arrive with EU Terminal support, not before.
 10. **Defensive numbers.** None are picked here. Bundle size, file count,
-    per-request body size, viewer-session lifetime, and error-log
-    retention are all real guards this design names — each ships open
-    under the open-limit rule, with the handover arithmetic, for the team
-    to set.
-11. **Artifact-visible persistent state.** Deferred — removed from this
-    PRD entirely, and held in the **Future research** section below. An
-    active artifact in V1 computes over its request and its published
-    files and remembers nothing; the requests this forecloses — a poll, an
-    RSVP list, a sign-up sheet, anything whose essence is remembering
-    between visits — are out of V1's reach, and the policy makes the model
-    say so honestly rather than publish a page that silently forgets. The
-    reason for the removal is deliberate: state bolted on as a per-
-    artifact side pocket would be invisible to the product and to the
-    agent, and the team wants artifact state designed to tie back into
-    the platform — stored somewhere the agent can direct and read through
-    Rally's own rails — which deserves its own decision, not a default.
+    per-request body size, viewer-session lifetime, per-artifact storage
+    quota, query-tool row and time bounds, and error-log retention are
+    all real guards this design names — each ships open under the
+    open-limit rule, with the handover arithmetic, for the team to set.
+11. **Any artifact storage mechanism other than the facet.** Rejected for
+    V1: no Rally-mediated key-value binding (a curated `STORAGE` API was
+    designed and dropped — with a real database available, a KV facade in
+    front of it is a second storage contract to teach and quota for
+    strictly less power), and no writes into workspace-owned resource
+    storage (the deeper platform tie remains **Future research** below).
+    The facet is the one place artifact state lives, and the platform tie
+    V1 ships is the read side: the rail's Data view, CSV export, and the
+    agent's read-only query tools over the same rows.
+12. **An agent write tool into artifact data.** Deferred. The agent
+    changes artifact data by revising the artifact, or data changes
+    through the artifact's own request paths; a typed write into a
+    model-designed schema is its own authorization and receipt problem,
+    deferred exactly the way the versioning layer deferred model-visible
+    history.
+13. **Live rendering of prior versions of a *stateful* artifact.**
+    Accepted limitation, not a choice to revisit lightly: one facet runs
+    one class, so serving V3's code would mean aborting the live facet
+    under current viewers, and running old code against the live schema
+    is undefined behavior besides. A prior version of a stateful artifact
+    opens as *source* through the versioning layer's preview; prior
+    static and stateless-active versions still render live per key design
+    decision 11.
 
 ## Product behavior
 
-**Creation.** A participant asks for something site-shaped — "build us a
-searchable page of the beta signups". The run, steered by an extension of
-the document-generation standing policy:
+**Creation.** A participant asks for something site-shaped — "put up an
+RSVP page for the offsite". The run, steered by an extension of the
+document-generation standing policy:
 
 1. Loads the Terminal plugin and writes the site as ordinary files in a
    stable directory beneath the sandbox's resource-output directory —
-   `beta-signups/index.html`, `beta-signups/style.css`,
-   `beta-signups/signups.json`, and, because search runs server-side over
-   that data, `beta-signups/index.js`.
+   `offsite-rsvp/index.html`, `offsite-rsvp/style.css`, and, because
+   RSVPs must be remembered between visits, an `offsite-rsvp/index.js`
+   that exports the storage class (`SiteData`) serving the page and
+   owning its rows.
 2. Publishes the directory with `terminal_publish_resource`, exactly as it
    publishes a document; the root `index.js` is what makes the publish an
    active site, and the result returns the artifact's URL.
 3. Says, in chat, a short framing with an embed citation of the artifact —
-   "The signups page is live in this work stream — open it and tell me
-   what to change." — and none of the site's code.
+   "The RSVP page is live in this work stream — open it and tell me what
+   to change." — and none of the site's code.
 
 Participants see the standard tool-activity rows (files written, site
 published), then the message. The artifact appears in the right rail under
 **Artifacts** as a site resource; its detail renders the site itself, live,
 in a preview pane, above the URL, a **Pop out** action, a **Copy link**
 action, the error log, and — via the versioning layer — the version list.
+A stateful artifact's detail additionally shows **Data**: the tables the
+site keeps, browsable read-only, with a CSV export per table — the same
+rows the site itself reads and writes, so what participants see in the
+page and what they see in the rail can never disagree.
 
 **The model's choice of static versus active** is expressed in file layout,
 never in a parameter: the policy steers it to write only assets (an
-`index.html` root) when the page has no server behavior, and to add a root
-`index.js` only when the request needs request-time computation — search or
+`index.html` root) when the page has no server behavior; to add a root
+`index.js` when the request needs request-time computation — search or
 filtering over data published with the site, or a small API the page
-calls. A request whose essence is *remembering* something between visits —
-a poll, an RSVP list, a sign-up sheet — is out of V1's reach (non-goal
-11): the policy makes the model say so plainly in chat and offer the
-nearest alternative (collect the answers in the work stream itself, or a
-static page), never publish a page that silently forgets. A directory with
+calls; and to export the storage class from that `index.js` only when the
+request's essence is *remembering* between visits — a poll, an RSVP list,
+a sign-up sheet. State is never added speculatively: a page that only
+computes gets no database. A directory with
 neither entry — a folder of generated outputs, say —
 publishes as one downloadable archive, which is also how "zip that folder up
 for me" becomes a single call. A participant can override the
@@ -253,11 +288,14 @@ overlay is open above the rail — a dialog, the command palette, a
 lightbox — the preview pane shows a quiet placeholder and the embedded
 view is hidden (decision 10 explains why this is a rule, not a bug).
 
-An **active** artifact behaves like a small application computed per
-request: every authorized viewer's requests reach the same frozen module,
-which routes, searches, filters, and renders over the data published with
-it — and holds nothing between requests (non-goal 11). A **static**
-artifact is simply the current files.
+An **active** artifact behaves like a small application: every authorized
+viewer's requests reach the same module. A *stateless* one computes per
+request over the data published with it and holds nothing between
+requests. A *stateful* one — its `index.js` exports the storage class —
+is backed by one isolated SQLite database that all viewers share and
+every version keeps: the RSVP page's list is one list, a republish never
+resets it, and answering the poll from two laptops moves one tally. A
+**static** artifact is simply the current files.
 
 **Revising.** "Make the header orange and add a maybe option" — from any
 participant, at any time — leads the model to edit the files in the sandbox
@@ -265,9 +303,14 @@ participant, at any time — leads the model to edit the files in the sandbox
 sandbox was recycled) and publish the same directory again. Same artifact,
 same URL, new version; the superseded version lands in the rail's version
 list with agent provenance. From that list a prior version opens on direct
-request — rendered read-only per the Viewing rules above, with its
-*source* additionally readable through the versioning layer's existing
-preview. Two participants asking
+request — rendered read-only per the Viewing rules above for static and
+stateless-active artifacts, source-only for stateful ones (non-goal
+13) — with its *source* always readable through the versioning layer's
+existing preview. A republish of a stateful artifact restarts its
+running class on the next request (the facet is aborted and reloaded
+with the new code — the reference platform's exact update lifecycle) and
+touches none of its rows; schema evolution across versions is the
+model's responsibility, taught by the skill as additive-only. Two participants asking
 for changes at once are serialized by the substream run loop as any two
 asks are; the versioning layer records whichever landed second as the later
 version, and nothing is lost.
@@ -376,35 +419,61 @@ None yet.
    binding rather than serving the server module's source — no secret
    can be in it (the sandbox guarantees that), but serving it is
    surface nobody asked for.
-4. **One supervisor Durable Object per artifact.** A new
-   jurisdiction-pinned `ArtifactHostDO` (one per artifact, addressed
-   through the same stub helper every other DO uses) owns the artifact's
-   serving-side truth: current version pointer, viewer-session issuance
-   and checks, and the bounded error log. The serving Worker is
-   stateless; the DO is the authority. It holds no artifact-visible
-   state: V1 removed that capability outright (non-goal 11), so the
-   designs that would carry it — a Rally-mediated storage binding backed
-   by this DO, or *Durable Object facets* running the model's own DO
-   class as a child with its own SQLite — are not V1 questions at all.
-   Both are worked through in **Future research** below, facets included,
-   so the trade is decided once, deliberately, when state is designed to
-   tie into the platform.
-5. **Active artifacts are a fetch handler plus one injected binding,
-   nothing else.** The server module is the directory's root `index.js` —
-   the loader's `mainModule`, under the single most conventional entry
-   name in the training data — one ES module default-exporting
-   `fetch(request, env)`. Its entire environment is injected by the
-   loader per Cloudflare's bindings pattern (`ctx.exports` entrypoint
-   stubs with per-artifact `props`): `env.ASSETS.fetch(request)`, serving
-   the artifact's own published files, and nothing more.
-   `globalOutbound: null`. No storage (non-goal 11), no secrets, no
-   Rally bindings, no identity: requests reach the module with Rally's
-   viewer cookie stripped, and nothing in the runtime discloses who is
-   viewing. The plugin prompt carries the TypeScript declaration for the
-   binding, per Cloudflare's own advice that typed declarations are how
-   an agent learns a binding — and the same declaration is how a future
-   binding would arrive, which is exactly why Future research routes
-   through this seam.
+4. **One supervisor Durable Object per artifact, hosting the model's
+   storage class as a facet.** A new jurisdiction-pinned `ArtifactHostDO`
+   (one per artifact, addressed through the same stub helper every other
+   DO uses) owns the artifact's serving-side truth: current version
+   pointer, viewer-session issuance and checks, the bounded error log —
+   and, for a stateful artifact, one **Durable Object facet** (`"data"`)
+   running the model's exported storage class with its own isolated
+   SQLite database. Facet isolation is symmetric: the model's class
+   cannot read the supervisor's tables, and the supervisor cannot read
+   the facet's except through the wrapper (decision 12). This is the
+   production-proven shape — Cloudflare OS runs every gadget as a
+   dynamic-worker facet of its workspace DO — and two of its constraints
+   are adopted as rules rather than rediscovered: **requests to a
+   stateful artifact route through the supervisor** (the serving Worker
+   already consults it per request for the session check, and facet
+   stubs cannot travel over RPC, so the supervisor forwards
+   `facet.fetch(request)` itself); and **a version update is
+   `facets.abort(reason)` then re-`get` with the new class** on the next
+   request — storage survives the abort, and aborting a facet that is
+   not running is a no-op, so the supervisor aborts defensively when its
+   own in-memory tracking is cold (post-hibernation), exactly as the
+   reference does. Artifact deletion calls `facets.delete`, which
+   permanently removes the facet's database through the same lifecycle
+   that deletes the resource. Rejected: *a Rally-mediated key-value
+   binding backed by this DO* (non-goal 11 — a KV facade over a real
+   database is a second storage contract for less power); *artifact
+   state in workspace-owned resource storage* (the deeper platform tie,
+   held in Future research).
+5. **Active artifacts are one module with at most two shapes, and one
+   injected binding.** The server module is the directory's root
+   `index.js` — the loader's `mainModule`, under the single most
+   conventional entry name in the training data. A *stateless* site
+   default-exports `fetch(request, env)` and runs in the serving
+   Worker's loader isolate. A *stateful* site instead exports
+   `class SiteData extends DurableObject` — a fixed name, the same
+   convention the reference platform uses (`getDurableObjectClass` with
+   a fixed class name) — whose `fetch(request)` serves every request
+   from inside the facet, with the same assets fallback; when both
+   shapes are present, `SiteData` serves and the default export is
+   ignored, a rule the activation message states. Either way the
+   environment is injected by the loader per Cloudflare's bindings
+   pattern (`ctx.exports` entrypoint stubs with per-artifact `props`):
+   `env.ASSETS.fetch(request)`, serving the artifact's own published
+   files, and nothing more — plus, inside `SiteData`, the Durable Object
+   storage API (`this.ctx.storage.sql`, `storage.kv`) over the facet's
+   own database. `globalOutbound: null`. No secrets, no Rally bindings,
+   no identity: requests reach the module with Rally's viewer cookie
+   stripped, and nothing in the runtime discloses who is viewing. The
+   plugin prompt carries the TypeScript declarations, per Cloudflare's
+   own advice that typed declarations are how an agent learns a
+   binding. Rejected: *a Cap'n Web RPC contract between page and
+   server* (the reference platform's choice, made for its code-mode
+   agent) — Rally's artifacts keep plain HTTP `fetch`, the single most
+   pretrained server contract there is, and the one that works
+   identically in a browser tab.
 6. **Viewer access is Rally-minted, short-lived, and checked at the
    artifact authority.** Opening an artifact calls the regional API
    (`POST /artifacts/:id/open`, authorized against current work-stream
@@ -532,20 +601,83 @@ None yet.
     prefix the server module never sees), which keeps one origin, one
     cookie, and one access flow per artifact, and keeps every
     participant-shareable address — the canonical URL, chips, embeds,
-    copied links — pointing at current. Old versions are safe to render
-    by construction: a prior *static* version serves its frozen assets
-    exactly, and a prior *active* version runs its frozen module over
-    its frozen assets — with no artifact-visible state in V1 (non-goal
-    11), old code has nothing shared to corrupt. One rule is recorded
-    now for when that changes: if Future research adds state, a prior
-    version runs it **read-only** — looking at V3 must never mutate the
-    artifact everyone else is using. The desktop chrome labels the
-    state (viewing V3, read-only, back to current), mirroring the
-    versioning layer's prior-version contract. Rejected: *pinned
-    version links* — a shared link that silently shows a stale site is
-    the confusion this rule exists to prevent; *serving prior versions
-    at distinct hostnames* — a second origin per version multiplies the
-    access flow and the label allocator for no product gain.
+    copied links — pointing at current. What renders depends on what the
+    version was: a prior *static* version serves its frozen assets
+    exactly, and a prior *stateless-active* version runs its frozen
+    module over its frozen assets — nothing shared exists for old code
+    to corrupt. A prior version of a *stateful* artifact opens as
+    **source only** (non-goal 13): one facet runs one class, so serving
+    old code live would abort the facet under current viewers, and old
+    code against the live schema is undefined besides — looking at V3
+    must never disturb the artifact everyone else is using. The desktop
+    chrome labels the state (viewing V3, read-only, back to current),
+    mirroring the versioning layer's prior-version contract. Rejected:
+    *pinned version links* — a shared link that silently shows a stale
+    site is the confusion this rule exists to prevent; *serving prior
+    versions at distinct hostnames* — a second origin per version
+    multiplies the access flow and the label allocator for no product
+    gain.
+12. **The data plane: one Rally wrapper inside the facet backs the rail,
+    the export, and the agent tools.** Rally assembles the dynamic
+    worker's `modules` map, so the facet never loads the model's class
+    directly: a Rally-authored bootstrap module imports `SiteData`,
+    subclasses it, and the facet runs the wrapper. Inherited code shares
+    `this.ctx.storage` — the same database — so the wrapper answers
+    supervisor RPCs the model's code never defined: a schema describe
+    (tables, columns, row counts, sampled values), a read-only query
+    that executes SQL **inside a transaction that always rolls back**
+    (structural read-only, no SELECT-sniffing), a table page/CSV stream
+    for the rail's Data view and export, and a database-size read for
+    the storage quota (an open limit measured here, enforced as a loud
+    serve-time refusal of further writes, never silent truncation). One
+    read path, three consumers — the two agent tools, the Data view,
+    and the export — so they can never disagree. The wrapper is the
+    load-bearing mechanism of the whole stateful design and is proven
+    on real workerd before anything rides it; the reference platform's
+    workerd test pattern applies directly (a facet class carrying
+    `ctx.props` is reachable only via `ctx.facets`, so tests reach it
+    through a test-hooks DO). Rejected: *querying the facet from the
+    supervisor directly* — facet isolation is symmetric and forbids it,
+    which is exactly why the wrapper exists; *exposing the model's own
+    class methods as the agent surface* (the reference platform's
+    pattern, via its RPC-native gadget contract) — Rally's agent speaks
+    typed tools, not arbitrary model-defined RPC, and SQL over a
+    described schema is the contract that survives a hostile or clumsy
+    class.
+
+**Implementation notes from the reference platform.** Cloudflare OS
+(`cloudflare/cloudflare-os`, read at `af56a9d`) runs this architecture
+in production — every gadget is a dynamic worker whose class runs as a
+facet of its workspace DO — and its code and agent docs carry gotchas
+worth having before they are rediscovered:
+
+- *Snapshot state synchronously with the loader cache key.* The
+  `LOADER.get` callback runs asynchronously; any state the load depends
+  on (the version pointer above all) is captured in the same
+  synchronous step that computes the isolate ID, or a concurrent
+  republish can flip it mid-load.
+- *Facet stubs do not travel over RPC* — the supervisor forwards
+  requests itself (decision 4 already adopts this as the routing rule).
+- *Abort defensively.* `facets.abort` on a facet that is not running is
+  a no-op, so the supervisor aborts whenever its in-memory tracking of
+  what code the facet runs is cold — after hibernation, before serving
+  a version it cannot confirm — rather than assuming.
+- *Capture logs with a `tails` loopback.* The loader's `tails` option
+  delivers the dynamic worker's console output and exceptions to a
+  Rally entrypoint (`ctx.exports` with the artifact id in `props`) —
+  the right feed for the error log, richer than catching thrown
+  exceptions at the forward site alone.
+- *`ctx.props`, not constructor arguments*, for anything a
+  `WorkerEntrypoint` or facet class needs — stubs restore from `props`.
+  Call `.dup()` before storing any stub received as an RPC parameter
+  (Cap'n Web disposes call parameters on return), and declare every
+  RPC parameter a receiver accepts even when unused — argument
+  validation rejects undeclared ones.
+- *Only Rally's own DO classes need Wrangler migration entries*; facet
+  classes are dynamic and never appear there. The workerd test suite
+  reaches a `ctx.props`-carrying facet class only through `ctx.facets`,
+  so tests go through a test-hooks DO, per the reference's own test
+  layout.
 
 ## Data model
 
@@ -582,10 +714,18 @@ authoritative.
   site republish is one more pointer swap at the same capture site, with
   `storage_kind` naming the manifest-shaped reference.
 - `ArtifactHostDO` (new DO class, both regions, jurisdiction-pinned):
-  `artifact_state` (current version, resource linkage), `viewer_sessions`
-  (hashed session, principal, issued/expires, single-use code redemption),
-  `error_log` (bounded ring; retention an open limit). No artifact-visible
-  storage tables exist (non-goal 11).
+  `artifact_state` (current version, resource linkage, whether a
+  `SiteData` class is present), `viewer_sessions` (hashed session,
+  principal, issued/expires, single-use code redemption), `error_log`
+  (bounded ring; retention an open limit). The supervisor's own tables
+  never hold artifact data.
+- The `"data"` facet (stateful artifacts only): the model's `SiteData`
+  class under the Rally wrapper (decision 12), one isolated SQLite
+  database per artifact with a model-designed schema. It rides the
+  supervisor's Durable Object storage envelope — no separate namespace,
+  no migration entry (facet classes are dynamic; only `ArtifactHostDO`
+  itself appears in the Wrangler migrations) — and `facets.delete`
+  removes it with the artifact.
 - R2 `PAYLOADS`: `artifact/<artifact-id>/v<version>/assets/<path>` and
   `…/manifest.json`, immutable per version; deletion rides the existing
   cleanup outbox with the sweeper's version-liveness rule.
@@ -596,7 +736,8 @@ Generation is Global-only at launch because the Terminal sandbox is
 (non-goal 9). Serving deploys to both regions in configuration parity —
 Worker, wildcard route, DO namespace, bucket prefix — with the EU half
 staged and dormant, mirroring how the EU Daytona bindings are staged. An
-artifact's assets, manifest, sessions, and error log all rest in
+artifact's assets, manifest, stored data (the facet's SQLite rides its
+supervisor's storage), sessions, and error log all rest in
 the workspace's region; the region-distinct wildcard hosts mean serving
 never crosses the boundary; nothing new is added to the Global control
 plane. EU inference remains unarchived, so prompt-policy tuning cohorts
@@ -609,11 +750,16 @@ The new trust surface is the point of this PRD, so it is stated in full.
 - **Artifact code is untrusted, and the sandbox is capability-based.**
   `globalOutbound: null` — `fetch()` and `connect()` throw. The module's
   `env` contains exactly one injected entrypoint stub (`ASSETS`), whose
-  `props` (artifact id, region) are set by the serving Worker and
-  invisible to the module. No secret, Rally binding, D1, R2, queue, or provider
+  `props` (artifact id, region) are set by the serving side and
+  invisible to the module. A stateful artifact's class additionally
+  holds the Durable Object storage API over *its own* facet database and
+  nothing else — facet isolation is symmetric, so it can never read the
+  supervisor's tables, another artifact's facet, or anything beyond its
+  rows. No secret, Rally binding, D1, R2, queue, or provider
   credential is reachable; stubs cannot be forged, only received. CPU,
   memory, and isolate lifetime are the platform's own limits — platform
-  numbers, not Rally's to restate.
+  numbers, not Rally's to restate; the facet database's size is Rally's
+  one added guard, an open limit enforced as a loud write refusal.
 - **Origin isolation, three ways.** Every artifact has its own origin on
   a domain that is not `rallywith.ai`; artifacts are therefore never
   same-origin with the application, the API, or each other (goal 6), and
@@ -657,33 +803,50 @@ The new trust surface is the point of this PRD, so it is stated in full.
   Worker exposes artifact content and viewer sessions, not workspace
   authority.
 - **Viewer identity does not enter artifact code** (key design decision
-  5) — and with no artifact-visible state in V1 (non-goal 11), an active
-  artifact cannot record anything about its viewers at all. Passing
-  identity in as a capability is a future, deliberate decision with its
-  own review, not a default.
+  5). A stateful artifact records what viewers *submit*, never who they
+  are: the runtime discloses no identity, so the only attribution a page
+  can have is what it asks for as content (a name field on the RSVP
+  form). Passing identity in as a capability is a future, deliberate
+  decision with its own review, not a default.
+- **Artifact data is untrusted content with a trusted container.** The
+  facet's rows were written by model code and page visitors, so their
+  *contents* get the same untrusted handling connector payloads get —
+  in the rail's Data view, in CSV exports, and in the agent tools'
+  results. The *container* is Rally's: the wrapper's describe, query,
+  page, and export methods are Rally-authored, the query path is
+  structurally read-only (always-rollback transaction), and a hostile
+  `SiteData` class can at worst shim what the wrapper reads — lying
+  about its own data, which no artifact-owned store could prevent —
+  never reach beyond its facet or mutate anything through a read.
 - **Nothing that protects data is scoped by the feature flag.** The flag
   below gates presentation; authorization is structural.
 
 ## Agent behavior
 
-This PRD adds no tool and no plugin. It widens one existing tool —
-`terminal_publish_resource` accepts a directory — extends
+This PRD adds no plugin and no publish tool. It widens one existing
+tool — `terminal_publish_resource` accepts a directory — extends
 `terminal_import_resource` to materialize what that widening publishes,
-and extends the document-generation standing policy. Everything below
-lands in the [`agent-tools.md`](../../agent-tools.md) Terminal registry
-and the plugin prompt in the implementing change; the house rule that a
-*changed* Terminal tool carries the same registry, schema, and test
-burden as a new one applies in full.
+extends the document-generation standing policy, and adds **one
+two-tool read family** to the work-stream plugin for stateful
+artifacts' data: `workstream_describe_artifact_data` and
+`workstream_query_artifact_data`, both read-only. Everything below
+lands in the [`agent-tools.md`](../../agent-tools.md) registries and
+the plugin prompts in the implementing change; the house rule that a
+*changed* tool carries the same registry, schema, and test burden as a
+new one applies in full, and the two new tools carry it outright.
 
-**Plugin contract.** Unchanged: same nine tools, same availability,
+**Plugin contract (Terminal).** Same nine tools, same availability,
 regions, origins, lease, and frozen authority; loading still starts
 nothing. The plugin's activation message gains one short paragraph — the
 kind conventions: a published directory with `index.js` at its root is a
 live site with server behavior (`index.js` is an ES module
 default-exporting `fetch(request, env)`, with `env.ASSETS` as declared —
-the message carries the typed declaration verbatim, and names plainly
-that nothing persists between requests); with `index.html` and no
-`index.js`, a static live site; with
+the message carries the typed declarations verbatim); a site that must
+remember between visits instead exports `class SiteData extends
+DurableObject` from that `index.js`, whose `fetch(request)` serves the
+page and whose storage (`this.ctx.storage.sql` / `storage.kv`) is the
+site's own private database — when both shapes are present, `SiteData`
+serves; with `index.html` and no `index.js`, a static live site; with
 neither, a downloadable archive. The paragraph closes with the one
 sentence aimed squarely at the smallest routed model: a document is
 published by its file path, never by its folder.
@@ -770,17 +933,55 @@ and whose `suggestedCall` allowlist, today admitting only the two
 workstream content tools, widens by exactly the one
 `terminal_import_resource` entry.
 
+**Tool contract — the artifact-data read family, new.** Two tools on
+the work-stream plugin (model-facing `workstream_describe_artifact_data`
+and `workstream_query_artifact_data`), available wherever the
+work-stream attachment tools are — deliberately *not* on the Terminal
+plugin, because reading a poll's tally must not require a sandbox.
+Both are backed by the facet wrapper of key design decision 12.
+
+- `describe_artifact_data`: strict input `{ resource: string }` — a
+  site resource's slug or id, resolved through the same visibility
+  loader as every attachment tool, so nonexistent, foreign, and
+  invisible ids collapse to `resource_not_found`. Output: the tables —
+  name, columns with declared types, row count, and a few sampled
+  values per column — plus the artifact's slug and mode. Discovery
+  first, per the family rule: the run answering a data question may be
+  post-compaction, a different run, or a smaller routed model that
+  never saw the schema it is about to query. `mode: "read"`,
+  `idempotency: "safe"`.
+- `query_artifact_data`: strict input `{ resource: string, sql: string,
+  params?: (string | number | null)[] }`. Executes read-only — the
+  wrapper runs the statement inside a transaction that always rolls
+  back — and returns `{ columns, rows, rowCount, truncated }`, bounded
+  by row and byte caps with a visible truncation marker (both caps and
+  the query-time bound are open limits). `mode: "read"`,
+  `idempotency: "safe"`. Failures, designed as loop repairs:
+  `resource_not_found` (as above); `no_artifact_data` — "This site
+  keeps no stored data; its content is its published files" — for
+  static, stateless-active, and archive resources, with the
+  `terminal_import_resource` suggestion when reading source was the
+  likely intent; `sql_error`, carrying SQLite's own message plus
+  "describe the data first, then rebuild the statement";
+  `limit_exceeded` — narrow the query with `WHERE`, `LIMIT`, or fewer
+  columns. Results are artifact data: untrusted content under the same
+  handling as connector payloads, quoted as data, never followed as
+  instructions.
+- No write tool exists in this family (non-goal 12), and the two tools
+  render only where the work-stream attachment tools already do.
+
 **Standing-policy extension.** The document-generation policy gains the
 site trigger and manners: a request whose natural output is a web page or
 small application — explicitly named ("build a page/app/dashboard"), or
 implied by interactivity a document cannot carry — becomes a directory
 with its entry at `index.html`, adding `index.js` only when the behavior
-needs request-time computation, published with the ordinary publish tool;
-chat narration stays short and code-free and the artifact is announced
-with an embed citation. A persistence-shaped ask — a poll, sign-ups,
-anything that must remember between visits — is answered honestly with
-the V1 boundary and the nearest alternative, per non-goal 11, never with
-a page that silently forgets. Participant overrides win in all directions ("just show me the
+needs request-time computation, and exporting the storage class only
+when the request must remember between visits — a poll, sign-ups, a
+list visitors add to — published with the ordinary publish tool; chat
+narration stays short and code-free and the artifact is announced
+with an embed citation. When a participant later asks about what the
+artifact collected, the policy steers the model to the data read
+tools, never to guessing from the transcript. Participant overrides win in all directions ("just show me the
 code" publishes files as ordinary resources; "make it a real page" builds
 the site; "zip that up" publishes the directory as an archive). Same
 render conditions as the document policy — ordinary participant-triggered
@@ -792,10 +993,12 @@ is cheapest to carry: the *standing policy* holds the trigger and the
 manners (above — always rendered, evaluated on every request); the
 *plugin activation message* holds the mechanics (the kind conventions
 and the typed `ASSETS` declaration — present whenever the tools are);
-and the deep build craft — static-versus-active judgement, directory
-layout, the fetch-handler shape and asset-fallback route pattern, the
-statelessness rules and their anti-patterns, data-as-files, the
-revise-in-place loop — ships as a new loadable skill,
+and the deep build craft — static-versus-active-versus-stateful
+judgement, directory layout, the fetch-handler shape and asset-fallback
+route pattern, the `SiteData` storage-class shape with its
+additive-forever schema discipline, the statelessness rules and their
+anti-patterns, data-as-files, the revise-in-place loop — ships as a new
+loadable skill,
 **`building-live-sites`** (`ownerPlugin: rally:terminal`, so it is
 offered only where the Terminal plugin is in scope), loaded when the
 model is about to write a site's files. That keeps hundreds of lines of
@@ -808,16 +1011,16 @@ in [`site-authoring-skill.md`](site-authoring-skill.md) in this folder
 and is normative for the implementing change, written to
 [`writing-skills.md`](../../writing-skills.md)'s rules (behavior
 nudges rather than wire tool names, medium-model bar at both the
-routing and execution moments, byte-stable). Its **deferred
-extension** — facet-backed stateful sites, drafted so the facet
-branch's teaching cost is visible in Future research — is explicitly
-*not* installed in V1: it teaches a capability non-goal 11 removes,
-and it ships only with the state follow-up PRD, revised against that
-PRD's actual contract.
+routing and execution moments, byte-stable). Its stateful-sites
+section — originally drafted as a deferred extension — installs in V1
+with the rest of the body, since facet storage ships in V1; the draft
+is revised in the same change to teach the `SiteData` contract exactly
+as this PRD fixes it.
 
 **Model-usability acceptance.** Schema snapshot and contract tests for the
-widened tool's shapes, kind resolution, and failures, walked through the
-real sanitizer like the rest of the family; the skill covered at both of
+widened tool's shapes, kind resolution, and failures, and for the two
+data tools' shapes and failures, all walked through the
+real sanitizer like the rest of their families; the skill covered at both of
 its moments per the skill-authoring rules — the catalog line routes a
 site-shaped request to `building-live-sites` (and a document-shaped one
 away from it) on the routed models, and the body executes to a working
@@ -849,14 +1052,17 @@ rather than papered over.
 
 ## Rollout
 
-1. Infrastructure first, dark: the serving Workers, domain, DO class,
-   and the widened publish path deploy with the standing-policy module
+1. Infrastructure first, dark: the serving Workers, domain, DO class
+   with its facet hosting and wrapper, the widened publish path, and
+   the two data read tools deploy with the standing-policy module
    absent — directory publishing works but nothing steers to it, so
-   dogfooding is by explicit ask.
+   dogfooding is by explicit ask. The wrapper's workerd proofs
+   (read-only rollback, abort-and-reload on republish, facet deletion)
+   gate this deploy, not the flag flip.
 2. `live-artifacts-enabled` ships as a client feature flag in the
    established fail-closed pattern — presentation-only, gating the rail's
-   site-artifact detail (preview pane, Pop out, link, error log) and the
-   artifact window;
+   site-artifact detail (preview pane, Data view, Pop out, link, error
+   log) and the artifact window;
    everything that protects data is structural, per the flag rules. The
    flag's default reproduces today's behavior: `false`.
 3. The standing-policy module lands last, as its own deploy, once the
@@ -888,56 +1094,69 @@ rather than papered over.
    renders the page live in the preview pane, and a **Pop out** that
    opens the same artifact in the artifact window — with no code in chat
    and no code listing as the primary resource.
-2. "Build a searchable page of these signups" yields an active artifact;
-   two participants search it with different queries at once and each
-   sees results the same module computed; the module's `fetch()` egress
-   attempt (added in a test artifact) throws. "Make a poll for the
-   offsite date" yields an honest boundary answer in chat with an
-   alternative, and no artifact that silently forgets.
-3. "Change the header" from a *second* participant edits and republishes:
+2. "Make a poll for the offsite date" yields a stateful artifact: two
+   participants vote from different machines and both see the combined
+   tally; the module's `fetch()` egress attempt (added in a test
+   artifact) throws; a republish ("add a maybe option") keeps every
+   vote already cast. "Build a searchable page of these signups" yields
+   a *stateless* active artifact — no storage class, no Data view —
+   because nothing needs remembering.
+3. "Who hasn't voted yet?" in chat is answered through the data tools —
+   a describe, then a read-only query — with the numbers matching the
+   page; the rail's Data view shows the same rows and exports them as
+   CSV. A query tool call that attempts a write (`INSERT`, tested
+   directly) changes nothing — the rollback guard holds on real
+   workerd.
+4. "Change the header" from a *second* participant edits and republishes:
    same URL, same rail entry, version list grown by one, both viewers see
    the new header on reload.
-4. A non-participant workspace member without work-stream visibility
-   cannot open the artifact; a participant who loses visibility loses
-   viewing on their next request; the bare URL without minted access
-   serves the neutral page.
-5. A server module that throws serves the plain error page and the
+5. A non-participant workspace member without work-stream visibility
+   cannot open the artifact, its Data view, or its data through the
+   read tools; a participant who loses visibility loses all three on
+   their next request; the bare URL without minted access serves the
+   neutral page.
+6. A server module that throws serves the plain error page and the
    error appears in the rail's error log.
-6. Publishing a multi-file directory with neither root entry yields
+7. Publishing a multi-file directory with neither root entry yields
    exactly one downloadable zip resource; renaming its entry to
    `index.js` and republishing the same path upgrades it to a live site
    under the same resource identity.
-7. Publishing a one-file directory is refused with
+8. Publishing a one-file directory is refused with
    `single_file_directory`, and the model recovers in one corrected call
    publishing the file's own path; on every configured model routing
    stage, a document request yields a file publish and never an archive.
-8. Republishing a live site's path with its root entry removed fails
+9. Republishing a live site's path with its root entry removed fails
    loudly with the recovery instruction; the site keeps serving its
    current version.
-9. Opening a dialog, the command palette, and a lightbox each hides the
+10. Opening a dialog, the command palette, and a lightbox each hides the
    rail's preview behind its placeholder and restores it on close; the
-   preview never paints over an app overlay. Searching the signups page
-   inside the preview pane works, and the preview's navigation stays on
-   the artifact's origin — an external link in the page opens the system
+   preview never paints over an app overlay. Voting in the poll inside
+   the preview pane works, and the preview's navigation stays on the
+   artifact's origin — an external link in the page opens the system
    browser, not the pane.
-10. A chip or embed citation in chat always opens the current version.
-   From the version list, a prior version renders read-only on direct
-   request — its frozen module over its frozen assets — with its source
-   additionally readable through the versioning layer's preview; the
-   canonical URL serves the newest version throughout.
-11. In a fresh run, "show me the site's source" leads through the
+11. A chip or embed citation in chat always opens the current version.
+   From the version list, a prior static or stateless-active version
+   renders read-only on direct request — its frozen module over its
+   frozen assets — while a prior version of a stateful artifact opens
+   as source only (non-goal 13); source is always readable through the
+   versioning layer's preview, and the canonical URL serves the newest
+   version throughout.
+12. In a fresh run, "show me the site's source" leads through the
    registry's redirect — a content read on the site resource returns the
    `terminal_import_resource` suggestion, the import materializes the
    directory, and the files are read there — with no dead end on any
    configured routing stage. A browser request for `/index.js` on an
    active artifact returns 404.
-12. Where Terminal is unavailable, behavior is byte-identical to today;
+13. Deleting a stateful artifact removes its facet database through the
+   deletion lifecycle; a subsequent publish at the same path starts
+   empty.
+14. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render — the preview pane
-   included.
-13. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+   and Data view included.
+15. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
    workerd suite pass; every new test shown to fail when its protected
-   behavior is broken; the rail, artifact window, and error surfaces
-   captured from a real window.
+   behavior is broken; the rail (preview and Data view), artifact
+   window, and error surfaces captured from a real window.
 
 ## Open questions
 
@@ -960,156 +1179,50 @@ rather than papered over.
    inventory's rule for new stored identifiers; the type is stored
    forever.
 
-## Future research: platform-tied artifact state
+## Future research
 
-Artifact-visible persistent state was removed from this PRD's scope
-(non-goal 11) on a deliberate judgement: the easy design — a per-artifact
-key-value pocket only the artifact's own code can reach — would ship fast
-and then stand in the way of the design the product actually wants, where
-the data an artifact collects is *platform data*: somewhere the agent can
-direct writes and reads through Rally's own rails, somewhere the product
-can show, export, and reason about. What a poll collects is exactly the
-kind of thing a participant asks Rally about in chat ("who hasn't
-voted?"), and a side pocket makes that question unanswerable. This
-section holds the design space so the next PRD starts from it instead of
-re-deriving it.
+Two threads survive this PRD's scope decisions. The storage design
+space this section once held was resolved when the team chose to ship
+facet storage in V1 (non-goal 11 records what was rejected with it);
+what remains is the *deeper* platform tie, and the sharing problem
+V1's access model postpones rather than solves.
 
-**What V1 loses, named honestly:** polls, RSVP lists, sign-up sheets,
-guest books, counters — every artifact whose essence is remembering
-between visits. The standing policy makes the model decline these with
-an alternative rather than fake them. Dogfooding of those declines is
-the demand signal: when real asks pile up against the boundary, that is
-the trigger for the follow-up PRD, with this section as its starting
-material.
+**1. Artifact state as versioned platform data.** V1 makes artifact
+data readable by the platform — the Data view, the export, the agent's
+query tools all see the facet's rows — but the rows are still storage,
+not *content*: they have no version history, no diffability, no seam
+into the resource system. The direction worth researching is
+materializing artifact data into the versioning layer at meaningful
+boundaries — a snapshot when a poll closes, a resource derived from a
+sign-up sheet — using the storage-shape column the versioning layer's
+key design decision 7 explicitly reserved for a future producer. Open
+problems: which boundaries are meaningful (per-write versioning is
+absurd for a counter); whether a snapshot is a CSV resource, a typed
+row-set, or both; and how a derived resource cites the artifact it came
+from. Nothing in V1 blocks this: the wrapper's export path is the
+natural producer, and the facet stays the live store.
 
-**The bar any storage design must clear** (drawn from the rules this PRD
-already locks):
-
-1. The agent can reach the data through typed Rally rails — reading it
-   in chat, seeding it at publish, correcting it on request — not only
-   the artifact's runtime.
-2. The product can see it: surfaced in the rail (or as a resource),
-   exportable, deletable with the artifact through the existing
-   lifecycle.
-3. Regional end to end, resting in the workspace's region beside
-   everything else.
-4. Read-only under prior-version viewing (key design decision 11's
-   recorded rule), and quota-able under the open-limit rule.
-5. Writable only through a capability Rally injects — never ambient,
-   never identity-bearing by default, per the Security and trust model.
-
-**Candidate directions, with the trade each carries:**
-
-1. **The removed V1 design: a `STORAGE` entrypoint binding backed by
-   `ArtifactHostDO`.** Four verbs (`get`/`put`/`delete`/`list`, JSON
-   values) over RPC to the artifact's supervisor DO. Fastest to build,
-   chokepoint for quota and read-only enforcement, smallest trust
-   surface — but as designed it is exactly the opaque pocket this
-   removal rejects; it clears the bar only if paired with agent rails
-   and product surfacing (direction 3), at which point it is that
-   direction's transport rather than a design of its own.
-2. **Durable Object facets: the model's own DO class as a child with
-   isolated SQLite.** The platform's full-power path — real SQL, real
-   schemas, per-artifact isolation the runtime enforces. Carries the
-   trust and lifecycle costs already argued in this PRD's history:
-   the whole storage API handed to untrusted code, model-written schema
-   migrations across artifact versions outside every migration rail this
-   repository has, weak Rally chokepoints for read-only prior versions
-   and quotas, and blast-radius coupling to the supervisor. Right when
-   artifacts genuinely need a database; wrong as the default, and
-   adoptable later without unwinding anything since the supervisor DO it
-   attaches to already exists.
-
-   How the agent would read a facet's data — worked through here because
-   it is the part of the facet branch that is not obvious, and it
-   changes the branch's cost ledger:
-
-   - *The isolation wrinkle.* Facet isolation is symmetric: the
-     supervisor cannot query the facet's SQLite any more than the facet
-     can query the supervisor's. Every read path therefore has to
-     execute *inside* the facet, in the isolate that also contains the
-     model's class.
-   - *The foothold: a Rally-authored bootstrap wrapper.* Rally assembles
-     the dynamic worker's `modules` map, so it controls which class the
-     facet loads: a bootstrap module imports the model's class and
-     exports a Rally-authored subclass of it, and the facet instantiates
-     the wrapper. Inherited code shares `this.ctx.storage` — the same
-     database — so the wrapper can answer supervisor RPCs the model's
-     code never defined: a schema describe (tables, columns, row counts,
-     sampled values) and a query method that executes SQL **inside a
-     transaction that always rolls back** — structurally read-only, with
-     no fragile SELECT-sniffing. The wrapper is the load-bearing trick
-     of the whole branch and must be proven on real workerd before
-     anything is promised on top of it.
-   - *The tool family it backs*, sketched for the follow-up PRD (nothing
-     here adds a tool now): `workstream_describe_artifact_data`
-     (`{resource}` → the schema; discovery-first, because the run
-     answering "who hasn't voted?" may be post-compaction, a different
-     run, or a smaller routed model that never saw the schema it is
-     querying) and `workstream_query_artifact_data` (`{resource, sql,
-     params?}` → bounded rows with a visible truncation marker;
-     `mode: "read"`, `idempotency: "safe"`; the same visibility loader
-     as every attachment tool, so foreign ids collapse to
-     `resource_not_found`; failures in the family vocabulary —
-     `sql_error` carrying SQLite's own message plus "describe, then
-     rebuild the statement", `no_artifact_data` for a static artifact,
-     query-time and row bounds open under the limit rule). SQL rather
-     than typed getters because an arbitrary model-designed schema is
-     the point of facets, and a getter tool would page whole tables
-     through context where SQL pushes the computation to the data — the
-     attachment rails' philosophy, on the most heavily pretrained query
-     language there is.
-   - *No write tool.* The agent changes artifact data by revising the
-     artifact, or the artifact changes it through its own request
-     paths; a typed write into a model-designed schema is its own
-     authorization and receipt problem, deferred exactly the way the
-     versioning layer deferred model-visible history.
-   - *Results are untrusted data.* The query runs beside model-written
-     code that could shim what the wrapper sees — unavoidable in any
-     design where artifact code owns the writes, the `STORAGE` binding
-     included. Contents are as honest as the artifact; Rally's
-     authority is untouched either way; tool output gets the same
-     untrusted-content handling connector payloads get.
-   - *One read path, three consumers.* The same wrapper methods back
-     the agent tools, a rail **Data** tab, and a CSV export — which is
-     how the facet branch clears this section's "product can see it"
-     bar.
-   - *The ledger entry.* Direction 3 gets equivalent agent reads nearly
-     free — its data is resource-shaped and already readable through
-     today's attachment rails. The facet branch must build the wrapper,
-     the two-tool family, and the workerd proofs to reach the same
-     agent experience; that build is a real cost charged against
-     facets when the follow-up PRD weighs these directions. Its
-     *teaching* cost is likewise already drafted:
-     [`site-authoring-skill.md`](site-authoring-skill.md)'s deferred
-     extension is the model-facing guidance the facet branch would
-     install, and its length beside the stateless body is part of the
-     same ledger.
-3. **Artifact state as platform data: writes land in a store the agent
-   and the product share.** The direction the removal was made for.
-   Artifact writes travel through a Rally-injected binding into
-   workspace-owned, typed storage — as (or beside) a work-stream
-   resource, or as structured rows a WorkspaceDO/WorkstreamDO authority
-   owns — so the same data is readable by the agent through the
-   attachment rails, visible in the rail, versionable through the
-   versioning layer's seam (its key design decision 7 explicitly
-   reserved a storage-shape column for exactly such a future), and
-   automatically covered by deletion, export, and regional rules. Open
-   problems to research before it is buildable: write frequency versus
-   version-capture cost (a counter incremented per click must not mint
-   a version per click); schema — free JSON versus a declared shape the
-   agent can query; concurrency (last-write-wins versus the authority
-   serializing); and how a viewer-triggered write is attributed when
-   viewer identity deliberately does not enter artifact code.
-4. **No runtime writes at all: state changes only through the agent.**
-   The degenerate-but-honest candidate: an artifact stays read-only and
-   anything interactive routes through the work stream (an elicitation,
-   a chat ask), with the model republishing data files. Zero new trust
-   surface; latency and ceremony likely too high for anything
-   click-shaped — but it is the fallback that keeps V1's guarantees
-   untouched, and research should measure how far it actually carries
-   before rejecting it.
-
-The likely resolution composes 1 and 3: the binding as the runtime's
-transport, the platform store as its backing — decided in its own PRD,
-against this bar, when the decline signal says the demand is real.
+**2. Observer verification, for when artifacts read beyond their own
+rows.** V1 never has to ask "may this viewer see this data?" beyond
+work-stream visibility, because an artifact can only show what was
+published with it or collected through it — all of it work-stream
+content by construction. The moment a future capability lets an
+artifact render *live external data* (the egress-gateway binding of
+non-goal 3, or any connector-backed binding), a shared artifact starts
+showing viewers data that some of them may not be allowed to see at the
+source, and work-stream visibility stops being a sufficient answer.
+The reference platform (Cloudflare OS) worked this problem thoroughly,
+and its framework is recorded here so the future PRD starts from it:
+every data source backing a shared surface needs an *observer
+verification* strategy — private-only (never shareable), single-ACL
+check (the source is one unit; verify each viewer against it on every
+open), per-data-set tracking (the source spans distinct ACLs; log
+which sets were actually shown, verify every viewer against every
+logged set, re-verify on each open so revocation at the source is
+caught), or low-stakes no-op — chosen by one lens: does the binding
+span sub-resources with distinct ACLs, and is there a per-viewer
+access oracle to check against? Rally's baseline maps to the
+single-ACL case with the work stream as the unit, which is exactly why
+V1 needs no machinery; the tracking strategy is what connector-backed
+artifacts will need, and it is the expensive one — design it with the
+binding, not after it.
