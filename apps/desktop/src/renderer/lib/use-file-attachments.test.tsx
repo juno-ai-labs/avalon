@@ -4,14 +4,14 @@ import { ApiError } from './api';
 import type * as DraftCache from './draft-cache';
 import { clearAllDrafts, readDraftAttachments } from './draft-cache';
 
-/** Lets one test hold the cache read open long enough to lose a race to a drop. */
-let readDelayMs = 0;
+/** Lets one test hold the cache read open until the drop it races has landed. */
+let holdRead: Promise<void> | undefined;
 vi.mock('./draft-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof DraftCache>();
   return {
     ...actual,
     readDraftAttachments: async (draftKey: string) => {
-      if (readDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, readDelayMs));
+      if (holdRead) await holdRead;
       return actual.readDraftAttachments(draftKey);
     },
   };
@@ -48,7 +48,7 @@ function apiMock(overrides: Partial<FileAttachmentsApi> = {}): FileAttachmentsAp
 describe('useFileAttachments', () => {
   beforeEach(async () => {
     await clearAllDrafts();
-    readDelayMs = 0;
+    holdRead = undefined;
     vi.stubGlobal('URL', {
       ...URL,
       createObjectURL: vi.fn(() => 'blob:preview'),
@@ -270,12 +270,25 @@ describe('useFileAttachments', () => {
     seeded.unmount();
 
     // The drop lands before the cached nine are known, so it is counted against
-    // an empty composer and has to be reconciled once they arrive.
-    readDelayMs = 60;
+    // an empty composer and has to be reconciled once they arrive. The read is
+    // held open until that has happened, so the ordering is staged causally
+    // rather than on a timer the machine can lose under load.
+    let releaseRead!: () => void;
+    holdRead = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
     const { result } = renderHook(() => useFileAttachments(api, draftKey));
     act(() => result.current.addFiles(
       Array.from({ length: 10 }, (_, index) => new File([`dropped-${index}`], `dropped-${index}.txt`)),
     ));
+
+    // The drop having been counted against an empty composer is the precondition
+    // everything below reconciles, so it is checked before the read is released.
+    await waitFor(() => expect(result.current.attachments.map((attachment) => attachment.file.name))
+      .toEqual(Array.from({ length: 10 }, (_, index) => `dropped-${index}.txt`)));
+    await act(async () => {
+      releaseRead();
+    });
 
     // Wait for the cached nine to arrive, not merely for ten tiles: the ten
     // dropped files satisfy that count on their own, before reconciliation.

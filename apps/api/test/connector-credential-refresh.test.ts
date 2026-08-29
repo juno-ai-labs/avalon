@@ -107,9 +107,18 @@ describe("connector credential refresh serialization", () => {
       CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
     };
 
+    // Above the wait loop's own worst case: ROTATION_WAIT_ATTEMPTS = 8 backoffs
+    // of 100/200/400/800/1600/2000/2000/2000ms, ~9.1s cumulative. A backoff
+    // sleeps to completion with no early wake, so a deadline inside that ladder
+    // aborts the loser mid-sleep and the run fails with an AbortError before any
+    // assertion is reached. The budget covers scheduling jitter between two real
+    // callers, not the ~20ms of simulated refresh work below it — a caller that
+    // genuinely never gets the lease now fails on the loop's own bounded-wait
+    // error, which names the reason.
+    const budgetMs = 10_000;
     await Promise.all([
-      ensureFreshConnectorCredentials(env, first, adapter, AbortSignal.timeout(2_000)),
-      ensureFreshConnectorCredentials(env, second, adapter, AbortSignal.timeout(2_000)),
+      ensureFreshConnectorCredentials(env, first, adapter, AbortSignal.timeout(budgetMs)),
+      ensureFreshConnectorCredentials(env, second, adapter, AbortSignal.timeout(budgetMs)),
     ]);
 
     expect(refreshCredentials).toHaveBeenCalledTimes(1);

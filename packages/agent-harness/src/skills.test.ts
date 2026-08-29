@@ -504,8 +504,12 @@ function runInput(fetcher: typeof fetch) {
       fetch: fetcher,
       maxIterations: 4,
       maxToolCalls: 10,
-      maxWallClockMs: 5_000,
-      toolTimeoutMs: 500,
+      // Ambient budgets, not subjects: both are real timers over real SSE body
+      // reads, and no test in this file has a deadline for its subject — every
+      // one of them asserts `status: "completed"`. Set far above anything a
+      // passing run needs, matching `index.test.ts`'s `runInput`.
+      maxWallClockMs: 120_000,
+      toolTimeoutMs: 30_000,
       maxWebResults: 4,
     },
     workspaceId: "workspace-1",

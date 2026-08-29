@@ -8,13 +8,15 @@ describe('TelemetryQuitBarrier', () => {
     let finishFlush!: () => void;
     const flush = vi.fn(() => new Promise<void>((resolve) => { finishFlush = resolve; }));
     const resume = vi.fn();
-    const barrier = new TelemetryQuitBarrier(flush, 1_000);
+    // Ten minutes puts the failsafe timeout out of reach of this test, so a
+    // resume here can only have come from the flush path.
+    const barrier = new TelemetryQuitBarrier(flush, 10 * 60 * 1000);
 
     expect(barrier.hold(resume)).toBe(true);
     expect(barrier.hold(resume)).toBe(true);
-    await vi.waitFor(() => expect(flush).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(flush).toHaveBeenCalledOnce(), { timeout: 5_000 });
     finishFlush();
-    await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce(), { timeout: 5_000 });
 
     expect(barrier.hold(resume)).toBe(false);
   });

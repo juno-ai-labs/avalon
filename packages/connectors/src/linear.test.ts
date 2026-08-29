@@ -1,6 +1,7 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { NormalizedActivitySchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import { neverAborts } from "./test-signals";
 import {
   canPersonalLinearConnectionAccessWebhook,
   createLinearConnector,
@@ -200,7 +201,7 @@ describe("Linear connector", () => {
       });
     });
     const connection = personalLinearConnection([LinearCapabilities.read]);
-    await expect(adapter.refreshCredentials!(connection, AbortSignal.timeout(1_000))).resolves.toMatchObject({
+    await expect(adapter.refreshCredentials!(connection, neverAborts())).resolves.toMatchObject({
       accessToken: "rotated-personal-access",
       refreshToken: "rotated-personal-refresh",
       oauthActor: "user",
@@ -238,7 +239,7 @@ describe("Linear connector", () => {
     const result = await adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
     expect(result.output).toMatchObject({ nodes: [{ id: "team-1", name: "Core" }] });
     expect(refreshes).toBe(1);
@@ -258,19 +259,19 @@ describe("Linear connector", () => {
     await expect(adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "user", userId: asUserId("7088fd6d-1db0-4f5a-86ca-3978d96e0d47") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).resolves.toMatchObject({ summary: "Listed Linear teams" });
     expect(graphqlCalls).toBe(1);
 
     await expect(adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "user", userId: asUserId("c823c5e4-dcc7-4a16-8856-3db84d0efb17") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).rejects.toThrow(/another principal/i);
     await expect(adapter.executeTool("list_teams", {}, {
       connection,
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).rejects.toThrow(/another principal/i);
     expect(graphqlCalls).toBe(1);
   });
@@ -288,14 +289,14 @@ describe("Linear connector", () => {
     await expect(adapter.hydrateResource!(connection, {
       resource_type: "linear_document",
       provider_resource_id: "document-1",
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ id: "document-1", title: "Personal plan" });
+    }, neverAborts())).resolves.toMatchObject({ id: "document-1", title: "Personal plan" });
     await expect(adapter.healthCheck(connection)).resolves.toEqual({
       ok: true,
       message: "Linear authorization is healthy",
     });
     await expect(adapter.nativeAgent!.execute({}, {
       connection,
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).rejects.toThrow(/workspace scope/i);
   });
 
@@ -313,7 +314,7 @@ describe("Linear connector", () => {
     const hydrated = await adapter.hydrateResource!(linearConnection([]), {
       resource_type: "linear_document",
       provider_resource_id: "document-1",
-    }, AbortSignal.timeout(1_000));
+    }, neverAborts());
     expect(hydrated).toMatchObject({ id: "document-1", title: "Design" });
     expect((hydrated as { content: string }).content).toHaveLength(40_000);
   });
@@ -337,7 +338,7 @@ describe("Linear connector", () => {
     await expect(adapter.hydrateResource!(linearConnection([]), {
       resource_type: "linear_project_update",
       provider_resource_id: "update-1",
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({
+    }, neverAborts())).resolves.toMatchObject({
       id: "update-1",
       body: "On track",
       project: { id: "project-1" },
@@ -366,7 +367,7 @@ describe("Linear connector", () => {
     }, {
       connection: linearConnection([LinearCapabilities.write]),
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
     expect(variables).toEqual({ id: "issue-1", input: { stateId: "state-started" } });
     const updateSchema = adapter.manifest.tools.find((tool) => tool.name === "update_issue")?.inputSchema;
@@ -395,7 +396,7 @@ describe("Linear connector", () => {
     const context = {
       connection: linearConnection([LinearCapabilities.issueCreate]),
       principal: { type: "workspace" as const, workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     await expect(adapter.executeTool("create_issue", {
@@ -438,7 +439,7 @@ describe("Linear connector", () => {
     }, {
       connection: linearConnection([LinearCapabilities.issueCreate]),
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
 
     expect(variables).toEqual({
@@ -469,7 +470,7 @@ describe("Linear connector", () => {
     await adapter.executeTool("search_issues", { query: "flaky rebase" }, {
       connection: linearConnection([LinearCapabilities.read]),
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
 
     // Titles alone made "the issue about the flaky rebase test" unfindable
@@ -500,7 +501,7 @@ describe("Linear connector", () => {
     const result = await adapter.executeTool("list_workflow_states", { teamId: "team-1" }, {
       connection: linearConnection([LinearCapabilities.read]),
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
 
     expect(variables).toMatchObject({ filter: { team: { id: { eq: "team-1" } } } });
@@ -517,7 +518,7 @@ describe("Linear connector", () => {
     await expect(adapter.executeTool("create_issue", { teamId: "team-1", title: "Ship" }, {
       connection: linearConnection([LinearCapabilities.read]),
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).rejects.toMatchObject({
       code: "unsupported_capability",
       message: expect.stringContaining(LinearCapabilities.read),
@@ -553,7 +554,7 @@ describe("Linear connector", () => {
       config: linearConfig(fetcher),
       connection,
       verified,
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).resolves.toBe(true);
     expect(queries).toHaveLength(2);
     expect(queries[0]).toContain("resource: comment");

@@ -19,7 +19,7 @@ import { asWorkspaceId } from "@rally/contracts";
 import { workspaceDOName } from "../src/durable-objects/names";
 
 /** Its own workspace: every suite here addresses one object by name. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009a0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009e0");
 const RESOURCE = "00000000-0000-7000-8000-0000000009a1";
 const RUN = "00000000-0000-7000-8000-0000000009a2";
 

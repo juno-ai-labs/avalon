@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   initializeAutoUpdate,
   MANUAL_UPDATE_URL,
@@ -59,6 +59,13 @@ function setup(overrides: Partial<AutoUpdateDependencies> = {}) {
 }
 
 describe('desktop auto-update runtime', () => {
+  // Unconditional: restoreMocks, unstubGlobals and unstubEnvs leave fake timers
+  // installed, and Vitest fakes setImmediate by default — so a failed assertion
+  // under fake timers would otherwise hang every later test in this file.
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('emits bounded check and download outcomes without provider error text', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-12T20:00:00Z'));
@@ -72,7 +79,6 @@ describe('desktop auto-update runtime', () => {
       { phase: 'check', result: 'available', durationMs: 1_500 },
       { phase: 'download', result: 'success', durationMs: 6_000 },
     ]);
-    vi.useRealTimers();
   });
 
   it('checks immediately and every three hours without disabling differential downloads', () => {

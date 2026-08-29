@@ -2,6 +2,7 @@ import { asUserId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import { NormalizedActivitySchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import { neverAborts } from "./test-signals";
 import {
   createNotionConnector,
   normalizeNotionWebhook,
@@ -190,7 +191,7 @@ describe("Notion connector", () => {
     const result = await adapter.executeTool("retrieve_page", { pageId: "page-1" }, {
       connection,
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
     expect(result.output).toMatchObject({
       page: { object: "page", id: "page-1" },
@@ -222,7 +223,7 @@ describe("Notion connector", () => {
     }, {
       connection: notionConnection([NotionCapabilities.insert]),
       principal: { type: "workspace", workspaceId: AVALON_WORKSPACE_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
     expect(sentBody).toEqual({
       parent: { page_id: "parent-page" },
@@ -239,7 +240,7 @@ describe("Notion connector", () => {
     await expect(adapter.executeTool("retrieve_page", { pageId: "page-1" }, {
       connection: notionConnection([NotionCapabilities.read]),
       principal: { type: "user", userId: AVALON_USER_ID },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).rejects.toThrow(/workspace connection is not available/iu);
   });
 
@@ -255,7 +256,7 @@ describe("Notion connector", () => {
     const hydrated = await notionAdapter(fetcher).hydrateResource!(notionConnection([NotionCapabilities.commentRead]), {
       resource_type: "notion_comment",
       provider_resource_id: "comment-1",
-    }, AbortSignal.timeout(1_000));
+    }, neverAborts());
     const richText = (hydrated as { rich_text: Array<{ plain_text: string }> }).rich_text;
     expect(richText[0]?.plain_text).toHaveLength(80_000);
   });

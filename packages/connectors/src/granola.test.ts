@@ -1,5 +1,6 @@
 import { asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import { neverAborts } from "./test-signals";
 import {
   createGranolaConnector,
   createGranolaWebhookEndpoint,
@@ -85,7 +86,7 @@ describe("Granola connector", () => {
     await expect(createGranolaWebhookEndpoint(
       workspaceApiKey,
       "https://api.example.test/ingest/granola/connection-id",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
       fetcher,
     )).resolves.toEqual({
       id: "whe_1234567890abcd",
@@ -417,7 +418,7 @@ function workspaceToolContext() {
   return {
     connection: workspaceConnection(),
     principal: { type: "workspace" as const, workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a") },
-    signal: AbortSignal.timeout(1_000),
+    signal: neverAborts(),
   };
 }
 

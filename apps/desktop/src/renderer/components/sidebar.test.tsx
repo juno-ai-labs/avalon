@@ -2385,7 +2385,7 @@ describe('pinned work streams', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Let it land' }));
     await screen.findByRole('region', { name: 'Pinned' });
     expect(scrollIntoView).not.toHaveBeenCalled();
-  }, 10_000);
+  });
 
   it('scrolls nothing when the pin was refused', async () => {
     renderWith(

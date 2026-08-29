@@ -10,7 +10,9 @@ const runtime = {
   release: '1.96.0', buildId: 'build-1', platform: 'darwin' as const, architecture: 'arm64' as const,
   launchId: '018f0000-0000-7000-8000-000000000004', channel: 'stable' as const,
 };
-const generationEpoch = Date.now() - 60 * 60_000;
+// One hour before the instant `beforeEach` pins, so fixture timestamps and the
+// subject's own `Date.now()` come from the same declared clock.
+const generationEpoch = Date.parse('2026-08-12T19:05:00.000Z');
 const generationTime = (minute: number): Date => new Date(generationEpoch + minute * 60_000);
 
 beforeEach(() => {
@@ -226,6 +228,30 @@ describe('NativeCrashUploader', () => {
     expect((await readdir(completed)).filter((name) => name.endsWith('.dmp'))).toHaveLength(1);
     expect(fetch).toHaveBeenCalledOnce();
     expect(onState.mock.calls.map(([state]) => state)).toContain('evicted');
+  });
+
+  it('deletes a generation whose retention window has passed instead of uploading it', async () => {
+    const { root, dump } = await fixture();
+    // The fixture's generation was created at 19:05; its manifest keeps it for
+    // fourteen days, so this instant is past `deleteAfter`.
+    vi.setSystemTime(new Date('2026-08-27T00:00:00.000Z'));
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(null, { status: 202 }));
+    const onState = vi.fn();
+    const uploader = new NativeCrashUploader({
+      rootDirectory: root, enabled: () => true,
+      identity: () => ({ installationId: '018f0000-0000-7000-8000-000000000003' }),
+      authenticatedSession: async () => ({
+        apiBaseUrl: 'https://api.rallywith.ai', accessToken: 'secret', route: 'global',
+      }),
+      anonymousSession: () => null, globalApiBaseUrl: 'https://api.rallywith.ai', fetch,
+      onState,
+    });
+
+    await uploader.flush();
+
+    expect(onState.mock.calls.map(([state]) => state)).toEqual(['expired']);
+    expect(fetch).not.toHaveBeenCalled();
+    await expect(access(dump)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('reuses the upload id from a sidecar written before the rename', async () => {

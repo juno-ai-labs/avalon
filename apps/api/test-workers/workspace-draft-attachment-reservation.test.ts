@@ -9,7 +9,8 @@ import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { workspaceDOName } from "../src/durable-objects/names";
 import { workstreamRegionalEffectHash } from "../src/durable-objects/workstream-regional-effect";
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008a0");
+/** Its own workspace, for the reason `workspace-directory-reads` states. */
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008c0");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000008a1");
 const USER_ID = asUserId("00000000-0000-7000-8000-0000000008a2");
 const OTHER_USER_ID = asUserId("00000000-0000-7000-8000-0000000008a7");
