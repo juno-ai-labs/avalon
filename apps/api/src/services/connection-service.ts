@@ -65,6 +65,14 @@ import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import { workspaceDOName } from "../durable-objects/names";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import {
+  WorkspaceConnectorOAuthAttemptFinishResultSchema,
+  WorkspaceConnectorOAuthAttemptReadResultSchema,
+  WorkspaceWebhookReceiptClaimResultSchema,
+  type WorkspaceConnectorOAuthAttempt,
+} from "../durable-objects/workspace-connections-protocol";
 
 type CreateWebhookInput = z.infer<typeof CreateWebhookConnectionRequestSchema>;
 
@@ -155,23 +163,6 @@ function connectorIngressRouteValues(
 }
 
 type OAuthConnectorProvider = Exclude<ConnectorOAuthProvider, "google" | "github">;
-
-interface ConnectorOAuthAttemptRow {
-  id: string;
-  provider: ConnectorOAuthProvider;
-  status: "pending" | "succeeded" | "denied" | "failed";
-  connection_id: string | null;
-  error_code: string | null;
-  expires_at: string;
-  user_id: string;
-  workspace_id: string;
-  telemetry_operation_id: string | null;
-  telemetry_event_version: number;
-  telemetry_scope: Scope | null;
-  telemetry_capability_count: number | null;
-  telemetry_reconnect: number;
-  created_at: string;
-}
 
 const TELEMETRY_CONNECTOR_TYPES = new Set([
   "generic_webhook", "github", "google", "granola", "linear", "notion", "slack", "x",
@@ -459,15 +450,22 @@ export class ConnectionService {
   }
 
   async bindOAuthTelemetry(attemptId: string, operationId: string, eventVersion: 1 | 2): Promise<void> {
-    await this.env.DB.prepare(
-      `UPDATE connector_oauth_attempts
-       SET telemetry_operation_id = COALESCE(telemetry_operation_id, ?),
-           telemetry_event_version = CASE
-             WHEN telemetry_operation_id IS NULL THEN ? ELSE telemetry_event_version END,
-           updated_at = ?
-       WHERE id = ? AND region = ?
-         AND provider IN ('google', 'github', 'granola', 'linear', 'notion', 'slack')`,
-    ).bind(operationId, eventVersion, nowIso(), attemptId, this.env.AVALON_REGION).run().catch(() => undefined);
+    // Best-effort exactly as before: a bind refused by the operation-id unique
+    // index, or an attempt id that never started, must not fail the OAuth
+    // start it decorates.
+    const workspaceId = this.requireAuth().workspaceId;
+    try {
+      await (await this.workspaceObject(workspaceId)).bindConnectorOAuthAttemptTelemetry({
+        workspaceId,
+        attemptId,
+        region: this.env.AVALON_REGION,
+        operationId,
+        eventVersion,
+        at: nowIso(),
+      });
+    } catch {
+      // Telemetry decoration only; the OAuth start it labels already stands.
+    }
   }
 
   async beginGoogle(input: {
@@ -630,7 +628,7 @@ export class ConnectionService {
     redirect.searchParams.set("region", this.env.AVALON_REGION);
     if (attemptId) redirect.searchParams.set("attempt", attemptId);
     redirect.searchParams.set("provider", "google");
-    if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
+    if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return redirect.toString();
   }
@@ -758,7 +756,7 @@ export class ConnectionService {
     ) as { provider: "github"; attemptId?: unknown; scope: Scope; capabilities: string[]; connectionId: string | null };
     const attemptId = oauthAttemptIdValue(stateData.attemptId);
     const oauthExpiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-    if (attemptId) await this.extendOAuthAttempt(attemptId, oauthExpiresAt);
+    if (attemptId) await this.extendOAuthAttempt(String(installState.workspace_id), attemptId, oauthExpiresAt);
     const config = githubConnectorConfig(this.env);
     if (!config) throw new ApiError(503, "github_app_unavailable", "The Rally GitHub App is not configured");
     const installation = await getGitHubInstallation(config, installationId, AbortSignal.timeout(15_000));
@@ -965,7 +963,7 @@ export class ConnectionService {
     redirect.searchParams.set("region", this.env.AVALON_REGION);
     if (attemptId) redirect.searchParams.set("attempt", attemptId);
     redirect.searchParams.set("provider", "github");
-    if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
+    if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return redirect.toString();
   }
@@ -1239,7 +1237,7 @@ export class ConnectionService {
     redirect.searchParams.set("region", this.env.AVALON_REGION);
     if (attemptId) redirect.searchParams.set("attempt", attemptId);
     redirect.searchParams.set("provider", provider);
-    if (attemptId) await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId });
+    if (attemptId) await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "succeeded", { connectionId });
     await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
     return redirect.toString();
   }
@@ -1247,7 +1245,7 @@ export class ConnectionService {
   async completeProviderDenial(provider: ConnectorOAuthProvider, state: string): Promise<string> {
     const row = await this.consumeProviderState(provider, state, "connector");
     const attemptId = await this.oauthAttemptIdFromState(row);
-    await this.finishOAuthAttempt(attemptId, "denied", { errorCode: "oauth_denied" });
+    await this.finishOAuthAttempt(String(row.workspace_id), attemptId, "denied", { errorCode: "oauth_denied" });
     return this.connectorAttemptTarget({
       provider,
       status: "denied",
@@ -1273,7 +1271,8 @@ export class ConnectionService {
         errorCode: normalizeConnectorOAuthErrorCode(errorCode),
       });
     }
-    this.env = withWorkspaceRuntimeDatabase(this.env, String(row.workspace_id));
+    const workspaceId = String(row.workspace_id);
+    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     let attemptId: string;
     try {
       attemptId = await this.oauthAttemptIdFromState(row);
@@ -1284,25 +1283,25 @@ export class ConnectionService {
         errorCode: normalizeConnectorOAuthErrorCode(errorCode),
       });
     }
-    const existing = await this.loadOAuthAttempt(attemptId);
-    if (existing?.status === "succeeded" && existing.connection_id) {
+    const existing = await this.loadOAuthAttempt(workspaceId, attemptId);
+    if (existing?.status === "succeeded" && existing.connectionId) {
       return this.connectorAttemptTarget({
         provider,
         status: "succeeded",
         attemptId,
-        connectionId: existing.connection_id,
+        connectionId: existing.connectionId,
       });
     }
     if (
-      existing?.connection_id
+      existing?.connectionId
       && (existing.status === "pending" || existing.status === "failed")
     ) {
       const committed = await this.env.DB.prepare(
         `SELECT id FROM connector_connections
          WHERE id = ? AND workspace_id = ? AND connector_type = ? AND status = 'healthy'`,
-      ).bind(existing.connection_id, row.workspace_id, provider).first<{ id: string }>();
+      ).bind(existing.connectionId, row.workspace_id, provider).first<{ id: string }>();
       if (committed) {
-        await this.finishOAuthAttempt(attemptId, "succeeded", { connectionId: committed.id });
+        await this.finishOAuthAttempt(workspaceId, attemptId, "succeeded", { connectionId: committed.id });
         return this.connectorAttemptTarget({
           provider,
           status: "succeeded",
@@ -1312,9 +1311,9 @@ export class ConnectionService {
       }
     }
     const terminalStatus = existing?.status === "denied" ? "denied" : "failed";
-    const terminalError = existing?.error_code ?? normalizeConnectorOAuthErrorCode(errorCode);
+    const terminalError = existing?.errorCode ?? normalizeConnectorOAuthErrorCode(errorCode);
     if (!existing || existing.status === "pending") {
-      await this.finishOAuthAttempt(attemptId, terminalStatus, { errorCode: terminalError });
+      await this.finishOAuthAttempt(workspaceId, attemptId, terminalStatus, { errorCode: terminalError });
     }
     return this.connectorAttemptTarget({
       provider,
@@ -1326,42 +1325,27 @@ export class ConnectionService {
 
   async getOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttempt> {
     const auth = this.requireAuth();
-    const at = nowIso();
-    await this.env.DB.prepare(
-      `UPDATE connector_oauth_attempts
-       SET status = 'failed', error_code = 'oauth_attempt_expired', completed_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND user_id = ? AND region = ?
-         AND status = 'pending' AND expires_at <= ?`,
-    ).bind(
-      at,
-      at,
-      attemptId,
-      auth.workspaceId,
-      auth.userId,
-      this.env.AVALON_REGION,
-      at,
-    ).run();
-    const row = await this.env.DB.prepare(
-      `SELECT id, provider, status, connection_id, error_code, expires_at,
-              user_id, workspace_id, telemetry_operation_id, telemetry_event_version,
-              telemetry_scope, telemetry_capability_count, telemetry_reconnect, created_at
-       FROM connector_oauth_attempts
-       WHERE id = ? AND workspace_id = ? AND user_id = ? AND region = ?`,
-    ).bind(
-      attemptId,
-      auth.workspaceId,
-      auth.userId,
-      this.env.AVALON_REGION,
-    ).first<ConnectorOAuthAttemptRow>();
-    if (!row) throw new ApiError(404, "oauth_attempt_not_found", "The connector authorization attempt was not found");
-    await this.emitOAuthOutcome(row).catch(() => undefined);
+    // Lazy expiry and the read are one object transaction, member-scoped: the
+    // row reported is the row after the sweep, and another member's attempt is
+    // neither expired nor revealed by this poll.
+    const { attempt } = WorkspaceConnectorOAuthAttemptReadResultSchema.parse(
+      await (await this.workspaceObject(auth.workspaceId)).connectorOAuthAttempt({
+        workspaceId: auth.workspaceId,
+        attemptId,
+        region: this.env.AVALON_REGION,
+        userId: auth.userId,
+        expireDueAt: nowIso(),
+      }),
+    );
+    if (!attempt) throw new ApiError(404, "oauth_attempt_not_found", "The connector authorization attempt was not found");
+    await this.emitOAuthOutcome(attempt).catch(() => undefined);
     return {
-      attemptId: row.id,
-      provider: row.provider,
-      status: row.status,
-      connectionId: row.connection_id,
-      errorCode: row.error_code,
-      expiresAt: row.expires_at,
+      attemptId: attempt.attemptId,
+      provider: attempt.provider,
+      status: attempt.status,
+      connectionId: attempt.connectionId,
+      errorCode: attempt.errorCode,
+      expiresAt: attempt.expiresAt,
     };
   }
 
@@ -2030,25 +2014,22 @@ export class ConnectionService {
     const normalized = source.normalize(context, envelope, payloadKey);
     if (!normalized) throw new ApiError(400, "unsupported_webhook_event", "Granola webhook event is not supported");
     if (this.env.WORKSPACE_DOS) {
-      const receiptId = newId();
-      const receipt = await this.env.DB.prepare(
-        `INSERT INTO webhook_receipts
-           (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
-      ).bind(
-        receiptId,
-        connection.workspace_id,
-        connection.id,
-        envelope.receiptKey ?? envelope.deliveryId,
-        receivedAt,
-        new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
-      ).run();
+      const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
+        await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
+          workspaceId: connection.workspace_id,
+          receiptId: newId(),
+          connectionId: connection.id,
+          signatureHash: envelope.receiptKey ?? envelope.deliveryId,
+          receivedAt,
+          expiresAt: new Date(Date.now() + 4 * 24 * 60 * 60_000).toISOString(),
+        }),
+      );
       const persisted = await persistNormalizedActivity(this.env, {
         ...normalized,
         rawContentHash: normalized.rawContentHash ?? envelope.bodyHash,
       }, "granola");
       return {
-        duplicate: Number(receipt.meta.changes ?? 0) === 0 || persisted.duplicate,
+        duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
         activityId: persisted.activityId,
       };
     }
@@ -2176,29 +2157,26 @@ export class ConnectionService {
       }
     }
     if (this.env.WORKSPACE_DOS) {
-      await this.env.DB.prepare(
-        `DELETE FROM webhook_receipts
-          WHERE workspace_id = ? AND connection_id = ? AND expires_at <= ?`,
-      ).bind(connection.workspace_id, connectionId, nowIso()).run();
       await this.env.PAYLOADS.put(payloadKey, rawBody, {
         httpMetadata: { contentType: "application/json" },
       });
       const receivedAt = nowIso();
-      const receipt = await this.env.DB.prepare(
-        `INSERT INTO webhook_receipts
-           (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(connection_id, signature_hash) DO NOTHING`,
-      ).bind(
-        receiptId,
-        connection.workspace_id,
-        connectionId,
-        envelope.receiptKey ?? envelope.deliveryId,
-        receivedAt,
-        new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
-      ).run();
+      // The claim sweeps this connection's expired receipts in the same object
+      // transaction, which is what the separate DELETE ahead of the insert
+      // used to do in its own round trip.
+      const receipt = WorkspaceWebhookReceiptClaimResultSchema.parse(
+        await (await this.workspaceObject(connection.workspace_id)).claimWebhookReceipt({
+          workspaceId: connection.workspace_id,
+          receiptId,
+          connectionId,
+          signatureHash: envelope.receiptKey ?? envelope.deliveryId,
+          receivedAt,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
+        }),
+      );
       const persisted = await persistNormalizedActivity(this.env, normalized, "generic_webhook");
       return {
-        duplicate: Number(receipt.meta.changes ?? 0) === 0 || persisted.duplicate,
+        duplicate: receipt.outcome === "duplicate" || persisted.duplicate,
         activityId: persisted.activityId,
       };
     }
@@ -2471,14 +2449,23 @@ export class ConnectionService {
     ).run();
   }
 
-  private async extendOAuthAttempt(attemptId: string, expiresAt: string): Promise<void> {
-    const at = nowIso();
-    await this.env.DB.prepare(
-      `UPDATE connector_oauth_attempts
-       SET status = 'pending', error_code = NULL, completed_at = NULL, expires_at = ?, updated_at = ?
-       WHERE id = ? AND region = ?
-         AND (status = 'pending' OR (status = 'failed' AND error_code = 'oauth_attempt_expired'))`,
-    ).bind(expiresAt, at, attemptId, this.env.AVALON_REGION).run();
+  private workspaceObject(workspaceId: string) {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
+    );
+  }
+
+  private async extendOAuthAttempt(workspaceId: string, attemptId: string, expiresAt: string): Promise<void> {
+    await (await this.workspaceObject(workspaceId)).extendConnectorOAuthAttempt({
+      workspaceId,
+      attemptId,
+      region: this.env.AVALON_REGION,
+      expiresAt,
+      at: nowIso(),
+    });
   }
 
   private async persistOAuthStart(input: {
@@ -2494,25 +2481,18 @@ export class ConnectionService {
     reconnect: boolean;
   }): Promise<void> {
     const at = nowIso();
-    await this.env.DB.prepare(
-        `INSERT INTO connector_oauth_attempts
-         (id, region, provider, user_id, workspace_id, status, connection_id,
-          error_code, expires_at, completed_at, created_at, updated_at,
-          telemetry_scope, telemetry_capability_count, telemetry_reconnect)
-         VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL, ?, ?, ?, ?, ?)`,
-      ).bind(
-        input.attemptId,
-        this.env.AVALON_REGION,
-        input.provider,
-        input.auth.userId,
-        input.auth.workspaceId,
-        input.expiresAt,
-        at,
-        at,
-        input.scope,
-        input.capabilityCount,
-        input.reconnect ? 1 : 0,
-      ).run();
+    await (await this.workspaceObject(input.auth.workspaceId)).startConnectorOAuthAttempt({
+      workspaceId: input.auth.workspaceId,
+      attemptId: input.attemptId,
+      region: this.env.AVALON_REGION,
+      provider: input.provider,
+      userId: input.auth.userId,
+      expiresAt: input.expiresAt,
+      telemetryScope: input.scope,
+      telemetryCapabilityCount: input.capabilityCount,
+      telemetryReconnect: input.reconnect,
+      at,
+    });
     try {
       await workspaceRegionalDatabase(this.env).prepare(
         `INSERT INTO oauth_states
@@ -2537,10 +2517,15 @@ export class ConnectionService {
       // state can never point at a missing product receipt. Best-effort cleanup
       // avoids leaving a pending row when the D1 routing receipt fails; expiry
       // remains the recovery fence if this compensating RPC is interrupted.
-      await this.env.DB.prepare(
-        `DELETE FROM connector_oauth_attempts
-          WHERE id = ? AND workspace_id = ? AND status = 'pending'`,
-      ).bind(input.attemptId, input.auth.workspaceId).run().catch(() => undefined);
+      try {
+        await (await this.workspaceObject(input.auth.workspaceId)).abandonConnectorOAuthAttempt({
+          workspaceId: input.auth.workspaceId,
+          attemptId: input.attemptId,
+        });
+      } catch {
+        // The original persistence error is authoritative; expiry reconciles
+        // an undeleted pending row.
+      }
       throw error;
     }
   }
@@ -2556,107 +2541,105 @@ export class ConnectionService {
   }
 
   private async finishOAuthAttempt(
+    workspaceId: string,
     attemptId: string,
     status: "succeeded" | "denied" | "failed",
     result: { connectionId?: string; errorCode?: string },
   ): Promise<void> {
-    const at = nowIso();
-    const updated = await this.env.DB.prepare(
-      `UPDATE connector_oauth_attempts
-       SET status = ?, connection_id = ?, error_code = ?, completed_at = ?, updated_at = ?
-       WHERE id = ? AND region = ?
-         AND (status = 'pending' OR (? = 'succeeded' AND status = 'failed'))
-       RETURNING id`,
-    ).bind(
-      status,
-      result.connectionId ?? null,
-      result.errorCode ?? null,
-      at,
-      at,
-      attemptId,
-      this.env.AVALON_REGION,
-      status,
-    ).first<{ id: string }>();
-    if (!updated) {
-      const existing = await this.loadOAuthAttempt(attemptId);
-      if (!existing || existing.status !== status || existing.connection_id !== (result.connectionId ?? null)) {
-        throw new ApiError(409, "oauth_attempt_already_completed", "The connector authorization attempt already completed");
-      }
+    // Settlement, its replay convergence, and the settled row all come back
+    // from one object transaction; the facade shape re-read the row after a
+    // refused update and could describe a state between the two.
+    const finished = WorkspaceConnectorOAuthAttemptFinishResultSchema.parse(
+      await (await this.workspaceObject(workspaceId)).finishConnectorOAuthAttempt({
+        workspaceId,
+        attemptId,
+        region: this.env.AVALON_REGION,
+        status,
+        connectionId: result.connectionId ?? null,
+        errorCode: result.errorCode ?? null,
+        at: nowIso(),
+      }),
+    );
+    if (finished.outcome === "conflict") {
+      throw new ApiError(409, "oauth_attempt_already_completed", "The connector authorization attempt already completed");
     }
-    const settled = await this.loadOAuthAttempt(attemptId);
-    if (settled) {
-      await this.emitOAuthOutcome(settled).catch(() => undefined);
-      try {
-        await publishWorkspaceSync(this.env, settled.workspace_id, ["connector_oauth_attempts"]);
-      } catch (error) {
-        // The attempt is already durably settled. Reconnect's full workspace
-        // snapshot provides another reconciliation edge if this live signal
-        // cannot reach the hibernating WorkspaceDO.
-        logWarn(this.env, "connector_oauth_attempt_sync_publish_failed", {
-          workspace_id: settled.workspace_id,
-          attempt_id: settled.id,
-          reason: error instanceof Error ? error.message : "unknown",
-        });
-      }
+    const settled = finished.attempt;
+    await this.emitOAuthOutcome(settled).catch(() => undefined);
+    try {
+      await publishWorkspaceSync(this.env, settled.workspaceId, ["connector_oauth_attempts"]);
+    } catch (error) {
+      // The attempt is already durably settled. Reconnect's full workspace
+      // snapshot provides another reconciliation edge if this live signal
+      // cannot reach the hibernating WorkspaceDO.
+      logWarn(this.env, "connector_oauth_attempt_sync_publish_failed", {
+        workspace_id: settled.workspaceId,
+        attempt_id: settled.attemptId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
     }
   }
 
-  private async loadOAuthAttempt(attemptId: string): Promise<ConnectorOAuthAttemptRow | null> {
-    return this.env.DB.prepare(
-      `SELECT id, provider, status, connection_id, error_code, expires_at,
-              user_id, workspace_id, telemetry_operation_id, telemetry_event_version,
-              telemetry_scope, telemetry_capability_count, telemetry_reconnect, created_at
-       FROM connector_oauth_attempts WHERE id = ? AND region = ?`,
-    ).bind(attemptId, this.env.AVALON_REGION).first<ConnectorOAuthAttemptRow>();
+  private async loadOAuthAttempt(
+    workspaceId: string,
+    attemptId: string,
+  ): Promise<WorkspaceConnectorOAuthAttempt | null> {
+    return WorkspaceConnectorOAuthAttemptReadResultSchema.parse(
+      await (await this.workspaceObject(workspaceId)).connectorOAuthAttempt({
+        workspaceId,
+        attemptId,
+        region: this.env.AVALON_REGION,
+        userId: null,
+        expireDueAt: null,
+      }),
+    ).attempt;
   }
 
-  private async emitOAuthOutcome(row: ConnectorOAuthAttemptRow): Promise<void> {
-    if (!row.telemetry_operation_id || row.status === 'pending'
-      || !['google', 'github', 'granola', 'linear', 'notion', 'slack'].includes(row.provider)) return;
-    const result = row.status === 'succeeded'
+  private async emitOAuthOutcome(attempt: WorkspaceConnectorOAuthAttempt): Promise<void> {
+    if (!attempt.telemetryOperationId || attempt.status === 'pending') return;
+    const result = attempt.status === 'succeeded'
       ? 'success'
-      : row.status === 'denied' ? 'denied'
-        : row.error_code === 'oauth_attempt_expired' ? 'unavailable' : 'failed';
+      : attempt.status === 'denied' ? 'denied'
+        : attempt.errorCode === 'oauth_attempt_expired' ? 'unavailable' : 'failed';
     const auth: IdentityAuthContext = {
-      sessionId: `telemetry:${row.id}`,
-      userId: asUserId(row.user_id),
-      workspaceId: asWorkspaceId(row.workspace_id),
+      sessionId: `telemetry:${attempt.attemptId}`,
+      userId: asUserId(attempt.userId),
+      workspaceId: asWorkspaceId(attempt.workspaceId),
       region: this.env.AVALON_REGION,
       role: null,
     };
-    const connector = telemetryConnector(row.provider);
-    if (row.telemetry_event_version === 2
+    const connector = telemetryConnector(attempt.provider);
+    if (attempt.telemetryEventVersion === 2
       && connector !== null
-      && row.telemetry_scope !== null
-      && row.telemetry_capability_count !== null) {
+      && attempt.telemetryScope !== null
+      && attempt.telemetryCapabilityCount !== null) {
       await emitAuthenticatedApiTelemetry(this.env, auth, apiTelemetryEnvelope(
         this.env,
         'connector_setup_completed_v2',
         {
           connector,
-          scope: row.telemetry_scope,
+          scope: attempt.telemetryScope,
           method: 'oauth',
           result,
-          duration: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(row.created_at))),
-          capabilityCount: telemetryCountBucket(row.telemetry_capability_count),
-          reconnect: row.telemetry_reconnect === 1,
+          duration: telemetryJourneyDuration(Math.max(0, Date.now() - Date.parse(attempt.createdAt))),
+          capabilityCount: telemetryCountBucket(attempt.telemetryCapabilityCount),
+          reconnect: attempt.telemetryReconnect,
         },
-        row.telemetry_operation_id,
+        attempt.telemetryOperationId,
         'workspace-user',
         this.env.AVALON_REGION,
-        row.telemetry_operation_id,
+        attempt.telemetryOperationId,
       ));
       return;
     }
-    if (row.provider === 'granola') return;
+    if (attempt.provider === 'granola') return;
     await emitAuthenticatedApiTelemetry(this.env, auth, apiTelemetryEnvelope(
       this.env,
       'connector_setup_completed',
-      { connector: row.provider, result },
-      row.telemetry_operation_id,
+      { connector: attempt.provider, result },
+      attempt.telemetryOperationId,
       'workspace-user',
       this.env.AVALON_REGION,
-      row.telemetry_operation_id,
+      attempt.telemetryOperationId,
     ));
   }
 

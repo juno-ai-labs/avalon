@@ -1,10 +1,12 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthContext } from "../src/env";
-import { decryptString } from "../src/lib/crypto";
+import type { AuthContext, Env } from "../src/env";
+import { decryptString, encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
-import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
+import { sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000001");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000002");
@@ -176,6 +178,132 @@ describe("Granola workspace connection", () => {
     expect(payloadPut).toHaveBeenCalledTimes(2);
     expect(database.prepare("SELECT count(*) AS count FROM activities").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 1 });
+  });
+
+  it("claims the receipt through the typed object RPC without a credential crossing in plaintext", async () => {
+    const connectionId = "00000000-0000-4000-8000-000000000010";
+    const secretBytes = new TextEncoder().encode("webhook-signing-secret");
+    const signingSecret = `whsec_${base64(secretBytes)}`;
+    const regional = new DatabaseSync(":memory:");
+    databases.push(regional);
+    regional.exec(`
+      CREATE TABLE connector_ingress_routes (
+        connection_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        region TEXT NOT NULL,
+        connector_type TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        provider_account_id TEXT,
+        provider_user_id TEXT,
+        status TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO connector_ingress_routes
+        (connection_id, workspace_id, region, connector_type, scope, status, updated_at)
+      VALUES ('${connectionId}', '${WORKSPACE_ID}', 'global', 'granola', 'workspace',
+              'active', '2026-01-01T00:00:00.000Z');
+    `);
+    const workspace = createTestWorkspaceDO({
+      workspaceId: WORKSPACE_ID,
+      regionalDatabase: regional,
+      register: (created) => { databases.push(created); },
+    });
+    const encrypted = await encryptString(
+      JSON.stringify({
+        apiKey: API_KEY,
+        webhookEndpointId: "whe_1234567890abcd",
+        webhookSigningSecret: signingSecret,
+      }),
+      CREDENTIAL_KEY,
+      connectionId,
+    );
+    workspace.objectDatabase.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+        display_name, encrypted_credentials, credential_iv, credential_key_version,
+        granted_scopes_json, status, cursor_json, config_json,
+        created_at, updated_at, model_plugin_id)
+       VALUES (?, ?, 'granola', 'workspace', NULL, 'workspace:abc', 'Granola workspace',
+               ?, ?, 1, '["granola.workspace.read"]', 'healthy', '{}', '{}',
+               '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 'plugin_granola')`,
+    ).run(connectionId, WORKSPACE_ID, encrypted.ciphertext, encrypted.iv);
+
+    // A real WorkspaceDO answers, but every request and result that crosses
+    // the doubled transport is recorded, so the test can prove the plaintext
+    // API key and signing secret never ride the RPC boundary in either
+    // direction — only the encrypted envelope and the delivery identity do.
+    const exchanges: string[] = [];
+    const rpcs = workspaceObjectRpcs(workspace.instance, [
+      "executeRuntimeSql",
+      "claimWebhookReceipt",
+    ]);
+    const stub = Object.fromEntries(Object.entries(rpcs).map(([name, method]) => [
+      name,
+      async (...args: unknown[]) => {
+        exchanges.push(`${name}:request:${JSON.stringify(args)}`);
+        const result = await (method as (...called: unknown[]) => Promise<unknown>)(...args);
+        exchanges.push(`${name}:result:${JSON.stringify(result)}`);
+        return result;
+      },
+    ]));
+    const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: (name: string) => createTestDurableObjectId(name),
+      get: () => stub,
+      jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
+    });
+    const payloadPut = vi.fn(async () => null);
+    const queueSend = vi.fn(async () => undefined);
+    const env = createTestEnv({
+      DB: sqliteD1(regional),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      PUBLIC_API_BASE_URL: "https://api.example.test",
+      CONNECTOR_CREDENTIALS_KEY: CREDENTIAL_KEY,
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
+      ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send: queueSend }),
+      WORKSPACE_DOS: binding,
+    });
+    const event = {
+      event_id: "22222222-2222-4222-8222-222222222222",
+      event_type: "note.generated",
+      note_id: "not_2234567890abcd",
+      occurred_at: "2026-08-07T13:00:00-07:00",
+    } as const;
+    const rawBodyText = JSON.stringify(event);
+    const rawBody = new TextEncoder().encode(rawBodyText);
+    const timestamp = Math.floor(Date.now() / 1_000);
+    const signature = await hmacBase64(
+      secretBytes,
+      `${event.event_id}.${timestamp}.${rawBodyText}`,
+    );
+    const headers = {
+      webhookId: event.event_id,
+      webhookTimestamp: String(timestamp),
+      webhookSignature: `v1,${signature}`,
+    };
+    const service = new ConnectionService(env);
+
+    const first = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+    const retry = await service.ingestGranolaWebhook(connectionId, rawBody, headers);
+
+    // The second delivery is the receipt claim's duplicate outcome — the
+    // object's returned witness, not a physical write counter read in the
+    // Worker.
+    expect(first.duplicate).toBe(false);
+    expect(retry.duplicate).toBe(true);
+    const claims = exchanges.filter((entry) => entry.startsWith("claimWebhookReceipt:request:"));
+    expect(claims).toHaveLength(2);
+    // Both deliveries claim the same delivery identity — the receipt key the
+    // verifier derived, which is what makes the second one a duplicate.
+    const claimedHashes = claims.map((entry) => /"signatureHash":"([^"]+)"/u.exec(entry)?.[1]);
+    expect(claimedHashes[0]).toBeTruthy();
+    expect(claimedHashes[1]).toBe(claimedHashes[0]);
+    for (const exchange of exchanges) {
+      expect(exchange).not.toContain(API_KEY);
+      expect(exchange).not.toContain(signingSecret);
+      expect(exchange).not.toContain("webhook-signing-secret");
+    }
   });
 });
 

@@ -4405,7 +4405,9 @@ describe("Durable Objects in the Workers runtime", () => {
       }],
     });
     expect(insert.status).toBe(200);
-    const receiptId = "00000000-0000-7000-8000-000000000428";
+    // Receipt claims moved to the typed `claimWebhookReceipt` RPC, so the
+    // generic port refuses the table by name rather than executing a claim
+    // whose outcome the caller would read off a physical write counter.
     const receipt = await stub.executeRuntimeSql({
       workspaceId: WORKSPACE_ID,
       requestId: "00000000-0000-7000-8000-000000000429",
@@ -4414,10 +4416,13 @@ describe("Durable Objects in the Workers runtime", () => {
           (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
          VALUES (?, ?, ?, 'signed-delivery',
                  '2026-08-18T20:00:00.000Z', '2026-08-19T20:00:00.000Z')`,
-        params: [receiptId, WORKSPACE_ID, connectionId],
+        params: ["00000000-0000-7000-8000-000000000428", WORKSPACE_ID, connectionId],
       }],
     });
-    expect(receipt.status).toBe(200);
+    expect(receipt.status).toBe(409);
+    expect(receipt.bodyJson).toContain(
+      "workspace_runtime_table_requires_typed_rpc:webhook_receipts",
+    );
     const selected = await stub.executeRuntimeSql({
       workspaceId: WORKSPACE_ID,
       requestId: "00000000-0000-7000-8000-000000000425",
@@ -4431,8 +4436,8 @@ describe("Durable Objects in the Workers runtime", () => {
     });
     await runInDurableObject(stub, (_instance, state) => {
       expect(state.storage.sql.exec<{ workspace_id: string }>(
-        "SELECT workspace_id FROM webhook_receipts WHERE id = ?",
-        receiptId,
+        "SELECT workspace_id FROM connector_connections WHERE id = ?",
+        connectionId,
       ).one()).toEqual({ workspace_id: WORKSPACE_ID });
     });
     const mismatch = await stub.executeRuntimeSql({
