@@ -13,8 +13,11 @@ async function readWorkflow() {
 
 function matrixCommand(workflow, lane) {
   const escapedLane = lane.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  // Sibling keys (currently `env:`) may sit between `name` and `command`.
   const match = workflow.match(new RegExp(
-    `^ {10}- name: ${escapedLane}\\n {12}command: (?:>-\\n(?<folded>(?:^ {14}.+\\n?)+)|(?<inline>.+))`,
+    `^ {10}- name: ${escapedLane}\\n`
+      + `(?: {12}(?!command:)\\S.*\\n(?: {14}.+\\n)*)*`
+      + ` {12}command: (?:>-\\n(?<folded>(?:^ {14}.+\\n?)+)|(?<inline>.+))`,
     'mu',
   ));
 
@@ -70,21 +73,32 @@ test('CI shards the package-owned desktop and API test commands without drift', 
     'API test must remain one shardable command followed by the package-owned workers suite',
   );
   assert.equal(
-    matrixCommand(workflow, 'desktop-tests-1-of-2'),
+    matrixCommand(workflow, 'desktop-tests-1-of-n'),
     `pnpm --filter @rally/desktop exec ${desktopScripts.test} --shard=1/2`,
   );
   assert.equal(
-    matrixCommand(workflow, 'desktop-tests-2-of-2'),
+    matrixCommand(workflow, 'desktop-tests-2-of-n'),
     `pnpm --filter @rally/desktop exec ${desktopScripts.test} --shard=2/2`,
   );
   assert.equal(
-    matrixCommand(workflow, 'api-tests-1-of-2'),
-    `pnpm --filter @rally/api exec ${apiTestCommands[0]} --shard=1/2`,
+    matrixCommand(workflow, 'api-tests-1-of-n'),
+    `pnpm --filter @rally/api exec ${apiTestCommands[0]} --shard=1/3`,
   );
   assert.equal(
-    matrixCommand(workflow, 'api-tests-2-of-2'),
-    `pnpm --filter @rally/api exec ${apiTestCommands[0]} --shard=2/2 && `
-      + 'pnpm --filter @rally/api test:workers',
+    matrixCommand(workflow, 'api-tests-2-of-n'),
+    `pnpm --filter @rally/api exec ${apiTestCommands[0]} --shard=2/3`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'api-tests-3-of-n'),
+    `pnpm --filter @rally/api exec ${apiTestCommands[0]} --shard=3/3`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'api-tests-workers-1-of-n'),
+    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=1/2`,
+  );
+  assert.equal(
+    matrixCommand(workflow, 'api-tests-workers-2-of-n'),
+    `pnpm --filter @rally/api exec ${apiScripts['test:workers']} --shard=2/2`,
   );
 });
 
@@ -108,10 +122,13 @@ test('CI still runs every repository quality gate', async () => {
   const commands = [
     'lint',
     'typecheck-and-build-invariants',
-    'desktop-tests-1-of-2',
-    'desktop-tests-2-of-2',
-    'api-tests-1-of-2',
-    'api-tests-2-of-2',
+    'desktop-tests-1-of-n',
+    'desktop-tests-2-of-n',
+    'api-tests-1-of-n',
+    'api-tests-2-of-n',
+    'api-tests-3-of-n',
+    'api-tests-workers-1-of-n',
+    'api-tests-workers-2-of-n',
     'remaining-tests',
   ].flatMap((lane) => matrixCommand(workflow, lane).split(' && '));
 
@@ -122,8 +139,13 @@ test('CI still runs every repository quality gate', async () => {
     'pnpm --filter @rally/api build:eu',
     'pnpm --filter @rally/desktop test:release',
     'pnpm test:scripts',
-    'pnpm --filter @rally/api test:workers',
   ]) {
     assert.ok(commands.includes(command), `CI must retain the exact command: ${command}`);
   }
+
+  assert.equal(
+    commands.filter((command) => command.includes('vitest.workers.config.ts')).length,
+    2,
+    'CI must retain the workers suite across two shards',
+  );
 });

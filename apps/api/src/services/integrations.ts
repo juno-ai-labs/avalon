@@ -236,7 +236,7 @@ import {
   freezeRunMemoryContext,
 } from "./memory-service";
 import { createMemoryTableTools } from "./memory-table-service";
-import type { loadAutomationMemoryTableContext } from "./memory-table-service";
+import type { MaterializedMemoryTable } from "./memory-table-service";
 import { readAutomationMemoryBootstrapForRun } from "./automation-memory-client";
 import { workstreamRunLimits } from "./workstream-run-policy";
 import { parseTerminalRegionConfiguration, TERMINAL_PLUGIN_ID } from "./terminal/contract";
@@ -5118,7 +5118,7 @@ async function loadRunPromptContext(
         resultDelivery: Array<{ channel: "email" | "slack_agent_dm"; destination: string }>;
         defaultBehavior: Record<string, unknown>;
         overrides: Record<string, unknown>;
-        durableTables: Awaited<ReturnType<typeof loadAutomationMemoryTableContext>>;
+        durableTables: MaterializedMemoryTable[];
       }
     | undefined;
   if (input.automationSubscriptionId) {
