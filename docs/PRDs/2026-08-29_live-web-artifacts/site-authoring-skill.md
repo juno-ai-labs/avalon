@@ -4,13 +4,11 @@
 > implementing change. This file is the complete authored draft of the
 > loadable skill that teaches the model how to build a site for Rally's
 > artifact runtime, written to [`writing-skills.md`](../../writing-skills.md)
-> and cribbing its patterns from Cloudflare's Dynamic Workers guidance
-> (the fetch-handler shape, the assets-fallback route pattern, the
-> typed-declaration teaching style). The **Deferred extension** at the end
-> is *not* installed in V1 — it teaches facet-backed storage, which
-> non-goal 11 removes — and ships only with the state follow-up PRD, per
-> the house rule that a skill never teaches a capability that does not
-> exist.
+> and cribbing its patterns from Cloudflare's Dynamic Workers and facet
+> guidance (the fetch-handler shape, the assets-fallback route pattern,
+> the storage-class shape, the typed-declaration teaching style). The
+> whole skill — the **Stateful sites** section included — installs in
+> V1, since facet storage ships in V1.
 
 The V1 skill, as the implementing change installs it (authored in
 TypeScript per the harness convention; this markdown is the content):
@@ -20,9 +18,9 @@ TypeScript per the harness convention; this markdown is the content):
   without the Terminal workspace, so the skill is offered only to runs
   whose frozen scope includes it.
 - **description**: "How to build a live web page or small web app as a
-  published site: choose static or active, lay out the directory, write
-  a stateless request handler against the injected asset binding, and
-  revise it in place."
+  published site: choose static, active, or stateful, lay out the
+  directory, write the request handler or storage class against the
+  injected bindings, and revise it in place."
 - **whenToUse**: "When a request is site-shaped — a page, dashboard,
   calculator, or small app someone will open — and you are about to
   write its files, beyond what the standing guidance already covers."
@@ -46,12 +44,12 @@ that works the first time.
      page calls? Also write **`index.js`** at the directory root. This
      makes the site **active**.
    - The request needs the site to **remember something between
-     visits** — a poll, sign-ups, anything visitors add to? A live
-     site cannot do that: nothing persists between requests. Say so
-     plainly in chat and offer the nearest working alternative
-     (collect the answers in the work stream itself, or a page that
-     presents data you maintain and republish). Never publish a page
-     that looks like it saves and silently forgets.
+     visits** — a poll, sign-ups, anything visitors add to? Export a
+     **storage class** from `index.js` instead of a default handler —
+     the **Stateful sites** section below is the whole shape. Never
+     add storage speculatively: a page that only computes gets no
+     database, and never publish a page that looks like it saves but
+     does not.
 
 2. **Lay out one stable directory** beneath the workspace's resource
    output directory, named for the site (`launch-checklist/`, not
@@ -64,8 +62,10 @@ that works the first time.
    under any other name (`app.js`, `main.js`, `home.html`) is not an
    entry, and the publish will not treat the directory as a site.
 
-3. **If the site is active, write `index.js` as one ES module
-   default-exporting a fetch handler.** The whole server is:
+3. **If the site is active but keeps nothing, write `index.js` as one
+   ES module default-exporting a fetch handler** (a site that must
+   remember uses the storage-class shape in **Stateful sites**
+   instead). The whole stateless server is:
 
    ```js
    export default {
@@ -144,8 +144,9 @@ that works the first time.
 - **State smuggled into module scope** (`let hits = 0` above the
   handler). It resets whenever the runtime feels like it and differs
   between instances. Do instead: derive everything from the request and
-  the published files; if it must be remembered, see step 1's third
-  bullet — say the honest no.
+  the published files — and if it genuinely must be remembered, use the
+  storage class from **Stateful sites**; module scope is never the
+  place.
 - **`localStorage` as shared state.** It is per-viewer, per-browser —
   fine for one person's UI preference, never for anything two viewers
   should both see. Do instead: shared content is a published file.
@@ -212,23 +213,21 @@ no module-level state, real statuses, nothing external.
 
 ---
 
-## Deferred extension: stateful sites on facet storage
+## Stateful sites: the storage class
 
-**Not installed in V1.** This section ships as part of the skill only
-if and when the state follow-up PRD lands on the facet direction
-(Future research, direction 2), and its text is revised against that
-PRD's actual contract. It is drafted now so the teaching cost of the
-facet branch is visible when the directions are weighed. Everything
-above it remains true for stateless sites; this extension *adds* the
-stateful path rather than changing the stateless one.
+When the request's essence is remembering between visits — a poll, an
+RSVP list, a sign-up sheet — the site keeps a private database.
+Everything above remains true; a stateful site changes one thing: the
+shape of `index.js`.
 
-When a site may remember, the request-shaped test in step 1 changes:
-a poll, an RSVP list, a sign-up sheet becomes buildable. A stateful
-site adds one file — a storage class — and keeps everything else.
-
-1. **Export a storage class from `index.js` alongside the handler.**
-   The class extends the platform's Durable Object shape and owns the
-   site's database; Rally runs it with its own isolated SQLite:
+1. **Export the storage class; it is the whole server.** Instead of a
+   default-exported handler, `index.js` exports exactly
+   `class SiteData extends DurableObject` — the exact name matters —
+   whose `fetch(request)` serves every request, with the same
+   API-then-assets order (`this.env.ASSETS` inside the class). Rally
+   runs the class against the site's own isolated SQLite database,
+   which every viewer shares and every republish keeps. If a default
+   handler is also exported, it is ignored — `SiteData` serves.
 
    ```js
    import { DurableObject } from "cloudflare:workers";
@@ -248,23 +247,28 @@ site adds one file — a storage class — and keeps everything else.
        );
      }
 
-     addRsvp(name, answer) {
-       this.ctx.storage.sql.exec(
-         "INSERT INTO rsvps (name, answer) VALUES (?, ?)", name, answer,
-       );
-     }
-
-     listRsvps() {
-       return this.ctx.storage.sql
-         .exec("SELECT name, answer FROM rsvps ORDER BY created_at")
-         .toArray();
+     async fetch(request) {
+       const url = new URL(request.url);
+       if (url.pathname === "/api/rsvps" && request.method === "POST") {
+         const { name, answer } = await request.json();
+         if (typeof name !== "string" || name.trim() === "")
+           return Response.json({ error: "name required" }, { status: 400 });
+         this.ctx.storage.sql.exec(
+           "INSERT INTO rsvps (name, answer) VALUES (?, ?)",
+           name.trim(), answer,
+         );
+         return Response.json({ ok: true });
+       }
+       if (url.pathname === "/api/rsvps") {
+         const rows = this.ctx.storage.sql
+           .exec("SELECT name, answer FROM rsvps ORDER BY created_at")
+           .toArray();
+         return Response.json({ rsvps: rows });
+       }
+       return this.env.ASSETS.fetch(request);
      }
    }
    ```
-
-   The fetch handler reaches it through the binding the runtime
-   injects, and stays as thin as before: parse, call a method, return
-   JSON.
 
 2. **SQL is synchronous and local — use it plainly.** Queries run
    against the site's own SQLite in the same place the class runs: no
@@ -289,11 +293,13 @@ site adds one file — a storage class — and keeps everything else.
    guesses is prohibited; store what was submitted, not who submitted
    it, unless the page explicitly asks for a name as content.
 
-5. **Prior versions run read-only.** When someone views an old version
-   of the site, your old code runs but every write throws. Write
-   handlers so a read-only pass still renders (render the list even if
-   the submit path would fail), and let the write failure surface as
-   the labeled read-only state, not a crash on load.
+5. **Old versions of a stateful site do not run.** When someone views
+   a prior version, they see its *source*, not a live page — only the
+   current version's code ever runs against the database. So never
+   rely on an old version staying reachable as an application, and
+   treat the current version's rendering of existing rows as part of
+   every revision's job: after a schema addition, the page must still
+   render the rows older code wrote.
 
 ### Anti-patterns (stateful)
 
