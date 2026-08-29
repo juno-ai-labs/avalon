@@ -35,9 +35,9 @@ once and passes on a rerun.
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
-includes workerd. CI splits them: `api-tests-2-of-2` appends
-`pnpm --filter @rally/api test:workers`, and the container and release suites
-are their own matrix jobs.
+includes workerd. CI splits them: `api-tests-workers-1-of-n` and
+`api-tests-workers-2-of-n` each run the package-owned workers command with a
+Vitest shard, and the container and release suites are their own matrix jobs.
 
 A test in any of these that fails once and passes on a rerun is a defect to fix
 in the change that met it —
@@ -507,6 +507,80 @@ One thing the fixtures make explicit that the old copies left implicit: seven
 migrations set `PRAGMA foreign_keys = ON` themselves, so a replay ends with
 enforcement on however the connection was opened. Ten of the sixteen private
 copies never wrote that pragma and were relying on it anyway.
+
+## Letting a run reach the model
+
+**Decide deliberately whether your test lets a run get as far as inference, and
+say which you chose.** The workers suite has no provider double and
+`wrangler.test.jsonc` carries a placeholder `OPENROUTER_API_KEY`, so a run that
+reaches the model makes a real outbound request. That request cannot succeed
+here — and it does not fail quickly either. The harness spends an establishment
+timeout, then a transport retry, then each configured fallback model before it
+gives up, which is far longer than a test's budget. The run stays `executing`,
+and the test waiting on it times out on an assertion that has nothing to do with
+what broke.
+
+That failure is worse than it sounds, because the passing case is not
+necessarily better. `participant-notification.test.ts` waited for its work
+stream's loop to fall idle and got `idle:0` for a year — not because the loop
+had finished, but because nothing had ever claimed it, and a loop that never
+started reads exactly like a loop at rest. The assertion only began failing when
+an unrelated change let the run actually be claimed. A test that lets a run
+start and does not control the model is asserting on whichever of those two it
+happens to get.
+
+So: if what you are testing happens before inference, keep the run away from the
+model. If the run has to complete, install the double.
+
+```ts
+import { useOpenRouterDouble } from "./helpers/openrouter-double";
+
+// File scope: every test in the file gets it, and the assertions below hold.
+const provider = useOpenRouterDouble((call) => {
+  expect(call.toolNames).toContain("memory_search");
+  return { say: "Noted." };
+});
+
+it("...", async () => {
+  // ... drive the run ...
+  expect(provider.calls).toHaveLength(1);
+});
+```
+
+The handler is a function, not a script: it receives the model, the protocol
+transcript, and the tool names offered on that turn, and returns what the
+provider should answer — `{ say }` to end the turn — the loop stops on an
+assistant message with no tool calls — `{ callTool }` to drive a tool round trip
+and be called again with the result, `{ httpError }` for a refusal, `{ raw }`
+for a `Response` you build yourself. So a test can assert on
+*what the model was asked*, which is usually the more interesting half.
+
+Four things about it are deliberate:
+
+- **It is opt-in per file, not installed suite-wide.** A file that does not ask
+  for it behaves exactly as it did before, so adopting this does not quietly
+  change what every other file is asserting.
+- **Any other outbound host is refused, and the refusal is recorded as well as
+  thrown.** Production turns a failed provider fetch into a run failure and a
+  failed catalog fetch into a shrug, so a throw on its own gets swallowed on the
+  way out and the surprise is lost. The recorded list is asserted empty after
+  every test, which is what makes an unexpected call visible instead of a
+  mystery later. `vi.stubGlobal` replaces `fetch` for the whole isolate, so this
+  is the only thing standing between you and a silently swallowed call.
+- **The model catalog answers empty on purpose.** The harness falls back to its
+  own documented context window for a model the catalog does not describe, and a
+  test double is not the place to invent that number
+  ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)).
+- **It uses `vi.stubGlobal`, not `fetchMock` from `cloudflare:test`.** That
+  export does not exist in `@cloudflare/vitest-pool-workers` 0.22.0, the newest
+  published version, nor in the Miniflare it carries — checked 0.18.0, 0.20.0
+  and 0.21.3 as well. The package still ships the `MockAgent` and
+  `MockReplyOptionsCallback` types and its README still advertises "a
+  declarative interface for mocking outbound requests", so the API looks
+  available and is not; the runtime export list stops at `SELF`, `env`,
+  `runInDurableObject`, `reset` and friends. `vi.stubGlobal` works because the
+  test file, the production modules, and the code running inside a Durable
+  Object share one isolate here.
 
 ## Advisements, to-dos, and traps from Cloudflare's own docs
 
