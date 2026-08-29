@@ -1,5 +1,6 @@
 import type { CitationTarget } from '@rally/contracts/citations';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../components/inspector-rail';
 import type { CitationContext, CitationResource } from '../components/markdown-citations';
 import { desktopBridge } from './platform';
 import type { WorkstreamResource } from './types';
@@ -30,7 +31,14 @@ import { useUiStore } from './ui-store';
  * tier here and a fetch in the rail in one change, so that the chip and the
  * panel it opens agree about what exists.
  */
-export function useCitations({ resources }: {
+export function useCitations({ loadResourceContent, resources }: {
+  /**
+   * The preview route, or absent on a surface that has none. It is the same
+   * read the rail's detail makes, deliberately: the embed card's excerpt and
+   * the panel it opens onto must be the same text, and a second route would be
+   * a second answer about one document.
+   */
+  loadResourceContent?: (resourceId: string, signal?: AbortSignal) => Promise<Blob>;
   resources: WorkstreamResource[];
 }): CitationContext {
   const inspect = useUiStore((state) => state.inspect);
@@ -60,6 +68,69 @@ export function useCitations({ resources }: {
     [local],
   );
 
+  /**
+   * One read per resource, shared by every card citing it and kept across
+   * mounts.
+   *
+   * A transcript can cite the same document from several turns, and the reader
+   * scrolls cards in and out of existence. Each read *causes* the conversion —
+   * the preview route materializes the derivative inside the request — so a
+   * per-card read would ask a Word file to be converted once per citation and
+   * again every time the reader scrolled back. The promise is cached rather
+   * than the text, so cards that mount mid-flight join the read in progress
+   * instead of starting a second one.
+   *
+   * A rejection is cached too. Every terminal answer here — unconvertible,
+   * gone, retries spent — is a verdict about the document, and re-asking on
+   * the next scroll would drive the route for as long as somebody reads the
+   * room.
+   */
+  const reads = useRef<{
+    loader: unknown;
+    controller: AbortController;
+    inFlight: Map<string, Promise<string>>;
+  } | null>(null);
+  // Built on the first ask rather than in an effect of this hook's own, because
+  // the asks come from effects *below* it: React runs a child's effect before
+  // its parent's, so a card mounting in the same commit would have found an
+  // uninitialized ref, been told there is no preview, and — its own effect
+  // depending on a stable callback — never asked again.
+  const previewReads = (loader: typeof loadResourceContent): NonNullable<typeof reads.current> => {
+    const current = reads.current;
+    if (current && current.loader === loader) return current;
+    // A route that changed under the screen ends the reads it started, and the
+    // cards still mounted ask again through the new one: their effect depends
+    // on this callback, whose identity changes with the loader.
+    current?.controller.abort();
+    const next = { loader, controller: new AbortController(), inFlight: new Map<string, Promise<string>>() };
+    reads.current = next;
+    return next;
+  };
+  // Unmounting leaves nothing waiting on a conversion nobody will see.
+  useEffect(() => () => {
+    reads.current?.controller.abort();
+    reads.current = null;
+  }, []);
+
+  const preview = useCallback((resourceId: string): Promise<string> | undefined => {
+    const resource = local.get(resourceId);
+    if (!loadResourceContent || !resource) return undefined;
+    const state = previewReads(loadResourceContent);
+    const cached = state.inFlight.get(resource.id);
+    if (cached) return cached;
+    const read = readResourcePreviewText(
+      loadResourceContent,
+      resource.id,
+      state.controller.signal,
+      MAX_RESOURCE_PREVIEW_WAIT_MS,
+    );
+    // Nothing else awaits this copy, and an unhandled rejection on a cached
+    // promise is reported even though every consumer handles its own.
+    read.catch(() => undefined);
+    state.inFlight.set(resource.id, read);
+    return read;
+  }, [loadResourceContent, local]);
+
   const open = useCallback((target: CitationTarget): void => {
     if (target.scheme === 'external') {
       void desktopBridge().openExternal(target.url);
@@ -80,5 +151,5 @@ export function useCitations({ resources }: {
     inspect({ type: 'resource', id: resource.id });
   }, [inspect, local, openRail]);
 
-  return useMemo(() => ({ open, resolve }), [open, resolve]);
+  return useMemo(() => ({ open, preview, resolve }), [open, preview, resolve]);
 }

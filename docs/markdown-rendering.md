@@ -108,7 +108,19 @@ paragraph — is merged by `rehypeCitationEmbedRows` into a single
 `.citation-card-row` that scrolls sideways; a lone embed keeps its paragraph.
 While a message streams, embeds in different settled segments stay separate
 cards, and the whole-body re-render at completion merges them — the same
-healing every other cross-segment construct gets. A GFM
+healing every other cross-segment construct gets.
+
+An embed card also shows a **preview** of the resource's own text between its
+badge and its title, when the host offers one: `CitationContext.preview` reads
+the same `/resources/:id/preview` derivative the rail's detail panel shows — a
+Word file's markdown, a PDF's OCR — so the card and the panel it opens onto
+cannot disagree about a document. It is a glance, not a reader: the stylesheet
+clamps it to four lines and it scrolls in neither axis, because the whole card
+is one button and a scrollable box inside it would swallow the click. While the
+derivative is still being converted the card shows a shimmering skeleton, and
+every terminal answer — unconvertible, gone, retries spent — leaves the card's
+empty room rather than an error inside a control. A still never asks at all.
+A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
 inline numbered pill with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
@@ -450,6 +462,43 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-29 — The embed card previews the document it names
+
+**What changed:** `CitationContext` gained `preview`, and the embed card draws
+the opening lines of the resource's markdown-converted text between its badge
+and its title, at the kind label's size and weight, clamped to four lines and
+scrollable in neither axis. While the derivative is still being prepared the
+card shows a shimmering three-bar skeleton on the preview's own grid, so the
+card does not resize when the text lands. `useCitations` supplies the reader,
+and every read is shared per resource and cached across mounts.
+
+**Why:** the tile said what a resource *is* and nothing about what it *says*,
+so a run of three cards was three identical grey boxes distinguishable only by
+title. A few lines of the document is what makes one card worth clicking over
+another — and it is free of a new route, because the rail's detail already
+reads exactly this derivative.
+
+**Why the read is shared and cached, including its rejections:** the preview
+route materializes the derivative *inside the request*, so each read causes the
+conversion. A per-card read would convert a Word file once per citation and
+again every time the reader scrolled it back into view; a re-asked rejection
+would drive the route for as long as somebody had the room open. The promise is
+cached rather than the text, so a card mounting mid-flight joins the read
+already running.
+
+**Why the reads are built lazily rather than in an effect:** React runs a
+child's effect before its parent's, so a card mounting in the same commit as
+the hook asked before an effect-initialized ref existed, was told there is no
+preview, and — its own effect depending on a stable callback — never asked
+again. Found in a real window: every card rendered its empty room and no
+request was ever made, with every test passing.
+
+**What a future change has to respect:** the preview is presentation — it is
+`aria-hidden`, the button's accessible name stays the title, and nothing inside
+the card may become independently focusable or scrollable while the card is a
+button. A still (`render.still`) must never ask: a picture serialized
+mid-skeleton would keep that skeleton forever.
 
 ### 2026-08-29 — The embed card becomes a file tile, and runs of them a row
 
