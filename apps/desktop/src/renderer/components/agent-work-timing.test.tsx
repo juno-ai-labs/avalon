@@ -100,6 +100,27 @@ describe('AgentWorkTiming', () => {
     }
   });
 
+  it.each([
+    { activeName: undefined, activeVerb: undefined, expected: 'Rally is working' },
+    { activeName: 'Rally is thinking', activeVerb: 'thinking', expected: 'Rally is thinking' },
+    { activeName: 'Slack is working', activeVerb: 'Slack is working', expected: 'Slack is working' },
+  ])('speaks $expected while it runs', ({ activeName, activeVerb, expected }) => {
+    // The visible label ticks ten times a second, so the live region carries a
+    // stable sentence instead. Every caller that overrides the verb owns that
+    // sentence: deriving it from the verb left a thinking row announcing the
+    // bare word "thinking", a gerund with no subject.
+    render(
+      <AgentWorkTiming
+        active
+        durationMs={83_000}
+        {...(activeName === undefined ? {} : { activeName })}
+        {...(activeVerb === undefined ? {} : { activeVerb })}
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveAccessibleName(expected);
+  });
+
   it('qualifies a recovered terminal duration as an upper bound', () => {
     render(
       <AgentWorkTiming

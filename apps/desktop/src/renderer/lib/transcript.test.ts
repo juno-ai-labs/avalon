@@ -1406,6 +1406,19 @@ describe('grouping tool calls by plugin', () => {
     expect(grouped[0]!.pluginActivity?.monotonicStartedAt).toEqual([500]);
   });
 
+  it('never lets a group row acknowledge the turn it was built from', () => {
+    // A tool block carries its turn's attention ordinal — the same ordinal as
+    // that turn's text — and the group keeps the row's other fields. Carrying
+    // that ordinal too would let a group scrolling into view acknowledge an
+    // answer still below the fold, because the guard that skipped tool rows
+    // keys on the message type this row no longer has.
+    const grouped = groupPluginToolMessages([
+      { ...toolRow('slack-1', 'connection:one', 'Slack'), attentionSequenceNumber: 7 },
+    ]);
+
+    expect(grouped[0]!.attentionSequenceNumber).toBeNull();
+  });
+
   it('renumbers the rows it kept so the feed stays densely ordered', () => {
     const grouped = groupPluginToolMessages([
       toolRow('slack-1', 'connection:one', 'Slack'),

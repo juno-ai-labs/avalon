@@ -346,7 +346,7 @@ const connectorProviders = [
  */
 function InstalledConnectionMark({ connection }: { connection: WorkstreamConnection }): React.JSX.Element | null {
   const mark = connectorBrandMark(connection.connectorType, connection.displayName);
-  return mark ? <ConnectorMark className="settings-connection-mark" mark={mark} /> : null;
+  return mark ? <ConnectorMark mark={mark} /> : null;
 }
 
 function invitationStatusLabel(status: WorkspaceInvitation['status']): string {
@@ -1537,7 +1537,7 @@ export function WorkspaceSettingsScreen({
                           <div className="provider-card-heading">
                             <div className="provider-icon">
                               {mark
-                                ? <ConnectorMark className="provider-mark" mark={mark} />
+                                ? <ConnectorMark mark={mark} />
                                 : Icon && <Icon aria-hidden="true" size={18} />}
                             </div>
                             <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>

@@ -509,3 +509,45 @@ describe('markdown list markers', () => {
     },
   );
 });
+
+/**
+ * Every surface that sizes a company mark has to out-specify the shared rule.
+ *
+ * `.connector-mark` carries the default height and width, and it sits low in
+ * this file. A per-surface size written as a bare class ties it at (0,1,0) and
+ * loses on source order, so the rule is inert and the mark silently keeps the
+ * default — which is exactly what happened to Settings' provider chip and its
+ * connection row, and it survived a visual check because 16px against 19px and
+ * 14px is a difference you have to be looking for.
+ */
+describe('company mark sizing', () => {
+  const sizesAMark = (prelude: string): boolean => {
+    const declarations = rule(prelude) ?? '';
+    return /(^|;|\s)(height|width)\s*:/u.test(declarations);
+  };
+
+  it('sizes a mark only through the surface that owns it', () => {
+    const markRules = preludes()
+      .filter((prelude) => prelude.includes('connector-mark'))
+      .filter(sizesAMark);
+
+    expect(markRules.length).toBeGreaterThan(1);
+    for (const prelude of markRules) {
+      // The shared default is the one rule allowed to be a bare class.
+      if (prelude === '.connector-mark') continue;
+      expect(prelude, `${prelude} ties .connector-mark and loses on order`)
+        .toMatch(/\.[a-z-]+\s+\.connector-mark/u);
+    }
+  });
+
+  it('keeps the shared default above the surfaces that override it', () => {
+    // Specificity settles these, but a bare rule added *below* the default
+    // would win on order and read as if it were fine, so the ordering is
+    // pinned too: the default comes first and everything else out-specifies it.
+    const source = readFileSync(resolve(process.cwd(), 'src/renderer/styles/app.css'), 'utf8');
+    const base = source.indexOf('\n.connector-mark {');
+    expect(base).toBeGreaterThan(-1);
+    expect(source.indexOf('.provider-icon .connector-mark')).toBeLessThan(base);
+    expect(source.indexOf('.settings-connection-name .connector-mark')).toBeLessThan(base);
+  });
+});

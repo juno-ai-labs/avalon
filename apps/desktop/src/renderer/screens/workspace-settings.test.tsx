@@ -489,6 +489,13 @@ describe('Workspace settings', () => {
     const card = screen.getByText('Slack').closest('.provider-card');
     const cardMark = card?.querySelector('.connector-mark');
     expect(cardMark?.getAttribute('style')).toBe(rowMark?.getAttribute('style'));
+
+    // Each mark carries `connector-mark` and nothing else. A second class here
+    // is how the sizes went dead: a bare `.provider-mark` ties `.connector-mark`
+    // on specificity and loses on source order, so the rule reads as if it
+    // applies and does not. Both surfaces size through `.connector-mark` now.
+    expect([...(rowMark?.classList ?? [])]).toEqual(['connector-mark']);
+    expect([...(cardMark?.classList ?? [])]).toEqual(['connector-mark']);
   });
 
   it('leaves an inbound webhook unmarked, having no company behind it', async () => {

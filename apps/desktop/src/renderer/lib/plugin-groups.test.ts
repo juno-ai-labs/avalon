@@ -101,4 +101,13 @@ describe('pluginGroup', () => {
     // A planned tool block learns its plugin only when the call starts.
     expect(pluginGroup(undefined, undefined)).toBeNull();
   });
+
+  it('never names a row after a connection id it cannot resolve', () => {
+    // A connector block whose plugin activity has not arrived — or never will —
+    // carries an id and no name. "connection:9c1f… worked for 0ms" is worse than
+    // the tool name this feed already declines to show, and it would key on the
+    // id, so the activity landing later would open a second row beside it.
+    expect(pluginGroup('connection:9c1f0000-0000-4000-8000-000000000001', undefined)).toBeNull();
+    expect(pluginGroup('plugin_something_new', undefined)).toBeNull();
+  });
 });
