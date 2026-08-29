@@ -75,14 +75,21 @@ const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 
 /**
  * What the polls below wait for is alarm delivery and the drain finishing under
- * cross-file contention — never a slow query, which answers in milliseconds. The
- * budgets are the ones this file already used as fixed-iteration loops
- * (40 × 50ms, 40 × 50ms, 40 × 25ms); the tests that chain them carry an outer
- * timeout wider than their sum, so the poll's own failure is what reports.
+ * cross-file contention — never a slow query, which answers in milliseconds.
+ * These are wall-clock budgets, deliberately wider than the fixed-iteration
+ * loops they replaced: those loops spent a Durable Object round trip per
+ * iteration *on top of* their sleep, so their real window stretched as the
+ * machine slowed, while `expect.poll` spends its probes out of a flat budget.
+ * Sized for a contended multi-suite run and still well inside the suite's 30s
+ * test budget, so the poll's own failure is what reports.
  */
-const RUN_SETTLE_TIMEOUT_MS = 2_000;
-const LOOP_RELEASE_TIMEOUT_MS = 2_000;
-const SOCKET_EVIDENCE_TIMEOUT_MS = 1_000;
+const RUN_SETTLE_TIMEOUT_MS = 10_000;
+const LOOP_RELEASE_TIMEOUT_MS = 10_000;
+const SOCKET_EVIDENCE_TIMEOUT_MS = 5_000;
+// The subscribed attachment write trails the snapshot by one storage round
+// trip, never by real work — but the probes ride the same contended object,
+// so this too is a wall-clock budget, not the 40x10ms loop it replaced.
+const SUBSCRIPTION_SETTLE_TIMEOUT_MS = 2_000;
 
 interface CapturedProviderRequest {
   url: string;
@@ -563,16 +570,19 @@ async function openSubscribedSocket(
   // Snapshot delivery precedes the server's final subscribed attachment write.
   // Do not let the alarm publish into that narrow gap or the test could miss
   // the first live frame while still appearing to have a subscribed client.
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const subscribed = await runInDurableObject(stub, (_instance, state) =>
-      state.getWebSockets().some((server) => (
-        server.deserializeAttachment() as { subscribed?: boolean }
-      ).subscribed === true));
-    if (subscribed) return { socket, initial: initialFrame };
-    await new Promise((resolve) => setTimeout(resolve, 10));
+  try {
+    await expect.poll(
+      () => runInDurableObject(stub, (_instance, state) =>
+        state.getWebSockets().some((server) => (
+          server.deserializeAttachment() as { subscribed?: boolean }
+        ).subscribed === true)),
+      { timeout: SUBSCRIPTION_SETTLE_TIMEOUT_MS, interval: 10 },
+    ).toBe(true);
+  } catch (error) {
+    socket.close(1011, "subscription did not settle");
+    throw new Error("product socket did not become subscribed", { cause: error });
   }
-  socket.close(1011, "subscription did not settle");
-  throw new Error("product socket did not become subscribed");
+  return { socket, initial: initialFrame };
 }
 
 function collectSocketFrames(socket: WebSocket): {
@@ -599,7 +609,9 @@ async function waitForSocketEvidence(
     ? "arrived"
     : `socket evidence did not arrive: ${frames.map((frame) => frame.type).join(",")}`), {
     timeout: SOCKET_EVIDENCE_TIMEOUT_MS,
-    interval: 50,
+    // 25ms, not the file's 50ms convention: this replaces a 40x25ms loop, and
+    // frames land in a local array, so the tighter probe costs nothing.
+    interval: 25,
   }).toBe("arrived");
 }
 
@@ -616,8 +628,17 @@ async function restoreProviderFetch(stub: DurableObjectStub): Promise<void> {
   await runInDurableObject(stub, (_instance, state) => {
     const scope = globalThis as ProviderCaptureGlobal;
     scope.__rallyPipelineProviderState?.delete(state.id.toString());
-    if (scope.__rallyPipelineOriginalFetch) scope.fetch = scope.__rallyPipelineOriginalFetch;
-    delete scope.__rallyPipelineOriginalFetch;
+    // Hand the real fetch back only once no object still holds an install:
+    // every patched closure dispatches through the shared map, so while any
+    // entry remains the patch must stay, and restoring per-caller would strand
+    // a concurrent test's requests on the real network. Safe to call twice —
+    // a second call deletes nothing and finds either an empty map or nothing
+    // saved to restore.
+    if ((scope.__rallyPipelineProviderState?.size ?? 0) === 0
+      && scope.__rallyPipelineOriginalFetch) {
+      scope.fetch = scope.__rallyPipelineOriginalFetch;
+      delete scope.__rallyPipelineOriginalFetch;
+    }
   });
 }
 
@@ -721,9 +742,9 @@ describe("a member's message travels the whole pipeline", () => {
     // have reached, which is a race the drain wins or loses by milliseconds.
     let observed = "";
     let outstanding = -1;
-    // Forty tenths, not sixty: the window has to end inside the 5s test timeout
-    // or a drain that never releases its row reports as "timed out" rather than
-    // as the thing that is wrong with it.
+    // Forty tenths, not sixty: the window stays well inside the suite's 30s
+    // test budget, so a drain that never releases its row reports as the
+    // assertion that names it rather than as a harness timeout.
     for (let attempt = 0; attempt < 40; attempt += 1) {
       [observed, outstanding] = await runInDurableObject(stub, (_instance, state) => [
         state.storage.sql.exec<{ exact_state: string }>(
@@ -775,12 +796,10 @@ describe("a member's message travels the whole pipeline", () => {
       actor: "system",
       text: "Response could not be completed",
     });
-    // Long enough that the bounded wait above ends first, so a drain that never
-    // releases its row reports as the assertion that names it rather than as a
-    // timeout. This test drives a whole run to the provider boundary; the
-    // default 5s left no room for the wait, which is why the loop half of
-    // the assertion could not have one before.
-  }, 20_000);
+    // The bounded wait above ends well inside the suite's 30s budget, so a
+    // drain that never releases its row reports as the assertion that names
+    // it rather than as a timeout.
+  });
 
   it("delivers a scheduled activation into an existing Bind projection exactly once across eviction and replay", async () => {
     const stub = agentStub();
@@ -1028,7 +1047,7 @@ describe("a member's message travels the whole pipeline", () => {
       ).one().count,
     }));
     expect(durableAfterTerminalReplay).toEqual(durableBeforeTerminalReplay);
-  }, 20_000);
+  });
 
   it("admits an addressed follow-up as immutable pending input without publishing it early", async () => {
     const stub = agentStub();
@@ -1356,7 +1375,7 @@ describe("a member's message travels the whole pipeline", () => {
         messageId,
       ).one().count).toBe(1);
     });
-  }, 20_000);
+  });
 
   it("keeps non-final external elicitation answers canonical and admits only the final answer", async () => {
     const stub = agentStub();
@@ -1459,7 +1478,7 @@ describe("a member's message travels the whole pipeline", () => {
         message_type: "elicitation",
       });
     });
-  }, 20_000);
+  });
 
   it("refuses an external answer when the durable elicitation targets another member", async () => {
     const stub = agentStub();
@@ -1512,7 +1531,7 @@ describe("a member's message travels the whole pipeline", () => {
         elicitationId,
       ).one()).toEqual({ status: "pending", answer_json: null });
     });
-  }, 20_000);
+  });
 
   it("records stop on the loop and makes retry durable as a subordinate execution receipt", async () => {
     const stub = agentStub();
@@ -1648,7 +1667,7 @@ describe("a member's message travels the whole pipeline", () => {
     // The budget covers driving a real run through admission and the alarm to
     // the provider boundary, not the stop and retry assertions that follow
     // inside the fenced `runInDurableObject` block.
-  }, 20_000);
+  });
 
   it("a follow-up is promoted by the same loop after the failed execution releases it", async () => {
     const stub = agentStub();
@@ -1699,7 +1718,7 @@ describe("a member's message travels the whole pipeline", () => {
     const second = await settledRunForTrigger(stub, turnId);
     expect(second.run_id).not.toBe(opened.body.harnessRunId);
     expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(second));
-  }, 20_000);
+  });
 
   it("message writes are idempotent across the whole path", async () => {
     const stub = agentStub();
@@ -1849,7 +1868,7 @@ describe("a member's message travels the whole pipeline", () => {
       socket?.close(1000, "test complete");
       await restoreProviderFetch(stub);
     }
-  }, 20_000);
+  });
 
   it("keeps interleaved assistant text and tools in exact order live, after reconnect, and after cold reload", async () => {
     const stub = agentStub();
@@ -1933,7 +1952,7 @@ describe("a member's message travels the whole pipeline", () => {
       reconnectSocket?.close(1000, "test complete");
       await restoreProviderFetch(stub);
     }
-  }, 20_000);
+  });
 
   it("the failed run leaves the transcript readable and ordered", async () => {
     const stub = agentStub();
@@ -1990,5 +2009,5 @@ describe("a member's message travels the whole pipeline", () => {
       "00000000-0000-7000-8000-0000000005b2",
     ].includes(item.turnId)).map((item) => item.attentionOrdinal ?? null))
       .toEqual([null, 2]);
-  }, 20_000);
+  });
 });

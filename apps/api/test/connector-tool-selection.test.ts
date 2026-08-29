@@ -1012,7 +1012,10 @@ describe("connector tools selected for harness runs", () => {
         fetch: modelFetch,
         maxIterations: 3,
         maxToolCalls: 2,
-        maxWallClockMs: 1_000,
+        // A real Bind run deadline, not a test budget — wide so a starved
+        // scheduler cannot abort the scripted run (see
+        // model-protocol-transcript.test.ts for the incident shape).
+        maxWallClockMs: 10_000,
         toolTimeoutMs: 100,
         maxWebResults: 4,
       },
