@@ -47,8 +47,10 @@ storage is shared, an active artifact is multiplayer for free: two
 participants opening the same poll see and move the same tally. No
 `index.js` but an `index.html` at the root publishes a **static** artifact —
 assets only, served from the region's bucket. A directory with neither entry
-publishes as one downloadable **archive** resource rather than failing:
-publishing a directory is a total operation, and no layout is a dead end.
+publishes as one downloadable **archive** resource rather than failing, with
+a single deliberate exception — a one-file directory is refused with
+instructions, because it is almost always a mistaken document publish — so
+publishing a directory is total everywhere the intent is unambiguous.
 
 Viewing and revising are both multiplayer in the way the work stream already
 is. Every participant with visibility of the work stream can open the
@@ -246,9 +248,12 @@ version, and nothing is lost.
   silently downgrade a live site to an archive — the kind rules under Agent
   behavior): the standard tool failure surfaces on its activity row with a
   recovery instruction, and the model repairs and retries per its ordinary
-  loop. A directory that merely lacks a site entry is not a failure at all:
-  it publishes as an archive, and the result says so plainly, so a
-  misnamed entry is a one-step rename-and-republish recovery.
+  loop. A multi-file directory that merely lacks a site entry is not a
+  failure at all: it publishes as an archive, and the result says so
+  plainly, so a misnamed entry is a one-step rename-and-republish
+  recovery. A *one-file* directory is the exception — it is refused with
+  the instruction to publish the file's own path, because that shape is
+  almost always a document publish that grabbed the folder by mistake.
 - *Server module throws at serve time*: the viewer gets a plain Rally
   error page from the serving Worker (never a stack trace); the error —
   message, stack, request path — is recorded to a bounded per-artifact
@@ -405,7 +410,20 @@ None yet.
    meant a site but named its entry `app.js` gets an archive, not an
    error. That is *visibly* wrong rather than silently wrong — the
    result names the kind it published — and recovery is one rename and
-   republish under the same identity, so the trade is taken. Second,
+   republish under the same identity, so the trade is taken. But the
+   trade is narrowed where the mistake is most likely: before this
+   widening, passing a directory where a file was meant was a hard
+   error, and the models Rally routes to for cost — which under-read
+   successful results — would otherwise convert that guardrail's most
+   common firing into a success-shaped wrong outcome, a zip in the rail
+   where the announced document should be, durable under its own
+   identity. So a directory on the archive branch containing exactly
+   one file is refused (`single_file_directory` below): a one-file zip
+   is almost never a deliberate bundle, and it is near-exactly the
+   mistaken-document shape. Genuine bundles stay total; the accepted
+   residue is a document wrapped in a folder *with* auxiliary files,
+   which is rarer, visible in the rail, and left to dogfooding to
+   size. Second,
    kind changes across republishes of one path are asymmetric by rule:
    archive→site upgrades freely, but a republish that would turn a live
    site back into an archive fails loudly — a URL participants hold is
@@ -586,7 +604,9 @@ live site with server behavior (`index.js` is an ES module
 default-exporting `fetch(request, env)`, with `env.ASSETS` and
 `env.STORAGE` as declared; the message carries the typed declarations
 verbatim); with `index.html` and no `index.js`, a static live site; with
-neither, a downloadable archive.
+neither, a downloadable archive. The paragraph closes with the one
+sentence aimed squarely at the smallest routed model: a document is
+published by its file path, never by its folder.
 
 **Tool contract — `publish_resource`, widened.**
 
@@ -622,13 +642,16 @@ neither, a downloadable archive.
   directory), `limit_exceeded` / `resource_limit_exceeded` (reduce or
   split the bundle; the guard's value is an open limit),
   `resource_not_ready`, `tool_receipt_missing` and retryable provider
-  failures (retry the exact call so the receipt reconciles). One code is
-  added: `site_entry_removed` — "This path serves a live site and the
-  republish has no `index.js` or `index.html` at its root. Restore an
-  entry file, or publish the files under a different path." No
-  `missing_index` exists, because a missing entry is not an error; and
-  no publish-time code validation is promised — `index.js` is executed
-  at serve time, never at publish.
+  failures (retry the exact call so the receipt reconciles). Two codes
+  are added. `site_entry_removed` — "This path serves a live site and
+  the republish has no `index.js` or `index.html` at its root. Restore
+  an entry file, or publish the files under a different path."
+  `single_file_directory` — "This directory contains a single file.
+  Publish the file's own path to publish it as a document; a directory
+  publishes as a zip only when bundling multiple files." No
+  `missing_index` exists, because a missing entry on a multi-file
+  directory is not an error; and no publish-time code validation is
+  promised — `index.js` is executed at serve time, never at publish.
 - Discovery and sequencing: the directory is discovered with the CLI the
   model already has (`ls`, `find`). Revision after a sandbox recycle
   uses the existing recovery rail, widened to match:
@@ -657,6 +680,14 @@ widened tool's shapes, kind resolution, and failures, walked through the
 real sanitizer like the rest of the family — including the
 misnamed-entry path: an intended site published as an archive must be
 recoverable from the result alone, by rename and republish, in one step.
+The kind conventions are exercised on the routed models, not only the
+frontier stage: on each model routing stage actually configured, a
+document request must yield a file publish and never an archive, and a
+`single_file_directory` refusal must be recovered in one corrected call
+from its error sentence alone. This is the widening's one real
+regression risk — the models Rally routes to for cost under-read
+successful results, so the flows that used to be hard errors are the
+ones to walk on them deliberately.
 Prompt evaluation remains the document PRD's posture —
 Rally has no evaluation suite, so acceptance is the manual flows below,
 dogfooded on the models the route plan serves, and that gap is named
@@ -726,25 +757,29 @@ rather than papered over.
    serves the neutral page.
 5. A server module that throws serves the plain error page and the
    error appears in the rail's error log.
-6. Publishing a directory with neither root entry yields exactly one
-   downloadable archive resource; renaming its entry to `index.js` and
-   republishing the same path upgrades it to a live site under the same
-   resource identity.
-7. Republishing a live site's path with its root entry removed fails
+6. Publishing a multi-file directory with neither root entry yields
+   exactly one downloadable zip resource; renaming its entry to
+   `index.js` and republishing the same path upgrades it to a live site
+   under the same resource identity.
+7. Publishing a one-file directory is refused with
+   `single_file_directory`, and the model recovers in one corrected call
+   publishing the file's own path; on every configured model routing
+   stage, a document request yields a file publish and never an archive.
+8. Republishing a live site's path with its root entry removed fails
    loudly with the recovery instruction; the site keeps serving its
    current version.
-8. Opening a dialog, the command palette, and a lightbox each hides the
+9. Opening a dialog, the command palette, and a lightbox each hides the
    rail's preview behind its placeholder and restores it on close; the
    preview never paints over an app overlay. Answering the poll inside
    the preview pane works, and the preview's navigation stays on the
    artifact's origin — an external link in the page opens the system
    browser, not the pane.
-9. Prior versions are listed and their source opens read-only through the
-   versioning layer's preview.
-10. Where Terminal is unavailable, behavior is byte-identical to today;
+10. Prior versions are listed and their source opens read-only through
+   the versioning layer's preview.
+11. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render — the preview pane
    included.
-11. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+12. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
    workerd suite pass; every new test shown to fail when its protected
    behavior is broken; the rail, artifact window, and error surfaces
    captured from a real window.
