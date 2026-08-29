@@ -73,16 +73,42 @@ const STREAM_FAILURE_PRIMARY_MODEL = "pipeline-b06/primary";
 const STREAM_FAILURE_FALLBACK_MODEL = "pipeline-b06/fallback";
 const INTERLEAVED_TOOLS_MODEL = "pipeline-b12/primary";
 
+/**
+ * What the polls below wait for is alarm delivery and the drain finishing under
+ * cross-file contention — never a slow query, which answers in milliseconds. The
+ * budgets are the ones this file already used as fixed-iteration loops
+ * (40 × 50ms, 40 × 50ms, 40 × 25ms); the tests that chain them carry an outer
+ * timeout wider than their sum, so the poll's own failure is what reports.
+ */
+const RUN_SETTLE_TIMEOUT_MS = 2_000;
+const LOOP_RELEASE_TIMEOUT_MS = 2_000;
+const SOCKET_EVIDENCE_TIMEOUT_MS = 1_000;
+
 interface CapturedProviderRequest {
   url: string;
   body: Record<string, unknown>;
 }
 
+interface ProviderCaptureEntry {
+  requests: CapturedProviderRequest[];
+  scripts: unknown[][];
+  models: string[];
+}
+
 type ProviderCaptureGlobal = typeof globalThis & {
   __rallyPipelineOriginalFetch?: typeof fetch;
-  __rallyPipelineProviderRequests?: CapturedProviderRequest[];
-  __rallyPipelineProviderScripts?: unknown[][];
+  __rallyPipelineProviderState?: Map<string, ProviderCaptureEntry>;
 };
+
+/**
+ * Every object in this file shares one `globalThis` inside the Durable Object
+ * isolate, so the `fetch` a live test installs also serves a finished test's
+ * still-draining object. Each install therefore gives its own object a unique
+ * OpenRouter key and keys its captured requests and script queue by that
+ * object's id, and the installed `fetch` attributes a request by the bearer
+ * token it arrived with instead of taking whatever is next in a file-wide queue.
+ */
+const PROVIDER_KEY_PREFIX = "workerd-pipeline-provider-key:";
 
 interface SocketFrame extends Record<string, unknown> {
   type: string;
@@ -163,7 +189,12 @@ beforeEach(async () => {
     workspaceDOName("global", WORKSPACE_ID),
   ));
   await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
-});
+  // Generous, and only because of the interleave: a sibling file's `reset()`
+  // holds every object's gate, so this hook can wait out a full reset before it
+  // gets to run at all. The work itself — reset, the D1 seed, and the
+  // `initializeWorkspace` RPC — takes milliseconds, so a failure here is a hang,
+  // never a slow query.
+}, 30_000);
 
 function agentStub(): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -242,19 +273,23 @@ async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRo
   // instance method directly joins only the handler promise and can leave the
   // claimed loop execution running until the suite's wall-clock poll expires under
   // cross-file contention.
+  //
+  // A `false` return here is not a failure: an already-overdue alarm may have
+  // fired on its own, leaving workerd's alarm slot empty and nothing to force.
+  // The poll below is what proves the run settled.
   await runDurableObjectAlarm(stub);
-  let lastRow: RunRow | null = null;
-  let lastLoop = "null";
-  let lastAlarm: number | null = null;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  let settled: RunRow | null = null;
+  await expect.poll(async () => {
     const row = await runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<RunRow>(
         `SELECT run_id, status, error_json, terminalized_at, final_turn_id
            FROM runs WHERE run_id = ?`,
         runId,
       ).toArray()[0] ?? null);
-    if (row && row.terminalized_at !== null) return row;
-    lastRow = row;
+    if (row && row.terminalized_at !== null) {
+      settled = row;
+      return "terminal";
+    }
     const diagnostics = await runInDurableObject(stub, async (_instance, state) => ({
       alarm: await state.storage.getAlarm(),
       loop: state.storage.sql.exec(
@@ -263,14 +298,10 @@ async function settledRun(stub: DurableObjectStub, runId: string): Promise<RunRo
            FROM substream_loops WHERE id = 1`,
       ).toArray()[0] ?? null,
     }));
-    lastAlarm = diagnostics.alarm;
-    lastLoop = JSON.stringify(diagnostics.loop);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(
-    `run ${runId} never reached a terminal state — row=${JSON.stringify(lastRow)} `
-    + `alarm=${String(lastAlarm)} loop=${lastLoop}`,
-  );
+    return `run ${runId} never reached a terminal state — row=${JSON.stringify(row)} `
+      + `alarm=${String(diagnostics.alarm)} loop=${JSON.stringify(diagnostics.loop)}`;
+  }, { timeout: RUN_SETTLE_TIMEOUT_MS, interval: 50 }).toBe("terminal");
+  return settled!;
 }
 
 async function settledRunForTrigger(
@@ -292,15 +323,14 @@ async function settledRunForTrigger(
 }
 
 async function waitForLoopRelease(stub: DurableObjectStub): Promise<void> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const executing = await runInDurableObject(stub, (_instance, state) =>
-      state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM substream_loops WHERE status = 'executing'`,
-      ).one().count);
-    if (executing === 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error("singleton loop did not release its execution");
+  await expect.poll(() => runInDurableObject(stub, (_instance, state) =>
+    state.storage.sql.exec<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM substream_loops WHERE status = 'executing'`,
+    ).one().count), {
+    timeout: LOOP_RELEASE_TIMEOUT_MS,
+    interval: 50,
+    message: "singleton loop did not release its execution",
+  }).toBe(0);
 }
 
 /**
@@ -317,10 +347,12 @@ async function installProviderCapture(
   stub: DurableObjectStub,
   model: string,
 ): Promise<void> {
-  await runInDurableObject(stub, (instance) => {
+  await runInDurableObject(stub, (instance, state) => {
+    const objectId = state.id.toString();
     const target = instance as unknown as { env: Env };
     target.env = new Proxy(target.env, {
       get: (current, property, receiver) => {
+        if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
         if (property === "OPENROUTER_PRIMARY_MODEL") return model;
         if (property === "OPENROUTER_FALLBACK_MODELS") return "";
         return Reflect.get(current, property, receiver);
@@ -328,23 +360,24 @@ async function installProviderCapture(
     });
     const scope = globalThis as ProviderCaptureGlobal;
     scope.__rallyPipelineOriginalFetch ??= scope.fetch;
-    scope.__rallyPipelineProviderRequests = [];
+    const objects = scope.__rallyPipelineProviderState ??= new Map<string, ProviderCaptureEntry>();
+    objects.set(objectId, { requests: [], scripts: [], models: [model] });
     scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof request === "string"
         ? request
         : request instanceof URL
           ? request.toString()
           : request.url;
-      if (url === "https://openrouter.ai/api/v1/models") {
-        return Response.json({ data: [{ id: model, context_length: 131_072 }] });
-      }
+      if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
+      const entry = providerCaller(objects, request, init);
+      if (!entry) return unattributedProviderResponse();
       if (url === "https://openrouter.ai/api/v1/chat/completions") {
         const text = typeof init?.body === "string"
           ? init.body
           : request instanceof Request
             ? await request.clone().text()
             : "";
-        scope.__rallyPipelineProviderRequests!.push({
+        entry.requests.push({
           url,
           body: JSON.parse(text) as Record<string, unknown>,
         });
@@ -356,6 +389,50 @@ async function installProviderCapture(
       throw new Error(`unexpected_pipeline_provider_request:${url}`);
     }) as typeof fetch;
   });
+}
+
+/**
+ * The models catalog is fetched without an Authorization header, so it cannot be
+ * attributed to one object; every registered object's models answer it, which is
+ * all any of them reads out of it.
+ */
+function providerCatalog(objects: Map<string, ProviderCaptureEntry>): Response {
+  const ids = [...new Set([...objects.values()].flatMap((entry) => entry.models))];
+  return Response.json({ data: ids.map((id) => ({ id, context_length: 131_072 })) });
+}
+
+/** The entry of the object whose per-object key signed this request, if any. */
+function providerCaller(
+  objects: Map<string, ProviderCaptureEntry>,
+  request: RequestInfo | URL,
+  init?: RequestInit,
+): ProviderCaptureEntry | null {
+  const authorization = request instanceof Request
+    ? request.headers.get("authorization")
+    : new Headers(init?.headers).get("authorization");
+  const prefix = `Bearer ${PROVIDER_KEY_PREFIX}`;
+  return (authorization?.startsWith(prefix)
+    ? objects.get(authorization.slice(prefix.length))
+    : undefined) ?? null;
+}
+
+/**
+ * A request signed by no live install belongs to an object this file has
+ * already finished with — a drain outliving its test. It is refused with the
+ * provider's own terminal status rather than a thrown transport failure, which
+ * the harness would retry: that keeps the zombie's work out of the running
+ * test's captured requests and script queue *and* off its machine.
+ */
+function unattributedProviderResponse(): Response {
+  return Response.json(
+    {
+      error: {
+        code: "unattributed_pipeline_provider_request",
+        message: "no live provider install owns this key",
+      },
+    },
+    { status: 401 },
+  );
 }
 
 function providerStream(events: readonly unknown[]): Response {
@@ -387,11 +464,12 @@ async function installScriptedProvider(
     fallbackModels: readonly string[];
   },
 ): Promise<void> {
-  await runInDurableObject(stub, (instance) => {
+  await runInDurableObject(stub, (instance, state) => {
+    const objectId = state.id.toString();
     const target = instance as unknown as { env: Env };
     target.env = new Proxy(target.env, {
       get: (current, property, receiver) => {
-        if (property === "OPENROUTER_API_KEY") return "workerd-scripted-provider-key";
+        if (property === "OPENROUTER_API_KEY") return `${PROVIDER_KEY_PREFIX}${objectId}`;
         if (property === "OPENROUTER_PRIMARY_MODEL") return routing.primaryModel;
         if (property === "OPENROUTER_FALLBACK_MODELS") {
           return routing.fallbackModels.join(",");
@@ -401,22 +479,21 @@ async function installScriptedProvider(
     });
     const scope = globalThis as ProviderCaptureGlobal;
     scope.__rallyPipelineOriginalFetch ??= scope.fetch;
-    scope.__rallyPipelineProviderRequests = [];
-    scope.__rallyPipelineProviderScripts = scripts.map((events) => [...events]);
+    const objects = scope.__rallyPipelineProviderState ??= new Map<string, ProviderCaptureEntry>();
+    objects.set(objectId, {
+      requests: [],
+      scripts: scripts.map((events) => [...events]),
+      models: [routing.primaryModel, ...routing.fallbackModels],
+    });
     scope.fetch = (async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof request === "string"
         ? request
         : request instanceof URL
           ? request.toString()
           : request.url;
-      if (url === "https://openrouter.ai/api/v1/models") {
-        return Response.json({
-          data: [routing.primaryModel, ...routing.fallbackModels].map((id) => ({
-            id,
-            context_length: 131_072,
-          })),
-        });
-      }
+      if (url === "https://openrouter.ai/api/v1/models") return providerCatalog(objects);
+      const entry = providerCaller(objects, request, init);
+      if (!entry) return unattributedProviderResponse();
       if (url !== "https://openrouter.ai/api/v1/chat/completions") {
         throw new Error(`unexpected_pipeline_provider_request:${url}`);
       }
@@ -426,14 +503,14 @@ async function installScriptedProvider(
           ? await request.clone().text()
           : "";
       const body = JSON.parse(text) as Record<string, unknown>;
-      scope.__rallyPipelineProviderRequests!.push({ url, body });
+      entry.requests.push({ url, body });
       if (body.stream !== true) {
         return Response.json(
           { error: { code: "test_structured_request_refused", message: "not part of this oracle" } },
           { status: 401 },
         );
       }
-      const events = scope.__rallyPipelineProviderScripts!.shift();
+      const events = entry.scripts.shift();
       if (!events) {
         return Response.json(
           { error: { code: "unexpected_extra_stream", message: "script exhausted" } },
@@ -518,27 +595,29 @@ async function waitForSocketEvidence(
   frames: readonly SocketFrame[],
   predicate: (frame: SocketFrame) => boolean,
 ): Promise<void> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (frames.some(predicate)) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`socket evidence did not arrive: ${frames.map((frame) => frame.type).join(",")}`);
+  await expect.poll(() => (frames.some(predicate)
+    ? "arrived"
+    : `socket evidence did not arrive: ${frames.map((frame) => frame.type).join(",")}`), {
+    timeout: SOCKET_EVIDENCE_TIMEOUT_MS,
+    interval: 50,
+  }).toBe("arrived");
 }
 
 async function capturedProviderRequests(stub: DurableObjectStub): Promise<CapturedProviderRequest[]> {
-  return runInDurableObject(stub, () => {
+  return runInDurableObject(stub, (_instance, state) => {
     const scope = globalThis as ProviderCaptureGlobal;
-    return structuredClone(scope.__rallyPipelineProviderRequests ?? []);
+    return structuredClone(
+      scope.__rallyPipelineProviderState?.get(state.id.toString())?.requests ?? [],
+    );
   });
 }
 
 async function restoreProviderFetch(stub: DurableObjectStub): Promise<void> {
-  await runInDurableObject(stub, () => {
+  await runInDurableObject(stub, (_instance, state) => {
     const scope = globalThis as ProviderCaptureGlobal;
+    scope.__rallyPipelineProviderState?.delete(state.id.toString());
     if (scope.__rallyPipelineOriginalFetch) scope.fetch = scope.__rallyPipelineOriginalFetch;
     delete scope.__rallyPipelineOriginalFetch;
-    delete scope.__rallyPipelineProviderRequests;
-    delete scope.__rallyPipelineProviderScripts;
   });
 }
 
@@ -706,13 +785,16 @@ describe("a member's message travels the whole pipeline", () => {
   it("delivers a scheduled activation into an existing Bind projection exactly once across eviction and replay", async () => {
     const stub = agentStub();
     const opened = await (async () => {
-      await installScriptedProvider(stub, [[
-        { choices: [{ delta: { content: "persistent conversation ready" }, finish_reason: "stop" }] },
-      ]], {
-        primaryModel: SCHEDULED_ACTIVATION_MODEL,
-        fallbackModels: [],
-      });
+      // The `try` opens before the install so the restore is unconditional: a
+      // throw inside it would otherwise leave `fetch` patched for the rest of
+      // the file.
       try {
+        await installScriptedProvider(stub, [[
+          { choices: [{ delta: { content: "persistent conversation ready" }, finish_reason: "stop" }] },
+        ]], {
+          primaryModel: SCHEDULED_ACTIVATION_MODEL,
+          fallbackModels: [],
+        });
         const result = await initializeWorkstream(
           stub,
           "establish the persistent conversation",
@@ -757,11 +839,12 @@ describe("a member's message travels the whole pipeline", () => {
       scheduledWakeupId: wakeupId,
     };
     const { runId, workflowInput, providerRequests } = await (async () => {
-      // The alarm is autonomous in real workerd. Install the only external
-      // dependency before admission so the test remains about durable replay
-      // even when workerd runs the alarm between either awaited assertion.
-      await installProviderCapture(stub, SCHEDULED_ACTIVATION_MODEL);
       try {
+        // The alarm is autonomous in real workerd. Install the only external
+        // dependency before admission so the test remains about durable replay
+        // even when workerd runs the alarm between either awaited assertion —
+        // inside the `try`, so the restore below is unconditional.
+        await installProviderCapture(stub, SCHEDULED_ACTIVATION_MODEL);
         const runId = await launchWorkstreamHarness(TEST_ENV, activation);
         const workflowInput = await runInDurableObject(stub, (_instance, state) => {
           const row = state.storage.sql.exec<{ execution_context_json: string }>(
@@ -950,6 +1033,12 @@ describe("a member's message travels the whole pipeline", () => {
   it("admits an addressed follow-up as immutable pending input without publishing it early", async () => {
     const stub = agentStub();
     const opened = await initializeWorkstream(stub, "first message");
+    // Settle the opening run before taking the hold: its activation alarm is
+    // armed one millisecond out, and if it claims the loop first the hold's
+    // `WHERE status = 'idle'` matches nothing and the fixture throws
+    // `loop_hold_failed`. The sibling invoked-external-message test below
+    // learned the same lesson.
+    await settledRun(stub, opened.body.harnessRunId as string);
 
     await runInDurableObject(stub, async (instance, state) => {
       const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
@@ -1556,7 +1645,10 @@ describe("a member's message travels the whole pipeline", () => {
         status: "idle",
       });
     });
-  });
+    // The budget covers driving a real run through admission and the alarm to
+    // the provider boundary, not the stop and retry assertions that follow
+    // inside the fenced `runInDurableObject` block.
+  }, 20_000);
 
   it("a follow-up is promoted by the same loop after the failed execution releases it", async () => {
     const stub = agentStub();
@@ -1607,7 +1699,7 @@ describe("a member's message travels the whole pipeline", () => {
     const second = await settledRunForTrigger(stub, turnId);
     expect(second.run_id).not.toBe(opened.body.harnessRunId);
     expect(PRE_PROVIDER_FAILURES).not.toContain(failureCode(second));
-  });
+  }, 20_000);
 
   it("message writes are idempotent across the whole path", async () => {
     const stub = agentStub();
@@ -1681,20 +1773,22 @@ describe("a member's message travels the whole pipeline", () => {
 
   it("fails an observable streamed response without retry and replaces its partial overlay with the reserved error turn", async () => {
     const stub = agentStub();
-    await installScriptedProvider(stub, [[
-      { choices: [{ delta: { content: "observable partial" }, finish_reason: null }] },
-      { error: { message: "provider stream broke" } },
-    ]], {
-      // The fallback is deliberate: the oracle proves that participant-visible
-      // output closes the entire route, rather than succeeding because there
-      // was no later model available.
-      primaryModel: STREAM_FAILURE_PRIMARY_MODEL,
-      fallbackModels: [STREAM_FAILURE_FALLBACK_MODEL],
-    });
     let socket: WebSocket | null = null;
     let stopCollecting: (() => void) | null = null;
 
+    // Installed inside the `try` so the restore is unconditional: a throw in the
+    // install would otherwise leave `fetch` patched for the rest of the file.
     try {
+      await installScriptedProvider(stub, [[
+        { choices: [{ delta: { content: "observable partial" }, finish_reason: null }] },
+        { error: { message: "provider stream broke" } },
+      ]], {
+        // The fallback is deliberate: the oracle proves that participant-visible
+        // output closes the entire route, rather than succeeding because there
+        // was no later model available.
+        primaryModel: STREAM_FAILURE_PRIMARY_MODEL,
+        fallbackModels: [STREAM_FAILURE_FALLBACK_MODEL],
+      });
       const opened = await initializeWorkstream(stub, "show me a streamed answer");
       expect(opened.status).toBe(200);
       ({ socket } = await openSubscribedSocket(
@@ -1765,26 +1859,28 @@ describe("a member's message travels the whole pipeline", () => {
       type: "function",
       function: { name: "core_current_time", arguments: "{}" },
     });
-    await installScriptedProvider(stub, [
-      [
-        { choices: [{ delta: { content: "text A" }, finish_reason: null }] },
-        { choices: [{ delta: { tool_calls: [toolCall("provider-tool-1")] }, finish_reason: "tool_calls" }] },
-      ],
-      [
-        { choices: [{ delta: { content: "text B" }, finish_reason: null }] },
-        { choices: [{ delta: { tool_calls: [toolCall("provider-tool-2")] }, finish_reason: "tool_calls" }] },
-      ],
-      [{ choices: [{ delta: { content: "final C" }, finish_reason: "stop" }] }],
-    ], {
-      primaryModel: INTERLEAVED_TOOLS_MODEL,
-      fallbackModels: [],
-    });
     const expectedOrder = ["text:text A", "tool", "text:text B", "tool", "text:final C"];
     let liveSocket: WebSocket | null = null;
     let reconnectSocket: WebSocket | null = null;
     let stopCollecting: (() => void) | null = null;
 
+    // Installed inside the `try` so the restore is unconditional: a throw in the
+    // install would otherwise leave `fetch` patched for the rest of the file.
     try {
+      await installScriptedProvider(stub, [
+        [
+          { choices: [{ delta: { content: "text A" }, finish_reason: null }] },
+          { choices: [{ delta: { tool_calls: [toolCall("provider-tool-1")] }, finish_reason: "tool_calls" }] },
+        ],
+        [
+          { choices: [{ delta: { content: "text B" }, finish_reason: null }] },
+          { choices: [{ delta: { tool_calls: [toolCall("provider-tool-2")] }, finish_reason: "tool_calls" }] },
+        ],
+        [{ choices: [{ delta: { content: "final C" }, finish_reason: "stop" }] }],
+      ], {
+        primaryModel: INTERLEAVED_TOOLS_MODEL,
+        fallbackModels: [],
+      });
       const opened = await initializeWorkstream(stub, "perform two deterministic tool steps");
       expect(opened.status).toBe(200);
       ({ socket: liveSocket } = await openSubscribedSocket(
@@ -1894,5 +1990,5 @@ describe("a member's message travels the whole pipeline", () => {
       "00000000-0000-7000-8000-0000000005b2",
     ].includes(item.turnId)).map((item) => item.attentionOrdinal ?? null))
       .toEqual([null, 2]);
-  });
+  }, 20_000);
 });

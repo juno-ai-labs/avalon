@@ -302,26 +302,53 @@ test('rejects stale public bytes even when their size and first byte match', asy
 test('allows a full artifact transfer to exceed the timeout while bytes keep arriving', async () => {
   const chunks = ['first-', 'second-', 'third'];
   const expected = Buffer.from(chunks.join(''));
-  let chunkIndex = 0;
+  const idleTimeoutMilliseconds = 200;
+  const chunkGapMilliseconds = 75;
+
+  // The idle deadline is driven by this clock rather than by real timers: the
+  // gaps between chunks stay under the timeout while their sum exceeds it.
+  let elapsedMilliseconds = 0;
+  let deadline;
+  const setIdleTimeoutImplementation = (onIdle, milliseconds) => {
+    deadline = { at: elapsedMilliseconds + milliseconds, onIdle };
+    return deadline;
+  };
+  const clearIdleTimeoutImplementation = (handle) => {
+    if (handle !== undefined && handle === deadline) deadline = undefined;
+  };
+  const advance = (milliseconds) => {
+    elapsedMilliseconds += milliseconds;
+    if (!deadline || deadline.at > elapsedMilliseconds) return;
+    const { onIdle } = deadline;
+    deadline = undefined;
+    onIdle();
+  };
 
   await verifyPublicReleaseArtifactHash({
+    clearIdleTimeoutImplementation,
     expectedHash: createHash('sha512').update(expected).digest('base64'),
-    fetchImplementation: async (_url, { signal }) => new Response(new ReadableStream({
-      start(controller) {
-        signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
-      },
-      async pull(controller) {
-        await new Promise((resolve) => setTimeout(resolve, 75));
-        if (signal.aborted) return;
-        controller.enqueue(Buffer.from(chunks[chunkIndex]));
-        chunkIndex += 1;
-        if (chunkIndex === chunks.length) controller.close();
-      },
-    })),
-    idleTimeoutMilliseconds: 200,
+    fetchImplementation: async (_url, { signal }) => {
+      let chunkIndex = 0;
+      return new Response(new ReadableStream({
+        start(controller) {
+          signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+        },
+        pull(controller) {
+          advance(chunkGapMilliseconds);
+          assert.equal(signal.aborted, false, 'idle deadline fired while bytes were still arriving');
+          controller.enqueue(Buffer.from(chunks[chunkIndex]));
+          chunkIndex += 1;
+          if (chunkIndex === chunks.length) controller.close();
+        },
+      }));
+    },
+    idleTimeoutMilliseconds,
+    setIdleTimeoutImplementation,
     sleepImplementation: async () => undefined,
     url: 'https://downloads.with-avalon.com/stable/darwin/arm64/Avalon-1.147.0.dmg',
   });
+
+  assert.ok(elapsedMilliseconds > idleTimeoutMilliseconds);
 });
 
 test('preserves an HTTP failure when response-body cancellation also fails', async () => {

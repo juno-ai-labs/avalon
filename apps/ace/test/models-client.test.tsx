@@ -21,6 +21,9 @@ function workstreamFlag(routing: { model: string; fallbackModels: string[] }): o
 
 describe('Ace Models client', () => {
   beforeEach(() => {
+    // ModelsView debounces validation behind a 400ms window.setTimeout; the tests below drive
+    // that clock rather than waiting it out in real time.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -28,6 +31,7 @@ describe('Ace Models client', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount());
+    vi.useRealTimers();
     vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
@@ -87,6 +91,7 @@ describe('Ace Models client', () => {
 
     const save = Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent === 'Save route')!;
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
     await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
     expect(save.disabled).toBe(true);
 
@@ -101,6 +106,7 @@ describe('Ace Models client', () => {
       );
       freeTextInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
     await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
     expect(save.disabled).toBe(false);
     await act(async () => save.click());
@@ -135,6 +141,7 @@ describe('Ace Models client', () => {
     });
 
     await act(async () => root.render(<ModelsView />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
     await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
     const primary = container.querySelector<HTMLInputElement>('.model-route-card input')!;
     await act(async () => {
@@ -142,6 +149,7 @@ describe('Ace Models client', () => {
       primary.dispatchEvent(new Event('input', { bubbles: true }));
     });
 
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
     await vi.waitFor(() => expect(container.textContent).toContain('OpenRouter does not recognize or currently route: missing/model'));
     expect(primary.getAttribute('aria-invalid')).toBe('true');
     const save = Array.from(container.querySelectorAll('button'))

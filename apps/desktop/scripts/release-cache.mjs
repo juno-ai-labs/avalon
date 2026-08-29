@@ -64,9 +64,11 @@ function sleep(milliseconds) {
 }
 
 export async function verifyPublicReleaseArtifactHash({
+  clearIdleTimeoutImplementation = clearTimeout,
   expectedHash,
   fetchImplementation = fetch,
   idleTimeoutMilliseconds = 30_000,
+  setIdleTimeoutImplementation = setTimeout,
   sleepImplementation = sleep,
   url,
 }) {
@@ -86,8 +88,8 @@ export async function verifyPublicReleaseArtifactHash({
     const abortController = new AbortController();
     let idleTimeout;
     const refreshIdleTimeout = () => {
-      clearTimeout(idleTimeout);
-      idleTimeout = setTimeout(() => abortController.abort(), idleTimeoutMilliseconds);
+      clearIdleTimeoutImplementation(idleTimeout);
+      idleTimeout = setIdleTimeoutImplementation(() => abortController.abort(), idleTimeoutMilliseconds);
     };
     try {
       refreshIdleTimeout();
@@ -115,7 +117,7 @@ export async function verifyPublicReleaseArtifactHash({
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
     } finally {
-      clearTimeout(idleTimeout);
+      clearIdleTimeoutImplementation(idleTimeout);
     }
     if (attempt < 6) await sleepImplementation(500 * 2 ** attempt);
   }
