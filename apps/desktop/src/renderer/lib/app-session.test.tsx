@@ -863,6 +863,22 @@ describe('single-platform desktop identity routing', () => {
     expect(window.location.hash).toBe(before);
   });
 
+  it('gives a signed-in person without a workspace the window, not the inline message', async () => {
+    // `SignInScreen` is the only surface that renders the inline message, and
+    // `SessionGate` shows it only when there is no session at all. Someone who
+    // has signed in but not joined a workspace is on `WorkspaceOnboardingGate`,
+    // which renders neither — so routing them inline files the failure where
+    // nothing draws it.
+    bridge.getSession.mockResolvedValueOnce({ ...globalIdentitySession, expiresAt: futureExpiry });
+    renderProvider();
+    expect(await screen.findByText('global:signed-out')).toBeVisible();
+
+    await dispatchDeepLink('rallywithai://notes/not-a-note');
+
+    await waitFor(() => expect(lastDeepLinkFailure()).toBe('Rally could not open that note link.'));
+    expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
+  });
+
   it('opens the new work stream screen, which is how the menu bar starts one', async () => {
     bridge.getSession.mockResolvedValueOnce({
       ...globalIdentitySession,

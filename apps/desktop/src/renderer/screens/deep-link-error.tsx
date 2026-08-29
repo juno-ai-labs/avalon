@@ -18,17 +18,25 @@ export function DeepLinkErrorScreen(): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    // Main holds the message, so a second failure arriving while this window is
-    // already open replaces the text in place. The read covers the first one,
-    // which was set before this renderer existed to be told about it.
+    let pushed = false;
+    // Subscribe before reading, and let a push win over the read. Main holds the
+    // message, so a second failure arriving while this window is already open
+    // replaces the text in place, and the read covers the first one — which was
+    // set before this renderer existed to be told about it. But the read is a
+    // snapshot taken when the invoke was served: if a newer failure lands while
+    // it is still in flight, letting it settle would put the older link's
+    // message back on screen and leave it there, blaming the window on a link
+    // the person has already dealt with.
+    const unsubscribe = bridge.onDeepLinkErrorChanged((next) => {
+      if (cancelled) return;
+      pushed = true;
+      setMessage(next);
+    });
     void bridge.getDeepLinkError()
       .then((current) => {
-        if (!cancelled) setMessage(current);
+        if (!cancelled && !pushed) setMessage(current);
       })
       .catch(() => undefined);
-    const unsubscribe = bridge.onDeepLinkErrorChanged((next) => {
-      if (!cancelled) setMessage(next);
-    });
     return () => {
       cancelled = true;
       unsubscribe();

@@ -44,11 +44,19 @@ always-on-top window in front of whichever window is focused.
 
 ### Signed out is different, and stays inline
 
-Without a workspace there is exactly one window, and the sign-in screen is
+With no session at all there is exactly one window, and the sign-in screen is
 already showing the message under the buttons that answer it — "Sign in before
 opening this note." is next to the sign-in button. A second window over the top
 of the remedy helps nobody, so `reportDeepLinkFailure` falls through to
-`setDeepLinkError`, which the onboarding screen renders as an `InlineError`.
+`setDeepLinkError`, which `SignInScreen` renders as an `InlineError`.
+
+The test is `session === null`, and not "has no workspace", because `SignInScreen`
+is the only surface that reads that state and `SessionGate` reaches it only when
+there is no session. A person who has signed in but not joined a workspace is on
+`WorkspaceOnboardingGate`, which renders `RegionOnboarding` or
+`InvitationOnboarding` — neither of which reads `deepLinkError`. Routing those
+failures inline would file them where nothing draws them, so they take the window
+like every other signed-in failure.
 
 The session-refresh failure in `app-session.tsx` ("Your session expired.") calls
 `setDeepLinkError` directly rather than going through the reporter. It is not a
@@ -70,6 +78,14 @@ session, no workspace and no socket, and the cases where it matters most are
 exactly the ones where none of the three is available: a link that arrives while
 the application is still booting, or one refused because the session has expired.
 
+Subscribing happens before the read, and a pushed message wins over one still in
+flight: the read is a snapshot taken when main served the invoke, so a failure
+arriving before it settles is newer than what it will return.
+
+If that first `loadRenderer` rejects, the window is disposed and the singleton
+cleared before the error propagates. A window that never loaded is worse left in
+place than absent — see **Invariants**.
+
 Closing the window — the Continue button, or the title bar — is the
 acknowledgement, and `closed` clears `deepLinkErrorMessage`.
 
@@ -90,6 +106,19 @@ acknowledgement, and `closed` clears `deepLinkErrorMessage`.
   message.** A new `setDeepLinkError('…')` added inside `handleDeepLink` compiles
   and does nothing visible for a signed-in person, because no surface renders
   that state any more.
+- **A window whose renderer never loaded is disposed, not kept.** Left in the
+  singleton it is worse than no window at all: the next failure takes the
+  re-show branch, raises a blank window with no Continue button, and *resolves*
+  — so the reporter reads the notice as delivered and its own fallback does not
+  run either. One failed load would otherwise disable every later notice for the
+  lifetime of the process.
+- **A pushed message outranks the mount-time read.** The read returns whatever
+  main held when the invoke was served; letting a late one land would restore an
+  older link's message and leave it there, blaming the window on a link the
+  person has already dealt with.
+- **The `closed` handler clears only if the window is still the current one.** A
+  disposed window's `closed` arrives after the singleton has moved on, and
+  clearing then would take the live window's message with it.
 - **The window must stay dismissible whatever the message says.** It cannot be
   resized and does not scroll as a page, so the message scrolls inside it and the
   Continue row is anchored. A message long enough to push the button past the
@@ -112,11 +141,14 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
 
 ## Failure modes and limits
 
-- **Main cannot open the window.** `showDeepLinkError` rejects and the reporter
-  falls back to `setDeepLinkError`. For a signed-in person that state is not
-  rendered anywhere, so the notice is effectively lost until the session ends and
-  the sign-in screen shows it. This is the accepted cost of taking the message
-  out of the shell; in practice the invoke only rejects if `loadRenderer` fails.
+- **Main refuses or cannot open the window.** `showDeepLinkError` rejects — the
+  message failed validation, or the window could not be built — and the reporter
+  falls back to `setDeepLinkError` *and* reports the rejection through
+  `reportJavascriptError`. For a signed-in person that state is not rendered
+  anywhere, so the notice is still lost to them; the report is what stops it
+  being lost to us as well, because the symptom is a surface that never appears
+  and nothing else would record it. This is the accepted cost of taking the
+  message out of the shell.
 - **A message arrives while the window is already open.** It replaces the text in
   place and re-focuses. The person may never see the first message. That is
   deliberate — both are the same failure reported twice in the normal case.
@@ -144,6 +176,10 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
   those two the wrong way round is the trap — a signed-in assertion against the
   inline output passes only while the routing is broken.
 - Run both with `pnpm --filter @rally/desktop test`.
+- **The window's own lifecycle is not unit-covered.** `main/index.ts` has no test
+  harness — the extracted main-process modules beside it do, but the entry point
+  does not — so disposal-on-failed-load is verified by driving the real
+  application, per the procedure below.
 - **Layout is not covered by either.** jsdom does not lay out, so the anchored
   Continue row can only be checked in a real window — run the client per
   [`dev-environment.md`](dev-environment.md#driving-and-screenshotting-it), call
@@ -189,4 +225,9 @@ row anchored; an early revision of this change did not, and a long message pushe
 the only way to dismiss the window off the bottom edge of a window that can
 neither scroll nor resize. Finally, `setDeepLinkError` inside `handleDeepLink` no
 longer reaches a signed-in person — new failures there must go through
-`reportDeepLinkFailure`.
+`reportDeepLinkFailure`. Three defects review found before this landed are worth
+keeping in mind when changing it: a window whose renderer failed to load must be
+disposed rather than left in the singleton, the mount-time read must not be
+allowed to overwrite a newer pushed message, and "signed out" here means no
+session rather than no workspace. Each is stated as an invariant above because
+each is invisible until the rare path runs.
