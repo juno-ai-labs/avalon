@@ -35,9 +35,9 @@ once and passes on a rerun.
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
-includes workerd. CI splits them: `api-tests-workers` runs
-`pnpm --filter @rally/api test:workers`, and the container and release suites
-are their own matrix jobs.
+includes workerd. CI splits them: `api-tests-workers-1-of-n` and
+`api-tests-workers-2-of-n` each run the package-owned workers command with a
+Vitest shard, and the container and release suites are their own matrix jobs.
 
 A test in any of these that fails once and passes on a rerun is a defect to fix
 in the change that met it —
