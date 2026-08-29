@@ -409,9 +409,12 @@ None yet.
    kind changes across republishes of one path are asymmetric by rule:
    archive→site upgrades freely, but a republish that would turn a live
    site back into an archive fails loudly — a URL participants hold is
-   never killed by an accident of file layout. The archive format —
-   zip's double-click familiarity for this product's audience versus
-   tar.gz — is the team's product call, held open below.
+   never killed by an accident of file layout. The archive format is
+   **zip**: Rally's ideal customer is nontechnical, and a zip
+   double-clicks open on macOS and Windows with nothing to install or
+   look up. The rejected alternative, tar.gz, is the engineer's default
+   and the cheaper streaming write, and both advantages lose to the
+   recipient not knowing what to do with the file.
 10. **The rail preview is a main-process `WebContentsView`, never
     renderer DOM.** The right rail's live preview renders the artifact's
     HTTPS URL in an Electron `WebContentsView` created, owned, and
@@ -766,7 +769,3 @@ rather than papered over.
    title bar naming the artifact and its work stream, a refresh action)
    — settle against real screenshots during implementation, per house
    practice.
-5. **The archive format.** Zip double-clicks open for the workplace
-   audience Rally actually has; tar.gz is the engineer's default and the
-   cheaper streaming write. A product call, the team's to make before
-   the archive fallback ships; nothing else in the design depends on it.
