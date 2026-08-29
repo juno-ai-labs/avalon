@@ -325,6 +325,15 @@ export interface DesktopSystemAudioCaptureInfo {
   sampleRate: number;
 }
 
+/**
+ * One refused deep link, with the identity its acknowledgement is matched
+ * against. The id rises with every failure the main process is asked to show.
+ */
+export interface DesktopDeepLinkErrorNotice {
+  id: number;
+  message: string;
+}
+
 export interface RallyDesktopBridge {
   getRuntimeConfig: () => Promise<RuntimeConfig>;
   /** Whether any Rally window currently owns application focus. */
@@ -430,12 +439,19 @@ export interface RallyDesktopBridge {
    * rather than a second dialog.
    */
   showDeepLinkError: (message: string) => Promise<void>;
-  /** The message to show, read by the failure window once it has mounted. */
-  getDeepLinkError: () => Promise<string | null>;
+  /** The notice to show, read by the failure window once it has mounted. */
+  getDeepLinkError: () => Promise<DesktopDeepLinkErrorNotice | null>;
   /** A later failure replacing the one already on screen in that window. */
-  onDeepLinkErrorChanged: (listener: (message: string | null) => void) => () => void;
-  /** Acknowledged: close the failure window. Only that window may call this. */
-  dismissDeepLinkError: () => Promise<void>;
+  onDeepLinkErrorChanged: (listener: (notice: DesktopDeepLinkErrorNotice | null) => void) => () => void;
+  /**
+   * Acknowledged: close the failure window. Only that window may call this.
+   *
+   * Takes the id of the notice being acknowledged rather than closing whatever
+   * is open. A newer failure can replace the text between the person reading it
+   * and their click landing — duplicate reports are the normal case here — and
+   * a bare close would then discard a notice nobody has seen.
+   */
+  dismissDeepLinkError: (noticeId: number) => Promise<void>;
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;

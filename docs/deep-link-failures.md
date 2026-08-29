@@ -86,8 +86,13 @@ If that first `loadRenderer` rejects, the window is disposed and the singleton
 cleared before the error propagates. A window that never loaded is worse left in
 place than absent — see **Invariants**.
 
-Closing the window — the Continue button, or the title bar — is the
-acknowledgement, and `closed` clears `deepLinkErrorMessage`.
+Closing the window is the acknowledgement, and it clears the notice. Continue
+acknowledges **by id**: `dismissDeepLinkError(noticeId)` closes only while that
+notice is still the current one. A failure reported between the person reading a
+message and their click arriving has already replaced the text, and a bare close
+would take that newer notice with it — resolving the report that carried it and
+leaving nothing on screen. Main ignores the stale acknowledgement instead, so the
+window stays up on the text nobody has read yet.
 
 ## Invariants
 
@@ -116,9 +121,25 @@ acknowledgement, and `closed` clears `deepLinkErrorMessage`.
   main held when the invoke was served; letting a late one land would restore an
   older link's message and leave it there, blaming the window on a link the
   person has already dealt with.
-- **The `closed` handler clears only if the window is still the current one.** A
-  disposed window's `closed` arrives after the singleton has moved on, and
-  clearing then would take the live window's message with it.
+- **Acknowledgement is scoped to a notice id, never "close whatever is open".**
+  The window is a singleton whose text changes under the reader, so a click
+  carries the id it was showing. Closing on a stale one discards a notice nobody
+  has seen and reports it as delivered.
+- **The window is released on `close`, not only on `closed`.** Between the two it
+  is still non-destroyed, so a report landing in that gap would take the re-show
+  branch, hand its message to a renderer that is going away, and *resolve* — and
+  `closed` would then null the message just accepted. Releasing on `close` means
+  such a report finds no window and builds a fresh one. `destroy()` skips `close`,
+  so both are bound and whichever runs first does the work.
+- **Release clears only if the window is still the current one.** A disposed
+  window's event arrives after the singleton has moved on, and clearing then
+  would take the live window's message with it.
+- **The re-show branch never raises a window that has not painted.** A window is
+  in the singleton from the moment it is constructed, before its renderer loads,
+  and the duplicate report that arrives during that load is the common case here
+  rather than a rare one. `show: false` with `ready-to-show` keeps an unpainted
+  window off the screen; re-showing during the load steps around it and puts an
+  empty always-on-top rectangle over everything until the renderer paints.
 - **The window must stay dismissible whatever the message says.** It cannot be
   resized and does not scroll as a page, so the message scrolls inside it and the
   Continue row is anchored. A message long enough to push the button past the
@@ -150,8 +171,14 @@ links at all. The desktop trust boundary that admits these IPC calls is owned by
   and nothing else would record it. This is the accepted cost of taking the
   message out of the shell.
 - **A message arrives while the window is already open.** It replaces the text in
-  place and re-focuses. The person may never see the first message. That is
-  deliberate — both are the same failure reported twice in the normal case.
+  place and re-focuses, unless the window is still loading, in which case the
+  mounting renderer picks it up instead. The person may never see the first
+  message. That is deliberate — both are the same failure reported twice in the
+  normal case.
+- **Continue is pressed on a message that has since been replaced.** The click
+  names a notice that is no longer current, main ignores it, and the window stays
+  open on the newer text. Nothing closes until someone acknowledges what is
+  actually on screen.
 - **A long message.** `DEEP_LINK_ERROR_MESSAGE_LIMIT` in `main/index.ts` bounds
   it, and is currently **open** (`Number.POSITIVE_INFINITY`, enforcing nothing)
   pending a number from the team — see
@@ -225,9 +252,16 @@ row anchored; an early revision of this change did not, and a long message pushe
 the only way to dismiss the window off the bottom edge of a window that can
 neither scroll nor resize. Finally, `setDeepLinkError` inside `handleDeepLink` no
 longer reaches a signed-in person — new failures there must go through
-`reportDeepLinkFailure`. Three defects review found before this landed are worth
-keeping in mind when changing it: a window whose renderer failed to load must be
-disposed rather than left in the singleton, the mount-time read must not be
-allowed to overwrite a newer pushed message, and "signed out" here means no
-session rather than no workspace. Each is stated as an invariant above because
-each is invisible until the rare path runs.
+`reportDeepLinkFailure`. Six defects review found before this landed are worth
+keeping in mind when changing it, and four of the five are lifecycle races around
+the singleton: a window whose renderer failed to load must be disposed rather
+than left in place; the window must be released on `close` rather than `closed`,
+or a report arriving in the gap is accepted and then discarded; the re-show
+branch must not raise a window that has not painted; and the mount-time read must
+not overwrite a newer pushed message; and Continue must acknowledge the notice
+it is showing by id rather than closing whatever is open, or a failure reported
+while the person was reading is closed away unseen and reported as delivered.
+The last is that "signed out" here means no session rather than no workspace. Each is stated as an invariant above,
+because a singleton that is created before it loads and torn down in two steps
+has more reachable states than it looks like it has, and every one of these is
+invisible until its path runs.
