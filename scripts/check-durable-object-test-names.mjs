@@ -40,15 +40,20 @@ export const workersSuiteDirectory = resolve(repositoryDirectory, "apps/api/test
  * for a `WorkspaceDO` is minted from a literal, so matching its argument finds
  * the declarations without needing to parse TypeScript.
  */
-const WORKSPACE_ID_LITERAL = /asWorkspaceId\(\s*["'`]([0-9a-fA-F-]{36})["'`]\s*\)/gu;
+// The optional trailing comma is the multiline-call shape a formatter writes.
+const WORKSPACE_ID_LITERAL = /asWorkspaceId\(\s*["'`]([0-9a-fA-F-]{36})["'`]\s*,?\s*\)/gu;
 
 export function workspaceIdLiterals(text) {
+  // Matched over the whole source, not line by line: `asWorkspaceId(` and its
+  // argument can be split across lines by ordinary formatting, and a
+  // per-line match would let exactly the collision this script exists to
+  // catch slip through unformatted. The line number is derived from the
+  // match offset.
   const found = [];
-  text.split("\n").forEach((line, index) => {
-    for (const match of line.matchAll(WORKSPACE_ID_LITERAL)) {
-      found.push({ line: index + 1, id: match[1] });
-    }
-  });
+  for (const match of text.matchAll(WORKSPACE_ID_LITERAL)) {
+    const line = text.slice(0, match.index).split("\n").length;
+    found.push({ line, id: match[1] });
+  }
   return found;
 }
 
@@ -85,7 +90,10 @@ export async function check(directory = workersSuiteDirectory) {
 async function main() {
   const found = await check();
   if (found.length === 0) {
-    console.log("Every workerd test file that names a workspace object names its own.");
+    console.log(
+      "No workspace id literal is spelled out by more than one workerd test file. "
+        + "(Ids imported from helpers/ are shared on purpose and are not compared.)",
+    );
     return;
   }
   throw new Error(

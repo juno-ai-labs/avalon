@@ -4,7 +4,12 @@ import { ApiError } from './api';
 import type * as DraftCache from './draft-cache';
 import { clearAllDrafts, readDraftAttachments } from './draft-cache';
 
-/** Lets one test hold the cache read open until the drop it races has landed. */
+/**
+ * Lets one test hold the cache read open until the drop it races has landed.
+ * Module-scoped because Vitest hoists `vi.mock` above the imports; the factory
+ * closes over the live binding and reads it at call time, so each test's
+ * assignment is what the mocked read sees.
+ */
 let holdRead: Promise<void> | undefined;
 vi.mock('./draft-cache', async (importOriginal) => {
   const actual = await importOriginal<typeof DraftCache>();

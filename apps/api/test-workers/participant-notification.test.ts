@@ -44,8 +44,12 @@ const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
 const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
 
-/** How long a canonical-turn probe waits; well inside the callers' own budget. */
-const POLL_BUDGET_MS = 4_000;
+/**
+ * A wall-clock budget: the probes spend Durable Object round trips out of it,
+ * so it is sized for a contended run, not for the promotion itself — and it
+ * stays well inside the suite's 30s test budget so its own failure reports.
+ */
+const POLL_BUDGET_MS = 10_000;
 
 const AUTH: AuthContext = {
   sessionId: SESSION_ID,
@@ -206,9 +210,9 @@ async function openWorkstream(
  * beat later, so canonical rows — the turn, its mentions, the seat a confirmed
  * target gets — are not observable the instant `create_message` returns.
  *
- * Every caller widens its own `it()` past the suite's 5s default, which also
- * covers `openWorkstream`, the request and the assertions: without that the
- * harness deadline preempts this poll's legible failure with an opaque one.
+ * The suite's 30s test budget also covers each caller's `openWorkstream`,
+ * request and assertions, so this poll's tighter budget is what fails
+ * legibly when promotion never lands.
  */
 async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Promise<void> {
   // Read-only, so the probe can neither advance nor duplicate the promotion; a
@@ -746,7 +750,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ))).toHaveLength(1);
-  }, 10_000);
+  });
 
   it("seats the accepted target and emits only the specific mention notification", async () => {
     const stub = agentStub();
@@ -789,7 +793,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
       envelope.effect.kind === "participant_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
     ))).toHaveLength(0);
-  }, 10_000);
+  });
 
   it("does not let confirmation seat the raw target of a rejected mention", async () => {
     const stub = agentStub();
@@ -824,7 +828,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         INVITEE_ID,
       ).one().count).toBe(0);
     });
-  }, 10_000);
+  });
 });
 
 describe("answering an elicitation in the ordered transcript", () => {
