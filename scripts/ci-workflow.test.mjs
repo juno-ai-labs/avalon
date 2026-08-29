@@ -149,3 +149,47 @@ test('CI still runs every repository quality gate', async () => {
     'CI must retain the workers suite across two shards',
   );
 });
+
+// A lane's `env:` is inert until the run step names it. Actions gives a matrix
+// key called `env` no meaning of its own — it is a variable like any other — so
+// a ceiling declared only in the matrix entry never reaches the process, and
+// nothing above would notice: every assertion here is about `command`. That is
+// how `NODE_OPTIONS: --max-old-space-size=8192` sat on the lint and typecheck
+// lanes without applying to either.
+test('a lane env: reaches the process that runs its command', async () => {
+  const workflow = await readWorkflow();
+  const runStep = workflow.match(
+    /^ {6}- name: Run \$\{\{ matrix\.name \}\}\n(?<body>(?:^ {8}.*\n)+)/mu,
+  );
+
+  assert.ok(runStep, 'CI must run each lane through one matrix-driven step');
+  assert.match(
+    runStep.groups.body,
+    /^ {8}env:\n {10}NODE_OPTIONS: \$\{\{ matrix\.env\.NODE_OPTIONS \}\}$/mu,
+    'the run step must name matrix.env.NODE_OPTIONS, or a lane env: does nothing',
+  );
+
+  const include = workflow.match(/^ {8}include:\n(?<body>(?:^ {10}.*\n)+)/mu);
+  assert.ok(include, 'CI must define a matrix include block');
+
+  // The forwarder above only matters while a lane still opts in. These two
+  // carry the ceiling, and an entry losing its `env:` is what the whole defect
+  // looked like: a number in the file that never reaches a process.
+  for (const lane of ['lint', 'typecheck-and-build-invariants']) {
+    assert.match(
+      include.groups.body,
+      new RegExp(`^ {10}- name: ${lane}\\n {12}env:\\n {14}NODE_OPTIONS: --max-old-space-size=\\d+$`, 'mu'),
+      `the ${lane} lane must declare the NODE_OPTIONS the run step forwards`,
+    );
+  }
+
+  for (const entry of include.groups.body.split(/^ {10}- /mu).slice(1)) {
+    const declared = entry.match(/^ {12}env:\n(?<body>(?:^ {14}.+\n)+)/mu);
+    if (!declared) continue;
+    assert.deepEqual(
+      declared.groups.body.trimEnd().split('\n').map((line) => line.trim().split(':')[0]),
+      ['NODE_OPTIONS'],
+      'the run step forwards NODE_OPTIONS only; another lane env: key would be inert',
+    );
+  }
+});

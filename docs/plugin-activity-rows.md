@@ -284,10 +284,14 @@ now owns the subject.
 **Why:** The string package's per-icon declaration imports a type from its own
 index, so eight icon imports pulled **all ~6,500 brand declarations** into the
 TypeScript program — the desktop renderer went from 575 files to 7,095, 92% of
-them icon types. Type-aware linting holds that program per worker, and a cold
+them icon types. Type-aware linting held that program per worker, and a cold
 `pnpm lint` on CI died with `JavaScript heap out of memory`. It passed locally
 only because `pnpm lint` caches and CI runs cold, which is the divergence
-`AGENTS.md` warns about. The `@thesvg/react` per-icon declarations import only
+`AGENTS.md` warns about. Lint no longer builds that program — `projectService` is
+scoped to `apps/api/src`, see
+[dev-environment.md](dev-environment.md#what-pnpm-lint-costs-in-memory) — so the
+barrel is a `pnpm typecheck` and editor cost now rather than a lint one. The rule
+stands either way. The `@thesvg/react` per-icon declarations import only
 from `react`: the program is 583 files again.
 
 **Considered and rejected:** Keeping the mask and vendoring the eight SVGs into

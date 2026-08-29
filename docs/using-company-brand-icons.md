@@ -32,13 +32,19 @@ import type { IconModule } from "./index.js";
 That index is the barrel over every brand, so **anything that reaches it pulls
 all ~6,500 icon declarations into the TypeScript program**. Eight icon imports
 took the desktop renderer's program from 575 files to 7,095 — 92% of it icon
-types — and a cold `pnpm lint`, which is type-aware through `projectService`,
-went from about 6.1 GB to 7.9 GB peak and ran out of heap on CI:
+types — and the cold `pnpm lint` that then built that program went from about
+6.1 GB to 7.9 GB peak and ran out of heap on CI:
 
 ```
 FATAL ERROR: Ineffective mark-compacts near heap limit
 Allocation failed - JavaScript heap out of memory
 ```
+
+Lint no longer builds that program: `projectService` is scoped to
+`apps/api/src` ([why](dev-environment.md#what-pnpm-lint-costs-in-memory)), so
+the renderer is parsed syntactically. The barrel still costs exactly this much —
+`pnpm typecheck` and every editor's language service now carry it instead, and
+neither has lint's cache to hide it. The rule below is unchanged.
 
 The `@thesvg/react` per-icon declarations import only from `react`, so
 `@thesvg/react/github` costs what it looks like. The barrel form of that package
