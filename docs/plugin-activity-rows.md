@@ -82,8 +82,10 @@ before the mapping learns about it.
 
 ### The marks
 
-A company draws its own mark, from [`thesvg`](https://www.npmjs.com/package/thesvg)
-— an MIT-licensed set of about 6,500 brand SVGs. Rally's own mark, the two
+A company draws its own mark, from `@thesvg/react`.
+[`using-company-brand-icons.md`](using-company-brand-icons.md) owns that — where
+a mark comes from, why it is imported one subpath at a time, and why it is
+monochrome. Rally's own mark, the two
 virtual groups, the public web, and an unbranded webhook are not companies and
 keep their existing artwork.
 
@@ -269,6 +271,44 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-08-29 — Marks come from `@thesvg/react`, one subpath at a time
+
+**What changed:** The brand marks moved from the `thesvg` string package, drawn
+as CSS masks, to `@thesvg/react` components imported one subpath at a time. A
+lint rule bans the barrel form, and
+[`using-company-brand-icons.md`](using-company-brand-icons.md) is the note that
+now owns the subject.
+
+**Why:** The string package's per-icon declaration imports a type from its own
+index, so eight icon imports pulled **all ~6,500 brand declarations** into the
+TypeScript program — the desktop renderer went from 575 files to 7,095, 92% of
+them icon types. Type-aware linting holds that program per worker, and a cold
+`pnpm lint` on CI died with `JavaScript heap out of memory`. It passed locally
+only because `pnpm lint` caches and CI runs cold, which is the divergence
+`AGENTS.md` warns about. The `@thesvg/react` per-icon declarations import only
+from `react`: the program is 583 files again.
+
+**Considered and rejected:** Keeping the mask and vendoring the eight SVGs into
+the repository, which also removes the type cost. It loses the reason to have
+the package at all — the next connector's mark being free — and puts artwork in
+the tree that nobody would remember to update. Also rejected: rendering the
+`default` variant for every brand, which avoids the SVG `<title>` the `mono` art
+carries. Google's default art has 19 element ids and 18 `url(#…)` references and
+two Google cards share the Settings page, so that trades a title for duplicated
+ids; the title is handled instead, by ignoring it in text queries and killing
+its tooltip.
+
+**Consequences:** A barrel import of `@thesvg/react`, `@thesvg/icons`, or
+`thesvg` is a lint error, because the cost is invisible to the person who writes
+it. `PLUGIN_BRAND_MARKS` now records which brands ship `mono` art, so a brand
+that gains or loses it upstream fails the table rather than the render.
+`dangerouslySetInnerHTML` is no longer even a question here — the components
+build real elements — but it stays absent from this renderer. The renderer's
+test setup ignores `title` in text queries; a component that puts real page text
+in one would now be missed.
+
+Shipped in #412.
 
 ### 2026-08-29 — Four defects review found in the grouped row
 

@@ -1,37 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import google from 'thesvg/google';
-import slack from 'thesvg/slack';
-import { PLUGIN_BRAND_MARKS, connectorBrandMark } from './plugin-marks';
-
-const decode = (mask: string): string =>
-  decodeURIComponent(mask.replace(/^url\("data:image\/svg\+xml,/u, '').replace(/"\)$/u, ''));
+import { PLUGIN_BRAND_MARKS, connectorBrandMark, isPluginBrandMark } from './plugin-marks';
 
 describe('PLUGIN_BRAND_MARKS', () => {
-  it('hands CSS a mask rather than markup for every brand', () => {
-    for (const [slug, mask] of Object.entries(PLUGIN_BRAND_MARKS)) {
-      expect(mask, slug).toMatch(/^url\("data:image\/svg\+xml,/u);
-      expect(decode(mask), slug).toContain('<svg');
+  it('gives every brand a component of its own', () => {
+    const marks = Object.entries(PLUGIN_BRAND_MARKS);
+    expect(marks.length).toBeGreaterThan(0);
+    // A shared component would mean two companies drawing the same mark.
+    expect(new Set(marks.map(([, brand]) => brand.Mark)).size).toBe(marks.length);
+  });
+
+  it('records which brands ship single-colour art', () => {
+    // Six do. Slack and Granola do not — their variant unions are
+    // `default | wordmark` and `default | light | dark` — so they render their
+    // palette and `.connector-mark` recolours it. If this flips upstream the
+    // table stops typechecking, which is the point of recording it.
+    expect(PLUGIN_BRAND_MARKS.slack.mono).toBe(false);
+    expect(PLUGIN_BRAND_MARKS.granola.mono).toBe(false);
+    for (const slug of ['github', 'google', 'google-drive', 'linear', 'notion', 'x'] as const) {
+      expect(PLUGIN_BRAND_MARKS[slug].mono, slug).toBe(true);
     }
   });
 
-  it('prefers the monochrome art, because a mask reads only alpha', () => {
-    // Google's colour mark is a solid four-colour silhouette; masked, it is a
-    // filled blob rather than the outlined G. Its mono variant is the outline,
-    // and every brand that ships one is treated the same way.
-    expect(decode(PLUGIN_BRAND_MARKS.google)).toBe(google.variants['mono']);
-    expect(decode(PLUGIN_BRAND_MARKS.google)).not.toBe(google.svg);
-  });
-
-  it('falls back to the colour art for a brand that ships no monochrome variant', () => {
-    // Slack's colour art is four flat paths whose alpha is the same shape a
-    // monochrome treatment would be, so the mask loses nothing.
-    expect(slack.variants['mono']).toBeUndefined();
-    expect(decode(PLUGIN_BRAND_MARKS.slack)).toBe(slack.svg);
-  });
-
-  it('draws a different mark for every brand', () => {
-    const marks = Object.values(PLUGIN_BRAND_MARKS);
-    expect(new Set(marks).size).toBe(marks.length);
+  it('narrows a company name apart from the shapes no company owns', () => {
+    expect(isPluginBrandMark('slack')).toBe(true);
+    expect(isPluginBrandMark('computer')).toBe(false);
+    expect(isPluginBrandMark('webhook')).toBe(false);
   });
 });
 
@@ -47,7 +40,7 @@ describe('connectorBrandMark', () => {
     for (const connectorType of adapters) {
       const mark = connectorBrandMark(connectorType);
       expect(mark, connectorType).not.toBeNull();
-      expect(PLUGIN_BRAND_MARKS[mark!], connectorType).toBeDefined();
+      expect(PLUGIN_BRAND_MARKS[mark!].Mark, connectorType).toBeDefined();
     }
   });
 
