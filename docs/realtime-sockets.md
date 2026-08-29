@@ -669,9 +669,12 @@ side being authorized. They are unchanged values, moved.
 **What a future change has to respect:** the ticket stays consumed when
 admission is refused for concurrency. It was spent on that attempt, and
 returning it would turn one ticket into two admissions. Both tables stay named
-in `WORKSPACE_LOCAL_TABLES` even though nothing routes to them any more, so an
-accidental generic statement reaches the object's refusal rather than D1's
-`no such table`.
+in `WORKSPACE_LOCAL_TABLES` so an accidental generic statement reaches the
+object rather than falling through to regional D1, and both are now also in
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, so the object refuses such a statement by
+name instead of executing it. The two lists do different jobs and a table needs
+both: the first decides where a statement goes, the second decides whether it
+is allowed to be generic at all.
 
 ### 2026-08-28 — A fifth audience admits the automation draft room
 
