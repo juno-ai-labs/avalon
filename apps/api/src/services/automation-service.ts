@@ -16,6 +16,7 @@ import { asWorkspaceId } from "@rally/contracts";
 import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceAutomationTemplateListSchema,
+  WorkspaceAutomationTemplateOwnershipSchema,
   WorkspaceAutomationTemplateVersionResultSchema,
 } from "../durable-objects/workspace-automation-template-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -113,6 +114,21 @@ export class AutomationService {
   }
 
   async addTemplateVersion(templateId: string, draft: AutomationDraft) {
+    // Authorization before validation. The write below fences on ownership
+    // too, but by then the draft's connectors have been checked — and a
+    // template that is missing, archived, or somebody else's would answer with
+    // a connector error rather than the 404 this endpoint has always given,
+    // telling a caller about connector state they have no claim on.
+    const ownership = WorkspaceAutomationTemplateOwnershipSchema.parse(
+      await (await this.workspace()).automationTemplateOwnership({
+        workspaceId: this.auth.workspaceId,
+        templateId,
+        ownerUserId: this.auth.userId,
+      }),
+    );
+    if (!ownership.owned) {
+      throw new ApiError(404, "template_not_found", "Automation template not found");
+    }
     const activitySourcePluginIds = suggestedActivitySourcePluginIds(draft.triggers);
     const connectorSelection = await this.validateConnectorSelections(
       draft.suggestedScope,

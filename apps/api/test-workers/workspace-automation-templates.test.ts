@@ -148,13 +148,52 @@ describe("automation template gallery", () => {
     expect(items[0]?.latestVersionNumber).toBe(2);
   });
 
+  it("reports ownership before a caller's draft is looked at", async () => {
+    // The preflight the service asks first. Without it, adding a version to a
+    // template that is missing, archived, or somebody else's answers with a
+    // connector error from validating the draft — a different status than the
+    // endpoint has ever given, and one that describes connector state the
+    // caller has no claim on.
+    await publish();
+    const ownership = (input: { templateId?: string; ownerUserId?: string }) =>
+      workspace().automationTemplateOwnership({
+        workspaceId: WORKSPACE_ID,
+        templateId: input.templateId ?? TEMPLATE,
+        ownerUserId: input.ownerUserId ?? OWNER,
+      });
+    expect(await ownership({})).toEqual({ owned: true });
+    expect(await ownership({ ownerUserId: OTHER_MEMBER })).toEqual({ owned: false });
+    expect(await ownership({ templateId: "00000000-0000-7000-8000-000000000bbf" }))
+      .toEqual({ owned: false });
+  });
+
+  it("stops reporting ownership once the template is archived", async () => {
+    await publish();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE automation_templates SET archived_at = ? WHERE id = ?`,
+        AT,
+        TEMPLATE,
+      );
+    });
+    expect(await workspace().automationTemplateOwnership({
+      workspaceId: WORKSPACE_ID,
+      templateId: TEMPLATE,
+      ownerUserId: OWNER,
+    })).toEqual({ owned: false });
+  });
+
   it("refuses a request addressed to a different workspace", async () => {
-    // Settled once, by hand: an RPC promise is a pipelining thenable, and
-    // `rejects.toThrow` reads through it a second time, which surfaces the same
-    // rejection again as an unhandled error and fails the run.
-    const outcome = await workspace().listAutomationTemplates({
-      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000bae"),
-    }).then(() => null, (error: unknown) => error);
+    // Called on the instance rather than through a stub. An RPC call returns a
+    // pipelining proxy that rejects separately from the promise the assertion
+    // attaches to, so a refusal asserted over RPC leaves that second rejection
+    // unhandled — noise in every run of this file, and a failure the day the
+    // runner treats those as fatal. The subject is `assertWorkspace`, not the
+    // transport.
+    const outcome = await runInDurableObject(workspace(), async (instance) =>
+      instance.listAutomationTemplates({
+        workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000bae"),
+      }).then(() => null, (error: unknown) => error));
     expect(String(outcome)).toContain("workspace_object_identity_mismatch");
   });
 });

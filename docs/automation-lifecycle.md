@@ -543,6 +543,15 @@ number and both wrote it, and `UNIQUE (template_id, version_number)` refused
 the second — a 500 with nothing in it a person could act on. Inside the object
 the read and the bump are one critical section, so the numbers are consecutive.
 
+`automationTemplateOwnership` is a preflight the service asks before it
+validates a draft's connectors. Moving the write into the object had put the
+ownership fence after that validation, so adding a version to a template that
+is missing, archived, or somebody else's answered with a connector error
+instead of the 404 the endpoint has always given — a changed contract, and one
+that describes connector state to a caller with no claim on the template. The
+transactional write still fences on ownership; the preflight decides only what
+is said.
+
 **Considered and rejected:** returning the gallery already joined to author
 names. The object has no `users` table and no business acquiring one; asking
 it to would put a regional identity read behind a workspace-product method.

@@ -95,16 +95,27 @@ export const WorkspaceTerminalPolicyClaimRequestSchema = z.object({
  * `restoreCurrentPolicy` compensation. One transaction cannot half-succeed, so
  * a refusal here means nothing was written and there is nothing to undo.
  */
-export const WorkspaceTerminalPolicyClaimResultSchema = z.object({
-  outcome: z.enum(["claimed", "preview_stale", "revision_conflict"]),
-  mutation: z.object({
-    proposedMode: TerminalNetworkModeSchema,
-    proposedDomains: z.array(z.string().min(1)),
-    effectiveDomains: z.array(z.string().min(1)),
-  }).strict().nullable(),
-  /** The policy as it stood when the claim was decided. */
-  current: WorkspaceTerminalNetworkPolicySchema.nullable(),
-  currentCustomDomains: z.array(z.string().min(1)),
+export const WorkspaceTerminalPolicyClaimResultSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("claimed"),
+    mutation: z.object({
+      proposedMode: TerminalNetworkModeSchema,
+      proposedDomains: z.array(z.string().min(1)),
+      effectiveDomains: z.array(z.string().min(1)),
+    }).strict(),
+    /** The policy as it stood when the claim was taken. */
+    current: WorkspaceTerminalNetworkPolicySchema,
+    currentCustomDomains: z.array(z.string().min(1)),
+  }).strict(),
+  // One member per outcome rather than an enum in a single member: the
+  // discriminant has to be a literal for a caller to narrow past a refusal to
+  // the branch that carries the mutation.
+  z.object({ outcome: z.literal("preview_stale") }).strict(),
+  z.object({ outcome: z.literal("revision_conflict") }).strict(),
+]);
+
+export const WorkspaceTerminalPolicySettlementResultSchema = z.object({
+  outcome: z.enum(["settled", "stale"]),
 }).strict();
 
 export const WorkspaceTerminalPolicyFailRequestSchema = z.object({
@@ -141,6 +152,9 @@ export type WorkspaceTerminalPolicyClaimRequest = z.infer<
 >;
 export type WorkspaceTerminalPolicyClaimResult = z.infer<
   typeof WorkspaceTerminalPolicyClaimResultSchema
+>;
+export type WorkspaceTerminalPolicySettlementResult = z.infer<
+  typeof WorkspaceTerminalPolicySettlementResultSchema
 >;
 export type WorkspaceTerminalPolicyFailRequest = z.infer<
   typeof WorkspaceTerminalPolicyFailRequestSchema

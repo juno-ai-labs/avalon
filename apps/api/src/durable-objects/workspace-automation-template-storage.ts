@@ -1,7 +1,10 @@
 import {
   WorkspaceAutomationTemplateListSchema,
+  WorkspaceAutomationTemplateOwnershipSchema,
   WorkspaceAutomationTemplateVersionResultSchema,
   type WorkspaceAutomationTemplateList,
+  type WorkspaceAutomationTemplateOwnership,
+  type WorkspaceAutomationTemplateOwnershipRequest,
   type WorkspaceAutomationTemplatePublishRequest,
   type WorkspaceAutomationTemplateVersionRequest,
   type WorkspaceAutomationTemplateVersionResult,
@@ -75,6 +78,21 @@ export function listWorkspaceAutomationTemplates(
       triggerDefinitionsJson: row.trigger_definitions_json,
     })),
   });
+}
+
+/** Whether this person owns an active template with this id. */
+export function workspaceAutomationTemplateOwnership(
+  storage: DurableObjectStorage,
+  request: WorkspaceAutomationTemplateOwnershipRequest,
+): WorkspaceAutomationTemplateOwnership {
+  const row = storage.sql.exec<{ id: string }>(
+    `SELECT id FROM automation_templates
+      WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
+    request.templateId,
+    request.workspaceId,
+    request.ownerUserId,
+  ).toArray()[0];
+  return WorkspaceAutomationTemplateOwnershipSchema.parse({ owned: row !== undefined });
 }
 
 /** Publish a template and its first version, or neither. */
