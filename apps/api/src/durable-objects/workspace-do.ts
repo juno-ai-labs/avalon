@@ -156,6 +156,8 @@ import {
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceDirectoryVisibilityRequestSchema,
+  WorkspaceAutomationOriginLabelRequestSchema,
+  WorkspaceAutomationOriginLabelSchema,
   WorkspaceDirectoryVisibleIdsRequestSchema,
   WorkspaceDirectoryVisibleIdsPageSchema,
   WorkspaceRegionalEffectApplyRequestSchema,
@@ -190,6 +192,8 @@ import {
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
   type WorkspaceDirectoryVisibilityRequest,
+  type WorkspaceAutomationOriginLabel,
+  type WorkspaceAutomationOriginLabelRequest,
   type WorkspaceDirectoryVisibleIdsRequest,
   type WorkspaceDirectoryVisibleIdsPage,
   type WorkspaceRegionalEffectApplyRequest,
@@ -5376,6 +5380,35 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).one();
       return WorkspaceBatchDispatchAdvanceResultSchema.parse({ remainingCount: remaining.count });
     });
+  }
+
+  /**
+   * The title to show as a generated work stream's origin label.
+   *
+   * WorkstreamDO renders the summary and does not hold the automation's
+   * directory row. It used to read it as SQL through the workspace runtime
+   * facade, which routes by table name and sends an unrecognised one to the
+   * regional database — which is how this read came to answer
+   * `no such table: automation_directory` on every attempt to open an
+   * automation's run work stream.
+   *
+   * A deleted automation answers `null` rather than its last title: the work
+   * stream outlives the automation that made it, and the label should go quiet
+   * rather than name something the workspace no longer has.
+   */
+  async automationOriginLabel(
+    input: WorkspaceAutomationOriginLabelRequest,
+  ): Promise<WorkspaceAutomationOriginLabel> {
+    await this.initialized;
+    const request = WorkspaceAutomationOriginLabelRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ title: string }>(
+      `SELECT title FROM automation_directory
+        WHERE automation_id = ? AND workspace_id = ? AND lifecycle <> 'deleted'`,
+      request.automationId,
+      request.workspaceId,
+    ).toArray()[0];
+    return WorkspaceAutomationOriginLabelSchema.parse({ title: row?.title ?? null });
   }
 
   async canReadWorkstream(input: WorkspaceDirectoryVisibilityRequest): Promise<boolean> {

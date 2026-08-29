@@ -72,12 +72,13 @@ export const WORKSPACE_LOCAL_TABLES = [
   "workspace_sandbox_network_policies",
   "workspace_sandbox_network_domains",
   "workspace_sandbox_network_policy_mutations",
-  // WorkspaceDO migration 22. Reached from *outside* the object — the work
-  // stream summary in `workstream-object-product.ts` reads an automation's
-  // title for its origin label — and `localStatement` routes a statement that
-  // names no table on this list to the regional database. Missing here, that
-  // read went to D1 and answered `no such table: automation_directory`, which
-  // surfaced as a 500 on every attempt to open an automation's run work stream.
+  // WorkspaceDO migration 22. No statement names it through this facade any
+  // more — the work stream summary's origin-label read became
+  // `workstreamSummaryContext` on WorkspaceDO — but the entry stays for the
+  // same reason as the typed-RPC-only names below: while it was missing, that
+  // read took this router's regional fallthrough and answered `no such table:
+  // automation_directory` from D1, a 500 on every attempt to open an
+  // automation's run work stream. A name on this list cannot fail that way.
   "automation_directory",
   "automation_subscriptions",
   "automation_runs",

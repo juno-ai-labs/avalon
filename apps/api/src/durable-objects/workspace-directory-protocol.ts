@@ -136,6 +136,32 @@ export const WorkspaceDirectoryPlannedAutomationRequestSchema = z.object({
   plannedFor: TimestampSchema,
 }).strict();
 
+/**
+ * An automation's current title, for the origin label on a work stream it made.
+ *
+ * The work stream lives in its own object and the automation's directory row
+ * lives in the workspace's, so this crosses. It used to cross as SQL through
+ * the workspace runtime facade, which routes a statement by the table names in
+ * it and sends anything it does not recognise to the regional database:
+ * `automation_directory` was missing from that allowlist, so the read was
+ * answered by D1 with `no such table` and every attempt to open an
+ * automation's run work stream returned 500. A method names its tables in the
+ * object that has them, and cannot be routed anywhere else.
+ */
+export const WorkspaceAutomationOriginLabelRequestSchema = z.object({
+  workspaceId: IdSchema,
+  automationId: IdSchema,
+}).strict();
+
+export const WorkspaceAutomationOriginLabelSchema = z.object({
+  /**
+   * The automation's title, or null when the workspace has no live directory
+   * row for it. The caller truncates for display; this carries what the
+   * directory holds.
+   */
+  title: z.string().nullable(),
+}).strict();
+
 export const WorkspaceDirectoryPinRequestSchema = WorkspaceDirectoryVisibilityRequestSchema;
 
 export const WorkspaceDirectoryReorderPinsRequestSchema = z.object({
@@ -361,6 +387,10 @@ export type WorkspaceDirectoryPlannedRequest = z.infer<typeof WorkspaceDirectory
 export type WorkspaceDirectoryPlannedAutomationRequest = z.infer<
   typeof WorkspaceDirectoryPlannedAutomationRequestSchema
 >;
+export type WorkspaceAutomationOriginLabelRequest = z.infer<
+  typeof WorkspaceAutomationOriginLabelRequestSchema
+>;
+export type WorkspaceAutomationOriginLabel = z.infer<typeof WorkspaceAutomationOriginLabelSchema>;
 export type WorkspaceDirectoryPinRequest = z.infer<typeof WorkspaceDirectoryPinRequestSchema>;
 export type WorkspaceDirectoryReorderPinsRequest = z.infer<typeof WorkspaceDirectoryReorderPinsRequestSchema>;
 export type WorkspaceDirectoryNotificationRequest = z.infer<typeof WorkspaceDirectoryNotificationRequestSchema>;

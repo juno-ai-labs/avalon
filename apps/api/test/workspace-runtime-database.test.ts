@@ -59,13 +59,13 @@ describe("workspace runtime database routing", () => {
   });
 
   it("routes an automation's origin label to the object that holds the directory", () => {
-    // The work stream summary reads an automation's title for its origin label,
-    // and this is the one statement that names `automation_directory` alone.
-    // `localStatement` sends anything naming no listed table to the regional
-    // database, so while the table was missing from `WORKSPACE_LOCAL_TABLES`
-    // this read answered `no such table: automation_directory` from D1 — a 500
-    // on every attempt to open an automation's run work stream, which is how it
-    // reached production.
+    // The statement the work stream summary used to issue. It now calls
+    // `workstreamSummaryContext` on WorkspaceDO instead, so nothing sends this
+    // through the facade — but the routing entry stays, and this holds it
+    // there. While `automation_directory` was missing from
+    // `WORKSPACE_LOCAL_TABLES` the read took the regional fallthrough and
+    // answered `no such table: automation_directory` from D1, a 500 on every
+    // attempt to open an automation's run work stream.
     expect(__workspaceRuntimeDatabaseTesting.localStatement(
       `SELECT title AS name FROM automation_directory
         WHERE automation_id = ? AND workspace_id = ? AND lifecycle <> 'deleted'`,
