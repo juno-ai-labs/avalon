@@ -1015,6 +1015,43 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-29 — `runHarness` imports the Bind runtime statically
+
+**What changed:** `runHarness` in `packages/agent-harness/src/index.ts` calls
+`runHarnessWithBind` through a static import instead of
+`await import("./bind-runtime")`.
+
+**Why:** the dynamic form never settled under
+`@cloudflare/vitest-pool-workers`. The import promise stayed pending past 36
+seconds while a 2-second timer kept firing in the same isolate — so the isolate
+was alive and the module load simply never completed, rather than being slow.
+Every workers test that let a run reach inference therefore hung inside
+`runHarness` and failed as a timeout on some later, unrelated assertion. That
+made the whole class of run-completing tests impossible to write, which is what
+`participant-notification.test.ts` ran into.
+
+**What was rejected:** leaving the dynamic form and warming the module from the
+test. There is no exported path to `bind-runtime` to warm, and it would have
+left the same trap armed for the next person.
+
+**Why the lazy form existed is not recorded.** The line arrives with the
+repository's initial import and carries no rationale, and no comment, commit
+message, or document explains it. The plausible reason is the Workers startup
+CPU budget — `bind-runtime` is large, and a dynamic import defers evaluating it
+until a run actually needs it. That is a guess and is written here as one. **A
+change that needs the lazy form back must establish its reason afresh** and
+verify it against this failure, rather than restoring it on the strength of this
+note.
+
+**What a future change has to respect:** `bind-runtime` imports seven runtime
+values back from `index` (`OpenRouterClient`, `OpenRouterError`,
+`HarnessPluginActivationError`, `canonicalToolInputHash`,
+`modelMessageWithoutProvenance`, `AVALON_DISCOVERY_PLUGIN_ID`,
+`AVALON_DISCOVERY_TOOL_DEFINITIONS`), so the two modules are now a static cycle.
+It is sound only because all seven are read inside function bodies rather than
+at module top level. Moving any of them into top-level initialization on either
+side breaks the cycle at load time.
+
 ### 2026-08-29 — Workspace memory becomes typed WorkspaceDO methods, and the retired automation union fails by name
 
 **What changed:** Every statement the memory services ran against the
