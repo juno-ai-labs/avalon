@@ -1,5 +1,6 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it, vi } from "vitest";
+import { neverAborts } from "./test-signals";
 import {
   createSlackConnector,
   joinAllSlackPublicChannels,
@@ -41,7 +42,7 @@ describe("Slack connector", () => {
     const refusal = await adapter.executeTool("create_canvas", { title: "Notes" }, {
       connection: slackWorkspaceToolConnection(),
       principal: { type: "workspace", workspaceId: asWorkspaceId("8f7c6014-d46d-4285-8eb2-cac59f1b301c") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     }).then(
       () => { throw new Error("A tool the connection cannot call must be refused"); },
       (error: unknown) => error as ConnectorError,
@@ -475,14 +476,14 @@ describe("Slack connector", () => {
       config: {},
     });
 
-    await expect(adapter.dynamicAgentTools!.discover(connection, AbortSignal.timeout(1_000)))
+    await expect(adapter.dynamicAgentTools!.discover(connection, neverAborts()))
       .rejects.toMatchObject({ code: "unsupported_capability" });
     expect(fetcher).not.toHaveBeenCalled();
 
     await expect(adapter.executeTool("read_user_profile", { user_id: "UALEX" }, {
       connection,
       principal: { type: "user", userId: asUserId("8046c3d3-4e9c-458b-8edb-653be8b809c9") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).resolves.toMatchObject({ output: { user: { id: "UALEX" } } });
     expect(fetcher).toHaveBeenCalledOnce();
   });
@@ -528,7 +529,7 @@ describe("Slack connector", () => {
 
     await expect(slackApi("xoxb", "conversations.info", {
       channel: "CPUBLIC",
-    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+    }, neverAborts(), fetcher)).resolves.toMatchObject({
       channel: { id: "CPUBLIC", is_private: false },
     });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -557,7 +558,7 @@ describe("Slack connector", () => {
       channel: "C1",
       ts: "1.0",
       limit: 15,
-    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+    }, neverAborts(), fetcher)).resolves.toMatchObject({
       messages: [
         { user: "U1", text: "<@UBOT> investigate" },
         { user: "UBOT", text: "Not yet" },
@@ -596,7 +597,7 @@ describe("Slack connector", () => {
       latest: "1786130000.000100",
       inclusive: false,
       limit: 8,
-    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+    }, neverAborts(), fetcher)).resolves.toMatchObject({
       messages: [{ user: "UALEX", files: [{ id: "FBRIEF" }] }],
     });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -698,7 +699,7 @@ describe("Slack connector", () => {
     await expect(adapter.refreshCredentials!({
       ...slackWorkspaceConnection(),
       credentials: { botAccessToken: "xoxe.xoxb-old", refreshToken: "xoxe-current" },
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({
+    }, neverAborts())).resolves.toMatchObject({
       botAccessToken: "xoxe.xoxb-new",
       refreshToken: "xoxe-next",
       expiresAt: "2026-08-07T04:00:00.000Z",
@@ -726,7 +727,7 @@ describe("Slack connector", () => {
     await expect(adapter.refreshCredentials!({
       ...slackWorkspaceConnection(),
       credentials: { botAccessToken: "xoxe.xoxb-old", refreshToken: "xoxe-current" },
-    }, AbortSignal.timeout(1_000))).rejects.toMatchObject({
+    }, neverAborts())).rejects.toMatchObject({
       code: "unauthorized",
       details: { missingScopes: [missingScope] },
     });
@@ -744,7 +745,7 @@ describe("Slack connector", () => {
     await expect(adapter.refreshCredentials!({
       ...slackWorkspaceConnection(),
       credentials: { botAccessToken: "xoxe.xoxb-old", refreshToken: "xoxe-invalid" },
-    }, AbortSignal.timeout(1_000))).rejects.toMatchObject({
+    }, neverAborts())).rejects.toMatchObject({
       code: "unauthorized",
       message: "invalid_refresh_token",
       // The name of this test was the only place the verdict appeared. Slack
@@ -792,7 +793,7 @@ describe("Slack connector", () => {
 
     await expect(joinAllSlackPublicChannels(
       "xoxb-test",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
       fetcher,
     )).resolves.toEqual({ joined: 1, alreadyMember: 2, skipped: 2, complete: true });
     expect(requests.filter(({ method }) => method === "conversations.list")).toEqual([
@@ -816,7 +817,7 @@ describe("Slack connector", () => {
 
     await expect(joinAllSlackPublicChannels(
       "xoxb-test",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
       fetcher,
     )).resolves.toEqual({
       joined: 0,
@@ -831,7 +832,7 @@ describe("Slack connector", () => {
     const fetcher: FetchLike = vi.fn(async () => json({ ok: false, error: "ratelimited" }));
     await expect(joinAllSlackPublicChannels(
       "xoxb-test",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
       fetcher,
     )).resolves.toMatchObject({ complete: false, retryAfterMs: 60_000 });
   });
@@ -841,7 +842,7 @@ describe("Slack connector", () => {
     await expect(joinSlackPublicChannel(
       "xoxb-test",
       "CNEW",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
       missingScope,
     )).rejects.toMatchObject({ code: "provider_error", message: "missing_scope" });
 
@@ -849,7 +850,7 @@ describe("Slack connector", () => {
     await expect(joinSlackPublicChannel(
       "xoxb-test",
       "CNEW",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
       restricted,
     )).resolves.toBe("skipped");
   });
@@ -859,7 +860,7 @@ describe("Slack connector", () => {
     await expect(joinSlackPublicChannel(
       "xoxb-test",
       "CNEW",
-      AbortSignal.timeout(1_000),
+      neverAborts(),
       fetcher,
     )).rejects.toMatchObject({ code: "provider_error", message: "internal_error" });
   });
@@ -896,7 +897,7 @@ describe("Slack connector", () => {
       connection,
       principal: { type: "workspace", workspaceId: asWorkspaceId(connection.workspaceId) },
       invocationAuthorization: { slackActionToken: "event-only-action-token" },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).resolves.toMatchObject({ output: { messages: [{ channel_id: "CIDEAS" }] } });
     expect(requests[0]).toMatchObject({
       action_token: "event-only-action-token",
@@ -909,7 +910,7 @@ describe("Slack connector", () => {
     await expect(adapter.executeTool("search_messages", { query: "project gizmo" }, {
       connection,
       principal: { type: "workspace", workspaceId: asWorkspaceId(connection.workspaceId) },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).rejects.toMatchObject({ code: "unauthorized" });
     expect(fetcher).toHaveBeenCalledOnce();
   });
@@ -991,7 +992,7 @@ describe("Slack connector", () => {
     const context = {
       connection,
       principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
-      signal: AbortSignal.timeout(2_000),
+      signal: neverAborts(),
     };
 
     await expect(adapter.executeTool("find_users", { query: "alex" }, context))
@@ -1043,7 +1044,7 @@ describe("Slack connector", () => {
       connection,
       principal: { type: "workspace" as const, workspaceId: asWorkspaceId(connection.workspaceId) },
       providerIdempotencyKey: "tool-receipt-send-message",
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     await expect(adapter.executeTool("send_message", { channel_id: "CIDEAS", text: "Hello" }, context))
@@ -1097,7 +1098,7 @@ describe("Slack connector", () => {
       credentials: { userAccessToken: "xoxe.xoxp-old", refreshToken: "xoxe-old" },
       cursor: {},
       config: {},
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({
+    }, neverAborts())).resolves.toMatchObject({
       userAccessToken: "xoxe.xoxp-new",
       refreshToken: "xoxe-new",
       expiresAt: "2026-08-07T04:00:00.000Z",
@@ -1128,7 +1129,7 @@ describe("Slack connector", () => {
       credentials: { botAccessToken: "xoxb-access", refreshToken: "xoxe-refresh" },
       cursor: {},
       config: {},
-    }), AbortSignal.timeout(1_000))).rejects.toThrow(/ratelimited/iu);
+    }), neverAborts())).rejects.toThrow(/ratelimited/iu);
   });
 
   it("parses verified event, interaction, and slash-command invocations", () => {
@@ -1281,7 +1282,7 @@ describe("Slack connector", () => {
     });
     const context = {
       connection: slackWorkspaceConnection(),
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     await expect(acknowledgeConnectorAgentActivation(
@@ -1385,33 +1386,33 @@ describe("Slack connector", () => {
       return json({ ok: true, plan: 42 });
     });
 
-    await expect(slackApi("xoxb", "team.billing.info", {}, AbortSignal.timeout(1_000), fetcher))
+    await expect(slackApi("xoxb", "team.billing.info", {}, neverAborts(), fetcher))
       .rejects.toThrow(/malformed response/iu);
     await expect(slackApi("xoxb", "users.lookupByEmail", {
       email: "ada@example.com",
-    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+    }, neverAborts(), fetcher)).resolves.toMatchObject({
       user: { id: "UADA", team_id: "TACME", deleted: false },
     });
     await expect(slackApi("xoxb", "users.info", {
       user: "UADA",
-    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+    }, neverAborts(), fetcher)).resolves.toMatchObject({
       user: { id: "UADA", team_id: "TACME", profile: { email: "ada@example.com" } },
     });
     await expect(slackApi("xoxb", "conversations.info", {
       channel: "CPRIVATE",
-    }, AbortSignal.timeout(1_000), fetcher)).resolves.toMatchObject({
+    }, neverAborts(), fetcher)).resolves.toMatchObject({
       channel: { id: "CPRIVATE", is_private: true },
     });
     await expect(slackApi("xoxb", "users.lookupByEmail", {
       email: "not-an-email",
-    }, AbortSignal.timeout(1_000), fetcher)).rejects.toThrow();
+    }, neverAborts(), fetcher)).rejects.toThrow();
     await expect(slackApi("xoxb", "conversations.open", {
       users: ["U1"],
-    } as never, AbortSignal.timeout(1_000), fetcher)).rejects.toThrow();
+    } as never, neverAborts(), fetcher)).rejects.toThrow();
     await expect(slackApi("xoxb", "chat.postMessage", {
       channel: "C1",
       text: "x".repeat(40_001),
-    }, AbortSignal.timeout(1_000), fetcher)).rejects.toThrow();
+    }, neverAborts(), fetcher)).rejects.toThrow();
   });
 });
 
@@ -1514,7 +1515,7 @@ describe("Slack agent-session origins", () => {
         canonicalUrl: null,
         metadata: {},
       },
-      AbortSignal.timeout(1_000),
+      neverAborts(),
     )).toBe("https://avalon.slack.com/archives/C0A4UF9RWAU/p1786491700928349");
   });
 
@@ -1561,7 +1562,7 @@ function slackAdapterWith(fetcher: FetchLike) {
 }
 
 function reactionContext() {
-  return { connection: slackWorkspaceConnection(), signal: AbortSignal.timeout(1_000) };
+  return { connection: slackWorkspaceConnection(), signal: neverAborts() };
 }
 
 function json(value: unknown, headers: HeadersInit = {}, status = 200): Response {

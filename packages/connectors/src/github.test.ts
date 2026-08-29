@@ -1,6 +1,7 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { NormalizedActivitySchema } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import { neverAborts } from "./test-signals";
 import {
   canGitHubPersonalConnectionAccessRepository,
   createGitHubAppJwt,
@@ -138,7 +139,7 @@ describe("GitHub connector", () => {
     const context = {
       connection,
       principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     await expect(adapter.executeTool("repositories.list", {}, context)).resolves.toMatchObject({
@@ -198,7 +199,7 @@ describe("GitHub connector", () => {
     }, {
       connection,
       principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     })).rejects.toMatchObject({
       code: "unauthorized",
       message: expect.stringContaining("read-only"),
@@ -401,7 +402,7 @@ describe("GitHub connector", () => {
     const context = {
       connection,
       principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
     const content = await adapter.executeTool("contents.get", { owner: "acme", repo: "widget", path: "README.md" }, context);
     expect(content.output).toMatchObject({ content: "x".repeat(40_000), truncated: true, totalChars: 45_000 });
@@ -468,7 +469,7 @@ describe("GitHub connector", () => {
     const context = {
       connection,
       principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     const listed = await adapter.executeTool("repositories.list", { page: 1, perPage: 2 }, context);
@@ -520,7 +521,7 @@ describe("GitHub connector", () => {
     const context = {
       connection: personalConnection([GitHubCapabilities.metadataRead]),
       principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     const beyondScan = await adapter.executeTool("repositories.list", {
@@ -575,7 +576,7 @@ describe("GitHub connector", () => {
     const context = {
       connection: personalConnection([GitHubCapabilities.contentsRead]),
       principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     const directory = await adapter.executeTool("contents.list", {
@@ -634,7 +635,7 @@ describe("GitHub connector", () => {
     const context = {
       connection: personalConnection([GitHubCapabilities.contentsRead]),
       principal: { type: "user" as const, userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     const directory = await adapter.executeTool("contents.list", {
@@ -687,7 +688,7 @@ describe("GitHub connector", () => {
     const result = await adapter.executeTool("repositories.list", {}, {
       connection,
       principal: { type: "user", userId: asUserId("d6d77053-92bc-4af6-8332-8bea8c4c6904") },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     });
     expect(result.output).toMatchObject({ repositories: [{ id: 1, full_name: "acme/widget" }] });
     expect(refreshes).toBe(1);
@@ -1112,34 +1113,34 @@ describe("GitHub connector", () => {
     await expect(adapter.hydrateResource!(connection, {
       resource_type: "github_repository",
       provider_resource_id: "acme/widget",
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ full_name: "acme/widget", private: true });
+    }, neverAborts())).resolves.toMatchObject({ full_name: "acme/widget", private: true });
     await expect(adapter.hydrateResource!(connection, {
       resource_type: "github_release",
       provider_resource_id: "acme/widget/releases/901",
       metadata: { owner: "acme", repo: "widget", releaseId: 901 },
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ id: 901, tag_name: "v1.0.0" });
+    }, neverAborts())).resolves.toMatchObject({ id: 901, tag_name: "v1.0.0" });
     await expect(adapter.hydrateResource!(connection, {
       resource_type: "github_pull_request_comment",
       provider_resource_id: "acme/widget#5/comments/31",
       metadata: { owner: "acme", repo: "widget", pullNumber: 5, commentId: "31" },
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "issue-comment" });
+    }, neverAborts())).resolves.toMatchObject({ kind: "issue-comment" });
     await expect(adapter.hydrateResource!(connection, {
       resource_type: "github_pull_request_review",
       provider_resource_id: "acme/widget#5/reviews/32",
       metadata: { owner: "acme", repo: "widget", pullNumber: 5, reviewId: "32" },
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "review" });
+    }, neverAborts())).resolves.toMatchObject({ kind: "review" });
     await expect(adapter.hydrateResource!(connection, {
       resource_type: "github_pull_request_review_comment",
       provider_resource_id: "acme/widget#5/review-comments/33",
       metadata: { owner: "acme", repo: "widget", pullNumber: 5, commentId: "33" },
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "review-comment" });
+    }, neverAborts())).resolves.toMatchObject({ kind: "review-comment" });
     await expect(adapter.hydrateResource!(connection, {
       resource_type: "github_check_run",
       provider_resource_id: "acme/widget/check-runs/34",
       metadata: { owner: "acme", repo: "widget", checkRunId: "34" },
-    }, AbortSignal.timeout(1_000))).resolves.toMatchObject({ kind: "check-run" });
+    }, neverAborts())).resolves.toMatchObject({ kind: "check-run" });
     await expect(adapter.healthCheck(connection)).resolves.toEqual({ ok: true, message: "GitHub user authorization is healthy" });
-    await adapter.revoke!(connection, AbortSignal.timeout(1_000));
+    await adapter.revoke!(connection, neverAborts());
     expect(calls.at(-1)).toMatchObject({ path: "/applications/github-client/token", method: "DELETE" });
     expect(calls.at(-1)?.authorization?.startsWith("Basic ")).toBe(true);
   });

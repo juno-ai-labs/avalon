@@ -20,7 +20,7 @@
 
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { asWorkstreamId, type WorkstreamId } from "@rally/contracts";
 
@@ -45,7 +45,7 @@ const auth = {
   role: "member" as const,
 };
 
-beforeAll(async () => {
+beforeEach(async () => {
   await seedOpenWorkstreamAuthority(env.DB);
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
@@ -86,7 +86,11 @@ beforeAll(async () => {
   await env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName(
     workspaceDOName("global", WORKSPACE_ID),
   )).initializeWorkspace(WORKSPACE_ID, "wnam");
-});
+  // Generous, and only because of the interleave: a sibling file's `reset()`
+  // takes every object's input gate, so this hook can wait out a full reset
+  // before it gets to run at all. The seed itself takes milliseconds — a
+  // failure here is a hang, never a slow query.
+}, 30_000);
 
 let unique = 0;
 /**

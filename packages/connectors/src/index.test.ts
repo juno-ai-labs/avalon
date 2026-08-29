@@ -1,5 +1,6 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
 import { describe, expect, it } from "vitest";
+import { alreadyAborted, neverAborts } from "./test-signals";
 import { NormalizedActivitySchema } from "@rally/contracts";
 import {
   __testing,
@@ -204,7 +205,7 @@ describe("connectors", () => {
           hasMore: false,
         };
       },
-    }, connection, AbortSignal.timeout(1_000));
+    }, connection, neverAborts());
 
     const byEventType = new Map(result.activities.map((activity) => [activity.eventType, activity.metadata]));
     // The stamp travels with the activity through the queue and the ingest
@@ -260,7 +261,7 @@ describe("connectors", () => {
         }
         return { activities: [], highWatermark: { historyId: "gmail-new" }, hasMore: true };
       },
-    }, connection, AbortSignal.timeout(1_000));
+    }, connection, neverAborts());
 
     expect(result.cursor).toMatchObject({
       activityStreams: {
@@ -319,7 +320,7 @@ describe("connectors", () => {
           hasMore: false,
         };
       },
-    }, connection, AbortSignal.timeout(1_000));
+    }, connection, neverAborts());
 
     expect(Object.fromEntries(seen)).toEqual({
       sequence: { sequence: 41 },
@@ -378,13 +379,13 @@ describe("connectors", () => {
       throw new Error(`Unexpected Google URL: ${url}`);
     };
     const adapter = googleAdapter(fetcher);
-    const baseline = await adapter.poll!(googleConnection(["gmail.read"]), AbortSignal.timeout(1_000));
+    const baseline = await adapter.poll!(googleConnection(["gmail.read"]), neverAborts());
     expect(baseline.activities).toEqual([]);
     expect(baseline.cursor).toMatchObject({ gmail: { historyId: "100" } });
 
     const incremental = await adapter.poll!(
       googleConnection(["gmail.read"], baseline.cursor),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
     expect(incremental.cursor).toMatchObject({ gmail: { historyId: "105", pendingChanges: [] } });
     expect(incremental.activities).toHaveLength(1);
@@ -417,7 +418,7 @@ describe("connectors", () => {
     const adapter = googleAdapter(fetcher);
     const result = await adapter.poll!(
       googleConnection(["gmail.read", "calendar.read", "drive.read"]),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
     expect(result.activities).toEqual([]);
     expect(result.cursor).toMatchObject({
@@ -453,7 +454,7 @@ describe("connectors", () => {
     const adapter = googleAdapter(fetcher);
     const result = await adapter.poll!(
       googleConnection(["gmail.read"], { gmail: { historyId: "gmail-expired", pendingChanges: [] } }),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
     expect(result.activities).toHaveLength(1);
     expect(result.activities[0]).toMatchObject({
@@ -483,7 +484,7 @@ describe("connectors", () => {
     const adapter = googleAdapter(fetcher);
     const result = await adapter.poll!(
       googleConnection(["calendar.read"], { calendar: { syncToken: "calendar-sync-old" } }),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
     expect(result.cursor).toMatchObject({ calendar: { syncToken: "calendar-sync-new" } });
     expect(result.activities.map((activity) => activity.providerResourceId)).toEqual(["event-1", "event-2"]);
@@ -511,7 +512,7 @@ describe("connectors", () => {
     const adapter = googleAdapter(fetcher);
     const result = await adapter.poll!(
       googleConnection(["calendar.read"], { calendar: { syncToken: "expired" } }),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
     expect(calls).toBe(2);
     expect(result.activities).toEqual([]);
@@ -548,7 +549,7 @@ describe("connectors", () => {
           completionCheckedAt: "2026-08-01T04:00:00.000Z"
         }
       }),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
     expect(result.activities).toHaveLength(1);
     expect(result.activities[0]).toMatchObject({
@@ -595,13 +596,13 @@ describe("connectors", () => {
       throw new Error(`Unexpected Google URL: ${url}`);
     };
     const adapter = googleAdapter(fetcher);
-    const baseline = await adapter.poll!(googleConnection(["drive.read"]), AbortSignal.timeout(1_000));
+    const baseline = await adapter.poll!(googleConnection(["drive.read"]), neverAborts());
     expect(baseline.activities).toEqual([]);
     expect(baseline.cursor).toMatchObject({ drive: { pageToken: "10" } });
 
     const incremental = await adapter.poll!(
       googleConnection(["drive.read"], baseline.cursor),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
     expect(incremental.cursor).toMatchObject({ drive: { pageToken: "20" } });
     expect(incremental.activities).toHaveLength(2);
@@ -665,7 +666,7 @@ describe("connectors", () => {
     };
     const adapter = googleAdapter(fetcher);
     const connection = googleConnection(["gmail.read", "calendar.read", "drive.read"]);
-    const signal = AbortSignal.timeout(1_000);
+    const signal = neverAborts();
     const gmail = await adapter.hydrateResource!(
       connection,
       { resource_type: "gmail_thread", provider_resource_id: "thread-1" },
@@ -745,7 +746,7 @@ describe("connectors", () => {
     const context = {
       connection,
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     const message = await adapter.executeTool("gmail.read_message", { messageId: "message-1" }, context);
     expect(message.output).toMatchObject({
@@ -783,7 +784,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(requests[0]?.pathname).toBe("/gmail/v1/users/me/profile");
@@ -805,7 +806,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toMatchObject({ code: "unsupported_capability" });
   });
@@ -848,7 +849,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(result.output).toMatchObject({
@@ -916,7 +917,7 @@ describe("connectors", () => {
           credentials: { accessToken: "google-access-token", providerAccountEmail: "adam@example.com" }
         },
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     // Scoped to the address headers: a bare keyword query would also match
@@ -954,7 +955,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     // The remedy has to be in `output`; `summary` never reaches the model.
@@ -986,7 +987,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(result.output).toMatchObject({
@@ -1019,7 +1020,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect((result.output as { items: unknown[] }).items).toHaveLength(1);
@@ -1056,7 +1057,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["calendar.write"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
 
     const calendars = await adapter.executeTool("calendar.list_calendars", {}, {
@@ -1118,7 +1119,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     const patch = requests.find((request) => request.method === "PATCH");
@@ -1152,7 +1153,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(patched.attendees).toEqual([
@@ -1174,7 +1175,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(requests.at(-1)?.searchParams.get("sendUpdates")).toBeNull();
@@ -1200,9 +1201,34 @@ describe("connectors", () => {
           credentials: { accessToken: "expired", refreshToken: "revoked" }
         },
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(2_000)
+        signal: neverAborts()
       }
     )).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("abandons a cancelled call before spending the refresh token on it", async () => {
+    let refreshAttempts = 0;
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.hostname === "oauth2.googleapis.com") {
+        refreshAttempts += 1;
+        return googleJson({ access_token: "fresh", expires_in: 3600 });
+      }
+      return googleJson({ error: { code: 401 } }, 401);
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "gmail.find_contacts",
+      { name: "Dana" },
+      {
+        connection: {
+          ...googleConnection(["gmail.read"]),
+          credentials: { accessToken: "expired", refreshToken: "still-valid" }
+        },
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: alreadyAborted()
+      }
+    )).rejects.toMatchObject({ name: "AbortError" });
+    expect(refreshAttempts).toBe(0);
   });
 
   it("keeps Spam and Trash out of a contact search", async () => {
@@ -1221,7 +1247,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     // One spoofed message in Spam would otherwise become a sourced address.
@@ -1252,7 +1278,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect((result.output as { items: Array<{ email: string }> }).items.map((item) => item.email))
@@ -1280,7 +1306,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(patched.attendees).toEqual([
@@ -1308,7 +1334,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(methods).toEqual(["PATCH"]);
@@ -1334,7 +1360,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(2_000)
+        signal: neverAborts()
       }
     );
     expect(result.output).toMatchObject({
@@ -1343,6 +1369,30 @@ describe("connectors", () => {
         { id: "message-2", subject: null, headersUnavailable: true }
       ]
     });
+  });
+
+  it("reports a hydration failure rather than a thin row once the search is cancelled", async () => {
+    const fetcher: typeof fetch = async (input) => {
+      const url = requestUrl(input);
+      if (url.pathname.endsWith("/users/me/messages")) {
+        return googleJson({ messages: [{ id: "message-1", threadId: "thread-1" }, { id: "message-2", threadId: "thread-2" }] });
+      }
+      if (url.pathname.endsWith("/messages/message-2")) return googleJson({ error: { code: 429 } }, 429);
+      return googleJson({
+        id: "message-1",
+        threadId: "thread-1",
+        payload: { headers: [{ name: "Subject", value: "Survived" }] }
+      });
+    };
+    await expect(googleAdapter(fetcher).executeTool(
+      "gmail.search",
+      { query: "is:unread" },
+      {
+        connection: googleConnection(["gmail.read"]),
+        principal: { type: "user", userId: TEST_USER_ID },
+        signal: alreadyAborted()
+      }
+    )).rejects.toMatchObject({ code: "provider_error" });
   });
 
   it("never leaves a partial address behind when truncating a long recipient list", async () => {
@@ -1364,7 +1414,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     // Every returned address has to be one that was actually in the header; a
@@ -1382,7 +1432,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toMatchObject({
       code: "unsupported_capability",
@@ -1407,7 +1457,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toMatchObject({
       code: "invalid_payload",
@@ -1432,7 +1482,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(attendeeQuery).toBeNull();
@@ -1458,7 +1508,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["gmail.read"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     const matched = await googleAdapter(fetcher).executeTool("gmail.find_contacts", { name: "张伟" }, context);
     expect((matched.output as { items: Array<{ email: string }> }).items.map((item) => item.email))
@@ -1477,7 +1527,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["calendar.read", "calendar.write"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toThrow(/attendeeEmails/u);
   });
@@ -1490,7 +1540,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toThrow(/limit/u);
   });
@@ -1510,7 +1560,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["calendar.read"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     const listed = await googleAdapter(byName).executeTool(
       "calendar.list_events",
@@ -1541,7 +1591,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["calendar.read", "calendar.write", "gmail.read"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     await expect(googleAdapter(fetcher).executeTool(
       "gmail.read_message",
@@ -1572,7 +1622,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["gmail.draft"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     await expect(adapter.executeTool("gmail.create_draft", {
       to: ["recipient@example.com"],
@@ -1616,7 +1666,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["gmail.send"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(result.output).toMatchObject({
@@ -1687,7 +1737,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["docs.read", "docs.write", "sheets.read", "sheets.write"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
 
     const document = await adapter.executeTool("docs.read_document", { documentId: "doc-1" }, context);
@@ -1772,7 +1822,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["drive.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     // Contents as well as names: a search for what a document says used to come
@@ -1796,7 +1846,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["sheets.read"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     await googleAdapter(fetcher).executeTool(
       "sheets.read_values",
@@ -1828,7 +1878,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["docs.read", "drive.read", "sheets.read"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     await expect(googleAdapter(fetcher).executeTool(
       "docs.read_document",
@@ -1863,7 +1913,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["drive.read", "docs.read", "docs.write", "sheets.read", "sheets.write"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(2_000)
+      signal: neverAborts()
     };
     const calls: Array<[string, Record<string, unknown>]> = [
       ["sheets.read_values", { spreadsheetId: "a-doc", range: "A1:B2" }],
@@ -1899,7 +1949,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["drive.read", "docs.write", "sheets.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toMatchObject({
       code: "invalid_payload",
@@ -1923,7 +1973,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["docs.read", "drive.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toThrow(/^That id is a spreadsheet, not a document\.$/u);
   });
@@ -1940,7 +1990,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["drive.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     // "The most recently modified spreadsheet" has no search term, and an empty
@@ -1984,7 +2034,7 @@ describe("connectors", () => {
       {
         connection: googleConnection(["docs.read"]),
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     )).rejects.toMatchObject({ code: "provider_error" });
   });
@@ -2005,7 +2055,7 @@ describe("connectors", () => {
     const context = {
       connection: googleConnection(["docs.write", "sheets.write"]),
       principal: { type: "user" as const, userId: TEST_USER_ID },
-      signal: AbortSignal.timeout(1_000)
+      signal: neverAborts()
     };
     const doc = await googleAdapter(fetcher).executeTool("docs.create_document", { title: "Notes" }, context);
     expect(doc.output).toMatchObject({ webUrl: "https://docs.google.com/document/d/doc-created/edit" });
@@ -2059,7 +2109,7 @@ describe("connectors", () => {
     };
     const adapter = googleAdapter(fetcher);
     const principal = { type: "user" as const, userId: TEST_USER_ID };
-    const signal = AbortSignal.timeout(1_000);
+    const signal = neverAborts();
 
     const search = await adapter.executeTool("drive.search", { query: "doc" }, {
       connection: googleConnection(["drive.read"]),
@@ -2136,7 +2186,7 @@ describe("connectors", () => {
       {
         connection,
         principal: { type: "user", userId: TEST_USER_ID },
-        signal: AbortSignal.timeout(1_000)
+        signal: neverAborts()
       }
     );
     expect(result.output).toMatchObject({ items: [{ id: "message-1" }] });
@@ -2188,7 +2238,7 @@ describe("connectors", () => {
         {
           connection,
           principal: { type: "user", userId: TEST_USER_ID },
-          signal: AbortSignal.timeout(1_000)
+          signal: neverAborts()
         }
       )
     ).rejects.toMatchObject({
@@ -2204,15 +2254,18 @@ describe("connectors", () => {
       return googleJson({ changes: [], nextPageToken: `${Number(current) + 1}` });
     };
     const adapter = googleAdapter(fetcher);
-    const started = Date.now();
     const result = await adapter.poll!(
       googleConnection(["drive.read"], { drive: { pageToken: "1" } }),
-      AbortSignal.timeout(1_000)
+      neverAborts()
     );
+    // nextPollAt is stamped from a clock read inside the poll, so measuring from
+    // a mark taken before it would silently budget the three Drive round trips
+    // on top of the interval being asserted.
+    const finished = Date.now();
     expect(result.cursor).toMatchObject({ drive: { pageToken: "4", continuing: true } });
-    const delay = Date.parse(result.nextPollAt!) - started;
-    expect(delay).toBeGreaterThanOrEqual(4_000);
-    expect(delay).toBeLessThan(10_000);
+    const delay = Date.parse(result.nextPollAt!) - finished;
+    expect(delay).toBeGreaterThan(4_000);
+    expect(delay).toBeLessThanOrEqual(5_000);
   });
 });
 

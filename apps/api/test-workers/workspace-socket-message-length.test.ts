@@ -31,7 +31,7 @@ import {
 import { workspaceDOName } from "../src/durable-objects/names";
 
 /** Its own workspace, for the reason `workspace-directory-reads` states. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009a0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009d0");
 const USER_ID = "00000000-0000-7000-8000-0000000009a1";
 const CLIENT_MESSAGE_ID = "00000000-0000-7000-8000-0000000009a2";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000009a3";
