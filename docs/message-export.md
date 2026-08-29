@@ -61,7 +61,7 @@ rule here, visible the first time a card is looked at.
 Three things on the card are drawn rather than reproduced: the code block's copy
 button is hidden, a task list's checkboxes are redrawn as marks, and a citation
 keeps its shape but loses everything that promises interaction — the footnote
-pill's hover popover and the embed card's chevron are both `display: none`. A
+pill's hover popover is `display: none`. A
 picture of a control is a lie, a greyed system checkbox reads as broken rather
 than as a task that is not done, and a hover popover printed into a PNG is a grey
 box over the text with no way to dismiss it.
@@ -272,6 +272,28 @@ Two traps:
   `../lib/platform` mock, or the buttons throw on render.
 
 ## Changelog
+
+### 2026-08-29 — The embed card follows the renderer's file-tile shape
+
+**What changed:** The `.citation-card` rules here redraw the renderer's reworked
+embed card — a fixed-width tile with the kind badge at the head and the title
+and kind at the foot — in this document's fixed light palette. The chevron rule
+is gone because the renderer no longer emits the element, so the class left the
+parameterised coverage list on its own. The renderer's `.citation-card-row`
+(a run of embeds sharing one horizontal row) wraps here instead of scrolling:
+a still cannot scroll, and a row that clipped would drop cards from the file
+somebody keeps.
+
+**Why:** The renderer reshaped the embed card from a one-line row into a file
+tile, and this stylesheet mirrors the markup `MarkdownBody` emits — a card
+whose rules still describe the row would have drawn the new badge unstyled and
+the tile as a squashed line. The palette stays this document's own: the card is
+deliberately unthemed, so it takes the shape, not the tokens.
+
+**What a future change has to respect:** the coverage test only proves every
+citation class has *a* rule here, not that the rule still matches the
+renderer's layout. A reshape over there is a redraw over here, in the same
+change.
 
 ### 2026-08-28 — The card keeps a citation's sources
 

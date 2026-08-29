@@ -267,12 +267,10 @@ describe('the exported document', () => {
     expect(html).toMatch(/\.sr-only\b[^{]*\{[^}]*(?:display:\s*none|clip-path)/u);
   });
 
-  it('drops the popover and the chevron, which are affordances a still card cannot offer', () => {
+  it('drops the popover, an affordance a still card cannot offer', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
 
-    for (const className of ['citation-pill-popover', 'citation-card-chevron']) {
-      expect(html).toMatch(new RegExp(`\\.${className}\\b[^{]*\\{[^}]*display:\\s*none;`, 'u'));
-    }
+    expect(html).toMatch(/\.citation-pill-popover\b[^{]*\{[^}]*display:\s*none;/u);
   });
 
   it('splashes two different messages differently and the same message the same way', () => {

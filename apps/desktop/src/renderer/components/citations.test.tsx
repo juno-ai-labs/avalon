@@ -55,6 +55,26 @@ describe('resource citations', () => {
     expect(card.closest('p')?.textContent).toBe(card.textContent);
     expect(screen.getByText('Published the review.').contains(card)).toBe(false);
     expect(screen.queryByRole('img')).toBeNull();
+    // A lone embed is not a run: it keeps its paragraph, not a row of one.
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+  });
+
+  it('merges consecutive embed cards into one scrollable row', () => {
+    render(
+      <MarkdownBody citations={context()}>
+        {'Two artifacts came out of this.\n\n![The deck](resource://board-deck)\n\n![The deck again](resource://board-deck)\n\nBoth are attached.'}
+      </MarkdownBody>,
+    );
+
+    const row = document.querySelector('.citation-card-row');
+    expect(row).not.toBeNull();
+    expect(row!.querySelectorAll('.citation-card')).toHaveLength(2);
+    // The row replaces the run's paragraphs outright: no card is left behind
+    // in a paragraph of its own, and the prose around the run is untouched.
+    expect(document.querySelectorAll('.citation-card')).toHaveLength(2);
+    expect(row!.closest('p')).toBeNull();
+    expect(screen.getByText('Two artifacts came out of this.')).toBeInTheDocument();
+    expect(screen.getByText('Both are attached.')).toBeInTheDocument();
   });
 
   it('reads a resource kind as words rather than as its system identifier', () => {
