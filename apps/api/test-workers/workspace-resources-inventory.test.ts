@@ -188,11 +188,12 @@ describe("connector resources", () => {
       canonicalUrl: null,
       at: AT,
     });
-    const [first, second, third] = await Promise.all([resolve(), resolve(), resolve()]);
-    expect(first.outcome).toBe("created");
-    expect(second.resourceId).toBe(first.resourceId);
-    expect(third.resourceId).toBe(first.resourceId);
-    expect([second.outcome, third.outcome]).toEqual(["existing", "existing"]);
+    const results = await Promise.all([resolve(), resolve(), resolve()]);
+    // Which caller the object serialized first is not this test's to assume:
+    // exactly one resolve created the row, and every caller got the same id.
+    expect(results.filter((result) => result.outcome === "created")).toHaveLength(1);
+    expect(results.filter((result) => result.outcome === "existing")).toHaveLength(2);
+    expect(new Set(results.map((result) => result.resourceId)).size).toBe(1);
   });
 });
 
@@ -377,44 +378,48 @@ describe("inbound email receipts", () => {
     })).toEqual({ outcome: "renewed" });
   });
 
-  it("records exactly one version for a freshly ingested email resource", async () => {
-    const first = await workspace().upsertInboundEmailResource({
+  it("records exactly one version for an email however many times it is delivered", async () => {
+    const upsert = (contentRef: string, at: string) => workspace().upsertInboundEmailResource({
       workspaceId: WORKSPACE_ID,
       candidateResourceId: nextId(),
       resendEmailId: "resend-email-2",
       title: "Quarterly update",
-      contentRef: "payload/email-one",
+      contentRef,
       metadataJson: "{}",
-      at: AT,
+      at,
     });
+    const versionCount = (resourceId: string) =>
+      runInDurableObject(workspace(), (_instance, state) => (
+        state.storage.sql.exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = ?`,
+          resourceId,
+        ).one()
+      ));
+    const first = await upsert("payload/email-one", AT);
     // The routed version followed its insert with an unconditional refresh,
     // which fired the semantic-version trigger and recorded a phantom second
     // version of every email on its first ingestion.
-    const versions = await runInDurableObject(workspace(), (_instance, state) => (
-      state.storage.sql.exec<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = ?`,
-        first.resourceId,
-      ).one()
-    ));
-    expect(versions.count).toBe(1);
+    expect((await versionCount(first.resourceId)).count).toBe(1);
 
-    const replay = await workspace().upsertInboundEmailResource({
-      workspaceId: WORKSPACE_ID,
-      candidateResourceId: nextId(),
-      resendEmailId: "resend-email-2",
-      title: "Quarterly update",
-      contentRef: "payload/email-one-redelivered",
-      metadataJson: "{}",
-      at: "2026-08-29T01:00:00.000Z",
-    });
+    // The realistic replay — a crashed delivery whose lease was taken over —
+    // re-derives byte-identical values from the same retrieved message, its
+    // payload pointer included. SQLite's UPDATE-OF triggers fire on a column
+    // being assigned, not changed, so an identical replay must write nothing.
+    const replay = await upsert("payload/email-one", "2026-08-29T01:00:00.000Z");
     expect(replay.resourceId).toBe(first.resourceId);
+    expect((await versionCount(first.resourceId)).count).toBe(1);
+
+    // Genuinely changed content is a new state of the resource and is kept.
+    const changed = await upsert("payload/email-one-refetched", "2026-08-29T02:00:00.000Z");
+    expect(changed.resourceId).toBe(first.resourceId);
     const refreshed = await runInDurableObject(workspace(), (_instance, state) => (
       state.storage.sql.exec<{ content_ref: string }>(
         `SELECT content_ref FROM resources WHERE id = ?`,
         first.resourceId,
       ).one()
     ));
-    expect(refreshed.content_ref).toBe("payload/email-one-redelivered");
+    expect(refreshed.content_ref).toBe("payload/email-one-refetched");
+    expect((await versionCount(first.resourceId)).count).toBe(2);
   });
 });
 

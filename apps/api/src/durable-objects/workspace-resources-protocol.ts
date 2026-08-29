@@ -204,6 +204,10 @@ export const WorkspaceResourceObjectRefRequestSchema = z.object({
   objectRef: z.string(),
 }).strict();
 
+export const WorkspaceReapableResourceObjectListRequestSchema = z.object({
+  workspaceId: IdSchema,
+}).strict();
+
 export const WorkspaceReapableResourceObjectSchema = z.object({
   object_ref: z.string(),
   resource_id: z.string(),
@@ -238,6 +242,7 @@ export const WorkspaceResourceObjectFailureRequestSchema = z.object({
   workspaceId: IdSchema,
   objectRef: z.string(),
   errorCode: z.string(),
+  at: TimestampSchema,
 }).strict();
 
 export const WorkspaceExpiredDraftReapRequestSchema = z.object({
@@ -409,6 +414,9 @@ export type WorkspaceResourceWatchDisableRequest = z.infer<
 >;
 export type WorkspaceResourceObjectRefRequest = z.infer<
   typeof WorkspaceResourceObjectRefRequestSchema
+>;
+export type WorkspaceReapableResourceObjectListRequest = z.infer<
+  typeof WorkspaceReapableResourceObjectListRequestSchema
 >;
 export type WorkspaceReapableResourceObjectList = z.infer<
   typeof WorkspaceReapableResourceObjectListSchema
