@@ -634,6 +634,48 @@ what that leaves exposed.
 
 ## Changelog
 
+### 2026-08-29 — Dictation admission becomes one question to WorkspaceDO
+
+**What changed:** `WorkspaceDO.admitTranscriptionSession`,
+`releaseTranscriptionSession`, and `renewTranscriptionSession` replace the four
+statements `realtime-transcription-service.ts` used to send through the
+workspace runtime facade. The SQL, the two-minute lease, and both concurrency
+caps now live in `workspace-transcription-storage.ts`, beside the insert that
+enforces them; the service keeps the socket proxy and maps a refusal to its
+`ApiError`. A refusal travels as an outcome (`ticket_replayed`,
+`concurrency_limit`) rather than a throw, because the status and sentence a
+person reads are the service's to choose and a thrown RPC error arrives as a
+bare message. `apps/api/test/realtime-transcription-admission.test.ts` is
+deleted; its four properties are asserted against a real object in
+`apps/api/test-workers/workspace-transcription-admission.test.ts`, and the proxy
+suite counts admissions through a small double instead of a hand-built copy of
+the object's schema.
+
+**Why:** the facade routes each statement by the table names in it and sends
+anything it does not recognise to the regional database — the defect that took
+automation run work streams down. Beyond that routing risk, admission read as
+one decision and was not: the sweep, the one-time ticket consumption and the
+cap-checked insert were three round trips and three separate critical sections,
+and the comment above them claimed the object serialized the sequence. Each
+statement was individually atomic, so the caps did hold; what a reader could
+not tell is which of the two they were getting. Inside the object it is one
+`transactionSync`, and the reading is true.
+
+**Considered and rejected:** passing the caps in the request. It keeps them
+next to the product code that chose them, and it lets any caller admit itself
+past them by sending a larger number — an authorization decision made by the
+side being authorized. They are unchanged values, moved.
+
+**What a future change has to respect:** the ticket stays consumed when
+admission is refused for concurrency. It was spent on that attempt, and
+returning it would turn one ticket into two admissions. Both tables stay named
+in `WORKSPACE_LOCAL_TABLES` so an accidental generic statement reaches the
+object rather than falling through to regional D1, and both are now also in
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, so the object refuses such a statement by
+name instead of executing it. The two lists do different jobs and a table needs
+both: the first decides where a statement goes, the second decides whether it
+is allowed to be generic at all.
+
 ### 2026-08-28 — A fifth audience admits the automation draft room
 
 **What changed:** `automation_socket` joins the ticket audiences. The desktop

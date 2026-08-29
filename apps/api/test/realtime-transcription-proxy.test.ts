@@ -1,73 +1,52 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { RealtimeTranscriptionService } from "../src/services/realtime-transcription-service";
 import { issueTranscriptionSocketTicket } from "../src/services/socket-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestDurableObjectId,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 
-class SqliteD1Statement {
-  constructor(
-    private readonly database: DatabaseSync,
-    private readonly sql: string,
-    private readonly values: SQLInputValue[] = [],
-  ) {}
+/**
+ * The workspace's dictation admission, as this suite needs to see it.
+ *
+ * Admission itself is decided by WorkspaceDO and asserted against a real object
+ * in `test-workers/workspace-transcription-admission.test.ts`. What these tests
+ * are about is the proxy either side of it: that a socket takes exactly one
+ * slot, and gives it back when it closes or is closed on it. So this counts
+ * slots and nothing else — it used to be a hand-built SQLite copy of the
+ * object's two tables, which could drift from the real schema without any test
+ * noticing, and which answered questions this file never asks.
+ */
+class TranscriptionAdmissions {
+  private readonly live = new Set<string>();
 
-  bind(...values: SQLInputValue[]): D1PreparedStatement {
-    return createTestD1PreparedStatement(new SqliteD1Statement(this.database, this.sql, values));
-  }
-
-  async run<T = Record<string, unknown>>(): Promise<D1Result<T>> {
-    const result = this.database.prepare(this.sql).run(...this.values);
-    return createTestD1Result<T>({
-      success: true,
-      results: [],
-      meta: { changes: Number(result.changes) },
+  binding(): Env["WORKSPACE_DOS"] {
+    const stub = {
+      admitTranscriptionSession: async (input: { sessionId: string }) => {
+        this.live.add(input.sessionId);
+        return { outcome: "admitted" as const, expiresAtSeconds: 1_800_000_120 };
+      },
+      releaseTranscriptionSession: async (input: { sessionId: string }) => {
+        this.live.delete(input.sessionId);
+      },
+      renewTranscriptionSession: async (input: { sessionId: string }) => ({
+        renewed: this.live.has(input.sessionId),
+        expiresAtSeconds: this.live.has(input.sessionId) ? 1_800_000_180 : null,
+      }),
+    };
+    const binding: Env["WORKSPACE_DOS"] = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+      idFromName: () => createTestDurableObjectId("workspace-id"),
+      get: () => stub,
+      jurisdiction: (): Env["WORKSPACE_DOS"] => binding,
     });
-  }
-}
-
-class SqliteD1Database {
-  readonly database = new DatabaseSync(":memory:");
-
-  constructor() {
-    // The authoritative WorkspaceDO shape (unit-suffixed epoch-seconds
-    // columns), minus the identity fences the double cannot satisfy.
-    this.database.exec(`
-      CREATE TABLE realtime_transcription_ticket_receipts (
-        ticket_id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        consumed_at_s INTEGER NOT NULL,
-        expires_at_s INTEGER NOT NULL CHECK (expires_at_s > consumed_at_s)
-      ) STRICT;
-      CREATE TABLE realtime_transcription_sessions (
-        id TEXT PRIMARY KEY,
-        ticket_id TEXT NOT NULL UNIQUE,
-        workspace_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        started_at_s INTEGER NOT NULL,
-        expires_at_s INTEGER NOT NULL CHECK (expires_at_s > started_at_s)
-      ) STRICT;
-      CREATE INDEX realtime_transcription_sessions_user_idx
-        ON realtime_transcription_sessions(workspace_id, user_id, expires_at_s);
-    `);
-  }
-
-  prepare(sql: string): D1PreparedStatement {
-    return createTestD1PreparedStatement(new SqliteD1Statement(this.database, sql));
-  }
-
-  async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
-    const results: D1Result<T>[] = [];
-    for (const statement of statements) results.push(await statement.run<T>());
-    return results;
+    return binding;
   }
 
   activeSessions(): number {
-    return Number(this.database.prepare(
-      "SELECT COUNT(*) AS count FROM realtime_transcription_sessions",
-    ).get()?.count ?? 0);
+    return this.live.size;
   }
 }
 
@@ -138,9 +117,9 @@ function request(): Request {
   } as Request;
 }
 
-function env(database: SqliteD1Database): Env {
+function env(admissions: TranscriptionAdmissions): Env {
   return createTestEnv({
-    DB: createTestD1Database(database),
+    WORKSPACE_DOS: admissions.binding(),
     SESSION_SIGNING_KEY: "test-signing-key",
     AVALON_REGION: "global",
     ALLOWED_ORIGINS: "app://avalon",
@@ -176,40 +155,36 @@ afterEach(() => {
 
 describe("realtime transcription proxy", () => {
   it("opens the Azure upgrade over HTTPS and releases the lease when the client closes", async () => {
-    const database = new SqliteD1Database();
+    const database = new TranscriptionAdmissions();
     const upstream = new FakeSocket();
     const { pairs } = installSocketRuntime(upstream);
     const deferred: Promise<void>[] = [];
     const environment = env(database);
     const ticket = await issueTranscriptionSocketTicket(environment, auth);
 
-    try {
-      const response = await new RealtimeTranscriptionService(
-        environment,
-        (promise) => deferred.push(promise),
-      ).upgrade(ticket, request());
+    const response = await new RealtimeTranscriptionService(
+      environment,
+      (promise) => deferred.push(promise),
+    ).upgrade(ticket, request());
 
-      expect(response.status).toBe(101);
-      expect(fetch).toHaveBeenCalledWith(
-        "https://avalon.openai.azure.com/openai/v1/realtime?intent=transcription",
-        expect.objectContaining({ headers: expect.objectContaining({ Upgrade: "websocket" }) }),
-      );
-      expect(upstream.acceptedWith).toEqual({ allowHalfOpen: true });
-      expect(pairs[0]?.server.acceptedWith).toEqual({ allowHalfOpen: true });
-      expect(JSON.parse(upstream.sent[0] ?? "{}")).toMatchObject({
-        type: "session.update",
-        session: { audio: { input: { transcription: { model: "gpt-live-transcribe" } } } },
-      });
-      expect(database.activeSessions()).toBe(1);
+    expect(response.status).toBe(101);
+    expect(fetch).toHaveBeenCalledWith(
+      "https://avalon.openai.azure.com/openai/v1/realtime?intent=transcription",
+      expect.objectContaining({ headers: expect.objectContaining({ Upgrade: "websocket" }) }),
+    );
+    expect(upstream.acceptedWith).toEqual({ allowHalfOpen: true });
+    expect(pairs[0]?.server.acceptedWith).toEqual({ allowHalfOpen: true });
+    expect(JSON.parse(upstream.sent[0] ?? "{}")).toMatchObject({
+      type: "session.update",
+      session: { audio: { input: { transcription: { model: "gpt-live-transcribe" } } } },
+    });
+    expect(database.activeSessions()).toBe(1);
 
-      pairs[0]?.server.emit("close", { code: 1000, reason: "Client closed" });
-      await Promise.all(deferred);
+    pairs[0]?.server.emit("close", { code: 1000, reason: "Client closed" });
+    await Promise.all(deferred);
 
-      expect(upstream.closes).toContainEqual({ code: 1000, reason: "Client closed" });
-      expect(database.activeSessions()).toBe(0);
-    } finally {
-      database.database.close();
-    }
+    expect(upstream.closes).toContainEqual({ code: 1000, reason: "Client closed" });
+    expect(database.activeSessions()).toBe(0);
   });
 
   it("closes both sockets and releases the lease when the frame-rate policy is exceeded", async () => {
@@ -217,57 +192,49 @@ describe("realtime transcription proxy", () => {
     // upgrade and the 31st frame, while releaseAndReport's retry setTimeout
     // has to stay real for `await Promise.all(deferred)` to settle.
     vi.useFakeTimers({ toFake: ["Date"] });
-    const database = new SqliteD1Database();
+    const database = new TranscriptionAdmissions();
     const upstream = new FakeSocket();
     const { pairs } = installSocketRuntime(upstream);
     const deferred: Promise<void>[] = [];
     const environment = env(database);
     const ticket = await issueTranscriptionSocketTicket(environment, auth);
 
-    try {
-      await new RealtimeTranscriptionService(
-        environment,
-        (promise) => deferred.push(promise),
-      ).upgrade(ticket, request());
-      const server = pairs[0]!.server;
-      for (let index = 0; index < 31; index += 1) {
-        server.emit("message", {
-          data: JSON.stringify({ type: "input_audio_buffer.append", audio: "AQID" }),
-        });
-      }
-      await Promise.all(deferred);
-
-      expect(server.sent.map((message) => JSON.parse(message))).toContainEqual({
-        type: "error",
-        error: {
-          code: "dictation_frame_rate_limit",
-          message: "Dictation audio arrived too quickly.",
-        },
+    await new RealtimeTranscriptionService(
+      environment,
+      (promise) => deferred.push(promise),
+    ).upgrade(ticket, request());
+    const server = pairs[0]!.server;
+    for (let index = 0; index < 31; index += 1) {
+      server.emit("message", {
+        data: JSON.stringify({ type: "input_audio_buffer.append", audio: "AQID" }),
       });
-      expect(server.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
-      expect(upstream.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
-      expect(database.activeSessions()).toBe(0);
-    } finally {
-      database.database.close();
     }
+    await Promise.all(deferred);
+
+    expect(server.sent.map((message) => JSON.parse(message))).toContainEqual({
+      type: "error",
+      error: {
+        code: "dictation_frame_rate_limit",
+        message: "Dictation audio arrived too quickly.",
+      },
+    });
+    expect(server.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
+    expect(upstream.closes).toContainEqual({ code: 1008, reason: "Dictation audio arrived too quickly." });
+    expect(database.activeSessions()).toBe(0);
   });
 
   it("does not close a healthy transcription session after the former five-minute limit", async () => {
     vi.useFakeTimers();
-    const database = new SqliteD1Database();
+    const database = new TranscriptionAdmissions();
     const upstream = new FakeSocket();
     const { pairs } = installSocketRuntime(upstream);
     const environment = env(database);
     const ticket = await issueTranscriptionSocketTicket(environment, auth);
 
-    try {
-      await new RealtimeTranscriptionService(environment).upgrade(ticket, request());
-      await vi.advanceTimersByTimeAsync(6 * 60 * 1_000);
+    await new RealtimeTranscriptionService(environment).upgrade(ticket, request());
+    await vi.advanceTimersByTimeAsync(6 * 60 * 1_000);
 
-      expect(pairs[0]!.server.closes).toEqual([]);
-      expect(upstream.closes).toEqual([]);
-    } finally {
-      database.database.close();
-    }
+    expect(pairs[0]!.server.closes).toEqual([]);
+    expect(upstream.closes).toEqual([]);
   });
 });
