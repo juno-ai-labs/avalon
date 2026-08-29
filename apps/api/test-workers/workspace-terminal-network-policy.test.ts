@@ -80,6 +80,35 @@ async function claim(input: {
   );
 }
 
+/** Claim, and fail the test rather than the narrowing if it was refused. */
+async function claimed(input: Parameters<typeof claim>[0] = {}) {
+  const result = await claim(input);
+  if (result.outcome !== "claimed") {
+    throw new Error(`expected a claim, got ${result.outcome}`);
+  }
+  return result;
+}
+
+async function commit(input: {
+  mutationId?: string;
+  mode?: "trusted_only" | "full_internet";
+  claimedRevision: number;
+  resultingRevision: number;
+  customDomains?: string[];
+}) {
+  return workspace().commitTerminalPolicyApplication({
+    workspaceId: WORKSPACE_ID,
+    mutationId: input.mutationId ?? MUTATION,
+    createdByUserId: ADMIN,
+    mode: input.mode ?? "full_internet",
+    claimedRevision: input.claimedRevision,
+    resultingRevision: input.resultingRevision,
+    customDomains: input.customDomains ?? [],
+    effectiveDomains: input.customDomains ?? [],
+    at: AT,
+  });
+}
+
 beforeEach(async () => {
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await runInDurableObject(workspace(), (_instance, state) => {
@@ -116,9 +145,8 @@ describe("Terminal network policy", () => {
   it("claims the policy and its preview together", async () => {
     await settings();
     await preview();
-    const claimed = await claim();
-    expect(claimed.outcome).toBe("claimed");
-    expect(claimed.mutation?.proposedMode).toBe("full_internet");
+    const result = await claimed();
+    expect(result.mutation.proposedMode).toBe("full_internet");
     expect((await settings()).policy.verificationState).toBe("pending");
   });
 
@@ -161,60 +189,111 @@ describe("Terminal network policy", () => {
   it("publishes the applied policy, its revision, and its domains together", async () => {
     await settings();
     await preview();
-    const claimed = await claim();
-    await workspace().commitTerminalPolicyApplication({
-      workspaceId: WORKSPACE_ID,
-      mutationId: MUTATION,
-      createdByUserId: ADMIN,
-      mode: "full_internet",
-      claimedRevision: claimed.current!.revision,
-      resultingRevision: claimed.current!.revision + 1,
+    const result = await claimed();
+    expect(await commit({
+      claimedRevision: result.current.revision,
+      resultingRevision: result.current.revision + 1,
       customDomains: ["docs.example.com", "api.example.com"],
-      effectiveDomains: ["docs.example.com"],
-      at: AT,
-    });
+    })).toEqual({ outcome: "settled" });
     const after = await settings();
     expect(after.policy).toMatchObject({
       mode: "full_internet",
       revision: 2,
       verificationState: "verified",
       failureCode: null,
-      effectiveDomains: ["docs.example.com"],
+      effectiveDomains: ["docs.example.com", "api.example.com"],
     });
     // Sorted by the object, so the caller's order is not the stored order.
     expect(after.customDomains).toEqual(["api.example.com", "docs.example.com"]);
   });
 
+  it("writes nothing for a commit whose claim is already settled", async () => {
+    // The replay the fencing exists for. Settling on revision alone would find
+    // the numbers agreeable and replace the domain rows a person is looking at,
+    // leaving them describing a revision that never published them.
+    await settings();
+    await preview();
+    const result = await claimed();
+    await commit({
+      claimedRevision: result.current.revision,
+      resultingRevision: result.current.revision + 1,
+      customDomains: ["docs.example.com"],
+    });
+    expect(await commit({
+      claimedRevision: result.current.revision,
+      resultingRevision: result.current.revision + 1,
+      customDomains: ["attacker.example.com"],
+    })).toEqual({ outcome: "stale" });
+    const after = await settings();
+    expect(after.customDomains).toEqual(["docs.example.com"]);
+    expect(after.policy.revision).toBe(2);
+  });
+
+  it("does not let a replayed failure release the next application's claim", async () => {
+    // A failed application leaves the revision where it was, so the next
+    // preview claims the same number. Fenced on revision alone, a retried
+    // failure for the first would put the policy back to `verified` while the
+    // second is still reconciling sandboxes.
+    await settings();
+    await preview();
+    const first = await claimed();
+    await workspace().failTerminalPolicyApplication({
+      workspaceId: WORKSPACE_ID,
+      mutationId: MUTATION,
+      revision: first.current.revision,
+      failureCode: "provider_policy_mismatch",
+      at: AT,
+    });
+
+    const second = "00000000-0000-7000-8000-000000000ac2";
+    await preview({ mutationId: second });
+    const claimTwo = await claimed({ mutationId: second });
+    expect(claimTwo.current.revision).toBe(1);
+    expect((await settings()).policy.verificationState).toBe("pending");
+
+    expect(await workspace().failTerminalPolicyApplication({
+      workspaceId: WORKSPACE_ID,
+      mutationId: MUTATION,
+      revision: first.current.revision,
+      failureCode: "provider_policy_mismatch",
+      at: AT,
+    })).toEqual({ outcome: "stale" });
+    expect((await settings()).policy.verificationState).toBe("pending");
+  });
+
   it("replaces the domain list rather than appending to it", async () => {
     await settings();
     await preview();
-    const claimed = await claim();
-    const commit = (customDomains: string[], resultingRevision: number, claimedRevision: number) =>
-      workspace().commitTerminalPolicyApplication({
-        workspaceId: WORKSPACE_ID,
-        mutationId: MUTATION,
-        createdByUserId: ADMIN,
-        mode: "trusted_only",
-        claimedRevision,
-        resultingRevision,
-        customDomains,
-        effectiveDomains: customDomains,
-        at: AT,
-      });
-    await commit(["one.example.com"], claimed.current!.revision + 1, claimed.current!.revision);
+    const first = await claimed();
+    await commit({
+      mode: "trusted_only",
+      claimedRevision: first.current.revision,
+      resultingRevision: first.current.revision + 1,
+      customDomains: ["one.example.com"],
+    });
     expect((await settings()).customDomains).toEqual(["one.example.com"]);
-    await commit(["two.example.com"], 3, 2);
+
+    const second = "00000000-0000-7000-8000-000000000ac3";
+    await preview({ mutationId: second, expectedRevision: 2 });
+    const next = await claimed({ mutationId: second, expectedRevision: 2 });
+    await commit({
+      mutationId: second,
+      mode: "trusted_only",
+      claimedRevision: next.current.revision,
+      resultingRevision: next.current.revision + 1,
+      customDomains: ["two.example.com"],
+    });
     expect((await settings()).customDomains).toEqual(["two.example.com"]);
   });
 
   it("gives a failed application back as verified, with its reason", async () => {
     await settings();
     await preview();
-    const claimed = await claim();
+    const result = await claimed();
     await workspace().failTerminalPolicyApplication({
       workspaceId: WORKSPACE_ID,
       mutationId: MUTATION,
-      revision: claimed.current!.revision,
+      revision: result.current.revision,
       failureCode: "provider_policy_mismatch",
       at: AT,
     });
@@ -227,12 +306,17 @@ describe("Terminal network policy", () => {
   });
 
   it("refuses a request addressed to a different workspace", async () => {
-    // Settled once, by hand: an RPC promise is a pipelining thenable, and
-    // `rejects.toThrow` reads through it a second time, which surfaces the same
-    // rejection again as an unhandled error and fails the run.
-    const outcome = await workspace().terminalNetworkMode({
-      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000abe"),
-    }).then(() => null, (error: unknown) => error);
+    // Called on the instance rather than through a stub. An RPC call returns a
+    // pipelining proxy that rejects separately from the promise the assertion
+    // attaches to, so a refusal asserted over RPC leaves that second rejection
+    // unhandled — `uncaught exception ... in promise` in every run of this
+    // file, and a failure the day the runner treats those as fatal. The
+    // subject here is `assertWorkspace`, not the transport, so this reaches it
+    // directly and the rejection has exactly one owner.
+    const outcome = await runInDurableObject(workspace(), async (instance) =>
+      instance.terminalNetworkMode({
+        workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000abe"),
+      }).then(() => null, (error: unknown) => error));
     expect(String(outcome)).toContain("workspace_object_identity_mismatch");
   });
 });

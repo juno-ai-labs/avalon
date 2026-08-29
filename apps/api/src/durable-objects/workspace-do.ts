@@ -220,6 +220,7 @@ import {
   type WorkspaceTerminalPolicyClaimResult,
   type WorkspaceTerminalPolicyCommitRequest,
   type WorkspaceTerminalPolicyFailRequest,
+  type WorkspaceTerminalPolicySettlementResult,
   type WorkspaceTerminalPolicyPreviewRequest,
 } from "./workspace-terminal-network-protocol";
 import {
@@ -5430,19 +5431,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     });
   }
 
-  /**
-   * Admit one realtime dictation socket: sweep, spend the ticket, take a slot.
-   *
-   * The service used to send these as separate statements through the
-   * workspace runtime facade — three round trips, and three critical sections
-   * rather than one. Here it is a single decision, and the concurrency caps
-   * live beside the insert that enforces them rather than travelling from a
-   * caller that could pass a larger number.
-   *
-   * A refusal comes back as an outcome rather than a throw: a replayed ticket
-   * and a workspace at its cap are ordinary answers, and the sentence the
-   * person reads is the service's to choose.
-   */
   /** The Terminal network policy and its domains, creating the default if absent. */
   async terminalNetworkSettings(
     input: WorkspaceTerminalNetworkSettingsRequest,
@@ -5489,26 +5477,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return claimWorkspaceTerminalPolicyApplication(this.state.storage, request);
   }
 
-  /** Release a claim with a reason, keeping the last verified policy. */
+  /**
+   * Release a claim with a reason, keeping the last verified policy.
+   *
+   * Answers `stale` when the named application is no longer the pending one,
+   * rather than releasing whichever claim happens to hold the revision.
+   */
   async failTerminalPolicyApplication(
     input: WorkspaceTerminalPolicyFailRequest,
-  ): Promise<void> {
+  ): Promise<WorkspaceTerminalPolicySettlementResult> {
     await this.initialized;
     const request = WorkspaceTerminalPolicyFailRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    failWorkspaceTerminalPolicyApplication(this.state.storage, request);
+    return failWorkspaceTerminalPolicyApplication(this.state.storage, request);
   }
 
-  /** Publish the applied policy: domains, the new revision, and the ledger. */
+  /**
+   * Publish the applied policy: domains, the new revision, and the ledger.
+   *
+   * Answers `stale` for a replayed commit, having written nothing.
+   */
   async commitTerminalPolicyApplication(
     input: WorkspaceTerminalPolicyCommitRequest,
-  ): Promise<void> {
+  ): Promise<WorkspaceTerminalPolicySettlementResult> {
     await this.initialized;
     const request = WorkspaceTerminalPolicyCommitRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    commitWorkspaceTerminalPolicyApplication(this.state.storage, request);
+    return commitWorkspaceTerminalPolicyApplication(this.state.storage, request);
   }
 
+  /**
+   * Admit one realtime dictation socket: sweep, spend the ticket, take a slot.
+   *
+   * The service used to send these as separate statements through the
+   * workspace runtime facade — three round trips, and three critical sections
+   * rather than one. Here it is a single decision, and the concurrency caps
+   * live beside the insert that enforces them rather than travelling from a
+   * caller that could pass a larger number.
+   *
+   * A refusal comes back as an outcome rather than a throw: a replayed ticket
+   * and a workspace at its cap are ordinary answers, and the sentence the
+   * person reads is the service's to choose.
+   */
   async admitTranscriptionSession(
     input: WorkspaceTranscriptionAdmitRequest,
   ): Promise<WorkspaceTranscriptionAdmitResult> {
