@@ -200,6 +200,51 @@ import {
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import {
+  addWorkspaceAutomationTemplateVersion,
+  listWorkspaceAutomationTemplates,
+  publishWorkspaceAutomationTemplate,
+  workspaceAutomationTemplateOwnership,
+} from "./workspace-automation-template-storage";
+import {
+  WorkspaceAutomationTemplateOwnershipRequestSchema,
+  WorkspaceAutomationTemplatePublishRequestSchema,
+  WorkspaceAutomationTemplateVersionRequestSchema,
+  type WorkspaceAutomationTemplateList,
+  type WorkspaceAutomationTemplateOwnership,
+  type WorkspaceAutomationTemplateOwnershipRequest,
+  type WorkspaceAutomationTemplatePublishRequest,
+  type WorkspaceAutomationTemplateVersionRequest,
+  type WorkspaceAutomationTemplateVersionResult,
+} from "./workspace-automation-template-protocol";
+import {
+  abandonWorkspaceConnectorOAuthAttempt,
+  bindWorkspaceConnectorOAuthAttemptTelemetry,
+  claimWorkspaceWebhookReceipt,
+  extendWorkspaceConnectorOAuthAttempt,
+  finishWorkspaceConnectorOAuthAttempt,
+  readWorkspaceConnectorOAuthAttempt,
+  startWorkspaceConnectorOAuthAttempt,
+} from "./workspace-connections-storage";
+import {
+  WorkspaceConnectorOAuthAttemptAbandonRequestSchema,
+  WorkspaceConnectorOAuthAttemptExtendRequestSchema,
+  WorkspaceConnectorOAuthAttemptFinishRequestSchema,
+  WorkspaceConnectorOAuthAttemptReadRequestSchema,
+  WorkspaceConnectorOAuthAttemptStartRequestSchema,
+  WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema,
+  WorkspaceWebhookReceiptClaimRequestSchema,
+  type WorkspaceConnectorOAuthAttemptAbandonRequest,
+  type WorkspaceConnectorOAuthAttemptExtendRequest,
+  type WorkspaceConnectorOAuthAttemptFinishRequest,
+  type WorkspaceConnectorOAuthAttemptFinishResult,
+  type WorkspaceConnectorOAuthAttemptReadRequest,
+  type WorkspaceConnectorOAuthAttemptReadResult,
+  type WorkspaceConnectorOAuthAttemptStartRequest,
+  type WorkspaceConnectorOAuthAttemptTelemetryBindRequest,
+  type WorkspaceWebhookReceiptClaimRequest,
+  type WorkspaceWebhookReceiptClaimResult,
+} from "./workspace-connections-protocol";
+import {
   claimWorkspaceTerminalPolicyApplication,
   commitWorkspaceTerminalPolicyApplication,
   failWorkspaceTerminalPolicyApplication,
@@ -436,6 +481,14 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "automation_directory",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
+  // Claims live on `claimWebhookReceipt`; the only generic statements left
+  // naming this table are the connection service's pre-cutover branches, which
+  // run only when WORKSPACE_DOS is unbound and so never reach this object.
+  // `connector_oauth_attempts` is deliberately absent: the attempt-bind
+  // statement batched with a connection mutation in
+  // `persistConnectionMutation` still arrives generically, and refusing the
+  // table here would break that atomic pair.
+  "webhook_receipts",
 ] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
@@ -5429,6 +5482,176 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).one();
       return WorkspaceBatchDispatchAdvanceResultSchema.parse({ remainingCount: remaining.count });
     });
+  }
+
+  /**
+   * The title to show as a generated work stream's origin label.
+   *
+   * WorkstreamDO renders the summary and does not hold the automation's
+   * directory row. It used to read it as SQL through the workspace runtime
+   * facade, which routes by table name and sends an unrecognised one to the
+   * regional database — which is how this read came to answer
+   * `no such table: automation_directory` on every attempt to open an
+   * automation's run work stream.
+   *
+   * A deleted automation answers `null` rather than its last title: the work
+   * stream outlives the automation that made it, and the label should go quiet
+   * rather than name something the workspace no longer has.
+   */
+  /**
+   * Admit one realtime dictation socket: sweep, spend the ticket, take a slot.
+   *
+   * The service used to send these as separate statements through the
+   * workspace runtime facade — three round trips, and three critical sections
+   * rather than one. Here it is a single decision, and the concurrency caps
+   * live beside the insert that enforces them rather than travelling from a
+   * caller that could pass a larger number.
+   *
+   * A refusal comes back as an outcome rather than a throw: a replayed ticket
+   * and a workspace at its cap are ordinary answers, and the sentence the
+   * person reads is the service's to choose.
+   */
+  /** The workspace-shared template gallery, at each template's latest version. */
+  async listAutomationTemplates(
+    input: { workspaceId: string },
+  ): Promise<WorkspaceAutomationTemplateList> {
+    await this.initialized;
+    const workspaceId = IdSchema.parse(input.workspaceId);
+    this.assertWorkspace(workspaceId);
+    return listWorkspaceAutomationTemplates(this.state.storage, workspaceId);
+  }
+
+  /**
+   * Whether this person owns an active template with this id.
+   *
+   * A preflight, so the service can answer 404 before it validates a draft's
+   * connectors. Without it, adding a version to somebody else's template
+   * answers with a connector error — which both changes the endpoint's
+   * contract and tells a caller about connector state they have no claim on.
+   * The write still fences on ownership; this only decides what is said.
+   */
+  async automationTemplateOwnership(
+    input: WorkspaceAutomationTemplateOwnershipRequest,
+  ): Promise<WorkspaceAutomationTemplateOwnership> {
+    await this.initialized;
+    const request = WorkspaceAutomationTemplateOwnershipRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceAutomationTemplateOwnership(this.state.storage, request);
+  }
+
+  /** Publish a template and its first version, or neither. */
+  async publishAutomationTemplate(
+    input: WorkspaceAutomationTemplatePublishRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceAutomationTemplatePublishRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    publishWorkspaceAutomationTemplate(this.state.storage, request);
+  }
+
+  /**
+   * Add the next version of a template the caller owns.
+   *
+   * The version number is read and bumped in one critical section, which two
+   * separate statements through the runtime facade could not do: both readers
+   * saw the same number and the unique constraint refused the second write.
+   */
+  async addAutomationTemplateVersion(
+    input: WorkspaceAutomationTemplateVersionRequest,
+  ): Promise<WorkspaceAutomationTemplateVersionResult> {
+    await this.initialized;
+    const request = WorkspaceAutomationTemplateVersionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return addWorkspaceAutomationTemplateVersion(this.state.storage, request);
+  }
+
+  /** Record a started connector OAuth handoff, pending until settled. */
+  async startConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptStartRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptStartRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    startWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /** Delete a pending start whose regional state receipt failed to write. */
+  async abandonConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptAbandonRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptAbandonRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    abandonWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /** Revive an attempt for GitHub's install-then-authorize second leg. */
+  async extendConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptExtendRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptExtendRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    extendWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /**
+   * One attempt, optionally settling a due expiry in the same transaction.
+   *
+   * Through the facade the expiry sweep and the read were two round trips;
+   * asked here they are one critical section, and a member-scoped request
+   * cannot expire or observe another member's attempt.
+   */
+  async connectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptReadRequest,
+  ): Promise<WorkspaceConnectorOAuthAttemptReadResult> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptReadRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return readWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /**
+   * Settle an attempt on a returned witness, or report how it already ended.
+   *
+   * A replayed callback converges rather than erring; a genuinely different
+   * settlement answers `conflict` as an outcome, keeping the service's 409 and
+   * its sentence rather than losing both to a thrown RPC error.
+   */
+  async finishConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptFinishRequest,
+  ): Promise<WorkspaceConnectorOAuthAttemptFinishResult> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptFinishRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return finishWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /** Attach the client's telemetry operation to an attempt, first writer wins. */
+  async bindConnectorOAuthAttemptTelemetry(
+    input: WorkspaceConnectorOAuthAttemptTelemetryBindRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    bindWorkspaceConnectorOAuthAttemptTelemetry(this.state.storage, request);
+  }
+
+  /**
+   * Claim one webhook delivery and sweep the connection's expired receipts.
+   *
+   * The duplicate branch is decided by the insert's returned witness rather
+   * than by the facade's physical `rowsWritten` counter, and the sweep —
+   * which the granola path never had, so its receipts grew without bound —
+   * runs in the same transaction as the claim it makes room for.
+   */
+  async claimWebhookReceipt(
+    input: WorkspaceWebhookReceiptClaimRequest,
+  ): Promise<WorkspaceWebhookReceiptClaimResult> {
+    await this.initialized;
+    const request = WorkspaceWebhookReceiptClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceWebhookReceipt(this.state.storage, request);
   }
 
   /** The Terminal network policy and its domains, creating the default if absent. */

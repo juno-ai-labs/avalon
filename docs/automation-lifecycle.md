@@ -526,6 +526,48 @@ idempotent per workspace.
 
 ## Changelog
 
+### 2026-08-29 — The template gallery becomes three typed WorkspaceDO methods
+
+**What changed:** `listAutomationTemplates`, `publishAutomationTemplate` and
+`addAutomationTemplateVersion` replace the six statements
+`automation-service.ts` sent through the workspace runtime facade. The SQL
+lives in `workspace-automation-template-storage.ts`. The gallery's author names
+stay a regional lookup in the service, because they join `users`, which the
+object does not have.
+
+**Why:** the facade routes by table name and sends anything it does not
+recognise to the regional database. Beyond that, adding a version read
+`latest_version_number` and then wrote the incremented value in a separate
+batch. Two people publishing a revision at the same moment both read the same
+number and both wrote it, and `UNIQUE (template_id, version_number)` refused
+the second — a 500 with nothing in it a person could act on. Inside the object
+the read and the bump are one critical section, so the numbers are consecutive.
+
+`automationTemplateOwnership` is a preflight the service asks before it
+validates a draft's connectors. Moving the write into the object had put the
+ownership fence after that validation, so adding a version to a template that
+is missing, archived, or somebody else's answered with a connector error
+instead of the 404 the endpoint has always given — a changed contract, and one
+that describes connector state to a caller with no claim on the template. The
+transactional write still fences on ownership; the preflight decides only what
+is said.
+
+**Considered and rejected:** returning the gallery already joined to author
+names. The object has no `users` table and no business acquiring one; asking
+it to would put a regional identity read behind a workspace-product method.
+
+**What a future change has to respect:** `usedBy` is zero because nothing
+counts subscriptions any more — the cutover moved them to AutomationAgent and
+dropped the table the count joined. The literal `0 AS use_count` in the old
+query said the same thing less clearly, and making it plain in code does not
+make it right: `new-automation.tsx` renders the value into "by {author} · used
+by {count}", so every card in the gallery has read "used by 0" for every
+template in every workspace since the cutover. That is a user-visible defect
+this change documents rather than fixes, and the honest options are to drop the
+field from the route contract and the desktop row, or to have AutomationAgent
+answer the count. It is not settled, and nobody should read "reports zero
+rather than a number it cannot know" as "the interface is fine".
+
 ### 2026-08-29 — The cutover has run, and its deploy scaffolding is removed
 
 **What changed:** The three one-shot steps that carried the authority cutover —
