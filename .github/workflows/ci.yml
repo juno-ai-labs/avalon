@@ -32,19 +32,17 @@ jobs:
               pnpm --filter @rally/api build:eu &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
-            command: pnpm --filter @rally/desktop exec vitest run --shard=1/3
+            command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
           - name: desktop-tests-2-of-n
-            command: pnpm --filter @rally/desktop exec vitest run --shard=2/3
-          - name: desktop-tests-3-of-n
-            command: pnpm --filter @rally/desktop exec vitest run --shard=3/3
+            command: pnpm --filter @rally/desktop exec vitest run --shard=2/2
           - name: api-tests-1-of-n
-            command: pnpm --filter @rally/api exec vitest run --shard=1/2
+            command: pnpm --filter @rally/api exec vitest run --shard=1/3
           - name: api-tests-2-of-n
-            command: >-
-              pnpm --filter @rally/api exec vitest run --shard=2/2
+            command: pnpm --filter @rally/api exec vitest run --shard=2/3
+          - name: api-tests-3-of-n
+            command: pnpm --filter @rally/api exec vitest run --shard=3/3
           - name: api-tests-workers
-            command: >-
-              pnpm --filter @rally/api test:workers
+            command: pnpm --filter @rally/api test:workers
           - name: crash-symbolicator-container
             command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests
