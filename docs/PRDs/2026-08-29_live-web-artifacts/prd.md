@@ -369,6 +369,11 @@ None yet.
    paths, content types, hashes, the resolved mode — beside the assets;
    the serving Worker's asset binding resolves requests against the
    manifest, static-site conventions included (`/` → `/index.html`).
+   The manifest records `index.js` as *module, not asset*: a request
+   for `/index.js` on an active artifact 404s through the asset
+   binding rather than serving the server module's source — no secret
+   can be in it (the sandbox guarantees that), but serving it is
+   surface nobody asked for.
 4. **One supervisor Durable Object per artifact.** A new
    jurisdiction-pinned `ArtifactHostDO` (one per artifact, addressed
    through the same stub helper every other DO uses) owns the artifact's
@@ -549,10 +554,21 @@ authoritative.
   provider `avalon_generated`, provider identity
   `terminal:<workstream-id>:<normalized-path>` — the same derivation file
   publishes use, unchanged; the row's resource type, not its identity,
-  records what the path published as. A directory that publishes as an
-  archive is an ordinary `generated_file` row holding the archive Rally
-  produced. The existing slug, version-number, and lifecycle columns
-  apply unchanged.
+  records what the path published as. A site resource's `content_ref`
+  points at the version's manifest — not at any single page — so its
+  MIME type is the manifest's: a vendor type of the shape
+  `application/vnd.<brand>.site-manifest+json`, where `<brand>` (rally
+  or avalon) follows the rebrand inventory's rule for new stored
+  identifiers and is the team's one-word call before the publish path
+  ships (the type is stored forever). `text/html` would misroute the
+  resource into single-document read paths and converters;
+  `application/zip` would make sites indistinguishable from archive
+  publishes, whose behavior is the opposite. A precise unrecognized
+  type fails closed into the `other` kind; a familiar wrong one fails
+  open into a converter. A directory that publishes as an
+  archive is an ordinary `generated_file` row holding the zip Rally
+  produced, MIME `application/zip`. The existing slug, version-number,
+  and lifecycle columns apply unchanged.
 - A new `artifact_registry` table beside the resource authority in
   WorkspaceDO: `artifact_id`, `resource_id`, `workstream_id`, the
   allocated hostname `label` (unique, region-wide via the label
@@ -680,9 +696,11 @@ published by its file path, never by its folder.
 - Successful `output`, by what the path resolved to: a *file* returns
   today's shape, byte-for-byte unchanged. A *site* directory returns
   `{ resourceId, slug, resourceType: "generated_site", url, mode:
-  "static" | "active", version, fileCount, totalBytes, manifestSha256,
-  createdAt }` — the URL and slug because the model's next step is
-  citing the artifact; `version` because revision narration wants it. An
+  "static" | "active", version, mimeType, fileCount, totalBytes,
+  manifestSha256, createdAt }` — the URL and slug because the model's
+  next step is citing the artifact; `version` because revision
+  narration wants it; `mimeType` is the site-manifest vendor type the
+  Data model fixes. An
   *archive* directory returns the existing download-only archive shape
   (`resourceType: "generated_file"`, `attachmentKind: "other"`, the
   archive's mime type and size) plus `fileCount` and `totalBytes` for
@@ -719,6 +737,25 @@ published by its file path, never by its folder.
   published directory back into the sandbox (of an archive resource, the
   archive file), so the loop stays list → import → edit → republish the
   same path. Nothing needs an id the family does not already return.
+
+**Attachment rails and the site kind.** The join between "the artifact"
+and "a resource in this work stream" is one token — the same
+`resourceId`/`slug` flows through publish, listings, and import — and
+the revision loop is the document loop the routed models already
+practice. What must not be left undefined is the natural next call a
+model makes after connecting them: a content read on the site resource.
+The attachment registry therefore classifies `generated_site` (keyed on
+its manifest MIME type, per the Data model) as the `other` kind in
+listings — honest: not directly readable content — and the four content
+tools (`workstream_read_resource`, `_view_`, `_search_`,
+`_summarize_`) answer a site with the registry's bounded wrong-tool
+remediation carrying `suggestedCall: terminal_import_resource` — "a
+site's source is edited in the terminal workspace; import it there to
+read or revise it" — so even the failure path teaches the connection
+instead of dead-ending it. The structured-failure sanitizer's
+`suggestedCall` allowlist, which today admits only the two workstream
+content tools, widens by exactly this one entry in contracts, runtime,
+and tests together, per the registry's own rule.
 
 **Standing-policy extension.** The document-generation policy gains the
 site trigger and manners: a request whose natural output is a web page or
@@ -844,10 +881,16 @@ rather than papered over.
    request — its frozen module over its frozen assets — with its source
    additionally readable through the versioning layer's preview; the
    canonical URL serves the newest version throughout.
-11. Where Terminal is unavailable, behavior is byte-identical to today;
+11. In a fresh run, "show me the site's source" leads through the
+   registry's redirect — a content read on the site resource returns the
+   `terminal_import_resource` suggestion, the import materializes the
+   directory, and the files are read there — with no dead end on any
+   configured routing stage. A browser request for `/index.js` on an
+   active artifact returns 404.
+12. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render — the preview pane
    included.
-12. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+13. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
    workerd suite pass; every new test shown to fail when its protected
    behavior is broken; the rail, artifact window, and error surfaces
    captured from a real window.
@@ -867,6 +910,11 @@ rather than papered over.
    title bar naming the artifact and its work stream, a refresh action)
    — settle against real screenshots during implementation, per house
    practice.
+4. **The brand word in the site-manifest MIME type** —
+   `application/vnd.rally.…` or `application/vnd.avalon.…` — the team's
+   one-word call before the publish path ships, made under the rebrand
+   inventory's rule for new stored identifiers; the type is stored
+   forever.
 
 ## Future research: platform-tied artifact state
 
