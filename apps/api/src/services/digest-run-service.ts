@@ -2,11 +2,17 @@ import { ExecutionPrincipalSchema, asWorkspaceId, asWorkstreamId, type Workstrea
 import { newId, nowIso } from "@rally/db";
 
 import type { Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceDigestClaimResultSchema,
+  WorkspaceDigestCursorSchema,
+  WorkspaceDigestFireScheduleSchema,
+} from "../durable-objects/workspace-digests-protocol";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import {
   latestActivityEventCursor,
   listActivityEventsForUser,
-  type ActivityEventCursor,
   type ActivityEventRow,
 } from "./activity-event-service";
 import { resolveDigestsEnabled } from "./digest-flags";
@@ -52,14 +58,19 @@ interface DigestScheduleRow {
   workspace_id: string;
   user_id: string;
   timezone: string;
-  enabled: number;
   execution_principal_json: string;
   user_name: string;
   workspace_name: string;
 }
 
-interface DeliveryCursorRow {
-  cursor_through: number | null;
+/** The WorkspaceDO that owns this workspace's digest tables. */
+function workspaceDigests(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
 }
 
 export type DigestFireOutcome =
@@ -81,30 +92,37 @@ export async function fireDigestSchedule(
   input: DigestScheduleFireInput,
 ): Promise<DigestFireOutcome> {
   env = withWorkspaceRuntimeDatabase(env, input.workspaceId);
-  const digest = await env.DB.prepare(
-    `SELECT id, workspace_id, user_id, enabled, execution_principal_json
-       FROM digest_schedules WHERE id = ? AND workspace_id = ?`,
-  ).bind(input.scheduleId, input.workspaceId).first<Pick<
-    DigestScheduleRow,
-    "id" | "workspace_id" | "user_id" | "enabled" | "execution_principal_json"
-  >>();
+  const workspace = await workspaceDigests(env, input.workspaceId);
+  const fire = WorkspaceDigestFireScheduleSchema.parse(await workspace.digestScheduleForFire({
+    workspaceId: input.workspaceId,
+    scheduleId: input.scheduleId,
+  }));
+  const digest = fire.schedule;
   const identity = digest ? await workspaceRegionalDatabase(env).prepare(
     `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
        FROM users u JOIN workspaces w ON w.id = ?
        JOIN workspace_members m ON m.workspace_id = w.id AND m.user_id = u.id AND m.status = 'active'
       WHERE u.id = ?`,
-  ).bind(input.workspaceId, digest.user_id).first<Pick<
+  ).bind(input.workspaceId, digest.userId).first<Pick<
     DigestScheduleRow,
     "timezone" | "user_name" | "workspace_name"
   >>() : null;
-  const schedule: DigestScheduleRow | null = digest && identity ? { ...digest, ...identity } : null;
+  const schedule: DigestScheduleRow | null = digest && identity
+    ? {
+      id: digest.id,
+      workspace_id: input.workspaceId,
+      user_id: digest.userId,
+      execution_principal_json: digest.executionPrincipalJson,
+      ...identity,
+    }
+    : null;
   // A revoked membership or a deleted schedule is a decision, not a failure:
   // retrying would only reach the same answer.
-  if (!schedule) return { started: false, reason: "unauthorized" };
-  if (schedule.enabled !== 1) return { started: false, reason: "disabled" };
+  if (!schedule || !digest) return { started: false, reason: "unauthorized" };
+  if (!digest.enabled) return { started: false, reason: "disabled" };
   // Checked before any write: an occurrence skipped here claims nothing and
   // moves no cursor, so turning the flag back on costs nothing — the next
-  // occurrence to fire reads `previousCursor` exactly as it always does and
+  // occurrence to fire reads the committed cursor exactly as it always does and
   // catches up on whatever was missed. See `digest-flags.ts` for why this
   // fails open rather than closed.
   const digestsEnabled = await resolveDigestsEnabled(env, {
@@ -122,7 +140,10 @@ export async function fireDigestSchedule(
   }
 
   const latest = await latestActivityEventCursor(env, asWorkspaceId(schedule.workspace_id));
-  const from = await previousCursor(env, schedule.id);
+  const from = WorkspaceDigestCursorSchema.parse(await workspace.latestDigestCursor({
+    workspaceId: input.workspaceId,
+    digestScheduleId: schedule.id,
+  })).cursorThrough;
   const notBefore = from ? null : new Date(Date.now() - FIRST_DIGEST_LOOKBACK_MS).toISOString();
 
   const events = await listActivityEventsForUser(env, {
@@ -150,31 +171,22 @@ export async function fireDigestSchedule(
 
   const deliveryId = newId();
   const at = nowIso();
-  const claimed = await env.DB.prepare(
-    `INSERT INTO digest_deliveries
-       (id, workspace_id, digest_schedule_id, user_id, planned_for,
-        cursor_from, cursor_through, event_count, highlight_count,
-        harness_run_id, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
-     ON CONFLICT DO NOTHING
-     RETURNING id`,
-  ).bind(
+  const claimed = WorkspaceDigestClaimResultSchema.parse(await workspace.claimDigestDelivery({
+    workspaceId: schedule.workspace_id,
     deliveryId,
-    schedule.workspace_id,
-    schedule.id,
-    schedule.user_id,
-    input.plannedFor,
-    from,
-    through,
-    events.length,
-    events.filter((event) => event.is_target === 1).length,
+    digestScheduleId: schedule.id,
+    userId: schedule.user_id,
+    plannedFor: input.plannedFor,
+    cursorFrom: from,
+    cursorThrough: through,
+    eventCount: events.length,
+    highlightCount: events.filter((event) => event.is_target === 1).length,
     // Nothing happened, so nothing is written and nothing is sent — but the
     // cursor still advances, so the next digest does not re-scan this window.
-    events.length === 0 ? "empty" : "planned",
+    status: events.length === 0 ? "empty" : "planned",
     at,
-    at,
-  ).first<{ id: string }>();
-  if (!claimed) return { started: false, reason: "already_planned" };
+  }));
+  if (claimed.outcome === "already_planned") return { started: false, reason: "already_planned" };
   if (events.length === 0) return { started: false, reason: "empty" };
 
   let workstreamId: WorkstreamId | null = null;
@@ -198,10 +210,12 @@ export async function fireDigestSchedule(
       executionPrincipal: principal,
       digestDeliveryId: deliveryId,
     });
-    await env.DB.prepare(
-      `UPDATE digest_deliveries SET status = 'running', harness_run_id = ?, updated_at = ?
-        WHERE id = ? AND status = 'planned'`,
-    ).bind(harnessRunId, nowIso(), deliveryId).run();
+    await workspace.markDigestDeliveryRunning({
+      workspaceId: schedule.workspace_id,
+      deliveryId,
+      harnessRunId,
+      at: nowIso(),
+    });
     return { started: true, deliveryId, harnessRunId };
   } catch (error) {
     // An attempt that started nothing undoes itself completely — the claim, so
@@ -217,8 +231,10 @@ export async function fireDigestSchedule(
     // that boundary from a refusal before the receipt existed. `harnessRunId`
     // covers failures before the launcher is reached at all.
     if (harnessRunId === null && !loopActivationWasRecorded(error)) {
-      await env.DB.prepare("DELETE FROM digest_deliveries WHERE id = ? AND status = 'planned'")
-        .bind(deliveryId).run().catch(() => undefined);
+      await workspace.releaseDigestDeliveryClaim({
+        workspaceId: schedule.workspace_id,
+        deliveryId,
+      }).catch(() => undefined);
       // Legacy D1 rows cascade. The DO path leaves a durable, unlistable
       // tombstone because its object identity cannot join this transaction.
       if (workstreamId) {
@@ -234,33 +250,6 @@ export async function fireDigestSchedule(
     }
     throw error;
   }
-}
-
-/**
- * Where the next digest starts reading: the highest point this schedule has
- * committed to covering.
- *
- * "Committed" includes a delivery that is still `planned` or `running`, not just
- * a settled one. Two configured times a minute apart, or one slow run, would
- * otherwise both start from the last *settled* cursor and summarize the same
- * events into consecutive emails — the window is frozen before the harness is
- * queued, so the second occurrence cannot see that the first already claimed it.
- *
- * `failed` is excluded, which is what folds an undelivered window into the next
- * digest rather than losing it.
- *
- * The maximum rather than the newest row: `planned_for` orders occurrences, but
- * a retried or late one can settle out of order, and the cursor must never move
- * backwards.
- */
-async function previousCursor(env: Env, scheduleId: string): Promise<ActivityEventCursor | null> {
-  const row = await env.DB.prepare(
-    `SELECT MAX(cursor_through) AS cursor_through
-       FROM digest_deliveries
-      WHERE digest_schedule_id = ?
-        AND status IN ('delivered', 'empty', 'planned', 'running')`,
-  ).bind(scheduleId).first<DeliveryCursorRow>();
-  return row?.cursor_through == null ? null : Number(row.cursor_through);
 }
 
 /**
@@ -351,11 +340,14 @@ async function createDigestWorkstream(
     modelOverride: null,
     now: Date.parse(at),
   });
-  // The occurrence is regional coordination state; it references the D1
-  // identity anchor but never owns the work-stream record.
-  await env.DB.prepare(
-    "UPDATE digest_deliveries SET workstream_id = ?, updated_at = ? WHERE id = ?",
-  ).bind(workstreamId, at, occurrence.deliveryId).run();
+  // The delivery is workspace coordination state; it references the work
+  // stream's identity but never owns the work-stream record.
+  await (await workspaceDigests(env, schedule.workspace_id)).recordDigestDeliveryWorkstream({
+    workspaceId: schedule.workspace_id,
+    deliveryId: occurrence.deliveryId,
+    workstreamId,
+    at,
+  });
   return workstreamId;
 }
 

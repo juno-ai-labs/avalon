@@ -24,7 +24,7 @@ import { workspaceDOName } from "../src/durable-objects/names";
 import { WorkspaceAutomationOriginLabelSchema } from "../src/durable-objects/workspace-directory-protocol";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009a0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000cb0");
 const AUTHOR = asUserId("00000000-0000-7000-8000-0000000009a1");
 const AUTOMATION_ID = "00000000-0000-7000-8000-0000000009c0";
 const OTHER_AUTOMATION_ID = "00000000-0000-7000-8000-0000000009c1";
@@ -113,7 +113,7 @@ describe("automationOriginLabel", () => {
     // `rejects.toThrow` reads through it a second time, which surfaces the same
     // rejection again as an unhandled error and fails the run.
     const outcome = await workspace().automationOriginLabel({
-      workspaceId: asWorkspaceId("00000000-0000-7000-8000-0000000009a9"),
+      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000cb9"),
       automationId: AUTOMATION_ID,
     }).then(() => null, (error: unknown) => error);
     expect(String(outcome)).toContain("workspace_object_identity_mismatch");

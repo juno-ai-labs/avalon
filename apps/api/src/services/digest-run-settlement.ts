@@ -1,7 +1,15 @@
-import { asUserId, asWorkspaceId } from "@rally/contracts";
+import { DigestDeliveryTargetTypeSchema, asUserId, asWorkspaceId } from "@rally/contracts";
 
 import type { Env } from "../env";
 import { newId, nowIso } from "@rally/db";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceDigestDeliveryContextSchema,
+  WorkspaceDigestSettleResultSchema,
+  WorkspaceDigestTerminalContextSchema,
+  type WorkspaceDigestSettleResult,
+} from "../durable-objects/workspace-digests-protocol";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { deliverDigest } from "./digest-delivery-service";
 import {
   emitProductUsageTelemetry,
@@ -54,25 +62,29 @@ interface DigestDeliveryRow {
   planned_for: string;
   event_count: number;
   highlight_count: number;
-  status: string;
+  workstream_id: string | null;
   timezone: string;
   user_name: string;
   workspace_name: string;
 }
 
+/** The WorkspaceDO that owns this workspace's digest tables. */
+function workspaceDigests(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
+}
+
 async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result: "success" | "failed"): Promise<void> {
-  const [targets, prior] = await Promise.all([
-    env.DB.prepare(
-      `SELECT DISTINCT target_type FROM digest_delivery_targets target
-       JOIN digest_deliveries delivery ON delivery.digest_schedule_id = target.digest_schedule_id
-       WHERE delivery.id = ? ORDER BY target_type LIMIT 2`,
-    ).bind(delivery.id).all<{ target_type: "email" | "slack_agent_dm" }>(),
-    env.DB.prepare(
-      `SELECT COUNT(*) AS count FROM digest_deliveries current
-       JOIN digest_deliveries previous ON previous.digest_schedule_id = current.digest_schedule_id
-       WHERE current.id = ? AND previous.status = 'delivered' AND previous.id <> current.id`,
-    ).bind(delivery.id).first<{ count: number }>(),
-  ]);
+  const context = WorkspaceDigestTerminalContextSchema.parse(
+    await (await workspaceDigests(env, delivery.workspace_id)).digestTerminalTelemetryContext({
+      workspaceId: delivery.workspace_id,
+      deliveryId: delivery.id,
+    }),
+  );
   await emitProductUsageTelemetry(env, {
     workspaceId: asWorkspaceId(delivery.workspace_id),
     userId: asUserId(delivery.user_id),
@@ -81,12 +93,33 @@ async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result:
       deliveryId: delivery.id,
       result,
       activityCount: telemetryCountBucket(Number(delivery.event_count)),
-      targetTypes: targets.results.map((row) => row.target_type),
-      firstDelivery: Number(prior?.count ?? 0) === 0,
+      // The object stores the type as text; the event's registration is what
+      // narrows it, exactly as the routed read's row-type assertion did.
+      targetTypes: DigestDeliveryTargetTypeSchema.array().parse(context.targetTypes),
+      firstDelivery: context.priorDeliveredCount === 0,
     },
     operationId: delivery.id,
     eventId: resourceTelemetryEventId(delivery.id, 10),
   }).catch(() => undefined);
+}
+
+/** Settle exactly once; only the attempt that wins the transition owns its side effects. */
+async function settleDelivery(
+  env: Env,
+  workspaceId: string,
+  deliveryId: string,
+  status: "delivered" | "failed",
+  errorJson: string | null,
+): Promise<WorkspaceDigestSettleResult> {
+  return WorkspaceDigestSettleResultSchema.parse(
+    await (await workspaceDigests(env, workspaceId)).settleDigestDelivery({
+      workspaceId,
+      deliveryId,
+      status,
+      errorJson,
+      at: nowIso(),
+    }),
+  );
 }
 
 export async function settleDigestRun(
@@ -103,49 +136,57 @@ export async function settleDigestRun(
   text: string | null,
 ): Promise<void> {
   env = withWorkspaceRuntimeDatabase(env, workspaceId);
-  const localDelivery = await env.DB.prepare(
-    `SELECT id, workspace_id, user_id, planned_for, event_count, highlight_count, status
-       FROM digest_deliveries WHERE id = ? AND workspace_id = ?`,
-  ).bind(deliveryId, workspaceId).first<Omit<
-    DigestDeliveryRow,
-    "timezone" | "user_name" | "workspace_name"
-  >>();
-  const identity = localDelivery ? await workspaceRegionalDatabase(env).prepare(
+  const workspace = await workspaceDigests(env, workspaceId);
+  const context = WorkspaceDigestDeliveryContextSchema.parse(await workspace.digestDeliveryContext({
+    workspaceId,
+    deliveryId,
+  }));
+  const identity = context.delivery ? await workspaceRegionalDatabase(env).prepare(
     `SELECT u.timezone, u.name AS user_name, w.name AS workspace_name
        FROM users u JOIN workspaces w ON w.id = ? WHERE u.id = ?`,
-  ).bind(workspaceId, localDelivery.user_id).first<Pick<
+  ).bind(workspaceId, context.delivery.userId).first<Pick<
     DigestDeliveryRow,
     "timezone" | "user_name" | "workspace_name"
   >>() : null;
-  const delivery: DigestDeliveryRow | null = localDelivery && identity
-    ? { ...localDelivery, ...identity }
+  const delivery: DigestDeliveryRow | null = context.delivery && identity
+    ? {
+      id: context.delivery.id,
+      workspace_id: workspaceId,
+      user_id: context.delivery.userId,
+      planned_for: context.delivery.plannedFor,
+      event_count: context.delivery.eventCount,
+      highlight_count: context.delivery.highlightCount,
+      workstream_id: context.delivery.workstreamId,
+      ...identity,
+    }
     : null;
-  if (!delivery) return;
+  if (!delivery || !context.delivery) return;
   // Already settled by an earlier attempt of this step. The cursor has moved and
-  // the destinations have their copy; re-sending would duplicate it.
-  if (delivery.status === "delivered" || delivery.status === "failed") return;
+  // the destinations have their copy; re-sending would duplicate it. This is a
+  // fast path, not the guard — two attempts of one retried step can overlap,
+  // both read an unsettled status here, and both reach the settle below. The
+  // settle's own compare-and-set is what decides which of them won.
+  if (context.delivery.status === "delivered" || context.delivery.status === "failed") return;
 
   const summary = text?.trim() ?? "";
   if (outcomeStatus !== "completed" || summary.length < MINIMUM_DIGEST_CHARACTERS) {
     // A run that could not write a digest sends nothing. The delivery is marked
     // failed rather than delivered, and because only settled deliveries advance
     // the cursor, this window is folded into the next digest rather than lost.
-    await env.DB.prepare(
-      `UPDATE digest_deliveries
-          SET status = 'failed', error_json = ?, updated_at = ?
-        WHERE id = ? AND status NOT IN ('delivered', 'failed')`,
-    ).bind(
-      JSON.stringify({ code: `digest_run_${outcomeStatus}`, message: "The digest run produced no summary" }),
-      nowIso(),
-      deliveryId,
-    ).run();
-    await emitDigestTerminal(env, delivery, "failed").catch(() => undefined);
+    const settled = await settleDelivery(env, workspaceId, deliveryId, "failed", JSON.stringify({
+      code: `digest_run_${outcomeStatus}`,
+      message: "The digest run produced no summary",
+    }));
+    if (settled.outcome === "settled") await emitDigestTerminal(env, delivery, "failed").catch(() => undefined);
     return;
   }
 
-  await env.DB.prepare(
-    "UPDATE digest_deliveries SET summary_markdown = ?, updated_at = ? WHERE id = ?",
-  ).bind(summary, nowIso(), deliveryId).run();
+  await workspace.recordDigestSummary({
+    workspaceId,
+    deliveryId,
+    summaryMarkdown: summary,
+    at: nowIso(),
+  });
 
   // Counted when the window was taken, against the events the run was actually
   // given. Recomputing it here would have to re-derive the audience filter, the
@@ -168,31 +209,24 @@ export async function settleDigestRun(
   // A run where nothing was *sent* but nothing failed either — a retry finding
   // its destinations already served, or a non-production run — is not this case.
   if (delivered.delivered === 0 && delivered.failed > 0) {
-    await env.DB.prepare(
-      `UPDATE digest_deliveries SET status = 'failed', error_json = ?, updated_at = ?
-        WHERE id = ? AND status NOT IN ('delivered', 'failed')`,
-    ).bind(
-      JSON.stringify({
-        code: "digest_not_delivered",
-        message: "No destination accepted this digest",
-      }),
-      nowIso(),
-      deliveryId,
-    ).run();
-    await emitDigestTerminal(env, delivery, "failed").catch(() => undefined);
+    const settled = await settleDelivery(env, workspaceId, deliveryId, "failed", JSON.stringify({
+      code: "digest_not_delivered",
+      message: "No destination accepted this digest",
+    }));
+    if (settled.outcome === "settled") await emitDigestTerminal(env, delivery, "failed").catch(() => undefined);
     return;
   }
 
   // Marked delivered only after every destination has settled, so a delivery
   // that throws mid-way is retried by the workflow step rather than recorded as
   // done. Each destination's own `last_delivered_delivery_id` keeps that retry
-  // from re-sending what already landed.
-  await env.DB.prepare(
-    `UPDATE digest_deliveries SET status = 'delivered', updated_at = ?
-      WHERE id = ? AND status NOT IN ('delivered', 'failed')`,
-  ).bind(nowIso(), deliveryId).run();
+  // from re-sending what already landed. The compare-and-set answers which
+  // attempt settled it: the loser used to fall through here anyway and emit the
+  // terminal telemetry and the transcript note a second time.
+  const settled = await settleDelivery(env, workspaceId, deliveryId, "delivered", null);
+  if (settled.outcome !== "settled") return;
   await emitDigestTerminal(env, delivery, "success").catch(() => undefined);
-  await noteDeliveryInTranscript(env, delivery.id, delivered.delivered);
+  await noteDeliveryInTranscript(env, delivery, delivered.delivered);
 }
 
 /**
@@ -209,29 +243,20 @@ export async function settleDigestRun(
  *
  * Resolved through `digest_deliveries.workstream_id` rather than by joining back
  * through `harness_runs`, so it still lands when the launch never recorded its
- * run id on the delivery.
- *
- * The `COALESCE` covers the deploy window running the other way. Migrations land
- * before either Worker deploys, so the *previous* Worker claims deliveries into
- * the new schema without writing the new column; resolving through
- * `workstream_id` alone would drop the note for every one of them and invert the
- * signal above — the digest went out, and its transcript would say it did not.
- * `harness_runs` is what the migration's own backfill reads for exactly the same
- * reason, and it is only ever consulted here when the column is NULL.
+ * run id on the delivery. A delivery claimed before the column existed carries
+ * NULL and deliberately gets no note — the settlement itself must still land
+ * rather than fail the whole run over a missing note.
  */
 async function noteDeliveryInTranscript(
   env: Env,
-  deliveryId: string,
+  delivery: DigestDeliveryRow,
   destinations: number,
 ): Promise<void> {
-  const delivery = await env.DB.prepare(
-    `SELECT workspace_id, workstream_id FROM digest_deliveries WHERE id = ?`,
-  ).bind(deliveryId).first<{ workspace_id: string; workstream_id: string | null }>();
-  if (!delivery?.workstream_id) return;
+  if (!delivery.workstream_id) return;
   await createMessageObjectPort(env, delivery.workspace_id, delivery.workstream_id)
     .appendMessage({
       messageId: newId(),
-      clientMessageId: `digest-delivered:${deliveryId}`,
+      clientMessageId: `digest-delivered:${delivery.id}`,
       authorType: "system",
       authorUserId: null,
       externalActorJson: null,
