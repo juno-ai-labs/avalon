@@ -2,6 +2,7 @@ import {
   WorkspaceTerminalNetworkModeSchema,
   WorkspaceTerminalNetworkSettingsSchema,
   WorkspaceTerminalPolicyClaimResultSchema,
+  WorkspaceTerminalPolicySettlementResultSchema,
   type WorkspaceTerminalNetworkMode,
   type WorkspaceTerminalNetworkSettings,
   type WorkspaceTerminalNetworkSettingsRequest,
@@ -10,6 +11,7 @@ import {
   type WorkspaceTerminalPolicyCommitRequest,
   type WorkspaceTerminalPolicyFailRequest,
   type WorkspaceTerminalPolicyPreviewRequest,
+  type WorkspaceTerminalPolicySettlementResult,
 } from "./workspace-terminal-network-protocol";
 
 interface PolicyRow extends Record<string, SqlStorageValue> {
@@ -144,13 +146,10 @@ export function claimWorkspaceTerminalPolicyApplication(
 ): WorkspaceTerminalPolicyClaimResult {
   return storage.transactionSync(() => {
     const current = policyOf(storage, request.workspaceId);
+    // A refusal carries nothing but its reason: the union says so, and the
+    // caller narrows on `outcome` rather than asserting past two nulls.
     const refusal = (outcome: "preview_stale" | "revision_conflict") =>
-      WorkspaceTerminalPolicyClaimResultSchema.parse({
-        outcome,
-        mutation: null,
-        current: current ? policyView(current) : null,
-        currentCustomDomains: domainsOf(storage, request.workspaceId),
-      });
+      WorkspaceTerminalPolicyClaimResultSchema.parse({ outcome });
 
     const mutation = storage.sql.exec<MutationRow>(
       `SELECT id, expected_revision, proposed_mode, proposed_domains_json,
@@ -184,15 +183,22 @@ export function claimWorkspaceTerminalPolicyApplication(
       return refusal("revision_conflict");
     }
 
-    const claimed = storage.sql.exec(
+    // A returned witness rather than a row count, per
+    // `docs/durable-object-sqlite.md`: the statement says which revision it
+    // took, so the check is on the fact the statement reports rather than on a
+    // row count. This also refuses a policy already `pending` — a
+    // preview taken before an application started can still be confirmed while
+    // one is in flight, and the second confirm must not join it.
+    const claimed = storage.sql.exec<{ revision: number }>(
       `UPDATE workspace_sandbox_network_policies
           SET verification_state = 'pending', failure_code = NULL, updated_at = ?
-        WHERE workspace_id = ? AND revision = ? AND verification_state = 'verified'`,
+        WHERE workspace_id = ? AND revision = ? AND verification_state = 'verified'
+        RETURNING revision`,
       request.at,
       request.workspaceId,
       request.expectedRevision,
-    ).rowsWritten;
-    if (claimed === 0) return refusal("revision_conflict");
+    ).toArray()[0];
+    if (claimed?.revision !== request.expectedRevision) return refusal("revision_conflict");
 
     storage.sql.exec(
       `UPDATE workspace_sandbox_network_policy_mutations
@@ -217,40 +223,99 @@ export function claimWorkspaceTerminalPolicyApplication(
   });
 }
 
-/** Give the claim back with a reason, keeping the last verified policy. */
+/**
+ * Give the claim back with a reason, keeping the last verified policy.
+ *
+ * Fenced on the mutation, not on the revision. A failed application leaves the
+ * revision unchanged, so the next preview claims the same number — and a
+ * retried failure for the first would otherwise release the second's claim,
+ * putting the policy back to `verified` while its application is still
+ * reconciling sandboxes.
+ */
 export function failWorkspaceTerminalPolicyApplication(
   storage: DurableObjectStorage,
   request: WorkspaceTerminalPolicyFailRequest,
-): void {
-  storage.transactionSync(() => {
-    storage.sql.exec(
-      `UPDATE workspace_sandbox_network_policies
-          SET verification_state = 'verified', failure_code = ?, updated_at = ?
-        WHERE workspace_id = ? AND revision = ?`,
-      request.failureCode,
-      request.at,
-      request.workspaceId,
-      request.revision,
-    );
-    storage.sql.exec(
+): WorkspaceTerminalPolicySettlementResult {
+  return storage.transactionSync(() => {
+    const settled = storage.sql.exec<{ id: string }>(
       `UPDATE workspace_sandbox_network_policy_mutations
           SET state = 'failed', failure_code = ?, completed_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND id = ?`,
+        WHERE workspace_id = ? AND id = ? AND state = 'pending'
+        RETURNING id`,
       request.failureCode,
       request.at,
       request.at,
       request.workspaceId,
       request.mutationId,
+    ).toArray()[0];
+    if (settled?.id !== request.mutationId) {
+      return WorkspaceTerminalPolicySettlementResultSchema.parse({ outcome: "stale" });
+    }
+    storage.sql.exec(
+      `UPDATE workspace_sandbox_network_policies
+          SET verification_state = 'verified', failure_code = ?, updated_at = ?
+        WHERE workspace_id = ? AND revision = ? AND verification_state = 'pending'`,
+      request.failureCode,
+      request.at,
+      request.workspaceId,
+      request.revision,
     );
+    return WorkspaceTerminalPolicySettlementResultSchema.parse({ outcome: "settled" });
   });
 }
 
-/** Publish the applied policy: the domain list, the new revision, and the ledger. */
+/**
+ * Publish the applied policy: the domain list, the new revision, and the ledger.
+ *
+ * The mutation is settled first and the policy second, both on returned
+ * witnesses, and the domain rows are replaced only once both have said yes. A
+ * replayed commit therefore changes nothing: it finds its mutation already out
+ * of `pending`, returns `stale`, and leaves the domains a person is looking at
+ * agreeing with the revision that published them.
+ */
 export function commitWorkspaceTerminalPolicyApplication(
   storage: DurableObjectStorage,
   request: WorkspaceTerminalPolicyCommitRequest,
-): void {
-  storage.transactionSync(() => {
+): WorkspaceTerminalPolicySettlementResult {
+  return storage.transactionSync(() => {
+    const stale = () =>
+      WorkspaceTerminalPolicySettlementResultSchema.parse({ outcome: "stale" });
+    const settled = storage.sql.exec<{ id: string }>(
+      `UPDATE workspace_sandbox_network_policy_mutations
+          SET state = 'verified', completed_at = ?, updated_at = ?
+        WHERE workspace_id = ? AND id = ? AND state = 'pending'
+          AND resulting_revision = ?
+        RETURNING id`,
+      request.at,
+      request.at,
+      request.workspaceId,
+      request.mutationId,
+      request.resultingRevision,
+    ).toArray()[0];
+    if (settled?.id !== request.mutationId) return stale();
+
+    const published = storage.sql.exec<{ revision: number }>(
+      `UPDATE workspace_sandbox_network_policies
+          SET mode = ?, revision = ?, verification_state = 'verified',
+              effective_domains_json = ?, failure_code = NULL,
+              last_verified_at = ?, updated_at = ?
+        WHERE workspace_id = ? AND revision = ? AND verification_state = 'pending'
+        RETURNING revision`,
+      request.mode,
+      request.resultingRevision,
+      JSON.stringify(request.effectiveDomains),
+      request.at,
+      request.at,
+      request.workspaceId,
+      request.claimedRevision,
+    ).toArray()[0];
+    // The mutation was `pending` and the policy was not, which the claim makes
+    // impossible: they are taken together. Refusing the whole transaction is
+    // the only answer that leaves the two agreeing.
+    if (published?.revision !== request.resultingRevision) {
+      throw new Error("terminal_policy_commit_policy_missing");
+    }
+
     storage.sql.exec(
       `DELETE FROM workspace_sandbox_network_domains WHERE workspace_id = ?`,
       request.workspaceId,
@@ -265,28 +330,6 @@ export function commitWorkspaceTerminalPolicyApplication(
         request.at,
       );
     }
-    storage.sql.exec(
-      `UPDATE workspace_sandbox_network_policies
-          SET mode = ?, revision = ?, verification_state = 'verified',
-              effective_domains_json = ?, failure_code = NULL,
-              last_verified_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND revision = ? AND verification_state = 'pending'`,
-      request.mode,
-      request.resultingRevision,
-      JSON.stringify(request.effectiveDomains),
-      request.at,
-      request.at,
-      request.workspaceId,
-      request.claimedRevision,
-    );
-    storage.sql.exec(
-      `UPDATE workspace_sandbox_network_policy_mutations
-          SET state = 'verified', completed_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND id = ? AND state = 'pending'`,
-      request.at,
-      request.at,
-      request.workspaceId,
-      request.mutationId,
-    );
+    return WorkspaceTerminalPolicySettlementResultSchema.parse({ outcome: "settled" });
   });
 }

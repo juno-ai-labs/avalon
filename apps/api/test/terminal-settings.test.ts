@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../src/env";
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { TerminalSettingsService } from "../src/services/terminal/settings";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import type { DatabaseSync } from "node:sqlite";
 import {
@@ -79,6 +79,12 @@ function fixture(role: AuthContext["role"] = "owner") {
     VALUES ('${S}', '${W}', 'Settings', 'Settings', 'ad_hoc', '${U}', 'idle',
             '2026-08-13', '2026-08-13', '2026-08-13');
   `);
+  const routedStatements: string[] = [];
+  const workspaceObject = createTestWorkspaceDO({
+    workspaceId: W,
+    regionalDatabase: database,
+    register: (created) => { objectDatabases.push(created); },
+  });
   const objectStores = new Map<string, DatabaseSync>();
   const objectStore = seedSandboxObject(objectStores, S, {
     state: "running", stableName: "settings-sandbox", providerSandboxId: "provider-1",
@@ -93,11 +99,17 @@ function fixture(role: AuthContext["role"] = "owner") {
         // The Terminal network policy is decided by a real WorkspaceDO over its
         // own schema, so these tests assert the object's revision fencing and
         // claim atomicity rather than a re-implementation of them.
-        ...workspaceObjectRpcs(createTestWorkspaceDO({
-          workspaceId: W,
-          regionalDatabase: database,
-          register: (created) => { objectDatabases.push(created); },
-        }).instance, [
+        // `executeRuntimeSql` is served by the real object too, so the
+        // statements this service's collaborators still route — the final-diff
+        // preserver's `resources` and `resource_object_deletion_outbox` writes
+        // — run against WorkspaceDO's own schema rather than the frozen
+        // through-0089 stand-in, whose `resource_object_deletion_outbox` has
+        // since lost a column the production table has.
+        executeRuntimeSql: (input: { statements: Array<{ sql: string }> }) => {
+          for (const statement of input.statements) routedStatements.push(statement.sql);
+          return workspaceObject.instance.executeRuntimeSql(input as never);
+        },
+        ...workspaceObjectRpcs(workspaceObject.instance, [
           "terminalNetworkSettings",
           "terminalNetworkMode",
           "recordTerminalPolicyPreview",
@@ -127,6 +139,9 @@ function fixture(role: AuthContext["role"] = "owner") {
         },
       },
     }),
+    // The final-diff preserver stages the diff in R2 before it writes the
+    // resource row, so the bucket has to exist for that path to be reached.
+    PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: async () => undefined }),
     DAYTONA_API_KEY: "key", DAYTONA_API_URL: "https://app.daytona.io/api", DAYTONA_TARGET: "us",
     DAYTONA_TERMINAL_SNAPSHOT: "snapshot", TERMINAL_EMERGENCY_DISABLED: "false",
   });
@@ -142,6 +157,7 @@ function fixture(role: AuthContext["role"] = "owner") {
     database,
     objectStore,
     objectStores,
+    routedStatements,
     env,
     provider,
     service: new TerminalSettingsService(env, auth, provider),
@@ -252,6 +268,34 @@ describe("Terminal workspace settings", () => {
     const owner = fixture();
     await expect(owner.service.preview({ expectedRevision: 99, mode: "full_internet", customDomains: [] }))
       .rejects.toMatchObject({ status: 409, code: "terminal_policy_revision_conflict", message: expect.stringContaining("reload") });
+  });
+
+  it("keeps the final-diff preserver's writes routed to the object", async () => {
+    // The service stopped wrapping its environment when its own statements
+    // became typed methods — and `apply` still hands that environment to the
+    // final-diff preserver, which writes `resources` and
+    // `resource_object_deletion_outbox` through `env.DB`. Both are WorkspaceDO
+    // tables that migration 0090 dropped from regional D1, so an unrouted
+    // handle makes the first of them `no such table`: swallowed into
+    // `failures`, surfacing as a 502 blaming the provider, with the policy
+    // change unable to land while any sandbox holds a diff.
+    //
+    // The other cases cannot see it. Their `runUtilityCommand` returns empty
+    // stdout, so the preserver returns before reaching any SQL. This one gives
+    // it a diff, and asserts on where the statement went rather than on the
+    // whole preserve path, which needs more of the runtime than this suite has.
+    const { provider, service, routedStatements } = fixture();
+    vi.mocked(provider.runUtilityCommand).mockResolvedValue({
+      exitCode: 0,
+      stdout: "diff --git a/a.txt b/a.txt\n+one\n",
+      stderr: "",
+    });
+    const preview = await service.preview({ expectedRevision: 1, mode: "full_internet", customDomains: [] });
+    await service.apply({ mutationId: preview.mutationId, expectedRevision: 1, confirmed: true })
+      .catch(() => undefined);
+
+    expect(routedStatements.some((sql) => sql.includes("resource_object_deletion_outbox")))
+      .toBe(true);
   });
 
   it("stops every affected sandbox even when the first provider stop fails", async () => {

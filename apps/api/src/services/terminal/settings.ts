@@ -11,6 +11,7 @@ import type { z } from "zod";
 import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
+import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
 import { workspaceDOName } from "../../durable-objects/names";
 import {
   WorkspaceTerminalNetworkSettingsSchema,
@@ -53,7 +54,15 @@ export class TerminalSettingsService {
     auth: AuthContext,
     provider: TerminalSandboxProvider | null,
   ) {
-    this.env = env;
+    // Still routed, deliberately. The policy statements left `env.DB` for typed
+    // methods, but this service is not the only thing that reads it: `apply`
+    // hands this environment to `createTerminalFinalDiffPreserver`, which
+    // writes `resources` and `resource_object_deletion_outbox` through
+    // `env.DB`. Both are WorkspaceDO tables that migration 0090 dropped from
+    // regional D1, so an unrouted handle turns a policy change made while any
+    // sandbox holds a diff into `no such table` — the same routing defect this
+    // change exists to remove, arriving from the other side.
+    this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
     this.auth = auth;
     this.provider = provider;
   }
@@ -155,8 +164,7 @@ export class TerminalSettingsService {
     if (claim.outcome === "revision_conflict") {
       throw new ApiError(409, "terminal_policy_revision_conflict", "The Terminal network policy changed; reload settings and preview the policy again.");
     }
-    const mutation = claim.mutation!;
-    const current = claim.current!;
+    const { mutation, current } = claim;
     const customDomains = mutation.proposedDomains;
     const effectiveDomains = mutation.effectiveDomains;
     const previousCustomDomains = claim.currentCustomDomains;
@@ -418,6 +426,9 @@ export class TerminalSettingsService {
    * workspace's default row if this is the first read.
    */
   private async settings() {
+    // Parsed here rather than trusting the return type: the value crossed an
+    // RPC boundary, and the object it came from may be running an older
+    // deployment than this Worker.
     return WorkspaceTerminalNetworkSettingsSchema.parse(
       await (await this.workspace()).terminalNetworkSettings({
         workspaceId: this.auth.workspaceId,

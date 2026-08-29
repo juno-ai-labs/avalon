@@ -60,7 +60,7 @@ describe("workspace runtime database routing", () => {
 
   it("routes an automation's origin label to the object that holds the directory", () => {
     // The statement the work stream summary used to issue. It now calls
-    // `workstreamSummaryContext` on WorkspaceDO instead, so nothing sends this
+    // `automationOriginLabel` on WorkspaceDO instead, so nothing sends this
     // through the facade — but the routing entry stays, and this holds it
     // there. While `automation_directory` was missing from
     // `WORKSPACE_LOCAL_TABLES` the read took the regional fallthrough and

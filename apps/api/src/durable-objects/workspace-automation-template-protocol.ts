@@ -37,6 +37,24 @@ export const WorkspaceAutomationTemplatePublishRequestSchema = z.object({
   version: WorkspaceAutomationTemplateVersionInputSchema,
 }).strict();
 
+/**
+ * Does this person own an active template with this id?
+ *
+ * Asked before the draft's connectors are validated, so a template that is
+ * missing, archived, or somebody else's answers 404 rather than a connector
+ * error. The write below fences on ownership again — this preflight decides
+ * what a caller is told, not what they are allowed to write.
+ */
+export const WorkspaceAutomationTemplateOwnershipRequestSchema = z.object({
+  workspaceId: IdSchema,
+  templateId: IdSchema,
+  ownerUserId: IdSchema,
+}).strict();
+
+export const WorkspaceAutomationTemplateOwnershipSchema = z.object({
+  owned: z.boolean(),
+}).strict();
+
 export const WorkspaceAutomationTemplateVersionRequestSchema = z.object({
   workspaceId: IdSchema,
   templateId: IdSchema,
@@ -74,6 +92,12 @@ export const WorkspaceAutomationTemplateListSchema = z.object({
 
 export type WorkspaceAutomationTemplatePublishRequest = z.infer<
   typeof WorkspaceAutomationTemplatePublishRequestSchema
+>;
+export type WorkspaceAutomationTemplateOwnershipRequest = z.infer<
+  typeof WorkspaceAutomationTemplateOwnershipRequestSchema
+>;
+export type WorkspaceAutomationTemplateOwnership = z.infer<
+  typeof WorkspaceAutomationTemplateOwnershipSchema
 >;
 export type WorkspaceAutomationTemplateVersionRequest = z.infer<
   typeof WorkspaceAutomationTemplateVersionRequestSchema
