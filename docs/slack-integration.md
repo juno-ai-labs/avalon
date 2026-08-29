@@ -840,16 +840,47 @@ only the lease they were handed.
 **Consequences:** New ingress lifecycle states belong in the protocol and
 storage files, not in service SQL — the object refuses nothing yet, so a raw
 statement naming these tables still executes, and adding one reopens the path
-this closed. The attempt ceiling (20) now lives in
-`workspace-slack-storage.ts` and is deliberately still spelled in the re-drive
-statement in `slack-agent-service.ts` and the alarm's due-time arm in
-`workspace-schedule-execution.ts`; the three must move together. Typed
-mutations re-derive the workspace alarm the way `executeRuntimeSql` did, so a
-method added to this family must call `refreshScheduleAfterSlackWrite` or its
-table's due time goes stale. `processQueuedIngress` and `maintainIngress` now
-require the workspace id — the legacy single-argument forms are gone. Still on
-the facade, deliberately: everything listed under "what changed" as remaining,
-for a later part of this stack.
+this closed. The attempt ceiling is one exported constant,
+`SLACK_INGRESS_ATTEMPT_LIMIT` in `workspace-slack-protocol.ts`, interpolated by
+the claim and recovery SQL inside the object, by the reauthorization re-drive in
+`slack-agent-service.ts`, and by the alarm's due-time arm in
+`workspace-schedule-execution.ts` — it sits in the protocol rather than beside
+the claim so a service can import it without dragging `DurableObjectStorage`
+along. It was briefly three literals with a comment saying they must move
+together; a comment is only as good as the next person reading all three files.
+
+Typed *mutations* re-derive the workspace alarm the way `executeRuntimeSql` did,
+so a mutating method added to this family must call
+`refreshScheduleAfterSlackWrite` or its table's due time goes stale — but two
+exceptions are load-bearing and must be preserved. Reads never call it. And
+neither does `sweepSlackIngress`, whose only caller is the `slack_ingress`
+maintenance target: that runs inside this object's own alarm drain, whose
+statements go through the local executor and so never carried the auto-refresh,
+and whose end-of-drain `schedule_reconcile` is the authoritative pass. A
+`waitUntil` refresh started mid-drain reads the target list before later targets
+advance their rows and can land after that reconcile, replacing a correct index
+with a stale one — the failure the comment on the end-of-drain refresh exists to
+prevent. Mutating methods additionally gate the refresh on an outcome that moved
+a row: `executeRuntimeSql` could not, because it keys on table names in the SQL
+text and cannot see whether the statement matched anything, so a losing claim
+or a stale settlement paid for a full reconcile there.
+
+`processQueuedIngress` and `maintainIngress` now require the workspace id as a
+leading parameter — the legacy trailing-optional forms are gone, and with them a
+runtime throw no caller could reach.
+
+The recovery scan's predicate mirrors the claim's, and must keep doing so: it
+re-enqueues what that claim will take. The facade statement applied the attempt
+ceiling to every row including a `processing` one whose lease had expired, which
+the claim reclaims regardless of attempt count. That stranded a job whose worker
+died on its twentieth attempt — permanently `processing`, permanently due
+because the alarm reads a processing row's due time as its `lease_expires_at`,
+never re-enqueued, and taken by no reap — so the alarm woke, swept nothing, and
+re-armed on the same instant. Fixed here by scoping the ceiling to
+`queued`/`failed`.
+
+Still on the facade, deliberately: everything listed under "what changed" as
+remaining, for a later part of this stack.
 
 Shipped in the facade-to-RPC stack, 9/9 part 1.
 

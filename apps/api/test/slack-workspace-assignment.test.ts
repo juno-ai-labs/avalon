@@ -1770,7 +1770,7 @@ describe("Slack ingress re-drive after reauthorization", () => {
       fixture.instance,
       fixture.credentialsKey,
       vi.fn(async (body: unknown) => { sent.push(body); }),
-    )).maintainIngress(100, "22222222-2222-4222-8222-222222222222").then(() => sent);
+    )).maintainIngress("22222222-2222-4222-8222-222222222222", 100).then(() => sent);
   }
 
   it("re-drives an authorization failure once the installation is reauthorized", async () => {
@@ -1909,7 +1909,7 @@ describe("Slack ingress maintenance reaps link challenges", () => {
       instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).maintainIngress(100, "22222222-2222-4222-8222-222222222222");
+    )).maintainIngress("22222222-2222-4222-8222-222222222222", 100);
 
     const kept = objectDatabase.prepare("SELECT token_hash FROM slack_link_challenges").all() as { token_hash: string }[];
     expect(kept.map((row) => row.token_hash).sort()).toEqual([
@@ -2117,7 +2117,7 @@ describe("Slack ingress jobs given up on", () => {
       instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).maintainIngress(100, "22222222-2222-4222-8222-222222222222");
+    )).maintainIngress("22222222-2222-4222-8222-222222222222", 100);
 
     const summaries = warning.mock.calls.map((call) => call[0] as { event?: string; count?: number; job_ids?: string[]; error_codes?: string[] })
       .filter((entry) => entry.event === "slack_ingress_exhausted_jobs");

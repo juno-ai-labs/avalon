@@ -265,6 +265,38 @@ describe("Slack ingress jobs", () => {
     );
     expect(recoverable.jobIds).toEqual(["event:old", "event:taken"]);
   });
+
+  it("names a dead lease at the attempt ceiling, which nothing else can advance", async () => {
+    await enqueue({ jobId: "event:doomed", bodyHash: "hash-doomed" });
+    // Burn the attempts down to the last one the ceiling allows, retryably —
+    // a non-retryable failure pins the count at the ceiling in one step.
+    for (let attempt = 0; attempt < 19; attempt += 1) {
+      const held = await claimedJob({ jobId: "event:doomed", atMinutes: attempt * 10 });
+      await fail({
+        jobId: "event:doomed",
+        leaseId: held.leaseId,
+        retryable: true,
+        atMinutes: attempt * 10 + 1,
+      });
+    }
+    // The twentieth claim succeeds and its worker dies: `processing`, at the
+    // ceiling, with a lease that lapses. The claim will still reclaim it, the
+    // alarm reads a processing row as due at its lease expiry, and no reap
+    // takes a processing row — so if this scan skips it, the alarm wakes on
+    // the same instant for ever.
+    await claimedJob({ jobId: "event:doomed", atMinutes: 200 });
+    const recoverable = WorkspaceSlackIngressRecoverableResultSchema.parse(
+      await workspace().recoverableSlackIngressJobs({
+        workspaceId: WORKSPACE_ID,
+        staleBefore: at(220),
+        at: at(220),
+        limit: 10,
+      }),
+    );
+    expect(recoverable.jobIds).toEqual(["event:doomed"]);
+    expect(await claim({ jobId: "event:doomed", atMinutes: 220 }))
+      .toMatchObject({ outcome: "claimed" });
+  });
 });
 
 describe("Slack ingress maintenance sweep", () => {
@@ -469,6 +501,6 @@ describe("workspace fencing", () => {
         jobId: "event:Ev1",
         at: at(0),
       }).then(() => null, (error: unknown) => error));
-    expect(String(outcome)).toContain("workspace");
+    expect(String(outcome)).toContain("workspace_object_identity_mismatch");
   });
 });
