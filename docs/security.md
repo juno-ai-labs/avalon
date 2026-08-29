@@ -60,6 +60,14 @@ are canonical storage services, not authorization layers.
   always-on-top under Rally's name; `DEEP_LINK_ERROR_MESSAGE_LIMIT` bounds it and
   is currently open. See
   [`deep-link-failures.md`](deep-link-failures.md#failure-modes-and-limits).
+  Admitting that window to the shared check widens what it *could* call to every
+  handler behind `assertTrustedIpcSender` — `system:open-settings` and
+  `system:open-external` among them — which it has no reason to. It is kept
+  there because its renderer is the application's own error telemetry and theme
+  code, which does invoke on that boundary, and because the window renders one
+  string with no scripting, no session, and no network of its own. That balance
+  holds only while the window stays this small: give it any further UI and its
+  privileges should be narrowed to the channels it actually uses first.
 - Navigation and popup creation are denied by default; OAuth opens in the system
   browser.
 - A strict Content Security Policy allows bundled content and the configured

@@ -27,7 +27,7 @@ import {
   setDeviceWorkspaceName,
 } from './device-preferences';
 import { desktopBridge, type DesktopWorkspaceOnboardingState } from './platform';
-import { abandonPendingWorkstreamFeedOpen, markSurfaceEntrypoint } from './telemetry';
+import { abandonPendingWorkstreamFeedOpen, markSurfaceEntrypoint, reportJavascriptError } from './telemetry';
 import type { Region } from './types';
 
 const connectorProviderNames = {
@@ -389,17 +389,29 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
      * text under the buttons that answer it, so it stays inline: opening a
      * second window over the top of the fix helps nobody.
      *
-     * A rejection means main could not open the window at all — this renderer
-     * is trusted and the message is its own copy, so nothing else refuses one.
-     * The message is kept in state anyway: that is the copy the sign-in screen
-     * shows if this session then ends, and it is the only one left.
+     * The test is `session === null`, not "has no workspace". `SignInScreen` is
+     * the only surface that renders `deepLinkError`, and `SessionGate` shows it
+     * only when there is no session at all: a signed-in person who has not
+     * joined a workspace yet is on `WorkspaceOnboardingGate`, which renders
+     * `RegionOnboarding` or `InvitationOnboarding` and neither of those reads
+     * that state. Sending those failures inline would file them somewhere
+     * nothing draws, so they take the window like every other signed-in one.
+     *
+     * A rejection means main refused or could not open the window — it
+     * validates the message, and building the window can fail. The message is
+     * kept in state as the last copy anyway, but for a signed-in person nothing
+     * renders it, so the failure is reported rather than swallowed: silence
+     * here is the surface not appearing at all.
      */
     const reportDeepLinkFailure = (message: string): void => {
-      if (!sessionRef.current?.workspace) {
+      if (sessionRef.current === null) {
         setDeepLinkError(message);
         return;
       }
-      void bridge.showDeepLinkError(message).catch(() => setDeepLinkError(message));
+      void bridge.showDeepLinkError(message).catch((error: unknown) => {
+        setDeepLinkError(message);
+        reportJavascriptError(error, 'unknown');
+      });
     };
     const handleDeepLink = (navigation: DesktopDeepLinkNavigation): void => {
       let deepLink: URL;
