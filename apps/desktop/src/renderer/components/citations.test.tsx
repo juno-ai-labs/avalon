@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { CitationTarget } from '@rally/contracts/citations';
 import { describe, expect, it, vi } from 'vitest';
 import { CitationFootnoteSection, CitationsProvider } from './markdown-citations';
@@ -128,6 +128,68 @@ describe('resource citations', () => {
     // anchor: an id the allowlist rejected must not reach the DOM as a target.
     expect(document.body).toHaveTextContent('A walk and an empty.');
     expect(document.body.innerHTML).not.toContain('resource:');
+  });
+
+  it('shows the resource\'s converted markdown in the card, under a shimmering skeleton while it converts', async () => {
+    let deliver: (text: string) => void = () => undefined;
+    const preview = vi.fn(() => new Promise<string>((resolve) => { deliver = resolve; }));
+    render(
+      <MarkdownBody citations={context({ preview })}>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    // The card is asking, so the room holds a skeleton and not an empty box.
+    expect(document.querySelector('.citation-card-preview-skeleton')).not.toBeNull();
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+    expect(preview).toHaveBeenCalledWith('board-deck');
+
+    // The derivative is what shows — the markdown a Word file was converted
+    // into, not its bytes.
+    await act(async () => { deliver('## Revenue\n\nUp 14% on the quarter.'); });
+
+    const excerpt = document.querySelector('.citation-card-preview');
+    expect(excerpt).not.toBeNull();
+    expect(excerpt).toHaveTextContent('Up 14% on the quarter.');
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+    // A preview is presentation: the button still announces the title alone.
+    expect(excerpt).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('button', { name: 'Open Q3 board deck' })).toBeInTheDocument();
+  });
+
+  it('keeps the card\'s empty room when a preview is unavailable or not offered', async () => {
+    const failing = vi.fn(() => Promise.reject(new Error('not convertible')));
+    const { unmount } = render(
+      <MarkdownBody citations={context({ preview: failing })}>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+    await act(async () => { await Promise.resolve(); });
+
+    // A rejection reads the same as no preview at all: no skeleton left
+    // spinning, no error text inside a card that is a button.
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+    expect(document.querySelector('.citation-card-preview')).toBeNull();
+    expect(document.querySelector('.citation-card')).not.toBeNull();
+    unmount();
+
+    // A host offering no preview at all never leaves a skeleton behind.
+    render(
+      <MarkdownBody citations={context()}>{'![Q3 board deck](resource://board-deck)'}</MarkdownBody>,
+    );
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
+  });
+
+  it('asks for no preview in a still, which would keep a skeleton forever', () => {
+    const preview = vi.fn(() => new Promise<string>(() => undefined));
+    render(
+      <MarkdownBody citations={context({ preview })} still>
+        {'![Q3 board deck](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    expect(preview).not.toHaveBeenCalled();
+    expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
   });
 
   it('renders citations as plain text on a surface that cannot open one', () => {

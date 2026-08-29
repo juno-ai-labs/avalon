@@ -273,6 +273,24 @@ Two traps:
 
 ## Changelog
 
+### 2026-08-29 — The card draws no preview, because it can never have one
+
+**What changed:** `.citation-card-preview` and `.citation-card-preview-skeleton`
+are declared `display: none` here.
+
+**Why:** the renderer's embed card now previews the resource's converted text,
+and shows a shimmering skeleton while that text is being prepared. A still is
+serialized at one moment, so `MarkdownBody`'s `still` flag stops the card
+asking at all — neither element can appear in a saved picture. The rules exist
+because the coverage test names every citation class the renderer can emit and
+requires an answer here, and the honest answer for a live-loading affordance in
+a picture is that it is not drawn.
+
+**What a future change has to respect:** a rule here is not what stops the
+preview appearing — `still` is. Removing that flag's effect would put a frozen
+skeleton into somebody's saved file, and this stylesheet would hide it only by
+accident.
+
 ### 2026-08-29 — The embed card follows the renderer's file-tile shape
 
 **What changed:** The `.citation-card` rules here redraw the renderer's reworked
