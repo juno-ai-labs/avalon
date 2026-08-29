@@ -922,11 +922,72 @@ already locks):
    trust and lifecycle costs already argued in this PRD's history:
    the whole storage API handed to untrusted code, model-written schema
    migrations across artifact versions outside every migration rail this
-   repository has, no Rally chokepoint for read-only prior versions or
-   quotas, and blast-radius coupling to the supervisor. Right when
+   repository has, weak Rally chokepoints for read-only prior versions
+   and quotas, and blast-radius coupling to the supervisor. Right when
    artifacts genuinely need a database; wrong as the default, and
    adoptable later without unwinding anything since the supervisor DO it
    attaches to already exists.
+
+   How the agent would read a facet's data — worked through here because
+   it is the part of the facet branch that is not obvious, and it
+   changes the branch's cost ledger:
+
+   - *The isolation wrinkle.* Facet isolation is symmetric: the
+     supervisor cannot query the facet's SQLite any more than the facet
+     can query the supervisor's. Every read path therefore has to
+     execute *inside* the facet, in the isolate that also contains the
+     model's class.
+   - *The foothold: a Rally-authored bootstrap wrapper.* Rally assembles
+     the dynamic worker's `modules` map, so it controls which class the
+     facet loads: a bootstrap module imports the model's class and
+     exports a Rally-authored subclass of it, and the facet instantiates
+     the wrapper. Inherited code shares `this.ctx.storage` — the same
+     database — so the wrapper can answer supervisor RPCs the model's
+     code never defined: a schema describe (tables, columns, row counts,
+     sampled values) and a query method that executes SQL **inside a
+     transaction that always rolls back** — structurally read-only, with
+     no fragile SELECT-sniffing. The wrapper is the load-bearing trick
+     of the whole branch and must be proven on real workerd before
+     anything is promised on top of it.
+   - *The tool family it backs*, sketched for the follow-up PRD (nothing
+     here adds a tool now): `workstream_describe_artifact_data`
+     (`{resource}` → the schema; discovery-first, because the run
+     answering "who hasn't voted?" may be post-compaction, a different
+     run, or a smaller routed model that never saw the schema it is
+     querying) and `workstream_query_artifact_data` (`{resource, sql,
+     params?}` → bounded rows with a visible truncation marker;
+     `mode: "read"`, `idempotency: "safe"`; the same visibility loader
+     as every attachment tool, so foreign ids collapse to
+     `resource_not_found`; failures in the family vocabulary —
+     `sql_error` carrying SQLite's own message plus "describe, then
+     rebuild the statement", `no_artifact_data` for a static artifact,
+     query-time and row bounds open under the limit rule). SQL rather
+     than typed getters because an arbitrary model-designed schema is
+     the point of facets, and a getter tool would page whole tables
+     through context where SQL pushes the computation to the data — the
+     attachment rails' philosophy, on the most heavily pretrained query
+     language there is.
+   - *No write tool.* The agent changes artifact data by revising the
+     artifact, or the artifact changes it through its own request
+     paths; a typed write into a model-designed schema is its own
+     authorization and receipt problem, deferred exactly the way the
+     versioning layer deferred model-visible history.
+   - *Results are untrusted data.* The query runs beside model-written
+     code that could shim what the wrapper sees — unavoidable in any
+     design where artifact code owns the writes, the `STORAGE` binding
+     included. Contents are as honest as the artifact; Rally's
+     authority is untouched either way; tool output gets the same
+     untrusted-content handling connector payloads get.
+   - *One read path, three consumers.* The same wrapper methods back
+     the agent tools, a rail **Data** tab, and a CSV export — which is
+     how the facet branch clears this section's "product can see it"
+     bar.
+   - *The ledger entry.* Direction 3 gets equivalent agent reads nearly
+     free — its data is resource-shaped and already readable through
+     today's attachment rails. The facet branch must build the wrapper,
+     the two-tool family, and the workerd proofs to reach the same
+     agent experience; that build is a real cost charged against
+     facets when the follow-up PRD weighs these directions.
 3. **Artifact state as platform data: writes land in a store the agent
    and the product share.** The direction the removal was made for.
    Artifact writes travel through a Rally-injected binding into
