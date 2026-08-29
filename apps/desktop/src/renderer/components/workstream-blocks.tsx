@@ -1,13 +1,7 @@
 import clsx from 'clsx';
 import {
-  IconBrandGithub,
-  IconBrandGoogle,
-  IconBrandGoogleDrive,
-  IconBrandNotion,
-  IconBrandSlack,
   IconDeviceDesktop,
   IconPlug,
-  IconStack2,
   IconWebhook,
   IconWorldSearch,
   type TablerIcon,
@@ -43,7 +37,8 @@ import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { useTextClamped } from '../lib/use-text-clamped';
-import type { PluginGroupIcon } from '../lib/plugin-groups';
+import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
+import { PLUGIN_BRAND_MARKS } from '../lib/plugin-marks';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
 import {
@@ -1045,23 +1040,39 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
   );
 }
 
-const pluginIconByKey: Record<Exclude<PluginGroupIcon, 'rally'>, TablerIcon> = {
-  'brand-github': IconBrandGithub,
-  'brand-google': IconBrandGoogle,
-  'brand-google-drive': IconBrandGoogleDrive,
-  'brand-notion': IconBrandNotion,
-  'brand-slack': IconBrandSlack,
+/**
+ * The shapes no company owns. Everything else is a brand's own mark and comes
+ * from `PLUGIN_BRAND_MARKS` instead.
+ */
+const unbrandedIconByKey: Record<'computer' | 'plug' | 'web' | 'webhook', TablerIcon> = {
   computer: IconDeviceDesktop,
-  linear: IconStack2,
   plug: IconPlug,
+  web: IconWorldSearch,
   webhook: IconWebhook,
-  'world-search': IconWorldSearch,
 };
 
-/** Rally's own mark is artwork, not a line icon, so it is not in the table. */
+/**
+ * A brand's mark, or the line icon that stands in where there is no brand.
+ *
+ * Rally's own mark and every company mark are painted through a mask — see
+ * `plugin-marks.ts` for why — so they take `currentColor` like the line icons
+ * beside them and need no per-theme artwork.
+ */
 function PluginGlyphMark({ icon }: { icon: PluginGroupIcon }): React.JSX.Element {
   if (icon === 'rally') return <RallyMark className="plugin-face-mark" />;
-  const PluginIcon = pluginIconByKey[icon];
+  const brand = icon in PLUGIN_BRAND_MARKS
+    ? PLUGIN_BRAND_MARKS[icon as keyof typeof PLUGIN_BRAND_MARKS]
+    : undefined;
+  if (brand) {
+    return (
+      <span
+        aria-hidden="true"
+        className="plugin-face-mark"
+        style={{ '--plugin-mark': brand } as React.CSSProperties}
+      />
+    );
+  }
+  const PluginIcon = unbrandedIconByKey[icon as keyof typeof unbrandedIconByKey];
   return <PluginIcon aria-hidden="true" size={15} stroke={1.8} />;
 }
 
@@ -1096,7 +1107,7 @@ function PluginGlyph({ icon, name, pulsing = false }: {
 
 /** A row shows the plugin that owns the tool it ran, so there is only ever one. */
 function PluginFace({ plugin }: { plugin: AutomationPluginActivity }): React.JSX.Element {
-  return <PluginGlyph icon={plugin.icon} name={plugin.displayName} />;
+  return <PluginGlyph icon={pluginGroupIconForContract(plugin.icon)} name={plugin.displayName} />;
 }
 
 /**

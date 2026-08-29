@@ -1068,7 +1068,7 @@ describe('MessageBlock plugin activity rows', () => {
 
   it('names the plugin rather than the calls it made, and pulses its mark while it works', () => {
     const { container } = render(<MessageBlock {...actions} message={pluginRow('message-slack', {
-      groupKey: 'name:Slack', name: 'Slack', icon: 'brand-slack', active: true, durationMs: 242_000,
+      groupKey: 'name:Slack', name: 'Slack', icon: 'slack', active: true, durationMs: 242_000,
     })} />);
 
     expect(screen.getByText('Slack is working for 4m 02s')).toBeVisible();
@@ -1082,11 +1082,24 @@ describe('MessageBlock plugin activity rows', () => {
 
   it('settles to the past tense with a still mark once the plugin is done', () => {
     render(<MessageBlock {...actions} message={pluginRow('message-slack-done', {
-      groupKey: 'name:Slack', name: 'Slack', icon: 'brand-slack', active: false, durationMs: 302_000,
+      groupKey: 'name:Slack', name: 'Slack', icon: 'slack', active: false, durationMs: 302_000,
     })} />);
 
     expect(screen.getByText('Slack worked for 5m 02s')).toBeVisible();
     expect(screen.getByRole('img', { name: 'Plugin: Slack' })).not.toHaveClass('plugin-face-active');
+  });
+
+  it('paints a company mark through a mask so it takes the row\'s own colour', () => {
+    // A brand's palette never reaches the document: the mask reads the
+    // artwork's alpha and `currentColor` fills it, which is what keeps eight
+    // companies legible on four grounds without per-theme artwork.
+    const { container } = render(<MessageBlock {...actions} message={pluginRow('message-granola', {
+      groupKey: 'name:Granola', name: 'Granola', icon: 'granola', active: false, durationMs: 3_000,
+    })} />);
+
+    const mark = container.querySelector('.plugin-face-mark');
+    expect(mark?.getAttribute('style')).toContain('data:image/svg+xml');
+    expect(container.querySelector('svg')).toBeNull();
   });
 
   it('gives the virtual groups their own names and marks', () => {

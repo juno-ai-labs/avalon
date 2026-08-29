@@ -16,6 +16,7 @@ this document is only about the machinery underneath them.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/plugin-groups.ts` | The only place that decides which row a plugin belongs to, what that row is called, and which glyph it draws. |
+| `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, taken from `thesvg` and turned into CSS masks. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks and plugin activities out of the canonical snapshot; `groupPluginToolMessages` collapses the composed feed. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies `groupPluginToolMessages` to the composed transcript, and is the only caller. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row. |
@@ -70,11 +71,39 @@ is also the only key the live pre-canonical row and the canonical block that
 replaces it can both produce: they identify the same plugin by different ids
 (`plugin_slack` against `connection:<uuid>`).
 
-The glyph comes from the display name too, mirroring the backend's own
-`connectorAutomationPluginIcon`. The canonical transcript identifies a connector
-only by connection id, and the icon the backend does resolve travels on the live
-tool-invocation row alone, so the name is the one signal available on both
-paths. It is a manifest string, not user input.
+The glyph comes from the display name too. The canonical transcript identifies a
+connector only by connection id, and the icon the backend does resolve travels on
+the live tool-invocation row alone, so the name is the one signal available on
+both paths. It is a manifest string, not user input. Every connector Rally has an
+adapter for is named in that mapping; the generic plug is for one that arrives
+before the mapping learns about it.
+
+### The marks
+
+A company draws its own mark, from [`thesvg`](https://www.npmjs.com/package/thesvg)
+— an MIT-licensed set of about 6,500 brand SVGs. Rally's own mark, the two
+virtual groups, the public web, and an unbranded webhook are not companies and
+keep their existing artwork.
+
+Two things about how a mark is drawn are load-bearing:
+
+- **It is a CSS mask, not markup.** `thesvg` hands out SVG as a string and its
+  own documentation renders one with `dangerouslySetInnerHTML`. Nothing in this
+  renderer injects HTML, and a brand glyph is not the feature to start with —
+  the strings are build-time constants, but the pattern the next person copies
+  would not be. The browser reads the file for its alpha channel and paints
+  `currentColor` through it, so a malformed icon can only fail to draw. It is
+  also how `.rally-mark` has always worked.
+- **A mask reads alpha, so the mark is monochrome by construction.** That is
+  what this feed wants: one contrasting neutral across four themes, instead of
+  eight brand palettes of which several vanish against one ground or the other —
+  X and Notion on a dark theme, Granola on a light one. It also means no
+  per-theme artwork and no component that knows which theme is on.
+
+The one consequence of masking on alpha is that colour art which is a solid
+silhouette of an outlined mark masks to a blob. Google is exactly that, so the
+package's `mono` variant is preferred wherever it ships one. Slack and Granola
+ship none, and their colour art masks to the shape a monochrome treatment would.
 
 ### Where a run ends
 
@@ -113,6 +142,14 @@ was chosen against its own chip and the transcript has four themes and no chip.
 - **`pluginGroup` is the only mapping.** A second table anywhere — a component
   branching on `pluginId`, a screen naming Rally itself — is how the feed and
   the row it draws come to disagree about what a group is.
+- **No brand palette reaches the document.** A mark is alpha painted in the
+  row's own colour. Drawing one in its brand colours would put eight
+  independently-chosen palettes on four grounds, and several of them disappear
+  on one or the other; it would also make the mark the only thing in the row a
+  theme cannot restyle.
+- **A brand's artwork is never injected as markup.** `dangerouslySetInnerHTML`
+  is absent from this renderer, and `plugin-marks.ts` is the module a reader
+  would copy from if it were not.
 - **The grouped list is renumbered.** `sequenceNumber` is a dense display index
   and dropped rows have to be squeezed out of it, or the unread divider and the
   virtualizer key off positions that no longer exist.
@@ -155,6 +192,8 @@ It deliberately does **not** cover:
   whose block has not landed — groups by display name, so it joins the same row
   its canonical replacement will. A first-party tool in that state carries no
   plugin information at all and is dropped until the block arrives.
+- **A connector with no mark in the mapping** draws the generic plug. Nothing
+  breaks; the row is just less recognizable until the mapping names it.
 - **A failed tool call** is not marked. The row says how long the plugin worked
   and no more, which is what the per-plugin activity row said before this change
   too; a run's failures reach the reader through Rally's own words and the run
@@ -166,7 +205,8 @@ It deliberately does **not** cover:
 
 | Suite | Command | What it proves |
 | --- | --- | --- |
-| `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, and every glyph. |
+| `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
+| `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: a mask rather than markup, the monochrome variant preferred, and one distinct mark per brand. |
 | `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, and the absent orb. |
 
@@ -181,6 +221,44 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-08-29 — Company marks come from `thesvg`, drawn as masks
+
+**What changed:** Every connector now draws its own company mark instead of a
+Tabler approximation, taken from the `thesvg` package and painted as a CSS mask
+in the row's own colour. Granola and X had no mark at all and drew the generic
+plug; Linear drew a generic stack. The backend's icon names are translated into
+this renderer's own vocabulary rather than the enum being widened.
+
+**Why:** The row exists to tell a reader *where* Rally is working, and a plug is
+the one glyph that says nothing. Two of the eight connectors drew one, because
+the shared icon enum has no name for Granola or X and Tabler ships no glyph for
+Granola or Linear. `thesvg` has all eight, and its 6,500 marks mean the next
+connector needs no artwork decision at all.
+
+**Considered and rejected:** Rendering the package's SVG strings with
+`dangerouslySetInnerHTML`, which is what its own documentation shows. These
+strings are build-time constants so the injection is safe here — but the
+renderer has no other use of it, and the pattern that gets copied out of this
+module would not be constant. A mask cannot carry markup into the document.
+Also rejected: drawing the marks in their brand colours. It was built and looked
+at side by side, and it fails on its own terms — X and Notion are near-black and
+disappear on a dark theme, Granola's is near-black and disappears on a light one,
+and only some brands ship the light/dark art that would fix it. The masked
+neutral is legible on all four themes with no per-theme artwork.
+
+**Consequences:** `PluginGroupIcon` is now the renderer's own vocabulary rather
+than the contract's, so a surface that carries `AutomationPluginIcon` must go
+through `pluginGroupIconForContract`. A brand mark can never be drawn in colour
+without abandoning the mask, which would also reintroduce the injection
+question. `--plugin-mark` carries artwork rather than a colour and is listed as
+runtime-set in the theme-token test, which would otherwise reject it. `thesvg`
+tree-shakes through its subpath exports — only the eight imported brands reach
+the bundle, about 10 kB — so importing a ninth is cheap, but a barrel
+`import { … } from 'thesvg'` would pull all 6,500 in. Granola's entry is marked
+`brand-use` rather than an open licence, meaning it is the company's mark shown
+under its own guidelines; identifying a connector by its logo is the ordinary
+use, but it is not a public-domain asset to reuse elsewhere.
 
 ### 2026-08-29 — Tool calls collapse into one row per plugin
 
