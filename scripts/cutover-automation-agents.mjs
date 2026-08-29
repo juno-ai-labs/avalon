@@ -107,10 +107,9 @@ function rows(result) {
  * that body, so an unpaged `SELECT id FROM workspaces` stops being the
  * inventory at some account size and starts being a prefix of it — silently,
  * because a short answer and a complete one are the same shape. The workspaces
- * past the cut would never be sent a cutover command, and the deploy that
- * replaces both Workers would still report success; each of them would then be
- * left serving `automation_cutover_in_progress` with no record of having been
- * skipped. Keyset on the primary key rather than OFFSET: the pages are read
+ * past the cut would never be sent a cutover command, and this run would still
+ * print a success summary; each of them would then be left serving
+ * `automation_cutover_in_progress` with no record of having been skipped. Keyset on the primary key rather than OFFSET: the pages are read
  * across separate requests, and a workspace created between two of them shifts
  * every later offset by one, dropping a row that was already there.
  */

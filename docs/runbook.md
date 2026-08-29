@@ -841,8 +841,13 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
   apply — have been removed from `deploy-api.yml`. They were deliberately
   temporary: left in place, the refusal permanently bans an EU-only or
   Global-only deploy in the name of a cutover that has already happened. Both
-  regions ran it in one release, every workspace's automations were imported
-  into their own `AutomationAgent` objects, and the legacy tables were dropped.
+  regions ran it in one release. Completion was confirmed per workspace
+  afterwards rather than inferred from the drained queue: Workers Logs carry one
+  `automation_cutover_completed` event for each of the three Global workspaces
+  (EU held none), and zero `workspace_do_schema_hash_mismatch` events. Those
+  events are themselves proof the objects applied through WorkspaceDO v22, since
+  `finalizeAutomationCutover` exists only in the new build and runs after the
+  constructor's migration pass.
   `scripts/cutover-automation-agents.mjs` is kept as an operator tool rather
   than deleted, because it is the remedy if a workspace is ever found still
   holding legacy automation state; `--apply` is idempotent per workspace, so
@@ -865,30 +870,47 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
   rerun resumes where it stopped.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, records the release config on `main`, and deploys the landing site from `main`'s then-current tip. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
-### Automation cutover failure and DLQ rehearsal
+### Cutting a workspace over by hand, and reading the DLQ
 
-The automation cutover is roll-forward only. A failed workspace command remains
-retryable from its WorkspaceDO campaign ledger; do not deploy an older Worker or
-recreate removed tables. Record the region, workflow run, cutover `runId`, and
-workspace ID from the structured failure before retrying the same workflow.
+The fleet-wide cutover ran on 2026-08-28 and **there is no cutover workflow left
+to retry** — rerunning `deploy-api.yml` only redeploys the Workers. If a
+workspace is ever found still holding legacy automation state, the remedy is to
+run the retained script directly:
 
-Before merging the authority cutover, rehearse Global and EU with seeded active,
-paused, error, and draft automations. Interrupt after witness, fence, import, and
-cleanup receipts and confirm the next apply resumes without duplicate objects or
-triggers. Inspect `avalon-global-migration-commands-dead-letter` and
-`avalon-eu-migration-commands-dead-letter`; replay only the exact failed
-cutover messages after fixing their cause. A message is safe to redeliver because
-the command and every import/finalization step are idempotent. Confirm the command
-queues drain, DLQ counts return to their pre-rehearsal baseline, final health is
-green, drafts and legacy tables are absent, and connector/digest schedules still
-fire. Never copy an EU payload into a Global fixture or diagnostic.
+```bash
+CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… node scripts/cutover-automation-agents.mjs --apply
+```
 
-What a member sees while their workspace is waiting: creating a new automation
-answers `503 automation_cutover_in_progress` — WorkspaceDO refuses to mint an
-automation id until its campaign row reads `completed` — and existing accepted
-automations keep running from their imported objects. So a report of "I can't
-make a new automation" during a cutover deploy is that gate, not a fault; check
-the region's command-queue backlog and campaign state before treating it as one.
+It needs the Cloudflare credentials the deploy job used to assert, and
+`pnpm migrate:automation-agents` runs it in dry-run mode first, which inventories
+both regions and sends nothing. **Check the migration tracker before you start**:
+`avalon-<region>-migration-commands` is shared with its "Force a migration"
+fan-out, and a class-wide force running concurrently holds the backlog above zero
+so the drain loop waits on work that is not yours.
+
+The cutover is roll-forward only. A failed workspace command stays retryable from
+its WorkspaceDO campaign ledger; do not deploy an older Worker or recreate
+removed tables. Record the region, the script's `runId`, and the workspace ID
+from the structured failure before rerunning — the command and every
+import/finalization step are idempotent, so a redelivery is safe and a completed
+campaign is a no-op.
+
+**Reading the dead-letter queues.** `avalon-global-migration-commands-dead-letter`
+and its EU counterpart have no consumer, so nothing drains them and their depth
+is cumulative rather than current — as of 2026-08-29 they hold 787 and 1 messages
+respectively, all from forced-migration runs between 23 and 27 August, none from
+the cutover. That is why the script compares each DLQ against a **baseline taken
+at dispatch** and fails on an increase, rather than on a non-zero count. Read
+them the same way: the delta across a run is the signal, the absolute number is
+history nobody has cleared. Never copy an EU payload into a Global fixture or
+diagnostic.
+
+What a member sees if their workspace is somehow still waiting: creating a new
+automation answers `503 automation_cutover_in_progress` — WorkspaceDO refuses to
+mint an automation id until its campaign row reads `completed` — and existing
+accepted automations keep running from their imported objects. So a report of "I
+can't make a new automation" is that gate, not a fault; check the region's
+command-queue backlog and campaign state before treating it as one.
 Every other automation failure a person can hit has its own status and sentence
 in `apps/api/src/services/automation-agent-errors.ts`; a `500 internal_error`
 from an automation route means the object threw a code that table does not name,
