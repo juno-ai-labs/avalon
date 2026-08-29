@@ -1,8 +1,16 @@
-import type { DigestDeliveryTargetType } from "@rally/contracts";
+import { asWorkspaceId, type DigestDeliveryTargetType } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 
 import type { Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceDigestDeliveryTargetsSchema,
+  WorkspaceDigestTargetOutcomeResultSchema,
+  type WorkspaceDigestDeliveryTarget,
+  type WorkspaceDigestTargetOutcomeResult,
+} from "../durable-objects/workspace-digests-protocol";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import { digestEmailHtml } from "./digest-email-content";
 import { markdownToEmailText } from "./email-markdown";
@@ -31,14 +39,14 @@ export interface DigestDeliveryContext {
   highlightCount: number;
 }
 
-export interface DigestDeliveryTargetRow {
-  id: string;
-  target_type: string;
-  connection_id: string | null;
-  provider_tenant_id: string | null;
-  provider_user_id: string | null;
-  email_address: string | null;
-  last_delivered_delivery_id: string | null;
+/** The WorkspaceDO that owns this workspace's digest tables. */
+function workspaceDigests(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
 }
 
 /**
@@ -52,7 +60,7 @@ export interface DigestDeliveryTargetRow {
  */
 const CONNECTOR_DELIVERIES: Partial<Record<
   DigestDeliveryTargetType,
-  (env: Env, context: DigestDeliveryContext, target: DigestDeliveryTargetRow) => Promise<void>
+  (env: Env, context: DigestDeliveryContext, target: WorkspaceDigestDeliveryTarget) => Promise<void>
 >> = {
   slack_agent_dm: async (env, context, target) => {
     await new SlackAgentService(env).deliverDigest({
@@ -60,8 +68,8 @@ const CONNECTOR_DELIVERIES: Partial<Record<
       userId: context.userId,
       deliveryId: context.deliveryId,
       targetId: target.id,
-      connectionId: target.connection_id!,
-      slackUserId: target.provider_user_id!,
+      connectionId: target.connectionId!,
+      slackUserId: target.providerUserId!,
       title: digestTitle(context),
       markdown: context.bodyMarkdown,
     });
@@ -92,33 +100,43 @@ export async function deliverDigest(
       WHERE workspace_id = ? AND user_id = ? AND status = 'active'`,
   ).bind(context.workspaceId, context.userId).first();
   if (!membership) return { delivered: 0, skipped: 0, failed: 0 };
-  const result = await env.DB.prepare(
-    `SELECT t.id, t.target_type, t.connection_id, t.provider_tenant_id, t.provider_user_id,
-            t.email_address, t.last_delivered_delivery_id
-       FROM digest_delivery_targets t
-       JOIN digest_deliveries d ON d.id = ?
-      WHERE t.digest_schedule_id = d.digest_schedule_id
-        AND t.workspace_id = ? AND t.user_id = ?
-        AND t.status IN ('active', 'needs_input')
-      ORDER BY t.target_type ASC`,
-  ).bind(context.deliveryId, context.workspaceId, context.userId).all<DigestDeliveryTargetRow>();
+  const workspace = await workspaceDigests(env, context.workspaceId);
+  const result = WorkspaceDigestDeliveryTargetsSchema.parse(await workspace.digestDeliveryTargets({
+    workspaceId: context.workspaceId,
+    deliveryId: context.deliveryId,
+    userId: context.userId,
+  }));
 
   let delivered = 0;
   let skipped = 0;
   let failed = 0;
   const failures: unknown[] = [];
-  for (const target of result.results ?? []) {
+  for (const target of result.targets) {
     // The target already received this digest on an earlier attempt of the same
     // step. Delivery is at-least-once at the transport and exactly-once here.
-    if (target.last_delivered_delivery_id === context.deliveryId) {
+    if (target.lastDeliveredDeliveryId === context.deliveryId) {
       skipped += 1;
       continue;
     }
     try {
       const sent = await deliverToTarget(env, context, target, request);
       if (sent) {
-        await markDelivered(env, target.id, context.deliveryId);
-        delivered += 1;
+        const recorded = await markDelivered(env, context.workspaceId, target.id, context.deliveryId);
+        if (recorded.outcome === "recorded") {
+          delivered += 1;
+        } else {
+          // The target row vanished between the read and the record — a
+          // settings save replaces every row under fresh ids. The send
+          // happened, but with no `last_delivered_delivery_id` written it
+          // must not count as delivered: settling the occurrence on it would
+          // leave the recreated target with no idempotency marker, and a
+          // retried step would send a second copy on its authority.
+          skipped += 1;
+          logWarn(env, "digest_delivery_target_vanished", {
+            delivery_id: context.deliveryId,
+            target_id: target.id,
+          });
+        }
       } else {
         skipped += 1;
       }
@@ -128,7 +146,13 @@ export async function deliverDigest(
       // every occurrence from now on.
       failed += 1;
       const permanent = error instanceof ApiError && error.details?.retryable === false;
-      await markFailed(env, target.id, permanent, error);
+      const marked = await markFailed(env, context.workspaceId, target.id, permanent, error);
+      if (marked.outcome === "target_not_found") {
+        logWarn(env, "digest_delivery_target_vanished", {
+          delivery_id: context.deliveryId,
+          target_id: target.id,
+        });
+      }
       // A permanent rejection is recorded and not rethrown: retrying the step
       // would only reach the same answer, and the target now says so.
       if (!permanent) failures.push(error);
@@ -148,13 +172,13 @@ export async function deliverDigest(
 async function deliverToTarget(
   env: Env,
   context: DigestDeliveryContext,
-  target: DigestDeliveryTargetRow,
+  target: WorkspaceDigestDeliveryTarget,
   request: typeof fetch,
 ): Promise<boolean> {
-  if (target.target_type === "email") {
-    if (!target.email_address) return false;
+  if (target.targetType === "email") {
+    if (!target.emailAddress) return false;
     const delivery = await sendResendEmail(env, {
-      recipientEmail: target.email_address,
+      recipientEmail: target.emailAddress,
       subject: digestTitle(context),
       html: digestEmailHtml({
         recipientName: singleLine(context.recipientName),
@@ -177,8 +201,8 @@ async function deliverToTarget(
     return delivery === "sent";
   }
 
-  const connectorDelivery = CONNECTOR_DELIVERIES[target.target_type as DigestDeliveryTargetType];
-  if (!connectorDelivery || !target.connection_id || !target.provider_user_id) return false;
+  const connectorDelivery = CONNECTOR_DELIVERIES[target.targetType as DigestDeliveryTargetType];
+  if (!connectorDelivery || !target.connectionId || !target.providerUserId) return false;
   await connectorDelivery(env, context, target);
   return true;
 }
@@ -221,14 +245,20 @@ function digestTitle(context: DigestDeliveryContext): string {
   return `Your ${singleLine(context.workspaceName)} digest · ${occurrenceLabel(context.plannedFor, context.timezone)}`;
 }
 
-async function markDelivered(env: Env, targetId: string, deliveryId: string): Promise<void> {
-  const at = nowIso();
-  await env.DB.prepare(
-    `UPDATE digest_delivery_targets
-        SET status = 'active', last_delivered_at = ?, last_delivered_delivery_id = ?,
-            last_error_json = NULL, updated_at = ?
-      WHERE id = ?`,
-  ).bind(at, deliveryId, at, targetId).run();
+async function markDelivered(
+  env: Env,
+  workspaceId: string,
+  targetId: string,
+  deliveryId: string,
+): Promise<WorkspaceDigestTargetOutcomeResult> {
+  return WorkspaceDigestTargetOutcomeResultSchema.parse(
+    await (await workspaceDigests(env, workspaceId)).markDigestTargetDelivered({
+      workspaceId,
+      targetId,
+      deliveryId,
+      at: nowIso(),
+    }),
+  );
 }
 
 /**
@@ -241,22 +271,21 @@ async function markDelivered(env: Env, targetId: string, deliveryId: string): Pr
  */
 async function markFailed(
   env: Env,
+  workspaceId: string,
   targetId: string,
   permanent: boolean,
   error: unknown,
-): Promise<void> {
-  await env.DB.prepare(
-    `UPDATE digest_delivery_targets
-        SET status = CASE WHEN ? THEN 'needs_input' ELSE status END,
-            last_error_json = ?, updated_at = ?
-      WHERE id = ?`,
-  ).bind(
-    permanent ? 1 : 0,
-    JSON.stringify({
-      code: "digest_delivery_failed",
-      message: error instanceof Error ? error.message.slice(0, 500) : "Digest delivery failed",
+): Promise<WorkspaceDigestTargetOutcomeResult> {
+  return WorkspaceDigestTargetOutcomeResultSchema.parse(
+    await (await workspaceDigests(env, workspaceId)).markDigestTargetFailed({
+      workspaceId,
+      targetId,
+      permanent,
+      errorJson: JSON.stringify({
+        code: "digest_delivery_failed",
+        message: error instanceof Error ? error.message.slice(0, 500) : "Digest delivery failed",
+      }),
+      at: nowIso(),
     }),
-    nowIso(),
-    targetId,
-  ).run();
+  );
 }
