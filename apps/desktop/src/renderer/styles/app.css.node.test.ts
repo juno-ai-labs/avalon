@@ -552,3 +552,32 @@ describe('company mark sizing', () => {
     expect(source.indexOf('.settings-connection-name .connector-mark')).toBeLessThan(base);
   });
 });
+
+/**
+ * A message header shows the author, the time, and — once a response settles —
+ * the total it took. The last two are the same kind of thing, and the design
+ * asks for them to be indistinguishable: same size, same weight, same colour.
+ * Two rules that happen to agree today would drift the first time either is
+ * touched, and the difference is a few tenths of a pixel on one line, which is
+ * exactly the sort of thing a visual check passes over.
+ */
+describe('message header meta typography', () => {
+  it('styles the settled total through the timestamp rule rather than beside it', () => {
+    const shared = rule('.message-block time,\n.message-block .message-work-summary');
+    expect(shared).not.toBeNull();
+    expect(shared).toContain('font-size: var(--av-sys-font-size-meta)');
+    expect(shared).toContain('color: var(--av-ref-color-neutral-8)');
+    // Neither may carry a size, weight, or colour of its own anywhere else, or
+    // the two stop matching without either rule looking wrong on its own.
+    const strays = preludes().filter((prelude) => prelude.includes('.message-work-summary')
+      && prelude !== '.message-block time,\n.message-block .message-work-summary');
+    expect(strays).toEqual([]);
+  });
+
+  it('centres the header on its children rather than on their line boxes', () => {
+    // The row mixes three type sizes whose line boxes exceed their glyphs by
+    // different amounts, so flex centring alone leaves the text looking high.
+    expect(rule('.message-block > header')).toContain('align-items: center');
+    expect(rule('.message-block > header > *')).toContain('line-height: 1');
+  });
+});

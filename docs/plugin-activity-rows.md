@@ -27,26 +27,35 @@ this document is only about the machinery underneath them.
 
 ## How it works
 
-### What the transcript already carries
+### What the transcript carries
 
-Nothing here is new backend state. The canonical ordered transcript
-([`workstream-durable-object.md`](workstream-durable-object.md)) already
-delivers both halves:
+The canonical ordered transcript
+([`workstream-durable-object.md`](workstream-durable-object.md)) delivers the
+row's material in one field:
 
-- A **tool block** carries `pluginId` — the plugin's canonical id, `rally:memory`
-  or `connection:<uuid>`. The block is written when the model *plans* the call
-  and its `pluginId` is filled in when the call *starts*, so a block is briefly
+- **`snapshot.pluginRuns`** states, per plugin per assistant turn, its
+  `pluginRunId`, `turnId`, `pluginId`, `displayName`, `state`, `durationMs`,
+  `timingAccuracy`, and the `toolCallIds` it placed. A client joins a tool block
+  to its run on `toolCallIds` and renders what it is told. `durationMs` is
+  **nullable**, and null means the timing is unknown rather than zero.
+- A **tool block** still carries `pluginId` — `rally:memory` or
+  `connection:<uuid>`. The block is written when the model *plans* the call and
+  its `pluginId` is filled in when the call *starts*, so a block is briefly
   anonymous.
-- A **plugin activity** (`scope: 'plugin'`) hangs off the assistant turn, one per
-  plugin per turn, carrying that plugin's `label` and its intervals. Its elapsed
-  time covers the whole stretch the plugin was in play, including the gaps
-  between its calls, which no sum of individual call durations can reproduce.
+
+A plugin activity (`scope: 'plugin'`) still hangs off the assistant turn and is
+what `pluginRuns` is computed from. Its elapsed time covers the whole stretch
+the plugin was in play, including the gaps between its calls, which no sum of
+individual call durations can reproduce. The client no longer reads it directly
+except as the legacy fallback below.
 
 ### The three steps
 
 1. **Projection.** `orderedTranscriptMessages` copies `pluginId` and the owning
-   activity's `label` onto each tool row, and turns each plugin activity into a
-   `plugin_activity` row rather than the generic thinking row it used to be.
+   run's `displayName` onto each tool row, and turns each entry of
+   `snapshot.pluginRuns` into a `plugin_activity` row. When `pluginRuns` is
+   empty — an API that predates the field — it falls back to deriving the same
+   row from the activity tree.
 2. **Composition.** `composeTranscript` interleaves those canonical rows with
    live overlays exactly as before. A live tool row that has not yet been
    replaced by its canonical block carries the connector plugin's display name,
@@ -136,7 +145,18 @@ order with its own narration.
 ### The row itself
 
 `PluginActivityBlock` is `AgentWorkTiming` with the plugin's verbs and its mark
-in the orb's slot. The mark is drawn bare — no chip, no ring, no per-connector
+in the orb's slot. Rally is the agent and is the subject of its own sentence —
+"Rally worked for 5s" — while every other plugin is something Rally reached for
+and reads that way: "Used Slack for 5s". The Computer group is the one whose
+name is a common noun rather than a proper one, so it is the one that takes an
+article: "Used a computer for 11s". A row whose duration is unknown drops the
+duration rather than printing `0ms`.
+
+A **settled response total** is not a plugin row and does not live in the feed
+at all. While it runs it is progress and stays a row; once it settles
+`foldSettledWorkIntoMessages` moves it into the header of the message it
+produced — "Rally · 11 minutes ago · Worked for 2m 52s" — because a spent timer
+under the answer reads like another step still to come. The mark is drawn bare — no chip, no ring, no per-connector
 brand fill — and pulses its opacity while the group is active, which is the
 whole of the "still going" signal. A column of enclosed glyphs down a transcript
 reads as a toolbar of controls, and these are labels; the single neutral is also
@@ -272,6 +292,87 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-08-29 — The server says which plugin ran, and for how long
+
+**What changed:** `WorkstreamTranscriptSnapshot` gained `pluginRuns`: per plugin
+per turn, its display name, state, duration, timing accuracy and tool call ids,
+built by `pluginRunsForTurns` in the transcript storage. The renderer builds its
+rows from that and joins tool blocks to runs on `toolCallIds`. `durationMs` is
+nullable end to end, and an unknown duration renders as no duration. The
+activity-tree derivation is kept only as a fallback for an API that predates the
+field.
+
+**Why:** A grouped row rendered `Rally worked for 0ms` for runs that really
+worked — one production run logged `tool_calls=2` and `tool_time_ms=6770` while
+the feed reported nothing. The renderer was never *told* which plugin owned
+which call; it rebuilt that from three separately-derived id families, over a
+snapshot that only carried activities reachable by an upward walk seeded from
+`turn.activity_id` and `block.activity_id`. Both columns are nullable — the
+development-seeded tool turn leaves both NULL — so for a settled run in that
+state the plugin and tool_call activities never reached the client at all.
+
+Every one of those failures produced the same number, because
+`activityDuration` sums `durationMs ?? elapsedMsAtSnapshot ?? 0`. A missing
+activity, an unreachable one, and an interval closed without a duration all read
+as zero, so the client could not tell "took no time" from "I cannot see the
+timing" and rendered the second as the first. That is what made the bug a
+confident falsehood rather than a gap, and it is why the nullable duration
+matters as much as the new field: even if some upstream join still misses, the
+row now says nothing rather than something false.
+
+**Considered and rejected:** Putting `pluginRunId` and a resolved duration on
+the tool block instead. It needs no new array, but a plugin's total spans
+several blocks, so the number would be duplicated across them and a reader would
+have to know which copy was authoritative. Also rejected: making `pluginRuns`
+required. A desktop build updates on its own schedule and has to parse a
+snapshot from an older API, so the field is defaulted and an empty array means
+"this server does not report runs" rather than "no plugin ran".
+
+**Consequences:** The plugin↔tool relationship is the authority's to state, and
+a client that recomputes it has reintroduced this defect. `pluginRunsForTurns`
+must keep seeding from the turn's own id and walking *down*; a workers test
+pins that a turn whose blocks carry no `activityId` still reports its runs, and
+it fails if the seed goes back to `turn.activityId`. Anywhere a duration is
+summed, one unknown contribution makes the total unknown rather than smaller —
+adding only the parts that reported understates the work by exactly the part
+that did not, and presents the shortfall as certain. The legacy fallback can be
+deleted once no deployed API omits `pluginRuns`.
+
+### 2026-08-29 — Rally works; everything else is used
+
+**What changed:** A group carries its own `activeVerb` and `completedVerb`.
+Rally reads "Rally is working" / "Rally worked"; every other plugin reads "Using
+Slack" / "Used Slack"; the Computer group reads "Using a computer" / "Used a
+computer". A settled response total moves out of the feed into the header of the
+message it produced, via `foldSettledWorkIntoMessages`.
+
+**Why:** "Slack worked for 5s" makes the connector the actor, which it is not —
+Rally decided to call it. Naming the agent as the subject everywhere would be
+worse, because "Rally worked" is then indistinguishable from the response-level
+total. So the agent keeps the working voice and the tools take the used voice,
+which also reads as what a person would say about their own work. Computer is
+the only group named with a common noun, so it is the only one needing an
+article; every connector is a proper name and takes none.
+
+The response total moved because it stops being progress the moment it settles.
+Left in the feed it is a spent timer sitting under the answer, which reads like
+another step still to come; in the header it sits with the rest of that
+message's provenance, beside the author and the time.
+
+**Considered and rejected:** Deriving the phrasing in the component from the
+group's name and a boolean. It puts a grammar rule in the renderer, and the
+article case would have been a name comparison against "Computer" — a string
+match that breaks the day the group is renamed. Also rejected: folding a turn's
+*thinking* row into the header too. Thinking annotates one step inside a run and
+several belong to a single message; only the response's own total is a fact
+about the finished message.
+
+**Consequences:** A new group decides its own phrasing, and a group whose name
+is a common noun needs the article written into its verbs. A message can now
+carry `workSummary`, and the header renders it; a surface that shows agent
+messages without that header will drop the total silently.
+
 
 ### 2026-08-29 — Marks come from `@thesvg/react`, one subpath at a time
 
