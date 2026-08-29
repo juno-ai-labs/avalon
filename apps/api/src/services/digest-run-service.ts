@@ -7,9 +7,11 @@ import {
   WorkspaceDigestClaimResultSchema,
   WorkspaceDigestCursorSchema,
   WorkspaceDigestFireScheduleSchema,
+  WorkspaceDigestRunningResultSchema,
 } from "../durable-objects/workspace-digests-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
+import { logWarn } from "../observability/logger";
 import {
   latestActivityEventCursor,
   listActivityEventsForUser,
@@ -210,12 +212,24 @@ export async function fireDigestSchedule(
       executionPrincipal: principal,
       digestDeliveryId: deliveryId,
     });
-    await workspace.markDigestDeliveryRunning({
-      workspaceId: schedule.workspace_id,
-      deliveryId,
-      harnessRunId,
-      at: nowIso(),
-    });
+    const marked = WorkspaceDigestRunningResultSchema.parse(
+      await workspace.markDigestDeliveryRunning({
+        workspaceId: schedule.workspace_id,
+        deliveryId,
+        harnessRunId,
+        at: nowIso(),
+      }),
+    );
+    if (marked.outcome === "not_planned") {
+      // The run is already launched, so there is nothing to unwind — but a
+      // claim that stopped being `planned` under its own winner means some
+      // other writer touched this occurrence, and that must not be invisible.
+      logWarn(env, "digest_delivery_claim_not_planned", {
+        workspace_id: schedule.workspace_id,
+        delivery_id: deliveryId,
+        harness_run_id: harnessRunId,
+      });
+    }
     return { started: true, deliveryId, harnessRunId };
   } catch (error) {
     // An attempt that started nothing undoes itself completely — the claim, so
@@ -245,7 +259,7 @@ export async function fireDigestSchedule(
         // its parent delivery claim. This authoritative tombstone keeps the
         // never-started system stream unlistable and is safer than a
         // cross-object purge that could race a late Workflow creation.
-      
+
       }
     }
     throw error;
