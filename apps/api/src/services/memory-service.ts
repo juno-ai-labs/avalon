@@ -1,9 +1,26 @@
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
+import { asWorkspaceId } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { z } from "zod";
 import type { Env } from "../env";
 import { sha256 } from "../lib/crypto";
 import type { HarnessTool, HarnessToolResult } from "@rally/agent-harness";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceMemoryAddResultSchema,
+  WorkspaceMemoryCandidateListSchema,
+  WorkspaceMemoryItemForWriteResultSchema,
+  WorkspaceMemoryItemListSchema,
+  WorkspaceMemoryOutboxClaimResultSchema,
+  WorkspaceMemoryOutboxDueListSchema,
+  WorkspaceMemoryProjectionSourceResultSchema,
+  WorkspaceMemoryReceiptResultSchema,
+  WorkspaceMemoryScopeSchema,
+  WorkspaceMemoryWriteResultSchema,
+  type WorkspaceMemoryItem,
+  type WorkspaceMemoryOutboxRow,
+} from "../durable-objects/workspace-memory-protocol";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createHarnessRunObjectPort } from "../runtime/harness-run-port";
 import { createIdentityObjectPort } from "../runtime/identity-port";
@@ -24,18 +41,6 @@ export interface MemoryScope {
   kind: MemoryScopeKind;
   ownerId: string;
   writable: boolean;
-}
-
-interface MemoryItemRow {
-  memory_item_id: string;
-  memory_scope_id: string;
-  workspace_id: string;
-  scope_kind: MemoryScopeKind;
-  text: string;
-  revision: number;
-  expires_at: string | null;
-  invalidated_at: string | null;
-  updated_at: string;
 }
 
 export interface MemorySearchItem {
@@ -70,18 +75,22 @@ interface RankedCandidate {
   revision: number;
 }
 
-interface ReceiptRow {
-  operation: "add" | "update" | "invalidate";
-  input_hash: string;
-  result_json: string;
-}
-
 interface MutationResult {
   memoryItemId: string;
   memoryScopeId: string;
   scopeKind: MemoryScopeKind;
   revision: number;
   invalidated: boolean;
+}
+
+/** The WorkspaceDO that owns this workspace's memory tables. */
+function workspaceMemoryObject(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
 }
 
 /**
@@ -211,10 +220,6 @@ export function unwritableScopeError(
   );
 }
 
-function d1Changes(result: D1Result<unknown>): number {
-  return Number((result.meta as { changes?: unknown } | undefined)?.changes ?? 0);
-}
-
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -224,10 +229,6 @@ function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
-}
-
-function placeholders(count: number): string {
-  return Array.from({ length: count }, () => "?").join(", ");
 }
 
 function vectorId(memoryItemId: string, revision: number): string {
@@ -259,28 +260,19 @@ async function ensureScope(
   ownerId: string,
   writable: boolean,
 ): Promise<MemoryScope> {
-  const createdAt = nowIso();
-  await env.DB.prepare(
-    `INSERT INTO memory_scopes (memory_scope_id, workspace_id, kind, owner_id, created_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(workspace_id, kind, owner_id) DO NOTHING`,
-  ).bind(newId(), workspaceId, kind, ownerId, createdAt).run();
-  const row = await env.DB.prepare(
-    `SELECT memory_scope_id, workspace_id, kind, owner_id
-       FROM memory_scopes
-      WHERE workspace_id = ? AND kind = ? AND owner_id = ?`,
-  ).bind(workspaceId, kind, ownerId).first<{
-    memory_scope_id: string;
-    workspace_id: string;
-    kind: MemoryScopeKind;
-    owner_id: string;
-  }>();
-  if (!row) throw new Error("memory_scope_creation_failed");
+  const workspace = await workspaceMemoryObject(env, workspaceId);
+  const scope = WorkspaceMemoryScopeSchema.parse(await workspace.ensureMemoryScope({
+    workspaceId,
+    proposedScopeId: newId(),
+    kind,
+    ownerId,
+    at: nowIso(),
+  }));
   return {
-    memoryScopeId: row.memory_scope_id,
-    workspaceId: row.workspace_id,
-    kind: row.kind,
-    ownerId: row.owner_id,
+    memoryScopeId: scope.memoryScopeId,
+    workspaceId: scope.workspaceId,
+    kind: scope.kind,
+    ownerId: scope.ownerId,
     writable,
   };
 }
@@ -327,40 +319,21 @@ export async function resolveMemoryAccess(
     if (workstream.automation_subscription_id !== input.automationSubscriptionId) {
       throw new Error("memory_automation_workstream_mismatch");
     }
-    const subscription = await env.DB.prepare(
-      `SELECT scope, owner_user_id
-         FROM automation_subscriptions
-        WHERE id = ? AND workspace_id = ? AND status = 'active'`,
-    ).bind(input.automationSubscriptionId, input.workspaceId).first<{
-      scope: "personal" | "workspace";
-      owner_user_id: string | null;
-    }>();
-    if (!subscription) throw new Error("memory_automation_subscription_not_found");
-    if (subscription.scope === "personal") {
-      if (
-        input.executionPrincipal.type !== "user"
-        || subscription.owner_user_id !== input.executionPrincipal.userId
-      ) {
-        throw new Error("memory_personal_automation_principal_mismatch");
-      }
-      scopes.push(await ensureScope(
-        env,
-        input.workspaceId,
-        "user",
-        input.executionPrincipal.userId,
-        true,
-      ));
-    } else if (input.executionPrincipal.type !== "workspace") {
-      throw new Error("memory_workspace_automation_principal_mismatch");
-    }
-    scopes.push(await ensureScope(
-      env,
-      input.workspaceId,
-      "automation",
-      input.automationSubscriptionId,
-      true,
-    ));
-    return scopes;
+    // The 2026-08-28 automation cutover moved automation-scoped memory into
+    // the named AutomationAgent and dropped both `automation_subscriptions`
+    // and every `memory_scopes` row of kind `automation` from WorkspaceDO
+    // (`docs/data-model.md`), so the subscription row this branch used to
+    // read — to authorize a personal automation's owner and grant the
+    // automation scope — no longer exists anywhere this service can reach.
+    // Every live automation run resolves memory through
+    // `executeAutomationMemoryToolForRun` instead: the tools and the recall
+    // freeze both route there when `automationRunContext` is present, and a
+    // run that names a subscription without that context is already stopped
+    // by name in `loadRunPromptContext`. This refusal is the fence for a
+    // future caller that reaches here anyway — it fails by name rather than
+    // surfacing the routed `no such table: automation_subscriptions` the old
+    // read produced once the table was dropped.
+    throw new Error("memory_automation_scope_retired");
   }
 
   // Everything below is the union for a run that is *not* an automation run,
@@ -424,29 +397,20 @@ export async function resolveMemoryAccess(
 
 async function searchFts(
   env: Env,
+  workspaceId: string,
   scopeIds: readonly string[],
   query: string,
 ): Promise<RankedCandidate[]> {
   const match = ftsQuery(query);
   if (!match || scopeIds.length === 0) return [];
-  const rows = await env.DB.prepare(
-    `SELECT item.memory_item_id, item.revision
-       FROM memory_items_fts
-       JOIN memory_items item ON item.rowid = memory_items_fts.rowid
-      WHERE memory_items_fts MATCH ?
-        AND item.memory_scope_id IN (${placeholders(scopeIds.length)})
-        AND item.invalidated_at IS NULL
-        AND (item.expires_at IS NULL OR item.expires_at > ?)
-      ORDER BY bm25(memory_items_fts), item.updated_at DESC
-      LIMIT ${SEARCH_CANDIDATES_PER_LEG}`,
-  ).bind(match, ...scopeIds, nowIso()).all<{
-    memory_item_id: string;
-    revision: number;
-  }>();
-  return (rows.results ?? []).map((row) => ({
-    memoryItemId: row.memory_item_id,
-    revision: Number(row.revision),
-  }));
+  const workspace = await workspaceMemoryObject(env, workspaceId);
+  return WorkspaceMemoryCandidateListSchema.parse(await workspace.searchMemoryItemsFts({
+    workspaceId,
+    match,
+    scopeIds: [...scopeIds],
+    now: nowIso(),
+    limit: SEARCH_CANDIDATES_PER_LEG,
+  })).candidates;
 }
 
 async function embedQuery(env: Env, query: string): Promise<number[]> {
@@ -497,31 +461,29 @@ async function loadCanonicalItems(
   workspaceId: string,
   scopeIds: readonly string[],
   memoryItemIds: readonly string[],
-): Promise<MemoryItemRow[]> {
+): Promise<WorkspaceMemoryItem[]> {
   if (scopeIds.length === 0 || memoryItemIds.length === 0) return [];
-  const rows = await env.DB.prepare(
-    `SELECT item.memory_item_id, item.memory_scope_id, item.workspace_id,
-            scope.kind AS scope_kind, item.text, item.revision, item.expires_at,
-            item.invalidated_at, item.updated_at
-       FROM memory_items item
-       JOIN memory_scopes scope ON scope.memory_scope_id = item.memory_scope_id
-      WHERE item.workspace_id = ?
-        AND item.memory_scope_id IN (${placeholders(scopeIds.length)})
-        AND item.memory_item_id IN (${placeholders(memoryItemIds.length)})
-        AND item.invalidated_at IS NULL
-        AND (item.expires_at IS NULL OR item.expires_at > ?)`,
-  ).bind(workspaceId, ...scopeIds, ...memoryItemIds, nowIso()).all<MemoryItemRow>();
-  return rows.results ?? [];
+  const workspace = await workspaceMemoryObject(env, workspaceId);
+  return WorkspaceMemoryItemListSchema.parse(await workspace.canonicalMemoryItems({
+    workspaceId,
+    scopeIds: [...scopeIds],
+    memoryItemIds: [...memoryItemIds],
+    now: nowIso(),
+  })).items;
 }
 
-async function recordAccess(env: Env, itemIds: readonly string[]): Promise<void> {
+async function recordAccess(
+  env: Env,
+  workspaceId: string,
+  itemIds: readonly string[],
+): Promise<void> {
   if (itemIds.length === 0) return;
-  const at = nowIso();
-  await env.DB.batch(itemIds.map((memoryItemId) => env.DB.prepare(
-    `UPDATE memory_items
-        SET access_count = access_count + 1, last_accessed_at = ?
-      WHERE memory_item_id = ? AND invalidated_at IS NULL`,
-  ).bind(at, memoryItemId)));
+  const workspace = await workspaceMemoryObject(env, workspaceId);
+  await workspace.recordMemoryItemAccess({
+    workspaceId,
+    memoryItemIds: [...itemIds],
+    at: nowIso(),
+  });
 }
 
 async function hybridMemorySearch(
@@ -536,7 +498,7 @@ async function hybridMemorySearch(
   }
   const scopeIds = scopes.map((scope) => scope.memoryScopeId);
   const [ftsSettled, vectorSettled] = await Promise.allSettled([
-    searchFts(env, scopeIds, query),
+    searchFts(env, input.workspaceId, scopeIds, query),
     searchVector(env, scopes, query),
   ]);
   const fts = ftsSettled.status === "fulfilled" ? ftsSettled.value : [];
@@ -557,12 +519,12 @@ async function hybridMemorySearch(
     canonicalScopeIds,
     candidateIds,
   );
-  const canonicalById = new Map(canonicalRows.map((row) => [row.memory_item_id, row]));
+  const canonicalById = new Map(canonicalRows.map((row) => [row.memoryItemId, row]));
   const scores = new Map<string, number>();
   for (const candidates of [fts, vector]) {
     candidates.forEach((candidate, index) => {
       const canonical = canonicalById.get(candidate.memoryItemId);
-      if (!canonical || Number(canonical.revision) !== candidate.revision) return;
+      if (!canonical || canonical.revision !== candidate.revision) return;
       scores.set(
         candidate.memoryItemId,
         (scores.get(candidate.memoryItemId) ?? 0) + 1 / (RRF_OFFSET + index + 1),
@@ -572,8 +534,8 @@ async function hybridMemorySearch(
   const ranked = [...scores.entries()]
     .sort(([leftId, leftScore], [rightId, rightScore]) => {
       if (rightScore !== leftScore) return rightScore - leftScore;
-      const updated = canonicalById.get(rightId)!.updated_at.localeCompare(
-        canonicalById.get(leftId)!.updated_at,
+      const updated = canonicalById.get(rightId)!.updatedAt.localeCompare(
+        canonicalById.get(leftId)!.updatedAt,
       );
       return updated || (leftId < rightId ? -1 : leftId > rightId ? 1 : 0);
     })
@@ -581,18 +543,19 @@ async function hybridMemorySearch(
     .map(([memoryItemId]): MemorySearchItem => {
       const row = canonicalById.get(memoryItemId)!;
       return {
-        memoryItemId: row.memory_item_id,
-        memoryScopeId: row.memory_scope_id,
-        scopeKind: row.scope_kind,
+        memoryItemId: row.memoryItemId,
+        memoryScopeId: row.memoryScopeId,
+        scopeKind: row.scopeKind,
         text: row.text,
-        revision: Number(row.revision),
-        expiresAt: row.expires_at,
+        revision: row.revision,
+        expiresAt: row.expiresAt,
       };
     });
   if (trackAccess) {
     // Retrieval remains available when non-authoritative access counters cannot
     // be updated; the canonical authorization/read above has already succeeded.
-    await recordAccess(env, ranked.map((item) => item.memoryItemId)).catch(() => undefined);
+    await recordAccess(env, input.workspaceId, ranked.map((item) => item.memoryItemId))
+      .catch(() => undefined);
   }
   return { query, retrievalMode, results: ranked, scopes: reauthorizedScopes };
 }
@@ -619,19 +582,21 @@ async function memoryReadById(
   const row = (await loadCanonicalItems(env, input.workspaceId, scopeIds, [memoryItemId]))[0];
   const currentScopes = await resolveMemoryAccess(env, input);
   const currentlyAuthorized = new Set(currentScopes.map((scope) => scope.memoryScopeId));
-  const visible = row && currentlyAuthorized.has(row.memory_scope_id) ? row : null;
-  if (visible) await recordAccess(env, [visible.memory_item_id]).catch(() => undefined);
+  const visible = row && currentlyAuthorized.has(row.memoryScopeId) ? row : null;
+  if (visible) {
+    await recordAccess(env, input.workspaceId, [visible.memoryItemId]).catch(() => undefined);
+  }
   return {
     query: null,
     memoryItemId,
     retrievalMode: "exact" as const,
     results: visible ? [{
-      memoryItemId: visible.memory_item_id,
-      memoryScopeId: visible.memory_scope_id,
-      scopeKind: visible.scope_kind,
+      memoryItemId: visible.memoryItemId,
+      memoryScopeId: visible.memoryScopeId,
+      scopeKind: visible.scopeKind,
       text: visible.text,
-      revision: Number(visible.revision),
-      expiresAt: visible.expires_at,
+      revision: visible.revision,
+      expiresAt: visible.expiresAt,
     }] : [],
   };
 }
@@ -720,19 +685,20 @@ async function loadReceipt(
   env: Env,
   input: Pick<WorkstreamWorkflowInput, "workspaceId" | "harnessRunId">,
   receiptId: string,
-  operation: ReceiptRow["operation"],
+  operation: "add" | "update" | "invalidate",
   inputHash: string,
 ): Promise<MutationResult | null> {
-  const row = await env.DB.prepare(
-    `SELECT operation, input_hash, result_json
-       FROM memory_mutations
-      WHERE receipt_id = ? AND workspace_id = ? AND harness_run_id = ?`,
-  ).bind(receiptId, input.workspaceId, input.harnessRunId).first<ReceiptRow>();
-  if (!row) return null;
-  if (row.operation !== operation || row.input_hash !== inputHash) {
+  const workspace = await workspaceMemoryObject(env, input.workspaceId);
+  const receipt = WorkspaceMemoryReceiptResultSchema.parse(await workspace.memoryMutationReceipt({
+    workspaceId: input.workspaceId,
+    harnessRunId: input.harnessRunId,
+    receiptId,
+  }));
+  if (receipt.outcome === "none") return null;
+  if (receipt.operation !== operation || receipt.inputHash !== inputHash) {
     throw new Error("memory_mutation_receipt_mismatch");
   }
-  return JSON.parse(row.result_json) as MutationResult;
+  return JSON.parse(receipt.resultJson) as MutationResult;
 }
 
 async function mutationInputHash(operation: string, args: unknown): Promise<string> {
@@ -796,58 +762,33 @@ async function addMemory(
     executionPrincipal: input.executionPrincipal,
     rationale: args.rationale,
   };
-  try {
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO memory_items
-           (memory_item_id, memory_scope_id, workspace_id, text, revision, expires_at,
-            provenance_json, last_mutation_id, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
-      ).bind(
-        memoryItemId,
-        scope.memoryScopeId,
-        input.workspaceId,
-        args.text,
-        args.expiresAt ?? null,
-        JSON.stringify(provenance),
-        memoryMutationId,
-        at,
-        at,
-      ),
-      env.DB.prepare(
-        `INSERT INTO memory_mutations
-           (memory_mutation_id, receipt_id, memory_item_id, memory_scope_id, workspace_id,
-            operation, prior_revision, resulting_revision, actor_principal_json,
-            harness_run_id, workstream_id, rationale, input_hash, mutation_json,
-            result_json, created_at)
-         VALUES (?, ?, ?, ?, ?, 'add', NULL, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
-        memoryMutationId,
-        receiptId,
-        memoryItemId,
-        scope.memoryScopeId,
-        input.workspaceId,
-        JSON.stringify(input.executionPrincipal),
-        input.harnessRunId,
-        input.workstreamId,
-        args.rationale,
-        inputHash,
-        JSON.stringify({ text: args.text, expiresAt: args.expiresAt ?? null }),
-        JSON.stringify(result),
-        at,
-      ),
-      env.DB.prepare(
-        `INSERT INTO memory_index_outbox
-           (outbox_id, memory_item_id, memory_scope_id, workspace_id, revision,
-            operation, status, available_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, 'upsert', 'pending', ?, ?, ?)`,
-      ).bind(newId(), memoryItemId, scope.memoryScopeId, input.workspaceId, at, at, at),
-    ]);
-  } catch (error) {
-    const raced = await loadReceipt(env, input, receiptId, "add", inputHash);
-    if (raced) return mutationToolResult(raced, "Added durable memory");
-    throw error;
+  const workspace = await workspaceMemoryObject(env, input.workspaceId);
+  const outcome = WorkspaceMemoryAddResultSchema.parse(await workspace.addMemoryItem({
+    workspaceId: input.workspaceId,
+    memoryItemId,
+    memoryScopeId: scope.memoryScopeId,
+    text: args.text,
+    expiresAt: args.expiresAt ?? null,
+    provenanceJson: JSON.stringify(provenance),
+    mutation: {
+      memoryMutationId,
+      receiptId,
+      actorPrincipalJson: JSON.stringify(input.executionPrincipal),
+      harnessRunId: input.harnessRunId,
+      workstreamId: input.workstreamId,
+      rationale: args.rationale,
+      inputHash,
+      mutationJson: JSON.stringify({ text: args.text, expiresAt: args.expiresAt ?? null }),
+      resultJson: JSON.stringify(result),
+    },
+    at,
+  }));
+  // A replay that raced this write past the preflight read above settles
+  // inside the object's transaction and answers with the recorded result.
+  if (outcome.outcome === "replayed") {
+    return mutationToolResult(JSON.parse(outcome.resultJson) as MutationResult, "Added durable memory");
   }
+  if (outcome.outcome === "receipt_mismatch") throw new Error("memory_mutation_receipt_mismatch");
   return mutationToolResult(result, "Added durable memory");
 }
 
@@ -855,21 +796,18 @@ async function loadWritableItem(
   env: Env,
   input: WorkstreamWorkflowInput,
   memoryItemId: string,
-): Promise<{ row: MemoryItemRow; scope: MemoryScope }> {
+): Promise<{ item: WorkspaceMemoryItem; scope: MemoryScope }> {
   const scopes = await resolveMemoryAccess(env, input);
-  const row = await env.DB.prepare(
-    `SELECT item.memory_item_id, item.memory_scope_id, item.workspace_id,
-            scope.kind AS scope_kind, item.text, item.revision, item.expires_at,
-            item.invalidated_at, item.updated_at
-       FROM memory_items item
-       JOIN memory_scopes scope ON scope.memory_scope_id = item.memory_scope_id
-      WHERE item.memory_item_id = ? AND item.workspace_id = ?`,
-  ).bind(memoryItemId, input.workspaceId).first<MemoryItemRow>();
-  if (!row) throw new Error("memory_item_not_found");
-  const scope = scopes.find((candidate) => candidate.memoryScopeId === row.memory_scope_id);
+  const workspace = await workspaceMemoryObject(env, input.workspaceId);
+  const found = WorkspaceMemoryItemForWriteResultSchema.parse(await workspace.memoryItemForWrite({
+    workspaceId: input.workspaceId,
+    memoryItemId,
+  }));
+  if (found.outcome !== "found") throw new Error("memory_item_not_found");
+  const scope = scopes.find((candidate) => candidate.memoryScopeId === found.item.memoryScopeId);
   if (!scope) throw new Error("memory_item_not_authorized");
   if (!scope.writable) throw new Error(`memory_scope_not_writable:${scope.kind}`);
-  return { row, scope };
+  return { item: found.item, scope };
 }
 
 async function updateMemory(
@@ -887,13 +825,13 @@ async function updateMemory(
   const inputHash = await mutationInputHash("update", args);
   const replay = await loadReceipt(env, input, receiptId, "update", inputHash);
   if (replay) return mutationToolResult(replay, "Updated durable memory");
-  const { row, scope } = await loadWritableItem(env, input, args.memoryItemId);
-  if (row.invalidated_at) throw new Error("memory_item_invalidated");
-  if (Number(row.revision) !== args.expectedRevision) throw memoryRevisionConflict();
+  const { item, scope } = await loadWritableItem(env, input, args.memoryItemId);
+  if (item.invalidatedAt) throw new Error("memory_item_invalidated");
+  if (item.revision !== args.expectedRevision) throw memoryRevisionConflict();
   const nextRevision = args.expectedRevision + 1;
   const memoryMutationId = newId();
   const at = nowIso();
-  const expiresAt = args.expiresAt ?? row.expires_at;
+  const expiresAt = args.expiresAt ?? item.expiresAt;
   const result: MutationResult = {
     memoryItemId: args.memoryItemId,
     memoryScopeId: scope.memoryScopeId,
@@ -901,78 +839,34 @@ async function updateMemory(
     revision: nextRevision,
     invalidated: false,
   };
-  try {
-    const batch = await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE memory_items
-            SET text = ?, revision = ?, expires_at = ?, last_mutation_id = ?, updated_at = ?
-          WHERE memory_item_id = ? AND workspace_id = ? AND memory_scope_id = ?
-            AND revision = ? AND invalidated_at IS NULL`,
-      ).bind(
-        args.text,
-        nextRevision,
-        expiresAt,
-        memoryMutationId,
-        at,
-        args.memoryItemId,
-        input.workspaceId,
-        scope.memoryScopeId,
-        args.expectedRevision,
-      ),
-      env.DB.prepare(
-        `INSERT INTO memory_mutations
-           (memory_mutation_id, receipt_id, memory_item_id, memory_scope_id, workspace_id,
-            operation, prior_revision, resulting_revision, actor_principal_json,
-            harness_run_id, workstream_id, rationale, input_hash, mutation_json,
-            result_json, created_at)
-         SELECT ?, ?, memory_item_id, memory_scope_id, workspace_id, 'update', ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?
-           FROM memory_items
-          WHERE memory_item_id = ? AND last_mutation_id = ?`,
-      ).bind(
-        memoryMutationId,
-        receiptId,
-        args.expectedRevision,
-        nextRevision,
-        JSON.stringify(input.executionPrincipal),
-        input.harnessRunId,
-        input.workstreamId,
-        args.rationale,
-        inputHash,
-        JSON.stringify({ text: args.text, expiresAt }),
-        JSON.stringify(result),
-        at,
-        args.memoryItemId,
-        memoryMutationId,
-      ),
-      env.DB.prepare(
-        `INSERT INTO memory_index_outbox
-           (outbox_id, memory_item_id, memory_scope_id, workspace_id, revision,
-            operation, status, available_at, created_at, updated_at)
-         SELECT ?, memory_item_id, memory_scope_id, workspace_id, ?, 'upsert',
-                'pending', ?, ?, ?
-           FROM memory_items
-          WHERE memory_item_id = ? AND last_mutation_id = ?`,
-      ).bind(
-        newId(),
-        nextRevision,
-        at,
-        at,
-        at,
-        args.memoryItemId,
-        memoryMutationId,
-      ),
-    ]);
-    if (d1Changes(batch[0]!) === 0) {
-      const raced = await loadReceipt(env, input, receiptId, "update", inputHash);
-      if (raced) return mutationToolResult(raced, "Updated durable memory");
-      throw memoryRevisionConflict();
-    }
-  } catch (error) {
-    const raced = await loadReceipt(env, input, receiptId, "update", inputHash);
-    if (raced) return mutationToolResult(raced, "Updated durable memory");
-    throw error;
+  const workspace = await workspaceMemoryObject(env, input.workspaceId);
+  const outcome = WorkspaceMemoryWriteResultSchema.parse(await workspace.updateMemoryItem({
+    workspaceId: input.workspaceId,
+    memoryItemId: args.memoryItemId,
+    memoryScopeId: scope.memoryScopeId,
+    expectedRevision: args.expectedRevision,
+    text: args.text,
+    expiresAt,
+    mutation: {
+      memoryMutationId,
+      receiptId,
+      actorPrincipalJson: JSON.stringify(input.executionPrincipal),
+      harnessRunId: input.harnessRunId,
+      workstreamId: input.workstreamId,
+      rationale: args.rationale,
+      inputHash,
+      mutationJson: JSON.stringify({ text: args.text, expiresAt }),
+      resultJson: JSON.stringify(result),
+    },
+    at,
+  }));
+  if (outcome.outcome === "replayed") {
+    return mutationToolResult(JSON.parse(outcome.resultJson) as MutationResult, "Updated durable memory");
   }
+  if (outcome.outcome === "receipt_mismatch") throw new Error("memory_mutation_receipt_mismatch");
+  // The object's transaction settles a replay before checking the revision,
+  // so a conflict here is genuinely another writer's, not this receipt's.
+  if (outcome.outcome === "revision_conflict") throw memoryRevisionConflict();
   return mutationToolResult(result, "Updated durable memory");
 }
 
@@ -987,9 +881,9 @@ async function invalidateMemory(
   const inputHash = await mutationInputHash("invalidate", args);
   const replay = await loadReceipt(env, input, receiptId, "invalidate", inputHash);
   if (replay) return mutationToolResult(replay, "Invalidated durable memory");
-  const { row, scope } = await loadWritableItem(env, input, args.memoryItemId);
-  if (row.invalidated_at) throw new Error("memory_item_invalidated");
-  if (Number(row.revision) !== args.expectedRevision) throw memoryRevisionConflict();
+  const { item, scope } = await loadWritableItem(env, input, args.memoryItemId);
+  if (item.invalidatedAt) throw new Error("memory_item_invalidated");
+  if (item.revision !== args.expectedRevision) throw memoryRevisionConflict();
   const nextRevision = args.expectedRevision + 1;
   const memoryMutationId = newId();
   const at = nowIso();
@@ -1001,80 +895,31 @@ async function invalidateMemory(
     revision: nextRevision,
     invalidated: true,
   };
-  try {
-    const batch = await env.DB.batch([
-      env.DB.prepare(
-        `UPDATE memory_items
-            SET revision = ?, invalidated_at = ?, invalidated_by_principal_json = ?,
-                invalidation_reason = ?, last_mutation_id = ?, updated_at = ?
-          WHERE memory_item_id = ? AND workspace_id = ? AND memory_scope_id = ?
-            AND revision = ? AND invalidated_at IS NULL`,
-      ).bind(
-        nextRevision,
-        at,
-        principalJson,
-        args.reason,
-        memoryMutationId,
-        at,
-        args.memoryItemId,
-        input.workspaceId,
-        scope.memoryScopeId,
-        args.expectedRevision,
-      ),
-      env.DB.prepare(
-        `INSERT INTO memory_mutations
-           (memory_mutation_id, receipt_id, memory_item_id, memory_scope_id, workspace_id,
-            operation, prior_revision, resulting_revision, actor_principal_json,
-            harness_run_id, workstream_id, rationale, input_hash, mutation_json,
-            result_json, created_at)
-         SELECT ?, ?, memory_item_id, memory_scope_id, workspace_id, 'invalidate', ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?
-           FROM memory_items
-          WHERE memory_item_id = ? AND last_mutation_id = ?`,
-      ).bind(
-        memoryMutationId,
-        receiptId,
-        args.expectedRevision,
-        nextRevision,
-        principalJson,
-        input.harnessRunId,
-        input.workstreamId,
-        args.reason,
-        inputHash,
-        JSON.stringify({ reason: args.reason }),
-        JSON.stringify(result),
-        at,
-        args.memoryItemId,
-        memoryMutationId,
-      ),
-      env.DB.prepare(
-        `INSERT INTO memory_index_outbox
-           (outbox_id, memory_item_id, memory_scope_id, workspace_id, revision,
-            operation, status, available_at, created_at, updated_at)
-         SELECT ?, memory_item_id, memory_scope_id, workspace_id, ?, 'delete',
-                'pending', ?, ?, ?
-           FROM memory_items
-          WHERE memory_item_id = ? AND last_mutation_id = ?`,
-      ).bind(
-        newId(),
-        nextRevision,
-        at,
-        at,
-        at,
-        args.memoryItemId,
-        memoryMutationId,
-      ),
-    ]);
-    if (d1Changes(batch[0]!) === 0) {
-      const raced = await loadReceipt(env, input, receiptId, "invalidate", inputHash);
-      if (raced) return mutationToolResult(raced, "Invalidated durable memory");
-      throw memoryRevisionConflict();
-    }
-  } catch (error) {
-    const raced = await loadReceipt(env, input, receiptId, "invalidate", inputHash);
-    if (raced) return mutationToolResult(raced, "Invalidated durable memory");
-    throw error;
+  const workspace = await workspaceMemoryObject(env, input.workspaceId);
+  const outcome = WorkspaceMemoryWriteResultSchema.parse(await workspace.invalidateMemoryItem({
+    workspaceId: input.workspaceId,
+    memoryItemId: args.memoryItemId,
+    memoryScopeId: scope.memoryScopeId,
+    expectedRevision: args.expectedRevision,
+    reason: args.reason,
+    mutation: {
+      memoryMutationId,
+      receiptId,
+      actorPrincipalJson: principalJson,
+      harnessRunId: input.harnessRunId,
+      workstreamId: input.workstreamId,
+      rationale: args.reason,
+      inputHash,
+      mutationJson: JSON.stringify({ reason: args.reason }),
+      resultJson: JSON.stringify(result),
+    },
+    at,
+  }));
+  if (outcome.outcome === "replayed") {
+    return mutationToolResult(JSON.parse(outcome.resultJson) as MutationResult, "Invalidated durable memory");
   }
+  if (outcome.outcome === "receipt_mismatch") throw new Error("memory_mutation_receipt_mismatch");
+  if (outcome.outcome === "revision_conflict") throw memoryRevisionConflict();
   return mutationToolResult(result, "Invalidated durable memory");
 }
 
@@ -1205,131 +1050,100 @@ export function createMemoryTools(env: Env, input: WorkstreamWorkflowInput): Har
   }));
 }
 
-interface OutboxRow {
-  outbox_id: string;
-  memory_item_id: string;
-  memory_scope_id: string;
-  workspace_id: string;
-  revision: number;
-  operation: "upsert" | "delete";
-  attempt_count: number;
-}
-
-async function claimOutboxRow(env: Env, row: OutboxRow, leaseToken: string): Promise<boolean> {
-  const now = nowIso();
-  const leaseExpiresAt = new Date(Date.now() + 60_000).toISOString();
-  const result = await env.DB.prepare(
-    `UPDATE memory_index_outbox
-        SET status = 'processing', lease_token = ?, lease_expires_at = ?,
-            attempt_count = attempt_count + 1, updated_at = ?
-      WHERE outbox_id = ? AND (
-        (status = 'pending' AND available_at <= ?)
-        OR (status = 'processing' AND lease_expires_at <= ?)
-      )`,
-  ).bind(leaseToken, leaseExpiresAt, now, row.outbox_id, now, now).run();
-  return d1Changes(result) > 0;
-}
-
-async function completeOutboxRow(env: Env, outboxId: string, leaseToken: string): Promise<void> {
-  const at = nowIso();
-  await env.DB.prepare(
-    `UPDATE memory_index_outbox
-        SET status = 'completed', completed_at = ?, lease_token = NULL,
-            lease_expires_at = NULL, last_error = NULL, updated_at = ?
-      WHERE outbox_id = ? AND status = 'processing' AND lease_token = ?`,
-  ).bind(at, at, outboxId, leaseToken).run();
-}
-
-async function retryOutboxRow(
+async function projectOutboxRow(
   env: Env,
-  row: OutboxRow,
-  leaseToken: string,
-  error: unknown,
+  workspace: Awaited<ReturnType<typeof workspaceMemoryObject>>,
+  row: WorkspaceMemoryOutboxRow,
 ): Promise<void> {
-  const delaySeconds = Math.min(3_600, 2 ** Math.min(12, row.attempt_count + 1));
-  const availableAt = new Date(Date.now() + delaySeconds * 1_000).toISOString();
-  const at = nowIso();
-  const message = error instanceof Error ? error.message : String(error);
-  await env.DB.prepare(
-    `UPDATE memory_index_outbox
-        SET status = 'pending', available_at = ?, lease_token = NULL,
-            lease_expires_at = NULL, last_error = ?, updated_at = ?
-      WHERE outbox_id = ? AND status = 'processing' AND lease_token = ?`,
-  ).bind(availableAt, message.slice(0, 2_000), at, row.outbox_id, leaseToken).run();
-}
-
-async function projectOutboxRow(env: Env, row: OutboxRow): Promise<void> {
   if (!env.MEMORY_INDEX) throw new Error("memory_vector_binding_unavailable");
-  const current = await env.DB.prepare(
-    `SELECT item.text, item.revision, item.invalidated_at, item.expires_at,
-            scope.kind AS scope_kind
-       FROM memory_items item
-       JOIN memory_scopes scope ON scope.memory_scope_id = item.memory_scope_id
-      WHERE item.memory_item_id = ? AND item.memory_scope_id = ? AND item.workspace_id = ?`,
-  ).bind(row.memory_item_id, row.memory_scope_id, row.workspace_id).first<{
-    text: string;
-    revision: number;
-    invalidated_at: string | null;
-    expires_at: string | null;
-    scope_kind: MemoryScopeKind;
-  }>();
-  const priorVectorId = row.revision > 1 ? vectorId(row.memory_item_id, row.revision - 1) : null;
+  const current = WorkspaceMemoryProjectionSourceResultSchema.parse(
+    await workspace.memoryIndexProjectionSource({
+      workspaceId: row.workspaceId,
+      memoryItemId: row.memoryItemId,
+      memoryScopeId: row.memoryScopeId,
+    }),
+  );
+  const priorVectorId = row.revision > 1 ? vectorId(row.memoryItemId, row.revision - 1) : null;
   if (
     row.operation === "delete"
-    || !current
-    || Number(current.revision) !== row.revision
-    || current.invalidated_at
-    || (current.expires_at != null && current.expires_at <= nowIso())
+    || current.outcome === "none"
+    || current.revision !== row.revision
+    || current.invalidatedAt
+    || (current.expiresAt != null && current.expiresAt <= nowIso())
   ) {
     await env.MEMORY_INDEX.deleteByIds([
-      vectorId(row.memory_item_id, row.revision),
+      vectorId(row.memoryItemId, row.revision),
       ...(priorVectorId ? [priorVectorId] : []),
     ]);
     return;
   }
   const embedding = await embedDocument(env, current.text);
   await env.MEMORY_INDEX.upsert([{
-    id: vectorId(row.memory_item_id, row.revision),
+    id: vectorId(row.memoryItemId, row.revision),
     values: embedding,
-    namespace: row.memory_scope_id,
+    namespace: row.memoryScopeId,
     metadata: {
-      workspaceId: row.workspace_id,
-      scopeKind: current.scope_kind,
+      workspaceId: row.workspaceId,
+      scopeKind: current.scopeKind,
       revision: row.revision,
     },
   }]);
   if (priorVectorId) await env.MEMORY_INDEX.deleteByIds([priorVectorId]);
 }
 
-/** Replay the transactional embedding outbox. Safe for concurrent cron workers. */
+/**
+ * Replay the transactional embedding outbox. Safe for concurrent workers: a
+ * row is claimed under a lease before its projection leaves the object, and a
+ * lost lease means another worker finished it. Runs inside WorkspaceDO's own
+ * alarm in production, where {@link durableObjectStubForWorkspace} hands back
+ * the registered instance rather than an RPC round trip to itself.
+ */
 export async function processMemoryIndexOutbox(
   env: Env,
   limit = 50,
   workspaceId?: string,
 ): Promise<number> {
-  if (!workspaceId && env.WORKSPACE_DOS) throw new Error("memory_index_workspace_required");
-  if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
+  if (!workspaceId) throw new Error("memory_index_workspace_required");
   if (!env.AI || !env.MEMORY_INDEX) return 0;
-  const now = nowIso();
-  const rows = await env.DB.prepare(
-    `SELECT outbox_id, memory_item_id, memory_scope_id, workspace_id,
-            revision, operation, attempt_count
-       FROM memory_index_outbox
-      WHERE (status = 'pending' AND available_at <= ?)
-         OR (status = 'processing' AND lease_expires_at <= ?)
-      ORDER BY created_at ASC
-      LIMIT ?`,
-  ).bind(now, now, Math.max(1, Math.min(200, limit))).all<OutboxRow>();
+  const workspace = await workspaceMemoryObject(env, workspaceId);
+  const due = WorkspaceMemoryOutboxDueListSchema.parse(await workspace.dueMemoryIndexOutbox({
+    workspaceId,
+    now: nowIso(),
+    limit: Math.max(1, Math.min(200, limit)),
+  }));
   let completed = 0;
-  for (const row of rows.results ?? []) {
+  for (const row of due.rows) {
     const leaseToken = newId();
-    if (!await claimOutboxRow(env, row, leaseToken)) continue;
+    const claim = WorkspaceMemoryOutboxClaimResultSchema.parse(
+      await workspace.claimMemoryIndexOutboxRow({
+        workspaceId,
+        outboxId: row.outboxId,
+        leaseToken,
+        leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+        now: nowIso(),
+      }),
+    );
+    if (!claim.claimed) continue;
     try {
-      await projectOutboxRow(env, row);
-      await completeOutboxRow(env, row.outbox_id, leaseToken);
+      await projectOutboxRow(env, workspace, row);
+      await workspace.completeMemoryIndexOutboxRow({
+        workspaceId,
+        outboxId: row.outboxId,
+        leaseToken,
+        at: nowIso(),
+      });
       completed += 1;
     } catch (error) {
-      await retryOutboxRow(env, row, leaseToken, error);
+      const delaySeconds = Math.min(3_600, 2 ** Math.min(12, row.attemptCount + 1));
+      const message = error instanceof Error ? error.message : String(error);
+      await workspace.retryMemoryIndexOutboxRow({
+        workspaceId,
+        outboxId: row.outboxId,
+        leaseToken,
+        availableAt: new Date(Date.now() + delaySeconds * 1_000).toISOString(),
+        lastError: message.slice(0, 2_000),
+        at: nowIso(),
+      });
     }
   }
   return completed;
