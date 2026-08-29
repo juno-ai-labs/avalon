@@ -192,6 +192,15 @@ export const WorkspaceDigestDeliveryRunningRequestSchema = z.object({
   at: TimestampSchema,
 }).strict();
 
+/**
+ * `not_planned` means the claim was no longer waiting for its launch — it was
+ * released, settled, or never existed. The caller just launched a run against
+ * it, so silence here would leave nothing saying the two disagree.
+ */
+export const WorkspaceDigestRunningResultSchema = z.object({
+  outcome: z.enum(["running", "not_planned"]),
+}).strict();
+
 export const WorkspaceDigestReleaseClaimRequestSchema = z.object({
   workspaceId: IdSchema,
   deliveryId: IdSchema,
@@ -318,6 +327,8 @@ export type WorkspaceDigestDeliveryWorkstreamRequest =
   z.infer<typeof WorkspaceDigestDeliveryWorkstreamRequestSchema>;
 export type WorkspaceDigestDeliveryRunningRequest =
   z.infer<typeof WorkspaceDigestDeliveryRunningRequestSchema>;
+export type WorkspaceDigestRunningResult =
+  z.infer<typeof WorkspaceDigestRunningResultSchema>;
 export type WorkspaceDigestReleaseClaimRequest =
   z.infer<typeof WorkspaceDigestReleaseClaimRequestSchema>;
 export type WorkspaceDigestReleaseClaimResult =

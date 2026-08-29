@@ -1,6 +1,16 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Recorded rather than real so a test can see what the terminal event said;
+// everything else on the module stays the real implementation.
+const emitProductUsageTelemetry = vi.hoisted(() =>
+  vi.fn<(env: unknown, input: unknown) => Promise<void>>(async () => undefined));
+vi.mock("../src/telemetry/product-usage", async (importOriginal) => ({
+  ...await importOriginal<typeof ProductUsageModule>(),
+  emitProductUsageTelemetry,
+}));
+
+import type * as ProductUsageModule from "../src/telemetry/product-usage";
 import type { Env } from "../src/env";
 import { deliverDigest } from "../src/services/digest-delivery-service";
 import { settleDigestRun } from "../src/services/digest-run-settlement";
@@ -52,6 +62,7 @@ let workspaceDO: WorkspaceDO;
 let workspaceStore: DatabaseSync;
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  emitProductUsageTelemetry.mockClear();
 });
 
 /**
@@ -62,11 +73,16 @@ afterEach(() => {
  * per-target delivery records are the object's own decisions rather than a
  * re-implementation of them.
  */
-function envFor(database: DatabaseSync, extra: Record<string, unknown> = {}): Env {
+function envFor(
+  database: DatabaseSync,
+  extra: Record<string, unknown> = {},
+  substreamExtra: Record<string, unknown> = {},
+): Env {
   return createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
       objectStores: new Map([[WORKSTREAM, objectStore]]),
+      extra: substreamExtra,
     }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
@@ -235,6 +251,25 @@ describe("digest delivery", () => {
       .toEqual({ status: "needs_input" });
   });
 
+  it("does not count a send against a target that vanished before it was recorded", async () => {
+    const database = seededDatabase();
+    // A settings save mid-delivery deletes and re-inserts every target row
+    // under fresh ids. The transport stands in for that moment: the send
+    // lands, and by the time the record is written the row is gone.
+    const request = vi.fn(async () => {
+      workspaceStore.exec(`DELETE FROM digest_delivery_targets WHERE id = '${TARGET}'`);
+      return new Response(JSON.stringify({ id: "resend-1" }), { status: 200 });
+    });
+
+    const result = await deliverDigest(envFor(database), context, request as unknown as typeof fetch);
+
+    // Counting it delivered would settle the occurrence with no idempotency
+    // marker written anywhere, and a retried step would send the recreated
+    // target a second copy on that authority. Skipped is the honest count:
+    // nothing was recorded, and nothing is left claiming it was.
+    expect(result).toEqual({ delivered: 0, skipped: 1, failed: 0 });
+  });
+
   it("rethrows a retryable failure so the workflow step retries it", async () => {
     const database = seededDatabase();
     const request = vi.fn(async () => new Response("upstream down", { status: 503 }));
@@ -318,6 +353,53 @@ describe("settling a digest run", () => {
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
 
+    expect(deliveryStatus().status).toBe("delivered");
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = ?",
+      `digest-delivered:${DELIVERY}`,
+    )).toEqual({ count: 0 });
+  });
+
+  it("keeps the terminal event when a target type this build does not know appears", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    // `target_type` is bare TEXT in the object schema — the value list is
+    // enforced on the write path, not by a CHECK — so a newer build or a
+    // backfill can leave a type this one has never heard of. It must cost one
+    // array entry, never the whole terminal event.
+    workspaceStore.exec(`
+      INSERT INTO digest_delivery_targets
+        (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
+         provider_tenant_id, provider_user_id, status, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-00000000000a', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}',
+              'carrier_pigeon', '00000000-0000-7000-8000-00000000000b', 'tenant-1', 'pigeon-1',
+              'disabled', '2026-01-01', '2026-01-01');
+    `);
+
+    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
+
+    expect(deliveryStatus().status).toBe("delivered");
+    const terminal = emitProductUsageTelemetry.mock.calls
+      .map(([, input]) => input as { name: string; properties: { targetTypes: string[] } })
+      .find((input) => input.name === "digest_delivery_terminal");
+    expect(terminal?.properties.targetTypes).toEqual(["email"]);
+  });
+
+  it("keeps a settled delivery when the transcript note cannot be written", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    const env = envFor(database, {}, {
+      executeMessageOperation: () => {
+        throw new Error("transcript authority offline");
+      },
+    });
+
+    await expect(settleDigestRun(env, WORKSPACE, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
+
+    // The settle has already won. Failing the step over the note would make
+    // the retry read `already_settled` and return before writing one — the
+    // note would be lost either way, with a failed run as the extra price.
     expect(deliveryStatus().status).toBe("delivered");
     expect(workstreamObjectGet(
       objectStore,

@@ -295,6 +295,7 @@ import {
   type WorkspaceDigestReplaceRowsRequest,
   type WorkspaceDigestRowState,
   type WorkspaceDigestRowStateRequest,
+  type WorkspaceDigestRunningResult,
   type WorkspaceDigestSettings,
   type WorkspaceDigestSettingsRequest,
   type WorkspaceDigestSettleRequest,
@@ -5770,12 +5771,14 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     recordWorkspaceDigestDeliveryWorkstream(this.state.storage, request);
   }
 
-  /** The launch succeeded: the claim graduates from `planned` to `running`. */
-  async markDigestDeliveryRunning(input: WorkspaceDigestDeliveryRunningRequest): Promise<void> {
+  /** The launch succeeded: the claim graduates from `planned` to `running`, or says it could not. */
+  async markDigestDeliveryRunning(
+    input: WorkspaceDigestDeliveryRunningRequest,
+  ): Promise<WorkspaceDigestRunningResult> {
     await this.initialized;
     const request = WorkspaceDigestDeliveryRunningRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    markWorkspaceDigestDeliveryRunning(this.state.storage, request);
+    return markWorkspaceDigestDeliveryRunning(this.state.storage, request);
   }
 
   /** Undo a claim whose launch never started, so the scheduler's retry gets another go. */
