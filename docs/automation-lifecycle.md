@@ -526,6 +526,33 @@ idempotent per workspace.
 
 ## Changelog
 
+### 2026-08-29 — The template gallery becomes three typed WorkspaceDO methods
+
+**What changed:** `listAutomationTemplates`, `publishAutomationTemplate` and
+`addAutomationTemplateVersion` replace the six statements
+`automation-service.ts` sent through the workspace runtime facade. The SQL
+lives in `workspace-automation-template-storage.ts`. The gallery's author names
+stay a regional lookup in the service, because they join `users`, which the
+object does not have.
+
+**Why:** the facade routes by table name and sends anything it does not
+recognise to the regional database. Beyond that, adding a version read
+`latest_version_number` and then wrote the incremented value in a separate
+batch. Two people publishing a revision at the same moment both read the same
+number and both wrote it, and `UNIQUE (template_id, version_number)` refused
+the second — a 500 with nothing in it a person could act on. Inside the object
+the read and the bump are one critical section, so the numbers are consecutive.
+
+**Considered and rejected:** returning the gallery already joined to author
+names. The object has no `users` table and no business acquiring one; asking
+it to would put a regional identity read behind a workspace-product method.
+
+**What a future change has to respect:** `usedBy` is zero because nothing
+counts subscriptions any more — the cutover moved them to AutomationAgent and
+dropped the table the count joined. The literal `0 AS use_count` in the old
+query said the same thing less clearly. If the count comes back it is
+AutomationAgent's to answer, not this gallery's.
+
 ### 2026-08-29 — The cutover has run, and its deploy scaffolding is removed
 
 **What changed:** The three one-shot steps that carried the authority cutover —

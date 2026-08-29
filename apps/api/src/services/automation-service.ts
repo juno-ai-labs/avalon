@@ -12,6 +12,13 @@ import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import { asWorkspaceId } from "@rally/contracts";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceAutomationTemplateListSchema,
+  WorkspaceAutomationTemplateVersionResultSchema,
+} from "../durable-objects/workspace-automation-template-protocol";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 
 type TriggerDefinition = z.infer<typeof TriggerDefinitionSchema>;
 
@@ -40,32 +47,33 @@ export class AutomationService {
   }
 
   async listTemplates() {
-    const result = await this.env.DB.prepare(
-      `SELECT t.*,
-       0 AS use_count,
-       v.required_capabilities_json, v.trigger_definitions_json
-       FROM automation_templates t
-       JOIN automation_template_versions v ON v.template_id = t.id AND v.version_number = t.latest_version_number
-       WHERE t.workspace_id = ? AND t.sharing_state = 'workspace' AND t.archived_at IS NULL
-       ORDER BY t.name COLLATE NOCASE`,
-    ).bind(this.auth.workspaceId).all<Record<string, unknown>>();
-    const ownerIds = [...new Set(result.results.flatMap((row) =>
-      typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
+    // The gallery rows come from the object that owns the tables; the author
+    // names are a regional join the object cannot make, so they stay here.
+    const gallery = WorkspaceAutomationTemplateListSchema.parse(
+      await (await this.workspace()).listAutomationTemplates({
+        workspaceId: this.auth.workspaceId,
+      }),
+    );
+    const ownerIds = [...new Set(gallery.items.flatMap((item) =>
+      item.ownerUserId === null ? [] : [item.ownerUserId]))];
     const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
       `SELECT id, name FROM users WHERE id IN (${ownerIds.map(() => "?").join(",")})`,
     ).bind(...ownerIds).all<{ id: string; name: string }>()).results;
     const ownerNames = new Map(owners.map((owner) => [owner.id, owner.name]));
-    return { items: result.results.map((row) => ({
-      id: row.id,
-      name: row.name,
-      author: typeof row.owner_user_id === "string"
-        ? ownerNames.get(row.owner_user_id) ?? "Unknown member"
-        : "Unknown member",
-      description: row.description,
-      usedBy: Number(row.use_count),
-      requiredCapabilities: templateCapabilities(row.required_capabilities_json),
-      latestVersion: Number(row.latest_version_number),
-      activitySources: activitySourceDefinitions(templateTriggers(row.trigger_definitions_json)),
+    return { items: gallery.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      author: item.ownerUserId === null
+        ? "Unknown member"
+        : ownerNames.get(item.ownerUserId) ?? "Unknown member",
+      description: item.description,
+      // Nothing counts subscriptions any more: AutomationAgent owns them, and
+      // the cutover dropped the table this used to join. The contract keeps the
+      // field, so the gallery reports zero rather than a number it cannot know.
+      usedBy: 0,
+      requiredCapabilities: templateCapabilities(item.requiredCapabilitiesJson),
+      latestVersion: item.latestVersionNumber,
+      activitySources: activitySourceDefinitions(templateTriggers(item.triggerDefinitionsJson)),
     })) };
   }
 
@@ -81,29 +89,30 @@ export class AutomationService {
     const templateId = newId();
     const versionId = newId();
     const at = nowIso();
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `INSERT INTO automation_templates
-         (id, workspace_id, owner_user_id, name, description, sharing_state,
-          latest_version_number, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'workspace', 1, ?, ?)`,
-      ).bind(templateId, this.auth.workspaceId, this.auth.userId, input.name, input.description, at, at),
-      this.env.DB.prepare(
-        `INSERT INTO automation_template_versions
-         (id, template_id, version_number, overview, instructions, trigger_definitions_json,
-          required_capabilities_json, expected_outputs_json, default_behavior_json,
-          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
-         VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(versionId, templateId, input.draft.overview, input.draft.instructions, JSON.stringify(input.draft.triggers), JSON.stringify(input.draft.requiredCapabilities), JSON.stringify(input.draft.expectedOutputs), JSON.stringify(input.draft.defaultBehavior), JSON.stringify(input.draft.recommendedPlugins), JSON.stringify(input.draft.memoryTables), this.auth.userId, at),
-    ]);
+    await (await this.workspace()).publishAutomationTemplate({
+      workspaceId: this.auth.workspaceId,
+      templateId,
+      ownerUserId: this.auth.userId,
+      name: input.name,
+      description: input.description,
+      version: {
+        versionId,
+        overview: input.draft.overview,
+        instructions: input.draft.instructions,
+        triggerDefinitionsJson: JSON.stringify(input.draft.triggers),
+        requiredCapabilitiesJson: JSON.stringify(input.draft.requiredCapabilities),
+        expectedOutputsJson: JSON.stringify(input.draft.expectedOutputs),
+        defaultBehaviorJson: JSON.stringify(input.draft.defaultBehavior),
+        recommendedPluginsJson: JSON.stringify(input.draft.recommendedPlugins),
+        memoryTablesJson: JSON.stringify(input.draft.memoryTables),
+        createdByUserId: this.auth.userId,
+        at,
+      },
+    });
     return { id: templateId, latestVersionId: versionId, latestVersionNumber: 1 };
   }
 
   async addTemplateVersion(templateId: string, draft: AutomationDraft) {
-    const template = await this.env.DB.prepare(
-      `SELECT * FROM automation_templates WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
-    ).bind(templateId, this.auth.workspaceId, this.auth.userId).first<Record<string, unknown>>();
-    if (!template) throw new ApiError(404, "template_not_found", "Automation template not found");
     const activitySourcePluginIds = suggestedActivitySourcePluginIds(draft.triggers);
     const connectorSelection = await this.validateConnectorSelections(
       draft.suggestedScope,
@@ -111,20 +120,46 @@ export class AutomationService {
       activitySourcePluginIds,
     );
     this.assertActivityTriggerBindings(draft.triggers, activitySourcePluginIds, connectorSelection);
-    const number = Number(template.latest_version_number) + 1;
     const id = newId();
     const at = nowIso();
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `INSERT INTO automation_template_versions
-         (id, template_id, version_number, overview, instructions, trigger_definitions_json,
-          required_capabilities_json, expected_outputs_json, default_behavior_json,
-          recommended_plugins_json, memory_tables_json, created_by_user_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(id, templateId, number, draft.overview, draft.instructions, JSON.stringify(draft.triggers), JSON.stringify(draft.requiredCapabilities), JSON.stringify(draft.expectedOutputs), JSON.stringify(draft.defaultBehavior), JSON.stringify(draft.recommendedPlugins), JSON.stringify(draft.memoryTables), this.auth.userId, at),
-      this.env.DB.prepare("UPDATE automation_templates SET latest_version_number = ?, updated_at = ? WHERE id = ?").bind(number, at, templateId),
-    ]);
-    return { id, versionNumber: number };
+    // Ownership, the version number and both writes are one decision in the
+    // object. As a read here and a batch afterwards, two revisions published at
+    // the same moment read the same number and the unique constraint refused
+    // the second — a 500 rather than the next version.
+    const result = WorkspaceAutomationTemplateVersionResultSchema.parse(
+      await (await this.workspace()).addAutomationTemplateVersion({
+        workspaceId: this.auth.workspaceId,
+        templateId,
+        ownerUserId: this.auth.userId,
+        version: {
+          versionId: id,
+          overview: draft.overview,
+          instructions: draft.instructions,
+          triggerDefinitionsJson: JSON.stringify(draft.triggers),
+          requiredCapabilitiesJson: JSON.stringify(draft.requiredCapabilities),
+          expectedOutputsJson: JSON.stringify(draft.expectedOutputs),
+          defaultBehaviorJson: JSON.stringify(draft.defaultBehavior),
+          recommendedPluginsJson: JSON.stringify(draft.recommendedPlugins),
+          memoryTablesJson: JSON.stringify(draft.memoryTables),
+          createdByUserId: this.auth.userId,
+          at,
+        },
+      }),
+    );
+    if (result.outcome === "template_not_found") {
+      throw new ApiError(404, "template_not_found", "Automation template not found");
+    }
+    return { id, versionNumber: result.versionNumber! };
+  }
+
+  /** The WorkspaceDO that owns this workspace's template gallery. */
+  private workspace() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(this.auth.workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
+    );
   }
 
   private async validateConnectorSelections(

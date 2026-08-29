@@ -200,6 +200,19 @@ import {
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import {
+  addWorkspaceAutomationTemplateVersion,
+  listWorkspaceAutomationTemplates,
+  publishWorkspaceAutomationTemplate,
+} from "./workspace-automation-template-storage";
+import {
+  WorkspaceAutomationTemplatePublishRequestSchema,
+  WorkspaceAutomationTemplateVersionRequestSchema,
+  type WorkspaceAutomationTemplateList,
+  type WorkspaceAutomationTemplatePublishRequest,
+  type WorkspaceAutomationTemplateVersionRequest,
+  type WorkspaceAutomationTemplateVersionResult,
+} from "./workspace-automation-template-protocol";
+import {
   claimWorkspaceTerminalPolicyApplication,
   commitWorkspaceTerminalPolicyApplication,
   failWorkspaceTerminalPolicyApplication,
@@ -5447,6 +5460,42 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and a workspace at its cap are ordinary answers, and the sentence the
    * person reads is the service's to choose.
    */
+  /** The workspace-shared template gallery, at each template's latest version. */
+  async listAutomationTemplates(
+    input: { workspaceId: string },
+  ): Promise<WorkspaceAutomationTemplateList> {
+    await this.initialized;
+    const workspaceId = IdSchema.parse(input.workspaceId);
+    this.assertWorkspace(workspaceId);
+    return listWorkspaceAutomationTemplates(this.state.storage, workspaceId);
+  }
+
+  /** Publish a template and its first version, or neither. */
+  async publishAutomationTemplate(
+    input: WorkspaceAutomationTemplatePublishRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceAutomationTemplatePublishRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    publishWorkspaceAutomationTemplate(this.state.storage, request);
+  }
+
+  /**
+   * Add the next version of a template the caller owns.
+   *
+   * The version number is read and bumped in one critical section, which two
+   * separate statements through the runtime facade could not do: both readers
+   * saw the same number and the unique constraint refused the second write.
+   */
+  async addAutomationTemplateVersion(
+    input: WorkspaceAutomationTemplateVersionRequest,
+  ): Promise<WorkspaceAutomationTemplateVersionResult> {
+    await this.initialized;
+    const request = WorkspaceAutomationTemplateVersionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return addWorkspaceAutomationTemplateVersion(this.state.storage, request);
+  }
+
   /** The Terminal network policy and its domains, creating the default if absent. */
   async terminalNetworkSettings(
     input: WorkspaceTerminalNetworkSettingsRequest,
