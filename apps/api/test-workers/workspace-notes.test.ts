@@ -31,6 +31,7 @@ import {
   WorkspaceNoteSidebarListSchema,
   WorkspaceNoteStateSchema,
   WorkspaceNoteUpdateResultSchema,
+  WorkspaceNoteVisibilityResultSchema,
   type WorkspaceNoteAccess,
 } from "../src/durable-objects/workspace-notes-protocol";
 
@@ -285,6 +286,33 @@ describe("workspace notes", () => {
     }).then((result) => WorkspaceNoteSidebarListSchema.parse(result));
     expect((await sidebar(OWNER)).items.map((item) => item.id).sort()).toEqual([NOTE, sharedNote].sort());
     expect((await sidebar(OTHER_MEMBER)).items.map((item) => item.id)).toEqual([sharedNote]);
+  });
+
+  it("answers a visibility check wider than one statement's bound parameters", async () => {
+    // The engine refuses a statement with more than 100 bound parameters, and
+    // the revoked-import security fence forwards every imported note id in one
+    // call. An unchunked IN list turns that call into a thrown SQLITE_ERROR —
+    // the fence fails instead of evaluating.
+    await seedNote({ scope: "workspace" });
+    const resourceIds = [RESOURCE, ...Array.from({ length: 149 }, () => nextId())];
+    const visible = WorkspaceNoteVisibilityResultSchema.parse(
+      await workspace().visibleNoteResourceIds({
+        workspaceId: WORKSPACE_ID,
+        userId: OTHER_MEMBER,
+        resourceIds,
+      }),
+    );
+    expect(visible.resourceIds).toEqual([RESOURCE]);
+  });
+
+  it("answers a bare existence check without shipping the transcript", async () => {
+    // The idempotent create endpoint asks only "does this id exist here" and
+    // then re-reads under the view guard; carrying the whole transcript on the
+    // existence answer doubles the payload of every existing-note open.
+    await seedNote();
+    await appendSegment({ clientSegmentId: nextId() });
+    expect((await noteState(OWNER, "any")).segments).toEqual([]);
+    expect((await noteState(OWNER, "view")).segments).toHaveLength(1);
   });
 
   it("retires a deletion-outbox entry exactly once", async () => {

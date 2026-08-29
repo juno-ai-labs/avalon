@@ -2,6 +2,8 @@ import type { NoteSummary } from "@rally/contracts";
 
 import { uuidV7 } from "../lib/uuid-v7";
 
+import { boundParameterChunks } from "./bound-parameters";
+
 import {
   NOTE_SIDEBAR_SQL,
   NoteSidebarRowSchema,
@@ -178,9 +180,12 @@ export function workspaceNoteState(
   request: WorkspaceNoteStateRequest,
 ): WorkspaceNoteState {
   const row = readNoteRow(storage, request.workspaceId, request.noteId, request.userId, request.access);
+  // `any` answers only existence, for the idempotent create endpoint; the
+  // caller re-reads under the view guard before showing anything, so shipping
+  // the transcript here doubled the payload of every existing-note open.
   return WorkspaceNoteStateSchema.parse({
     note: row ? noteRecord(row) : null,
-    segments: row ? noteSegments(storage, request.noteId) : [],
+    segments: row && request.access !== "any" ? noteSegments(storage, request.noteId) : [],
   });
 }
 
@@ -411,23 +416,31 @@ export function commitWorkspaceNoteGeneration(
   });
 }
 
-/** Which of these note resources this principal may currently see. */
+/**
+ * Which of these note resources this principal may currently see.
+ *
+ * Chunked because the engine refuses a statement with more than 100 bound
+ * parameters, and the Terminal revoked-import fence forwards every imported
+ * note id in one call — unchunked, a generation with enough notes turned that
+ * security check into a thrown SQLITE_ERROR instead of an answer. The chunk
+ * size leaves room for the two scalars bound beside each id run.
+ */
 export function visibleWorkspaceNoteResourceIds(
   storage: DurableObjectStorage,
   request: WorkspaceNoteVisibilityRequest,
 ): WorkspaceNoteVisibilityResult {
-  const placeholders = request.resourceIds.map(() => "?").join(", ");
-  const rows = storage.sql.exec<{ resource_id: string }>(
-    `SELECT resource_id FROM notes
-      WHERE workspace_id = ? AND resource_id IN (${placeholders})
-        AND archived_at IS NULL AND (scope = 'workspace' OR owner_user_id = ?)`,
-    request.workspaceId,
-    ...request.resourceIds,
-    request.userId,
-  ).toArray();
-  return WorkspaceNoteVisibilityResultSchema.parse({
-    resourceIds: rows.map((row) => row.resource_id),
+  const resourceIds = boundParameterChunks(request.resourceIds).flatMap((ids) => {
+    const placeholders = ids.map(() => "?").join(", ");
+    return storage.sql.exec<{ resource_id: string }>(
+      `SELECT resource_id FROM notes
+        WHERE workspace_id = ? AND resource_id IN (${placeholders})
+          AND archived_at IS NULL AND (scope = 'workspace' OR owner_user_id = ?)`,
+      request.workspaceId,
+      ...ids,
+      request.userId,
+    ).toArray().map((row) => row.resource_id);
   });
+  return WorkspaceNoteVisibilityResultSchema.parse({ resourceIds });
 }
 
 /** The oldest unprocessed privacy transitions, one pass's worth. */
