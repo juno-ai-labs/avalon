@@ -92,6 +92,7 @@ import {
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
 import {
+  SLACK_INGRESS_ATTEMPT_LIMIT,
   WorkspaceSlackIngressClaimResultSchema,
   WorkspaceSlackIngressEnqueueResultSchema,
   WorkspaceSlackIngressFailResultSchema,
@@ -354,13 +355,12 @@ export class SlackAgentService {
     });
   }
 
-  async maintainIngress(limit = 100, workspaceId?: string): Promise<void> {
-    // Always required now: the recovery scan and the sweep are typed
-    // WorkspaceDO methods, and there is no object to ask without knowing whose
-    // it is. The alarm's `slack_ingress` arm has always passed it.
-    if (!workspaceId) {
-      throw new Error("slack_ingress_maintenance_workspace_required");
-    }
+  async maintainIngress(workspaceId: string, limit = 100): Promise<void> {
+    // Required, and required by the compiler: the recovery scan and the sweep
+    // are typed WorkspaceDO methods, and there is no object to ask without
+    // knowing whose it is. This took the id as a trailing optional with a
+    // runtime throw behind it, which is a guard no caller can reach and no
+    // test can cover; `tsc` gives the same guarantee at build time instead.
     this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     await this.prewarmWorkspaceCredentials();
     const at = nowIso();
@@ -459,7 +459,7 @@ export class SlackAgentService {
          SELECT j.id FROM slack_ingress_jobs j
          JOIN connector_connections c ON c.id = j.connection_id
          WHERE j.payload_json IS NOT NULL AND j.status = 'failed'
-           AND j.attempt_count >= 20 AND j.error_code IN (${SLACK_AUTHORIZATION_ERROR_CODES.map(() => "?").join(", ")})
+           AND j.attempt_count >= ${SLACK_INGRESS_ATTEMPT_LIMIT} AND j.error_code IN (${SLACK_AUTHORIZATION_ERROR_CODES.map(() => "?").join(", ")})
            AND j.received_at > ?
            AND c.status = 'healthy' AND c.updated_at > j.updated_at
          ORDER BY j.received_at ASC LIMIT ?

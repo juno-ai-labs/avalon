@@ -5709,7 +5709,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackIngressEnqueueRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = enqueueWorkspaceSlackIngressJob(this.state.storage, request);
-    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    if (result.outcome === "queued") this.refreshScheduleAfterSlackWrite(request.workspaceId);
     return result;
   }
 
@@ -5727,7 +5727,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackIngressClaimRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = claimWorkspaceSlackIngressJob(this.state.storage, request);
-    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    if (result.outcome === "claimed") this.refreshScheduleAfterSlackWrite(request.workspaceId);
     return result;
   }
 
@@ -5739,7 +5739,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackIngressCompleteRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = completeWorkspaceSlackIngressJob(this.state.storage, request);
-    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    if (result.outcome === "settled") this.refreshScheduleAfterSlackWrite(request.workspaceId);
     return result;
   }
 
@@ -5754,7 +5754,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackIngressFailRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = failWorkspaceSlackIngressJob(this.state.storage, request);
-    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    if (result.outcome === "failed") this.refreshScheduleAfterSlackWrite(request.workspaceId);
     return result;
   }
 
@@ -5779,9 +5779,16 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     await this.initialized;
     const request = WorkspaceSlackIngressSweepRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    const result = sweepWorkspaceSlackIngress(this.state.storage, request);
-    this.refreshScheduleAfterSlackWrite(request.workspaceId);
-    return result;
+    // Deliberately no `refreshScheduleAfterSlackWrite`. This method has one
+    // caller, `SlackAgentService.maintainIngress`, reached only as the
+    // `slack_ingress` maintenance target — always inside this object's own
+    // alarm drain, whose statements go through the local executor rather than
+    // `executeRuntimeSql` and so never carried that auto-refresh. Adding it
+    // here would start a `waitUntil` reconcile from a target list read
+    // mid-drain and let it land after `schedule_reconcile` has written the
+    // correct one, which is exactly what the comment on that end-of-drain
+    // refresh exists to prevent. The drain reconciles; this pass does not.
+    return sweepWorkspaceSlackIngress(this.state.storage, request);
   }
 
   /**
@@ -5840,7 +5847,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceSlackThreadClaimRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     const result = claimWorkspaceSlackThread(this.state.storage, request);
-    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    if (result.outcome === "claimed") this.refreshScheduleAfterSlackWrite(request.workspaceId);
     return result;
   }
 
@@ -5862,6 +5869,13 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * typed method would wait for an unrelated write to arm the alarm that
    * recovers or reaps it. Failures are logged and swallowed for the same
    * reason as there: the alarm's own end-of-drain refresh is the backstop.
+   *
+   * Callers gate this on an outcome that moved a row. `executeRuntimeSql` could
+   * not: it keys on the table names in the SQL text and has no idea whether the
+   * statement matched anything, so a losing claim or a stale settlement paid for
+   * a full reconcile there. A typed method can see its own refusal, and a
+   * refusal changed no due time. Read-only methods never call this at all, and
+   * neither does `sweepSlackIngress` — see the comment on it for why.
    */
   private refreshScheduleAfterSlackWrite(workspaceId: string): void {
     this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {

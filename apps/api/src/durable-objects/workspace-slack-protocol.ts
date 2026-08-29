@@ -53,6 +53,23 @@ export const WorkspaceSlackIngressEnqueueRequestSchema = z.object({
  * returns its witness and the duplicate branch reads the prior row in the same
  * transaction, so the answer is the row's, not the counter's.
  */
+/**
+ * The retry ceiling one ingress job gets before only a reauthorization
+ * re-drive can bring it back.
+ *
+ * Unchanged from the `20` the service spelled at every site it replaced. It
+ * lives in the protocol rather than beside the claim that enforces it because
+ * two sites outside the object have to agree with it exactly and cannot import
+ * from storage without dragging `DurableObjectStorage` into a service: the
+ * reauthorization re-drive in `services/slack-agent-service.ts`, still a facade
+ * statement because it joins `connector_connections`, and the workspace alarm's
+ * due-time arm in `services/workspace-schedule-execution.ts`, which must count
+ * exactly the rows the claim and the recovery scan will and will not act on. A
+ * comment saying "these three must move together" is only as good as the next
+ * person reading all three files; one exported constant is checked by `tsc`.
+ */
+export const SLACK_INGRESS_ATTEMPT_LIMIT = 20;
+
 export const WorkspaceSlackIngressEnqueueResultSchema = z.discriminatedUnion("outcome", [
   z.object({ outcome: z.literal("queued") }).strict(),
   /** The same id with the same body: an idempotent retry, safe to re-announce. */
