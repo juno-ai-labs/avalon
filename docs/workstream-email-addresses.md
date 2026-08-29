@@ -534,9 +534,12 @@ expired-lease takeover in one transaction and mints the lease token inside the
 object; renew, settle and failure recording present that token and answer with
 outcomes (`renewed`/`lease_lost`, `processed`/`lease_lost`) read from
 `RETURNING` witnesses. `upsertInboundEmailResource` creates or refreshes the
-email's resource in one critical section, and a fresh insert no longer runs
-the follow-up refresh — which re-assigned versioned columns and recorded a
-phantom second version of every email on first ingestion.
+email's resource in one critical section, and it writes only when something
+changed: the old follow-up refresh re-assigned versioned columns — which
+fires the semantic-version trigger even when their values are unchanged —
+recording a phantom second version on first ingestion and again on every
+lease-takeover replay, whose values re-derive byte-identical from the same
+retrieved message.
 
 **Why:** Part of the facade-to-RPC stack: the facade routes SQL by the table
 names in it, and `workstream_email_receipts` answered `no such table` from the

@@ -284,6 +284,7 @@ import {
   WorkspaceInboundEmailLeaseRequestSchema,
   WorkspaceInboundEmailResourceRequestSchema,
   WorkspaceInboundEmailSettleRequestSchema,
+  WorkspaceReapableResourceObjectListRequestSchema,
   WorkspaceResourceDescriptorsRequestSchema,
   WorkspaceResourceExistsRequestSchema,
   WorkspaceResourceHydrationPublishRequestSchema,
@@ -312,6 +313,7 @@ import {
   type WorkspaceInboundEmailSettleRequest,
   type WorkspaceInboundEmailSettleResult,
   type WorkspaceReapableResourceObjectList,
+  type WorkspaceReapableResourceObjectListRequest,
   type WorkspaceResourceDescriptorList,
   type WorkspaceResourceDescriptorsRequest,
   type WorkspaceResourceExistsRequest,
@@ -5791,12 +5793,12 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
 
   /** Outbox rows the object-deletion reaper should look at, one bounded batch. */
   async listReapableResourceObjects(
-    input: { workspaceId: string },
+    input: WorkspaceReapableResourceObjectListRequest,
   ): Promise<WorkspaceReapableResourceObjectList> {
     await this.initialized;
-    const workspaceId = IdSchema.parse(input.workspaceId);
-    this.assertWorkspace(workspaceId);
-    return listWorkspaceReapableResourceObjects(this.state.storage, workspaceId);
+    const request = WorkspaceReapableResourceObjectListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return listWorkspaceReapableResourceObjects(this.state.storage, request.workspaceId);
   }
 
   /**
