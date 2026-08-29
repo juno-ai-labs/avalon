@@ -172,6 +172,17 @@ test('a lane env: reaches the process that runs its command', async () => {
   const include = workflow.match(/^ {8}include:\n(?<body>(?:^ {10}.*\n)+)/mu);
   assert.ok(include, 'CI must define a matrix include block');
 
+  // The forwarder above only matters while a lane still opts in. These two
+  // carry the ceiling, and an entry losing its `env:` is what the whole defect
+  // looked like: a number in the file that never reaches a process.
+  for (const lane of ['lint', 'typecheck-and-build-invariants']) {
+    assert.match(
+      include.groups.body,
+      new RegExp(`^ {10}- name: ${lane}\\n {12}env:\\n {14}NODE_OPTIONS: --max-old-space-size=\\d+$`, 'mu'),
+      `the ${lane} lane must declare the NODE_OPTIONS the run step forwards`,
+    );
+  }
+
   for (const entry of include.groups.body.split(/^ {10}- /mu).slice(1)) {
     const declared = entry.match(/^ {12}env:\n(?<body>(?:^ {14}.+\n)+)/mu);
     if (!declared) continue;
