@@ -14,6 +14,13 @@ export interface AgentWorkTimingProps {
   timingAccuracy?: 'observed' | 'upper_bound';
   activeVerb?: string;
   completedVerb?: string;
+  /**
+   * Drawn in the orb's place. A grouped plugin row names the plugin it is
+   * timing, and its mark is what says which one — a second spinner beside
+   * every mark says only that something is running, which the mark and the
+   * shimmering label already say.
+   */
+  icon?: React.ReactNode;
 }
 
 export function AgentCompactionIndicator(): React.JSX.Element {
@@ -45,6 +52,7 @@ export function AgentWorkTiming({
   activeVerb = 'working',
   completedVerb = 'worked',
   durationMs,
+  icon,
   monotonicStartedAt,
   timingAccuracy = 'observed',
   startedAt,
@@ -69,7 +77,12 @@ export function AgentWorkTiming({
   const label = timingAccuracy === 'upper_bound' && !active
     ? `${verb} for at most ${duration}`
     : `${verb} for ${duration}`;
-  const accessibleLabel = active ? 'Rally is working' : label;
+  // The elapsed time changes ten times a second, so a live region carrying it
+  // would read the row out continuously. While the segment runs the name is the
+  // verb alone, which is stable: "Rally is working", "Slack is working".
+  const accessibleLabel = active
+    ? activeVerb === 'working' ? 'Rally is working' : activeVerb
+    : label;
 
   return (
     <div
@@ -79,16 +92,18 @@ export function AgentWorkTiming({
       className={clsx('agent-work-timing', running && 'agent-work-timing-active')}
       role="status"
     >
-      <ThinkingOrb
-        aria-hidden="true"
-        className="agent-work-timing-orb"
-        paused={!running}
-        size={20}
-        // thinking-orbs@0.2.0 draws animation time zero when speed is zero.
-        speed={running ? 1 : 0}
-        state="solving"
-        theme="dark"
-      />
+      {icon ?? (
+        <ThinkingOrb
+          aria-hidden="true"
+          className="agent-work-timing-orb"
+          paused={!running}
+          size={20}
+          // thinking-orbs@0.2.0 draws animation time zero when speed is zero.
+          speed={running ? 1 : 0}
+          state="solving"
+          theme="dark"
+        />
+      )}
       <span aria-hidden="true" className="agent-work-timing-label">{label}</span>
     </div>
   );
