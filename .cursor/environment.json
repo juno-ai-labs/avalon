@@ -1,0 +1,21 @@
+{
+  "name": "Rally",
+  "user": "ubuntu",
+  "install": "./.cursor/install.sh",
+  "ports": [
+    { "name": "API (Global)", "port": 8787 },
+    { "name": "API (EU)", "port": 8788 }
+  ],
+  "terminals": [
+    {
+      "name": "api",
+      "command": "pnpm dev:api:local",
+      "description": "Both regional API Workers with remote bindings disabled — Global on http://127.0.0.1:8787, EU on http://127.0.0.1:8788. Check health with `curl -s http://127.0.0.1:8787/health` (expect \"ok\": true)."
+    },
+    {
+      "name": "seed-fixtures",
+      "command": "until curl -sf http://127.0.0.1:8787/health >/dev/null 2>&1; do sleep 1; done; pnpm db:open-authority",
+      "description": "Once the Global Worker is healthy, walks the local authority to durable_object_open and seeds the product fixtures (work streams, transcripts, automations) into their Durable Objects. Idempotent; re-runs repair partial imports. Exits when done."
+    }
+  ]
+}
