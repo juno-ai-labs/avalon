@@ -14,12 +14,34 @@ import {
   type ReactNode,
 } from 'react';
 import { statusDescription, statusLabel, type WorkstreamMarkerStatus } from '../lib/format';
+import { PLUGIN_BRAND_MARKS, type PluginBrandMark } from '../lib/plugin-marks';
 import { isComposingKeyEvent } from '../lib/ime';
 import type { WorkspaceMember } from '../lib/types';
 import type { SocketState } from '../lib/use-workstream-socket';
 
 export function RallyMark({ className }: { className?: string }): React.JSX.Element {
   return <span aria-hidden="true" className={clsx('rally-mark', className)} />;
+}
+
+/**
+ * A company's mark, painted as `currentColor` through the artwork's own alpha.
+ *
+ * Every surface that draws a connector draws it through here, so the mark, its
+ * colour, and the way it is put on the page are decided once. Nothing about a
+ * brand's palette reaches the document — see `lib/plugin-marks.ts` for why the
+ * artwork is a mask rather than markup.
+ */
+export function ConnectorMark({ className, mark }: {
+  className?: string;
+  mark: PluginBrandMark;
+}): React.JSX.Element {
+  return (
+    <span
+      aria-hidden="true"
+      className={clsx('connector-mark', className)}
+      style={{ '--plugin-mark': PLUGIN_BRAND_MARKS[mark] } as React.CSSProperties}
+    />
+  );
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(

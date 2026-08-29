@@ -51,7 +51,7 @@ import {
   type CitationRender,
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { Badge, Button, InlineError, RallyMark } from './primitives';
+import { Badge, Button, ConnectorMark, InlineError, RallyMark } from './primitives';
 
 /**
  * A stable colour per participant. The values are the theme's, reached through
@@ -1060,17 +1060,8 @@ const unbrandedIconByKey: Record<'computer' | 'plug' | 'web' | 'webhook', Tabler
  */
 function PluginGlyphMark({ icon }: { icon: PluginGroupIcon }): React.JSX.Element {
   if (icon === 'rally') return <RallyMark className="plugin-face-mark" />;
-  const brand = icon in PLUGIN_BRAND_MARKS
-    ? PLUGIN_BRAND_MARKS[icon as keyof typeof PLUGIN_BRAND_MARKS]
-    : undefined;
-  if (brand) {
-    return (
-      <span
-        aria-hidden="true"
-        className="plugin-face-mark"
-        style={{ '--plugin-mark': brand } as React.CSSProperties}
-      />
-    );
+  if (icon in PLUGIN_BRAND_MARKS) {
+    return <ConnectorMark className="plugin-face-mark" mark={icon as keyof typeof PLUGIN_BRAND_MARKS} />;
   }
   const PluginIcon = unbrandedIconByKey[icon as keyof typeof unbrandedIconByKey];
   return <PluginIcon aria-hidden="true" size={15} stroke={1.8} />;

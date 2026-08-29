@@ -47,3 +47,34 @@ export const PLUGIN_BRAND_MARKS = {
 } as const;
 
 export type PluginBrandMark = keyof typeof PLUGIN_BRAND_MARKS;
+
+/**
+ * The mark a connector wears, from the type its own manifest declares.
+ *
+ * This is the mapping every surface goes through, so a connector wears one mark
+ * in Settings, in the transcript, and anywhere else it is drawn — the alternative
+ * is what was here before, where the same company was a `GitBranch` on one
+ * screen and a `brand-github` on another.
+ *
+ * Google is the one type that is two brands: a Gmail and Calendar connection and
+ * a Drive connection share the type and are told apart by their name, which is
+ * the same discriminator the backend uses.
+ *
+ * Null is not a failure. A webhook is not a company and has no mark to wear, and
+ * a connector added before this mapping learns about it draws the generic plug.
+ */
+export function connectorBrandMark(
+  connectorType: string,
+  displayName?: string,
+): PluginBrandMark | null {
+  switch (connectorType) {
+    case 'github': return 'github';
+    case 'google': return displayName?.includes('Drive') ? 'google-drive' : 'google';
+    case 'granola': return 'granola';
+    case 'linear': return 'linear';
+    case 'notion': return 'notion';
+    case 'slack': return 'slack';
+    case 'x': return 'x';
+    default: return null;
+  }
+}

@@ -468,6 +468,45 @@ describe('Workspace settings', () => {
     expect(await screen.findByText('Sam')).toBeVisible();
   });
 
+  it('marks an installed connection and its provider card with the same company', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000021',
+      connectorType: 'slack',
+      scope: 'workspace',
+      displayName: 'Slack · Rally',
+      capabilities: ['slack.agent'],
+      status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const row = (await screen.findByText('Slack · Rally')).closest('tr');
+    const rowMark = row?.querySelector('.connector-mark');
+    expect(rowMark).toBeTruthy();
+
+    // The card somebody would connect from wears the same mark as the row that
+    // connecting produced: both reach it from the connector's own type.
+    const card = screen.getByText('Slack').closest('.provider-card');
+    const cardMark = card?.querySelector('.connector-mark');
+    expect(cardMark?.getAttribute('style')).toBe(rowMark?.getAttribute('style'));
+  });
+
+  it('leaves an inbound webhook unmarked, having no company behind it', async () => {
+    api.getConnections.mockResolvedValue([{
+      id: '00000000-0000-7000-8000-000000000022',
+      connectorType: 'generic_webhook',
+      scope: 'workspace',
+      displayName: 'Deploy notifications',
+      capabilities: [],
+      status: 'healthy',
+    }]);
+    renderSettings();
+    openSettingsSection('Connections');
+
+    const row = (await screen.findByText('Deploy notifications')).closest('tr');
+    expect(row?.querySelector('.connector-mark')).toBeNull();
+  });
+
   it('adds a nested GitHub settings page only for a configurable active connection', async () => {
     api.getConnections.mockResolvedValue([{
       id: '00000000-0000-7000-8000-000000000020',
