@@ -274,12 +274,12 @@ an older worktree so the smoke test sees both fixtures.
 ## Quality gate caches
 
 `pnpm lint` and `pnpm typecheck` both cache, which is the difference between a
-warm run of a few seconds and a cold one of about forty-five. Both caches are
+warm run of a few seconds and a cold one of about a minute. Both caches are
 gitignored, and CI checks out fresh, so neither changes what CI proves.
 
 | Gate | Cold | Warm | Cache |
 | --- | --- | --- | --- |
-| `pnpm lint` | ~45s | ~2s | `.eslintcache` |
+| `pnpm lint` | ~60s | ~2s | `.eslintcache` |
 | `pnpm typecheck` | ~45s | ~14s | `*.tsbuildinfo` beside each tsconfig |
 
 **The typecheck cache is sound.** TypeScript records the module graph it actually
@@ -295,10 +295,20 @@ contents and nothing else:
   of the key. Rewriting one to report on every file flagged 889 files cold and 1
   warm — the one being the rule file itself, which had changed. **Run
   `pnpm lint:fresh` after touching a rule.**
-- **A type-aware verdict that depends on another file is too**, more narrowly.
-  `consistent-type-imports` reads whether an imported symbol is a type, which
-  lives in the file it came from, so turning an export from a value into a type
-  does not re-lint its importers.
+- **A verdict that depends on another file is too**, and one rule reaches for
+  exactly that. `rally/durable-object-sync-transaction` asks the type checker
+  whether the callback handed to a synchronous boundary returns a Promise, which
+  an imported callee's own signature decides. Demonstrated: a helper exporting
+  `() => string`, passed as `transactionSync(() => prepare())`, lints clean;
+  flipping *only* the helper to `async` leaves the calling file byte-identical,
+  so a warm run reuses its cached pass while a cold run reports the violation.
+  **Run `pnpm lint:fresh` after changing the return type of anything passed into
+  `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`.**
+
+  `consistent-type-imports` used to be named here as a second such case, on the
+  belief that it asks the exporting file whether a symbol is a type. It does not:
+  it reads only how the import is used in the importing file, and flipping an
+  export from `const Thing` to `type Thing` leaves its verdict unchanged.
 
 Both were accepted deliberately: the p90 run changes neither, and CI runs cold.
 When a local green looks implausible, `pnpm lint:fresh` is the first thing to
@@ -315,6 +325,61 @@ typecheck that proves less than it says. CI runs cold, so the merge gate is
 unaffected; locally, give the second session
 [its own worktree](#working-in-a-second-checkout-or-worktree) rather than
 sharing the clone.
+
+## What `pnpm lint` costs in memory
+
+**A cold `pnpm lint` peaks at about 4 GB of resident memory, and almost none of
+that is work — it is TypeScript programs the run never releases and a heap
+ceiling nothing bounds.** Two things decide the number:
+
+- **Type-aware parsing is per tsconfig, and nothing frees it.**
+  `parserOptions.projectService` opens each linted file in a TypeScript language
+  service, which loads that file's whole tsconfig program and keeps it for the
+  life of the process. So the cost is the *sum* over every package the run
+  touches: linted alone, `apps/api` measured 2.7 GB, `apps/desktop` 1.9 GB, and
+  `packages/*` 1.1 GB; a repo-wide `projectService` over the whole tree cost
+  4.7 GB against 0.9 GB with no type information at all. `eslint.config.mjs`
+  therefore scopes it to `apps/api/src`, and puts it in the same config object
+  as the rule that needs it so the two cannot drift apart. **Every figure in
+  this section is peak resident memory summed across the run's Node processes**
+  — what the machine has to supply, which is what a runner runs out of.
+- **V8's default heap limit is half of physical memory, so RSS tracks the
+  machine rather than the workload.** The live set is far smaller than the peak:
+  the same run completes under `--max-old-space-size=1536` at 1.6 GB, and only
+  fails below about 1 GB. Everything above that is a garbage collector with no
+  reason to run yet.
+
+**`--concurrency` multiplies both.** ESLint's parallelism is worker threads, and
+each thread builds its own programs *and* gets its own copy of the heap ceiling —
+so on a four-core machine the repo-wide config peaked at 6.5 GB and bought 12
+seconds. `pnpm lint` runs single-threaded for that reason, and CI is the case
+that forced it: Node sets its default ceiling at roughly half of physical memory
+(8.2 GB of a 16 GB sandbox, measured), so on a 7 GB runner two worker threads at
+about 3.5 GB each are the whole machine before the first program is even built.
+That arithmetic is why the fix is structural rather than a larger runner.
+
+`pnpm lint` itself pins no heap ceiling, so a local run gets Node's default.
+CI sets one: the `lint` and `typecheck-and-build-invariants` lanes in
+`ci.yml` carry `NODE_OPTIONS: --max-old-space-size=8192`, as do the macOS
+release job's verification steps. **A matrix key named `env` is only a
+variable — Actions gives it no meaning of its own** — so `ci.yml` names it
+explicitly on the run step, and a lane that sets nothing gets an empty
+`NODE_OPTIONS`, which Node ignores. A ceiling that is never named there is a
+ceiling that never applies, and the step's own `env:` group in the job log is
+where to check.
+
+Lowering that ceiling is the remaining lever if a runner still runs out, and it
+cuts both ways: `--max-old-space-size=2048` brought the same run to 1.9 GB in
+53s, faster than the 4.0 GB it takes unbounded, because a smaller heap is less
+to mark and compact. Below about 1 GB the run dies; at 1024 MB it survives but
+takes 98s, thrashing the collector.
+
+**That number is not lint's alone.** The same 8192 is on
+`typecheck-and-build-invariants`, which runs `pnpm typecheck`, two Wrangler
+dry-run builds, and the desktop release invariants — four Node processes whose
+memory nobody here has measured. It caps how large any of that may grow, so it
+is the team's to move rather than a measurement's to set, and a lane that starts
+failing on it wants its own measurement first.
 
 ## How many test workers to run
 
