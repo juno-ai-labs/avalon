@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import google from 'thesvg/google';
 import slack from 'thesvg/slack';
-import { PLUGIN_BRAND_MARKS } from './plugin-marks';
+import { PLUGIN_BRAND_MARKS, connectorBrandMark } from './plugin-marks';
 
 const decode = (mask: string): string =>
   decodeURIComponent(mask.replace(/^url\("data:image\/svg\+xml,/u, '').replace(/"\)$/u, ''));
@@ -32,5 +32,28 @@ describe('PLUGIN_BRAND_MARKS', () => {
   it('draws a different mark for every brand', () => {
     const marks = Object.values(PLUGIN_BRAND_MARKS);
     expect(new Set(marks).size).toBe(marks.length);
+  });
+});
+
+describe('connectorBrandMark', () => {
+  it('tells the two Google connectors apart by the name they display', () => {
+    // One connector type, two brands. The backend discriminates the same way.
+    expect(connectorBrandMark('google', 'Google Mail + Calendar')).toBe('google');
+    expect(connectorBrandMark('google', 'Google Drive + Docs + Sheets')).toBe('google-drive');
+  });
+
+  it('names a real mark for every connector Rally has an adapter for', () => {
+    const adapters = ['github', 'google', 'granola', 'linear', 'notion', 'slack', 'x'];
+    for (const connectorType of adapters) {
+      const mark = connectorBrandMark(connectorType);
+      expect(mark, connectorType).not.toBeNull();
+      expect(PLUGIN_BRAND_MARKS[mark!], connectorType).toBeDefined();
+    }
+  });
+
+  it('leaves a webhook and an unknown connector without one', () => {
+    // A webhook is not a company; there is no mark to be missing.
+    expect(connectorBrandMark('generic_webhook')).toBeNull();
+    expect(connectorBrandMark('some_future_service')).toBeNull();
   });
 });

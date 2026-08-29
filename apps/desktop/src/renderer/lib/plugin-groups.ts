@@ -1,5 +1,5 @@
 import type { AutomationPluginIcon } from '@rally/contracts';
-import type { PluginBrandMark } from './plugin-marks';
+import { connectorBrandMark, type PluginBrandMark } from './plugin-marks';
 
 /**
  * The glyph a plugin row draws.
@@ -78,22 +78,21 @@ function isUnnamedFirstPartyPlugin(pluginId: string, displayName: string | undef
 }
 
 /**
- * The connector glyph for a plugin's display name.
+ * The connector type a plugin's display name belongs to.
  *
  * The canonical transcript identifies a connector plugin by its connection id
- * — `connection:<uuid>` — which says nothing about which service it is, and
- * the icon the backend does resolve travels only on the live tool-invocation
- * row. So the name is the signal here, and it is a stable one: these are
- * manifest strings, not user input.
+ * — `connection:<uuid>` — which says nothing about which service it is, and the
+ * icon the backend does resolve travels on the live tool-invocation row alone.
+ * So a name is all this surface has, and it is a stable one: these are manifest
+ * strings, not user input.
  *
- * Every connector Rally has an adapter for is named here, because every one of
- * them has a mark in `thesvg`. The plug is for a connector that arrives before
- * this list learns about it — the case to keep working, not the case to design
- * for.
+ * Recovering the type rather than picking a mark here is what keeps a connector
+ * wearing one mark everywhere. `connectorBrandMark` is the single table, and
+ * Settings reaches it from the type it already holds.
  */
-function connectorIconForName(displayName: string): PluginGroupIcon {
+function connectorTypeForName(displayName: string): string | null {
   const name = displayName.toLowerCase();
-  if (name.startsWith('google')) return name.includes('drive') ? 'google-drive' : 'google';
+  if (name.startsWith('google')) return 'google';
   if (name.startsWith('slack')) return 'slack';
   if (name.startsWith('github')) return 'github';
   if (name.startsWith('notion')) return 'notion';
@@ -102,8 +101,18 @@ function connectorIconForName(displayName: string): PluginGroupIcon {
   // Exactly "X", which is the connector's whole manifest name. A prefix match
   // on one letter would claim every later connector that starts with it.
   if (name === 'x') return 'x';
-  if (name.includes('webhook')) return 'webhook';
-  if (name.startsWith('web')) return 'web';
+  if (name.includes('webhook')) return 'generic_webhook';
+  return null;
+}
+
+/** The glyph for a plugin known only by the name it displays. */
+function connectorIconForName(displayName: string): PluginGroupIcon {
+  const connectorType = connectorTypeForName(displayName);
+  const mark = connectorType ? connectorBrandMark(connectorType, displayName) : null;
+  if (mark) return mark;
+  if (connectorType === 'generic_webhook') return 'webhook';
+  // Not a connector at all: Rally's own named plugins reach here too.
+  if (displayName.toLowerCase().startsWith('web')) return 'web';
   return 'plug';
 }
 

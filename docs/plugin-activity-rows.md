@@ -16,7 +16,9 @@ this document is only about the machinery underneath them.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/plugin-groups.ts` | The only place that decides which row a plugin belongs to, what that row is called, and which glyph it draws. |
-| `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, taken from `thesvg` and turned into CSS masks. |
+| `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, taken from `thesvg` and turned into CSS masks, and `connectorBrandMark` — the one table saying which mark a connector wears. |
+| `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
+| `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks and plugin activities out of the canonical snapshot; `groupPluginToolMessages` collapses the composed feed. |
 | `apps/desktop/src/renderer/screens/workstream.tsx` | Applies `groupPluginToolMessages` to the composed transcript, and is the only caller. |
 | `apps/desktop/src/renderer/components/workstream-blocks.tsx` | `PluginGlyph` draws a mark; `PluginActivityBlock` renders one grouped row. |
@@ -85,6 +87,19 @@ A company draws its own mark, from [`thesvg`](https://www.npmjs.com/package/thes
 virtual groups, the public web, and an unbranded webhook are not companies and
 keep their existing artwork.
 
+**The mark belongs to the connector, not to this feed.** `connectorBrandMark`
+maps a connector's own type to its mark, and every surface that draws a
+connector goes through it: a transcript row, Settings' provider cards, and
+Settings' installed-connection rows. That is what keeps one company looking like
+one company — before this, GitHub was a `GitBranch` in Settings and a
+`brand-github` in the feed, and Granola and Notion shared a `FileText`.
+
+A transcript row is the one caller that does not hold a connector type: the
+canonical transcript names a plugin by connection id, so `connectorTypeForName`
+recovers the type from the display name first and then asks the same table. The
+two routes are pinned together by a test, per plugin, because a table reached
+two ways is a table that can disagree with itself.
+
 Two things about how a mark is drawn are load-bearing:
 
 - **It is a CSS mask, not markup.** `thesvg` hands out SVG as a string and its
@@ -150,6 +165,14 @@ was chosen against its own chip and the transcript has four themes and no chip.
 - **A brand's artwork is never injected as markup.** `dangerouslySetInnerHTML`
   is absent from this renderer, and `plugin-marks.ts` is the module a reader
   would copy from if it were not.
+- **One connector, one mark, on every surface.** A surface that picks its own
+  glyph for a connector — a hardcoded icon in a settings catalog, a second table
+  keyed on something else — is how the same company comes to look like two.
+  `connectorBrandMark` is the table; `ConnectorMark` is the component.
+- **A mark is drawn where the surface already had one.** The transcript's is
+  bare because its row is a label; Settings' provider card keeps its tinted
+  chip because that card is a control somebody clicks. Adding the mark did not
+  restyle either.
 - **The grouped list is renumbered.** `sequenceNumber` is a dense display index
   and dropped rows have to be squeezed out of it, or the unread divider and the
   virtualizer key off positions that no longer exist.
@@ -209,6 +232,7 @@ It deliberately does **not** cover:
 | `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: a mask rather than markup, the monochrome variant preferred, and one distinct mark per brand. |
 | `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, and the absent orb. |
+| `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
 
 The trap is the elapsed-time format: `formatDuration` zero-pads the seconds of a
 minute, so the string is `4m 02s`, not `4m 2s`.
@@ -221,6 +245,39 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-08-29 — A connector's mark belongs to the connector, so Settings wears it too
+
+**What changed:** `connectorBrandMark` maps a connector's own type to its mark,
+and every surface that draws a connector now goes through it — the transcript
+row, Settings' provider cards, and Settings' installed-connection rows, which
+had no mark at all. `ConnectorMark` in `primitives.tsx` is the one component
+that paints one.
+
+**Why:** The marks arrived attached to the transcript feed rather than to the
+connector, which meant Settings kept its own hardcoded Lucide glyphs and the same
+company looked like two things: GitHub was a `GitBranch` on one screen and the
+octocat on another, and Granola and Notion shared a single `FileText`. A person
+connecting Slack from a provider card and then finding it in a row should see
+the same company both times. Attaching the mark to the connector type is also
+what makes adding a connector one edit instead of three.
+
+**Considered and rejected:** Keying the shared table on the plugin display name,
+which is what the transcript already had. Settings holds a connector type and
+never sees the plugin's display name, so that would have made the surface with
+the *better* identity translate down to the weaker one. It is now the other way
+round: the type is the key, and the transcript — the only caller without one —
+recovers it from the name first. Also rejected: giving Settings' provider cards
+the transcript's bare treatment. That card is a control somebody clicks and its
+tinted chip is deliberate; only the glyph inside it changed.
+
+**Consequences:** Adding a connector means adding it to `connectorBrandMark`;
+a surface that hardcodes a glyph for one has reintroduced the split this entry
+closed. The two routes into the table — by type, by display name — are pinned
+together by a per-connector test, because a table reached two ways can disagree
+with itself. Six Lucide icons left `workspace-settings.tsx` with the catalog
+entries that used them. An inbound webhook is not a company and deliberately
+draws nothing rather than a placeholder; a row's status dot and name carry it.
 
 ### 2026-08-29 — Company marks come from `thesvg`, drawn as masks
 
