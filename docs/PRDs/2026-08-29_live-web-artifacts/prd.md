@@ -304,7 +304,11 @@ request over the data published with it and holds nothing between
 requests. A *stateful* one — its `index.js` exports the storage class —
 is backed by one isolated SQLite database that all viewers share and
 every version keeps: the RSVP page's list is one list, a republish never
-resets it, and answering the poll from two laptops moves one tally. A
+resets it, and answering the poll from two laptops moves one tally.
+Every request carries the viewer's workspace identity as trusted
+headers (decision 13), so the page needs no name field and no seat
+picker — your RSVP is yours because you sent it, votes deduplicate per
+member, and the list shows real display names. A
 **static** artifact is simply the current files.
 
 **Revising.** "Make the header orange and add a maybe option" — from any
@@ -376,7 +380,11 @@ capability-fenced artifact runtime with no network egress."
 
 Everything else refines existing contract: an artifact is a resource (a
 named persistent kind); viewing one is viewing and creates no
-participation; the publish is a typed, authorized, receipted tool write.
+participation — opening a page never adds anyone to the work stream,
+even though artifact code learns who is viewing (key design decision
+13); interacting with a stateful artifact writes attributed rows the
+way posting a message writes an attributed message; the publish is a
+typed, authorized, receipted tool write.
 
 ## Decision log
 
@@ -474,12 +482,17 @@ None yet.
    `env.ASSETS.fetch(request)`, serving the artifact's own published
    files, and nothing more — plus, inside `SiteData`, the Durable Object
    storage API (`this.ctx.storage.sql`, `storage.kv`) over the facet's
-   own database. `globalOutbound: null`. No secrets, no Rally bindings,
-   no identity: requests reach the module with Rally's viewer cookie
-   stripped, and nothing in the runtime discloses who is viewing. The
-   plugin prompt carries the TypeScript declarations, per Cloudflare's
-   own advice that typed declarations are how an agent learns a
-   binding. Rejected: *a Cap'n Web RPC contract between page and
+   own database. `globalOutbound: null`. No secrets and no Rally
+   bindings: requests reach the module with Rally's viewer cookie
+   stripped. What every request *does* carry is the viewer's workspace
+   identity, as two trusted headers the serving side injects on every
+   request regardless of method — `Rally-Viewer-Id` (the stable member
+   id) and `Rally-Viewer-Name` (the display name, percent-encoded
+   UTF-8) — after first stripping any inbound headers of those names,
+   so a page or proxy can never forge them (decision 13). The plugin
+   prompt carries the TypeScript declarations, headers included, per
+   Cloudflare's own advice that typed declarations are how an agent
+   learns a binding. Rejected: *a Cap'n Web RPC contract between page and
    server* (the reference platform's choice, made for its code-mode
    agent) — Rally's artifacts keep plain HTTP `fetch`, the single most
    pretrained server contract there is, and the one that works
@@ -654,6 +667,51 @@ None yet.
     typed tools, not arbitrary model-defined RPC, and SQL over a
     described schema is the contract that survives a hostile or clumsy
     class.
+13. **Viewer identity rides every request as trusted headers.** Rally
+    is multiplayer-native — every artifact request is already
+    authenticated against a workspace member, and the workplace
+    expectation is that a poll knows who voted, the way every message
+    already carries its author. So the serving side injects
+    `Rally-Viewer-Id` and `Rally-Viewer-Name` into **every** request it
+    forwards to artifact code, all methods alike, immediately after the
+    session check that established who the viewer is — and immediately
+    after stripping any inbound headers of those names, which is the
+    entire anti-spoof mechanism and is tested as such. Static assets
+    ignore headers, so this is meaningful only to active artifacts. What
+    it buys: attribution without seat-picking UI (your vote is yours
+    because you cast it), duplicate prevention as an upsert on the
+    member id, and an exact answer to "who hasn't voted?" — roster
+    minus attributed voters — instead of fuzzy-matching self-typed
+    names. What it costs, stated plainly: artifact code can now record
+    *presence* — who opened the page and when — not only submissions.
+    Two things keep that honest rather than covert: everything a
+    stateful artifact records lands in the facet, where the rail's
+    Data view and the query tools expose it to every participant
+    (sunlight, structurally — there is nowhere hidden to put a log);
+    and the skill's manners say to record identity only where the
+    request calls for it. Rejected: *writes-only attribution*
+    (anonymous reads) — considered at length, preserved the
+    no-presence-logging property, and lost to the product judgement
+    that a multiplayer workplace tool should behave like the rest of
+    Rally, where being in the room is not anonymous; *identity as an
+    opt-in per-artifact flag* — a per-page privacy toggle nontechnical
+    users would have to reason about, and a parameter-shaped contract
+    everywhere else in this design is layout-shaped.
+    The contract is born guest-ready, because public sharing (non-goal
+    2) is deferred, not rejected: **an anonymous viewer is represented
+    by the absence of both headers**, so
+    `request.headers.get("Rally-Viewer-Id")` returns `null` — the real
+    value, via the single most pretrained header idiom there is — and
+    the natural falsy check a model writes today handles guests
+    correctly the day they exist. In V1 the headers are always present
+    (every viewer is an authenticated member); the declarations and the
+    skill still teach the null branch now, so no artifact needs a
+    retrofit later. Rejected: *a `"null"` sentinel string* — truthy, a
+    footgun that passes every `if (viewerId)` check and leaks the
+    literal word into data; *an empty-string value* — empty header
+    values behave inconsistently across clients and runtimes, and the
+    absent-vs-empty distinction is exactly the confusion absence alone
+    avoids.
 
 **Implementation notes from the reference platform.** Cloudflare OS
 (`cloudflare/cloudflare-os`, read at `af56a9d`) runs this architecture
@@ -812,12 +870,19 @@ The new trust surface is the point of this PRD, so it is stated in full.
   artifact code is contained by the isolate; a compromise of the serving
   Worker exposes artifact content and viewer sessions, not workspace
   authority.
-- **Viewer identity does not enter artifact code** (key design decision
-  5). A stateful artifact records what viewers *submit*, never who they
-  are: the runtime discloses no identity, so the only attribution a page
-  can have is what it asks for as content (a name field on the RSVP
-  form). Passing identity in as a capability is a future, deliberate
-  decision with its own review, not a default.
+- **Viewer identity enters artifact code as trusted headers, and
+  nothing a page can send can forge them** (key design decision 13).
+  Every forwarded request carries `Rally-Viewer-Id` and
+  `Rally-Viewer-Name`, injected after the session check and after
+  stripping inbound headers of those names — the strip is the security
+  property and has its own test. The identity is workspace member
+  identity (id and display name), never a credential: the viewer
+  cookie is still stripped, and holding a member's name grants nothing
+  anywhere else in Rally. The consequence is stated, not hidden: a
+  stateful artifact can record who opened it, and everything it
+  records is exposed to every participant through the Data view and
+  the query tools — presence logging is possible but structurally
+  incapable of being covert.
 - **Artifact data is untrusted content with a trusted container.** The
   facet's rows were written by model code and page visitors, so their
   *contents* get the same untrusted handling connector payloads get —
@@ -1012,9 +1077,10 @@ and the deep build craft — static-versus-active-versus-stateful
 judgement, directory layout, the fetch-handler shape and asset-fallback
 route pattern, the `SiteData` storage-class shape with its
 additive-forever schema discipline, the statelessness rules and their
-anti-patterns, the identity-less multiplayer patterns and
-freshness-by-polling, narrow-pane-first UI, data-as-files, the
-revise-in-place loop — ships as a new loadable skill,
+anti-patterns, the viewer-header attribution patterns (guest branch
+included) and freshness-by-polling, narrow-pane-first UI,
+data-as-files, the revise-in-place loop — ships as a new loadable
+skill,
 **`building-live-sites`** (`ownerPlugin: rally:terminal`, so it is
 offered only where the Terminal plugin is in scope), loaded when the
 model is about to write a site's files. That keeps hundreds of lines of
@@ -1111,18 +1177,26 @@ rather than papered over.
    opens the same artifact in the artifact window — with no code in chat
    and no code listing as the primary resource.
 2. "Make a poll for the offsite date" yields a stateful artifact: two
-   participants vote from different machines and both see the combined
-   tally; the module's `fetch()` egress attempt (added in a test
-   artifact) throws; a republish ("add a maybe option") keeps every
-   vote already cast. "Build a searchable page of these signups" yields
-   a *stateless* active artifact — no storage class, no Data view —
+   participants vote from different machines with no name field or
+   seat picker anywhere — each vote is attributed from the trusted
+   viewer headers, voting again *updates* that member's vote rather
+   than duplicating it, and both viewers see the combined tally; the
+   module's `fetch()` egress attempt (added in a test artifact)
+   throws; a republish ("add a maybe option") keeps every vote already
+   cast. "Build a searchable page of these signups" yields a
+   *stateless* active artifact — no storage class, no Data view —
    because nothing needs remembering.
 3. "Who hasn't voted yet?" in chat is answered through the data tools —
-   a describe, then a read-only query — with the numbers matching the
-   page; the rail's Data view shows the same rows and exports them as
-   CSV. A query tool call that attempts a write (`INSERT`, tested
-   directly) changes nothing — the rollback guard holds on real
-   workerd.
+   a describe, then a read-only query joined against the participant
+   roster the agent already has — exactly, by member id, with the
+   numbers matching the page; the rail's Data view shows the same rows
+   and exports them as CSV. A query tool call that attempts a write
+   (`INSERT`, tested directly) changes nothing — the rollback guard
+   holds on real workerd. A request sent with a forged
+   `Rally-Viewer-Id` header reaches the module carrying the *session's*
+   identity, never the forged one — the inbound strip holds — and a
+   test module built for the guest branch behaves correctly when the
+   headers are absent.
 4. "Change the header" from a *second* participant edits and republishes:
    same URL, same rail entry, version list grown by one, both viewers see
    the new header on reload.

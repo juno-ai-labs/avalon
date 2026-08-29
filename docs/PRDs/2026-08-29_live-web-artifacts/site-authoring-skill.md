@@ -122,12 +122,14 @@ that works the first time.
    Keep `index.js` free of large inline data: a data change should be a
    data-file edit, not a code edit.
 
-6. **There is no network and no identity — design within the fence.**
+6. **There is no network — design within the fence.**
    `fetch()` to anywhere outside the site throws; there is no way to
-   call an external API, load a remote resource server-side, or find
-   out who is viewing. Do not write code paths that try. A request that
-   genuinely needs outside data means you fetch it *yourself, now, in
-   the workspace* and publish the result as a data file with the site.
+   call an external API or load a remote resource server-side. Do not
+   write code paths that try. A request that genuinely needs outside
+   data means you fetch it *yourself, now, in the workspace* and
+   publish the result as a data file with the site. (Who is viewing
+   arrives on every request as trusted headers — see **Stateful
+   sites** item 7; a stateless site may read them too.)
 
 7. **Design the page for where it actually lives.** The primary viewing
    surface is a narrow pane in Rally's right rail (roughly phone-width),
@@ -255,29 +257,39 @@ shape of `index.js`.
        // start, so guard with IF NOT EXISTS, never DROP.
        this.ctx.storage.sql.exec(
          `CREATE TABLE IF NOT EXISTS rsvps (
-            id INTEGER PRIMARY KEY,
+            viewer_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             answer TEXT NOT NULL CHECK (answer IN ('yes','no','maybe')),
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
           )`,
        );
      }
 
      async fetch(request) {
        const url = new URL(request.url);
+       const viewerId = request.headers.get("Rally-Viewer-Id");
        if (url.pathname === "/api/rsvps" && request.method === "POST") {
-         const { name, answer } = await request.json();
-         if (typeof name !== "string" || name.trim() === "")
-           return Response.json({ error: "name required" }, { status: 400 });
+         // Anonymous viewers can read but not RSVP.
+         if (!viewerId)
+           return Response.json({ error: "sign in to RSVP" }, { status: 401 });
+         const name =
+           decodeURIComponent(request.headers.get("Rally-Viewer-Name") ?? "");
+         const { answer } = await request.json();
+         // One RSVP per person: answering again updates your answer.
          this.ctx.storage.sql.exec(
-           "INSERT INTO rsvps (name, answer) VALUES (?, ?)",
-           name.trim(), answer,
+           `INSERT INTO rsvps (viewer_id, name, answer)
+              VALUES (?, ?, ?)
+              ON CONFLICT (viewer_id) DO UPDATE
+                SET answer = excluded.answer,
+                    name = excluded.name,
+                    updated_at = datetime('now')`,
+           viewerId, name, answer,
          );
          return Response.json({ ok: true });
        }
        if (url.pathname === "/api/rsvps") {
          const rows = this.ctx.storage.sql
-           .exec("SELECT name, answer FROM rsvps ORDER BY created_at")
+           .exec("SELECT name, answer FROM rsvps ORDER BY updated_at")
            .toArray();
          return Response.json({ rsvps: rows });
        }
@@ -304,10 +316,11 @@ shape of `index.js`.
    answers questions about this data with read-only SQL against your
    schema ("who hasn't voted?"), and participants see it in the rail's
    data view and exports. Clear table and column names in plain words
-   are part of the site's interface, not private internals. Never store
-   who a viewer is — the runtime does not tell you, and recording
-   guesses is prohibited; store what was submitted, not who submitted
-   it, unless the page explicitly asks for a name as content.
+   are part of the site's interface, not private internals. Attribution
+   comes from the viewer headers (item 7), never from guessing or from
+   asking people to type their own names: store the viewer id and
+   display name where the page's purpose needs to know who acted, and
+   store neither where it does not.
 
 5. **Old versions of a stateful site do not run.** When someone views
    a prior version, they see its *source*, not a live page — only the
@@ -321,14 +334,22 @@ shape of `index.js`.
    `this.subscriberCount` silently resets. Write every fact that
    matters to `this.ctx.storage` the moment it exists, and treat any
    in-memory copy as rebuildable from storage on the next start.
-7. **Multiplayer without identity, by design.** The runtime tells the
-   page nothing about who is viewing, and clients reload freely with
-   no session to hold — so never build "log in as yourself" flows.
-   For a game or anything with roles, let any client *claim* any
-   player from the page (a name field, a seat picker), allow the same
-   seat from two windows, and make every submission carry what it
-   needs as content. This is the shape that works; fighting it
-   produces pages that break on reload.
+7. **The viewer arrives on every request — use it, and handle its
+   absence.** Every request carries two trusted headers Rally injects
+   and nothing can forge: `Rally-Viewer-Id` (a stable member id) and
+   `Rally-Viewer-Name` (the display name, percent-encoded — decode
+   with `decodeURIComponent`). So never build a login flow, a name
+   field for attribution, or a seat picker: an RSVP is attributed to
+   whoever sent it, one-vote-per-person is an upsert keyed on the
+   viewer id, and lists show real display names for free. Always
+   write the guest branch too: a missing header means an anonymous
+   viewer (`request.headers.get("Rally-Viewer-Id")` returns `null` —
+   today it never happens, but pages built now must not break the day
+   guests exist), so check for `null` and decide what a guest may
+   do — usually read but not submit. And record identity only where
+   the request calls for it: an attendance sheet stores who came; a
+   feedback box that was asked to be anonymous stores no id even
+   though it has one.
 8. **Freshness comes from polling, not push.** Nothing pushes updates
    into an open page; another viewer's vote appears when the page asks
    again. For shared-state pages, have the client re-fetch its own API
@@ -346,6 +367,13 @@ shape of `index.js`.
   on start). Participants' submissions are the product; a revision that
   clears them is data loss, not a fresh start. Do instead: additive
   schema changes, and ask in chat before any deliberate reset.
-- **Storing viewer identity or fingerprints.** The fence withholds
-  identity on purpose. Do instead: store submissions as content; if
-  attribution matters, make the page ask for a name as an input field.
+- **Recording presence nobody asked for.** The headers tell you who is
+  viewing on every request, and everything you store is visible to the
+  whole work stream in the rail's data view — a page that quietly logs
+  who opened it reads as surveillance the moment anyone looks. Do
+  instead: record identity with *acts* (an RSVP, a vote, a sign-up),
+  and record views only when the page's stated purpose is attendance.
+- **Attribution theater on an anonymous page.** If the request was for
+  anonymous feedback, storing the viewer id anyway breaks the promise
+  in a way the data view exposes. Do instead: ignore the headers
+  entirely there, and say in the page that responses are anonymous.
