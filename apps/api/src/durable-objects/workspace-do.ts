@@ -198,11 +198,15 @@ import {
   addWorkspaceAutomationTemplateVersion,
   listWorkspaceAutomationTemplates,
   publishWorkspaceAutomationTemplate,
+  workspaceAutomationTemplateOwnership,
 } from "./workspace-automation-template-storage";
 import {
+  WorkspaceAutomationTemplateOwnershipRequestSchema,
   WorkspaceAutomationTemplatePublishRequestSchema,
   WorkspaceAutomationTemplateVersionRequestSchema,
   type WorkspaceAutomationTemplateList,
+  type WorkspaceAutomationTemplateOwnership,
+  type WorkspaceAutomationTemplateOwnershipRequest,
   type WorkspaceAutomationTemplatePublishRequest,
   type WorkspaceAutomationTemplateVersionRequest,
   type WorkspaceAutomationTemplateVersionResult,
@@ -228,6 +232,7 @@ import {
   type WorkspaceTerminalPolicyClaimResult,
   type WorkspaceTerminalPolicyCommitRequest,
   type WorkspaceTerminalPolicyFailRequest,
+  type WorkspaceTerminalPolicySettlementResult,
   type WorkspaceTerminalPolicyPreviewRequest,
 } from "./workspace-terminal-network-protocol";
 import {
@@ -481,7 +486,17 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "slack_unfurled_links",
 ]);
 
-const WORKSPACE_TYPED_RPC_ONLY_TABLES = ["workstream_notification_intents"] as const;
+const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "workstream_notification_intents",
+  // Converted to typed methods, so a generic statement naming one is a
+  // mistake rather than a legacy caller. Refusing it here is what makes the
+  // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
+  // statement reaches this object and is told why, instead of executing
+  // against storage nobody meant to reach generically.
+  "automation_directory",
+  "realtime_transcription_sessions",
+  "realtime_transcription_ticket_receipts",
+] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
   return WORKSPACE_TYPED_RPC_ONLY_TABLES.find((table) => (
@@ -5513,6 +5528,24 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return listWorkspaceAutomationTemplates(this.state.storage, workspaceId);
   }
 
+  /**
+   * Whether this person owns an active template with this id.
+   *
+   * A preflight, so the service can answer 404 before it validates a draft's
+   * connectors. Without it, adding a version to somebody else's template
+   * answers with a connector error — which both changes the endpoint's
+   * contract and tells a caller about connector state they have no claim on.
+   * The write still fences on ownership; this only decides what is said.
+   */
+  async automationTemplateOwnership(
+    input: WorkspaceAutomationTemplateOwnershipRequest,
+  ): Promise<WorkspaceAutomationTemplateOwnership> {
+    await this.initialized;
+    const request = WorkspaceAutomationTemplateOwnershipRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceAutomationTemplateOwnership(this.state.storage, request);
+  }
+
   /** Publish a template and its first version, or neither. */
   async publishAutomationTemplate(
     input: WorkspaceAutomationTemplatePublishRequest,
@@ -5742,26 +5775,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return claimWorkspaceTerminalPolicyApplication(this.state.storage, request);
   }
 
-  /** Release a claim with a reason, keeping the last verified policy. */
+  /**
+   * Release a claim with a reason, keeping the last verified policy.
+   *
+   * Answers `stale` when the named application is no longer the pending one,
+   * rather than releasing whichever claim happens to hold the revision.
+   */
   async failTerminalPolicyApplication(
     input: WorkspaceTerminalPolicyFailRequest,
-  ): Promise<void> {
+  ): Promise<WorkspaceTerminalPolicySettlementResult> {
     await this.initialized;
     const request = WorkspaceTerminalPolicyFailRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    failWorkspaceTerminalPolicyApplication(this.state.storage, request);
+    return failWorkspaceTerminalPolicyApplication(this.state.storage, request);
   }
 
-  /** Publish the applied policy: domains, the new revision, and the ledger. */
+  /**
+   * Publish the applied policy: domains, the new revision, and the ledger.
+   *
+   * Answers `stale` for a replayed commit, having written nothing.
+   */
   async commitTerminalPolicyApplication(
     input: WorkspaceTerminalPolicyCommitRequest,
-  ): Promise<void> {
+  ): Promise<WorkspaceTerminalPolicySettlementResult> {
     await this.initialized;
     const request = WorkspaceTerminalPolicyCommitRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
-    commitWorkspaceTerminalPolicyApplication(this.state.storage, request);
+    return commitWorkspaceTerminalPolicyApplication(this.state.storage, request);
   }
 
+  /**
+   * Admit one realtime dictation socket: sweep, spend the ticket, take a slot.
+   *
+   * The service used to send these as separate statements through the
+   * workspace runtime facade — three round trips, and three critical sections
+   * rather than one. Here it is a single decision, and the concurrency caps
+   * live beside the insert that enforces them rather than travelling from a
+   * caller that could pass a larger number.
+   *
+   * A refusal comes back as an outcome rather than a throw: a replayed ticket
+   * and a workspace at its cap are ordinary answers, and the sentence the
+   * person reads is the service's to choose.
+   */
   async admitTranscriptionSession(
     input: WorkspaceTranscriptionAdmitRequest,
   ): Promise<WorkspaceTranscriptionAdmitResult> {
@@ -5791,6 +5846,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return renewWorkspaceTranscriptionSession(this.state.storage, request);
   }
 
+  /**
+   * The title to show as a generated work stream's origin label.
+   *
+   * WorkstreamDO renders the summary and does not hold the automation's
+   * directory row. It used to read it as SQL through the workspace runtime
+   * facade, which routes by table name and sends an unrecognised one to the
+   * regional database — which is how this read came to answer
+   * `no such table: automation_directory` on every attempt to open an
+   * automation's run work stream.
+   *
+   * A deleted automation answers `null` rather than its last title: the work
+   * stream outlives the automation that made it, and the label should go quiet
+   * rather than name something the workspace no longer has.
+   */
   async automationOriginLabel(
     input: WorkspaceAutomationOriginLabelRequest,
   ): Promise<WorkspaceAutomationOriginLabel> {

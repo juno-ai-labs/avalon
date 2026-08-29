@@ -202,6 +202,11 @@ async function renewTranscriptionSession(
   sessionId: string,
 ): Promise<void> {
   const workspace = await transcriptionWorkspace(env, workspaceId);
+  // Parsed and discarded: the renewal reports whether there was a lease left to
+  // extend, and there is nothing useful to do with a `false` here. The socket
+  // that owns the session is the thing that ends, and it ends on its own close
+  // rather than on a lease it stopped holding. The parse still runs, so a
+  // response that stopped matching the contract fails here rather than later.
   WorkspaceTranscriptionRenewResultSchema.parse(await workspace.renewTranscriptionSession({
     workspaceId,
     sessionId,
