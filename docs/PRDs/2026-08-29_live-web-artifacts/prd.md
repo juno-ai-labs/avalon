@@ -3,7 +3,7 @@
 > Created 2026-08-29.
 >
 > A work stream's participants can ask Rally for a working web page or small
-> web application — a landing page, a dashboard, a calculator, a poll — and
+> web application — a landing page, a dashboard, a calculator — and
 > get a hosted, openable, revisable site rather than a code listing. The model
 > builds the site in the Terminal sandbox and publishes it with the existing
 > Terminal publish tool — widened to accept a directory, no new tool — and
@@ -26,9 +26,10 @@
 ## Summary
 
 Today a document-shaped request becomes a published Markdown resource. This
-PRD gives the same treatment to a *site-shaped* request: "make a signup page
-for the launch", "build a little dashboard over these numbers", "put up a
-poll for the offsite date". The model writes the site's files in the work
+PRD gives the same treatment to a *site-shaped* request: "make a landing
+page for the launch", "build a little dashboard over these numbers", "put
+up a searchable page of the beta signups". The model writes the site's
+files in the work
 stream's Terminal sandbox exactly as it writes a document, then publishes the
 directory with the same `terminal_publish_resource` call that publishes a
 document — the tool widens to accept a directory, and gains no new
@@ -42,9 +43,13 @@ drift out of agreement with the files. An `index.js` at the directory root
 publishes an **active** artifact: that module is model-written JavaScript
 Rally executes per request as a Cloudflare Dynamic Worker inside a
 capability-fenced sandbox — no network egress, no ambient bindings, only an
-asset binding and a per-artifact storage binding Rally hands it. Because the
-storage is shared, an active artifact is multiplayer for free: two
-participants opening the same poll see and move the same tally. No
+asset binding Rally hands it. An active artifact computes its responses per
+request — routing, search and filtering over data bundled at publish, a
+small API the page calls — and is deliberately **stateless** in V1: it
+holds nothing between requests. Artifact-visible persistent state is
+removed from this PRD's scope and held in the Future research section, so
+that when storage arrives it ties back into the platform — agent-readable,
+product-visible — rather than shipping as an opaque side pocket. No
 `index.js` but an `index.html` at the root publishes a **static** artifact —
 assets only, served from the region's bucket. A directory with neither entry
 publishes as one downloadable **archive** resource rather than failing, with
@@ -109,15 +114,14 @@ motivation is structural, and stated as such.
    republish the same directory, update the same artifact and URL in place,
    and record history through the existing resource versioning layer.
 4. Every participant with visibility of the work stream, and only such a
-   person, can open the artifact; all viewers see the current version, and
-   an active artifact's storage is shared across its viewers.
+   person, can open the artifact; all viewers see the current version.
 5. Any participant can revise the artifact by asking in the work stream;
    concurrent asks serialize through the run loop that already serializes
    the work stream's agent work.
 6. Model-authored site content is never same-origin with the Rally
    application, with the regional API, or with any other artifact.
-7. The serving surface is regional from day one: an artifact's bytes,
-   storage, and execution stay in its workspace's region.
+7. The serving surface is regional from day one: an artifact's bytes and
+   execution stay in its workspace's region.
 
 ## Non-goals
 
@@ -143,8 +147,7 @@ motivation is structural, and stated as such.
    npm installs at serve time, no frameworks resolved server-side, no
    Python modules (the platform supports them; they are slow to start and
    nothing needs them), no per-artifact Cloudflare resources, no
-   Workers-for-Platforms dispatch namespaces. One loader, one asset store,
-   one storage binding.
+   Workers-for-Platforms dispatch namespaces. One loader, one asset store.
 6. **Background execution.** Rejected, and load-bearing for the product
    contract: artifact code runs only inside a viewer's request. No alarms,
    no cron, no timers that outlive a response, no artifact-initiated model
@@ -165,27 +168,40 @@ motivation is structural, and stated as such.
    to both regions in parity (staged, like the EU Daytona bindings), and
    EU artifacts arrive with EU Terminal support, not before.
 10. **Defensive numbers.** None are picked here. Bundle size, file count,
-    per-request body size, storage quota, viewer-session lifetime, and
-    error-log retention are all real guards this design names — each ships
-    open under the open-limit rule, with the handover arithmetic, for the
-    team to set.
+    per-request body size, viewer-session lifetime, and error-log
+    retention are all real guards this design names — each ships open
+    under the open-limit rule, with the handover arithmetic, for the team
+    to set.
+11. **Artifact-visible persistent state.** Deferred — removed from this
+    PRD entirely, and held in the **Future research** section below. An
+    active artifact in V1 computes over its request and its published
+    files and remembers nothing; the requests this forecloses — a poll, an
+    RSVP list, a sign-up sheet, anything whose essence is remembering
+    between visits — are out of V1's reach, and the policy makes the model
+    say so honestly rather than publish a page that silently forgets. The
+    reason for the removal is deliberate: state bolted on as a per-
+    artifact side pocket would be invisible to the product and to the
+    agent, and the team wants artifact state designed to tie back into
+    the platform — stored somewhere the agent can direct and read through
+    Rally's own rails — which deserves its own decision, not a default.
 
 ## Product behavior
 
 **Creation.** A participant asks for something site-shaped — "build us a
-quick RSVP page for the offsite". The run, steered by an extension of the
-document-generation standing policy:
+searchable page of the beta signups". The run, steered by an extension of
+the document-generation standing policy:
 
 1. Loads the Terminal plugin and writes the site as ordinary files in a
    stable directory beneath the sandbox's resource-output directory —
-   `offsite-rsvp/index.html`, `offsite-rsvp/style.css`, and, because RSVPs
-   are shared state, `offsite-rsvp/index.js`.
+   `beta-signups/index.html`, `beta-signups/style.css`,
+   `beta-signups/signups.json`, and, because search runs server-side over
+   that data, `beta-signups/index.js`.
 2. Publishes the directory with `terminal_publish_resource`, exactly as it
    publishes a document; the root `index.js` is what makes the publish an
    active site, and the result returns the artifact's URL.
 3. Says, in chat, a short framing with an embed citation of the artifact —
-   "The RSVP page is live in this work stream — open it and tell me what
-   to change." — and none of the site's code.
+   "The signups page is live in this work stream — open it and tell me
+   what to change." — and none of the site's code.
 
 Participants see the standard tool-activity rows (files written, site
 published), then the message. The artifact appears in the right rail under
@@ -196,8 +212,14 @@ action, the error log, and — via the versioning layer — the version list.
 **The model's choice of static versus active** is expressed in file layout,
 never in a parameter: the policy steers it to write only assets (an
 `index.html` root) when the page has no server behavior, and to add a root
-`index.js` only when the request needs shared state, form handling, or an
-API. A directory with neither — a folder of generated outputs, say —
+`index.js` only when the request needs request-time computation — search or
+filtering over data published with the site, or a small API the page
+calls. A request whose essence is *remembering* something between visits —
+a poll, an RSVP list, a sign-up sheet — is out of V1's reach (non-goal
+11): the policy makes the model say so plainly in chat and offer the
+nearest alternative (collect the answers in the work stream itself, or a
+static page), never publish a page that silently forgets. A directory with
+neither entry — a folder of generated outputs, say —
 publishes as one downloadable archive, which is also how "zip that folder up
 for me" becomes a single call. A participant can override the
 site/document/archive shape in plain words, exactly as the document policy's
@@ -209,8 +231,8 @@ URL, rendered by Electron in an isolated embedded view the main process
 owns (the mechanics are locked down in key design decision 10 and the
 Security and trust model), not a screenshot and not a sanitized re-render.
 The pane is a fixed region of the detail view with a reload control;
-interacting with the site inside it is interacting with the artifact, so a
-poll can be answered without leaving the rail. **Pop out** opens the same
+interacting with the site inside it is interacting with the artifact, so
+the signups page can be searched without leaving the rail. **Pop out** opens the same
 artifact in the dedicated artifact window when the rail is too small for
 the site. **Copy link** copies the canonical artifact URL. **Open in
 browser** mints a fresh access link and hands it to the system browser.
@@ -229,9 +251,10 @@ overlay is open above the rail — a dialog, the command palette, a
 lightbox — the preview pane shows a quiet placeholder and the embedded
 view is hidden (decision 10 explains why this is a rule, not a bug).
 
-An **active** artifact behaves like a small shared application: every
-authorized viewer's requests reach the same server module and the same
-per-artifact storage, so the RSVP page's list is one list. A **static**
+An **active** artifact behaves like a small application computed per
+request: every authorized viewer's requests reach the same frozen module,
+which routes, searches, filters, and renders over the data published with
+it — and holds nothing between requests (non-goal 11). A **static**
 artifact is simply the current files.
 
 **Revising.** "Make the header orange and add a maybe option" — from any
@@ -310,7 +333,7 @@ None yet.
    Worker holds a `worker_loaders` binding and materializes an artifact on
    demand with `LOADER.get(id, callback)`, per Cloudflare's Dynamic Workers
    API. Rejected alternatives: *static-only R2 serving* (kills active
-   artifacts, the half that makes a poll a poll); *Workers for Platforms
+   artifacts, the server-computed half); *Workers for Platforms
    dispatch namespaces* (a deploy pipeline and per-artifact upload API to
    manage, for tenancy Rally does not have — the loader's runtime callback
    plus the region's bucket is the whole pipeline); *rendering model HTML
@@ -350,29 +373,31 @@ None yet.
    jurisdiction-pinned `ArtifactHostDO` (one per artifact, addressed
    through the same stub helper every other DO uses) owns the artifact's
    serving-side truth: current version pointer, viewer-session issuance
-   and checks, the per-artifact storage the `STORAGE` binding reads and
-   writes, and the bounded error log. The serving Worker is stateless;
-   the DO is the authority. Rejected: *Durable Object facets* (running
-   the model's own DO class as a child with its own SQLite) — strictly
-   more power than V1 needs, and a much larger trust surface; the
-   storage-binding design below delivers shared state with the loader's
-   plainest mechanism. Facets are the named upgrade path if artifacts
-   outgrow key-value state.
-5. **Active artifacts are a fetch handler plus two injected bindings,
+   and checks, and the bounded error log. The serving Worker is
+   stateless; the DO is the authority. It holds no artifact-visible
+   state: V1 removed that capability outright (non-goal 11), so the
+   designs that would carry it — a Rally-mediated storage binding backed
+   by this DO, or *Durable Object facets* running the model's own DO
+   class as a child with its own SQLite — are not V1 questions at all.
+   Both are worked through in **Future research** below, facets included,
+   so the trade is decided once, deliberately, when state is designed to
+   tie into the platform.
+5. **Active artifacts are a fetch handler plus one injected binding,
    nothing else.** The server module is the directory's root `index.js` —
    the loader's `mainModule`, under the single most conventional entry
    name in the training data — one ES module default-exporting
    `fetch(request, env)`. Its entire environment is injected by the
    loader per Cloudflare's bindings pattern (`ctx.exports` entrypoint
-   stubs with per-artifact `props`): `env.ASSETS.fetch(request)` serving
-   the artifact's own files, and `env.STORAGE` — `get`/`put`/`delete`/
-   `list` over string keys and JSON values, backed by the artifact's
-   `ArtifactHostDO`. `globalOutbound: null`. No secrets, no Rally
-   bindings, no identity: requests reach the module with Rally's viewer
-   cookie stripped, and nothing in the runtime discloses who is viewing.
-   The tool's output and the plugin prompt carry the TypeScript
-   declarations for these bindings, per Cloudflare's own advice that
-   typed declarations are how an agent learns a binding.
+   stubs with per-artifact `props`): `env.ASSETS.fetch(request)`, serving
+   the artifact's own published files, and nothing more.
+   `globalOutbound: null`. No storage (non-goal 11), no secrets, no
+   Rally bindings, no identity: requests reach the module with Rally's
+   viewer cookie stripped, and nothing in the runtime discloses who is
+   viewing. The plugin prompt carries the TypeScript declaration for the
+   binding, per Cloudflare's own advice that typed declarations are how
+   an agent learns a binding — and the same declaration is how a future
+   binding would arrive, which is exactly why Future research routes
+   through this seam.
 6. **Viewer access is Rally-minted, short-lived, and checked at the
    artifact authority.** Opening an artifact calls the regional API
    (`POST /artifacts/:id/open`, authorized against current work-stream
@@ -500,13 +525,14 @@ None yet.
     prefix the server module never sees), which keeps one origin, one
     cookie, and one access flow per artifact, and keeps every
     participant-shareable address — the canonical URL, chips, embeds,
-    copied links — pointing at current. Two rules make old versions
-    safe to render: a prior *static* version serves its frozen assets
-    exactly; a prior *active* version runs its frozen module with
-    `env.STORAGE` **read-only** — writes throw — because old code
-    running against the live shared storage could corrupt what the
-    current version depends on, and "looking at V3" must never mutate
-    the artifact everyone else is using. The desktop chrome labels the
+    copied links — pointing at current. Old versions are safe to render
+    by construction: a prior *static* version serves its frozen assets
+    exactly, and a prior *active* version runs its frozen module over
+    its frozen assets — with no artifact-visible state in V1 (non-goal
+    11), old code has nothing shared to corrupt. One rule is recorded
+    now for when that changes: if Future research adds state, a prior
+    version runs it **read-only** — looking at V3 must never mutate the
+    artifact everyone else is using. The desktop chrome labels the
     state (viewing V3, read-only, back to current), mirroring the
     versioning layer's prior-version contract. Rejected: *pinned
     version links* — a shared link that silently shows a stale site is
@@ -538,8 +564,8 @@ authoritative.
 - `ArtifactHostDO` (new DO class, both regions, jurisdiction-pinned):
   `artifact_state` (current version, resource linkage), `viewer_sessions`
   (hashed session, principal, issued/expires, single-use code redemption),
-  `artifact_storage` (key, JSON value — the `STORAGE` binding's backing),
-  `error_log` (bounded ring; retention an open limit).
+  `error_log` (bounded ring; retention an open limit). No artifact-visible
+  storage tables exist (non-goal 11).
 - R2 `PAYLOADS`: `artifact/<artifact-id>/v<version>/assets/<path>` and
   `…/manifest.json`, immutable per version; deletion rides the existing
   cleanup outbox with the sweeper's version-liveness rule.
@@ -550,7 +576,7 @@ Generation is Global-only at launch because the Terminal sandbox is
 (non-goal 9). Serving deploys to both regions in configuration parity —
 Worker, wildcard route, DO namespace, bucket prefix — with the EU half
 staged and dormant, mirroring how the EU Daytona bindings are staged. An
-artifact's assets, manifest, storage, sessions, and error log all rest in
+artifact's assets, manifest, sessions, and error log all rest in
 the workspace's region; the region-distinct wildcard hosts mean serving
 never crosses the boundary; nothing new is added to the Global control
 plane. EU inference remains unarchived, so prompt-policy tuning cohorts
@@ -562,9 +588,9 @@ The new trust surface is the point of this PRD, so it is stated in full.
 
 - **Artifact code is untrusted, and the sandbox is capability-based.**
   `globalOutbound: null` — `fetch()` and `connect()` throw. The module's
-  `env` contains exactly the two injected entrypoint stubs, whose `props`
-  (artifact id, region) are set by the serving Worker and invisible to
-  the module. No secret, Rally binding, D1, R2, queue, or provider
+  `env` contains exactly one injected entrypoint stub (`ASSETS`), whose
+  `props` (artifact id, region) are set by the serving Worker and
+  invisible to the module. No secret, Rally binding, D1, R2, queue, or provider
   credential is reachable; stubs cannot be forged, only received. CPU,
   memory, and isolate lifetime are the platform's own limits — platform
   numbers, not Rally's to restate.
@@ -608,12 +634,13 @@ The new trust surface is the point of this PRD, so it is stated in full.
   waistline.** It holds the loader, the bucket, the DO namespace, and
   nothing else — no D1, no provider secrets, no Flagship. A compromise of
   artifact code is contained by the isolate; a compromise of the serving
-  Worker exposes artifact content and artifact storage, not workspace
+  Worker exposes artifact content and viewer sessions, not workspace
   authority.
 - **Viewer identity does not enter artifact code** (key design decision
-  5). An active artifact can count and store what viewers *do*, not who
-  they are. Passing identity in as a capability is a future, deliberate
-  decision with its own review, not a default.
+  5) — and with no artifact-visible state in V1 (non-goal 11), an active
+  artifact cannot record anything about its viewers at all. Passing
+  identity in as a capability is a future, deliberate decision with its
+  own review, not a default.
 - **Nothing that protects data is scoped by the feature flag.** The flag
   below gates presentation; authorization is structural.
 
@@ -633,9 +660,10 @@ regions, origins, lease, and frozen authority; loading still starts
 nothing. The plugin's activation message gains one short paragraph — the
 kind conventions: a published directory with `index.js` at its root is a
 live site with server behavior (`index.js` is an ES module
-default-exporting `fetch(request, env)`, with `env.ASSETS` and
-`env.STORAGE` as declared; the message carries the typed declarations
-verbatim); with `index.html` and no `index.js`, a static live site; with
+default-exporting `fetch(request, env)`, with `env.ASSETS` as declared —
+the message carries the typed declaration verbatim, and names plainly
+that nothing persists between requests); with `index.html` and no
+`index.js`, a static live site; with
 neither, a downloadable archive. The paragraph closes with the one
 sentence aimed squarely at the smallest routed model: a document is
 published by its file path, never by its folder.
@@ -694,12 +722,15 @@ published by its file path, never by its folder.
 
 **Standing-policy extension.** The document-generation policy gains the
 site trigger and manners: a request whose natural output is a web page or
-small application — explicitly named ("build a page/app/dashboard/poll"),
-or implied by interactivity a document cannot carry — becomes a directory
+small application — explicitly named ("build a page/app/dashboard"), or
+implied by interactivity a document cannot carry — becomes a directory
 with its entry at `index.html`, adding `index.js` only when the behavior
-needs a server, published with the ordinary publish tool; chat narration
-stays short and code-free and the artifact is announced with an embed
-citation. Participant overrides win in all directions ("just show me the
+needs request-time computation, published with the ordinary publish tool;
+chat narration stays short and code-free and the artifact is announced
+with an embed citation. A persistence-shaped ask — a poll, sign-ups,
+anything that must remember between visits — is answered honestly with
+the V1 boundary and the nearest alternative, per non-goal 11, never with
+a page that silently forgets. Participant overrides win in all directions ("just show me the
 code" publishes files as ordinary resources; "make it a real page" builds
 the site; "zip that up" publishes the directory as an archive). Same
 render conditions as the document policy — ordinary participant-triggered
@@ -776,10 +807,12 @@ rather than papered over.
    renders the page live in the preview pane, and a **Pop out** that
    opens the same artifact in the artifact window — with no code in chat
    and no code listing as the primary resource.
-2. "Make a poll for the offsite date" yields an active artifact; two
-   different participants opening it vote and both see the combined
-   tally; the module's `fetch()` egress attempt (added in a test
-   artifact) throws.
+2. "Build a searchable page of these signups" yields an active artifact;
+   two participants search it with different queries at once and each
+   sees results the same module computed; the module's `fetch()` egress
+   attempt (added in a test artifact) throws. "Make a poll for the
+   offsite date" yields an honest boundary answer in chat with an
+   alternative, and no artifact that silently forgets.
 3. "Change the header" from a *second* participant edits and republishes:
    same URL, same rail entry, version list grown by one, both viewers see
    the new header on reload.
@@ -802,16 +835,15 @@ rather than papered over.
    current version.
 9. Opening a dialog, the command palette, and a lightbox each hides the
    rail's preview behind its placeholder and restores it on close; the
-   preview never paints over an app overlay. Answering the poll inside
-   the preview pane works, and the preview's navigation stays on the
-   artifact's origin — an external link in the page opens the system
+   preview never paints over an app overlay. Searching the signups page
+   inside the preview pane works, and the preview's navigation stays on
+   the artifact's origin — an external link in the page opens the system
    browser, not the pane.
 10. A chip or embed citation in chat always opens the current version.
    From the version list, a prior version renders read-only on direct
-   request — a write attempted by a prior active version's module
-   throws, and the live artifact's storage is unchanged — with its
-   source additionally readable through the versioning layer's preview;
-   the canonical URL serves the newest version throughout.
+   request — its frozen module over its frozen assets — with its source
+   additionally readable through the versioning layer's preview; the
+   canonical URL serves the newest version throughout.
 11. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render — the preview pane
    included.
@@ -831,12 +863,95 @@ rather than papered over.
    per-request DO hop matter, a short-lived signed session with periodic
    re-check is the reversible optimization — decided then, on the
    platform's own failure signals, not now.
-3. **When active artifacts outgrow key-value storage.** Durable Object
-   facets (the model's own DO class as a child with isolated SQLite) are
-   the named upgrade path; the trigger would be a real artifact that
-   cannot be built on `STORAGE`, and the decision is a new PRD against
-   the facet trust surface.
-4. **Whether the artifact window wants a shared chrome** (address-less
+3. **Whether the artifact window wants a shared chrome** (address-less
    title bar naming the artifact and its work stream, a refresh action)
    — settle against real screenshots during implementation, per house
    practice.
+
+## Future research: platform-tied artifact state
+
+Artifact-visible persistent state was removed from this PRD's scope
+(non-goal 11) on a deliberate judgement: the easy design — a per-artifact
+key-value pocket only the artifact's own code can reach — would ship fast
+and then stand in the way of the design the product actually wants, where
+the data an artifact collects is *platform data*: somewhere the agent can
+direct writes and reads through Rally's own rails, somewhere the product
+can show, export, and reason about. What a poll collects is exactly the
+kind of thing a participant asks Rally about in chat ("who hasn't
+voted?"), and a side pocket makes that question unanswerable. This
+section holds the design space so the next PRD starts from it instead of
+re-deriving it.
+
+**What V1 loses, named honestly:** polls, RSVP lists, sign-up sheets,
+guest books, counters — every artifact whose essence is remembering
+between visits. The standing policy makes the model decline these with
+an alternative rather than fake them. Dogfooding of those declines is
+the demand signal: when real asks pile up against the boundary, that is
+the trigger for the follow-up PRD, with this section as its starting
+material.
+
+**The bar any storage design must clear** (drawn from the rules this PRD
+already locks):
+
+1. The agent can reach the data through typed Rally rails — reading it
+   in chat, seeding it at publish, correcting it on request — not only
+   the artifact's runtime.
+2. The product can see it: surfaced in the rail (or as a resource),
+   exportable, deletable with the artifact through the existing
+   lifecycle.
+3. Regional end to end, resting in the workspace's region beside
+   everything else.
+4. Read-only under prior-version viewing (key design decision 11's
+   recorded rule), and quota-able under the open-limit rule.
+5. Writable only through a capability Rally injects — never ambient,
+   never identity-bearing by default, per the Security and trust model.
+
+**Candidate directions, with the trade each carries:**
+
+1. **The removed V1 design: a `STORAGE` entrypoint binding backed by
+   `ArtifactHostDO`.** Four verbs (`get`/`put`/`delete`/`list`, JSON
+   values) over RPC to the artifact's supervisor DO. Fastest to build,
+   chokepoint for quota and read-only enforcement, smallest trust
+   surface — but as designed it is exactly the opaque pocket this
+   removal rejects; it clears the bar only if paired with agent rails
+   and product surfacing (direction 3), at which point it is that
+   direction's transport rather than a design of its own.
+2. **Durable Object facets: the model's own DO class as a child with
+   isolated SQLite.** The platform's full-power path — real SQL, real
+   schemas, per-artifact isolation the runtime enforces. Carries the
+   trust and lifecycle costs already argued in this PRD's history:
+   the whole storage API handed to untrusted code, model-written schema
+   migrations across artifact versions outside every migration rail this
+   repository has, no Rally chokepoint for read-only prior versions or
+   quotas, and blast-radius coupling to the supervisor. Right when
+   artifacts genuinely need a database; wrong as the default, and
+   adoptable later without unwinding anything since the supervisor DO it
+   attaches to already exists.
+3. **Artifact state as platform data: writes land in a store the agent
+   and the product share.** The direction the removal was made for.
+   Artifact writes travel through a Rally-injected binding into
+   workspace-owned, typed storage — as (or beside) a work-stream
+   resource, or as structured rows a WorkspaceDO/WorkstreamDO authority
+   owns — so the same data is readable by the agent through the
+   attachment rails, visible in the rail, versionable through the
+   versioning layer's seam (its key design decision 7 explicitly
+   reserved a storage-shape column for exactly such a future), and
+   automatically covered by deletion, export, and regional rules. Open
+   problems to research before it is buildable: write frequency versus
+   version-capture cost (a counter incremented per click must not mint
+   a version per click); schema — free JSON versus a declared shape the
+   agent can query; concurrency (last-write-wins versus the authority
+   serializing); and how a viewer-triggered write is attributed when
+   viewer identity deliberately does not enter artifact code.
+4. **No runtime writes at all: state changes only through the agent.**
+   The degenerate-but-honest candidate: an artifact stays read-only and
+   anything interactive routes through the work stream (an elicitation,
+   a chat ask), with the model republishing data files. Zero new trust
+   surface; latency and ceremony likely too high for anything
+   click-shaped — but it is the fallback that keeps V1's guarantees
+   untouched, and research should measure how far it actually carries
+   before rejecting it.
+
+The likely resolution composes 1 and 3: the binding as the runtime's
+transport, the platform store as its backing — decided in its own PRD,
+against this bar, when the decline signal says the demand is real.
