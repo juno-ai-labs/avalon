@@ -12,7 +12,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
   reapSettledWorkspaceNotificationIntents,
   workspaceNotificationIntentMaintenanceTarget,
@@ -27,6 +27,10 @@ import {
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { createTestSqlStorage } from "./helpers/sql-storage";
 import { sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const WORKSPACE_ID = "00000000-0000-7000-8000-0000000000a1";
 const WORKSTREAM_ID = "00000000-0000-7000-8000-0000000000a2";
@@ -37,29 +41,39 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
+/** The object each fixture database belongs to; passes run against it. */
+const workspaceObjects = new Map<DatabaseSync, WorkspaceDO>();
+
 /** The object's ledger, every version, as the constructor applies it. */
 function workspaceObjectDatabase(): DatabaseSync {
-  const database = new DatabaseSync(":memory:");
-  databases.push(database);
-  database.exec("PRAGMA foreign_keys = ON");
-  for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
-    for (const statement of migration.statements) database.exec(statement);
-  }
-  // Every write to the object asserts its identity first; the ledger's
-  // triggers refuse a row for any other workspace.
-  database.prepare(
-    `INSERT INTO workspace_identity
-       (id, workspace_id, region, placement_affinity, created_at, updated_at)
-     VALUES (1, ?, 'global', 'wnam', 0, 0)`,
-  ).run(WORKSPACE_ID);
-  return database;
+  const regional = new DatabaseSync(":memory:");
+  databases.push(regional);
+  // A real WorkspaceDO: its constructor applies the ledger, and the resource
+  // maintenance passes below run as its typed methods over this database.
+  const workspaceObject = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: regional,
+    register: (created) => { databases.push(created); },
+  });
+  workspaceObjects.set(workspaceObject.objectDatabase, workspaceObject.instance);
+  return workspaceObject.objectDatabase;
 }
 
 function scheduleContext(database: DatabaseSync): WorkspaceScheduleContext {
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
+    APP_ENV: "test",
     PAYLOADS: createCloudflareTestBinding<R2Bucket>({ delete: async () => undefined }),
+    WORKSPACE_DOS: testWorkspaceObjectBinding(workspaceObjects.get(database)!, [
+      "claimResourceSlug",
+      "listResourcesAwaitingSlug",
+      "listReapableResourceObjects",
+      "claimResourceObjectRemoval",
+      "retireResourceObjectStaging",
+      "recordResourceObjectCleanupFailure",
+      "reapExpiredDraftResources",
+    ]),
   });
   const storage = createCloudflareTestBinding<DurableObjectStorage>({
     transactionSync: (body: () => unknown) => body(),
