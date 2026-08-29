@@ -258,6 +258,24 @@ describe("workspace memory items", () => {
   });
 });
 
+describe("the memory index alarm", () => {
+  it("arms the workspace alarm for an embedding intent a write just left", async () => {
+    // `memory_index_outbox` is an alarm source, so while these writes were
+    // generic statements `executeRuntimeSql` re-derived the schedule for them.
+    // A typed method gets nothing for free: without an explicit refresh a
+    // memory written into a quiet workspace sits unprojected until an
+    // unrelated mutation happens to reconcile.
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      await state.storage.deleteAlarm();
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+    await addItem({ receiptId: "receipt-alarm" });
+    await runInDurableObject(workspace(), async (_instance, state) => {
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+  });
+});
+
 describe("workspace memory tables", () => {
   const TABLE_ID = "mtt_test-table";
 
