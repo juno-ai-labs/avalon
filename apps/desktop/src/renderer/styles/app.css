@@ -2622,17 +2622,26 @@ pre {
 .citation-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* The embed card. It is a block because image syntax is block-level to the
-   model that wrote it, so it already arrives in a paragraph of its own — the
-   width here is what makes that visible rather than what causes it. It sizes to
-   its content: a full-width box around a three-word title leaves an icon
-   stranded at the far edge. */
-.citation-card { align-items: center; background: var(--av-sys-color-surface-raised); border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-md); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; font: inherit; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; padding: 11px 13px; text-align: left; width: fit-content; }
-.citation-card:hover { background: var(--av-sys-color-surface-raised-hover); border-color: var(--av-sys-color-border-strong); }
-.citation-card-icon { align-items: center; color: var(--av-sys-color-text-muted); display: inline-flex; flex: 0 0 auto; }
-.citation-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.citation-card-title { font-size: 0.97em; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: 0.82em; }
-.citation-card-chevron { color: var(--av-sys-color-text-muted); flex: 0 0 auto; margin-left: 8px; }
+   model that wrote it, so it already arrives in a paragraph of its own.
+
+   The shape is an attached file's tile rather than a list row: the kind badge
+   at the head, the title and kind at the foot, and deliberate empty room
+   between — the room is what says "a thing was produced here", so the height
+   is a floor rather than a hug. Every colour is a semantic token, which is how
+   the same rule lands as a white sheet with a hairline on Terra Light and as a
+   near-borderless warm card drawn with space on Air; the kind takes the
+   theme's own label voice for the same reason. */
+.citation-card { background: var(--av-sys-color-surface-elevated); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); color: var(--av-sys-color-text-default); cursor: pointer; display: flex; flex-direction: column; font: inherit; gap: 26px; justify-content: space-between; margin: var(--av-sys-space-prose-gap) 0; max-width: 100%; min-height: 170px; padding: 11px; text-align: left; width: 176px; }
+.citation-card:hover { background: var(--av-sys-color-surface-elevated-hover); border-color: var(--av-sys-color-border-strong); }
+.citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
+.citation-card-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.citation-card-title { font-size: 0.97em; font-weight: var(--av-sys-font-weight-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.citation-card-kind { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); letter-spacing: var(--av-sys-label-tracking); text-transform: var(--av-sys-label-transform); }
+/* A run of embeds, merged by the rehype pass into one row that scrolls
+   sideways — a column of tiles between two sentences reads as the transcript
+   stalling, and the row spends one card's height however many were announced. */
+.citation-card-row { display: flex; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; overflow-x: auto; }
+.citation-card-row .citation-card { flex: 0 0 auto; margin: 0; }
 
 /* The grounding pill. It costs one character of line width and no vertical
    space at all, which is the whole reason the trailing source list is not
