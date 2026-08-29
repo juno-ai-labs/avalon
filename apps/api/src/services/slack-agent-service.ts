@@ -91,6 +91,16 @@ import {
   withWorkspaceRuntimeDatabase,
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
+import {
+  WorkspaceSlackIngressClaimResultSchema,
+  WorkspaceSlackIngressEnqueueResultSchema,
+  WorkspaceSlackIngressFailResultSchema,
+  WorkspaceSlackIngressRecoverableResultSchema,
+  WorkspaceSlackIngressSweepResultSchema,
+  WorkspaceSlackPendingPromptResultSchema,
+  WorkspaceSlackThreadClaimResultSchema,
+  WorkspaceSlackThreadRoutableResultSchema,
+} from "../durable-objects/workspace-slack-protocol";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 interface SlackConnectionRow extends Record<string, unknown> {
@@ -266,16 +276,6 @@ const SLACK_RETRYABLE_DENIAL_PREFIXES = [
 ] as const;
 
 type SlackPendingDenialReason = "connection" | "channel_resolution" | "policy";
-const SlackQueuedJobRowSchema = z.object({
-  id: z.string().min(1),
-  workspace_id: z.string().uuid(),
-  connection_id: z.string().uuid(),
-  team_id: z.string().min(1),
-  body_hash: z.string().min(1),
-  kind: z.enum(["event", "interaction", "command"]),
-  payload_json: z.string(),
-  lease_id: z.string().min(1),
-});
 
 const SlackInteractionPayloadSchema = z.record(z.string(), z.unknown());
 const SlackCommandFormSchema = z.object({
@@ -355,78 +355,63 @@ export class SlackAgentService {
   }
 
   async maintainIngress(limit = 100, workspaceId?: string): Promise<void> {
-    if (!workspaceId && this.env.WORKSPACE_DOS) {
+    // Always required now: the recovery scan and the sweep are typed
+    // WorkspaceDO methods, and there is no object to ask without knowing whose
+    // it is. The alarm's `slack_ingress` arm has always passed it.
+    if (!workspaceId) {
       throw new Error("slack_ingress_maintenance_workspace_required");
     }
-    if (workspaceId) this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
+    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
     await this.prewarmWorkspaceCredentials();
     const at = nowIso();
     await this.redriveReauthorizedIngress(limit);
     const staleBefore = new Date(Date.now() - 2 * 60_000).toISOString();
-    const recoverable = await this.env.DB.prepare(
-      `SELECT id, workspace_id FROM slack_ingress_jobs
-       WHERE payload_json IS NOT NULL AND attempt_count < 20
-         AND ((status IN ('queued', 'failed') AND updated_at < ?)
-           OR (status = 'processing' AND lease_expires_at < ?))
-       ORDER BY received_at ASC LIMIT ?`,
-    ).bind(staleBefore, at, limit).all<{ id: string; workspace_id: string }>();
-    for (const job of recoverable.results) {
+    const workspace = await this.workspaceDirectory(workspaceId);
+    const recoverable = WorkspaceSlackIngressRecoverableResultSchema.parse(
+      await workspace.recoverableSlackIngressJobs({ workspaceId, staleBefore, at, limit }),
+    );
+    for (const jobId of recoverable.jobIds) {
       try {
         await this.env.ACTIVITY_QUEUE.send(SlackIngressQueueMessageSchema.parse({
           kind: "slack_ingress",
           region: this.env.AVALON_REGION,
-          workspaceId: job.workspace_id,
-          jobId: job.id,
+          workspaceId,
+          jobId,
         }));
       } catch (error) {
         logWarn(this.env, "slack_ingress_recovery_enqueue_failed", {
-          job_id: job.id,
+          job_id: jobId,
           reason: error instanceof Error ? error.message : "unknown",
         });
       }
     }
     const retentionCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+    // `spentBefore` is bound to the grace horizon, not `retentionCutoff`. The
+    // workspace alarm counts a challenge as due a day after it was spent, so
+    // the sweep has to remove exactly what that expression counts, the way the
+    // claim and pending-prompt reaps do. Holding a challenge for the 30-day
+    // retention instead left every expired 15-minute token "due" for a month,
+    // and the alarm hot-looped on the gap (2026-08-22, ~1.5 fires a second for
+    // hours).
     const spentBefore = new Date(Date.now() - SLACK_LINK_CHALLENGE_GRACE_MS).toISOString();
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        "DELETE FROM slack_ingress_jobs WHERE status = 'completed' AND completed_at < ?",
-      ).bind(retentionCutoff),
-      // Bound to the grace horizon, not `retentionCutoff`. The workspace alarm
-      // counts a challenge as due a day after it was spent, so this reap has
-      // to remove exactly what that expression counts, the way the claim and
-      // pending-prompt reaps below do. Holding a challenge for the 30-day
-      // retention instead left every expired 15-minute token "due" for a
-      // month, and the alarm hot-looped on the gap (2026-08-22, ~1.5 fires a
-      // second for hours).
-      this.env.DB.prepare(
-        `DELETE FROM slack_link_challenges
-         WHERE (consumed_at IS NOT NULL AND consumed_at < ?) OR expires_at < ?`,
-      ).bind(spentBefore, spentBefore),
-      this.env.DB.prepare(
-        "DELETE FROM slack_agent_thread_claims WHERE lease_expires_at < ?",
-      ).bind(at),
-      this.env.DB.prepare(
-        "DELETE FROM slack_agent_pending_prompts WHERE expires_at < ?",
-      ).bind(at),
-      this.env.DB.prepare(
-        `DELETE FROM slack_ingress_jobs
-         WHERE status = 'failed' AND attempt_count >= 20 AND updated_at < ?`,
-      ).bind(retentionCutoff),
-    ]);
-    const exhausted = await this.env.DB.prepare(
-      `SELECT id, workspace_id, error_code FROM slack_ingress_jobs
-       WHERE status = 'failed' AND attempt_count >= 20
-       ORDER BY updated_at DESC LIMIT ?`,
-    ).bind(limit).all<{ id: string; workspace_id: string; error_code: string | null }>();
+    const swept = WorkspaceSlackIngressSweepResultSchema.parse(
+      await workspace.sweepSlackIngress({
+        workspaceId,
+        at,
+        retentionCutoff,
+        spentBefore,
+        exhaustedReportLimit: limit,
+      }),
+    );
     // One row per pass. The moment a job exhausts is logged at `error` and
     // reported by `processQueuedIngress`; this is the standing count, and one
     // error row per job per pass is what buried the 2026-08-22 incident under
     // fifty thousand lines an hour.
-    if (exhausted.results.length > 0) {
+    if (swept.exhausted.length > 0) {
       logWarn(this.env, "slack_ingress_exhausted_jobs", {
-        count: exhausted.results.length,
-        job_ids: exhausted.results.slice(0, 10).map((job) => job.id),
-        error_codes: [...new Set(exhausted.results.map((job) => job.error_code ?? "unknown"))],
+        count: swept.exhausted.length,
+        job_ids: swept.exhausted.slice(0, 10).map((job) => job.jobId),
+        error_codes: [...new Set(swept.exhausted.map((job) => job.errorCode ?? "unknown"))],
       });
     }
   }
@@ -730,92 +715,65 @@ export class SlackAgentService {
     return { response_type: "ephemeral", text: "Rally queued your request. I’ll continue in your Agent conversation." };
   }
 
-  async processQueuedIngress(workspaceId: string, jobId: string): Promise<void>;
-  async processQueuedIngress(jobId: string): Promise<void>;
-  async processQueuedIngress(workspaceIdOrJobId: string, maybeJobId?: string): Promise<void> {
-    const workspaceId = maybeJobId === undefined ? null : workspaceIdOrJobId;
-    const jobId = maybeJobId ?? workspaceIdOrJobId;
-    if (workspaceId === null && this.env.WORKSPACE_DOS) {
-      throw new Error("slack_ingress_workspace_required");
-    }
-    if (workspaceId) this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
-    const leaseId = crypto.randomUUID();
-    const at = nowIso();
-    // A job at the attempt ceiling is not claimable: the Queue redelivers a
-    // message whose processing threw, and without this bound every redelivery
-    // re-ran a dead job, pinned it again, and reported it again. Only the
-    // reauthorization re-drive, which resets the count, brings one back. A
-    // worker that died mid-attempt (`processing`, lease expired) is reclaimed
-    // regardless, because its attempt was never recorded as a failure.
-    const claimed = await this.env.DB.prepare(
-      `UPDATE slack_ingress_jobs SET
-         status = 'processing', attempt_count = attempt_count + 1,
-         lease_id = ?, lease_expires_at = ?, error_code = NULL, updated_at = ?
-       WHERE id = ? AND (? = '' OR workspace_id = ?)
-         AND ((status IN ('queued', 'failed') AND attempt_count < 20)
-           OR (status = 'processing' AND lease_expires_at < ?))
-       RETURNING id, workspace_id, connection_id, team_id, body_hash, kind, payload_json, lease_id`,
-    ).bind(
-      leaseId,
-      new Date(Date.now() + 5 * 60_000).toISOString(),
-      at,
-      jobId,
-      workspaceId ?? "",
-      workspaceId ?? "",
-      at,
-    ).first<Record<string, unknown>>();
-    if (!claimed) return;
-    const job = SlackQueuedJobRowSchema.parse(claimed);
+  async processQueuedIngress(workspaceId: string, jobId: string): Promise<void> {
+    this.env = withWorkspaceRuntimeDatabase(this.env, workspaceId);
+    const workspace = await this.workspaceDirectory(workspaceId);
+    // The claim's attempt ceiling and lease live in the object: a job at the
+    // ceiling is not claimable — the Queue redelivers a message whose
+    // processing threw, and without that bound every redelivery re-ran a dead
+    // job, pinned it again, and reported it again. Only the reauthorization
+    // re-drive, which resets the count, brings one back. A worker that died
+    // mid-attempt (`processing`, lease expired) is reclaimed regardless,
+    // because its attempt was never recorded as a failure.
+    const claim = WorkspaceSlackIngressClaimResultSchema.parse(
+      await workspace.claimSlackIngressJob({ workspaceId, jobId, at: nowIso() }),
+    );
+    if (claim.outcome === "unavailable") return;
+    const { job, leaseId } = claim;
+    // Outside the `try`, as the row-shape parse it replaces was: a claimed job
+    // with no payload is a defect that should hold its lease until it expires
+    // rather than be settled as a failure it did not have.
+    if (job.payloadJson === null) throw new Error("slack_ingress_payload_missing");
     try {
-      const rawPayload: unknown = JSON.parse(job.payload_json);
+      const rawPayload: unknown = JSON.parse(job.payloadJson);
       if (job.kind === "event") {
         const envelope = parseSlackEventEnvelope(rawPayload, this.env.SLACK_APP_ID);
-        await this.dispatchEvent(job.team_id, envelope, job.body_hash);
+        await this.dispatchEvent(job.teamId, envelope, job.bodyHash);
       } else if (job.kind === "interaction") {
-        await this.dispatchQueuedInteraction(SlackInteractionPayloadSchema.parse(rawPayload), job.id);
+        await this.dispatchQueuedInteraction(SlackInteractionPayloadSchema.parse(rawPayload), job.jobId);
       } else {
         await this.dispatchQueuedCommand(SlackCommandFormSchema.parse(rawPayload));
       }
-      await this.env.DB.prepare(
-        `UPDATE slack_ingress_jobs SET status = 'completed', payload_json = NULL,
-           lease_id = NULL, lease_expires_at = NULL, error_code = NULL,
-           completed_at = ?, updated_at = ?
-         WHERE id = ? AND lease_id = ?`,
-      ).bind(nowIso(), nowIso(), job.id, leaseId).run();
+      await workspace.completeSlackIngressJob({ workspaceId, jobId, leaseId, at: nowIso() });
     } catch (error) {
       const retryable = slackIngressRetryable(error);
       if (slackReconnectRequired(error)) {
-        await this.markSlackReconnectRequired(job.connection_id, slackErrorReason(error));
+        await this.markSlackReconnectRequired(job.connectionId, slackErrorReason(error));
       }
       const code = slackIngressErrorCode(error);
-      const failed = await this.env.DB.prepare(
-        `UPDATE slack_ingress_jobs SET status = 'failed', lease_id = NULL,
-           lease_expires_at = NULL, error_code = ?,
-           attempt_count = CASE WHEN ? THEN attempt_count ELSE 20 END, updated_at = ?
-         WHERE id = ? AND lease_id = ?
-         RETURNING attempt_count`,
-      ).bind(code, retryable ? 1 : 0, nowIso(), job.id, leaseId).first<{ attempt_count: number }>();
-      // Twenty is the ceiling the recovery sweep and the claim above stop at,
-      // so a job that reaches it here is not coming back on its own: only a
-      // reauthorization re-drive lifts it, or Slack delivering the event
-      // again. Two `@Avalon` mentions died this way on 2026-08-22, and the
-      // only record was an error row nobody was reading — hence the row, then
-      // the notice, in that order.
-      if (failed && failed.attempt_count >= 20) {
-        const fields = { workspace_id: job.workspace_id, job_id: job.id, kind: job.kind, code, retryable };
+      // The ceiling the recovery sweep and the claim stop at, so a job that
+      // reaches it here is not coming back on its own: only a reauthorization
+      // re-drive lifts it, or Slack delivering the event again. Two `@Avalon`
+      // mentions died this way on 2026-08-22, and the only record was an
+      // error row nobody was reading — hence the row, then the notice, in
+      // that order. The failure write and the one-notice-per-episode check
+      // are a single transaction in the object.
+      const failed = WorkspaceSlackIngressFailResultSchema.parse(
+        await workspace.failSlackIngressJob({
+          workspaceId,
+          jobId,
+          leaseId,
+          errorCode: code,
+          retryable,
+          exhaustionEpisodeStartedAt:
+            new Date(Date.now() - SLACK_EXHAUSTION_NOTICE_WINDOW_MS).toISOString(),
+          at: nowIso(),
+        }),
+      );
+      if (failed.outcome === "failed" && failed.exhausted) {
+        const fields = { workspace_id: workspaceId, job_id: jobId, kind: job.kind, code, retryable };
         logError(this.env, "slack_ingress_job_exhausted", fields);
-        const episode = await this.env.DB.prepare(
-          `SELECT 1 AS reported FROM slack_ingress_jobs
-            WHERE connection_id = ? AND error_code = ? AND attempt_count >= 20
-              AND id <> ? AND updated_at > ?
-            LIMIT 1`,
-        ).bind(
-          job.connection_id,
-          code,
-          job.id,
-          new Date(Date.now() - SLACK_EXHAUSTION_NOTICE_WINDOW_MS).toISOString(),
-        ).first<{ reported: number }>();
-        if (episode === null) {
+        if (failed.firstExhaustionReport) {
           await notifyOps(this.env, {
             event: "slack_ingress_job_exhausted",
             summary: "A Slack event was given up on after its retry budget. Nothing will process it again unless the installation is reauthorized, which re-drives it, or Slack delivers the event afresh; fix the cause first. Further jobs on this installation failing the same way within the hour are logged but not reported again.",
@@ -838,20 +796,28 @@ export class SlackAgentService {
   }): Promise<{ ok: true; duplicate?: boolean }> {
     const connection = await this.connectionForTeam(input.teamId);
     const at = nowIso();
-    const inserted = await this.env.DB.prepare(
-      `INSERT INTO slack_ingress_jobs
-       (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
-        status, attempt_count, received_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?)
-       ON CONFLICT(id) DO NOTHING`,
-    ).bind(input.id, connection.workspace_id, connection.id, input.teamId, input.bodyHash, input.kind, JSON.stringify(input.payload), at, at).run();
-    const duplicate = Number(inserted.meta.changes ?? 0) === 0;
-    if (duplicate) {
-      const prior = await this.env.DB.prepare(
-        "SELECT body_hash, status FROM slack_ingress_jobs WHERE id = ?",
-      ).bind(input.id).first<{ body_hash: string; status: string }>();
-      if (!prior || prior.body_hash !== input.bodyHash) throw new ApiError(409, "slack_ingress_conflict", "Slack reused an ingress identity with different content");
-      if (prior.status === "completed") return { ok: true, duplicate: true };
+    // The insert and its duplicate check are one transaction in the object,
+    // decided by the row's own witness rather than the adapter's
+    // `meta.changes` — the physical-write counter this repository forbids
+    // deciding a logical outcome from.
+    const admitted = WorkspaceSlackIngressEnqueueResultSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).enqueueSlackIngressJob({
+        workspaceId: connection.workspace_id,
+        jobId: input.id,
+        connectionId: connection.id,
+        teamId: input.teamId,
+        bodyHash: input.bodyHash,
+        kind: input.kind,
+        payloadJson: JSON.stringify(input.payload),
+        at,
+      }),
+    );
+    if (admitted.outcome === "conflict") {
+      throw new ApiError(409, "slack_ingress_conflict", "Slack reused an ingress identity with different content");
+    }
+    const duplicate = admitted.outcome === "replayed";
+    if (admitted.outcome === "replayed" && admitted.status === "completed") {
+      return { ok: true, duplicate: true };
     }
     const message = SlackIngressQueueMessageSchema.parse({
       kind: "slack_ingress",
@@ -1641,7 +1607,7 @@ export class SlackAgentService {
       ? await this.loadSession(connection.id, channelId, rootTs)
       : null;
     const pendingPrompt = !directMessage && !existingSession
-      ? await this.loadPendingPrompt(connection.id, channelId, rootTs, slackUserId)
+      ? await this.loadPendingPrompt(connection.workspace_id, connection.id, channelId, rootTs, slackUserId)
       : null;
     const botUserId = type === "app_mention" || !directMessage
       ? authorizedBotUserId(envelope) ?? await this.botUserId(connection)
@@ -1718,7 +1684,7 @@ export class SlackAgentService {
     const connection = await this.connectionForTeam(teamId);
     const token = await this.botToken(connection);
     const pendingPrompt = channelId && threadTs && isSlackRetryPrompt(prompt)
-      ? await this.loadPendingPrompt(connection.id, channelId, threadTs, slackUserId)
+      ? await this.loadPendingPrompt(connection.workspace_id, connection.id, channelId, threadTs, slackUserId)
       : null;
     const requestedPrompt = pendingPrompt?.prompt ?? prompt;
     // A member's request is answered on the strength of the token, not the
@@ -1737,6 +1703,7 @@ export class SlackAgentService {
         if (resolutionDenial.reconnectRequired) await this.markSlackReconnectRequired(connection.id);
         if (threadTs) {
           await this.rememberPendingPrompt(
+            connection.workspace_id,
             connection.id,
             targetChannel,
             threadTs,
@@ -1820,7 +1787,7 @@ export class SlackAgentService {
     }, AbortSignal.timeout(5_000));
     let sessionCreatedThisCall = false;
     if (!session) {
-      const claimId = await this.claimThread(connection.id, channel, thread);
+      const claimId = await this.claimThread(connection.workspace_id, connection.id, channel, thread);
       if (!claimId) {
         session = await this.waitForSession(connection.id, channel, thread);
         if (!session) throw new ApiError(503, "slack_thread_busy", "This Slack thread is still being initialized");
@@ -1860,12 +1827,12 @@ export class SlackAgentService {
             }
           }
         } finally {
-          await this.releaseThreadClaim(connection.id, channel, thread, claimId);
+          await this.releaseThreadClaim(connection.workspace_id, connection.id, channel, thread, claimId);
         }
       }
     }
     if (session) {
-      await this.clearPendingPrompt(connection.id, channel, thread, slackUserId);
+      await this.clearPendingPrompt(connection.workspace_id, connection.id, channel, thread, slackUserId);
       // Each prompt in a thread moves the status onto the message that made it.
       // The rotation restarts with it, so a continuation does not resume the
       // previous run's position and appear to have skipped a step.
@@ -2247,27 +2214,17 @@ export class SlackAgentService {
       const botUserId = authorizedBotId ?? await this.botUserId(connection);
       if (botUserId && text.includes(`<@${botUserId}>`)) return false;
     }
-    const routable = await this.env.DB.prepare(
-      `SELECT 1 AS routable
-       WHERE EXISTS (
-         SELECT 1 FROM slack_agent_sessions
-         WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
-       ) OR EXISTS (
-         SELECT 1 FROM slack_agent_pending_prompts
-         WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
-           AND slack_user_id = ? AND expires_at > ?
-       )`,
-    ).bind(
-      connection.id,
-      channelId,
-      threadTs,
-      connection.id,
-      channelId,
-      threadTs,
-      slackUserId,
-      nowIso(),
-    ).first<{ routable: number }>();
-    return Boolean(routable) || activitySubscribed;
+    const routable = WorkspaceSlackThreadRoutableResultSchema.parse(
+      await (await this.workspaceDirectory(connection.workspace_id)).slackThreadRoutable({
+        workspaceId: connection.workspace_id,
+        connectionId: connection.id,
+        channelId,
+        threadTs,
+        slackUserId,
+        at: nowIso(),
+      }),
+    );
+    return routable.routable || activitySubscribed;
   }
 
   private async persistSlackEventActivity(
@@ -2398,19 +2355,27 @@ export class SlackAgentService {
   }
 
   private async loadPendingPrompt(
+    workspaceId: string,
     connectionId: string,
     channelId: string,
     threadTs: string,
     slackUserId: string,
   ): Promise<{ prompt: string } | null> {
-    return this.env.DB.prepare(
-      `SELECT prompt FROM slack_agent_pending_prompts
-       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
-         AND slack_user_id = ? AND expires_at > ?`,
-    ).bind(connectionId, channelId, threadTs, slackUserId, nowIso()).first<{ prompt: string }>();
+    const pending = WorkspaceSlackPendingPromptResultSchema.parse(
+      await (await this.workspaceDirectory(workspaceId)).pendingSlackPrompt({
+        workspaceId,
+        connectionId,
+        channelId,
+        threadTs,
+        slackUserId,
+        at: nowIso(),
+      }),
+    );
+    return pending.prompt === null ? null : { prompt: pending.prompt };
   }
 
   private async rememberPendingPrompt(
+    workspaceId: string,
     connectionId: string,
     channelId: string,
     threadTs: string,
@@ -2420,39 +2385,33 @@ export class SlackAgentService {
   ): Promise<void> {
     const retainedPrompt = prompt.trim().slice(0, 40_000);
     if (!retainedPrompt) return;
-    const at = nowIso();
-    await this.env.DB.prepare(
-      `INSERT INTO slack_agent_pending_prompts
-       (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
-        denial_reason, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(connection_id, slack_channel_id, slack_thread_ts, slack_user_id)
-       DO UPDATE SET prompt = excluded.prompt, denial_reason = excluded.denial_reason,
-         expires_at = excluded.expires_at, updated_at = excluded.updated_at`,
-    ).bind(
+    await (await this.workspaceDirectory(workspaceId)).rememberSlackPendingPrompt({
+      workspaceId,
       connectionId,
       channelId,
       threadTs,
       slackUserId,
-      retainedPrompt,
+      prompt: retainedPrompt,
       denialReason,
-      new Date(Date.now() + SLACK_PENDING_PROMPT_TTL_MS).toISOString(),
-      at,
-      at,
-    ).run();
+      expiresAt: new Date(Date.now() + SLACK_PENDING_PROMPT_TTL_MS).toISOString(),
+      at: nowIso(),
+    });
   }
 
   private async clearPendingPrompt(
+    workspaceId: string,
     connectionId: string,
     channelId: string,
     threadTs: string,
     slackUserId: string,
   ): Promise<void> {
-    await this.env.DB.prepare(
-      `DELETE FROM slack_agent_pending_prompts
-       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ?
-         AND slack_user_id = ?`,
-    ).bind(connectionId, channelId, threadTs, slackUserId).run();
+    await (await this.workspaceDirectory(workspaceId)).clearSlackPendingPrompt({
+      workspaceId,
+      connectionId,
+      channelId,
+      threadTs,
+      slackUserId,
+    });
   }
 
   private async recoverLegacyDeniedPrompt(
@@ -2772,22 +2731,24 @@ export class SlackAgentService {
     }
   }
 
-  private async claimThread(connectionId: string, channelId: string, threadTs: string): Promise<string | null> {
-    const leaseId = crypto.randomUUID();
-    const at = nowIso();
-    const claimed = await this.env.DB.prepare(
-      `INSERT INTO slack_agent_thread_claims
-       (connection_id, slack_channel_id, slack_thread_ts, lease_id, lease_expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(connection_id, slack_channel_id, slack_thread_ts) DO UPDATE SET
-         lease_id = excluded.lease_id,
-         lease_expires_at = excluded.lease_expires_at,
-         updated_at = excluded.updated_at
-       WHERE slack_agent_thread_claims.lease_expires_at < ?
-       RETURNING lease_id`,
-    ).bind(connectionId, channelId, threadTs, leaseId, new Date(Date.now() + 5 * 60_000).toISOString(), at, at, at)
-      .first<{ lease_id: string }>();
-    return claimed?.lease_id === leaseId ? leaseId : null;
+  private async claimThread(
+    workspaceId: string,
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+  ): Promise<string | null> {
+    // The object mints the lease and its expiry; a loser never holds a lease
+    // id at all, so nothing here can mistake the winner's lease for its own.
+    const claimed = WorkspaceSlackThreadClaimResultSchema.parse(
+      await (await this.workspaceDirectory(workspaceId)).claimSlackThread({
+        workspaceId,
+        connectionId,
+        channelId,
+        threadTs,
+        at: nowIso(),
+      }),
+    );
+    return claimed.outcome === "claimed" ? claimed.leaseId : null;
   }
 
   private async waitForSession(connectionId: string, channelId: string, threadTs: string): Promise<SlackSessionRow | null> {
@@ -2801,11 +2762,20 @@ export class SlackAgentService {
     return null;
   }
 
-  private async releaseThreadClaim(connectionId: string, channelId: string, threadTs: string, leaseId: string): Promise<void> {
-    await this.env.DB.prepare(
-      `DELETE FROM slack_agent_thread_claims
-       WHERE connection_id = ? AND slack_channel_id = ? AND slack_thread_ts = ? AND lease_id = ?`,
-    ).bind(connectionId, channelId, threadTs, leaseId).run();
+  private async releaseThreadClaim(
+    workspaceId: string,
+    connectionId: string,
+    channelId: string,
+    threadTs: string,
+    leaseId: string,
+  ): Promise<void> {
+    await (await this.workspaceDirectory(workspaceId)).releaseSlackThreadClaim({
+      workspaceId,
+      connectionId,
+      channelId,
+      threadTs,
+      leaseId,
+    });
   }
 
   private async publishHome(teamId: string, slackUserId: string, viewHash?: string): Promise<void> {

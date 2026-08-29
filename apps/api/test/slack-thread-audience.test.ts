@@ -19,6 +19,12 @@ import {
   workstreamObjectParticipantRows,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  createTestWorkspaceDO,
+  SLACK_WORKSPACE_OBJECT_METHODS,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 
 /**
  * Who can talk to a work stream that was started from a Slack thread.
@@ -93,15 +99,15 @@ describe("who may continue a Slack work stream", () => {
   // themselves are exercised against the durable path — in the object test
   // below and in the Workers-runtime suites.
   it("refuses to open a work stream while the authority is not durable_object_open", async () => {
-    const database = await seededDatabase();
-    insertEventJob(database, "event:refused", appMention("EvRefused"));
+    const { database, instance, objectDatabase } = await seededDatabase();
+    insertEventJob(objectDatabase, "event:refused", appMention("EvRefused"));
     stubSlack({ privateChannel: false, members: ["U456"] });
 
-    await expect(service(database).processQueuedIngress("event:refused"))
+    await expect(service(database, instance).processQueuedIngress(WORKSPACE, "event:refused"))
       .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
 
     // The refusal reached the job ledger, and no legacy product row appeared.
-    expect(database.prepare("SELECT status FROM slack_ingress_jobs WHERE id = 'event:refused'").get())
+    expect(objectDatabase.prepare("SELECT status FROM slack_ingress_jobs WHERE id = 'event:refused'").get())
       .toEqual({ status: "failed" });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get())
       .toEqual({ count: 0 });
@@ -114,14 +120,14 @@ describe("who may continue a Slack work stream", () => {
     // room — so the roster is read either way, where it used to be skipped
     // whenever the channel was public and the work stream came out with an
     // empty participant list.
-    const database = await seededDatabase();
-    insertEventJob(database, "event:public-roster", appMention("EvPublicRoster"));
+    const { database, instance, objectDatabase } = await seededDatabase();
+    insertEventJob(objectDatabase, "event:public-roster", appMention("EvPublicRoster"));
     const slack = stubSlack({ privateChannel: false, members: ["U456", "UKAT"] });
 
     // The authority is deliberately still closed here: this asserts what the
     // ingress resolves on the way to the create, which happens before the
     // refusal, without standing up the whole create pipeline to do it.
-    await expect(service(database).processQueuedIngress("event:public-roster"))
+    await expect(service(database, instance).processQueuedIngress(WORKSPACE, "event:public-roster"))
       .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
 
     expect(slack.methods).toContain("conversations.members");
@@ -133,12 +139,12 @@ describe("who may continue a Slack work stream", () => {
     // Past the Slack threshold the work stream is workspace-scoped and seats
     // nobody, so the `users.info` fan-out behind the roster is skipped outright
     // — it is the expensive half, and there is no room left to seat.
-    const database = await seededDatabase();
-    insertEventJob(database, "event:big-room", appMention("EvBigRoom"));
+    const { database, instance, objectDatabase } = await seededDatabase();
+    insertEventJob(objectDatabase, "event:big-room", appMention("EvBigRoom"));
     const members = Array.from({ length: 51 }, (_, index) => `UBULK${index}`);
     const slack = stubSlack({ privateChannel: true, members });
 
-    await expect(service(database).processQueuedIngress("event:big-room"))
+    await expect(service(database, instance).processQueuedIngress(WORKSPACE, "event:big-room"))
       .rejects.toMatchObject({ status: 503, code: "workstream_authority_not_open" });
 
     // The listing still happens — the count is what decides the scope.
@@ -153,7 +159,7 @@ describe("who may continue a Slack work stream", () => {
     // participant rows live in the work stream's Durable Object, and the only
     // regional read left is the `users` profile join. The fences below are
     // armed for real: any statement that leaks back to D1 fails the test.
-    const database = await seededDatabase();
+    const { database } = await seededDatabase();
     // Walk the phase machine legitimately — transitions are trigger-enforced.
     // No workstream rows exist, so no workstream routes are created; the one
     // workspace product route is advanced by hand the way the campaign would.
@@ -209,10 +215,15 @@ describe("who may continue a Slack work stream", () => {
 
 function service(
   database: DatabaseSync,
+  instance: WorkspaceDO,
   roomEvents?: Record<string, unknown>[],
 ): SlackAgentService {
   return new SlackAgentService(createTestEnv({
     DB: sqliteD1(database),
+    // The ingress spine is typed WorkspaceDO methods now, and the remaining
+    // facade statements route to the same real object, so one workspace's
+    // Slack state lives in one store.
+    WORKSPACE_DOS: testWorkspaceObjectBinding(instance, SLACK_WORKSPACE_OBJECT_METHODS),
     ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({
       send: vi.fn(async () => undefined),
     }),
@@ -365,8 +376,8 @@ function appMention(eventId: string, overrides: {
   };
 }
 
-function insertEventJob(database: DatabaseSync, id: string, payload: unknown): void {
-  database.prepare(
+function insertEventJob(objectDatabase: DatabaseSync, id: string, payload: unknown): void {
+  objectDatabase.prepare(
     `INSERT INTO slack_ingress_jobs
      (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
       status, attempt_count, received_at, updated_at)
@@ -374,7 +385,11 @@ function insertEventJob(database: DatabaseSync, id: string, payload: unknown): v
   ).run(id, WORKSPACE, CONNECTION, id, JSON.stringify(payload));
 }
 
-async function seededDatabase(): Promise<DatabaseSync> {
+async function seededDatabase(): Promise<{
+  database: DatabaseSync;
+  instance: WorkspaceDO;
+  objectDatabase: DatabaseSync;
+}> {
   const database = legacyProductSqliteDatabase();
   databases.push(database);
   const encrypted = await encryptString(
@@ -394,6 +409,19 @@ async function seededDatabase(): Promise<DatabaseSync> {
       ('${WORKSPACE}', '${TAYLOR}', 'member', 'active', '2026-01-01'),
       ('${WORKSPACE}', '${ADAM}', 'owner', 'active', '2026-01-01'),
       ('${WORKSPACE}', '${KAT}', 'member', 'active', '2026-01-01');
+    INSERT INTO slack_installation_routes
+      (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+    VALUES ('T123', 'global', '${WORKSPACE}', '${CONNECTION}', 'active', '2026-01-01', '2026-01-01');
+  `);
+  // The connection and the user links are WorkspaceDO tables: they live in the
+  // real object's own database, where the facade and the typed methods both
+  // find them.
+  const { instance, objectDatabase } = createTestWorkspaceDO({
+    workspaceId: WORKSPACE,
+    regionalDatabase: database,
+    register: (created) => { databases.push(created); },
+  });
+  objectDatabase.exec(`
     INSERT INTO connector_connections
       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
        display_name, encrypted_credentials, credential_iv, credential_key_version,
@@ -411,5 +439,5 @@ async function seededDatabase(): Promise<DatabaseSync> {
       ('link-adam', '${WORKSPACE}', '${CONNECTION}', '${ADAM}', 'T123', 'UADAM', 'active',
        '2026-01-01', '2026-01-01');
   `);
-  return database;
+  return { database, instance, objectDatabase };
 }
