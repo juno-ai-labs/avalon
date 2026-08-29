@@ -6,6 +6,8 @@ import type { Env } from "../src/env";
 import { __integrationTesting } from "../src/services/integrations";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
   openWorkstreamAuthorityForTest,
   seedCanonicalConversationTurn,
@@ -43,6 +45,8 @@ const BRIEF = [
 const databases: DatabaseSync[] = [];
 /** The work stream's own object database, rebuilt by each `seededDatabase`. */
 let objectStores = new Map<string, DatabaseSync>();
+/** The real WorkspaceDO the fixture stands up; the delivery row lives in its database. */
+let workspaceDO: WorkspaceDO;
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
@@ -51,6 +55,11 @@ function envFor(database: DatabaseSync): Env {
   const base = createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+    // The digest window is re-read through the object that owns the delivery
+    // row, so the fixture serves that method from a real WorkspaceDO.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: workspaceObjectRpcs(workspaceDO, ["digestDeliveryContext"]),
+    }),
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
@@ -97,6 +106,14 @@ function seededDatabase(options: { brief?: string } = {}): DatabaseSync {
     VALUES ('${WORKSTREAM}', '${WORKSPACE}', 'Digest · Ada Lovelace',
             'Write this person''s scheduled digest of what changed since the last one.',
             'ad_hoc', '${OWNER}', 'running', 2, '2026-08-11', '2026-08-11', '2026-08-11', 'digest', 'personal');
+  `);
+  const built = createTestWorkspaceDO({
+    workspaceId: WORKSPACE,
+    regionalDatabase: database,
+    register: (created) => databases.push(created),
+  });
+  workspaceDO = built.instance;
+  built.objectDatabase.exec(`
     INSERT INTO digest_schedules
       (id, workspace_id, user_id, day_mask, enabled,
        execution_principal_json, version, created_at, updated_at)
