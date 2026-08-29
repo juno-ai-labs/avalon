@@ -1417,6 +1417,46 @@ directory write at all.
 
 ## Changelog
 
+### 2026-08-29 — The origin label is a question to WorkspaceDO, not SQL through the facade
+
+**What changed:** `WorkspaceDO.automationOriginLabel` is a new typed method
+returning an automation's current title, or `null` once it is deleted.
+`workstream-object-product.ts` calls it in place of the SQL statement it used to
+send through the workspace runtime facade, so no statement that facade routes
+names `automation_directory` any more. The schemas live beside the other
+directory contracts in `workspace-directory-protocol.ts`, and what the method
+decides is asserted in `test-workers/workspace-automation-origin-label.test.ts`
+against a real object.
+
+**Why:** the facade routes a statement by the table names in it, and its
+fallthrough is the regional database. `automation_directory`, added by
+WorkspaceDO migration 22, was missing from that allowlist, so the read went to
+D1 and answered `no such table` — a 500 on every attempt to open an
+automation's run work stream. A method cannot be routed to the wrong database:
+its tables are named in the object that has them, and its arguments are a
+signature rather than a string a router has to parse.
+
+**Considered and rejected:** one method returning the pin position as well, so
+a summary makes one round trip to the workspace instead of two. It is the
+better shape and it is not what shipped: the pin read is correct today, and
+folding it in makes every summary — automation-generated or not — depend on the
+workspace namespace binding, which is a behaviour change to every work stream in
+service of a defect in one. Also rejected: leaving the read as SQL and relying
+on the routing entry added with the fix. That entry is real and stays, but it
+protects one table by remembering to, and this is the third defect of that
+family in that router. Also rejected: converting the whole facade at once —
+roughly 470 prepared statements across 33 files, spanning connections, memory,
+digests, notes, resources, Slack and automations. That is a per-domain
+migration, and one diff of it would be neither reviewable nor reversible.
+
+**What a future change has to respect:** `automation_directory` stays in
+`WORKSPACE_LOCAL_TABLES` even with no facade statement naming it, for the same
+reason `workstream_notification_intents` does — an accidental generic statement
+should reach the object's refusal rather than D1's `no such table`. The
+routing-coverage test in `apps/api/test/workspace-runtime-database.test.ts`
+requires every WorkspaceDO table to be declared on one side or the other, so a
+new table cannot quietly acquire the regional default.
+
 ### 2026-08-28 — Automations leave WorkspaceDO, and their runs become hidden child work streams
 
 **What changed:** `AutomationAgent` provisions each occurrence as a private
