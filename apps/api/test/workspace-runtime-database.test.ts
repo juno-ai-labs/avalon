@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   __workspaceRuntimeDatabaseTesting,
+  WORKSPACE_LOCAL_TABLES,
   workspaceRuntimeDatabase,
 } from "../src/services/workspace-runtime-database";
+import { WORKSPACE_DO_SCHEMA_MIGRATIONS } from "../src/durable-objects/workspace-do";
 import type { WorkspaceRuntimeSqlResult } from "../src/durable-objects/workspace-runtime-sql";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
@@ -54,6 +56,20 @@ describe("workspace runtime database routing", () => {
     expect(__workspaceRuntimeDatabaseTesting.localStatement(
       "SELECT 1 AS linked FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
     )).toBe(false);
+  });
+
+  it("routes an automation's origin label to the object that holds the directory", () => {
+    // The work stream summary reads an automation's title for its origin label,
+    // and this is the one statement that names `automation_directory` alone.
+    // `localStatement` sends anything naming no listed table to the regional
+    // database, so while the table was missing from `WORKSPACE_LOCAL_TABLES`
+    // this read answered `no such table: automation_directory` from D1 — a 500
+    // on every attempt to open an automation's run work stream, which is how it
+    // reached production.
+    expect(__workspaceRuntimeDatabaseTesting.localStatement(
+      `SELECT title AS name FROM automation_directory
+        WHERE automation_id = ? AND workspace_id = ? AND lifecycle <> 'deleted'`,
+    )).toBe(true);
   });
 
   it("keeps object tables that the local list does not name on the local side", () => {
@@ -128,5 +144,104 @@ describe("workspace runtime database routing", () => {
     } finally {
       regional.close();
     }
+  });
+});
+
+/**
+ * WorkspaceDO tables that deliberately do not route through the D1 facade.
+ *
+ * These are reached only by typed RPC from inside the object, so no statement
+ * naming them is ever handed to `localStatement` and the router never has to
+ * classify them. That is a decision per table, not a default: the test below
+ * fails on any table a migration adds that appears in neither list, because
+ * the router's fallthrough is "regional", and a workspace-owned table that
+ * nobody routed is answered by D1 as `no such table` rather than as anything
+ * naming the boundary it crossed.
+ */
+const DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE = [
+  "_internal_durable_alarms",
+  "automation_creation_claims",
+  "automation_cutover_campaign",
+  "opportunity_batch_events",
+  "opportunity_batch_windows",
+  "opportunity_provenance_edges",
+  "opportunity_provenance_nodes",
+  "project_default_resource_publications",
+  "project_default_resource_targets",
+  "project_default_resources",
+  "project_participants",
+  "project_workstream_memberships",
+  "projects",
+  "suggested_work_ranking_rounds",
+  "suggested_work_sets",
+  "work_opportunities",
+  "work_opportunity_provenance_roots",
+  "work_opportunity_snapshots",
+  "work_opportunity_user_links",
+  "work_opportunity_user_states",
+  "workspace_activity_event_targets",
+  "workspace_activity_events",
+  "workspace_batch_dispatch_targets",
+  "workspace_batch_dispatches",
+  "workspace_directory_state",
+  "workspace_external_event_deliveries",
+  "workspace_external_event_registrations",
+  "workspace_identity",
+  "workspace_project_order",
+  "workspace_project_state",
+  "workspace_sidebar_list_state",
+  "workspace_socket_ticket_receipts",
+  "workspace_sync_events",
+  "workspace_workstream_directory",
+  "workspace_workstream_effect_receipts",
+  "workspace_workstream_resource_links",
+  "workspace_workstream_suggestion_feedback",
+  "workspace_workstream_viewers",
+  "workstream_notification_intents_kinds",
+] as const;
+
+/** Every table WorkspaceDO's migrations leave standing, in application order. */
+function workspaceObjectTables(): Set<string> {
+  const live = new Set<string>();
+  for (const migration of WORKSPACE_DO_SCHEMA_MIGRATIONS) {
+    for (const statement of migration.statements) {
+      for (const match of statement.matchAll(
+        /CREATE\s+(?:VIRTUAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)/giu,
+      )) live.add(String(match[1]).toLowerCase());
+      for (const match of statement.matchAll(
+        /DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?["`]?(\w+)/giu,
+      )) live.delete(String(match[1]).toLowerCase());
+    }
+  }
+  return live;
+}
+
+describe("workspace runtime database routing coverage", () => {
+  it("makes every WorkspaceDO table a routing decision rather than a fallthrough", () => {
+    const declared = new Set<string>([
+      ...WORKSPACE_LOCAL_TABLES,
+      ...DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE,
+    ]);
+    const undeclared = [...workspaceObjectTables()].filter((table) => !declared.has(table));
+    // `automation_directory` failed exactly this way: WorkspaceDO migration 22
+    // created it, nothing added it to `WORKSPACE_LOCAL_TABLES`, and the work
+    // stream summary's read of an automation's title went to the regional
+    // database — a 500 on every attempt to open an automation's run work
+    // stream. A new table lands here until somebody says which side it is on.
+    expect(undeclared).toEqual([]);
+  });
+
+  it("keeps the two lists disjoint, so a table has one answer and not two", () => {
+    const local = new Set<string>(WORKSPACE_LOCAL_TABLES);
+    expect(DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE.filter((table) => local.has(table)))
+      .toEqual([]);
+  });
+
+  it("holds the unrouted list to tables the object still has", () => {
+    // Otherwise it accumulates names that outlive their table and stops being
+    // evidence that anybody looked at them.
+    const live = workspaceObjectTables();
+    expect(DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE.filter((table) => !live.has(table)))
+      .toEqual([]);
   });
 });
