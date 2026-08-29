@@ -1449,13 +1449,17 @@ roughly 470 prepared statements across 33 files, spanning connections, memory,
 digests, notes, resources, Slack and automations. That is a per-domain
 migration, and one diff of it would be neither reviewable nor reversible.
 
-**What a future change has to respect:** `automation_directory` stays in
-`WORKSPACE_LOCAL_TABLES` even with no facade statement naming it, for the same
-reason `workstream_notification_intents` does — an accidental generic statement
-should reach the object's refusal rather than D1's `no such table`. The
-routing-coverage test in `apps/api/test/workspace-runtime-database.test.ts`
-requires every WorkspaceDO table to be declared on one side or the other, so a
-new table cannot quietly acquire the regional default.
+**What a future change has to respect:** `automation_directory` needs both
+lists, and they do different jobs. `WORKSPACE_LOCAL_TABLES` decides *where* a
+statement goes, so the entry stays even with no facade statement naming it —
+without it the read took the regional fallthrough. `WORKSPACE_TYPED_RPC_ONLY_TABLES`
+in `workspace-do.ts` decides whether a generic statement is allowed at all, and
+the table is added to it here now that the only reader is a typed method: a
+statement that arrives anyway is a mistake, and the object says so rather than
+executing it. The routing-coverage test in
+`apps/api/test/workspace-runtime-database.test.ts` requires every WorkspaceDO
+table to be declared on one routing list or the other, so a new table cannot
+quietly acquire the regional default.
 
 ### 2026-08-28 — Automations leave WorkspaceDO, and their runs become hidden child work streams
 
