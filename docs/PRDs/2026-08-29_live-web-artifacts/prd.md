@@ -52,8 +52,9 @@ publishing a directory is a total operation, and no layout is a dead end.
 
 Viewing and revising are both multiplayer in the way the work stream already
 is. Every participant with visibility of the work stream can open the
-artifact — in the desktop's isolated artifact window or in their browser —
-and always sees the current version. Anyone can ask Rally to change it, in
+artifact — rendered live in the right rail's artifact detail, popped out
+into the desktop's isolated artifact window, or in their browser — and
+always sees the current version. Anyone can ask Rally to change it, in
 chat, in their own words; the model edits the files and republishes the same
 directory, which updates the same artifact in place, records the superseded
 version through the resource versioning layer, and is what the next open
@@ -148,8 +149,9 @@ motivation is structural, and stated as such.
    calls. This is what keeps a live artifact on the right side of the
    contract's "no background service runtime".
 7. **Push-based live reload and viewer presence.** Deferred. Viewers see a
-   new version on next load; nothing pushes a refresh into an open
-   artifact window, and nobody sees who else is viewing.
+   new version on next load or reload; nothing pushes a refresh into an
+   open preview pane or artifact window, and nobody sees who else is
+   viewing.
 8. **Model-facing runtime log access.** Deferred. Server-module errors are
    captured (see Product behavior) and surfaced to people; a typed tool
    that lets the model read its artifact's logs is real and wanted, and it
@@ -185,9 +187,9 @@ document-generation standing policy:
 
 Participants see the standard tool-activity rows (files written, site
 published), then the message. The artifact appears in the right rail under
-**Artifacts** as a site resource; its detail shows the URL, an **Open**
-action, a **Copy link** action, and — via the versioning layer — the
-version list.
+**Artifacts** as a site resource; its detail renders the site itself, live,
+in a preview pane, above the URL, a **Pop out** action, a **Copy link**
+action, the error log, and — via the versioning layer — the version list.
 
 **The model's choice of static versus active** is expressed in file layout,
 never in a parameter: the policy steers it to write only assets (an
@@ -199,16 +201,25 @@ for me" becomes a single call. A participant can override the
 site/document/archive shape in plain words, exactly as the document policy's
 overrides work.
 
-**Viewing.** **Open** opens the artifact in the desktop's artifact window —
-a dedicated, isolated window locked to that artifact's origin (see Security
-and trust model). **Copy link** copies the canonical artifact URL. A
-participant may also choose **Open in browser**, which mints a fresh access
-link and hands it to the system browser. Either way the artifact always
-serves its current version; a viewer who was reading V3 when V4 published
-sees V4 on their next load. Opening the bare URL without Rally-minted
-access shows a neutral page saying the artifact must be opened from Rally —
-knowing a URL grants nothing, which is the house rule for every other
-resource identifier and holds here.
+**Viewing.** Selecting the site resource in the rail *is* opening it: the
+detail's preview pane renders the served artifact live — the real HTTPS
+URL, rendered by Electron in an isolated embedded view the main process
+owns (the mechanics are locked down in key design decision 10 and the
+Security and trust model), not a screenshot and not a sanitized re-render.
+The pane is a fixed region of the detail view with a reload control;
+interacting with the site inside it is interacting with the artifact, so a
+poll can be answered without leaving the rail. **Pop out** opens the same
+artifact in the dedicated artifact window when the rail is too small for
+the site. **Copy link** copies the canonical artifact URL. **Open in
+browser** mints a fresh access link and hands it to the system browser.
+Every surface serves the current version; a viewer who was reading V3 when
+V4 published sees V4 on their next load or reload. Opening the bare URL
+without Rally-minted access shows a neutral page saying the artifact must
+be opened from Rally — knowing a URL grants nothing, which is the house
+rule for every other resource identifier and holds here. While an app
+overlay is open above the rail — a dialog, the command palette, a
+lightbox — the preview pane shows a quiet placeholder and the embedded
+view is hidden (decision 10 explains why this is a rule, not a bug).
 
 An **active** artifact behaves like a small shared application: every
 authorized viewer's requests reach the same server module and the same
@@ -401,6 +412,54 @@ None yet.
    never killed by an accident of file layout. The archive format —
    zip's double-click familiarity for this product's audience versus
    tar.gz — is the team's product call, held open below.
+10. **The rail preview is a main-process `WebContentsView`, never
+    renderer DOM.** The right rail's live preview renders the artifact's
+    HTTPS URL in an Electron `WebContentsView` created, owned, and
+    positioned by the main process over the rail's preview region — the
+    renderer never embeds, fetches, or parses artifact content, and the
+    renderer's strict CSP (bundled content plus the regional API, nothing
+    else) is untouched. Locked down, because each of these is a place an
+    implementation would otherwise improvise:
+    - *Who does what.* The renderer requests access from the regional API
+      as it performs any authorized read, then asks the main process over
+      validated IPC to present the artifact: artifact id, the access URL,
+      and the preview region's window-relative bounds. The main process
+      parses every argument as IPC rules require, verifies the URL is
+      `https:` on the artifact serving domain before any load, clamps
+      bounds to the window, and owns the view's lifecycle. The renderer
+      can never navigate the view; it can only ask for an artifact.
+    - *One view, fixed pane.* At most one live preview view exists per
+      window, attached while a site resource's detail is showing and
+      destroyed when the detail closes, the work stream changes, or the
+      flag is off. The preview region is a fixed pane of the detail view
+      rather than content that scrolls beneath other rail content, so
+      bounds updates happen on layout changes only — a composited view
+      that chases a scrolling rectangle jitters, and the fix is layout,
+      not synchronization.
+    - *Overlays hide the view.* A `WebContentsView` composites above the
+      renderer's DOM, so any app surface that can overlap the rail —
+      dialogs, the command palette, lightboxes, menus — triggers hide;
+      the renderer reports overlay open/close over the same IPC and the
+      detail shows a placeholder meanwhile. This is the classic embedded-
+      view pitfall, and it is a rule here so no reviewer has to
+      rediscover it.
+    - *Same isolation contract as the artifact window, one
+      implementation.* The view and the pop-out window share the
+      creation path: no preload, no Node, sandbox on, a per-artifact
+      session partition (which also carries the viewer cookie between
+      rail and pop-out so the participant authorizes once), navigation
+      locked to the artifact's origin, `window.open` denied with
+      external links handed to the system browser, permission requests
+      (camera, microphone, geolocation, notifications) denied, DevTools
+      closed outside development.
+    Rejected: *an `<iframe>` in the renderer* — it would widen the
+    renderer CSP to a wildcard artifact host and graft remote,
+    model-authored content into the application DOM as a navigable,
+    `postMessage`-reachable child, the exact adjacency the backdrop
+    rules exist to forbid; *the `<webview>` tag* — disabled by default
+    and discouraged by Electron's own documentation; *a screenshot or
+    server-rendered thumbnail* — a dead image of a live thing, which is
+    the failure mode this PRD exists to end.
 
 ## Data model
 
@@ -463,15 +522,30 @@ The new trust surface is the point of this PRD, so it is stated in full.
   itself. The viewer-session cookie is per-artifact-origin and `HttpOnly`;
   it is stripped from the request before the request reaches the server
   module, so artifact code never sees a credential at all.
-- **The desktop viewer extends the export-window pattern, visibly.** The
-  artifact window is a dedicated window with no preload, no Node, sandbox
-  on, its own session partition per artifact, and navigation locked to
-  that artifact's origin — off-origin navigation and `window.open` are
-  denied, with external links handed to the system browser. This is the
-  message-export window's isolation contract with visibility turned on,
-  and it preserves the invariant that model-authored documents are never
-  same-origin with the app. The renderer itself never embeds artifact
-  content; the backdrop iframe rules are untouched.
+- **The desktop viewers extend the export-window pattern, visibly.** Both
+  presentation surfaces — the rail's embedded `WebContentsView` and the
+  pop-out artifact window — are main-process-owned web contents sharing
+  one creation path: no preload, no Node, sandbox on, a per-artifact
+  session partition, navigation locked to that artifact's origin —
+  off-origin navigation and `window.open` denied, external links handed
+  to the system browser — permission requests denied, DevTools closed
+  outside development. This is the message-export window's isolation
+  contract with visibility turned on, and it preserves the invariant that
+  model-authored documents are never same-origin with the app. The
+  renderer itself never embeds, fetches, or parses artifact content — the
+  embedded view is composited by the main process over the rail, the
+  renderer's CSP does not change, its IPC surface grows only the
+  validated present/hide/bounds requests of key design decision 10, and
+  the main process refuses to load anything but `https:` URLs on the
+  artifact serving domain. The backdrop iframe rules are untouched.
+- **The embedded view grants the artifact nothing the browser tab would
+  not.** Artifact code cannot tell the rail preview from a browser: no
+  `postMessage` channel to the application exists in either direction, no
+  preload API is present, and the only identity in the partition is the
+  artifact's own viewer cookie. A hostile artifact confined to the pane
+  can draw whatever it likes inside its rectangle and nothing outside it;
+  it cannot navigate the app, open windows, or reach another artifact's
+  partition.
 - **Authorization is current-visibility, at the authority.** Open mints
   access against work-stream visibility now; every artifact request
   re-checks the session at the `ArtifactHostDO`; revocation and
@@ -603,7 +677,8 @@ rather than papered over.
    dogfooding is by explicit ask.
 2. `live-artifacts-enabled` ships as a client feature flag in the
    established fail-closed pattern — presentation-only, gating the rail's
-   site-artifact detail (Open, link, error log) and the artifact window;
+   site-artifact detail (preview pane, Pop out, link, error log) and the
+   artifact window;
    everything that protects data is structural, per the flag rules. The
    flag's default reproduces today's behavior: `false`.
 3. The standing-policy module lands last, as its own deploy, once the
@@ -631,9 +706,10 @@ rather than papered over.
 ## Acceptance
 
 1. "Build a page that shows our launch checklist" yields file-writes and
-   one directory publish, a site resource in the rail, and an artifact
-   that opens in the artifact window rendering the page — with no code in
-   chat and no code listing as the primary resource.
+   one directory publish, a site resource in the rail whose detail
+   renders the page live in the preview pane, and a **Pop out** that
+   opens the same artifact in the artifact window — with no code in chat
+   and no code listing as the primary resource.
 2. "Make a poll for the offsite date" yields an active artifact; two
    different participants opening it vote and both see the combined
    tally; the module's `fetch()` egress attempt (added in a test
@@ -654,11 +730,18 @@ rather than papered over.
 7. Republishing a live site's path with its root entry removed fails
    loudly with the recovery instruction; the site keeps serving its
    current version.
-8. Prior versions are listed and their source opens read-only through the
+8. Opening a dialog, the command palette, and a lightbox each hides the
+   rail's preview behind its placeholder and restores it on close; the
+   preview never paints over an app overlay. Answering the poll inside
+   the preview pane works, and the preview's navigation stays on the
+   artifact's origin — an external link in the page opens the system
+   browser, not the pane.
+9. Prior versions are listed and their source opens read-only through the
    versioning layer's preview.
-9. Where Terminal is unavailable, behavior is byte-identical to today;
-   with the flag off, no artifact surfaces render.
-10. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+10. Where Terminal is unavailable, behavior is byte-identical to today;
+   with the flag off, no artifact surfaces render — the preview pane
+   included.
+11. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
    workerd suite pass; every new test shown to fail when its protected
    behavior is broken; the rail, artifact window, and error surfaces
    captured from a real window.
