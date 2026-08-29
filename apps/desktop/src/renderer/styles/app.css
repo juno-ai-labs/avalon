@@ -2115,8 +2115,12 @@ pre {
 /* The card keeps its tinted chip — this is a control a person clicks, unlike a
    transcript row's bare mark — and only the glyph inside it becomes the real
    company mark. `--av-sys-color-brand-ink` is the chip's own foreground, so the
-   mark is painted in it like the line icon it replaced. */
-.provider-mark { height: 19px; width: 19px; }
+   mark is painted in it like the line icon it replaced.
+
+   Sized through the surface that owns it, as every other mark here is: a bare
+   `.provider-mark` ties with `.connector-mark` on specificity and loses on
+   order, so the rule was inert and the chip drew a 16px mark. */
+.provider-icon .connector-mark { height: 19px; width: 19px; }
 
 .provider-icon {
   align-items: center;
@@ -2176,9 +2180,11 @@ pre {
   vertical-align: middle;
 }
 .settings-connection-name { align-items: center; display: flex; gap: 9px; }
-/* Between the status dot and the name, at the row's own text colour. The gap
-   above spaces it from both without a rule of its own. */
-.settings-connection-mark { height: 14px; width: 14px; }
+/* Between the status dot and the name, at the row's own text colour, and sized
+   through the row that owns it — a bare class here ties with `.connector-mark`
+   and loses on order. The gap above spaces it from both without a rule of its
+   own. */
+.settings-connection-name .connector-mark { height: 14px; width: 14px; }
 .settings-connection-table td:last-child { text-align: right; }
 .settings-connection-actions { align-items: center; display: inline-flex; justify-content: flex-end; }
 .settings-connection-empty-row td { height: auto; padding: 0; }

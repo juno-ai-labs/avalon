@@ -38,7 +38,7 @@ import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { useTextClamped } from '../lib/use-text-clamped';
 import { pluginGroupIconForContract, type PluginGroupIcon } from '../lib/plugin-groups';
-import { PLUGIN_BRAND_MARKS } from '../lib/plugin-marks';
+import { isPluginBrandMark, type PluginBrandMark } from '../lib/plugin-marks';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
 import {
@@ -1030,6 +1030,10 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
   return (
     <AgentWorkTiming
       active={thought.status === 'started'}
+      // This block renders both kinds of thought row — a turn's thinking and a
+      // response's overall work — so the subject comes from the row's own verb
+      // rather than being fixed here: "Rally is thinking", "Rally is working".
+      activeName={`Rally is ${thought.activeVerb ?? 'working'}`}
       durationMs={thought.durationMs}
       monotonicStartedAt={thought.monotonicStartedAt}
       timingAccuracy={thought.timingAccuracy}
@@ -1044,7 +1048,7 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
  * The shapes no company owns. Everything else is a brand's own mark and comes
  * from `PLUGIN_BRAND_MARKS` instead.
  */
-const unbrandedIconByKey: Record<'computer' | 'plug' | 'web' | 'webhook', TablerIcon> = {
+const unbrandedIconByKey: Record<Exclude<PluginGroupIcon, PluginBrandMark | 'rally'>, TablerIcon> = {
   computer: IconDeviceDesktop,
   plug: IconPlug,
   web: IconWorldSearch,
@@ -1060,10 +1064,11 @@ const unbrandedIconByKey: Record<'computer' | 'plug' | 'web' | 'webhook', Tabler
  */
 function PluginGlyphMark({ icon }: { icon: PluginGroupIcon }): React.JSX.Element {
   if (icon === 'rally') return <RallyMark className="plugin-face-mark" />;
-  if (icon in PLUGIN_BRAND_MARKS) {
-    return <ConnectorMark className="plugin-face-mark" mark={icon as keyof typeof PLUGIN_BRAND_MARKS} />;
-  }
-  const PluginIcon = unbrandedIconByKey[icon as keyof typeof unbrandedIconByKey];
+  // The guard narrows, so the table below stays exhaustive over what is left
+  // and a glyph added to one table but not the other is a typecheck failure
+  // rather than an undefined component at render time.
+  if (isPluginBrandMark(icon)) return <ConnectorMark className="plugin-face-mark" mark={icon} />;
+  const PluginIcon = unbrandedIconByKey[icon];
   return <PluginIcon aria-hidden="true" size={15} stroke={1.8} />;
 }
 
@@ -1114,6 +1119,7 @@ function PluginActivityBlock({ message }: { message: Message }): React.JSX.Eleme
   return (
     <AgentWorkTiming
       active={group.active}
+      activeName={`${group.name} is working`}
       activeVerb={`${group.name} is working`}
       completedVerb={`${group.name} worked`}
       durationMs={group.durationMs}

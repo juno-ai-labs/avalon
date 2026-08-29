@@ -164,6 +164,23 @@ was chosen against its own chip and the transcript has four themes and no chip.
 - **`pluginGroup` is the only mapping.** A second table anywhere — a component
   branching on `pluginId`, a screen naming Rally itself — is how the feed and
   the row it draws come to disagree about what a group is.
+- **A group row carries no attention ordinal.** It stands for machinery, not
+  for something a person read. The tool row it is built from carries its
+  *turn's* ordinal — the same one that turn's text carries — so keeping it would
+  let a group scrolling into view acknowledge an answer still below the fold,
+  through a read receipt the server stores.
+- **A plugin id this module cannot name is not a row.** Naming a row after
+  `connection:<uuid>` leaks an internal identifier into the feed and keys the
+  group on the id, so the display name arriving later opens a second row beside
+  the first instead of merging.
+- **Every caller that overrides `activeVerb` also passes `activeName`.** The
+  visible label ticks ten times a second, so a live region carries the name
+  instead; deriving it from the verb left a thinking row announcing the bare
+  word "thinking".
+- **A mark is sized through the surface that owns it.** `.connector-mark` holds
+  the default low in the stylesheet, so a per-surface size written as a bare
+  class ties it and loses on source order — an inert rule that reads as if it
+  applies.
 - **No brand palette reaches the document.** A mark is alpha painted in the
   row's own colour. Drawing one in its brand colours would put eight
   independently-chosen palettes on four grounds, and several of them disappear
@@ -252,6 +269,41 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-08-29 — Four defects review found in the grouped row
+
+**What changed:** A group row now carries `attentionSequenceNumber: null`; a
+plugin id with no display name produces no row rather than one named after the
+id; `AgentWorkTiming` takes the accessible name as `activeName` instead of
+deriving it from the visible verb; and Settings sizes its marks through
+`.provider-icon .connector-mark` and `.settings-connection-name .connector-mark`
+rather than bare classes.
+
+**Why:** All four came out of review on the pull request, and three were
+regressions this feature introduced rather than pre-existing gaps. The group row
+inherited the tool row's ordinal, which is its *turn's* ordinal — the same one
+the turn's text carries — and changing the row's type walked it past the
+`tool_event` exclusion in `highestVisibleAttentionSequence`, so a group scrolling
+into view acknowledged an answer still below the fold through a server-stored
+read receipt. Sniffing `activeVerb === 'working'` to pick an accessible name
+treated "not the default" as "is a plugin row", but thinking rows are the other
+caller that overrides the verb, so an active thought announced the bare word
+"thinking". The two Settings sizes tied `.connector-mark` on specificity and lost
+on source order, so both rules were inert and both marks drew at the shared 16px
+— a difference small enough to survive the visual check that was supposed to
+catch it. The id fallback was the one that was merely wrong rather than new: it
+contradicted this document's own invariant that an internal identifier never
+reaches the feed.
+
+**Consequences:** The read-receipt path now has one rule for both sources of
+`plugin_activity` rows, so neither can acknowledge a turn. A connector whose
+plugin activity never arrives shows nothing rather than a UUID, which is the same
+trade the unattributed tool row already makes. `activeName` is a required
+consideration for any caller that sets `activeVerb`. The stylesheet suite pins
+that a per-surface mark size out-specifies the shared rule, and the Settings
+component test pins that a mark carries no second class to hang one on.
+
+Shipped in #412.
 
 ### 2026-08-29 — A grouped row times every plugin running in it at once
 
