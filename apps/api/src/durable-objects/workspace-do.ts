@@ -199,6 +199,21 @@ import {
   type WorkspaceRegionalEffectApplyRequest,
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
+import {
+  admitWorkspaceTranscriptionSession,
+  releaseWorkspaceTranscriptionSession,
+  renewWorkspaceTranscriptionSession,
+} from "./workspace-transcription-storage";
+import {
+  WorkspaceTranscriptionAdmitRequestSchema,
+  WorkspaceTranscriptionRenewRequestSchema,
+  WorkspaceTranscriptionSessionRequestSchema,
+  type WorkspaceTranscriptionAdmitRequest,
+  type WorkspaceTranscriptionAdmitResult,
+  type WorkspaceTranscriptionRenewRequest,
+  type WorkspaceTranscriptionRenewResult,
+  type WorkspaceTranscriptionSessionRequest,
+} from "./workspace-transcription-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
   WorkspaceReleaseDraftAttachmentsRequestSchema,
@@ -5396,6 +5411,48 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * stream outlives the automation that made it, and the label should go quiet
    * rather than name something the workspace no longer has.
    */
+  /**
+   * Admit one realtime dictation socket: sweep, spend the ticket, take a slot.
+   *
+   * The service used to send these as separate statements through the
+   * workspace runtime facade — three round trips, and three critical sections
+   * rather than one. Here it is a single decision, and the concurrency caps
+   * live beside the insert that enforces them rather than travelling from a
+   * caller that could pass a larger number.
+   *
+   * A refusal comes back as an outcome rather than a throw: a replayed ticket
+   * and a workspace at its cap are ordinary answers, and the sentence the
+   * person reads is the service's to choose.
+   */
+  async admitTranscriptionSession(
+    input: WorkspaceTranscriptionAdmitRequest,
+  ): Promise<WorkspaceTranscriptionAdmitResult> {
+    await this.initialized;
+    const request = WorkspaceTranscriptionAdmitRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return admitWorkspaceTranscriptionSession(this.state.storage, request);
+  }
+
+  /** Give a dictation slot back when its socket closes. */
+  async releaseTranscriptionSession(
+    input: WorkspaceTranscriptionSessionRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceTranscriptionSessionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    releaseWorkspaceTranscriptionSession(this.state.storage, request);
+  }
+
+  /** Extend a live dictation lease, and say so when there was nothing to extend. */
+  async renewTranscriptionSession(
+    input: WorkspaceTranscriptionRenewRequest,
+  ): Promise<WorkspaceTranscriptionRenewResult> {
+    await this.initialized;
+    const request = WorkspaceTranscriptionRenewRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return renewWorkspaceTranscriptionSession(this.state.storage, request);
+  }
+
   async automationOriginLabel(
     input: WorkspaceAutomationOriginLabelRequest,
   ): Promise<WorkspaceAutomationOriginLabel> {
