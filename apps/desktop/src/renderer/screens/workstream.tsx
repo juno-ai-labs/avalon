@@ -62,6 +62,7 @@ import {
   composeTranscript,
   createTextMessage,
   dismissedSuggestionIdsQueryKey,
+  groupPluginToolMessages,
   orderedTranscriptMessages,
   pendingTranscriptInputOverlay,
   reconcileAuthoritativeTranscriptOverlays,
@@ -1196,7 +1197,7 @@ export function WorkstreamScreen(): React.JSX.Element {
     members.data ?? [],
   ), [id, members.data, orderedTranscript.data]);
   const transcript = useMemo(
-    () => composeTranscript(canonicalTranscript, transcriptOverlays.data),
+    () => groupPluginToolMessages(composeTranscript(canonicalTranscript, transcriptOverlays.data)),
     [canonicalTranscript, transcriptOverlays.data],
   );
   // Held here rather than in the row: the virtualizer unmounts a row that

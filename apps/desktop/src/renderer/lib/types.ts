@@ -14,6 +14,7 @@ import type {
   ResourceDirection,
   ResourceRelationshipType,
 } from '@rally/contracts';
+import type { PluginGroupIcon } from './plugin-groups';
 
 /** The OpenRouter model ids a composer may pin work to. Re-exported so the
  *  renderer keeps one import site for the shapes it speaks to the API in. */
@@ -271,8 +272,42 @@ export interface ToolEventData {
   toolType?: string;
   /** The single plugin that owns this tool; absent for Rally-owned tools. */
   plugin?: AutomationPluginActivity;
+  /**
+   * The canonical transcript's own owner id — `rally:memory`,
+   * `connection:<uuid>` — which is what decides the row this tool folds into.
+   * Absent until the call starts: a planned block does not yet name its owner.
+   */
+  pluginId?: string;
+  /** The owning plugin activity's label, when the transcript carries one. */
+  pluginName?: string;
   input?: unknown;
   output?: unknown;
+}
+
+/**
+ * One plugin's share of an agent loop, as the feed shows it: a name, a glyph,
+ * and the time that plugin has been working. It replaces the tool rows it was
+ * built from — the tools themselves are detail this audience does not read.
+ */
+export interface PluginActivityData {
+  /** Stable within one agent loop; two plugins that share it share a row. */
+  groupKey: string;
+  name: string;
+  icon: PluginGroupIcon;
+  /** True while any tool call in this group is still running. */
+  active: boolean;
+  /** Completed time accumulated across every turn of this agent loop. */
+  durationMs: number;
+  /**
+   * One local monotonic start per contribution still running.
+   *
+   * Plural because a batch's tool calls run concurrently in Bind, so two
+   * first-party plugins in the Rally group are active at the same time and the
+   * row's completed total counts both. A single start would advance the live
+   * number by one of them and let it jump to the real total at settle.
+   */
+  monotonicStartedAt?: readonly number[];
+  timingAccuracy?: 'observed' | 'upper_bound';
 }
 
 export interface ThoughtEventData {
@@ -383,6 +418,7 @@ export interface Message {
     | 'text'
     | 'thought'
     | 'tool_event'
+    | 'plugin_activity'
     | 'elicitation'
     | 'activity_suggestion'
     | 'system';
@@ -415,6 +451,7 @@ export interface Message {
   };
   toolEvent?: ToolEventData;
   thoughtEvent?: ThoughtEventData;
+  pluginActivity?: PluginActivityData;
   elicitation?: ElicitationData;
   activitySuggestion?: ActivitySuggestionData;
 }

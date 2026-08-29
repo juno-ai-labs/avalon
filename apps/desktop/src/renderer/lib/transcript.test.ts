@@ -8,6 +8,7 @@ import {
   createToolEventMessage,
   orderedTranscriptMessages,
   composeTranscript,
+  groupPluginToolMessages,
   mergeCanonicalTranscriptSnapshot,
   mergeRealtimeTranscriptActivity,
   mergeRealtimeTranscriptTurn,
@@ -800,8 +801,11 @@ describe('ordered turn rendering', () => {
     expect(composed.map((message) => message.id)).toEqual([
       'before', 'tool', 'github', 'run', 'after',
     ]);
-    expect(composed.filter((message) => message.messageType === 'thought')
+    expect(composed.filter((message) =>
+      message.messageType === 'plugin_activity' || message.messageType === 'thought')
       .map((message) => message.transcriptSequence)).toEqual([2, 2]);
+    expect(composed.find((message) => message.id === 'github')?.pluginActivity)
+      .toMatchObject({ groupKey: 'name:GitHub', icon: 'github', name: 'GitHub' });
   });
 
   it('uses the server elapsed baseline and a local monotonic start for mid-stream opens', () => {
@@ -1242,5 +1246,186 @@ describe('explicit transcript range coverage', () => {
         }
       }
     }
+  });
+});
+
+describe('grouping tool calls by plugin', () => {
+  const row = (id: string, extra: Partial<Message>): Message => ({
+    id,
+    workstreamId: 'workstream-one',
+    sequenceNumber: 0,
+    authorType: 'agent',
+    messageType: 'text',
+    createdAt: '2026-08-26T12:00:00.000Z',
+    ...extra,
+  });
+
+  const toolRow = (id: string, pluginId: string, pluginName: string, extra: Partial<Message['toolEvent']> = {}): Message =>
+    row(id, {
+      messageType: 'tool_event',
+      toolEvent: {
+        id, toolCallId: id, name: `${id}_call`, status: 'completed', pluginId, pluginName, ...extra,
+      },
+    });
+
+  const activityRow = (id: string, group: { groupKey: string; name: string; icon: 'plug' | 'rally' | 'slack' }, durationMs: number, active = false): Message =>
+    row(id, {
+      messageType: 'plugin_activity',
+      pluginActivity: { ...group, active, durationMs },
+    });
+
+  const slack = { groupKey: 'name:Slack', name: 'Slack', icon: 'slack' } as const;
+
+  it('shows one row per plugin, where that plugin first worked', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('slack-1', 'connection:one', 'Slack'),
+      toolRow('slack-2', 'connection:one', 'Slack'),
+      toolRow('granola-1', 'connection:two', 'Granola'),
+      toolRow('slack-3', 'connection:one', 'Slack'),
+    ]);
+
+    expect(grouped.map((message) => message.pluginActivity?.name)).toEqual(['Slack', 'Granola']);
+    expect(grouped.map((message) => message.messageType)).toEqual(['plugin_activity', 'plugin_activity']);
+    // Nothing downstream can reach the calls the row stands for.
+    expect(grouped.every((message) => message.toolEvent === undefined)).toBe(true);
+  });
+
+  it('closes a run at anything a person reads, so later work starts a new row', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('slack-1', 'connection:one', 'Slack'),
+      toolRow('granola-1', 'connection:two', 'Granola'),
+      row('said', { messageType: 'text', text: "I'm looking for more info" }),
+      toolRow('slack-2', 'connection:one', 'Slack'),
+    ]);
+
+    expect(grouped.map((message) => message.pluginActivity?.name ?? message.text)).toEqual([
+      'Slack', 'Granola', "I'm looking for more info", 'Slack',
+    ]);
+    expect(grouped[0]!.id).not.toBe(grouped[3]!.id);
+  });
+
+  it('keeps a run open across the thinking the model does between calls', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('granola-1', 'connection:two', 'Granola'),
+      row('thinking', { messageType: 'thought', thoughtEvent: { status: 'completed', durationMs: 900 } }),
+      toolRow('granola-2', 'connection:two', 'Granola'),
+    ]);
+
+    expect(grouped.map((message) => message.messageType)).toEqual(['plugin_activity', 'thought']);
+  });
+
+  it('folds every first-party plugin in one run into Rally and Computer', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('load', 'rally:discovery', 'rally:discovery'),
+      toolRow('memory', 'rally:memory', 'rally:memory'),
+      toolRow('wakeup', 'rally:workstream', 'Workstream'),
+      toolRow('table', 'rally:tables', 'rally:tables'),
+      toolRow('shell', 'rally:terminal', 'Terminal'),
+    ]);
+
+    expect(grouped.map((message) => message.pluginActivity?.name)).toEqual(['Rally', 'Computer']);
+    expect(grouped.map((message) => message.pluginActivity?.icon)).toEqual(['rally', 'computer']);
+  });
+
+  it('drops a tool call whose owner the transcript has not named yet', () => {
+    const planned = row('planned', {
+      messageType: 'tool_event',
+      toolEvent: { id: 'planned', toolCallId: 'planned', name: 'search', status: 'started' },
+    });
+
+    expect(groupPluginToolMessages([planned])).toEqual([]);
+  });
+
+  it('measures the plugin rather than the sum of its calls when the transcript says so', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('slack-1', 'connection:one', 'Slack', { durationMs: 400 }),
+      toolRow('slack-2', 'connection:one', 'Slack', { durationMs: 600 }),
+      // The plugin activity covers the gap between the two calls; the summed
+      // call durations cannot, and must not be added on top of it.
+      activityRow('slack-activity', slack, 4_000),
+    ]);
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]!.pluginActivity).toMatchObject({ durationMs: 4_000, name: 'Slack' });
+  });
+
+  it('adds the plugin activities of every turn in the run together', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('granola-1', 'connection:two', 'Granola'),
+      activityRow('granola-activity-1', { groupKey: 'name:Granola', name: 'Granola', icon: 'plug' }, 3_000),
+      row('thinking', { messageType: 'thought', thoughtEvent: { status: 'completed', durationMs: 900 } }),
+      toolRow('granola-2', 'connection:two', 'Granola'),
+      activityRow('granola-activity-2', { groupKey: 'name:Granola', name: 'Granola', icon: 'plug' }, 3_000, true),
+    ]);
+
+    expect(grouped.filter((message) => message.messageType === 'plugin_activity')).toHaveLength(1);
+    expect(grouped[0]!.pluginActivity).toMatchObject({ active: true, durationMs: 6_000 });
+  });
+
+  it('falls back to the calls it can see while the plugin activity is still missing', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('slack-1', 'connection:one', 'Slack', { durationMs: 400 }),
+      toolRow('slack-2', 'connection:one', 'Slack', { durationMs: 600, status: 'started' }),
+    ]);
+
+    expect(grouped[0]!.pluginActivity).toMatchObject({ active: true, durationMs: 1_000 });
+  });
+
+  it('keeps every concurrently running plugin ticking, not just the last one seen', () => {
+    // Bind runs a batch's non-activation tool calls concurrently, so two
+    // first-party plugins in the Rally group are genuinely active at the same
+    // time. Their completed times are summed, so the live row has to advance by
+    // both — keeping only the last start advanced it by one, and the number
+    // jumped up to the real total the moment they settled.
+    const running = (id: string, monotonicStartedAt: number): Message =>
+      row(id, {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'rally', name: 'Rally', icon: 'rally',
+          active: true, durationMs: 3_000, monotonicStartedAt: [monotonicStartedAt],
+        },
+      });
+    const grouped = groupPluginToolMessages([running('memory', 1_000), running('tables', 1_002)]);
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]!.pluginActivity).toMatchObject({ active: true, durationMs: 6_000 });
+    expect(grouped[0]!.pluginActivity?.monotonicStartedAt).toEqual([1_000, 1_002]);
+  });
+
+  it('carries a lone running plugin as one start', () => {
+    const grouped = groupPluginToolMessages([
+      row('slack-activity', {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'name:Slack', name: 'Slack', icon: 'slack',
+          active: true, durationMs: 2_000, monotonicStartedAt: [500],
+        },
+      }),
+    ]);
+
+    expect(grouped[0]!.pluginActivity?.monotonicStartedAt).toEqual([500]);
+  });
+
+  it('never lets a group row acknowledge the turn it was built from', () => {
+    // A tool block carries its turn's attention ordinal — the same ordinal as
+    // that turn's text — and the group keeps the row's other fields. Carrying
+    // that ordinal too would let a group scrolling into view acknowledge an
+    // answer still below the fold, because the guard that skipped tool rows
+    // keys on the message type this row no longer has.
+    const grouped = groupPluginToolMessages([
+      { ...toolRow('slack-1', 'connection:one', 'Slack'), attentionSequenceNumber: 7 },
+    ]);
+
+    expect(grouped[0]!.attentionSequenceNumber).toBeNull();
+  });
+
+  it('renumbers the rows it kept so the feed stays densely ordered', () => {
+    const grouped = groupPluginToolMessages([
+      toolRow('slack-1', 'connection:one', 'Slack'),
+      toolRow('slack-2', 'connection:one', 'Slack'),
+      row('said', { messageType: 'text', text: 'Done' }),
+    ]);
+
+    expect(grouped.map((message) => message.sequenceNumber)).toEqual([1, 2]);
   });
 });

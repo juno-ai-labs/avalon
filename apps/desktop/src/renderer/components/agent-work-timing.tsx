@@ -9,11 +9,32 @@ export interface AgentWorkTimingProps {
   durationMs: number;
   /** Start of the active segment. Omit it to keep the active total paused. */
   startedAt?: number;
-  monotonicStartedAt?: number;
+  /**
+   * The local monotonic start of every segment running at once, summed into the
+   * elapsed total. Usually one — a grouped plugin row can have several, because
+   * a batch's tool calls run concurrently and its completed total counts each
+   * of them, so the live number has to advance by each of them too.
+   */
+  monotonicStartedAt?: number | readonly number[];
   /** Recovered stops are known only by the later durable recovery boundary. */
   timingAccuracy?: 'observed' | 'upper_bound';
   activeVerb?: string;
   completedVerb?: string;
+  /**
+   * The stable name a screen reader hears while the segment runs. The visible
+   * label ticks ten times a second, so a live region cannot carry it; this is
+   * the sentence that stands in, and every caller that overrides `activeVerb`
+   * owns one — deriving it from the verb turned a thinking row's name into the
+   * bare word "thinking".
+   */
+  activeName?: string;
+  /**
+   * Drawn in the orb's place. A grouped plugin row names the plugin it is
+   * timing, and its mark is what says which one — a second spinner beside
+   * every mark says only that something is running, which the mark and the
+   * shimmering label already say.
+   */
+  icon?: React.ReactNode;
 }
 
 export function AgentCompactionIndicator(): React.JSX.Element {
@@ -42,26 +63,36 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 
 export function AgentWorkTiming({
   active,
+  activeName = 'Rally is working',
   activeVerb = 'working',
   completedVerb = 'worked',
   durationMs,
+  icon,
   monotonicStartedAt,
   timingAccuracy = 'observed',
   startedAt,
 }: AgentWorkTimingProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now());
 
+  const monotonicStarts = monotonicStartedAt === undefined
+    ? []
+    : typeof monotonicStartedAt === 'number' ? [monotonicStartedAt] : monotonicStartedAt;
+  // The effect keys on the starts' values, not on the array holding them: a
+  // caller that rebuilds the array each render would otherwise re-arm the
+  // interval on every tick it schedules.
+  const monotonicKey = monotonicStarts.join(',');
+
   useEffect(() => {
-    if (!active || (startedAt === undefined && monotonicStartedAt === undefined)) return;
+    if (!active || (startedAt === undefined && monotonicKey === '')) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(timer);
-  }, [active, monotonicStartedAt, startedAt]);
+  }, [active, monotonicKey, startedAt]);
 
-  const running = active && (monotonicStartedAt !== undefined || startedAt !== undefined);
+  const running = active && (monotonicStarts.length > 0 || startedAt !== undefined);
   const activeDuration = running
-    ? monotonicStartedAt !== undefined
-      ? Math.max(0, performance.now() - monotonicStartedAt)
+    ? monotonicStarts.length > 0
+      ? monotonicStarts.reduce((total, start) => total + Math.max(0, performance.now() - start), 0)
       : Math.max(0, now - startedAt!)
     : 0;
   const verb = active ? activeVerb : completedVerb;
@@ -69,7 +100,9 @@ export function AgentWorkTiming({
   const label = timingAccuracy === 'upper_bound' && !active
     ? `${verb} for at most ${duration}`
     : `${verb} for ${duration}`;
-  const accessibleLabel = active ? 'Rally is working' : label;
+  // The elapsed time changes ten times a second, so a live region carrying it
+  // would read the row out continuously; `activeName` is the stable stand-in.
+  const accessibleLabel = active ? activeName : label;
 
   return (
     <div
@@ -79,16 +112,18 @@ export function AgentWorkTiming({
       className={clsx('agent-work-timing', running && 'agent-work-timing-active')}
       role="status"
     >
-      <ThinkingOrb
-        aria-hidden="true"
-        className="agent-work-timing-orb"
-        paused={!running}
-        size={20}
-        // thinking-orbs@0.2.0 draws animation time zero when speed is zero.
-        speed={running ? 1 : 0}
-        state="solving"
-        theme="dark"
-      />
+      {icon ?? (
+        <ThinkingOrb
+          aria-hidden="true"
+          className="agent-work-timing-orb"
+          paused={!running}
+          size={20}
+          // thinking-orbs@0.2.0 draws animation time zero when speed is zero.
+          speed={running ? 1 : 0}
+          state="solving"
+          theme="dark"
+        />
+      )}
       <span aria-hidden="true" className="agent-work-timing-label">{label}</span>
     </div>
   );
