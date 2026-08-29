@@ -1,70 +1,64 @@
 import { asWorkspaceId } from "@rally/contracts";
 import { newId, nowIso } from "@rally/db";
 import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceNotePrivacyMarkResultSchema,
+  WorkspaceNotePrivacyPendingResultSchema,
+  type WorkspaceNotePrivacyTransition,
+} from "../durable-objects/workspace-notes-protocol";
 import type { Env } from "../env";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { createMessageObjectPort } from "../runtime/message-port";
 
-interface PrivacyTransitionRow extends Record<string, unknown> {
-  id: string;
-  workspace_id: string;
-  note_id: string;
-  resource_id: string;
-  note_title: string;
-  actor_user_id: string;
-  created_at: string;
-}
-
-interface AffectedWorkstreamRow extends Record<string, unknown> {
-  id: string;
+function workspaceObject(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
 }
 
 /** Returns how many transitions the pass processed; the alarm reads it as progress. */
 export async function processPendingNotePrivacyNotifications(
   env: Env,
-  options: { noteId?: string } = {},
+  options: { workspaceId: string; noteId?: string },
 ): Promise<number> {
-  const filter = options.noteId ? "AND note_id = ?" : "";
-  const bindings = options.noteId ? [options.noteId] : [];
-  const pending = await env.DB.prepare(
-    `SELECT * FROM note_privacy_change_outbox
-     WHERE processed_at IS NULL ${filter}
-     ORDER BY created_at ASC LIMIT 50`,
-  ).bind(...bindings).all<PrivacyTransitionRow>();
+  const pending = WorkspaceNotePrivacyPendingResultSchema.parse(
+    await (await workspaceObject(env, options.workspaceId)).pendingNotePrivacyTransitions({
+      workspaceId: options.workspaceId,
+      ...(options.noteId === undefined ? {} : { noteId: options.noteId }),
+    }),
+  );
   let processed = 0;
-  for (const transition of pending.results) {
+  for (const transition of pending.items) {
     await processTransition(env, transition);
     processed += 1;
   }
   return processed;
 }
 
-async function processTransition(env: Env, transition: PrivacyTransitionRow): Promise<void> {
-  const workspace = await durableObjectStubForWorkspace(
-    env,
-    env.WORKSPACE_DOS,
-    transition.workspace_id,
-    workspaceDOName(env.AVALON_REGION, asWorkspaceId(transition.workspace_id)),
-  );
+async function processTransition(env: Env, transition: WorkspaceNotePrivacyTransition): Promise<void> {
+  const workspace = await workspaceObject(env, transition.workspaceId);
   const access = await workspace.resourceAccess({
-    workspaceId: transition.workspace_id,
-    resourceId: transition.resource_id,
-    userId: transition.actor_user_id,
+    workspaceId: transition.workspaceId,
+    resourceId: transition.resourceId,
+    userId: transition.actorUserId,
   });
-  const affectedRows: AffectedWorkstreamRow[] = access.items.filter((item) => {
+  const affected = access.items.filter((item) => {
     // Generated work streams project the accepted automation's scope and
     // author into the same directory fields as ad-hoc work streams. Those are
     // the visibility facts needed here; consulting a second subscription
     // authority only duplicated them and could disagree after cutover.
     return item.scope === "workspace"
       || item.createdByUserId === null
-      || item.createdByUserId !== transition.actor_user_id;
-  }).map((item) => ({ id: item.workstreamId }));
+      || item.createdByUserId !== transition.actorUserId;
+  }).map((item) => item.workstreamId);
 
   const clientMessageId = `note-privacy:${transition.id}`;
-  const text = `${transition.note_title} is now private and no longer accessible`;
-  for (const workstream of affectedRows) {
-    const messages = createMessageObjectPort(env, transition.workspace_id, workstream.id);
+  const text = `${transition.noteTitle} is now private and no longer accessible`;
+  for (const workstreamId of affected) {
+    const messages = createMessageObjectPort(env, transition.workspaceId, workstreamId);
     await messages.appendMessage({
       messageId: newId(),
       clientMessageId,
@@ -82,8 +76,11 @@ async function processTransition(env: Env, transition: PrivacyTransitionRow): Pr
     });
   }
 
-  await env.DB.prepare(
-    `UPDATE note_privacy_change_outbox SET processed_at = ?
-     WHERE id = ? AND processed_at IS NULL`,
-  ).bind(nowIso(), transition.id).run();
+  WorkspaceNotePrivacyMarkResultSchema.parse(
+    await workspace.markNotePrivacyTransitionProcessed({
+      workspaceId: transition.workspaceId,
+      transitionId: transition.id,
+      at: nowIso(),
+    }),
+  );
 }
