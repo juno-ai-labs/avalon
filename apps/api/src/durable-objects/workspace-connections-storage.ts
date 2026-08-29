@@ -32,6 +32,19 @@ interface AttemptRow extends Record<string, SqlStorageValue> {
   created_at: string;
 }
 
+/**
+ * Expired receipts a single claim may drain from the connection's backlog.
+ *
+ * Not a number chosen here: it is the bound the generic-webhook prune has
+ * shipped with since receipts existed (`ORDER BY expires_at ASC LIMIT 100` in
+ * `connection-service.ts`), carried over so the cutover changes which
+ * connections get swept — all of them, rather than only generic ones — without
+ * also changing how much one delivery pays for it. Raising it is a decision
+ * with evidence behind it by then: a connection whose backlog outruns its
+ * delivery rate is visible as receipts that stop shrinking.
+ */
+const RECEIPT_SWEEP_BATCH = 100;
+
 const ATTEMPT_COLUMNS = `id, provider, status, connection_id, error_code, expires_at,
        user_id, workspace_id, telemetry_operation_id, telemetry_event_version,
        telemetry_scope, telemetry_capability_count, telemetry_reconnect, created_at`;
@@ -177,13 +190,26 @@ export function readWorkspaceConnectorOAuthAttempt(
 /**
  * Settle an attempt, or recognise that its settlement already happened.
  *
- * The compare-and-set takes a pending attempt — or, for `succeeded` only, one
- * that lazy expiry marked failed, because a callback that already consumed
- * valid OAuth state must win an expiry reconciliation race. A returned witness
- * decides the branch, per `docs/durable-object-sqlite.md`; the convergence
- * check that used to be a second facade read after the failed update now runs
- * in the same transaction, so the answer cannot describe a row that moved
- * between the two.
+ * The compare-and-set takes a pending attempt — or, when settling `succeeded`,
+ * any `failed` one, because a callback that already consumed valid OAuth state
+ * must win an expiry reconciliation race. Note what that clause says and what
+ * it does not: it is `status = 'failed'`, not `error_code =
+ * 'oauth_attempt_expired'`, so a `failed` written by a real exchange error is
+ * inside its reach too, and this is the facade statement's clause carried over
+ * unchanged rather than a rule invented here. Narrowing it to the expiry code
+ * would read tighter and is the wrong direction: `oauth_states` is single-use,
+ * so a second callback for an attempt that already failed its exchange cannot
+ * get far enough to settle anything, while `succeeded` is written only after
+ * the connection is committed — a CAS that refused it would answer 409 for a
+ * connection that exists, and leave its attempt reporting a failure the user
+ * can see was not one. `denied` is deliberately out of reach of both branches:
+ * a person who refused the grant is not overridden by a later callback, and the
+ * denied-out-of-reach test pins that.
+ *
+ * A returned witness decides the branch, per `docs/durable-object-sqlite.md`;
+ * the convergence check that used to be a second facade read after the failed
+ * update now runs in the same transaction, so the answer cannot describe a row
+ * that moved between the two.
  */
 export function finishWorkspaceConnectorOAuthAttempt(
   storage: DurableObjectStorage,
@@ -208,6 +234,11 @@ export function finishWorkspaceConnectorOAuthAttempt(
     ).toArray()[0];
     const row = attemptOf(storage, request);
     if (settled?.id === request.attemptId) {
+      // Unreachable as the table stands: the `SELECT` above shares this
+      // transaction with an `UPDATE … RETURNING` that just matched this id, and
+      // nothing deletes attempts. Kept because that reasoning rests on there
+      // being no trigger or cascading delete on this table, which is a property
+      // of today's schema rather than of this function.
       if (!row) throw new Error("connector_oauth_attempt_settled_row_missing");
       return WorkspaceConnectorOAuthAttemptFinishResultSchema.parse({
         outcome: "finished",
@@ -265,6 +296,21 @@ export function bindWorkspaceConnectorOAuthAttemptTelemetry(
  * rows already declare; it admits a redelivery of a signature hash whose
  * receipt has expired, which the providers' own replay windows refuse long
  * before the shortest receipt lifetime does.
+ *
+ * The sweep is in two parts, and the order matters. The claim's own key is
+ * deleted first and unconditionally, because the insert below decides
+ * `duplicate` from a unique-index conflict: an expired row for this exact
+ * `(connection_id, signature_hash)` left behind would answer every redelivery
+ * `duplicate` forever, which is precisely the Granola bug this is fixing. Only
+ * then does the backlog drain, in a batch bounded by `RECEIPT_SWEEP_BATCH` —
+ * the bound the generic-webhook prune already shipped with, carried over
+ * unchanged rather than re-chosen here. It has to stay bounded: the connections
+ * whose receipts grew without bound are exactly the ones whose first claim
+ * after this deploys would otherwise delete the entire accumulated history
+ * inside the same transaction as the claim, and a transaction that exceeds the
+ * request's budget takes the claim down with it — leaving every retry to
+ * re-attempt the same oversized delete and never make progress. Bounded, the
+ * backlog drains a batch per delivery while the claim itself always commits.
  */
 export function claimWorkspaceWebhookReceipt(
   storage: DurableObjectStorage,
@@ -273,10 +319,25 @@ export function claimWorkspaceWebhookReceipt(
   return storage.transactionSync(() => {
     storage.sql.exec(
       `DELETE FROM webhook_receipts
-        WHERE workspace_id = ? AND connection_id = ? AND expires_at <= ?`,
+        WHERE workspace_id = ? AND connection_id = ? AND signature_hash = ?
+          AND expires_at <= ?`,
+      request.workspaceId,
+      request.connectionId,
+      request.signatureHash,
+      request.receivedAt,
+    );
+    storage.sql.exec(
+      `DELETE FROM webhook_receipts
+        WHERE id IN (
+          SELECT id FROM webhook_receipts
+           WHERE workspace_id = ? AND connection_id = ? AND expires_at <= ?
+           ORDER BY expires_at ASC
+           LIMIT ?
+        )`,
       request.workspaceId,
       request.connectionId,
       request.receivedAt,
+      RECEIPT_SWEEP_BATCH,
     );
     const claimed = storage.sql.exec<{ id: string }>(
       `INSERT INTO webhook_receipts

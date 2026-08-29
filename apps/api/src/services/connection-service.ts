@@ -452,9 +452,13 @@ export class ConnectionService {
   async bindOAuthTelemetry(attemptId: string, operationId: string, eventVersion: 1 | 2): Promise<void> {
     // Best-effort exactly as before: a bind refused by the operation-id unique
     // index, or an attempt id that never started, must not fail the OAuth
-    // start it decorates.
-    const workspaceId = this.requireAuth().workspaceId;
+    // start it decorates. The facade statement swallowed with
+    // `.catch(() => undefined)` on a call that needed nothing but the attempt
+    // id; the typed call has to resolve a workspace first, so `requireAuth()`
+    // is inside the swallow too — otherwise this decoration could fail a start
+    // that already committed, which is the one thing the contract forbids.
     try {
+      const workspaceId = this.requireAuth().workspaceId;
       await (await this.workspaceObject(workspaceId)).bindConnectorOAuthAttemptTelemetry({
         workspaceId,
         attemptId,
@@ -463,8 +467,16 @@ export class ConnectionService {
         eventVersion,
         at: nowIso(),
       });
-    } catch {
+    } catch (error) {
       // Telemetry decoration only; the OAuth start it labels already stands.
+      // Logged rather than dropped: from here the benign refusal (a second bind
+      // losing to the operation-id unique index) and a structural one (a schema
+      // mismatch after a deploy, an unreachable object) look identical, and
+      // silently missing telemetry is the failure nobody goes looking for.
+      logWarn(this.env, "connector_oauth_attempt_telemetry_bind_failed", {
+        attempt_id: attemptId,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
     }
   }
 
