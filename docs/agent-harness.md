@@ -1072,6 +1072,21 @@ as its write, answered as an outcome with a returned witness, never derived
 from `rowsWritten` or reconstructed from a constraint violation after a lost
 race.
 
+A typed write that leaves an embedding intent must also arm the alarm that
+projects it. `memory_index_outbox` is on `WORKSPACE_ALARM_SOURCE_TABLES`, and
+while these writes were generic statements `executeRuntimeSql` re-derived the
+schedule for them; the first cut of this conversion dropped that, which would
+have left a memory written into a quiet workspace unprojected until an
+unrelated mutation happened to reconcile. `addMemoryItem`, `updateMemoryItem`
+and `invalidateMemoryItem` now call `refreshScheduleAfterMemoryOutboxWrite`,
+gated on an outcome that actually wrote a row — a replay or a refusal left no
+intent. The outbox claim, completion and retry methods deliberately do not:
+their only caller is `processMemoryIndexOutbox`, reached only as the
+`memory_index` maintenance target, which runs inside the object's own alarm
+drain, whose statements go through the local executor and never carried the
+auto-refresh either. A reconcile started there would race the drain's own
+end-of-drain `schedule_reconcile` with a stale target list.
+
 ### 2026-08-28 — A second host runs the compiler, and a semantic refinement has to be in the executor
 
 **What changed:** `AutomationAgent` runs `compileAutomation` from its own
