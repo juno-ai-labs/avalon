@@ -4157,27 +4157,36 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 20px;
 }
 
-/* Every mark in a plugin face is painted the same way: `currentColor` shown
-   through the artwork's own alpha. `.rally-mark` already carried its own mask
-   and only has to stop painting itself in the brand ink — the one colour in the
-   row that is not the shared neutral, and on the light themes the one with no
-   contrast to spare. A company mark brings its mask on `--plugin-mark`, set
-   from `plugin-marks.ts`. Nothing here draws a brand's palette: a mask reads
-   alpha only, which is what keeps eight companies legible on four grounds. */
+/* `.rally-mark` paints itself in the brand ink — the one colour in the row that
+   is not the shared neutral, and on the light themes the one with no contrast to
+   spare. Inside a plugin face it is a mark like any other. Company marks take
+   the row's colour through `.connector-mark`, above. */
 .plugin-face-mark { color: inherit; height: 17px; width: 17px; }
 
 /* A company mark is solid where the line icons beside it are 1.8px strokes, so
    it is drawn two pixels smaller to land at the same visual weight — matched by
    eye against the Tabler glyphs in the same column, not by geometry. */
 .connector-mark {
-  background: currentColor;
-  display: inline-block;
+  align-items: center;
+  display: inline-flex;
   flex: 0 0 auto;
   height: 16px;
-  -webkit-mask: var(--plugin-mark) center / contain no-repeat;
-  mask: var(--plugin-mark) center / contain no-repeat;
+  justify-content: center;
   width: 16px;
 }
+
+/* `pointer-events: none` because the monochrome art carries an SVG `<title>`,
+   which a browser shows as a native tooltip on hover — over rows that already
+   name the connector, and beside a `.plugin-face` that sets its own `title`. */
+.connector-mark > svg { height: 100%; pointer-events: none; width: 100%; }
+
+/* One neutral for every company. The package's `mono` art already paints in
+   `currentColor`; the two brands that ship none arrive with their palette on
+   the paths, and a CSS `fill` beats a presentation attribute, so this recolours
+   them to match. `[fill="none"]` is left alone — those shapes are deliberately
+   hollow, and filling them turns a mark into a blob. */
+.connector-mark svg [fill]:not([fill='none']) { fill: currentColor; }
+.connector-mark svg [stroke]:not([stroke='none']) { stroke: currentColor; }
 
 /* In a transcript row a company mark is solid where the line icons beside it are
    1.8px strokes, so it is drawn two pixels smaller than the box to land at the

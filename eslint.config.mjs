@@ -9,6 +9,7 @@ import {
   requireWebSocketTicketRule,
 } from "./scripts/eslint-rules/inference-boundaries.mjs";
 import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
+import { thesvgSubpathImportsRule } from "./scripts/eslint-rules/thesvg-subpath-imports.mjs";
 import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
 import { requireValidatedResponseRule } from "./scripts/eslint-rules/require-validated-response.mjs";
@@ -46,6 +47,7 @@ export default tseslint.config(
       rally: {
         rules: {
           "no-bare-zod-url": noBareZodUrlRule,
+          "thesvg-subpath-imports": thesvgSubpathImportsRule,
           "no-raw-entry-point-check": noRawEntryPointCheckRule,
           "no-direct-model-env-read": noDirectModelEnvReadRule,
           "no-direct-openrouter-client": noDirectOpenRouterClientRule,
@@ -71,6 +73,7 @@ export default tseslint.config(
       // wherever it is written, and the two folders that need it already keep
       // separate copies of the helper that replaces it.
       "rally/no-raw-entry-point-check": "error",
+      "rally/thesvg-subpath-imports": "error",
       "rally/provider-json-schema-complexity": "error",
     },
   },

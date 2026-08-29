@@ -9,7 +9,15 @@ import 'fake-indexeddb/auto';
 // test then fails as an assertion that never came true — indistinguishable from
 // a real defect, and only ever on CI. Five seconds costs a passing run nothing
 // and only slows one that was going to fail anyway.
-configure({ asyncUtilTimeout: 5_000 });
+configure({
+  asyncUtilTimeout: 5_000,
+  // An SVG `<title>` is the mark's metadata, not the page's text. The company
+  // marks carry one — `<title>Notion</title>` inside the Notion glyph — so a
+  // text query for a connector's name matched both the label a person reads and
+  // the glyph beside it. `script, style` is the library's own default for the
+  // same reason; this adds the third element whose text is not page text.
+  defaultIgnore: 'script, style, title',
+});
 
 /**
  * jsdom implements no `ResizeObserver`, and several components construct one on
