@@ -1,7 +1,10 @@
 import {
   WorkspaceAutomationTemplateListSchema,
+  WorkspaceAutomationTemplateOwnershipSchema,
   WorkspaceAutomationTemplateVersionResultSchema,
   type WorkspaceAutomationTemplateList,
+  type WorkspaceAutomationTemplateOwnership,
+  type WorkspaceAutomationTemplateOwnershipRequest,
   type WorkspaceAutomationTemplatePublishRequest,
   type WorkspaceAutomationTemplateVersionRequest,
   type WorkspaceAutomationTemplateVersionResult,
@@ -77,6 +80,21 @@ export function listWorkspaceAutomationTemplates(
   });
 }
 
+/** Whether this person owns an active template with this id. */
+export function workspaceAutomationTemplateOwnership(
+  storage: DurableObjectStorage,
+  request: WorkspaceAutomationTemplateOwnershipRequest,
+): WorkspaceAutomationTemplateOwnership {
+  const row = storage.sql.exec<{ id: string }>(
+    `SELECT id FROM automation_templates
+      WHERE id = ? AND workspace_id = ? AND owner_user_id = ? AND archived_at IS NULL`,
+    request.templateId,
+    request.workspaceId,
+    request.ownerUserId,
+  ).toArray()[0];
+  return WorkspaceAutomationTemplateOwnershipSchema.parse({ owned: row !== undefined });
+}
+
 /** Publish a template and its first version, or neither. */
 export function publishWorkspaceAutomationTemplate(
   storage: DurableObjectStorage,
@@ -101,13 +119,19 @@ export function publishWorkspaceAutomationTemplate(
 }
 
 /**
- * Add the next version, reading and bumping the number in one critical section.
+ * Add the next version, reading and bumping the number in one round trip.
  *
- * The service read `latest_version_number` and then wrote the incremented
- * value in a separate batch. Two people publishing a revision at the same
- * moment both read the same number and both wrote it, which
- * `UNIQUE (template_id, version_number)` turned into a 500 for whichever
- * landed second — a real failure with no explanation a person could act on.
+ * Two guarantees, and they are not the same one. What ends the version-number
+ * race is that this whole body runs inside a single Durable Object method: the
+ * service used to read `latest_version_number` here and write the incremented
+ * value in a separate batch, so two people publishing a revision at the same
+ * moment read the same number and both wrote it, and
+ * `UNIQUE (template_id, version_number)` turned that into a 500 for whichever
+ * landed second. The object's input gate is what serializes that now.
+ *
+ * `transactionSync` earns its place separately: it makes the version insert and
+ * the counter bump all-or-nothing, so a failing insert cannot leave
+ * `latest_version_number` ahead of the rows it counts.
  */
 export function addWorkspaceAutomationTemplateVersion(
   storage: DurableObjectStorage,
@@ -124,7 +148,6 @@ export function addWorkspaceAutomationTemplateVersion(
     if (!template) {
       return WorkspaceAutomationTemplateVersionResultSchema.parse({
         outcome: "template_not_found",
-        versionNumber: null,
       });
     }
     const versionNumber = template.latest_version_number + 1;
