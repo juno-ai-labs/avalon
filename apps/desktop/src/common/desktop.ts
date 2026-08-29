@@ -414,6 +414,28 @@ export interface RallyDesktopBridge {
   openMeetingAudioSettings: (permission: MeetingAudioPermissionKind) => Promise<void>;
   onMeetingCloseRequested: (listener: (reason: MeetingCloseReason) => void) => () => void;
   onSettingsSectionRequested: (listener: (section: DesktopSettingsSection) => void) => () => void;
+  /**
+   * Raise the deep-link failure window in front of whatever is on screen.
+   *
+   * A refused deep link is reported by whichever renderer was handed it, and
+   * for a connector completion that is the settings window — which raises and
+   * focuses itself, and renders no shell to put a message in. Anything drawn
+   * inside a single renderer is therefore either in a window nobody is looking
+   * at or in one with nowhere to draw it, which is why this leaves the renderer
+   * entirely and asks main for a window of its own.
+   *
+   * Both renderers are handed the same connector completion and both report it.
+   * The window is a singleton keyed on nothing: the second report re-shows the
+   * same window with the same message, so a duplicate costs a redundant focus
+   * rather than a second dialog.
+   */
+  showDeepLinkError: (message: string) => Promise<void>;
+  /** The message to show, read by the failure window once it has mounted. */
+  getDeepLinkError: () => Promise<string | null>;
+  /** A later failure replacing the one already on screen in that window. */
+  onDeepLinkErrorChanged: (listener: (message: string | null) => void) => () => void;
+  /** Acknowledged: close the failure window. Only that window may call this. */
+  dismissDeepLinkError: () => Promise<void>;
   consumePendingDeepLinks: () => Promise<DesktopDeepLinkNavigation[]>;
   onDeepLink: (listener: (navigation: DesktopDeepLinkNavigation) => void) => () => void;
   onSessionChanged: (listener: (session: DesktopSession | null) => void) => () => void;

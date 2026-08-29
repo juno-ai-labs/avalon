@@ -435,6 +435,20 @@ const browserBridge: RallyDesktopBridge = {
   onSettingsSectionRequested() {
     return () => undefined;
   },
+  async showDeepLinkError() {
+    // No second window to open in a browser tab; the caller falls back to the
+    // inline message it holds.
+    throw new Error('Rally cannot open a window here.');
+  },
+  async getDeepLinkError() {
+    return null;
+  },
+  onDeepLinkErrorChanged() {
+    return () => undefined;
+  },
+  async dismissDeepLinkError() {
+    // Nothing to dismiss: this bridge never opened a window.
+  },
   async consumePendingDeepLinks() {
     return [];
   },
