@@ -214,8 +214,14 @@ poll can be answered without leaving the rail. **Pop out** opens the same
 artifact in the dedicated artifact window when the rail is too small for
 the site. **Copy link** copies the canonical artifact URL. **Open in
 browser** mints a fresh access link and hands it to the system browser.
-Every surface serves the current version; a viewer who was reading V3 when
-V4 published sees V4 on their next load or reload. Opening the bare URL
+The canonical URL always serves the most recent version, and so does every
+default entry point: a chip or embed citation in chat, the rail preview,
+the pop-out window, and a link someone saved all resolve to current — a
+viewer who was reading V3 when V4 published sees V4 on their next load or
+reload. A prior version is reachable only on direct request, from the rail
+detail's version list: opening one renders *that* version read-only,
+plainly labeled as not current with one action — back to current — and no
+chip, embed, or shareable link ever pins a version. Opening the bare URL
 without Rally-minted access shows a neutral page saying the artifact must
 be opened from Rally — knowing a URL grants nothing, which is the house
 rule for every other resource identifier and holds here. While an app
@@ -233,8 +239,10 @@ participant, at any time — leads the model to edit the files in the sandbox
 (re-importing the current source from the published artifact first if the
 sandbox was recycled) and publish the same directory again. Same artifact,
 same URL, new version; the superseded version lands in the rail's version
-list with agent provenance, and a prior version's *source* opens read-only
-through the versioning layer's existing preview. Two participants asking
+list with agent provenance. From that list a prior version opens on direct
+request — rendered read-only per the Viewing rules above, with its
+*source* additionally readable through the versioning layer's existing
+preview. Two participants asking
 for changes at once are serialized by the substream run loop as any two
 asks are; the versioning layer records whichever landed second as the later
 version, and nothing is lost.
@@ -481,6 +489,30 @@ None yet.
     and discouraged by Electron's own documentation; *a screenshot or
     server-rendered thumbnail* — a dead image of a live thing, which is
     the failure mode this PRD exists to end.
+11. **The canonical URL is never version-addressed; prior versions render
+    under the serving Worker's reserved namespace, read-only.** Version
+    viewing reuses machinery this design already has: version bundles
+    are immutable in the bucket, and loader isolate IDs are
+    version-scoped (`artifact:<id>:v<n>`), so serving V3 is the same
+    `get()` with an older ID. A prior version is addressed only under
+    the serving Worker's reserved path namespace on the artifact's own
+    origin (the namespace `/__rally/open` already establishes — the one
+    prefix the server module never sees), which keeps one origin, one
+    cookie, and one access flow per artifact, and keeps every
+    participant-shareable address — the canonical URL, chips, embeds,
+    copied links — pointing at current. Two rules make old versions
+    safe to render: a prior *static* version serves its frozen assets
+    exactly; a prior *active* version runs its frozen module with
+    `env.STORAGE` **read-only** — writes throw — because old code
+    running against the live shared storage could corrupt what the
+    current version depends on, and "looking at V3" must never mutate
+    the artifact everyone else is using. The desktop chrome labels the
+    state (viewing V3, read-only, back to current), mirroring the
+    versioning layer's prior-version contract. Rejected: *pinned
+    version links* — a shared link that silently shows a stale site is
+    the confusion this rule exists to prevent; *serving prior versions
+    at distinct hostnames* — a second origin per version multiplies the
+    access flow and the label allocator for no product gain.
 
 ## Data model
 
@@ -774,8 +806,12 @@ rather than papered over.
    the preview pane works, and the preview's navigation stays on the
    artifact's origin — an external link in the page opens the system
    browser, not the pane.
-10. Prior versions are listed and their source opens read-only through
-   the versioning layer's preview.
+10. A chip or embed citation in chat always opens the current version.
+   From the version list, a prior version renders read-only on direct
+   request — a write attempted by a prior active version's module
+   throws, and the live artifact's storage is unchanged — with its
+   source additionally readable through the versioning layer's preview;
+   the canonical URL serves the newest version throughout.
 11. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render — the preview pane
    included.
