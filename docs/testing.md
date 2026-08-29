@@ -157,9 +157,12 @@ the test covers the wiring of the mocks.
 
 ## Timeouts and waiting
 
-**Every `vi.waitFor(…)` and `expect.poll(…)` passes an explicit `timeout`.** The
-number is the author's to choose, but it has to be chosen: both default to one
-second with a 50ms interval, which is sized for nothing in particular.
+**Every new or edited `vi.waitFor(…)` and `expect.poll(…)` passes an explicit
+`timeout`.** The number is the author's to choose, but it has to be chosen: both
+default to one second with a 50ms interval, which is sized for nothing in
+particular. Most existing `vi.waitFor` sites still ride that default — the rule
+is binding for the code you touch, and the backlog converts as files are
+edited, not in one sweep.
 `packages/agent-harness`, `packages/connectors`, `apps/ace` and `apps/site` raise
 the `expect.poll` default in their configs; `apps/api`, `apps/desktop` and
 `packages/db` do not. No config raises `vi.waitFor` anywhere, because Vitest

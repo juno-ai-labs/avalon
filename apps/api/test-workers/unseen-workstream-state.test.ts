@@ -417,10 +417,10 @@ describe("a work stream nobody has shown this person yet", () => {
       userId: INVITEE_ID,
     });
     creatorSocket.close(1000, "test complete");
-    // Above the 5s suite default because the budget covers two real WebSocket
-    // handshake-plus-subscribe round trips and three product ops under
-    // contended parallel-file load, not a slow object. `nextClose` and
+    // The suite's 30s budget covers two real WebSocket handshake-plus-
+    // subscribe round trips and three product ops under contended
+    // parallel-file load, not a slow object. `nextClose` and
     // `nextEvent` deliberately never reject: the convention here is to let the
     // harness timeout be the failure and size the budget for the work.
-  }, 20_000);
+  });
 });

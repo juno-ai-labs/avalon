@@ -25,6 +25,20 @@ test("finds an id passed inline as well as one bound to a constant", () => {
   assert.deepEqual(found.map((declaration) => declaration.id), ["00000000-0000-7000-8000-0000000004b3"]);
 });
 
+test("finds a call ordinary formatting split across lines", () => {
+  // A per-line match returned nothing for this shape, which let two files
+  // reuse an id whenever a formatter wrapped the call.
+  const found = workspaceIdLiterals(
+    [
+      "const WORKSPACE_ID = asWorkspaceId(",
+      "  \"00000000-0000-7000-8000-0000000009a0\",",
+      ");",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(found, [{ line: 1, id: "00000000-0000-7000-8000-0000000009a0" }]);
+});
+
 test("ignores an id assembled at run time, which is nobody else's to collide with", () => {
   // `forced-migration.test.ts` and `migration-reporting.test.ts` build a fresh
   // name per test from a prefix and a seed.

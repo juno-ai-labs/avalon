@@ -70,7 +70,10 @@ describe('Ace Models client', () => {
     });
 
     await act(async () => root.render(<ModelsView />));
-    await vi.waitFor(() => expect(container.textContent).toContain('Flagship connected'));
+    // Explicit budgets throughout: vi.waitFor's 1s default has no config knob,
+    // and these renders sit behind debounced fetches on a possibly loaded
+    // machine (docs/testing.md, "Timeouts and waiting").
+    await vi.waitFor(() => expect(container.textContent).toContain('Flagship connected'), { timeout: 5_000 });
     expect(container.textContent).toContain('Runs the main participant-visible work stream and the structured attachment-summary pass');
     expect(container.textContent).toContain('Targeted rules may still serve a different variation');
     const modelButtons = Array.from(container.querySelectorAll<HTMLButtonElement>('.models > button'));
@@ -92,7 +95,7 @@ describe('Ace Models client', () => {
     const save = Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent === 'Save route')!;
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
+    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'), { timeout: 5_000 });
     expect(save.disabled).toBe(true);
 
     const addFallback = Array.from(container.querySelectorAll('button'))
@@ -107,13 +110,13 @@ describe('Ace Models client', () => {
       freeTextInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
+    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'), { timeout: 5_000 });
     expect(save.disabled).toBe(false);
     await act(async () => save.click());
 
     await vi.waitFor(() => expect(fetch.mock.calls.some(([input, init]) => (
       String(input) === '/api/models/workstream' && init?.method === 'PUT'
-    ))).toBe(true));
+    ))).toBe(true), { timeout: 5_000 });
     const [, init] = fetch.mock.calls.find(([input, requestInit]) => (
       String(input) === '/api/models/workstream' && requestInit?.method === 'PUT'
     ))!;
@@ -142,7 +145,7 @@ describe('Ace Models client', () => {
 
     await act(async () => root.render(<ModelsView />));
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'));
+    await vi.waitFor(() => expect(container.textContent).toContain('All model IDs are available through OpenRouter.'), { timeout: 5_000 });
     const primary = container.querySelector<HTMLInputElement>('.model-route-card input')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(primary, 'missing/model');
@@ -150,7 +153,7 @@ describe('Ace Models client', () => {
     });
 
     await act(async () => { await vi.advanceTimersByTimeAsync(400); });
-    await vi.waitFor(() => expect(container.textContent).toContain('OpenRouter does not recognize or currently route: missing/model'));
+    await vi.waitFor(() => expect(container.textContent).toContain('OpenRouter does not recognize or currently route: missing/model'), { timeout: 5_000 });
     expect(primary.getAttribute('aria-invalid')).toBe('true');
     const save = Array.from(container.querySelectorAll('button'))
       .find((button) => button.textContent === 'Save route')!;

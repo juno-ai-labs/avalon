@@ -22,20 +22,20 @@ export default defineConfig({
     // tests that need *more* than this floor.
     testTimeout: 30_000,
     hookTimeout: 30_000,
-    // Bounds how many module-graph instantiations compete at once against the
-    // one Miniflare the pool shares across concurrently-running files — a cap
-    // on contention, not on test throughput. Left implicit this inherited
-    // `availableParallelism() - 1`, which is 3 on the four-core sandbox and
-    // grows with the machine; 3 is that number made explicit and stable. The
-    // arithmetic if it needs revisiting: 34 files x ~14s of instantiation is
-    // ~476s of work, so 3 concurrent files is ~160s of wall clock, 2 is ~240s,
-    // and 1 is ~480s. `VITEST_MAX_WORKERS` overrides this without an edit.
+    // No explicit `maxWorkers`: the pool's own default, `availableParallelism()
+    // minus one`, decides how many module-graph instantiations compete against
+    // the one Miniflare the files share, and `VITEST_MAX_WORKERS` overrides it
+    // per machine without an edit (docs/dev-environment.md has the
+    // multi-session arithmetic). If the team wants a fixed cap instead, the
+    // arithmetic for choosing it: 34 files x ~14s of instantiation is ~476s of
+    // work, so 3 concurrent files is ~160s of wall clock, 2 is ~240s, and 1 is
+    // ~480s — the number is a team decision, not one to hardcode from a
+    // four-core sandbox (docs/adding-security-defensive-and-other-limits.md).
     //
     // If a socket test in this directory starts failing intermittently, the
     // documented cause is WebSockets in a Durable Object under per-file storage
     // isolation and the documented remedy is `maxWorkers: 1, isolate: false`
     // here (docs/testing.md) — never a `retry`, and never adopted pre-emptively,
     // because it serialises the suite into roughly eight minutes.
-    maxWorkers: 3,
   },
 });
