@@ -134,9 +134,10 @@ describe("API security utilities", () => {
   });
 
   it("attaches resources with watching off until a canonical watch is activated", () => {
-    const enableSql = __resourceServiceTesting.enableResourceWatchSql.replace(/\s+/gu, " ");
-    expect(enableSql).toContain("watch_type = excluded.watch_type");
-    expect(enableSql).toContain("next_poll_at = excluded.next_poll_at");
+    // The watch upsert itself moved into WorkspaceDO as `enableResourceWatch`;
+    // its re-enable behaviour runs for real in
+    // `test-workers/workspace-resources-inventory.test.ts` rather than being
+    // pinned as source text here.
     // The reader production runs. A second, pre-cutover copy of this query used
     // to carry the same rule and this assertion was pointed at *that* one —
     // which is how a source-text assertion outlives the code it describes.

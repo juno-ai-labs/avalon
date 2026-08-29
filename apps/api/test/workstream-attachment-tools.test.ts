@@ -22,6 +22,7 @@ import {
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { ensureResourceSlug } from "../src/services/resource-slug";
 import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
+import { workspaceResourceMaintenanceRpcs } from "./helpers/workspace-object-rpcs";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const OTHER_USER_ID = "00000000-0000-4000-8000-000000000009";
@@ -91,6 +92,12 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
     // Receipts reach their object through the typed port now, not through the
     // routed D1 handle, so the binding has to be here for the port to resolve.
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+    // The alias claim is a typed WorkspaceDO method now, and the runtime
+    // router this binding activates answers the tools' resource SQL over the
+    // same fixture database rather than a second store.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: workspaceResourceMaintenanceRpcs(database),
+    }),
   });
   return {
     database,
