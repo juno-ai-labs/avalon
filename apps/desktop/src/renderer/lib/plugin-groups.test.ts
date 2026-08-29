@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { pluginGroup, pluginGroupIconForContract } from './plugin-groups';
+import { connectorBrandMark } from './plugin-marks';
 
 describe('pluginGroup', () => {
   it.each([
@@ -59,6 +60,23 @@ describe('pluginGroup', () => {
     ['Generic webhook', 'webhook'],
   ])('draws %s with its own mark', (displayName, icon) => {
     expect(pluginGroup('connection:one', displayName)?.icon).toBe(icon);
+  });
+
+  it.each([
+    ['github', 'GitHub'],
+    ['google', 'Google Mail + Calendar'],
+    ['google', 'Google Drive + Docs + Sheets'],
+    ['granola', 'Granola'],
+    ['linear', 'Linear'],
+    ['notion', 'Notion'],
+    ['slack', 'Slack'],
+    ['x', 'X'],
+  ])('draws %s the same whether it is known by type or by name', (connectorType, displayName) => {
+    // Settings reaches a mark from the connector type it holds; a transcript row
+    // has only the name. They are two routes into one table, and this is what
+    // stops one surface calling a company something the other does not.
+    expect(pluginGroup('connection:one', displayName)?.icon)
+      .toBe(connectorBrandMark(connectorType, displayName));
   });
 
   it('gives every connector Rally has an adapter for a mark of its own', () => {

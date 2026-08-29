@@ -2112,6 +2112,12 @@ pre {
 .provider-card-heading > div:last-child { display: flex; flex-direction: column; min-width: 0; }
 .provider-card-heading strong { font-size: 11.5px; }
 .provider-card-heading span { color: var(--av-sys-color-text-muted); font-size: 9.5px; margin-top: 1px; }
+/* The card keeps its tinted chip — this is a control a person clicks, unlike a
+   transcript row's bare mark — and only the glyph inside it becomes the real
+   company mark. `--av-sys-color-brand-ink` is the chip's own foreground, so the
+   mark is painted in it like the line icon it replaced. */
+.provider-mark { height: 19px; width: 19px; }
+
 .provider-icon {
   align-items: center;
   background: color-mix(in srgb, var(--av-sys-color-brand-base) 11%, var(--av-sys-color-surface-raised));
@@ -2170,6 +2176,9 @@ pre {
   vertical-align: middle;
 }
 .settings-connection-name { align-items: center; display: flex; gap: 9px; }
+/* Between the status dot and the name, at the row's own text colour. The gap
+   above spaces it from both without a rule of its own. */
+.settings-connection-mark { height: 14px; width: 14px; }
 .settings-connection-table td:last-child { text-align: right; }
 .settings-connection-actions { align-items: center; display: inline-flex; justify-content: flex-end; }
 .settings-connection-empty-row td { height: auto; padding: 0; }
@@ -4154,15 +4163,21 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
 /* A company mark is solid where the line icons beside it are 1.8px strokes, so
    it is drawn two pixels smaller to land at the same visual weight — matched by
    eye against the Tabler glyphs in the same column, not by geometry. */
-.plugin-face-mark:not(.rally-mark) {
+.connector-mark {
   background: currentColor;
   display: inline-block;
   flex: 0 0 auto;
-  height: 15px;
+  height: 16px;
   -webkit-mask: var(--plugin-mark) center / contain no-repeat;
   mask: var(--plugin-mark) center / contain no-repeat;
-  width: 15px;
+  width: 16px;
 }
+
+/* In a transcript row a company mark is solid where the line icons beside it are
+   1.8px strokes, so it is drawn two pixels smaller than the box to land at the
+   same visual weight — matched by eye against the Tabler glyphs in the same
+   column, not by geometry. */
+.plugin-face .connector-mark { height: 15px; width: 15px; }
 
 /* The group's "still going" signal, in place of the spinner each plugin row
    used to carry. The reduced-motion block near the end of this file cuts the
