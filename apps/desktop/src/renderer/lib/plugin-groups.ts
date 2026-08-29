@@ -141,6 +141,11 @@ export function pluginGroup(
   // the canonical block that replaces it can both produce: they identify the
   // same plugin by different ids.
   if (displayName) return { key: `name:${displayName}`, name: displayName, icon: connectorIconForName(displayName) };
-  if (pluginId) return { key: `id:${pluginId}`, name: pluginId, icon: 'plug' };
+  // A plugin id this table cannot name is not a row. `connection:<uuid>` is the
+  // shape that reaches here — a connector block whose plugin activity has not
+  // arrived, or never will — and a row reading "connection:9c1f… worked for
+  // 0ms" is worse than the tool name this feed already declines to show. It
+  // would also key on the id, so the activity landing later would open a second
+  // row beside it rather than merging into one.
   return null;
 }

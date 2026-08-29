@@ -884,6 +884,13 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         id: `${message.id}:plugin-group:${contribution.key}`,
         messageType: 'plugin_activity',
         pluginActivity: contribution.activity,
+        // A group row stands for machinery, not for something a person read, so
+        // it carries no attention ordinal — the same reason the projected
+        // plugin-activity row above sets this null. The tool row it is built
+        // from carries its *turn's* ordinal, which is also the ordinal of that
+        // turn's text, so spreading it would let a group scrolling into view
+        // acknowledge an answer still below the fold.
+        attentionSequenceNumber: null,
         // The tool call and its own thinking row are what this replaces;
         // nothing downstream should read them back off the group.
         toolEvent: undefined,

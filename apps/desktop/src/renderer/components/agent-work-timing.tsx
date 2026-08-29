@@ -21,6 +21,14 @@ export interface AgentWorkTimingProps {
   activeVerb?: string;
   completedVerb?: string;
   /**
+   * The stable name a screen reader hears while the segment runs. The visible
+   * label ticks ten times a second, so a live region cannot carry it; this is
+   * the sentence that stands in, and every caller that overrides `activeVerb`
+   * owns one — deriving it from the verb turned a thinking row's name into the
+   * bare word "thinking".
+   */
+  activeName?: string;
+  /**
    * Drawn in the orb's place. A grouped plugin row names the plugin it is
    * timing, and its mark is what says which one — a second spinner beside
    * every mark says only that something is running, which the mark and the
@@ -55,6 +63,7 @@ export function AgentCompactionIndicator(): React.JSX.Element {
 
 export function AgentWorkTiming({
   active,
+  activeName = 'Rally is working',
   activeVerb = 'working',
   completedVerb = 'worked',
   durationMs,
@@ -92,11 +101,8 @@ export function AgentWorkTiming({
     ? `${verb} for at most ${duration}`
     : `${verb} for ${duration}`;
   // The elapsed time changes ten times a second, so a live region carrying it
-  // would read the row out continuously. While the segment runs the name is the
-  // verb alone, which is stable: "Rally is working", "Slack is working".
-  const accessibleLabel = active
-    ? activeVerb === 'working' ? 'Rally is working' : activeVerb
-    : label;
+  // would read the row out continuously; `activeName` is the stable stand-in.
+  const accessibleLabel = active ? activeName : label;
 
   return (
     <div

@@ -49,6 +49,16 @@ export const PLUGIN_BRAND_MARKS = {
 export type PluginBrandMark = keyof typeof PLUGIN_BRAND_MARKS;
 
 /**
+ * Whether a glyph name is a company's mark rather than one of the shapes no
+ * company owns. A guard rather than a bare `in`, so the narrowing is real: what
+ * is left after it stays a closed union, and a glyph added to one table but not
+ * the other fails to typecheck instead of rendering as undefined.
+ */
+export function isPluginBrandMark(icon: string): icon is PluginBrandMark {
+  return icon in PLUGIN_BRAND_MARKS;
+}
+
+/**
  * The mark a connector wears, from the type its own manifest declares.
  *
  * This is the mapping every surface goes through, so a connector wears one mark
