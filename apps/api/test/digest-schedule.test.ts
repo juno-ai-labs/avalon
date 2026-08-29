@@ -14,6 +14,7 @@ import {
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 
 const WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const OWNER = asUserId("00000000-0000-7000-8000-000000000002");
@@ -33,19 +34,53 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-function envFor(database: DatabaseSync): Env {
-  return createTestEnv({
+interface Fixture {
+  database: DatabaseSync;
+  /** The workspace object's own database, where every digest table lives now. */
+  objectDatabase: DatabaseSync;
+  env: Env;
+}
+
+/**
+ * One real `WorkspaceDO` per fixture, serving both the typed digest methods
+ * and the runtime SQL port. The digest tables live in the object's own
+ * database, exactly as production routes them; only identity — users,
+ * workspaces, memberships — stays in the regional database.
+ */
+function fixture(options: { extra?: Record<string, unknown> } = {}): Fixture {
+  const database = seededDatabase();
+  const { instance, objectDatabase } = createTestWorkspaceDO({
+    workspaceId: WORKSPACE,
+    regionalDatabase: database,
+    register: (created) => databases.push(created),
+  });
+  const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
-    // WorkspaceDO owns the workspace alarm now: a digest save reconciles its
-    // own object rather than poking a separate scheduler. The stub keeps the
-    // seeded rows in this database while answering that reconcile.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-      extra: { refreshSchedule: async () => ({ alarmAt: null }) },
+      extra: {
+        ...workspaceObjectRpcs(instance, [
+          "digestSettings",
+          "replaceDigestSchedule",
+          "ensureDefaultDigestSchedule",
+          "digestScheduleRowState",
+          "replaceDigestScheduleRows",
+          // The one digest statement still routed generically — the settings
+          // read joining targets to connector display names — must reach the
+          // same object database the typed writes landed in.
+          "executeRuntimeSql",
+        ]),
+        // WorkspaceDO owns the workspace alarm: a digest save reconciles its
+        // own object rather than poking a separate scheduler. Stubbed so a
+        // test can observe when the reconcile happened.
+        refreshSchedule: async () => ({ alarmAt: null }),
+        ...options.extra,
+      },
     }),
   });
+  return { database, objectDatabase, env };
 }
 
 function seededDatabase(): DatabaseSync {
@@ -93,7 +128,7 @@ describe("digest schedule", () => {
   // so it has to describe what the reconciler is about to create rather than
   // something quieter.
   it("shows the on-by-default weekday schedule in the reader's own timezone", async () => {
-    const schedule = await new DigestService(envFor(seededDatabase()), auth).get();
+    const schedule = await new DigestService(fixture().env, auth).get();
 
     expect(schedule.enabled).toBe(true);
     expect(schedule.days).toEqual([1, 2, 3, 4, 5]);
@@ -106,25 +141,24 @@ describe("digest schedule", () => {
   });
 
   it("stays off before it is saved when the account has no address to send to", async () => {
-    const database = seededDatabase();
+    const { database, env } = fixture();
     database.exec(`UPDATE users SET email = '' WHERE id = '${OWNER}'`);
 
-    const schedule = await new DigestService(envFor(database), auth).get();
+    const schedule = await new DigestService(env, auth).get();
 
     expect(schedule.enabled).toBe(false);
     expect(schedule.deliveryTargets).toEqual([]);
   });
 
   it("runs in the account timezone and follows it when that changes", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
+    const { database, objectDatabase, env } = fixture();
     await new DigestService(env, auth).replace({
       enabled: true,
       days: [1],
       times: [9 * 60],
       deliveryTargets: [{ type: "email", connectionId: null }],
     });
-    const before = database.prepare(
+    const before = objectDatabase.prepare(
       "SELECT timezone, next_run_at FROM schedules WHERE digest_schedule_id IS NOT NULL",
     ).get() as { timezone: string; next_run_at: string };
     expect(before.timezone).toBe("Europe/London");
@@ -132,7 +166,7 @@ describe("digest schedule", () => {
     database.exec(`UPDATE users SET timezone = 'Asia/Tokyo' WHERE id = '${OWNER}'`);
     await rebuildDigestSchedulesForTimezone(env, { userId: OWNER, timezone: "Asia/Tokyo" });
 
-    const after = database.prepare(
+    const after = objectDatabase.prepare(
       "SELECT timezone, next_run_at FROM schedules WHERE digest_schedule_id IS NOT NULL",
     ).get() as { timezone: string; next_run_at: string };
     // Same configured hour, a different instant: 09:00 is 09:00 in whichever
@@ -147,9 +181,9 @@ describe("digest schedule", () => {
   });
 
   it("derives one schedule row per time and freezes the account email", async () => {
-    const database = seededDatabase();
+    const { objectDatabase, env } = fixture();
 
-    const saved = await new DigestService(envFor(database), auth).replace({
+    const saved = await new DigestService(env, auth).replace({
       enabled: true,
       days: [1, 3, 5],
       times: [16 * 60, 9 * 60, 12 * 60],
@@ -163,7 +197,7 @@ describe("digest schedule", () => {
       displayName: "owner@example.com",
       status: "active",
     })]);
-    const rules = database.prepare(
+    const rules = objectDatabase.prepare(
       "SELECT rrule FROM schedules WHERE digest_schedule_id IS NOT NULL ORDER BY rrule",
     ).all() as Array<{ rrule: string }>;
     expect(rules.map((row) => row.rrule)).toEqual([
@@ -175,8 +209,8 @@ describe("digest schedule", () => {
   });
 
   it("leaves nothing in the scheduler when the digest is switched off", async () => {
-    const database = seededDatabase();
-    const service = new DigestService(envFor(database), auth);
+    const { objectDatabase, env } = fixture();
+    const service = new DigestService(env, auth);
     await service.replace({
       enabled: true,
       days: [1],
@@ -196,12 +230,14 @@ describe("digest schedule", () => {
     expect(disabled.days).toEqual([1]);
     expect(disabled.times).toEqual([9 * 60]);
     expect(disabled.nextRunAt).toBeNull();
-    expect(database.prepare("SELECT COUNT(*) AS count FROM schedules").get()).toEqual({ count: 0 });
+    expect(objectDatabase.prepare(
+      "SELECT COUNT(*) AS count FROM schedules",
+    ).get()).toEqual({ count: 0 });
   });
 
   it("replaces rather than accumulates on a second save", async () => {
-    const database = seededDatabase();
-    const service = new DigestService(envFor(database), auth);
+    const { objectDatabase, env } = fixture();
+    const service = new DigestService(env, auth);
     const save = (times: number[]) => service.replace({
       enabled: true,
       days: [1, 2],
@@ -213,14 +249,14 @@ describe("digest schedule", () => {
     const second = await save([17 * 60]);
 
     expect(second.times).toEqual([17 * 60]);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM schedules").get()).toEqual({ count: 1 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_schedules").get()).toEqual({ count: 1 });
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM schedules").get()).toEqual({ count: 1 });
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM digest_schedules").get()).toEqual({ count: 1 });
   });
 
   it("refuses a destination the person cannot actually be reached at", async () => {
-    const database = seededDatabase();
+    const { objectDatabase, env } = fixture();
 
-    await expect(new DigestService(envFor(database), auth).replace({
+    await expect(new DigestService(env, auth).replace({
       enabled: true,
       days: [1],
       times: [9 * 60],
@@ -228,25 +264,26 @@ describe("digest schedule", () => {
       deliveryTargets: [{ type: "slack_agent_dm", connectionId: WORKSTREAM }],
     })).rejects.toMatchObject({ status: 422, code: "delivery_target_unavailable" });
     // Nothing is half-written: the schedule is resolved before anything is saved.
-    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_schedules").get()).toEqual({ count: 0 });
+    expect(objectDatabase.prepare(
+      "SELECT COUNT(*) AS count FROM digest_schedules",
+    ).get()).toEqual({ count: 0 });
   });
 
   it("recomputes the workspace alarm only after the rows are written", async () => {
-    const database = seededDatabase();
     const scheduleCountAtRefresh = vi.fn();
-    const env = createTestEnv({
-      ...envFor(database),
-      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
-        extra: {
-          refreshSchedule: async () => {
-            scheduleCountAtRefresh(database.prepare("SELECT COUNT(*) AS count FROM schedules").get());
-            return { alarmAt: null };
-          },
+    // The closure runs during the save below, well after `built` initializes.
+    const built: Fixture = fixture({
+      extra: {
+        refreshSchedule: async () => {
+          scheduleCountAtRefresh(
+            built.objectDatabase.prepare("SELECT COUNT(*) AS count FROM schedules").get(),
+          );
+          return { alarmAt: null };
         },
-      }),
+      },
     });
 
-    await new DigestService(env, auth).replace({
+    await new DigestService(built.env, auth).replace({
       enabled: true,
       days: [1],
       times: [9 * 60],
@@ -270,36 +307,34 @@ describe("digest schedule", () => {
 
 describe("digests are on by default", () => {
   it("gives every active member a weekday digest delivered to their address", async () => {
-    const database = seededDatabase();
+    const { objectDatabase, env } = fixture();
 
-    const result = await reconcileDigestDefaults(envFor(database));
+    const result = await reconcileDigestDefaults(env);
 
     expect(result).toEqual({ created: 2, derived: 2 });
-    expect(await new DigestService(envFor(database), auth).get()).toMatchObject({
+    expect(await new DigestService(env, auth).get()).toMatchObject({
       enabled: true,
       days: [1, 2, 3, 4, 5],
       times: [9 * 60],
       timezone: "Europe/London",
       deliveryTargets: [expect.objectContaining({ type: "email", displayName: "owner@example.com" })],
     });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT COUNT(*) AS count FROM schedules WHERE digest_schedule_id IS NOT NULL",
     ).get()).toEqual({ count: 2 });
   });
 
   it("is idempotent, so a second tick changes nothing", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
+    const { objectDatabase, env } = fixture();
     await reconcileDigestDefaults(env);
 
     expect(await reconcileDigestDefaults(env)).toEqual({ created: 0, derived: 0 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_schedules").get()).toEqual({ count: 2 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_delivery_targets").get()).toEqual({ count: 2 });
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM digest_schedules").get()).toEqual({ count: 2 });
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM digest_delivery_targets").get()).toEqual({ count: 2 });
   });
 
   it("never resurrects a digest somebody switched off", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
+    const { env } = fixture();
     await reconcileDigestDefaults(env);
     await new DigestService(env, auth).replace({
       enabled: false,
@@ -316,8 +351,7 @@ describe("digests are on by default", () => {
   });
 
   it("gives a member who joins later one too", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
+    const { database, objectDatabase, env } = fixture();
     await reconcileDigestDefaults(env);
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, timezone, created_at, updated_at)
@@ -328,25 +362,24 @@ describe("digests are on by default", () => {
     `);
 
     expect(await reconcileDigestDefaults(env)).toEqual({ created: 1, derived: 1 });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT timezone FROM schedules WHERE digest_schedule_id = (SELECT id FROM digest_schedules WHERE user_id = ?)",
     ).get("00000000-0000-7000-8000-00000000000f")).toEqual({ timezone: "Asia/Tokyo" });
   });
 
   it("repairs a save that wrote the configuration but not its schedule rows", async () => {
-    const database = seededDatabase();
-    const env = envFor(database);
+    const { objectDatabase, env } = fixture();
     await reconcileDigestDefaults(env);
-    database.exec("DELETE FROM schedules");
+    objectDatabase.exec("DELETE FROM schedules");
 
     expect(await reconcileDigestDefaults(env)).toEqual({ created: 0, derived: 2 });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM schedules").get()).toEqual({ count: 2 });
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM schedules").get()).toEqual({ count: 2 });
   });
 
   it("skips a member with no address to send to", async () => {
-    const database = seededDatabase();
+    const { database, env } = fixture();
     database.exec(`UPDATE users SET email = '  ' WHERE id = '${OTHER}'`);
 
-    expect(await reconcileDigestDefaults(envFor(database))).toEqual({ created: 1, derived: 1 });
+    expect(await reconcileDigestDefaults(env)).toEqual({ created: 1, derived: 1 });
   });
 });

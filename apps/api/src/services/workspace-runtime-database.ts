@@ -87,10 +87,19 @@ export const WORKSPACE_LOCAL_TABLES = [
   "automation_email_receipts",
   "automation_email_rate_windows",
   "automation_resources",
+  // The digest domain reaches these through typed WorkspaceDO methods now.
+  // One routed statement remains — the settings read that joins
+  // `digest_delivery_targets` to `connector_connections` for display names —
+  // and the entries stay regardless, so an accidental generic statement is
+  // routed to the object that has the tables rather than answered
+  // `no such table` by D1.
   "digest_schedules",
   "digest_schedule_times",
   "digest_delivery_targets",
   "digest_deliveries",
+  // Shared: digest-owned rows are written through the typed digest methods,
+  // while the workspace scheduler and the connector-poll paths still route
+  // their statements here.
   "schedules",
   "resources",
   "resource_versions",
