@@ -5,13 +5,14 @@ import {
   IconBrandGoogleDrive,
   IconBrandNotion,
   IconBrandSlack,
+  IconDeviceDesktop,
   IconPlug,
   IconStack2,
   IconWebhook,
   IconWorldSearch,
   type TablerIcon,
 } from '@tabler/icons-react';
-import type { AutomationPluginActivity, AutomationPluginIcon } from '@rally/contracts';
+import type { AutomationPluginActivity } from '@rally/contracts';
 import {
   Check,
   ChevronDown,
@@ -42,6 +43,7 @@ import { saveMessageExport } from '../lib/message-export';
 import { desktopBridge, desktopServicesAvailable } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
 import { useTextClamped } from '../lib/use-text-clamped';
+import type { PluginGroupIcon } from '../lib/plugin-groups';
 import type { ActivitySuggestionData, ElicitationData, Message, MessageMention } from '../lib/types';
 import { AgentWorkTiming } from './agent-work-timing';
 import {
@@ -54,7 +56,7 @@ import {
   type CitationRender,
 } from './markdown-citations';
 import { type AttachmentPreview, MessageAttachments } from './attachments';
-import { Badge, Button, InlineError } from './primitives';
+import { Badge, Button, InlineError, RallyMark } from './primitives';
 
 /**
  * A stable colour per participant. The values are the theme's, reached through
@@ -1043,30 +1045,80 @@ function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | nu
   );
 }
 
-const pluginIconByKey: Record<AutomationPluginIcon, TablerIcon> = {
+const pluginIconByKey: Record<Exclude<PluginGroupIcon, 'rally'>, TablerIcon> = {
   'brand-github': IconBrandGithub,
   'brand-google': IconBrandGoogle,
   'brand-google-drive': IconBrandGoogleDrive,
   'brand-notion': IconBrandNotion,
   'brand-slack': IconBrandSlack,
+  computer: IconDeviceDesktop,
   linear: IconStack2,
   plug: IconPlug,
   webhook: IconWebhook,
   'world-search': IconWorldSearch,
 };
 
-/** A row shows the plugin that owns the tool it ran, so there is only ever one. */
-function PluginFace({ plugin }: { plugin: AutomationPluginActivity }): React.JSX.Element {
-  const PluginIcon = pluginIconByKey[plugin.icon];
+/** Rally's own mark is artwork, not a line icon, so it is not in the table. */
+function PluginGlyphMark({ icon }: { icon: PluginGroupIcon }): React.JSX.Element {
+  if (icon === 'rally') return <RallyMark className="plugin-face-mark" />;
+  const PluginIcon = pluginIconByKey[icon];
+  return <PluginIcon aria-hidden="true" size={15} stroke={1.8} />;
+}
+
+/**
+ * The mark for one plugin, drawn bare.
+ *
+ * No chip, no ring: a row of enclosed glyphs reads as a toolbar, and these are
+ * not controls. The glyph takes a single high-contrast neutral rather than each
+ * connector's brand colour, because a brand colour chosen to sit on its own
+ * chip has no guaranteed contrast against a transcript in four themes.
+ *
+ * `pulsing` is how a group says it is still working. It replaces the per-plugin
+ * spinner: one mark that breathes carries the same fact in the space the mark
+ * already occupies.
+ */
+function PluginGlyph({ icon, name, pulsing = false }: {
+  icon: PluginGroupIcon;
+  name: string;
+  pulsing?: boolean;
+}): React.JSX.Element {
   return (
     <span
-      aria-label={`Plugin: ${plugin.displayName}`}
-      className={clsx('plugin-face', `plugin-face-${plugin.icon}`)}
+      aria-label={`Plugin: ${name}`}
+      className={clsx('plugin-face', `plugin-face-${icon}`, pulsing && 'plugin-face-active')}
       role="img"
-      title={plugin.displayName}
+      title={name}
     >
-      <PluginIcon aria-hidden="true" size={14} stroke={1.8} />
+      <PluginGlyphMark icon={icon} />
     </span>
+  );
+}
+
+/** A row shows the plugin that owns the tool it ran, so there is only ever one. */
+function PluginFace({ plugin }: { plugin: AutomationPluginActivity }): React.JSX.Element {
+  return <PluginGlyph icon={plugin.icon} name={plugin.displayName} />;
+}
+
+/**
+ * One plugin's stretch of work, standing in for every tool call it made.
+ *
+ * The wording is the plugin's own — "Slack is working for 4m 02s" becoming
+ * "Slack worked for 5m 02s" — so the row reads as a place rather than as a
+ * mechanism, which is the whole point of hiding the calls underneath it.
+ */
+function PluginActivityBlock({ message }: { message: Message }): React.JSX.Element | null {
+  const group = message.pluginActivity;
+  if (!group) return null;
+  return (
+    <AgentWorkTiming
+      active={group.active}
+      activeVerb={`${group.name} is working`}
+      completedVerb={`${group.name} worked`}
+      durationMs={group.durationMs}
+      icon={<PluginGlyph icon={group.icon} name={group.name} pulsing={group.active} />}
+      monotonicStartedAt={group.monotonicStartedAt}
+      timingAccuracy={group.timingAccuracy}
+    />
   );
 }
 
@@ -1397,6 +1449,7 @@ export function MessageBlock({
 }: MessageBlockProps): React.JSX.Element {
   if (message.messageType === 'thought') return <div className="transcript-event" id={`message-${message.id}`}><ThoughtBlock message={message} /></div>;
   if (message.messageType === 'tool_event') return <div className="transcript-event" id={`message-${message.id}`}><ToolBlock message={message} /></div>;
+  if (message.messageType === 'plugin_activity') return <div className="transcript-event" id={`message-${message.id}`}><PluginActivityBlock message={message} /></div>;
   if (message.messageType === 'elicitation' && message.elicitation) {
     if (message.elicitation.status === 'answered') {
       const externalResponse = message.authorType === 'external';
