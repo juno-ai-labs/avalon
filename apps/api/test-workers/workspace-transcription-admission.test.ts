@@ -28,8 +28,8 @@ import {
 } from "../src/durable-objects/workspace-transcription-storage";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009e0");
-const USER = asUserId("00000000-0000-7000-8000-0000000009e1");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c1b00");
+const USER = asUserId("00000000-0000-7000-8000-0000000c1b01");
 const NOW_S = 1_800_000_000;
 
 function workspace() {
@@ -108,11 +108,11 @@ describe("dictation admission", () => {
   it("bounds aggregate workspace concurrency across distinct people", async () => {
     for (let index = 0; index < MAX_CONCURRENT_WORKSPACE_TRANSCRIPTION_SESSIONS; index += 1) {
       expect((await admit({
-        userId: asUserId(`00000000-0000-7000-8000-${String(index).padStart(9, "0")}9f0`),
+        userId: asUserId(`00000000-0000-7000-8000-${String(index).padStart(9, "0")}b20`),
       })).outcome).toBe("admitted");
     }
     expect((await admit({
-      userId: asUserId("00000000-0000-7000-8000-0000000009ff"),
+      userId: asUserId("00000000-0000-7000-8000-0000000c1b0f"),
     })).outcome).toBe("concurrency_limit");
   });
 
@@ -162,7 +162,7 @@ describe("dictation admission", () => {
     // `rejects.toThrow` reads through it a second time, which surfaces the same
     // rejection again as an unhandled error and fails the run.
     const outcome = await workspace().admitTranscriptionSession({
-      workspaceId: asWorkspaceId("00000000-0000-7000-8000-0000000009ee"),
+      workspaceId: asWorkspaceId("00000000-0000-7000-8000-0000000c1b0e"),
       userId: USER,
       ticketId: nextId(),
       ticketExpiresAtSeconds: NOW_S + 60,

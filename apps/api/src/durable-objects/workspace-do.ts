@@ -402,7 +402,17 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "slack_unfurled_links",
 ]);
 
-const WORKSPACE_TYPED_RPC_ONLY_TABLES = ["workstream_notification_intents"] as const;
+const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "workstream_notification_intents",
+  // Converted to typed methods, so a generic statement naming one is a
+  // mistake rather than a legacy caller. Refusing it here is what makes the
+  // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
+  // statement reaches this object and is told why, instead of executing
+  // against storage nobody meant to reach generically.
+  "automation_directory",
+  "realtime_transcription_sessions",
+  "realtime_transcription_ticket_receipts",
+] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
   return WORKSPACE_TYPED_RPC_ONLY_TABLES.find((table) => (
@@ -5398,20 +5408,6 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   /**
-   * The title to show as a generated work stream's origin label.
-   *
-   * WorkstreamDO renders the summary and does not hold the automation's
-   * directory row. It used to read it as SQL through the workspace runtime
-   * facade, which routes by table name and sends an unrecognised one to the
-   * regional database — which is how this read came to answer
-   * `no such table: automation_directory` on every attempt to open an
-   * automation's run work stream.
-   *
-   * A deleted automation answers `null` rather than its last title: the work
-   * stream outlives the automation that made it, and the label should go quiet
-   * rather than name something the workspace no longer has.
-   */
-  /**
    * Admit one realtime dictation socket: sweep, spend the ticket, take a slot.
    *
    * The service used to send these as separate statements through the
@@ -5453,6 +5449,20 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return renewWorkspaceTranscriptionSession(this.state.storage, request);
   }
 
+  /**
+   * The title to show as a generated work stream's origin label.
+   *
+   * WorkstreamDO renders the summary and does not hold the automation's
+   * directory row. It used to read it as SQL through the workspace runtime
+   * facade, which routes by table name and sends an unrecognised one to the
+   * regional database — which is how this read came to answer
+   * `no such table: automation_directory` on every attempt to open an
+   * automation's run work stream.
+   *
+   * A deleted automation answers `null` rather than its last title: the work
+   * stream outlives the automation that made it, and the label should go quiet
+   * rather than name something the workspace no longer has.
+   */
   async automationOriginLabel(
     input: WorkspaceAutomationOriginLabelRequest,
   ): Promise<WorkspaceAutomationOriginLabel> {
