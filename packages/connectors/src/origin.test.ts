@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { neverAborts } from "./test-signals";
 
 import {
   authorizedConnection,
@@ -132,7 +133,7 @@ describe("connector origins", () => {
         resolveCanonicalUrl,
       }),
       { kind: "agent_session", session: {} },
-      { connection: connection(), signal: AbortSignal.timeout(1_000) },
+      { connection: connection(), signal: neverAborts() },
     )).toMatchObject({ canonicalUrl: "https://example.slack.com/archives/C1/p11" });
     expect(resolveCanonicalUrl).toHaveBeenCalledOnce();
   });
@@ -151,7 +152,7 @@ describe("connector origins", () => {
         resolveCanonicalUrl,
       }),
       { kind: "agent_session", session: {} },
-      { connection: connection(), signal: AbortSignal.timeout(1_000) },
+      { connection: connection(), signal: neverAborts() },
     );
 
     expect(resolveCanonicalUrl).not.toHaveBeenCalled();
@@ -167,7 +168,7 @@ describe("connector origins", () => {
         resolveCanonicalUrl: async () => "javascript:alert(1)",
       }),
       { kind: "agent_session", session: {} },
-      { connection: connection(), signal: AbortSignal.timeout(1_000) },
+      { connection: connection(), signal: neverAborts() },
     )).toMatchObject({ providerResourceId: "C1:1.1", canonicalUrl: null });
   });
 
@@ -183,7 +184,7 @@ describe("connector origins", () => {
         },
       }),
       { kind: "agent_session", session: {} },
-      { connection: connection(), signal: AbortSignal.timeout(1_000) },
+      { connection: connection(), signal: neverAborts() },
     )).toMatchObject({ providerResourceId: "C1:1.1", canonicalUrl: null });
   });
 

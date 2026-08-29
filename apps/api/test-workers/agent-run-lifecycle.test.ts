@@ -10,7 +10,7 @@
 
 import { env } from "cloudflare:workers";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { asSubstreamId } from "@rally/contracts";
 
@@ -31,7 +31,7 @@ import {
   seedWorkstreamRoot,
 } from "./helpers/substream-fixture";
 
-beforeAll(async () => {
+beforeEach(async () => {
   await seedOpenWorkstreamAuthority(env.DB);
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
@@ -44,7 +44,11 @@ beforeAll(async () => {
       ON CONFLICT(workspace_id, user_id) DO UPDATE SET status = 'active'`)
       .bind(WORKSPACE_ID, USER_ID),
   ]);
-});
+  // Generous, and only because of the interleave: a sibling file's `reset()`
+  // takes every object's input gate, so this hook can wait out a full reset
+  // before it gets to run at all. The seed itself takes milliseconds — a
+  // failure here is a hang, never a slow query.
+}, 30_000);
 
 let unique = 0;
 

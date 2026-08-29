@@ -11,7 +11,7 @@
 import { env } from "cloudflare:workers";
 import { asSubstreamId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
 import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   substreamAgentName,
@@ -109,6 +109,20 @@ async function initializedWorkspace() {
 
 beforeEach(async () => {
   await reset();
+});
+
+afterEach(async () => {
+  // Every test here shares one workspace object, and several arm its alarm at
+  // an instant already past. A wake-up left behind is delivered by workerd as a
+  // real `alarm()` that runs the full handler — draining and writing storage
+  // through the next test's `reset()`. Disarm unconditionally, whichever path
+  // the test armed through.
+  try {
+    await runInDurableObject(workspaceStub(), (_instance: WorkspaceDO, state) =>
+      state.storage.deleteAlarm());
+  } catch {
+    // The object may never have been created, or may already be gone.
+  }
 });
 
 describe("the shared Durable Object alarm list", () => {
@@ -361,7 +375,7 @@ describe("the shared Durable Object alarm list", () => {
       const failed = store.get("test_fail", "second");
       expect(failed?.attempt).toBe(1);
       expect(failed!.retryAt).toBeGreaterThan(now);
-      expect(failed!.retryAt - now).toBeLessThanOrEqual(scheduledAlarmRetryDelay(1, () => 1));
+      expect(failed!.retryAt).toBeLessThanOrEqual(Date.now() + scheduledAlarmRetryDelay(1, () => 1));
 
       // The gate holds on the very next drain: this is the loop the retry
       // states were introduced to prevent.
@@ -400,6 +414,9 @@ describe("the shared Durable Object alarm list", () => {
       const armed = await scheduling(instance).armNextAlarm();
       expect(armed).not.toBeNull();
       expect(armed!).toBeLessThanOrEqual(Date.now() + 1);
+      // Park the wake-up this arming just bought, for the reason the `afterEach`
+      // above gives: it is already past, and nothing else here wants it.
+      await state.storage.setAlarm(Date.now() + 600_000);
 
       expect(await scheduling(instance).drainDueScheduledAlarms(now))
         .toHaveLength(SCHEDULED_ALARM_DRAIN_LIMIT);

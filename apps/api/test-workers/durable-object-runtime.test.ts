@@ -2786,6 +2786,12 @@ describe("Durable Objects in the Workers runtime", () => {
       workstreamId: WORKSTREAM_ID,
       workstream: { title: "Avalon pricing conversation", titleStatus: "automatic" },
     });
+    // The alarm is armed already overdue, so workerd may have fired it before
+    // `runDurableObjectAlarm` looked: the helper then finds nothing, returns
+    // false, and the socket push is what the forwarding chain is proved by
+    // either way. Calling `alarm()` directly instead would keep this green
+    // even if construction stopped arming the alarm, so the wait stays on the
+    // push, inside the suite's 30s budget.
   });
 
   it("owns and pages the viewer-specific work-stream directory in WorkspaceDO SQL", async () => {
@@ -3214,6 +3220,9 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       socket.close(1000, "test complete");
     }
+    // Assembling and Zod-validating ~3,000 sidebar objects (1,502 items plus
+    // their state versions) in one invocation is real work, covered by the
+    // suite's 30s budget.
   });
 
   it("lists an automation's attention reason and refuses one no screen can render", async () => {
@@ -4963,6 +4972,9 @@ describe("Durable Objects in the Workers runtime", () => {
     await expect(evictDurableObject(substreamStub)).resolves.toBeUndefined();
   });
 
+  // These three tests deliberately hash and persist enough payload to cross the
+  // platform's 1 MB socket boundary in real workerd. Fixture construction is
+  // not a product latency assertion, so each gets an integration-test timeout.
   it("narrows truthful transcript coverage when an opening socket frame exceeds its cap", async () => {
     await seedOpenAuthority();
     await env.DB.batch([
@@ -5058,9 +5070,6 @@ describe("Durable Objects in the Workers runtime", () => {
     expect(frame).not.toHaveProperty("resumeFeed");
   });
 
-  // These two tests deliberately hash and persist enough payload to cross the
-  // platform's 1 MB socket boundary in real workerd. Fixture construction is
-  // not a product latency assertion, so it gets an integration-test timeout.
   it("narrows an oversized transcript range frame and reports only the covered prefix", async () => {
     await seedOpenAuthority();
     await env.DB.batch([
@@ -5151,7 +5160,7 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       socket.close(1000, "test complete");
     }
-  }, 15_000);
+  });
 
   it("serves an indivisible oversized turn as a sequence-owning placeholder envelope", async () => {
     await seedOpenAuthority();
@@ -5278,7 +5287,7 @@ describe("Durable Objects in the Workers runtime", () => {
     } finally {
       socket.close(1000, "test complete");
     }
-  }, 15_000);
+  });
 
   it("delivers an oversized pending-only snapshot as a complete ordered chunk set", async () => {
     await seedOpenAuthority();
@@ -5860,10 +5869,10 @@ describe("Durable Objects in the Workers runtime", () => {
       ).one().count)),
       { timeout: 4_000, interval: 50 },
     ).toBe(0);
-    // Above the 5s suite default so the harness deadline cannot preempt the
-    // poll's own `expected 1 to be +0` diagnostic when setup runs long on a
-    // loaded machine; the poll keeps its tighter 4s budget.
-  }, 10_000);
+    // The poll keeps its tighter 4s budget so a genuine recovery failure is
+    // reported as its own `expected 1 to be +0` well inside the suite's 30s
+    // test budget, rather than as a harness timeout.
+  });
 
   it("hydrates an overtaken pending upsert as a delivered removal from the minimal receipt", async () => {
     await seedOpenAuthority();

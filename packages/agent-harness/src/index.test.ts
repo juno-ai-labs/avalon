@@ -2523,6 +2523,13 @@ describe("agent harness", () => {
   // one model, and traversing would answer a question nobody asked. What it
   // also meant, until these three, was that a plan with nowhere to traverse had
   // no recovery whatsoever: one stalled request discarded an entire run.
+  //
+  // The three widened `it()` budgets below cover a real, jittered backoff sleep
+  // — the retry curve is 500ms then 1000ms with equal jitter, so a run spends up
+  // to 1.5s asleep, a different amount every time — not slow assertions. Do not
+  // tighten them, and do not fake the timers: the sleep races a real
+  // AbortSignal composed with the run deadline, and faking would desynchronise
+  // that interleaving from production.
   it("re-executes a fallback-less plan after a provider transport failure, re-sending identical bytes", async () => {
     const bodies: string[] = [];
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -2559,7 +2566,7 @@ describe("agent harness", () => {
     const streamed = events.filter((event) => event.type === "stream_delta");
     expect(streamed.some((event) => event.reset)).toBe(false);
     expect(streamed.map((event) => event.delta).join("")).toBe("recovered");
-  });
+  }, 15_000);
 
   it("names an exhausted transport budget as the provider's failure, not the harness's", async () => {
     const fetcher = vi.fn(async () => Response.json(
@@ -2585,7 +2592,7 @@ describe("agent harness", () => {
     // opens the endpoint *after* it. Lower that threshold and this fails as a
     // call count rather than as anything about breakers.
     expect(fetcher).toHaveBeenCalledTimes(3);
-  });
+  }, 15_000);
 
   it("names a refused endpoint as the circuit being open, without blaming the provider", async () => {
     const fetcher = vi.fn(async () => Response.json(
@@ -2620,7 +2627,7 @@ describe("agent harness", () => {
       status: "failed",
       failure: { kind: "routing", code: "provider_circuit_open" },
     });
-  });
+  }, 15_000);
 
   it("does not retry or reattribute a request-shaped rejection", async () => {
     const fetcher = vi.fn(async () => Response.json(
@@ -4512,10 +4519,13 @@ describe("agent harness", () => {
     expect(activationSignals).toHaveLength(1);
     expect(activationSignals[0]!.aborted).toBe(true);
     finishActivation();
-    await Promise.resolve();
-    await Promise.resolve();
+    // A bounded real wait rather than a couple of microtask ticks: a two-tick
+    // drain is satisfied by any detached path one await longer than the drain,
+    // so the fence would stop covering the guard the moment the implementation
+    // grew a step.
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(persistActivation).not.toHaveBeenCalled();
-  }, 2_000);
+  });
 
   it("single-flights expensive activation across a burst of repeated loads", async () => {
     const responses = [
@@ -4544,7 +4554,14 @@ describe("agent harness", () => {
     const activationReleased = new Promise<void>((resolve) => {
       releaseActivation = resolve;
     });
-    plugin.onActivate = vi.fn(async () => activationReleased);
+    let activationEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      activationEntered = resolve;
+    });
+    plugin.onActivate = vi.fn(async () => {
+      activationEntered();
+      return activationReleased;
+    });
     const persistActivation = vi.fn();
 
     const outcomePromise = runHarness({
@@ -4553,8 +4570,14 @@ describe("agent harness", () => {
       reauthorizePlugin: () => "authorized",
       persistActivation,
     });
-    await vi.waitFor(() => expect(plugin.onActivate).toHaveBeenCalledOnce());
-    releaseActivation();
+    // Waiting on entry rather than polling the spy: a poll that times out skips
+    // the release below, leaving onActivate's promise — and the run behind it —
+    // pending for the rest of the file.
+    try {
+      await entered;
+    } finally {
+      releaseActivation();
+    }
 
     await expect(outcomePromise).resolves.toMatchObject({
       status: "completed",
@@ -5911,8 +5934,11 @@ function runInput(fetcher: typeof fetch, overrides: Partial<{
       fetch: fetcher,
       maxIterations: 4,
       maxToolCalls: 10,
-      maxWallClockMs: overrides.maxWallClockMs ?? 1_000,
-      toolTimeoutMs: overrides.toolTimeoutMs ?? 100,
+      // Ambient budgets, not subjects: both are real timers over real SSE body
+      // reads, so they are set far above anything a passing run needs. A test
+      // whose subject *is* a deadline states its own small number.
+      maxWallClockMs: overrides.maxWallClockMs ?? 120_000,
+      toolTimeoutMs: overrides.toolTimeoutMs ?? 30_000,
       maxWebResults: 4,
       ...(overrides.transportRetries === undefined ? {} : { transportRetries: overrides.transportRetries }),
       // The transport retry refuses to spend a wait that cannot fit another

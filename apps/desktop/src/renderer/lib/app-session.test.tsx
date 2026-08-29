@@ -136,6 +136,11 @@ function resetDesktopBridge(): void {
   });
   bridge.getSession.mockResolvedValue(null);
   bridge.hasStoredCredential.mockResolvedValue(false);
+  // A scheduled refresh can fire more than once in a test that lets the clock
+  // run past the retry delay. Without a default this resolves `undefined` and
+  // the provider blanks the session; resolving the same object it already
+  // holds is a no-op re-render instead.
+  bridge.refreshSession.mockResolvedValue(expiredIdentitySession);
   bridge.consumePendingDeepLinks.mockResolvedValue([]);
   bridge.reportTelemetryProductIntent.mockResolvedValue(undefined);
   bridge.onDeepLink.mockImplementation((listener: (navigation: DesktopDeepLinkNavigation) => void) => {
@@ -276,14 +281,25 @@ describe('single-platform desktop identity routing', () => {
   });
 
   it('keeps a still-stored session signed in when a refresh fails transiently', async () => {
+    vi.useFakeTimers();
     bridge.getSession.mockResolvedValue(expiredIdentitySession);
     bridge.hasStoredCredential.mockResolvedValue(true);
     bridge.refreshSession.mockRejectedValueOnce(new Error('network unreachable'));
 
     renderProvider();
 
-    await waitFor(() => expect(bridge.refreshSession).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    await waitFor(() => expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    // Boot has to settle before the clock moves: the refresh timer is armed by
+    // the effect that runs once `session:get` resolves, so advancing straight
+    // past its 1s delay would move the clock before there was a timer to fire.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(bridge.refreshSession).toHaveBeenCalledTimes(1);
+    expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
     expect(bridge.logout).not.toHaveBeenCalled();
@@ -293,14 +309,27 @@ describe('single-platform desktop identity routing', () => {
     // Main surrenders the credential when a refresh can never succeed, so a
     // refresh that keeps failing with one still on disk is by definition
     // transient and must never strand the user on the sign-in screen.
+    vi.useFakeTimers();
     bridge.getSession.mockResolvedValue(expiredIdentitySession);
     bridge.hasStoredCredential.mockResolvedValue(true);
     bridge.refreshSession.mockRejectedValue(new Error('regional service unreachable'));
 
     renderProvider();
 
-    await waitFor(() => expect(bridge.refreshSession).toHaveBeenCalledTimes(1), { timeout: 5_000 });
-    await waitFor(() => expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(bridge.refreshSession).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(bridge.refreshSession).toHaveBeenCalledTimes(2);
+    expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('session-email')).toHaveTextContent('invitee@example.com');
     expect(screen.getByTestId('deep-link-error')).toHaveTextContent('none');
   });
@@ -308,13 +337,21 @@ describe('single-platform desktop identity routing', () => {
   it('does not probe the network to decide whether the credential was surrendered', async () => {
     // `session:get` refreshes to rebuild a missing profile cache, so using it
     // as the oracle would let a network blip masquerade as an expiry.
+    vi.useFakeTimers();
     bridge.getSession.mockResolvedValueOnce(expiredIdentitySession);
     bridge.hasStoredCredential.mockResolvedValue(true);
     bridge.refreshSession.mockRejectedValueOnce(new Error('network unreachable'));
 
     renderProvider();
 
-    await waitFor(() => expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1), { timeout: 5_000 });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(bridge.hasStoredCredential).toHaveBeenCalledTimes(1);
     expect(bridge.getSession).toHaveBeenCalledTimes(1);
     expect(bridge.refreshSession).toHaveBeenCalledTimes(1);
   });
