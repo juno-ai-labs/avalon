@@ -28,6 +28,7 @@ import { TerminalToolError } from "./tools";
 import { asWorkspaceId } from "@rally/contracts";
 import type { Env } from "../../env";
 import { workspaceDOName } from "../../durable-objects/names";
+import { WorkspaceNoteVisibilityResultSchema } from "../../durable-objects/workspace-notes-protocol";
 import {
   WorkspaceTerminalNetworkSettingsSchema,
   type WorkspaceTerminalNetworkPolicy,
@@ -554,13 +555,22 @@ export class TerminalSandboxCoordinator {
     const noteIds = resources.results.filter((candidate) => candidate.provider === "avalon_note")
       .map((candidate) => candidate.id);
     if (noteIds.length === 0) return false;
-    const notePlaceholders = noteIds.map(() => "?").join(", ");
-    const notes = await this.env.DB.prepare(
-      `SELECT resource_id FROM notes
-        WHERE workspace_id = ? AND resource_id IN (${notePlaceholders})
-          AND archived_at IS NULL AND (scope = 'workspace' OR owner_user_id = ?)`,
-    ).bind(context.workspaceId, ...noteIds, principalUserId).all<{ resource_id: string }>();
-    return new Set((notes.results ?? []).map((note) => note.resource_id)).size !== noteIds.length;
+    // Note visibility is the owning object's decision, asked as a typed
+    // method; a null principal sees only workspace-scoped notes.
+    const workspace = await durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(context.workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(context.workspaceId)),
+    );
+    const visible = WorkspaceNoteVisibilityResultSchema.parse(
+      await workspace.visibleNoteResourceIds({
+        workspaceId: context.workspaceId,
+        userId: principalUserId,
+        resourceIds: noteIds,
+      }),
+    );
+    return new Set(visible.resourceIds).size !== noteIds.length;
   }
 
   private async reserveFirstGeneration(
