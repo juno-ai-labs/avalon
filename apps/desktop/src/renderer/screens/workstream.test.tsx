@@ -92,7 +92,7 @@ describe('work-stream route handoff', () => {
     const transcript = {
       snapshotId: 'snapshot-route', snapshotThrough: 0, eventSequence: 0,
       snapshotAtUtc: '2026-08-27T12:00:00.000Z', unreadAnchorSequence: null,
-      unreadReason: 'no_unread' as const, ranges: [], activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      unreadReason: 'no_unread' as const, ranges: [], activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     expect(workstreamPayloadBelongsToRoute(routeWorkstreamId, workstream, transcript)).toBe(true);

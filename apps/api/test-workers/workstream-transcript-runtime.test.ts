@@ -277,6 +277,129 @@ describe("work-stream transcript on workerd SQLite", () => {
     });
   });
 
+  it("reports plugin runs for a turn whose blocks carry no activity id", async () => {
+    // The shape that rendered "Rally worked for 0ms" in production. The
+    // snapshot's activity walk seeds from `turn.activity_id` and
+    // `block.activity_id` and recurses upward to parents; both columns are
+    // nullable, and a development-seeded tool turn leaves both NULL. The plugin
+    // and tool-call activities are therefore unreachable from that walk even
+    // though they exist and are timed, and a client rebuilding the row from
+    // `activities` had no timing to show and no way to say so.
+    const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
+      substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),
+    ));
+    await runInDurableObject(stub, async (_instance, state) => {
+      seedWorkstreamRoot(state, 1, { workspaceId: WORKSPACE_ID, workstreamId: WORKSTREAM_ID });
+      const transcript = new WorkstreamTranscriptStorage(state.storage);
+      const turnId = "run-one:turn:1";
+      await transcript.seedDevelopmentConversationTurn({
+        turnId,
+        clientMessageId: null,
+        actor: "assistant",
+        authorUserId: null,
+        authorSnapshot: null,
+        externalActorJson: null,
+        messageType: "tool",
+        text: "",
+        structuredContentJson: JSON.stringify({
+          invocation: { toolCallId: "call-0", toolName: "memory_search", status: "completed" },
+        }),
+        producedByRunId: null,
+        expectedTranscriptSequence: 1,
+        createdAtUtc: new Date(1_000).toISOString(),
+      });
+      transcript.upsertActivity({
+        activityId: `${turnId}:activity`,
+        parentActivityId: null,
+        scope: "assistant_turn",
+        subjectId: turnId,
+        callIndex: 0,
+        label: "Assistant turn",
+        action: "start",
+        revision: 1,
+        occurredAtUtc: new Date(1_000).toISOString(),
+      });
+      transcript.upsertActivity({
+        activityId: `${turnId}:plugin:rally:memory`,
+        parentActivityId: `${turnId}:activity`,
+        scope: "plugin",
+        subjectId: "rally:memory",
+        callIndex: 0,
+        label: "rally:memory",
+        action: "start",
+        revision: 1,
+        occurredAtUtc: new Date(1_000).toISOString(),
+      });
+      transcript.upsertActivity({
+        activityId: "call-0:activity",
+        parentActivityId: `${turnId}:plugin:rally:memory`,
+        scope: "tool_call",
+        subjectId: "call-0",
+        callIndex: 0,
+        label: "memory_search",
+        action: "start",
+        revision: 1,
+        occurredAtUtc: new Date(1_000).toISOString(),
+      });
+      // Everything settles: an activity still running would seed the opening
+      // snapshot's `includeActive` clause and be reachable that way, which is
+      // not the state a finished run two days old is read in.
+      transcript.upsertActivity({
+        activityId: "call-0:activity",
+        parentActivityId: `${turnId}:plugin:rally:memory`,
+        scope: "tool_call",
+        subjectId: "call-0",
+        callIndex: 0,
+        label: "memory_search",
+        action: "complete",
+        revision: 2,
+        occurredAtUtc: new Date(7_770).toISOString(),
+      });
+      transcript.upsertActivity({
+        activityId: `${turnId}:plugin:rally:memory`,
+        parentActivityId: `${turnId}:activity`,
+        scope: "plugin",
+        subjectId: "rally:memory",
+        callIndex: 0,
+        label: "rally:memory",
+        action: "complete",
+        revision: 2,
+        occurredAtUtc: new Date(7_770).toISOString(),
+      });
+      transcript.upsertActivity({
+        activityId: `${turnId}:activity`,
+        parentActivityId: null,
+        scope: "assistant_turn",
+        subjectId: turnId,
+        callIndex: 0,
+        label: "Assistant turn",
+        action: "complete",
+        revision: 2,
+        occurredAtUtc: new Date(7_770).toISOString(),
+      });
+
+      const snapshot = transcript.createOpeningSnapshot({
+        unreadHighWaterAttentionOrdinal: null,
+        now: 9_000,
+      });
+
+      // The old surface cannot see it: nothing seeds the walk that would reach
+      // a plugin activity, so this is the state the client used to render from.
+      expect(snapshot.activities.map((activity) => activity.activityId))
+        .not.toContain(`${turnId}:plugin:rally:memory`);
+      // The new one states it outright, with the duration actually measured.
+      expect(snapshot.pluginRuns).toEqual([expect.objectContaining({
+        pluginRunId: `${turnId}:plugin:rally:memory`,
+        turnId,
+        pluginId: "rally:memory",
+        displayName: "rally:memory",
+        state: "completed",
+        durationMs: 6_770,
+        toolCallIds: ["call-0"],
+      })]);
+    });
+  });
+
   it("preserves two canonical compaction replacements and both completed edges", async () => {
     const stub = env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
       substreamAgentName("global", WORKSPACE_ID, WORKSTREAM_ID),

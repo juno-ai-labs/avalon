@@ -296,8 +296,16 @@ export interface PluginActivityData {
   icon: PluginGroupIcon;
   /** True while any tool call in this group is still running. */
   active: boolean;
-  /** Completed time accumulated across every turn of this agent loop. */
-  durationMs: number;
+  /**
+   * Completed time accumulated across every turn of this agent loop.
+   *
+   * Null means the timing could not be established, not that the work was
+   * instant. The row renders no duration at all in that case: a transcript
+   * that cannot see how long a plugin ran has to say nothing rather than
+   * claim `0ms`, which is what it used to do whenever one of the joins behind
+   * this number missed.
+   */
+  durationMs: number | null;
   /**
    * One local monotonic start per contribution still running.
    *
@@ -308,6 +316,9 @@ export interface PluginActivityData {
    */
   monotonicStartedAt?: readonly number[];
   timingAccuracy?: 'observed' | 'upper_bound';
+  /** How the row reads; see `PluginGroup` for why a group owns its phrasing. */
+  activeVerb: string;
+  completedVerb: string;
 }
 
 export interface ThoughtEventData {
@@ -452,6 +463,19 @@ export interface Message {
   toolEvent?: ToolEventData;
   thoughtEvent?: ThoughtEventData;
   pluginActivity?: PluginActivityData;
+  /**
+   * A settled response's total work, shown beside the author and time.
+   *
+   * While Rally is still working this is a row of its own, because it is the
+   * live progress the reader is watching. Once it settles it stops being
+   * progress and becomes a fact about the message it produced, so it moves
+   * into that message's header rather than leaving a spent timer sitting in
+   * the feed under the answer.
+   */
+  workSummary?: {
+    durationMs: number | null;
+    timingAccuracy?: 'observed' | 'upper_bound';
+  };
   elicitation?: ElicitationData;
   activitySuggestion?: ActivitySuggestionData;
 }
