@@ -253,6 +253,24 @@ describe("claiming an occurrence", () => {
     })).toEqual({ outcome: "kept" });
   });
 
+  it("says so when the running transition finds no planned claim", async () => {
+    const { scheduleId } = await replace();
+    const deliveryId = nextId();
+    await claim({ deliveryId, digestScheduleId: scheduleId });
+
+    const mark = (harnessRunId: string) => workspace().markDigestDeliveryRunning({
+      workspaceId: WORKSPACE_ID,
+      deliveryId,
+      harnessRunId,
+      at: AT,
+    });
+
+    expect(await mark("run-1")).toEqual({ outcome: "running" });
+    // The claim has already left `planned`, so a second transition must answer
+    // rather than silently matching zero rows.
+    expect(await mark("run-2")).toEqual({ outcome: "not_planned" });
+  });
+
   it("folds a failed window into the next cursor and counts everything else", async () => {
     const { scheduleId } = await replace();
     const failedId = nextId();

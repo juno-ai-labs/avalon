@@ -8,6 +8,7 @@ import {
   WorkspaceDigestReleaseClaimResultSchema,
   WorkspaceDigestReplaceResultSchema,
   WorkspaceDigestRowStateSchema,
+  WorkspaceDigestRunningResultSchema,
   WorkspaceDigestSettingsSchema,
   WorkspaceDigestSettleResultSchema,
   WorkspaceDigestTargetOutcomeResultSchema,
@@ -30,6 +31,7 @@ import {
   type WorkspaceDigestReplaceRowsRequest,
   type WorkspaceDigestRowState,
   type WorkspaceDigestRowStateRequest,
+  type WorkspaceDigestRunningResult,
   type WorkspaceDigestSettingsRequest,
   type WorkspaceDigestSettings,
   type WorkspaceDigestSettleRequest,
@@ -428,18 +430,22 @@ export function recordWorkspaceDigestDeliveryWorkstream(
   );
 }
 
-/** The launch succeeded: the claim graduates from `planned` to `running`. */
+/** The launch succeeded: the claim graduates from `planned` to `running`, or says it could not. */
 export function markWorkspaceDigestDeliveryRunning(
   storage: DurableObjectStorage,
   request: WorkspaceDigestDeliveryRunningRequest,
-): void {
-  storage.sql.exec(
+): WorkspaceDigestRunningResult {
+  const marked = storage.sql.exec<{ id: string }>(
     `UPDATE digest_deliveries SET status = 'running', harness_run_id = ?, updated_at = ?
-      WHERE id = ? AND status = 'planned'`,
+      WHERE id = ? AND status = 'planned'
+      RETURNING id`,
     request.harnessRunId,
     request.at,
     request.deliveryId,
-  );
+  ).toArray()[0];
+  return WorkspaceDigestRunningResultSchema.parse({
+    outcome: marked ? "running" : "not_planned",
+  });
 }
 
 /** Undo a claim whose launch never started, so the scheduler's retry gets another go. */

@@ -5,7 +5,9 @@ import type { Env } from "../env";
 import { workspaceDOName } from "../durable-objects/names";
 import {
   WorkspaceDigestDeliveryTargetsSchema,
+  WorkspaceDigestTargetOutcomeResultSchema,
   type WorkspaceDigestDeliveryTarget,
+  type WorkspaceDigestTargetOutcomeResult,
 } from "../durable-objects/workspace-digests-protocol";
 import { ApiError } from "../lib/api-error";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
@@ -119,8 +121,22 @@ export async function deliverDigest(
     try {
       const sent = await deliverToTarget(env, context, target, request);
       if (sent) {
-        await markDelivered(env, context.workspaceId, target.id, context.deliveryId);
-        delivered += 1;
+        const recorded = await markDelivered(env, context.workspaceId, target.id, context.deliveryId);
+        if (recorded.outcome === "recorded") {
+          delivered += 1;
+        } else {
+          // The target row vanished between the read and the record — a
+          // settings save replaces every row under fresh ids. The send
+          // happened, but with no `last_delivered_delivery_id` written it
+          // must not count as delivered: settling the occurrence on it would
+          // leave the recreated target with no idempotency marker, and a
+          // retried step would send a second copy on its authority.
+          skipped += 1;
+          logWarn(env, "digest_delivery_target_vanished", {
+            delivery_id: context.deliveryId,
+            target_id: target.id,
+          });
+        }
       } else {
         skipped += 1;
       }
@@ -130,7 +146,13 @@ export async function deliverDigest(
       // every occurrence from now on.
       failed += 1;
       const permanent = error instanceof ApiError && error.details?.retryable === false;
-      await markFailed(env, context.workspaceId, target.id, permanent, error);
+      const marked = await markFailed(env, context.workspaceId, target.id, permanent, error);
+      if (marked.outcome === "target_not_found") {
+        logWarn(env, "digest_delivery_target_vanished", {
+          delivery_id: context.deliveryId,
+          target_id: target.id,
+        });
+      }
       // A permanent rejection is recorded and not rethrown: retrying the step
       // would only reach the same answer, and the target now says so.
       if (!permanent) failures.push(error);
@@ -223,13 +245,20 @@ function digestTitle(context: DigestDeliveryContext): string {
   return `Your ${singleLine(context.workspaceName)} digest · ${occurrenceLabel(context.plannedFor, context.timezone)}`;
 }
 
-async function markDelivered(env: Env, workspaceId: string, targetId: string, deliveryId: string): Promise<void> {
-  await (await workspaceDigests(env, workspaceId)).markDigestTargetDelivered({
-    workspaceId,
-    targetId,
-    deliveryId,
-    at: nowIso(),
-  });
+async function markDelivered(
+  env: Env,
+  workspaceId: string,
+  targetId: string,
+  deliveryId: string,
+): Promise<WorkspaceDigestTargetOutcomeResult> {
+  return WorkspaceDigestTargetOutcomeResultSchema.parse(
+    await (await workspaceDigests(env, workspaceId)).markDigestTargetDelivered({
+      workspaceId,
+      targetId,
+      deliveryId,
+      at: nowIso(),
+    }),
+  );
 }
 
 /**
@@ -246,15 +275,17 @@ async function markFailed(
   targetId: string,
   permanent: boolean,
   error: unknown,
-): Promise<void> {
-  await (await workspaceDigests(env, workspaceId)).markDigestTargetFailed({
-    workspaceId,
-    targetId,
-    permanent,
-    errorJson: JSON.stringify({
-      code: "digest_delivery_failed",
-      message: error instanceof Error ? error.message.slice(0, 500) : "Digest delivery failed",
+): Promise<WorkspaceDigestTargetOutcomeResult> {
+  return WorkspaceDigestTargetOutcomeResultSchema.parse(
+    await (await workspaceDigests(env, workspaceId)).markDigestTargetFailed({
+      workspaceId,
+      targetId,
+      permanent,
+      errorJson: JSON.stringify({
+        code: "digest_delivery_failed",
+        message: error instanceof Error ? error.message.slice(0, 500) : "Digest delivery failed",
+      }),
+      at: nowIso(),
     }),
-    at: nowIso(),
-  });
+  );
 }

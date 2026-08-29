@@ -10,6 +10,7 @@ import {
   type WorkspaceDigestSettleResult,
 } from "../durable-objects/workspace-digests-protocol";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { logWarn } from "../observability/logger";
 import { deliverDigest } from "./digest-delivery-service";
 import {
   emitProductUsageTelemetry,
@@ -93,9 +94,16 @@ async function emitDigestTerminal(env: Env, delivery: DigestDeliveryRow, result:
       deliveryId: delivery.id,
       result,
       activityCount: telemetryCountBucket(Number(delivery.event_count)),
-      // The object stores the type as text; the event's registration is what
-      // narrows it, exactly as the routed read's row-type assertion did.
-      targetTypes: DigestDeliveryTargetTypeSchema.array().parse(context.targetTypes),
+      // The object stores the type as bare text — the value list is enforced
+      // on the write path, not by a CHECK — so an unknown destination is
+      // filtered out rather than parsed against. A strict parse here would
+      // throw the moment a third target type or a backfilled row appeared,
+      // and the swallowed rejection would silently lose the whole terminal
+      // event, `result` and `firstDelivery` with it.
+      targetTypes: context.targetTypes.flatMap((targetType) => {
+        const known = DigestDeliveryTargetTypeSchema.safeParse(targetType);
+        return known.success ? [known.data] : [];
+      }),
       firstDelivery: context.priorDeliveredCount === 0,
     },
     operationId: delivery.id,
@@ -226,7 +234,17 @@ export async function settleDigestRun(
   const settled = await settleDelivery(env, workspaceId, deliveryId, "delivered", null);
   if (settled.outcome !== "settled") return;
   await emitDigestTerminal(env, delivery, "success").catch(() => undefined);
-  await noteDeliveryInTranscript(env, delivery, delivered.delivered);
+  // Best effort, like the telemetry beside it: the delivery is already
+  // settled, so a note that throws here would fail the step, and its retry
+  // would read `already_settled` and return before ever reaching this line —
+  // the note would be lost anyway, with a failed run as the price.
+  await noteDeliveryInTranscript(env, delivery, delivered.delivered)
+    .catch((error: unknown) => {
+      logWarn(env, "digest_delivery_note_failed", {
+        delivery_id: delivery.id,
+        reason: error instanceof Error ? error.message : "unknown",
+      });
+    });
 }
 
 /**
