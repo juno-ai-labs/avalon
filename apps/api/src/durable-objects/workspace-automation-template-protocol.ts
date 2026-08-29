@@ -37,6 +37,24 @@ export const WorkspaceAutomationTemplatePublishRequestSchema = z.object({
   version: WorkspaceAutomationTemplateVersionInputSchema,
 }).strict();
 
+/**
+ * Does this person own an active template with this id?
+ *
+ * Asked before the draft's connectors are validated, so a template that is
+ * missing, archived, or somebody else's answers 404 rather than a connector
+ * error. The write below fences on ownership again — this preflight decides
+ * what a caller is told, not what they are allowed to write.
+ */
+export const WorkspaceAutomationTemplateOwnershipRequestSchema = z.object({
+  workspaceId: IdSchema,
+  templateId: IdSchema,
+  ownerUserId: IdSchema,
+}).strict();
+
+export const WorkspaceAutomationTemplateOwnershipSchema = z.object({
+  owned: z.boolean(),
+}).strict();
+
 export const WorkspaceAutomationTemplateVersionRequestSchema = z.object({
   workspaceId: IdSchema,
   templateId: IdSchema,
@@ -48,15 +66,24 @@ export const WorkspaceAutomationTemplateVersionRequestSchema = z.object({
 /**
  * The new version's number, or that there was no template to add one to.
  *
- * The number is read and bumped inside one transaction. As a read followed by
- * a batched write it was two round trips, and two people adding a version at
- * once both read the same `latest_version_number` and both wrote it — which
- * `UNIQUE (template_id, version_number)` turned into a 500 for whichever lost.
+ * A union rather than a number beside an outcome, so `added` without a number
+ * is unrepresentable: the pairing is a fact, and a storage bug that broke it
+ * should fail at this parse rather than reach a response as a null typed as a
+ * number.
+ *
+ * What ended the version-number race is that the read and the bump became one
+ * RPC. They were a read here and a batch afterwards, so two people adding a
+ * version at once both read the same `latest_version_number` and both wrote it,
+ * and `UNIQUE (template_id, version_number)` turned that into a 500 for
+ * whichever lost.
  */
-export const WorkspaceAutomationTemplateVersionResultSchema = z.object({
-  outcome: z.enum(["added", "template_not_found"]),
-  versionNumber: z.number().int().positive().nullable(),
-}).strict();
+export const WorkspaceAutomationTemplateVersionResultSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("added"),
+    versionNumber: z.number().int().positive(),
+  }).strict(),
+  z.object({ outcome: z.literal("template_not_found") }).strict(),
+]);
 
 export const WorkspaceAutomationTemplateSchema = z.object({
   id: IdSchema,
@@ -74,6 +101,12 @@ export const WorkspaceAutomationTemplateListSchema = z.object({
 
 export type WorkspaceAutomationTemplatePublishRequest = z.infer<
   typeof WorkspaceAutomationTemplatePublishRequestSchema
+>;
+export type WorkspaceAutomationTemplateOwnershipRequest = z.infer<
+  typeof WorkspaceAutomationTemplateOwnershipRequestSchema
+>;
+export type WorkspaceAutomationTemplateOwnership = z.infer<
+  typeof WorkspaceAutomationTemplateOwnershipSchema
 >;
 export type WorkspaceAutomationTemplateVersionRequest = z.infer<
   typeof WorkspaceAutomationTemplateVersionRequestSchema

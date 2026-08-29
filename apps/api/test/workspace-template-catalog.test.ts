@@ -43,15 +43,15 @@ interface SeededTemplate {
   versionId: string;
   name: string;
   triggers: string;
-  subscriptionId?: string;
   /** Defaults to the shared state; `'private'` is one member's own automation. */
   sharingState?: "private" | "workspace";
   archivedAt?: string;
-  /** Defaults to this workspace; a second one proves the tenant predicate. */
+  /**
+   * Defaults to this workspace. A second one is refused by the object's
+   * identity trigger — see "refuses to hold another workspace's template".
+   */
   workspaceId?: string;
   capabilities?: string;
-  /** A second subscription on the same template, to prove the count's filter. */
-  hiddenSubscriptionId?: string;
 }
 
 function fixture(templates: SeededTemplate[]): { app: Hono<HonoAppEnv>; env: Env } {
@@ -103,30 +103,14 @@ function fixture(templates: SeededTemplate[]): { app: Hono<HonoAppEnv>; env: Env
       template.versionId, template.id, template.triggers,
       template.capabilities ?? "[]", U, AT,
     );
-    const subscription = (id: string, lifecycle: string) => objectDatabase.prepare(
-      `INSERT INTO automation_subscriptions
-        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
-         execution_principal_json, connector_bindings_json, overrides_json, status,
-         lifecycle_state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'workspace', NULL, ?, '{}', '{}', 'active', ?, ?, ?)`,
-    ).run(
-      id, owningWorkspace, template.id, template.versionId,
-      JSON.stringify({ type: "workspace", workspaceId: owningWorkspace }), lifecycle, AT, AT,
-    );
-    if (template.subscriptionId) subscription(template.subscriptionId, "visible");
-    if (template.hiddenSubscriptionId) subscription(template.hiddenSubscriptionId, "deleted");
   }
-  // Two rungs are dropped here deliberately, per `docs/testing.md`. These three
-  // tables' live authority is `WORKSPACE_DOMAIN_SCHEMA_STATEMENTS` in
-  // `durable-objects/workspace-domain-schema.ts`, not regional D1 — migration
-  // 0090 dropped them from D1 — so `preRetirementProductSqliteDatabase()` is a
-  // frozen through-0089 stand-in for that schema; it agrees on every column
-  // this route reads, and is the looser of the two (the object's tables are
-  // STRICT with `json_valid` CHECKs). And with no `WORKSPACE_DOS` binding,
-  // `withWorkspaceRuntimeDatabase` leaves the port alone, so the catalog query
-  // and the owner-name lookup — separate authorities in production — read one
-  // database here. Neither the port nor the object's DDL is this file's
-  // subject; the response contract over the SQL is.
+  // Two authorities, as in production. The gallery rows are the object's, so
+  // they are seeded into a real WorkspaceDO over its own schema — STRICT, with
+  // the `json_valid` CHECKs and the identity trigger the test below turns on.
+  // The regional database is here for `users`, `workspaces` and
+  // `workspace_members`, which the author-name lookup joins and the object does
+  // not hold; `preRetirementProductSqliteDatabase()` is a frozen through-0089
+  // stand-in for those, and agrees on every column this route reads.
   const env = createTestEnv({
     DB: sqliteD1(database),
     AVALON_REGION: "global",
@@ -220,7 +204,6 @@ describe("the workspace template catalog", () => {
       versionId: "74000000-0000-7000-8000-000000000012",
       name: "Review watcher",
       triggers: CONNECTOR_ACTIVITY,
-      subscriptionId: "74000000-0000-7000-8000-000000000013",
     }]);
 
     const response = await app.request("/automation-templates", undefined, env);
@@ -286,9 +269,10 @@ describe("the workspace template catalog", () => {
         suggestedPluginId: "plugin_github",
       }]],
     ]);
-    // A template nobody has installed yet reports zero rather than dropping out
-    // of the catalog: `usedBy` counts visible subscriptions, and none of these
-    // has one.
+    // `usedBy` is a literal zero for every template, everywhere: the cutover
+    // moved subscriptions to AutomationAgent and dropped the table the count
+    // joined. Asserting it here records the contract's current shape — there is
+    // no filter or predicate under it left to break.
     expect(body.items.map((item) => item.usedBy)).toEqual([0, 0, 0]);
   });
 
@@ -368,28 +352,6 @@ describe("the workspace template catalog", () => {
       triggers: WEEKLY_CALENDAR,
       workspaceId: OTHER_W,
     }])).toThrow("workspace_identity_mismatch");
-  });
-
-  it("counts only the subscriptions still on show", async () => {
-    // `lifecycle_state` takes its 'visible' default everywhere else in this
-    // file, so the count's filter was passing on the column's default rather
-    // than on the predicate. A deleted subscription must not keep inflating a
-    // template's install count.
-    const { app, env } = fixture([{
-      id: "74000000-0000-7000-8000-000000000061",
-      versionId: "74000000-0000-7000-8000-000000000062",
-      name: "Changelog",
-      triggers: WEEKLY_CALENDAR,
-      subscriptionId: "74000000-0000-7000-8000-000000000063",
-      hiddenSubscriptionId: "74000000-0000-7000-8000-000000000064",
-    }]);
-
-    const response = await app.request("/automation-templates", undefined, env);
-
-    expect(response.status).toBe(200);
-    const body = await response.json() as { items: Array<{ usedBy: number }> };
-    expect(body.items).toHaveLength(1);
-    expect(body.items[0]!.usedBy).toBe(0);
   });
 
   it("keeps serving a catalog that holds a row it cannot represent", async () => {
