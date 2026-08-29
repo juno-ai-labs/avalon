@@ -191,7 +191,7 @@ export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryRes
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
-  const { api, clearDeepLinkError, deepLinkError, signOut } = useAppSession();
+  const { api, signOut } = useAppSession();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -520,12 +520,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workstreams={workstreams.data ?? []}
       />
         <main className="main-pane">
-        {deepLinkError && (
-          <div className="connection-banner" role="alert">
-            <span>{deepLinkError}</span>
-            <button onClick={clearDeepLinkError} type="button">Dismiss</button>
-          </div>
-        )}
           {children}
         </main>
       </div>
