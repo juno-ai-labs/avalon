@@ -3,26 +3,42 @@
  *
  * The alias is an alias: the UUID stays the primary key, so what these prove
  * is that allocation converges — one alias per resource, never two resources
- * on one alias, and a resource that already has one keeps it.
+ * on one alias, and a resource that already has one keeps it. The claims run
+ * against a real WorkspaceDO over its own schema; only the transport is
+ * doubled, so the partial unique index and the version-capture triggers are
+ * the object's rather than a fixture's.
  */
 import { asUserId, asWorkspaceId } from "@rally/contracts";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ResourceService } from "../src/services/resource-service";
 import { backfillResourceSlugs, ensureResourceSlug, RESOURCE_SLUG_PATTERN } from "../src/services/resource-slug";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
-import { workspaceObjectSqliteDatabase } from "./helpers/workspace-object-tables";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-0000000000d1");
+const RESOURCE_1 = "00000000-0000-7000-8000-0000000000e1";
+const RESOURCE_2 = "00000000-0000-7000-8000-0000000000e2";
+const RESOURCE_3 = "00000000-0000-7000-8000-0000000000e3";
+const RESOURCE_MISSING = "00000000-0000-7000-8000-0000000000ee";
 
 const open: DatabaseSync[] = [];
 afterEach(() => { for (const database of open.splice(0)) database.close(); });
 
 function fixture(resourceIds: string[]): { database: DatabaseSync; env: ReturnType<typeof createTestEnv> } {
-  const database = workspaceObjectSqliteDatabase(workspaceId);
-  open.push(database);
+  const regional = new DatabaseSync(":memory:");
+  open.push(regional);
+  const workspaceObject = createTestWorkspaceDO({
+    workspaceId,
+    regionalDatabase: regional,
+    register: (created) => { open.push(created); },
+  });
+  const database = workspaceObject.objectDatabase;
   const insert = database.prepare(
     `INSERT INTO resources
        (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at)
@@ -33,8 +49,17 @@ function fixture(resourceIds: string[]): { database: DatabaseSync; env: ReturnTy
   return {
     database,
     env: createTestEnv({
-      DB: sqliteD1(database),
+      DB: sqliteD1(regional),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
       SESSION_SIGNING_KEY: "0".repeat(64),
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspaceObject.instance, [
+        "claimResourceSlug",
+        "listResourcesAwaitingSlug",
+        // The listing surfaces still read through the workspace runtime port;
+        // the real object answers that SQL over the same store the claims use.
+        "executeRuntimeSql",
+      ]),
     }),
   };
 }
@@ -47,75 +72,77 @@ function slugOf(database: DatabaseSync, resourceId: string): string | null {
 
 describe("resource slug allocation", () => {
   it("gives a resource one alias and keeps returning it", async () => {
-    const { database, env } = fixture(["resource-1"]);
+    const { database, env } = fixture([RESOURCE_1]);
 
-    const first = await ensureResourceSlug(env, workspaceId, "resource-1");
+    const first = await ensureResourceSlug(env, workspaceId, RESOURCE_1);
 
     expect(first).toMatch(RESOURCE_SLUG_PATTERN);
-    expect(slugOf(database, "resource-1")).toBe(first);
+    expect(slugOf(database, RESOURCE_1)).toBe(first);
     // Idempotent: a second caller — the maintenance pass beside a creation
     // path, or a retried request — reads the alias rather than minting one.
-    await expect(ensureResourceSlug(env, workspaceId, "resource-1")).resolves.toBe(first);
+    await expect(ensureResourceSlug(env, workspaceId, RESOURCE_1)).resolves.toBe(first);
   });
 
   it("leaves an alias a resource already carries exactly as it is", async () => {
-    const { database, env } = fixture(["resource-1"]);
+    const { database, env } = fixture([RESOURCE_1]);
     // An alias no generator would mint, so a re-allocation is visible rather
     // than hidden behind a deterministic candidate. Aliases appear in what a
     // model has already read and written; re-minting one breaks those.
-    database.exec("UPDATE resources SET slug = 'alias-from-somewhere-else' WHERE id = 'resource-1'");
+    database.prepare("UPDATE resources SET slug = 'alias-from-somewhere-else' WHERE id = ?")
+      .run(RESOURCE_1);
 
-    await expect(ensureResourceSlug(env, workspaceId, "resource-1"))
+    await expect(ensureResourceSlug(env, workspaceId, RESOURCE_1))
       .resolves.toBe("alias-from-somewhere-else");
-    expect(slugOf(database, "resource-1")).toBe("alias-from-somewhere-else");
+    expect(slugOf(database, RESOURCE_1)).toBe("alias-from-somewhere-else");
   });
 
   it("gives two resources different aliases, and answers nothing for a resource that is gone", async () => {
-    const { env } = fixture(["resource-1", "resource-2"]);
+    const { env } = fixture([RESOURCE_1, RESOURCE_2]);
 
-    const first = await ensureResourceSlug(env, workspaceId, "resource-1");
-    const second = await ensureResourceSlug(env, workspaceId, "resource-2");
+    const first = await ensureResourceSlug(env, workspaceId, RESOURCE_1);
+    const second = await ensureResourceSlug(env, workspaceId, RESOURCE_2);
 
     expect(second).not.toBe(first);
-    await expect(ensureResourceSlug(env, workspaceId, "resource-missing")).resolves.toBeNull();
+    await expect(ensureResourceSlug(env, workspaceId, RESOURCE_MISSING)).resolves.toBeNull();
   });
 
   it("regenerates rather than failing when a candidate is already taken", async () => {
-    const { database, env } = fixture(["resource-1", "resource-2"]);
-    const taken = await ensureResourceSlug(env, workspaceId, "resource-1");
-    // The alias `resource-2`'s first attempt would produce, parked on another
+    const { database, env } = fixture([RESOURCE_1, RESOURCE_2]);
+    const taken = await ensureResourceSlug(env, workspaceId, RESOURCE_1);
+    // The alias `RESOURCE_2`'s first attempt would produce, parked on another
     // row: the allocator must move to its next attempt rather than give up or
     // hand two resources the same alias.
-    database.exec("DELETE FROM resources WHERE id = 'resource-1'");
+    database.prepare("DELETE FROM resources WHERE id = ?").run(RESOURCE_1);
     database.prepare(
       `INSERT INTO resources
          (id, workspace_id, resource_type, provider, title, metadata_json, created_at, updated_at, slug)
-       VALUES ('resource-3', ?, 'document', 'notion', 'Spec', '{}',
+       VALUES (?, ?, 'document', 'notion', 'Spec', '{}',
                '2026-08-28T01:00:00.000Z', '2026-08-28T01:00:00.000Z', ?)`,
-    ).run(workspaceId, await firstCandidate(env, "resource-2"));
+    ).run(RESOURCE_3, workspaceId, await firstCandidate(env, RESOURCE_2));
 
-    const allocated = await ensureResourceSlug(env, workspaceId, "resource-2");
+    const allocated = await ensureResourceSlug(env, workspaceId, RESOURCE_2);
 
     expect(allocated).toMatch(RESOURCE_SLUG_PATTERN);
-    expect(allocated).not.toBe(slugOf(database, "resource-3"));
+    expect(allocated).not.toBe(slugOf(database, RESOURCE_3));
     expect(allocated).not.toBe(taken);
   });
 
   it("fills in the resources an upgraded workspace had before aliases existed", async () => {
-    const { database, env } = fixture(["resource-1", "resource-2", "resource-3"]);
-    database.exec("UPDATE resources SET slug = 'kept-alias-from-before' WHERE id = 'resource-2'");
+    const { database, env } = fixture([RESOURCE_1, RESOURCE_2, RESOURCE_3]);
+    database.prepare("UPDATE resources SET slug = 'kept-alias-from-before' WHERE id = ?")
+      .run(RESOURCE_2);
 
     await expect(backfillResourceSlugs(env, workspaceId)).resolves.toBe(2);
 
-    expect(slugOf(database, "resource-2")).toBe("kept-alias-from-before");
-    expect(slugOf(database, "resource-1")).toMatch(RESOURCE_SLUG_PATTERN);
-    expect(slugOf(database, "resource-3")).toMatch(RESOURCE_SLUG_PATTERN);
+    expect(slugOf(database, RESOURCE_2)).toBe("kept-alias-from-before");
+    expect(slugOf(database, RESOURCE_1)).toMatch(RESOURCE_SLUG_PATTERN);
+    expect(slugOf(database, RESOURCE_3)).toMatch(RESOURCE_SLUG_PATTERN);
     // Nothing is left due, so the alarm's stall check sees the pass finish.
     await expect(backfillResourceSlugs(env, workspaceId)).resolves.toBe(0);
   });
 
   it("carries the alias on the resource the listing surfaces read", async () => {
-    const { database, env } = fixture(["00000000-0000-7000-8000-0000000000f1"]);
+    const { env } = fixture(["00000000-0000-7000-8000-0000000000f1"]);
     const allocated = await ensureResourceSlug(env, workspaceId, "00000000-0000-7000-8000-0000000000f1");
     const service = new ResourceService(env, {
       sessionId: "session-1", userId: asUserId("00000000-0000-7000-8000-0000000000d2"),
@@ -126,17 +153,16 @@ describe("resource slug allocation", () => {
       .resolves.toMatchObject({ slug: allocated });
     await expect(service.list({ limit: 10 }))
       .resolves.toMatchObject({ items: [{ slug: allocated }] });
-    void database;
   });
 
   it("does not turn an alias into a new version of the resource", async () => {
-    const { database, env } = fixture(["resource-1"]);
+    const { database, env } = fixture([RESOURCE_1]);
 
-    await ensureResourceSlug(env, workspaceId, "resource-1");
+    await ensureResourceSlug(env, workspaceId, RESOURCE_1);
 
     expect(database.prepare(
-      "SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = 'resource-1'",
-    ).get()).toEqual({ count: 1 });
+      "SELECT COUNT(*) AS count FROM resource_versions WHERE resource_id = ?",
+    ).get(RESOURCE_1)).toEqual({ count: 1 });
   });
 });
 

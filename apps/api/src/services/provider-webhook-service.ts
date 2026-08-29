@@ -1,5 +1,6 @@
 import {
   ActivityQueueMessageSchema,
+  asWorkspaceId,
   NormalizedActivitySchema,
   type NormalizedActivity,
   type Scope,
@@ -33,6 +34,8 @@ import { encryptString, sha256, timingSafeEqualText } from "../lib/crypto";
 import { withAuthorizedConnection } from "./connector-connection-access";
 import { connectorRegistryForEnv, linearConnectorConfig } from "../lib/connector-registry";
 import { decryptVersionedConnectorCredentials, decryptVersionedCredentialValue } from "./connector-credential-envelope";
+import { workspaceDOName } from "../durable-objects/names";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { logWarn } from "../observability/logger";
 import { publishWorkspaceSync } from "./workspace-realtime-service";
 import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
@@ -579,18 +582,34 @@ export class ProviderWebhookService {
         || existingWorkspaceReceipt?.processed_at === null;
       if (shouldApplyWorkspaceEffects) {
         for (const { connection, resources } of discoveredResources) {
-          const workspaceDatabase = withWorkspaceRuntimeDatabase(
+          // The typed upsert reaches the object that owns `resources`
+          // directly; only the legacy no-namespace path below still builds
+          // the receipt-fenced regional statement.
+          const workspace = await durableObjectStubForWorkspace(
             this.env,
-            connection.workspaceId,
-          ).DB;
-          await this.resourceUpsertStatement(
-            workspaceDatabase,
-            connection,
-            resources,
-            input.provider,
-            input.deliveryId,
-            input.eventType,
-          ).run();
+            this.env.WORKSPACE_DOS,
+            asWorkspaceId(connection.workspaceId),
+            workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(connection.workspaceId)),
+          );
+          const at = nowIso();
+          await workspace.upsertDiscoveredResources({
+            workspaceId: connection.workspaceId,
+            connectionId: connection.id,
+            provider: input.provider,
+            resources: resources.map((resource) => ({
+              id: newId(),
+              resourceType: resource.resourceType,
+              providerResourceId: resource.providerResourceId,
+              title: resource.title,
+              canonicalUrl: resource.canonicalUrl ?? null,
+              metadataJson: JSON.stringify({
+                ...resource.metadata,
+                discoveredEventType: input.eventType,
+                discoveredDeliveryId: input.deliveryId,
+              }),
+            })),
+            at,
+          });
         }
         const connectionWorkspace = new Map(connections.map((connection) => [
           connection.id,

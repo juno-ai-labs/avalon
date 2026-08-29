@@ -525,6 +525,37 @@ hashes remain; changing the words after them is not.
 
 ## Changelog
 
+### 2026-08-29 — The inbound receipt lease becomes one typed claim
+
+**What changed:** The work-stream inbound path's receipt handling moved from
+statements through the workspace runtime facade to typed `WorkspaceDO` methods.
+`claimInboundEmailReceipt` performs the insert, the duplicate read and the
+expired-lease takeover in one transaction and mints the lease token inside the
+object; renew, settle and failure recording present that token and answer with
+outcomes (`renewed`/`lease_lost`, `processed`/`lease_lost`) read from
+`RETURNING` witnesses. `upsertInboundEmailResource` creates or refreshes the
+email's resource in one critical section, and a fresh insert no longer runs
+the follow-up refresh — which re-assigned versioned columns and recorded a
+phantom second version of every email on first ingestion.
+
+**Why:** Part of the facade-to-RPC stack: the facade routes SQL by the table
+names in it, and `workstream_email_receipts` answered `no such table` from the
+regional database the moment its entry was missing. The claim was also three
+separate critical sections, and the gap between them is where two concurrent
+deliveries of one message could both proceed; the object's serialization makes
+the reading at the call site true. The 503 the old path returned when a
+conflicted insert found no row on re-read is unreachable in one transaction.
+
+**Considered and rejected:** Letting the caller keep minting the lease token.
+The token fences every later transition, so the object that enforces the fence
+mints it; the lease *length* stays the service's, because it is an
+environment-configured limit the object has no reading of.
+
+**Consequences:** The receipt tests in `resend-inbound-email.test.ts` seed and
+read a real WorkspaceDO's `workstream_email_receipts` rather than a fixture
+map, and the lease-expiry cases pin the wall clock because the object compares
+expiry against its own clock, not a caller-supplied timestamp.
+
 ### 2026-08-28 — An automation owns its address, its receipts, and its refusals
 
 **What changed:** An automation reserves its address once, inside acceptance, and
