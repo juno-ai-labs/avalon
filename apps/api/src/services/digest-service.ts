@@ -1,6 +1,7 @@
 import {
   DigestScheduleSchema,
   ExecutionPrincipalSchema,
+  asWorkspaceId,
   type DigestDeliveryTargetType,
   type DigestSchedule,
   type UpdateDigestScheduleRequest,
@@ -8,7 +9,16 @@ import {
 import { newId, nowIso } from "@rally/db";
 
 import type { AuthContext, Env } from "../env";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceDigestDefaultResultSchema,
+  WorkspaceDigestReplaceResultSchema,
+  WorkspaceDigestRowStateSchema,
+  WorkspaceDigestSettingsSchema,
+  type WorkspaceDigestReplaceRequest,
+} from "../durable-objects/workspace-digests-protocol";
 import { ApiError } from "../lib/api-error";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { logWarn } from "../observability/logger";
 import { refreshWorkspaceSchedule } from "./workstream-wakeup-service";
@@ -19,6 +29,16 @@ import {
   workspaceRegionalDatabase,
 } from "./workspace-runtime-database";
 
+/** The WorkspaceDO that owns this workspace's digest tables. */
+function workspaceDigests(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
+}
+
 /** RRULE weekday codes, indexed the way `Date#getDay` numbers them. */
 const RRULE_WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
 
@@ -28,16 +48,6 @@ const RRULE_WEEKDAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
  * without the client needing a nullable field it would have to branch on.
  */
 export const DIGEST_UNSAVED_ID = "00000000-0000-4000-8000-000000000000";
-
-interface DigestScheduleRow {
-  id: string;
-  workspace_id: string;
-  user_id: string;
-  day_mask: number;
-  enabled: number;
-  version: number;
-  created_at: string;
-}
 
 interface DeliveryTargetRow {
   target_type: string;
@@ -74,44 +84,31 @@ export function daysFromDayMask(mask: number): number[] {
 }
 
 /**
- * The `schedules` rows a digest's configuration implies, as statements to batch.
+ * The `schedules` rows a digest's configuration implies, as values for the
+ * object to write.
  *
  * Derived state, always rebuilt rather than reconciled: working out which row
  * belonged to which time would cost more than recreating all of them. A disabled
  * digest keeps its configuration and produces no rows at all, so re-enabling it
  * is a save rather than a rebuild and the scheduler carries nothing that can
- * fire in the meantime.
+ * fire in the meantime. The recurrence arithmetic stays here — the object writes
+ * exactly what it is handed, so the policy for *when* a digest fires does not
+ * move into the authority that stores it.
  */
-function digestScheduleRowStatements(
-  env: Env,
-  input: {
-    workspaceId: string;
-    digestScheduleId: string;
-    enabled: boolean;
-    days: number[];
-    times: number[];
-    timezone: string;
-    at: string;
-  },
-): D1PreparedStatement[] {
-  const clear = env.DB.prepare("DELETE FROM schedules WHERE digest_schedule_id = ?")
-    .bind(input.digestScheduleId);
-  if (!input.enabled || input.days.length === 0) return [clear];
-  return [clear, ...input.times.flatMap((minuteOfDay) => {
+function derivedDigestScheduleRows(input: {
+  enabled: boolean;
+  days: number[];
+  times: number[];
+  timezone: string;
+  at: string;
+}): WorkspaceDigestReplaceRequest["scheduleRows"] {
+  if (!input.enabled || input.days.length === 0) return [];
+  return input.times.flatMap((minuteOfDay) => {
     const rrule = digestRRule(input.days, minuteOfDay);
     const nextRunAt = nextRRuleOccurrence(rrule, input.timezone, new Date(input.at), new Date(input.at));
     if (!nextRunAt) return [];
-    return [env.DB.prepare(
-      `INSERT INTO schedules
-         (id, workspace_id, connector_connection_id,
-          digest_schedule_id, schedule_type, rrule, interval_seconds, timezone,
-          next_run_at, last_run_at, enabled, version, created_at, updated_at)
-       VALUES (?, ?, NULL, ?, 'calendar', ?, NULL, ?, ?, NULL, 1, 1, ?, ?)`,
-    ).bind(
-      newId(), input.workspaceId, input.digestScheduleId, rrule, input.timezone,
-      nextRunAt.toISOString(), input.at, input.at,
-    )];
-  })];
+    return [{ id: newId(), rrule, nextRunAt: nextRunAt.toISOString() }];
+  });
 }
 
 /**
@@ -135,37 +132,39 @@ export async function rebuildDigestSchedulesForTimezone(
   env: Env,
   input: { userId: string; timezone: string },
 ): Promise<void> {
+  // Focused unit environments omit the namespace deliberately — the same
+  // allowance `refreshWorkspaceSchedule` makes, and for the same reason. The
+  // environment contract requires it before request dispatch, so production
+  // never reaches this branch.
+  if (!env.WORKSPACE_DOS) return;
   const memberships = await env.DB.prepare(
     `SELECT workspace_id FROM workspace_members WHERE user_id = ? AND status = 'active'`,
   ).bind(input.userId).all<{ workspace_id: string }>();
-  const digests: Array<{ id: string; workspace_id: string; enabled: number; day_mask: number }> = [];
+  const rebuilt: string[] = [];
   for (const membership of memberships.results ?? []) {
-    const workspaceEnv = withWorkspaceRuntimeDatabase(env, membership.workspace_id);
-    const digest = await workspaceEnv.DB.prepare(
-      `SELECT id, workspace_id, enabled, day_mask FROM digest_schedules
-        WHERE workspace_id = ? AND user_id = ?`,
-    ).bind(membership.workspace_id, input.userId).first<{
-      id: string; workspace_id: string; enabled: number; day_mask: number;
-    }>();
-    if (digest) digests.push(digest);
-  }
-
-  for (const digest of digests) {
-    const workspaceEnv = withWorkspaceRuntimeDatabase(env, digest.workspace_id);
-    const times = await workspaceEnv.DB.prepare(
-      "SELECT minute_of_day FROM digest_schedule_times WHERE digest_schedule_id = ? ORDER BY minute_of_day ASC",
-    ).bind(digest.id).all<{ minute_of_day: number }>();
-    await workspaceEnv.DB.batch(digestScheduleRowStatements(workspaceEnv, {
-      workspaceId: digest.workspace_id,
-      digestScheduleId: digest.id,
-      enabled: digest.enabled === 1,
-      days: daysFromDayMask(digest.day_mask),
-      times: (times.results ?? []).map((row) => Number(row.minute_of_day)),
-      timezone: input.timezone,
-      at: nowIso(),
+    const workspace = await workspaceDigests(env, membership.workspace_id);
+    const settings = WorkspaceDigestSettingsSchema.parse(await workspace.digestSettings({
+      workspaceId: membership.workspace_id,
+      userId: input.userId,
     }));
+    if (!settings.schedule) continue;
+    const at = nowIso();
+    await workspace.replaceDigestScheduleRows({
+      workspaceId: membership.workspace_id,
+      digestScheduleId: settings.schedule.id,
+      timezone: input.timezone,
+      rows: derivedDigestScheduleRows({
+        enabled: settings.schedule.enabled,
+        days: daysFromDayMask(settings.schedule.dayMask),
+        times: settings.times,
+        timezone: input.timezone,
+        at,
+      }),
+      at,
+    });
+    rebuilt.push(membership.workspace_id);
   }
-  await Promise.all([...new Set(digests.map((digest) => digest.workspace_id))]
+  await Promise.all([...new Set(rebuilt)]
     .map((workspaceId) => refreshWorkspaceSchedule(env, workspaceId)));
 }
 
@@ -204,6 +203,8 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
   created: number;
   derived: number;
 }> {
+  // The same focused-environment allowance as `rebuildDigestSchedulesForTimezone`.
+  if (!env.WORKSPACE_DOS) return { created: 0, derived: 0 };
   const at = nowIso();
   const regionalDatabase = workspaceRegionalDatabase(env);
   const cursor = await regionalDatabase.prepare(
@@ -228,74 +229,55 @@ export async function reconcileDigestDefaults(env: Env): Promise<{
   let derived = 0;
   const workspaces = new Set<string>();
   for (const member of members.results ?? []) {
-    const workspaceEnv = withWorkspaceRuntimeDatabase(env, member.workspace_id);
-    let digest = await workspaceEnv.DB.prepare(
-      `SELECT id, workspace_id, enabled, day_mask FROM digest_schedules
-        WHERE workspace_id = ? AND user_id = ?`,
-    ).bind(member.workspace_id, member.user_id).first<{
-      id: string; workspace_id: string; enabled: number; day_mask: number;
-    }>();
+    const workspace = await workspaceDigests(env, member.workspace_id);
+    const settings = WorkspaceDigestSettingsSchema.parse(await workspace.digestSettings({
+      workspaceId: member.workspace_id,
+      userId: member.user_id,
+    }));
+    let digest = settings.schedule;
+    let times = settings.times;
     if (!digest) {
       if (!member.email?.trim()) continue;
-      const scheduleId = newId();
-      const inserted = await workspaceEnv.DB.batch([
-        workspaceEnv.DB.prepare(
-        `INSERT INTO digest_schedules
-           (id, workspace_id, user_id, day_mask, enabled,
-            execution_principal_json, version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 1, ?, 1, ?, ?)
-         ON CONFLICT DO NOTHING`,
-        ).bind(
-        scheduleId, member.workspace_id, member.user_id, dayMaskFromDays(DEFAULT_DAYS),
-        JSON.stringify({ type: "user", userId: member.user_id }), at, at,
-      ),
-        workspaceEnv.DB.prepare(
-        `INSERT INTO digest_schedule_times (digest_schedule_id, minute_of_day)
-         SELECT id, ? FROM digest_schedules WHERE workspace_id = ? AND user_id = ?
-         ON CONFLICT DO NOTHING`,
-      ).bind(DEFAULT_MINUTE_OF_DAY, member.workspace_id, member.user_id),
-      // Frozen against the account address the same way a saved target is, so a
-      // default and a chosen destination behave identically from here on.
-        workspaceEnv.DB.prepare(
-        `INSERT INTO digest_delivery_targets
-           (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
-            provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
-         SELECT ?, d.workspace_id, d.id, d.user_id, 'email', NULL, NULL, NULL, ?, 'active', ?, ?
-           FROM digest_schedules d
-          WHERE d.workspace_id = ? AND d.user_id = ?
-         ON CONFLICT DO NOTHING`,
-        ).bind(newId(), member.email.trim(), at, at, member.workspace_id, member.user_id),
-      ]);
-      if (Number(inserted[0]?.meta.changes ?? 0) > 0) created += 1;
-      digest = await workspaceEnv.DB.prepare(
-        `SELECT id, workspace_id, enabled, day_mask FROM digest_schedules
-          WHERE workspace_id = ? AND user_id = ?`,
-      ).bind(member.workspace_id, member.user_id).first<{
-        id: string; workspace_id: string; enabled: number; day_mask: number;
-      }>();
+      const ensured = WorkspaceDigestDefaultResultSchema.parse(
+        await workspace.ensureDefaultDigestSchedule({
+          workspaceId: member.workspace_id,
+          userId: member.user_id,
+          scheduleId: newId(),
+          targetId: newId(),
+          dayMask: dayMaskFromDays(DEFAULT_DAYS),
+          minuteOfDay: DEFAULT_MINUTE_OF_DAY,
+          emailAddress: member.email.trim(),
+          executionPrincipalJson: JSON.stringify({ type: "user", userId: member.user_id }),
+          at,
+        }),
+      );
+      if (ensured.created) created += 1;
+      digest = ensured.schedule;
+      times = ensured.times;
     }
-    if (!digest || digest.enabled !== 1 || digest.day_mask <= 0) continue;
-    const times = await workspaceEnv.DB.prepare(
-      "SELECT minute_of_day FROM digest_schedule_times WHERE digest_schedule_id = ? ORDER BY minute_of_day ASC",
-    ).bind(digest.id).all<{ minute_of_day: number }>();
-    if (times.results.length === 0) continue;
-    const scheduleState = await workspaceEnv.DB.prepare(
-      `SELECT COUNT(*) AS count,
-              SUM(CASE WHEN timezone = ? THEN 0 ELSE 1 END) AS timezone_mismatches
-         FROM schedules WHERE digest_schedule_id = ?`,
-    ).bind(member.timezone, digest.id).first<{ count: number; timezone_mismatches: number | null }>();
-    if (Number(scheduleState?.count ?? 0) > 0
-      && Number(scheduleState?.timezone_mismatches ?? 0) === 0) continue;
-    await workspaceEnv.DB.batch(digestScheduleRowStatements(workspaceEnv, {
-      workspaceId: digest.workspace_id,
+    if (!digest.enabled || digest.dayMask <= 0) continue;
+    if (times.length === 0) continue;
+    const rowState = WorkspaceDigestRowStateSchema.parse(await workspace.digestScheduleRowState({
+      workspaceId: member.workspace_id,
       digestScheduleId: digest.id,
-      enabled: true,
-      days: daysFromDayMask(digest.day_mask),
-      times: (times.results ?? []).map((row) => Number(row.minute_of_day)),
       timezone: member.timezone,
-      at: nowIso(),
     }));
-    workspaces.add(digest.workspace_id);
+    if (rowState.rowCount > 0 && rowState.timezoneMismatches === 0) continue;
+    const derivedAt = nowIso();
+    await workspace.replaceDigestScheduleRows({
+      workspaceId: member.workspace_id,
+      digestScheduleId: digest.id,
+      timezone: member.timezone,
+      rows: derivedDigestScheduleRows({
+        enabled: true,
+        days: daysFromDayMask(digest.dayMask),
+        times,
+        timezone: member.timezone,
+        at: derivedAt,
+      }),
+      at: derivedAt,
+    });
+    workspaces.add(member.workspace_id);
     derived += 1;
   }
 
@@ -340,23 +322,25 @@ export class DigestService {
    * coherent to render before anything exists.
    */
   async get(): Promise<DigestSchedule> {
-    const row = await this.loadRow();
-    if (!row) return await this.defaultSchedule();
-    const [times, targets, timing, timezone] = await Promise.all([
-      this.loadTimes(row.id),
-      this.loadTargets(row.id),
-      this.loadTiming(row.id),
+    const workspace = await workspaceDigests(this.env, this.auth.workspaceId);
+    const settings = WorkspaceDigestSettingsSchema.parse(await workspace.digestSettings({
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+    }));
+    if (!settings.schedule) return await this.defaultSchedule();
+    const [targets, timezone] = await Promise.all([
+      this.loadTargets(settings.schedule.id),
       this.accountTimezone(),
     ]);
     return DigestScheduleSchema.parse({
-      id: row.id,
-      enabled: row.enabled === 1,
-      days: daysFromDayMask(row.day_mask),
-      times,
+      id: settings.schedule.id,
+      enabled: settings.schedule.enabled,
+      days: daysFromDayMask(settings.schedule.dayMask),
+      times: settings.times,
       timezone,
       deliveryTargets: targets,
-      nextRunAt: timing.nextRunAt,
-      lastDeliveredAt: timing.lastDeliveredAt,
+      nextRunAt: settings.nextRunAt,
+      lastDeliveredAt: settings.lastDeliveredAt,
     });
   }
 
@@ -367,7 +351,11 @@ export class DigestService {
    * written, so a destination that has gone away fails the request rather than
    * leaving a schedule that fires into nowhere. Schedule rows are then rebuilt
    * from scratch — deriving them is cheap, and reconciling them in place would
-   * mean tracking which `schedules` row belonged to which time.
+   * mean tracking which `schedules` row belonged to which time. The whole write
+   * — configuration, times, frozen destinations, derived rows — is one object
+   * transaction, and the object decides create-versus-update inside it, so two
+   * first saves racing each other converge instead of the loser 500ing on
+   * `UNIQUE (workspace_id, user_id)`.
    */
   async replace(input: UpdateDigestScheduleRequest): Promise<DigestSchedule> {
     const days = [...new Set(input.days)].sort((left, right) => left - right);
@@ -376,55 +364,36 @@ export class DigestService {
     const timezone = await this.accountTimezone();
 
     const at = nowIso();
-    const existing = await this.loadRow();
-    const scheduleId = existing?.id ?? newId();
     const principal = ExecutionPrincipalSchema.parse({ type: "user", userId: this.auth.userId });
 
-    await this.env.DB.batch([
-      existing
-        ? this.env.DB.prepare(
-            `UPDATE digest_schedules
-                SET day_mask = ?, enabled = ?, execution_principal_json = ?,
-                    version = version + 1, updated_at = ?
-              WHERE id = ? AND workspace_id = ?`,
-          ).bind(
-            dayMaskFromDays(days), input.enabled ? 1 : 0,
-            JSON.stringify(principal), at, scheduleId, this.auth.workspaceId,
-          )
-        : this.env.DB.prepare(
-            `INSERT INTO digest_schedules
-               (id, workspace_id, user_id, day_mask, enabled,
-                execution_principal_json, version, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-          ).bind(
-            scheduleId, this.auth.workspaceId, this.auth.userId, dayMaskFromDays(days),
-            input.enabled ? 1 : 0, JSON.stringify(principal), at, at,
-          ),
-      this.env.DB.prepare("DELETE FROM digest_schedule_times WHERE digest_schedule_id = ?").bind(scheduleId),
-      ...times.map((minuteOfDay) => this.env.DB.prepare(
-        "INSERT INTO digest_schedule_times (digest_schedule_id, minute_of_day) VALUES (?, ?)",
-      ).bind(scheduleId, minuteOfDay)),
-      this.env.DB.prepare("DELETE FROM digest_delivery_targets WHERE digest_schedule_id = ?").bind(scheduleId),
-      ...targets.map((target) => this.env.DB.prepare(
-        `INSERT INTO digest_delivery_targets
-           (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
-            provider_tenant_id, provider_user_id, email_address, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
-      ).bind(
-        newId(), this.auth.workspaceId, scheduleId, this.auth.userId, target.type,
-        target.connectionId, target.providerTenantId, target.providerUserId,
-        target.emailAddress, at, at,
-      )),
-      ...digestScheduleRowStatements(this.env, {
-        workspaceId: this.auth.workspaceId,
-        digestScheduleId: scheduleId,
+    const workspace = await workspaceDigests(this.env, this.auth.workspaceId);
+    const saved = WorkspaceDigestReplaceResultSchema.parse(await workspace.replaceDigestSchedule({
+      workspaceId: this.auth.workspaceId,
+      userId: this.auth.userId,
+      scheduleId: newId(),
+      dayMask: dayMaskFromDays(days),
+      enabled: input.enabled,
+      executionPrincipalJson: JSON.stringify(principal),
+      times,
+      targets: targets.map((target) => ({
+        id: newId(),
+        targetType: target.type,
+        connectionId: target.connectionId,
+        providerTenantId: target.providerTenantId,
+        providerUserId: target.providerUserId,
+        emailAddress: target.emailAddress,
+      })),
+      scheduleRows: derivedDigestScheduleRows({
         enabled: input.enabled,
         days,
         times,
         timezone,
         at,
       }),
-    ]);
+      timezone,
+      at,
+    }));
+    const scheduleId = saved.scheduleId;
     // The alarm is recomputed after the write, never before: the Durable Object
     // reads D1, so refreshing early would compute the alarm from the old rows.
     await refreshWorkspaceSchedule(this.env, this.auth.workspaceId);
@@ -487,20 +456,14 @@ export class DigestService {
     });
   }
 
-  private async loadRow(): Promise<DigestScheduleRow | null> {
-    return await this.env.DB.prepare(
-      `SELECT id, workspace_id, user_id, day_mask, enabled, version, created_at
-         FROM digest_schedules WHERE workspace_id = ? AND user_id = ?`,
-    ).bind(this.auth.workspaceId, this.auth.userId).first<DigestScheduleRow>();
-  }
-
-  private async loadTimes(scheduleId: string): Promise<number[]> {
-    const result = await this.env.DB.prepare(
-      "SELECT minute_of_day FROM digest_schedule_times WHERE digest_schedule_id = ? ORDER BY minute_of_day ASC",
-    ).bind(scheduleId).all<{ minute_of_day: number }>();
-    return (result.results ?? []).map((row) => Number(row.minute_of_day));
-  }
-
+  /**
+   * The frozen destinations with their connector display names. This is the
+   * one digest statement still on the workspace runtime facade: it joins
+   * `digest_delivery_targets` to `connector_connections`, a table the
+   * connectors domain owns, and splitting the join is that domain's
+   * conversion to make — both tables live in the same WorkspaceDO, so the
+   * routed statement still reaches one database.
+   */
   private async loadTargets(scheduleId: string): Promise<DigestSchedule["deliveryTargets"]> {
     const result = await this.env.DB.prepare(
       `SELECT t.target_type, t.connection_id, t.email_address, t.status, t.last_delivered_at,
@@ -517,23 +480,6 @@ export class DigestService {
       status: row.status,
       lastDeliveredAt: row.last_delivered_at,
     }));
-  }
-
-  private async loadTiming(scheduleId: string): Promise<{
-    nextRunAt: string | null;
-    lastDeliveredAt: string | null;
-  }> {
-    const [next, last] = await Promise.all([
-      this.env.DB.prepare(
-        `SELECT MIN(next_run_at) AS next_run_at FROM schedules
-          WHERE digest_schedule_id = ? AND enabled = 1`,
-      ).bind(scheduleId).first<{ next_run_at: string | null }>(),
-      this.env.DB.prepare(
-        `SELECT MAX(updated_at) AS delivered_at FROM digest_deliveries
-          WHERE digest_schedule_id = ? AND status = 'delivered'`,
-      ).bind(scheduleId).first<{ delivered_at: string | null }>(),
-    ]);
-    return { nextRunAt: next?.next_run_at ?? null, lastDeliveredAt: last?.delivered_at ?? null };
   }
 
   /**
