@@ -35,7 +35,7 @@ once and passes on a rerun.
 
 `pnpm test` runs every package's `test` script recursively, and `@rally/api`'s
 runs the Node suite *and then* the workerd suite — so a green `pnpm test`
-includes workerd. CI splits them: `api-tests-2-of-2` appends
+includes workerd. CI splits them: `api-tests-workers` runs
 `pnpm --filter @rally/api test:workers`, and the container and release suites
 are their own matrix jobs.
 
