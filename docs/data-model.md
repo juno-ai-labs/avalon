@@ -880,6 +880,39 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-29 — The runtime router answers for `automation_directory`, and every object table is now a decision
+
+**What changed:** `automation_directory` joins `WORKSPACE_LOCAL_TABLES`, so the
+work stream summary's read of an automation's title routes to WorkspaceDO
+instead of to the regional database. `apps/api/test/workspace-runtime-database.test.ts`
+gains a coverage test: every table WorkspaceDO's migrations leave standing must
+appear either in `WORKSPACE_LOCAL_TABLES` or in that file's
+`DO_TABLES_NOT_ROUTED_THROUGH_THE_FACADE`, the tables reached only by typed RPC
+from inside the object.
+
+**Why:** the router's fallthrough is "regional" — `localStatement` returns
+`false` for a statement naming no listed table — and migration 22 added
+`automation_directory` without adding it to the list. Nothing in D1 has ever
+held that table, so the read was not misrouted on a judgement about where the
+data lives; it took the default for a name the router did not recognise. It
+answered `no such table: automation_directory` from D1 and surfaced as a 500 on
+every attempt to open an automation's run work stream in production. The
+coverage test exists because the one-line entry fixes this table and nothing
+about the next one: a workspace-owned table that nobody routed is silently
+regional until somebody opens the surface that reads it.
+
+**Considered and rejected:** inverting the default so an unrecognised table is
+refused rather than sent to D1. That needs a complete regional list, which the
+2026-08-22 entry below already rejected for the read guard and for the same
+reason — the region holds tables neither list enumerates, and the rule would
+refuse statements that are correct today. A test that fails when a migration
+adds an unrouted table catches the same defect at the only moment anyone can act
+on it, and costs nothing at runtime. Also rejected: adding all 39 unrouted
+object tables to `WORKSPACE_LOCAL_TABLES` on the theory that local is always the
+safer answer. Some of those names — `projects`, `resources` in an earlier life —
+are generic enough that a regional table could take them later, and claiming a
+name the facade never sees buys nothing.
+
 ### 2026-08-28 — Automation product state moves out of WorkspaceDO
 
 **What changed:** Named `AutomationAgent` objects own draft turns, compiled
