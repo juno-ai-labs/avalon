@@ -217,6 +217,16 @@ motivation is structural, and stated as such.
     opens as *source* through the versioning layer's preview; prior
     static and stateless-active versions still render live per key design
     decision 11.
+14. **Page export of artifacts (PDF, image).** Deferred — and the
+    ownership principle is fixed now so the deferral does not grow
+    in-page workarounds: when page export arrives, it is
+    platform-owned chrome (the message-export machinery — hidden
+    window, per-page splash and footer — is the natural owner), never
+    UI inside the artifact. The skill forbids Print/Save/Export
+    buttons in pages today and teaches `@media print`-friendly
+    layouts, so pages built before export exists render well when it
+    lands. The rail's per-table CSV export of a stateful artifact's
+    *data* ships in V1 and is unrelated to this deferral.
 
 ## Product behavior
 
@@ -979,9 +989,14 @@ needs request-time computation, and exporting the storage class only
 when the request must remember between visits — a poll, sign-ups, a
 list visitors add to — published with the ordinary publish tool; chat
 narration stays short and code-free and the artifact is announced
-with an embed citation. When a participant later asks about what the
-artifact collected, the policy steers the model to the data read
-tools, never to guessing from the transcript. Participant overrides win in all directions ("just show me the
+with an embed citation. The policy also carries the one
+disambiguation the reference platform's prompt learned to state
+outright: people ask for *things* — a tracker, a page, a poll — and a
+request for a new thing is a new artifact at a new path, even in a
+work stream that already has one; only a request *about* an existing
+artifact is a revision of it. When a participant later asks about
+what the artifact collected, the policy steers the model to the data
+read tools, never to guessing from the transcript. Participant overrides win in all directions ("just show me the
 code" publishes files as ordinary resources; "make it a real page" builds
 the site; "zip that up" publishes the directory as an archive). Same
 render conditions as the document policy — ordinary participant-triggered
@@ -997,8 +1012,9 @@ and the deep build craft — static-versus-active-versus-stateful
 judgement, directory layout, the fetch-handler shape and asset-fallback
 route pattern, the `SiteData` storage-class shape with its
 additive-forever schema discipline, the statelessness rules and their
-anti-patterns, data-as-files, the revise-in-place loop — ships as a new
-loadable skill,
+anti-patterns, the identity-less multiplayer patterns and
+freshness-by-polling, narrow-pane-first UI, data-as-files, the
+revise-in-place loop — ships as a new loadable skill,
 **`building-live-sites`** (`ownerPlugin: rally:terminal`, so it is
 offered only where the Terminal plugin is in scope), loaded when the
 model is about to write a site's files. That keeps hundreds of lines of
@@ -1181,7 +1197,7 @@ rather than papered over.
 
 ## Future research
 
-Two threads survive this PRD's scope decisions. The storage design
+Three threads survive this PRD's scope decisions. The storage design
 space this section once held was resolved when the team chose to ship
 facet storage in V1 (non-goal 11 records what was rejected with it);
 what remains is the *deeper* platform tie, and the sharing problem
@@ -1226,3 +1242,17 @@ single-ACL case with the work stream as the unit, which is exactly why
 V1 needs no machinery; the tracking strategy is what connector-backed
 artifacts will need, and it is the expensive one — design it with the
 binding, not after it.
+
+**3. Starter blueprints.** The reference platform steers its agent to
+start every common request from a *blueprint* — pre-written,
+already-reviewed code for a known shape (slides, a tracker, a doc) —
+and treats "consider a blueprint first" as a standing rule, because a
+vetted starting point beats a fresh derivation on quality, tokens, and
+latency at once. Rally's V1 equivalent is the skill's two worked
+examples, which is a library of size two. The research question is
+what a real library looks like here: more Tier-3 skill resources (the
+cheapest shape — no new machinery, loaded on demand), or first-class
+starter templates with their own registry and provenance. The demand
+signal is dogfooding repetition — the third time the model builds a
+poll from scratch, the poll blueprint should have existed twice
+already.
