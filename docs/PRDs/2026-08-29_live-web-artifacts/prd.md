@@ -563,9 +563,11 @@ authoritative.
   ships (the type is stored forever). `text/html` would misroute the
   resource into single-document read paths and converters;
   `application/zip` would make sites indistinguishable from archive
-  publishes, whose behavior is the opposite. A precise unrecognized
-  type fails closed into the `other` kind; a familiar wrong one fails
-  open into a converter. A directory that publishes as an
+  publishes, whose behavior is the opposite. The registry maps this
+  exact type to the `site` attachment kind (see Agent behavior); the
+  fail directions still justify the precision — an unrecognized precise
+  type fails closed into `other`, a familiar wrong one fails open into
+  a converter. A directory that publishes as an
   archive is an ordinary `generated_file` row holding the zip Rally
   produced, MIME `application/zip`. The existing slug, version-number,
   and lifecycle columns apply unchanged.
@@ -695,12 +697,13 @@ published by its file path, never by its folder.
   resolved from the directory's root entry per key design decision 9.
 - Successful `output`, by what the path resolved to: a *file* returns
   today's shape, byte-for-byte unchanged. A *site* directory returns
-  `{ resourceId, slug, resourceType: "generated_site", url, mode:
-  "static" | "active", version, mimeType, fileCount, totalBytes,
-  manifestSha256, createdAt }` — the URL and slug because the model's
-  next step is citing the artifact; `version` because revision
-  narration wants it; `mimeType` is the site-manifest vendor type the
-  Data model fixes. An
+  `{ resourceId, slug, resourceType: "generated_site",
+  attachmentKind: "site", url, mode: "static" | "active", version,
+  mimeType, fileCount, totalBytes, manifestSha256, createdAt }` — the
+  URL and slug because the model's next step is citing the artifact;
+  `version` because revision narration wants it; `mimeType` is the
+  site-manifest vendor type the Data model fixes; `attachmentKind` the
+  registry's `site` kind (see Attachment rails below). An
   *archive* directory returns the existing download-only archive shape
   (`resourceType: "generated_file"`, `attachmentKind: "other"`, the
   archive's mime type and size) plus `fileCount` and `totalBytes` for
@@ -744,18 +747,26 @@ and "a resource in this work stream" is one token — the same
 the revision loop is the document loop the routed models already
 practice. What must not be left undefined is the natural next call a
 model makes after connecting them: a content read on the site resource.
-The attachment registry therefore classifies `generated_site` (keyed on
-its manifest MIME type, per the Data model) as the `other` kind in
-listings — honest: not directly readable content — and the four content
-tools (`workstream_read_resource`, `_view_`, `_search_`,
-`_summarize_`) answer a site with the registry's bounded wrong-tool
-remediation carrying `suggestedCall: terminal_import_resource` — "a
-site's source is edited in the terminal workspace; import it there to
-read or revise it" — so even the failure path teaches the connection
-instead of dead-ending it. The structured-failure sanitizer's
-`suggestedCall` allowlist, which today admits only the two workstream
-content tools, widens by exactly this one entry in contracts, runtime,
-and tests together, per the registry's own rule.
+The attachment registry therefore gains a ninth natural-language kind,
+**`site`**, keyed on the manifest MIME type per the Data model — chosen
+over `website` (heavier than the family's terse single-noun style) and
+over `artifact` (internal jargon that collides with the rail's
+**Artifacts** section, which holds documents too). Sites become
+first-class in listings — "list the sites in this work stream" is an
+ordinary kind filter — and the four content tools
+(`workstream_read_resource`, `_view_`, `_search_`, `_summarize_`)
+answer a site with the registry's bounded wrong-tool remediation
+carrying `suggestedCall: terminal_import_resource` — "a site's source
+is edited in the terminal workspace; import it there to read or revise
+it" — so even the failure path teaches the connection instead of
+dead-ending it. The registry change carries its full documented cost,
+paid together in one change per the registry's own rules: the kind
+enum in contracts, the kind explanation added to every list tool's
+description, the classifier mapping and its tests, and the
+structured-failure sanitizer — whose kind vocabulary widens to nine
+and whose `suggestedCall` allowlist, today admitting only the two
+workstream content tools, widens by exactly the one
+`terminal_import_resource` entry.
 
 **Standing-policy extension.** The document-generation policy gains the
 site trigger and manners: a request whose natural output is a web page or
