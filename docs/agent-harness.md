@@ -573,9 +573,12 @@ accepts exactly one of a content query or `memoryItemId`; the exact-ID form is t
 conflict-recovery read for a mutation and still reauthorizes the item against the
 host-derived scope union. The host returns scope provenance without allowing the
 model to select scope IDs. Ad-hoc user runs search workspace, user, and work-stream
-memory. Personal automations search workspace, owner-user, and automation memory.
-Workspace automations search workspace and automation memory. All work streams
-created by one automation subscription therefore share one automation scope.
+memory. An automation run's memory tools execute inside its named
+`AutomationAgent` and reach that automation's own memory; the workspace-side
+automation scope union was retired with the 2026-08-28 automation cutover, and
+`resolveMemoryAccess` refuses a subscription-declaring run by name
+(`memory_automation_scope_retired`) rather than reading a subscription row no
+reachable store still holds.
 
 **A run in a work stream an automation created, carrying no subscription of its
 own, is none of those**, and the run's own `automationSubscriptionId` — not the
@@ -960,7 +963,7 @@ proof.
 | `apps/api/test/tool-usage-telemetry.test.ts`, `run-outcome-telemetry.test.ts` | Started/terminal tool and root-run outcomes, person/workspace attribution, replay/idempotency, bounded performance dimensions, and prohibited content. |
 | `apps/api/test/bind-tool-failure-classification.test.ts` | The structured-failure allowlist and its size bound. |
 | `apps/api/test/connector-tool-prose.test.ts`, `avalon-tool-prose.test.ts` | Every registry tool reaching a non-generic row, and no `write` described in passive words. |
-| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, invalidation races, and bounded insert contention. |
+| `apps/api/test/scoped-memory.test.ts` | The host-derived scope union, exact-ID conflict recovery, post-read revision races, and invalidation races, against a real `WorkspaceDO` standing in for the memory authority. `apps/api/test-workers/workspace-memory.test.ts` proves the object's transactional receipts, witnesses, and FTS triggers on real workerd. |
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
 | `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
@@ -988,15 +991,17 @@ checker: a test that imports a database or Node-only module to build a fixture w
 pass locally and fail `pnpm lint`.
 
 **A memory-scope fixture can enforce rules production dropped.**
-`scoped-memory.test.ts` builds on `preRetirementProductSqliteDatabase()`, which
-replays migrations only through 0089 — one short of the 0090 that moved
-`memory_scopes` into WorkspaceDO and dropped migration 0036's four owner-validation
-triggers with it. Left in place, those triggers enforce from the fixture the very
-rules `resolveMemoryAccess` is now solely responsible for, so neutering a scope
-condition still fails a test — on `memory_scope_workstream_owner_invalid`, from a
-constraint no deployed database has, rather than on the union the test asserts.
-The fixture drops all four for that reason. Anything that reaches
-`memory_scopes` through another fixture owes the same check.
+`scoped-memory.test.ts` used to build its memory tables on
+`preRetirementProductSqliteDatabase()`, whose through-0089 snapshot still carried
+migration 0036's four owner-validation triggers — constraints no deployed
+database has — so neutering a scope condition failed a test on
+`memory_scope_workstream_owner_invalid` rather than on the union the test
+asserts, and the fixture had to drop them by hand. Since memory moved behind
+typed WorkspaceDO methods the suite stands up the real object with
+`createTestWorkspaceDO`, whose schema is the object's own migration ledger, and
+the snapshot serves only identity and membership. Anything that reaches
+`memory_scopes` through another fixture still owes this check: a stand-in schema
+must not enforce rules the code under test is now solely responsible for.
 
 And **the route circuit breaker is module-scoped**, keyed by provider, model,
 credential source, and workspace. A test that deliberately fails one endpoint
@@ -1009,6 +1014,63 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-29 — Workspace memory becomes typed WorkspaceDO methods, and the retired automation union fails by name
+
+**What changed:** Every statement the memory services ran against the
+memory-owned tables — `memory_scopes`, `memory_items`, `memory_items_fts`,
+`memory_mutations`, `memory_index_outbox`, and the six `memory_table*` tables —
+left the workspace runtime facade and became typed WorkspaceDO methods
+(`workspace-memory-protocol.ts` / `workspace-memory-storage.ts`). Each mutation
+now decides its receipt replay, compare-and-set, audit record, and outbox
+intent inside one `transactionSync`, refuses with a discriminated outcome
+rather than a thrown SQL error, and judges its CAS by a `RETURNING` witness
+rather than a write counter. Two failure modes ceased to exist with the D1
+batches that produced them: `memory_table_insert_contention` (the insert's
+bounded retry loop around its own revision counter) and
+`memory_table_query_changed_during_read` (the row page and the revision
+re-check were separate round trips). The embedding-outbox processor claims,
+completes, and retries through the same typed methods; running inside
+WorkspaceDO's own alarm it resolves to the registered instance rather than an
+RPC to itself. `resolveMemoryAccess`'s automation branch no longer reads
+`automation_subscriptions` — it throws `memory_automation_scope_retired` after
+the work-stream mismatch check — and the automation memory-table materializers
+(`buildAutomationMemoryTableStatements`, `ensureAutomationMemoryTables`,
+`loadAutomationMemoryTableContext`) were deleted. The converted tables joined
+`WORKSPACE_TYPED_RPC_ONLY_TABLES`, all except `memory_index_outbox`, whose due
+time the schedule's alarm-target derivation still reads generically inside the
+object.
+
+**Why:** The facade classifies each statement by the table names it mentions
+and sends anything it does not recognise to the regional database, which is the
+defect class that took automation run work streams down in production
+(`no such table: automation_directory`). The memory domain was carrying a live
+instance of it: the 2026-08-28 automation cutover dropped
+`automation_subscriptions` from every migrated WorkspaceDO while the facade
+still routes that name there, so both the automation branch of
+`resolveMemoryAccess` and the memory-table materializers would have answered
+`no such table: automation_subscriptions` had anything reached them. Nothing
+does — automation runs route memory through `AutomationAgent`, and a
+subscription-declaring input without frozen context is stopped by name in
+`loadRunPromptContext` — but the honest fix for an unreachable branch reading a
+dropped table is a named refusal, and for materializers with no callers since
+the cutover, deletion.
+
+**Considered and rejected:** Converting the automation branch and the
+materializers to typed methods — the rows they read and join no longer exist in
+any store this service can reach, so a faithful conversion would have encoded a
+query that can never answer. Also rejected: chunking caller-sized `IN (…)`
+lists into runs of 90 to stay under object SQLite's 100-bound-parameter
+refusal; every id list binds as a single JSON parameter expanded with
+`json_each` instead, which removes the ceiling rather than budgeting for it.
+
+**What a future change has to respect:** WorkspaceDO's memory rows are
+reachable only through the typed methods — the generic SQL port refuses the
+tables by name, with `memory_index_outbox` as the one deliberate exception —
+and a memory mutation's replay decision must stay inside the same transaction
+as its write, answered as an outcome with a returned witness, never derived
+from `rowsWritten` or reconstructed from a constraint violation after a lost
+race.
 
 ### 2026-08-28 — A second host runs the compiler, and a semantic refinement has to be in the executor
 
