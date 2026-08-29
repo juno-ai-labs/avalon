@@ -72,12 +72,14 @@ export const WORKSPACE_LOCAL_TABLES = [
   "workspace_sandbox_network_policies",
   "workspace_sandbox_network_domains",
   "workspace_sandbox_network_policy_mutations",
-  // WorkspaceDO migration 22. Reached from *outside* the object — the work
-  // stream summary in `workstream-object-product.ts` reads an automation's
-  // title for its origin label — and `localStatement` routes a statement that
-  // names no table on this list to the regional database. Missing here, that
-  // read went to D1 and answered `no such table: automation_directory`, which
-  // surfaced as a 500 on every attempt to open an automation's run work stream.
+  // WorkspaceDO migration 22. No statement names it through this facade any
+  // more — the work stream summary's origin-label read became
+  // `automationOriginLabel` on WorkspaceDO — but the entry stays, because
+  // while it was missing that read took this router's regional fallthrough
+  // and answered `no such table: automation_directory` from D1: a 500 on
+  // every attempt to open an automation's run work stream. Listed here the
+  // statement reaches the object, and `WORKSPACE_TYPED_RPC_ONLY_TABLES`
+  // there refuses it by name rather than executing it.
   "automation_directory",
   "automation_subscriptions",
   "automation_runs",
@@ -110,9 +112,12 @@ export const WORKSPACE_LOCAL_TABLES = [
   "memory_table_rows_fts",
   "memory_table_cells",
   "memory_table_mutations",
-  // Kept in the router only so an accidental generic statement reaches
-  // WorkspaceDO's explicit typed-RPC-only refusal instead of falling through
-  // to regional D1 as a misleading `no such table` failure.
+  // Kept in the router so an accidental generic statement reaches WorkspaceDO
+  // rather than falling through to regional D1 as a misleading `no such table`.
+  // Whether the object then refuses it or executes it depends on
+  // `WORKSPACE_TYPED_RPC_ONLY_TABLES` over there: the notification-intent and
+  // transcription tables are named in that list and are refused; the pin and
+  // work-stream-email tables are not, and still execute.
   "workstream_notification_intents",
   "workspace_workstream_pins",
   "workstream_email_receipts",

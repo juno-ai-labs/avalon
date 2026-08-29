@@ -1,7 +1,18 @@
 import type { AuthContext, Env } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logError } from "../observability/logger";
-import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
+import { workspaceDOName } from "../durable-objects/names";
+import {
+  WorkspaceTranscriptionAdmitResultSchema,
+  WorkspaceTranscriptionRenewResultSchema,
+} from "../durable-objects/workspace-transcription-protocol";
+import {
+  MAX_CONCURRENT_USER_TRANSCRIPTION_SESSIONS,
+  MAX_CONCURRENT_WORKSPACE_TRANSCRIPTION_SESSIONS,
+  TRANSCRIPTION_SESSION_LEASE_SECONDS,
+} from "../durable-objects/workspace-transcription-storage";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { asWorkspaceId } from "@rally/contracts";
 import {
   isAllowedSocketOrigin,
   issueTranscriptionSocketTicket,
@@ -13,9 +24,6 @@ import {
 
 const MAX_CLIENT_FRAME_CHARACTERS = 256_000;
 const MAX_CLIENT_FRAMES_PER_SECOND = 30;
-const MAX_CONCURRENT_USER_SESSIONS = 2;
-const MAX_CONCURRENT_WORKSPACE_SESSIONS = 20;
-const SESSION_LEASE_SECONDS = 2 * 60;
 const SESSION_LEASE_REFRESH_MS = 60 * 1_000;
 const RELEASE_RETRY_DELAYS_MS = [0, 50, 200] as const;
 
@@ -138,60 +146,42 @@ function stringMessage(data: string | ArrayBuffer | Blob): string | null {
   return typeof data === "string" ? data : null;
 }
 
+/** The WorkspaceDO that owns this workspace's dictation admission state. */
+function transcriptionWorkspace(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
+}
+
 async function reserveTranscriptionSession(
   env: Env,
   claims: TranscriptionSocketClaims,
 ): Promise<string> {
-  // Admission state is owned by this workspace's WorkspaceDO. The object
-  // serializes the expiry sweep, the one-time ticket consumption, and the
-  // cap-checked insert, so two simultaneous upgrades cannot both pass the
-  // concurrency check the way racing D1 writes could.
-  const db = withWorkspaceRuntimeDatabase(env, claims.workspaceId).DB;
-  const now = Math.floor(Date.now() / 1_000);
-  await db.batch([
-    db.prepare("DELETE FROM realtime_transcription_sessions WHERE expires_at_s <= ?").bind(now),
-    db.prepare("DELETE FROM realtime_transcription_ticket_receipts WHERE expires_at_s <= ?").bind(now),
-  ]);
-
-  const receipt = await db.prepare(
-    `INSERT OR IGNORE INTO realtime_transcription_ticket_receipts
-       (ticket_id, workspace_id, user_id, consumed_at_s, expires_at_s)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).bind(claims.ticketId, claims.workspaceId, claims.userId, now, claims.expiresAt).run();
-  if (Number(receipt.meta?.changes ?? 0) !== 1) {
+  // Admission state is owned by this workspace's WorkspaceDO, and admission is
+  // one question to it. The expiry sweep, the one-time ticket consumption and
+  // the cap-checked insert are a single critical section inside the object, so
+  // two simultaneous upgrades cannot interleave through the middle of it. As
+  // separate statements through the runtime facade they were three round trips
+  // and three critical sections, which read as one and was not.
+  const sessionId = crypto.randomUUID();
+  const workspace = await transcriptionWorkspace(env, claims.workspaceId);
+  const result = WorkspaceTranscriptionAdmitResultSchema.parse(
+    await workspace.admitTranscriptionSession({
+      workspaceId: claims.workspaceId,
+      userId: claims.userId,
+      ticketId: claims.ticketId,
+      ticketExpiresAtSeconds: claims.expiresAt,
+      sessionId,
+      nowSeconds: Math.floor(Date.now() / 1_000),
+    }),
+  );
+  if (result.outcome === "ticket_replayed") {
     throw new ApiError(401, "socket_ticket_replayed", "The realtime ticket has already been used");
   }
-
-  const sessionId = crypto.randomUUID();
-  const expiresAt = now + SESSION_LEASE_SECONDS;
-  const reserved = await db.prepare(
-    `INSERT INTO realtime_transcription_sessions
-       (id, ticket_id, workspace_id, user_id, started_at_s, expires_at_s)
-     SELECT ?, ?, ?, ?, ?, ?
-     WHERE (
-       SELECT COUNT(*) FROM realtime_transcription_sessions
-       WHERE workspace_id = ? AND user_id = ? AND expires_at_s > ?
-     ) < ?
-       AND (
-         SELECT COUNT(*) FROM realtime_transcription_sessions
-         WHERE workspace_id = ? AND expires_at_s > ?
-       ) < ?`,
-  ).bind(
-    sessionId,
-    claims.ticketId,
-    claims.workspaceId,
-    claims.userId,
-    now,
-    expiresAt,
-    claims.workspaceId,
-    claims.userId,
-    now,
-    MAX_CONCURRENT_USER_SESSIONS,
-    claims.workspaceId,
-    now,
-    MAX_CONCURRENT_WORKSPACE_SESSIONS,
-  ).run();
-  if (Number(reserved.meta?.changes ?? 0) !== 1) {
+  if (result.outcome === "concurrency_limit") {
     throw new ApiError(429, "dictation_concurrency_limit", "Too many dictation sessions are already active");
   }
   return sessionId;
@@ -202,8 +192,8 @@ async function releaseTranscriptionSession(
   workspaceId: string,
   sessionId: string,
 ): Promise<void> {
-  await withWorkspaceRuntimeDatabase(env, workspaceId).DB
-    .prepare("DELETE FROM realtime_transcription_sessions WHERE id = ?").bind(sessionId).run();
+  const workspace = await transcriptionWorkspace(env, workspaceId);
+  await workspace.releaseTranscriptionSession({ workspaceId, sessionId });
 }
 
 async function renewTranscriptionSession(
@@ -211,10 +201,17 @@ async function renewTranscriptionSession(
   workspaceId: string,
   sessionId: string,
 ): Promise<void> {
-  const expiresAt = Math.floor(Date.now() / 1_000) + SESSION_LEASE_SECONDS;
-  await withWorkspaceRuntimeDatabase(env, workspaceId).DB.prepare(
-    "UPDATE realtime_transcription_sessions SET expires_at_s = ? WHERE id = ?",
-  ).bind(expiresAt, sessionId).run();
+  const workspace = await transcriptionWorkspace(env, workspaceId);
+  // Parsed and discarded: the renewal reports whether there was a lease left to
+  // extend, and there is nothing useful to do with a `false` here. The socket
+  // that owns the session is the thing that ends, and it ends on its own close
+  // rather than on a lease it stopped holding. The parse still runs, so a
+  // response that stopped matching the contract fails here rather than later.
+  WorkspaceTranscriptionRenewResultSchema.parse(await workspace.renewTranscriptionSession({
+    workspaceId,
+    sessionId,
+    nowSeconds: Math.floor(Date.now() / 1_000),
+  }));
 }
 
 export class RealtimeTranscriptionService {
@@ -388,10 +385,10 @@ export const __realtimeTranscriptionTesting = {
   base64DecodedByteLength,
   limits: {
     maxClientFramesPerSecond: MAX_CLIENT_FRAMES_PER_SECOND,
-    maxConcurrentUserSessions: MAX_CONCURRENT_USER_SESSIONS,
-    maxConcurrentWorkspaceSessions: MAX_CONCURRENT_WORKSPACE_SESSIONS,
+    maxConcurrentUserSessions: MAX_CONCURRENT_USER_TRANSCRIPTION_SESSIONS,
+    maxConcurrentWorkspaceSessions: MAX_CONCURRENT_WORKSPACE_TRANSCRIPTION_SESSIONS,
     sessionLeaseRefreshMs: SESSION_LEASE_REFRESH_MS,
-    sessionLeaseSeconds: SESSION_LEASE_SECONDS,
+    sessionLeaseSeconds: TRANSCRIPTION_SESSION_LEASE_SECONDS,
   },
   releaseTranscriptionSession,
   renewTranscriptionSession,

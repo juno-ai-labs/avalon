@@ -77,6 +77,7 @@ import {
 } from "../services/workspace-runtime-database";
 import { WorkstreamIdentityStorage } from "./workstream-identity-storage";
 import { substreamLoopId, workspaceDOName } from "./names";
+import { WorkspaceAutomationOriginLabelSchema } from "./workspace-directory-protocol";
 import { WorkspaceReserveDraftAttachmentsResultSchema } from "./workspace-draft-attachment-protocol";
 import { WORKSTREAM_DIRECTORY_RESOURCE_LINK_LIMIT } from "./workstream-regional-effect";
 import type { RegionalEffectCommand, WorkstreamObjectStore } from "./workstream-object-storage";
@@ -1360,12 +1361,16 @@ export class WorkstreamObjectProductService {
     const pin = await workspaceDatabase.prepare(
       `SELECT position FROM workspace_workstream_pins WHERE workstream_id = ? AND user_id = ?`,
     ).bind(root.workstream_key, userId).first<{ position: number }>();
-    const subscription = root.automation_subscription_id
-      ? await workspaceDatabase.prepare(
-        `SELECT title AS name FROM automation_directory
-          WHERE automation_id = ? AND workspace_id = ? AND lifecycle <> 'deleted'`,
-      ).bind(root.automation_subscription_id, root.parent_workspace_key).first<{ name: string }>()
-      : null;
+    // The automation's title is a typed question to the object that holds the
+    // directory, not SQL through the runtime facade. The facade routes by table
+    // name and sends anything unlisted to the regional database, which is how
+    // this read came to answer `no such table: automation_directory`. A work
+    // stream with no automation asks nothing.
+    const originLabel = root.automation_subscription_id === null ? null : WorkspaceAutomationOriginLabelSchema
+      .parse(await (await this.workspaceDirectory(root.parent_workspace_key)).automationOriginLabel({
+        workspaceId: root.parent_workspace_key,
+        automationId: root.automation_subscription_id,
+      })).title;
     const wakeup = first(this.storage.sql.exec<{ due_at: number; prompt: string }>(
       `SELECT due_at, prompt FROM workstream_wakeups
         WHERE status = 'pending' ORDER BY due_at, wakeup_id LIMIT 1`,
@@ -1382,7 +1387,7 @@ export class WorkstreamObjectProductService {
       objective: truncateUtf16Safe(root.description, WORKSTREAM_DESCRIPTION_MAX_CHARACTERS),
       emailAddress: root.email_address,
       originType: root.origin_type,
-      originLabel: subscription?.name ? truncateUtf16Safe(subscription.name, 120) : null,
+      originLabel: originLabel ? truncateUtf16Safe(originLabel, 120) : null,
       createdByUserId: root.created_by_user_id,
       automationSubscriptionId: root.automation_subscription_id,
       automationRunId: root.automation_run_id,

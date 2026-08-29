@@ -156,6 +156,8 @@ import {
   WorkspaceDirectoryScheduleTargetsRequestSchema,
   WorkspaceDirectoryScheduleTargetsResultSchema,
   WorkspaceDirectoryVisibilityRequestSchema,
+  WorkspaceAutomationOriginLabelRequestSchema,
+  WorkspaceAutomationOriginLabelSchema,
   WorkspaceDirectoryVisibleIdsRequestSchema,
   WorkspaceDirectoryVisibleIdsPageSchema,
   WorkspaceRegionalEffectApplyRequestSchema,
@@ -190,11 +192,28 @@ import {
   type WorkspaceDirectoryScheduleTargetsRequest,
   type WorkspaceDirectoryScheduleTargetsResult,
   type WorkspaceDirectoryVisibilityRequest,
+  type WorkspaceAutomationOriginLabel,
+  type WorkspaceAutomationOriginLabelRequest,
   type WorkspaceDirectoryVisibleIdsRequest,
   type WorkspaceDirectoryVisibleIdsPage,
   type WorkspaceRegionalEffectApplyRequest,
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
+import {
+  admitWorkspaceTranscriptionSession,
+  releaseWorkspaceTranscriptionSession,
+  renewWorkspaceTranscriptionSession,
+} from "./workspace-transcription-storage";
+import {
+  WorkspaceTranscriptionAdmitRequestSchema,
+  WorkspaceTranscriptionRenewRequestSchema,
+  WorkspaceTranscriptionSessionRequestSchema,
+  type WorkspaceTranscriptionAdmitRequest,
+  type WorkspaceTranscriptionAdmitResult,
+  type WorkspaceTranscriptionRenewRequest,
+  type WorkspaceTranscriptionRenewResult,
+  type WorkspaceTranscriptionSessionRequest,
+} from "./workspace-transcription-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
   WorkspaceReleaseDraftAttachmentsRequestSchema,
@@ -383,7 +402,17 @@ const WORKSPACE_ALARM_SOURCE_TABLES = new Set([
   "slack_unfurled_links",
 ]);
 
-const WORKSPACE_TYPED_RPC_ONLY_TABLES = ["workstream_notification_intents"] as const;
+const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
+  "workstream_notification_intents",
+  // Converted to typed methods, so a generic statement naming one is a
+  // mistake rather than a legacy caller. Refusing it here is what makes the
+  // routing entries in `WORKSPACE_LOCAL_TABLES` more than a courtesy: the
+  // statement reaches this object and is told why, instead of executing
+  // against storage nobody meant to reach generically.
+  "automation_directory",
+  "realtime_transcription_sessions",
+  "realtime_transcription_ticket_receipts",
+] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
   return WORKSPACE_TYPED_RPC_ONLY_TABLES.find((table) => (
@@ -5376,6 +5405,77 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
       ).one();
       return WorkspaceBatchDispatchAdvanceResultSchema.parse({ remainingCount: remaining.count });
     });
+  }
+
+  /**
+   * Admit one realtime dictation socket: sweep, spend the ticket, take a slot.
+   *
+   * The service used to send these as separate statements through the
+   * workspace runtime facade — three round trips, and three critical sections
+   * rather than one. Here it is a single decision, and the concurrency caps
+   * live beside the insert that enforces them rather than travelling from a
+   * caller that could pass a larger number.
+   *
+   * A refusal comes back as an outcome rather than a throw: a replayed ticket
+   * and a workspace at its cap are ordinary answers, and the sentence the
+   * person reads is the service's to choose.
+   */
+  async admitTranscriptionSession(
+    input: WorkspaceTranscriptionAdmitRequest,
+  ): Promise<WorkspaceTranscriptionAdmitResult> {
+    await this.initialized;
+    const request = WorkspaceTranscriptionAdmitRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return admitWorkspaceTranscriptionSession(this.state.storage, request);
+  }
+
+  /** Give a dictation slot back when its socket closes. */
+  async releaseTranscriptionSession(
+    input: WorkspaceTranscriptionSessionRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceTranscriptionSessionRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    releaseWorkspaceTranscriptionSession(this.state.storage, request);
+  }
+
+  /** Extend a live dictation lease, and say so when there was nothing to extend. */
+  async renewTranscriptionSession(
+    input: WorkspaceTranscriptionRenewRequest,
+  ): Promise<WorkspaceTranscriptionRenewResult> {
+    await this.initialized;
+    const request = WorkspaceTranscriptionRenewRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return renewWorkspaceTranscriptionSession(this.state.storage, request);
+  }
+
+  /**
+   * The title to show as a generated work stream's origin label.
+   *
+   * WorkstreamDO renders the summary and does not hold the automation's
+   * directory row. It used to read it as SQL through the workspace runtime
+   * facade, which routes by table name and sends an unrecognised one to the
+   * regional database — which is how this read came to answer
+   * `no such table: automation_directory` on every attempt to open an
+   * automation's run work stream.
+   *
+   * A deleted automation answers `null` rather than its last title: the work
+   * stream outlives the automation that made it, and the label should go quiet
+   * rather than name something the workspace no longer has.
+   */
+  async automationOriginLabel(
+    input: WorkspaceAutomationOriginLabelRequest,
+  ): Promise<WorkspaceAutomationOriginLabel> {
+    await this.initialized;
+    const request = WorkspaceAutomationOriginLabelRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const row = this.state.storage.sql.exec<{ title: string }>(
+      `SELECT title FROM automation_directory
+        WHERE automation_id = ? AND workspace_id = ? AND lifecycle <> 'deleted'`,
+      request.automationId,
+      request.workspaceId,
+    ).toArray()[0];
+    return WorkspaceAutomationOriginLabelSchema.parse({ title: row?.title ?? null });
   }
 
   async canReadWorkstream(input: WorkspaceDirectoryVisibilityRequest): Promise<boolean> {
