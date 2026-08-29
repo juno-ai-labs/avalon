@@ -1024,6 +1024,22 @@ function SystemMessageBlock({ disclosure, message }: { disclosure?: SystemRowDis
   );
 }
 
+/**
+ * How a settled response's total reads in a message header.
+ *
+ * Null is an unknown duration, not a zero one, and the header then says only
+ * that Rally worked — the same rule the plugin rows follow, for the same
+ * reason: a transcript that cannot see how long something took must not
+ * report a time it does not have.
+ */
+function workSummaryLabel(summary: NonNullable<Message['workSummary']>): string {
+  if (summary.durationMs === null) return 'Worked';
+  const duration = formatDuration(summary.durationMs) ?? '0ms';
+  return summary.timingAccuracy === 'upper_bound'
+    ? `Worked for at most ${duration}`
+    : `Worked for ${duration}`;
+}
+
 function ThoughtBlock({ message }: { message: Message }): React.JSX.Element | null {
   const thought = message.thoughtEvent;
   if (!thought) return null;
@@ -1119,9 +1135,9 @@ function PluginActivityBlock({ message }: { message: Message }): React.JSX.Eleme
   return (
     <AgentWorkTiming
       active={group.active}
-      activeName={`${group.name} is working`}
-      activeVerb={`${group.name} is working`}
-      completedVerb={`${group.name} worked`}
+      activeName={group.activeVerb}
+      activeVerb={group.activeVerb}
+      completedVerb={group.completedVerb}
       durationMs={group.durationMs}
       icon={<PluginGlyph icon={group.icon} name={group.name} pulsing={group.active} />}
       monotonicStartedAt={group.monotonicStartedAt}
@@ -1549,6 +1565,7 @@ export function MessageBlock({
           )}
           {message.contextLabel && <span className="message-context-label">{message.contextLabel}</span>}
           <time dateTime={message.createdAt}>{formatRelative(message.createdAt)}</time>
+          {message.workSummary && <span className="message-work-summary">{workSummaryLabel(message.workSummary)}</span>}
         </header>
       )}
       {sending

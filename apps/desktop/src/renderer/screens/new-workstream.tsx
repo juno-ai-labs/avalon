@@ -136,6 +136,7 @@ function optimisticOpeningTranscript(
     }],
     activities: [],
     activeActivities: [],
+    pluginRuns: [],
     activeTurns: [],
     pendingInputs: [],
   };
@@ -152,6 +153,7 @@ function emptyOptimisticTranscript(created: CreatedWorkstream): WorkstreamTransc
     ranges: [],
     activities: [],
     activeActivities: [],
+    pluginRuns: [],
     activeTurns: [],
     pendingInputs: [],
   };

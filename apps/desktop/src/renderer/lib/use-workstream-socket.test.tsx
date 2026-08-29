@@ -215,6 +215,7 @@ function emptyTranscriptSnapshot(): WorkstreamBoot['transcript'] {
     ranges: [],
     activities: [],
     activeActivities: [],
+    pluginRuns: [],
     activeTurns: [], pendingInputs: [],
   };
 }
