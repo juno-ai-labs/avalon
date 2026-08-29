@@ -48,7 +48,6 @@ on:
       - "scripts/wrangler-config.mjs"
       - "scripts/entry-point.mjs"
       - "scripts/check-regional-health.mjs"
-      - "scripts/cutover-automation-agents.mjs"
   workflow_dispatch:
     inputs:
       ref:
@@ -351,36 +350,6 @@ jobs:
           tags: avalon-crash-symbolicator:warm
           cache-from: type=gha,scope=crash-symbolicator
 
-      # The automation cutover is one-shot and has no rollback to legacy
-      # authority, so a deploy that would replace only one region's Worker must
-      # stop here rather than ship a build whose automation authoring refuses
-      # and whose legacy timers never fire again in the region it skipped.
-      #
-      # This step and the two cutover steps below are all one-shot, and all
-      # three come out in one change once the release carrying the cutover has
-      # landed in both regions. Left in place they cost a permanent ban on
-      # single-region deploys — an EU-only hotfix refused, months later, by a
-      # gate naming a cutover that finished long ago. The release summary at
-      # the end of this job says so, so the operator who runs the cutover is
-      # the one who is told to remove it.
-      - name: Refuse a single-region deploy while the automation cutover is pending
-        run: |
-          set -euo pipefail
-          if [ "$DEPLOY_EU" != "$DEPLOY_GLOBAL" ]; then
-            echo "The automation cutover must replace both regions in one deploy." >&2
-            echo "DEPLOY_EU=$DEPLOY_EU DEPLOY_GLOBAL=$DEPLOY_GLOBAL" >&2
-            exit 1
-          fi
-
-      # The new build distinguishes a truly fresh WorkspaceDO from an older
-      # object by the presence of its object-local migration ledger. Wake every
-      # stored workspace through the still-running regional Workers before
-      # replacing either one, and refuse a D1/object inventory mismatch. This
-      # runs in the deploy job because it needs the Cloudflare credentials
-      # asserted above and must see the *old* build still serving.
-      - name: Establish historical WorkspaceDO migration ledgers on the old build
-        run: node scripts/cutover-automation-agents.mjs --preflight
-
       # EU precedes Global because Global binds named EU entrypoints.
       - name: Deploy the EU Worker
         if: env.DEPLOY_EU == 'true'
@@ -414,12 +383,6 @@ jobs:
           if [ "$DEPLOY_GLOBAL" = "true" ]; then regions="$regions global"; fi
           node scripts/check-regional-health.mjs $regions
 
-      - name: Cut over workspace automations to AutomationAgent
-        run: node scripts/cutover-automation-agents.mjs --apply
-
-      - name: Verify regional health after automation cutover
-        run: node scripts/check-regional-health.mjs eu global
-
       - name: Record the remaining manual release gates
         if: success()
         run: |
@@ -442,9 +405,4 @@ jobs:
             echo "4. Google Drive + Docs + Sheets connector reads/writes against disposable fixtures."
             echo "5. Drive poll baseline, change, re-poll for \`docs.document_changed\` and \`sheets.spreadsheet_changed\`."
             echo "6. Create an automation, run it manually, confirm one work stream and run record survive a retry."
-            echo ""
-            echo "One-shot: this release carried the automation cutover. Once both regions are"
-            echo "confirmed healthy, delete the three cutover steps from .github/workflows/deploy-api.yml"
-            echo "— the single-region refusal, the preflight, and the apply — or every later"
-            echo "single-region deploy is refused by a gate whose reason has passed."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -836,37 +836,33 @@ Three GitHub Actions workflows carry the mechanical part of this procedure. They
 - `.github/workflows/ci.yml` runs on every pull request and deliberately does not rerun after a push to `main`: lint, typecheck, the full test suite, both Wrangler dry-run builds, the desktop release invariants, and the Gitleaks gate over the full history. Verification fans out across independent Ubuntu runners; the desktop and API Vitest suites each use two shards, while a terminal `verify` job collapses every lane back into the one stable branch-protection check. Keep `fail-fast: false` so all failures remain visible, and keep `if: always()` on the terminal job so a failed or cancelled lane reports `verify` as failed rather than skipped. Require the `verify` and `secrets` checks through a branch ruleset on `main` to stop a red pull request being merged in the first place. Push-triggered deployment and release workflows continue to verify the workspace themselves before touching production; they do not depend on a second CI run after merge.
 - `.github/workflows/deploy-api.yml` performs steps 1 and 5–7: dry-run validation, remote D1 migrations, the EU-then-Global Worker deployment, and the regional health check. It runs automatically on every merge to `main` that touches `apps/api`, `packages` (including `packages/db/migrations`), either lakehouse manifest/provisioner, the lockfile, the workspace file, or the workflow itself; documentation, desktop, and site-only merges do not redeploy. A `workflow_dispatch` run can additionally restrict the regions, skip the migration step, and deploy an arbitrary ref; the verify job resolves that ref once, and the deploy job checks out the resulting immutable SHA so a moving branch cannot change between validation and deployment. It creates any declared Queue that is missing and fully provisions/verifies both Global lakehouses before migrations; the EU deploy config intentionally contains no lakehouse binding. It does not create unrelated resources, confirm regional D1 IDs, or set Worker secrets — those steps stay manual and one-time — and it must not be used for the three-stage inbound-email bootstrap or any other release that introduces a new cross-region entrypoint. Those are deployed by hand in the documented order, which means holding such a change out of `main` until the staged rollout is complete.
   Migration 0090 is the one destructive exception to normal migration-first ordering: when it is the sole pending migration, compatible Workers deploy before it. The workflow fails closed if 0090 appears beside any other pending migration, because Wrangler applies the complete pending ledger and must never move an ordinary later migration behind the Worker that may require it.
-- The durable automation lifecycle merge adds one coordinated exception inside
-  that same deploy job. **The job refuses outright to run while `DEPLOY_EU` and
-  `DEPLOY_GLOBAL` disagree** — the cutover is one-shot with no rollback to legacy
-  authority, so shipping a build to one region would leave the other's automation
-  authoring refusing and its legacy timers never firing again. That check runs
-  before anything is deployed.
-  Then, still before EU is replaced and while the *old* build is serving,
-  `scripts/cutover-automation-agents.mjs --preflight` compares each region's D1
-  workspace inventory — read in keyset pages, because an unpaged D1 query
-  silently truncates at some account size — with the Durable Object namespace
-  listing, refuses a mismatch, and wakes every stored object by opaque ID through
-  the old Worker's migration-command Queue. It runs in the deploy job rather than
-  the validate job because it needs the Cloudflare credentials that job asserts.
-  After
-  EU, Global, Worker-first migrations, and regional health succeed, `--apply`
-  sends named idempotent cutover commands. It sleeps one poll interval before its
-  first backlog read — Queue metrics are eventually consistent, and an immediate
-  read can answer with the pre-dispatch count and "prove" a drain that never
-  happened — then waits for both command queues to
-  drain, refuses any increase in either migration-command dead-letter queue,
-  and is followed by a second two-region health check. Do not bypass either
-  health check.
-  **The drain wait is currently unbounded.** `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS`
-  ships as `+Infinity` behind a `LIMIT UNSET` marker
+- **The durable automation lifecycle cutover ran on 2026-08-28** and its three
+  one-shot deploy steps — the single-region refusal, the preflight, and the
+  apply — have been removed from `deploy-api.yml`. They were deliberately
+  temporary: left in place, the refusal permanently bans an EU-only or
+  Global-only deploy in the name of a cutover that has already happened. Both
+  regions ran it in one release, every workspace's automations were imported
+  into their own `AutomationAgent` objects, and the legacy tables were dropped.
+  `scripts/cutover-automation-agents.mjs` is kept as an operator tool rather
+  than deleted, because it is the remedy if a workspace is ever found still
+  holding legacy automation state; `--apply` is idempotent per workspace, so
+  rerunning it against a completed fleet is a no-op.
+  Running it by hand needs the Cloudflare credentials the deploy job used to
+  assert, and two things are worth knowing before you do. **The drain wait is
+  unbounded**: `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS` ships as `+Infinity`
+  behind a `LIMIT UNSET` marker
   ([`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md)),
-  so a consumer that cannot make progress — a WorkspaceDO wedged on a throwing
-  migration, retrying forever without ever reaching the dead-letter queue the
-  loop does watch — holds the deploy open until GitHub's own job timeout kills it
-  with no statement of what was stuck. If a cutover deploy appears hung, read the
-  regional command-queue backlog directly before cancelling; the run is
-  idempotent and a rerun resumes where it stopped.
+  so the poll has no exit but success. A deterministically failing message is
+  not what hangs it — the command queues carry five retries and a dead-letter
+  queue, and the loop already fails on any rise in the dead-letter count. What
+  hangs it is a drain that is merely slow, or this: **`avalon-<region>-migration-commands`
+  is shared with the migration tracker's "Force a migration" page.** Anyone
+  fanning a Durable Object class into that queue while the script runs keeps
+  the backlog above zero for reasons that have nothing to do with automations,
+  and the script waits on a number that is no longer about its own work. Check
+  the tracker before running it, and read the regional command-queue backlog
+  directly before concluding anything is stuck; the run is idempotent and a
+  rerun resumes where it stopped.
 - `.github/workflows/release-desktop-macos.yml` guards the tag, builds, signs, notarizes, staples, and verifies the macOS package, checks both regional APIs, publishes the immutable payloads, promotes the release manifest, records the release config on `main`, and deploys the landing site from `main`'s then-current tip. The health gate can be bypassed only through the `skip_health_gate` dispatch input. It runs automatically on a merge to `main` matching its `paths:` filter — the files the installed app is built from — bumping the version itself, and on a manual dispatch naming an existing tag. Nothing triggers on a tag.
 
 ### Automation cutover failure and DLQ rehearsal

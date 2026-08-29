@@ -20,15 +20,27 @@ const INVENTORY_PAGE_SIZE = 1_000;
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
  *
- * Bounds: wall-clock milliseconds the cutover waits for both regional command
- *   queues to drain before it gives up and fails the deploy.
- * Without it: a consumer that cannot make progress — a WorkspaceDO wedged on a
- *   throwing migration, so every message retries forever without ever reaching
- *   the dead-letter queue the loop does watch — leaves this poll spinning, and
- *   the deploy job holds the release open until GitHub's own job timeout kills
- *   it hours later with no statement of what was stuck. Only our own operators
- *   can cause it, but the guard is not standing in for a bug: the wait is over a
- *   fleet-wide fan-out whose slowest member is not knowable from here.
+ * Bounds: wall-clock milliseconds this run waits for both regional command
+ *   queues to drain before it gives up.
+ * Without it: the poll below has no exit but success, so a drain that never
+ *   completes hangs the caller indefinitely. Two ways that happens, and
+ *   neither is the one an earlier version of this comment claimed. A message
+ *   that fails deterministically is *not* one of them: the queues are
+ *   configured with five retries and a dead-letter queue, and the loop already
+ *   fails the moment the dead-letter count rises above its baseline.
+ *
+ *   The first is a drain that is merely slow. One message per workspace, each
+ *   waking a cold WorkspaceDO that imports its automations over RPC, metered
+ *   in batches of a hundred with a ten-second gathering window; on a large
+ *   enough fleet that is simply a long time, and nothing here says how long is
+ *   too long.
+ *
+ *   The second is the one to design against: `avalon-<region>-migration-commands`
+ *   is not this script's private queue. It is the migration tracker's
+ *   "Force a migration" queue, and the tracker can fan a whole Durable Object
+ *   class into it. An operator forcing a migration while this runs keeps the
+ *   backlog above zero for reasons that have nothing to do with the cutover,
+ *   and this loop waits on a number that is no longer about its own work.
  * Direction: a deadline; the open value is +Infinity, enforced through the
  *   finiteness guard below so no deadline is computed at all while it is open.
  * Trips: the run throws `automation_cutover_drain_timeout`, naming each region
@@ -37,8 +49,12 @@ const INVENTORY_PAGE_SIZE = 1_000;
  * Derive from: the fan-out against the queue's own throughput, not a benchmark.
  *   One message per workspace, each waking one WorkspaceDO that imports its
  *   automations over RPC; pick the wait from how long the slowest workspace's
- *   import may take multiplied by the batches ahead of it, plus the margin a
- *   failing deploy should not eat.
+ *   import may take multiplied by the batches ahead of it, plus the margin the
+ *   operator running this should not have to sit through.
+ *
+ *   Note the urgency changed on 2026-08-28: the cutover has run in production
+ *   and this script is no longer part of the deploy, so an unbounded wait now
+ *   costs an operator's afternoon rather than a stuck release.
  */
 export const AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 
