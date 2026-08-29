@@ -16,10 +16,25 @@ function memberName(node) {
   return null;
 }
 
+// A callback that is not written `async` can still hand the boundary a Promise —
+// a reference to an async function, or an arrow that returns one — and only the
+// callee's own signature says so. That answer needs a TypeScript program, which
+// `eslint.config.mjs` arranges for `apps/api/src` alone because opening one is
+// the single largest cost in a lint run.
+//
+// Throw rather than return `false` when it is missing. Degrading quietly would
+// leave this rule reporting nothing on files nobody meant to exempt, and a guard
+// that passes everything looks exactly like a guard that found nothing wrong.
 function returnsPromise(parserServices, callback) {
   const program = parserServices?.program;
   const nodeMap = parserServices?.esTreeNodeToTSNodeMap;
-  if (!program || !nodeMap) return false;
+  if (!program || !nodeMap) {
+    throw new Error(
+      "rally/durable-object-sync-transaction needs type information. Widen the "
+      + "`projectService` block in eslint.config.mjs to cover the files this rule "
+      + "is enabled on.",
+    );
+  }
 
   const checker = program.getTypeChecker();
   const tsCallback = nodeMap.get(callback);
