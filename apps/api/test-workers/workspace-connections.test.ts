@@ -120,6 +120,15 @@ async function claimReceipt(input: {
   );
 }
 
+async function receiptCount(): Promise<number> {
+  return runInDurableObject(workspace(), (_instance, state) => (
+    state.storage.sql.exec<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM webhook_receipts WHERE connection_id = ?`,
+      CONNECTION_ID,
+    ).toArray()[0]!.total
+  ));
+}
+
 beforeEach(async () => {
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
   await runInDurableObject(workspace(), (_instance, state) => {
@@ -339,6 +348,83 @@ describe("webhook receipt claims", () => {
         CONNECTION_ID,
       ).toArray()).toEqual([{ id: "00000000-0000-7000-8000-0000000c1c34" }]);
     });
+  });
+
+  it("drains a receipt backlog in bounded batches without failing the claim", async () => {
+    // The connections whose receipts were never swept are the ones that arrive
+    // at this deploy with a backlog, so the first claim on one is the case that
+    // has to hold. Seed more expired rows than a single batch may take, all of
+    // them older than the delivery being claimed.
+    const backlog = 250;
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (let index = 0; index < backlog; index += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO webhook_receipts
+             (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          `backlog-${String(index).padStart(4, "0")}`,
+          WORKSPACE_ID,
+          CONNECTION_ID,
+          `backlog-delivery-${index}`,
+          EARLIER,
+          EARLIER,
+        );
+      }
+    });
+
+    const claimed = await claimReceipt({
+      receiptId: "00000000-0000-7000-8000-0000000c1c35",
+      signatureHash: "delivery-after-backlog",
+    });
+    expect(claimed).toMatchObject({ outcome: "claimed" });
+
+    // One batch drained, not the whole history: the delete stays inside a
+    // budget the claim's transaction can afford, and the claim commits.
+    const remainingAfterFirst = await receiptCount();
+    expect(remainingAfterFirst).toBe(backlog - 100 + 1);
+
+    // Progress is incremental — the next delivery drains the next batch.
+    await claimReceipt({
+      receiptId: "00000000-0000-7000-8000-0000000c1c36",
+      signatureHash: "delivery-after-backlog-2",
+    });
+    expect(await receiptCount()).toBe(backlog - 200 + 2);
+  });
+
+  it("reclaims a delivery whose own expired receipt sits behind the batch", async () => {
+    // The claim decides `duplicate` from a unique-index conflict, so an expired
+    // row for the incoming key must go even when the ordered batch would never
+    // reach it. Everything seeded here expires before that row does, and there
+    // is more of it than one batch takes.
+    await claimReceipt({
+      receiptId: "00000000-0000-7000-8000-0000000c1c37",
+      signatureHash: "delivery-stranded",
+      receivedAt: EARLIER,
+      expiresAt: NOW,
+    });
+    await runInDurableObject(workspace(), (_instance, state) => {
+      for (let index = 0; index < 150; index += 1) {
+        state.storage.sql.exec(
+          `INSERT INTO webhook_receipts
+             (id, workspace_id, connection_id, signature_hash, received_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          `older-${String(index).padStart(4, "0")}`,
+          WORKSPACE_ID,
+          CONNECTION_ID,
+          `older-delivery-${index}`,
+          EARLIER,
+          EARLIER,
+        );
+      }
+    });
+
+    const reclaimed = await claimReceipt({
+      receiptId: "00000000-0000-7000-8000-0000000c1c38",
+      signatureHash: "delivery-stranded",
+      receivedAt: LATER,
+      expiresAt: "2026-08-30T10:00:00.000Z",
+    });
+    expect(reclaimed).toMatchObject({ outcome: "claimed" });
   });
 
   it("refuses generic runtime SQL naming the receipts table", async () => {

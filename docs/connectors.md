@@ -865,7 +865,17 @@ interlock with regional control-plane writes (`oauth_states`,
 `persistConnectionMutation` that must stay atomic with a connection mutation.
 Also rejected: refusing `connector_oauth_attempts` at the generic port — that
 batch still reaches it generically, and refusing the table would break the
-atomic pair.
+atomic pair. Also rejected: an unbounded receipt sweep, which is how this first
+landed. The connections that would pay for it are exactly the ones the fix is
+for — a Granola connection whose receipts were never pruned arrives at this
+deploy with the whole backlog, and its first claim would have had to delete all
+of it inside the claim's own transaction. If that transaction outruns the
+request's budget the claim never commits, and every retried delivery re-attempts
+the same oversized delete: a webhook path that cannot make progress, on the
+connections where the fix mattered most. Also rejected: sweeping from the
+workspace alarm instead, which decouples the drain from the deliveries that
+create the rows and adds a scheduled path to reason about for a table that is
+already visited on every claim.
 
 **Consequences:** New attempt states or receipt semantics are added to the
 protocol and storage together, with both sides parsing. The attempt-bind
@@ -874,6 +884,18 @@ converts `connector_connections`, and only then can `connector_oauth_attempts`
 join `WORKSPACE_TYPED_RPC_ONLY_TABLES`. A redelivery whose receipt has expired
 is now claimable again on every path — acceptable because provider replay
 windows (minutes) end long before the shortest receipt lifetime (a day). The
+sweep is bounded, and a future change must keep it so: the claim deletes the
+incoming `(connection_id, signature_hash)` row unconditionally — without that
+an expired row for the key being claimed answers `duplicate` forever, since the
+outcome comes from a unique-index conflict — and then drains at most
+`RECEIPT_SWEEP_BATCH` further expired rows, oldest first. That constant is the
+bound the generic-webhook prune already shipped with, carried over rather than
+re-chosen, so the cutover changes *which* connections get swept without changing
+what one delivery pays. A backlog therefore drains over several deliveries
+instead of one, which is the intended trade: the claim always commits. If a
+connection's backlog is ever seen to outrun its delivery rate, raising the
+constant is the change, and by then it is a decision with evidence rather than a
+guess. The
 pre-cutover branches in `ConnectionService.ingestWebhook`/`ingestGranolaWebhook`
 still write `webhook_receipts` through plain regional SQL; they run only when
 `WORKSPACE_DOS` is unbound and never reach the object.
