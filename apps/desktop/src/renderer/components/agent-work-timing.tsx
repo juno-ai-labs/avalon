@@ -9,7 +9,13 @@ export interface AgentWorkTimingProps {
   durationMs: number;
   /** Start of the active segment. Omit it to keep the active total paused. */
   startedAt?: number;
-  monotonicStartedAt?: number;
+  /**
+   * The local monotonic start of every segment running at once, summed into the
+   * elapsed total. Usually one — a grouped plugin row can have several, because
+   * a batch's tool calls run concurrently and its completed total counts each
+   * of them, so the live number has to advance by each of them too.
+   */
+  monotonicStartedAt?: number | readonly number[];
   /** Recovered stops are known only by the later durable recovery boundary. */
   timingAccuracy?: 'observed' | 'upper_bound';
   activeVerb?: string;
@@ -59,17 +65,25 @@ export function AgentWorkTiming({
 }: AgentWorkTimingProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now());
 
+  const monotonicStarts = monotonicStartedAt === undefined
+    ? []
+    : typeof monotonicStartedAt === 'number' ? [monotonicStartedAt] : monotonicStartedAt;
+  // The effect keys on the starts' values, not on the array holding them: a
+  // caller that rebuilds the array each render would otherwise re-arm the
+  // interval on every tick it schedules.
+  const monotonicKey = monotonicStarts.join(',');
+
   useEffect(() => {
-    if (!active || (startedAt === undefined && monotonicStartedAt === undefined)) return;
+    if (!active || (startedAt === undefined && monotonicKey === '')) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(timer);
-  }, [active, monotonicStartedAt, startedAt]);
+  }, [active, monotonicKey, startedAt]);
 
-  const running = active && (monotonicStartedAt !== undefined || startedAt !== undefined);
+  const running = active && (monotonicStarts.length > 0 || startedAt !== undefined);
   const activeDuration = running
-    ? monotonicStartedAt !== undefined
-      ? Math.max(0, performance.now() - monotonicStartedAt)
+    ? monotonicStarts.length > 0
+      ? monotonicStarts.reduce((total, start) => total + Math.max(0, performance.now() - start), 0)
       : Math.max(0, now - startedAt!)
     : 0;
   const verb = active ? activeVerb : completedVerb;

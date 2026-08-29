@@ -298,7 +298,15 @@ export interface PluginActivityData {
   active: boolean;
   /** Completed time accumulated across every turn of this agent loop. */
   durationMs: number;
-  monotonicStartedAt?: number;
+  /**
+   * One local monotonic start per contribution still running.
+   *
+   * Plural because a batch's tool calls run concurrently in Bind, so two
+   * first-party plugins in the Rally group are active at the same time and the
+   * row's completed total counts both. A single start would advance the live
+   * number by one of them and let it jump to the real total at settle.
+   */
+  monotonicStartedAt?: readonly number[];
   timingAccuracy?: 'observed' | 'upper_bound';
 }
 
