@@ -61,16 +61,6 @@ interface ResourceCursor {
   id: string;
 }
 
-const ENABLE_RESOURCE_WATCH_SQL = `INSERT INTO resource_watches
-  (id, workspace_id, workstream_id, resource_id, connection_id, watch_type,
-   cursor_json, next_poll_at, enabled, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, '{}', ?, 1, ?, ?)
-  ON CONFLICT(workstream_id, resource_id) DO UPDATE SET
-    watch_type = excluded.watch_type,
-    enabled = 1,
-    next_poll_at = excluded.next_poll_at,
-    updated_at = excluded.updated_at`;
-
 const UPLOAD_RESOURCE_VISIBILITY_SQL = `(r.provider != 'avalon_upload'
   OR r.attachment_status = 'attached'
   OR r.uploaded_by_user_id = ?)`;
@@ -178,10 +168,12 @@ export class ResourceService {
     if (file.size === 0) throw new ApiError(422, "attachment_empty", "Empty files cannot be attached");
     if (file.size > maxBytes) throw new ApiError(413, "attachment_too_large", `Attachments may not exceed ${maxBytes} bytes`);
     const id = draftId;
-    const existing = await this.env.DB.prepare(
-      `SELECT 1 FROM resources WHERE id = ?`,
-    ).bind(id).first();
-    if (existing) throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
+    const workspace = await this.workspaceDirectory();
+    const { exists } = await workspace.resourceExists({
+      workspaceId: this.auth.workspaceId,
+      resourceId: id,
+    });
+    if (exists) throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
     const bytes = new Uint8Array(await file.arrayBuffer());
     const contentSha256 = await sha256Hex(bytes);
     const declaredMimeType = truncateUtf16Safe(file.type || "application/octet-stream", 160);
@@ -207,55 +199,43 @@ export class ResourceService {
     });
     // A failed WorkspaceDO response is ambiguous: the resource row may have
     // committed. Keep the object staged in that case so cleanup can observe a
-    // committed pointer instead of deleting bytes it names.
-    await this.env.DB.prepare(
-      `INSERT INTO resources
-       (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
-        content_sha256, model_content_status, metadata_json, last_hydrated_at,
-        uploaded_by_user_id, attachment_status, created_at, updated_at,
-        revision_author_kind, revision_author_user_id, revision_cause)
-       VALUES (?, ?, 'uploaded_file', 'avalon_upload', ?, ?, ?, ?, 'pending', ?, ?, ?, 'draft', ?, ?,
-               'member', ?, 'created')`,
-    ).bind(
-      id,
-      this.auth.workspaceId,
+    // committed pointer instead of deleting bytes it names. A typed
+    // `draft_exists` is not ambiguous — the object wrote nothing — so the
+    // staged object is handed back to the reaper before the 409.
+    const created = await workspace.createUploadDraftResource({
+      workspaceId: this.auth.workspaceId,
+      resourceId: id,
       // Bounded at the write as well as the read. `title` arrives from a
       // multipart field and the declared MIME from a client-supplied header;
       // neither column constrains length — an unbounded value here becomes a
       // row that fails `ResourceSchema` and `MessageAttachmentSchema` on every
       // later read.
-      truncateUtf16Safe(title ?? file.name, 300),
-      verifiedMimeType,
-      key,
+      title: truncateUtf16Safe(title ?? file.name, 300),
+      mimeType: verifiedMimeType,
+      contentRef: key,
       contentSha256,
-      JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType }),
+      metadataJson: JSON.stringify({ originalName: file.name, size: file.size, declaredMimeType }),
+      uploadedByUserId: this.auth.userId,
       at,
-      this.auth.userId,
-      at,
-      at,
-      this.auth.userId,
-    ).run();
-    await this.env.DB.prepare(
-      `DELETE FROM resource_object_deletion_outbox
-        WHERE workspace_id = ? AND object_ref = ? AND cleanup_eligible = 0`,
-    ).bind(this.auth.workspaceId, key).run().catch(() => undefined);
+    });
+    if (created.outcome === "draft_exists") {
+      await releaseStagedResourceObject(this.env.DB, this.auth.workspaceId, key)
+        .catch(() => undefined);
+      throw new ApiError(409, "attachment_draft_exists", "This attachment draft already exists");
+    }
     await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, id);
     return this.get(id);
   }
 
   async deleteDraft(id: string): Promise<void> {
-    const resource = await this.env.DB.prepare(
-      `DELETE FROM resources
-       WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
-         AND uploaded_by_user_id = ? AND attachment_status = 'draft'
-         AND NOT EXISTS (SELECT 1 FROM workspace_workstream_resource_links WHERE resource_id = resources.id)
-         AND NOT EXISTS (SELECT 1 FROM pending_attachment_reservations WHERE resource_id = resources.id)
-       RETURNING content_ref, model_content_ref`,
-    ).bind(id, this.auth.workspaceId, this.auth.userId).first<{
-      content_ref: string | null;
-      model_content_ref: string | null;
-    }>();
-    if (!resource) throw new ApiError(404, "attachment_draft_not_found", "The draft attachment is unavailable or already sent");
+    const deleted = await (await this.workspaceDirectory()).deleteUploadDraftResource({
+      workspaceId: this.auth.workspaceId,
+      resourceId: id,
+      userId: this.auth.userId,
+    });
+    if (deleted.outcome === "not_found") {
+      throw new ApiError(404, "attachment_draft_not_found", "The draft attachment is unavailable or already sent");
+    }
     // The resource-deletion trigger has durably queued every object. Cleanup is
     // intentionally asynchronous so an R2 outage cannot turn a committed row
     // deletion into an unrecoverable orphan.
@@ -266,28 +246,24 @@ export class ResourceService {
     if (connection.connector_type !== input.provider && !(connection.connector_type === "google" && input.provider.startsWith("google"))) {
       throw new ApiError(422, "provider_mismatch", "The resource does not belong to the selected connection");
     }
-    const existing = await this.env.DB.prepare(
-      `SELECT id FROM resources
-       WHERE workspace_id = ? AND connection_id = ? AND provider = ? AND provider_resource_id = ?`,
-    ).bind(this.auth.workspaceId, input.connectionId, input.provider, input.providerResourceId).first<{ id: string }>();
-    if (existing) return this.get(existing.id);
-    const id = newId();
-    const at = nowIso();
-    await this.env.DB.prepare(
-      `INSERT INTO resources
-       (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
-        title, canonical_url, metadata_json, created_at, updated_at,
-        revision_author_kind, revision_author_connection_id, revision_cause)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, 'connector', ?, 'created')
-       ON CONFLICT DO NOTHING`,
-    ).bind(id, this.auth.workspaceId, input.connectionId, input.resourceType, input.provider, input.providerResourceId, input.title, input.canonicalUrl ?? null, at, at, input.connectionId).run();
-    const canonical = await this.env.DB.prepare(
-      `SELECT id FROM resources
-       WHERE workspace_id = ? AND connection_id = ? AND provider = ? AND provider_resource_id = ?`,
-    ).bind(this.auth.workspaceId, input.connectionId, input.provider, input.providerResourceId).first<{ id: string }>();
-    if (!canonical) throw new ApiError(500, "resource_write_failed", "The resource could not be stored");
-    await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, canonical.id);
-    return this.get(canonical.id);
+    // One critical section in the object: the read, the conditional insert
+    // and the canonical answer used to be three round trips through the
+    // runtime facade, held together by `ON CONFLICT DO NOTHING` and a re-read.
+    const canonical = await (await this.workspaceDirectory()).resolveConnectorResource({
+      workspaceId: this.auth.workspaceId,
+      candidateResourceId: newId(),
+      connectionId: input.connectionId,
+      provider: input.provider,
+      providerResourceId: input.providerResourceId,
+      resourceType: input.resourceType,
+      title: input.title,
+      canonicalUrl: input.canonicalUrl ?? null,
+      at: nowIso(),
+    });
+    if (canonical.outcome === "created") {
+      await allocateResourceSlugBesideCreation(this.env, this.auth.workspaceId, canonical.resourceId);
+    }
+    return this.get(canonical.resourceId);
   }
 
   async get(id: string) {
@@ -305,20 +281,17 @@ export class ResourceService {
 
   async versions(id: string): Promise<ResourceRevision[]> {
     await this.loadResource(id);
-    const result = await this.env.DB.prepare(
-      `SELECT * FROM resource_versions
-        WHERE resource_id = ? AND workspace_id = ?
-        ORDER BY version DESC`,
-    ).bind(id, this.auth.workspaceId).all<Record<string, unknown>>();
-    return result.results.map(toResourceRevision);
+    const history = await (await this.workspaceDirectory()).listResourceVersions({
+      workspaceId: this.auth.workspaceId,
+      resourceId: id,
+      version: null,
+    });
+    return history.items.map(toResourceRevision);
   }
 
   async version(id: string, version: number): Promise<ResourceRevision> {
     await this.loadResource(id);
-    const row = await this.env.DB.prepare(
-      `SELECT * FROM resource_versions
-        WHERE resource_id = ? AND workspace_id = ? AND version = ?`,
-    ).bind(id, this.auth.workspaceId, version).first<Record<string, unknown>>();
+    const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
     return toResourceRevision(row);
   }
@@ -329,18 +302,24 @@ export class ResourceService {
     representation: "original" | "model",
   ): Promise<Response> {
     await this.loadResource(id);
-    const column = representation === "model" ? "model_content_ref" : "content_ref";
-    const row = await this.env.DB.prepare(
-      `SELECT ${column} AS object_ref FROM resource_versions
-        WHERE resource_id = ? AND workspace_id = ? AND version = ?`,
-    ).bind(id, this.auth.workspaceId, version).first<{ object_ref: string | null }>();
+    const row = await this.loadVersion(id, version);
     if (!row) throw new ApiError(404, "resource_version_not_found", "Resource version not found");
-    if (!row.object_ref) {
+    const objectRef = representation === "model" ? row.model_content_ref : row.content_ref;
+    if (!objectRef) {
       throw new ApiError(404, "resource_version_content_unavailable", "This representation is unavailable for the resource version");
     }
-    const object = await this.env.PAYLOADS.get(row.object_ref);
+    const object = await this.env.PAYLOADS.get(objectRef);
     if (!object) throw new ApiError(404, "resource_version_content_unavailable", "Stored resource version content was not found");
     return resourceObjectResponse(object);
+  }
+
+  private async loadVersion(id: string, version: number) {
+    const history = await (await this.workspaceDirectory()).listResourceVersions({
+      workspaceId: this.auth.workspaceId,
+      resourceId: id,
+      version,
+    });
+    return history.items[0] ?? null;
   }
 
   async preview(id: string, signal: AbortSignal): Promise<Response> {
@@ -423,22 +402,14 @@ export class ResourceService {
     const idKey = `${this.env.AVALON_REGION}/${this.auth.workspaceId}/resources/${id}/hydrated/${contentSha256}/${crypto.randomUUID()}.json`;
     const at = nowIso();
     if (resource.content_sha256 === contentSha256) {
-      await this.env.DB.prepare(
-        `UPDATE resources
-         SET last_hydrated_at = ?, updated_at = ?,
-             revision_author_kind = 'connector', revision_author_run_id = NULL,
-             revision_author_user_id = NULL, revision_author_connection_id = ?,
-             revision_cause = 'refetched'
-         WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
-      ).bind(
+      await (await this.workspaceDirectory()).refreshResourceHydration({
+        workspaceId: this.auth.workspaceId,
+        resourceId: id,
+        connectionId: String(connection.id),
+        expectedContentRef: nullableString(resource.content_ref),
+        expectedContentSha256: nullableString(resource.content_sha256),
         at,
-        at,
-        connection.id,
-        id,
-        this.auth.workspaceId,
-        resource.content_ref,
-        resource.content_sha256,
-      ).run();
+      });
     } else {
       // Register the unique generation before writing it. If R2 publication,
       // compare-and-swap, or best-effort deletion fails, the regional reaper
@@ -456,32 +427,20 @@ export class ResourceService {
         at,
       });
       // An RPC failure keeps the object staged because WorkspaceDO may have
-      // committed the pointer before its response was lost.
-      const update = await this.env.DB.prepare(
-          `UPDATE resources
-           SET content_ref = ?, content_sha256 = ?, last_hydrated_at = ?, updated_at = ?,
-               model_content_ref = NULL, model_mime_type = NULL, model_content_sha256 = NULL,
-               model_metadata_json = NULL,
-               model_content_status = 'pending', model_content_extractor_version = NULL,
-               model_content_character_count = NULL, model_content_extracted_at = NULL,
-               model_content_claimed_at = NULL, model_content_claim_id = NULL,
-               model_content_error_code = NULL,
-               revision_author_kind = 'connector', revision_author_run_id = NULL,
-               revision_author_user_id = NULL, revision_author_connection_id = ?,
-               revision_cause = 'refetched'
-           WHERE id = ? AND workspace_id = ? AND content_ref IS ? AND content_sha256 IS ?`,
-        ).bind(
-          idKey,
-          contentSha256,
-          at,
-          at,
-          connection.id,
-          id,
-          this.auth.workspaceId,
-          resource.content_ref,
-          resource.content_sha256,
-      ).run();
-      if ((update.meta.changes ?? 0) === 0) {
+      // committed the pointer before its response was lost. A typed
+      // `updated: false` is not ambiguous — the fence refused the write — so
+      // the staged object goes back to the reaper.
+      const update = await (await this.workspaceDirectory()).publishResourceHydration({
+        workspaceId: this.auth.workspaceId,
+        resourceId: id,
+        connectionId: String(connection.id),
+        contentRef: idKey,
+        contentSha256,
+        expectedContentRef: nullableString(resource.content_ref),
+        expectedContentSha256: nullableString(resource.content_sha256),
+        at,
+      });
+      if (!update.updated) {
         await releaseStagedResourceObject(this.env.DB, this.auth.workspaceId, idKey)
           .catch(() => undefined);
       }
@@ -497,21 +456,22 @@ export class ResourceService {
     const at = nowIso();
     const mode = resourceWatchMode(adapter.manifest, at);
     const attachments = createResourceObjectPort(this.env, this.auth.workspaceId, workstreamId);
-    const watchStatement = this.env.DB.prepare(ENABLE_RESOURCE_WATCH_SQL).bind(
-      newId(),
-      this.auth.workspaceId,
+    const workspace = await this.workspaceDirectory();
+    const enableWatch = () => workspace.enableResourceWatch({
+      workspaceId: this.auth.workspaceId,
+      watchId: newId(),
       workstreamId,
-      id,
-      resource.connection_id,
-      mode.watchType,
-      mode.nextPollAt,
+      resourceId: id,
+      connectionId: String(resource.connection_id),
+      watchType: mode.watchType,
+      nextPollAt: mode.nextPollAt,
       at,
-      at,
-    );
-    // Two authorities, so no single batch spans them: the attachment is the
-    // work stream object's and the watch row is regional. The attachment is
-    // written first and compensated back if the regional write fails, because
-    // an attachment claiming a watch nothing polls is the recoverable half.
+    });
+    // Two authorities, so no single transaction spans them: the attachment is
+    // the work stream object's and the watch row is the workspace object's.
+    // The attachment is written first and compensated back if the watch write
+    // fails, because an attachment claiming a watch nothing polls is the
+    // recoverable half.
     //
     // The read and the write are one operation now. The routed version asked
     // whether the resource was attached, wrote the new flag, and — on failure —
@@ -523,7 +483,7 @@ export class ResourceService {
       throw new ApiError(404, "resource_attachment_not_found", "Attach the resource before enabling a watch");
     }
     try {
-      await watchStatement.run();
+      await enableWatch();
     } catch (error) {
       try {
         await attachments.setWatchEnabled({
@@ -566,9 +526,13 @@ export class ResourceService {
       ? null
       : await this.loadConnection(String(resource.connection_id));
     const attachments = createResourceObjectPort(this.env, this.auth.workspaceId, workstreamId);
-    const watchStatement = this.env.DB.prepare(
-      "UPDATE resource_watches SET enabled = 0, updated_at = ? WHERE workstream_id = ? AND resource_id = ?",
-    ).bind(nowIso(), workstreamId, id);
+    const workspace = await this.workspaceDirectory();
+    const disableWatch = () => workspace.disableResourceWatch({
+      workspaceId: this.auth.workspaceId,
+      workstreamId,
+      resourceId: id,
+      at: nowIso(),
+    });
     // The mirror of `watch` above, and the same two authorities in the same
     // order for the same reason.
     const claimed = await attachments.setWatchEnabled({ resourceId: id, watchEnabled: 0 });
@@ -576,7 +540,7 @@ export class ResourceService {
       throw new ApiError(404, "resource_attachment_not_found", "The resource is no longer attached");
     }
     try {
-      await watchStatement.run();
+      await disableWatch();
     } catch (error) {
       try {
         await attachments.setWatchEnabled({
@@ -892,7 +856,6 @@ function contentDisposition(disposition: "attachment" | "inline", fileName: stri
 }
 
 export const __resourceServiceTesting = {
-  enableResourceWatchSql: ENABLE_RESOURCE_WATCH_SQL,
   resourceWithWatchStateSql: RESOURCE_WITH_WATCH_STATE_SQL,
   encodeResourceCursor,
   decodeResourceCursor,

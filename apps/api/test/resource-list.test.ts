@@ -6,6 +6,10 @@ import type { AuthContext } from "../src/env";
 import { ResourceService } from "../src/services/resource-service";
 import { createTestD1Database, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
 import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-000000000001");
 const userId = asUserId("00000000-0000-7000-8000-000000000002");
@@ -121,49 +125,37 @@ describe("resource listing", () => {
   });
 
   it("lists every authorized resource version newest first", async () => {
-    const database = new DatabaseSync(":memory:");
-    database.exec(`
-      CREATE TABLE connector_connections (
-        id TEXT PRIMARY KEY, connector_type TEXT, scope TEXT, owner_user_id TEXT
-      );
-      CREATE TABLE resources (
-        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, connection_id TEXT,
-        resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
-        title TEXT NOT NULL, mime_type TEXT, content_ref TEXT, canonical_url TEXT,
-        metadata_json TEXT NOT NULL, last_hydrated_at TEXT, created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL, uploaded_by_user_id TEXT, attachment_status TEXT NOT NULL,
-        model_content_ref TEXT, current_version INTEGER NOT NULL
-      );
-      CREATE TABLE resource_watches (
-        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL, enabled INTEGER NOT NULL
-      );
-      CREATE TABLE notes (
-        id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, resource_id TEXT NOT NULL,
-        scope TEXT NOT NULL, owner_user_id TEXT NOT NULL, archived_at TEXT
-      );
-      CREATE TABLE resource_versions (
-        resource_id TEXT NOT NULL, workspace_id TEXT NOT NULL, version INTEGER NOT NULL,
-        resource_type TEXT NOT NULL, provider TEXT NOT NULL, provider_resource_id TEXT,
-        title TEXT NOT NULL, mime_type TEXT, content_ref TEXT, canonical_url TEXT,
-        metadata_json TEXT NOT NULL, last_hydrated_at TEXT, model_content_ref TEXT,
-        captured_at TEXT NOT NULL
-      );
-      INSERT INTO resources
-        (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
-         metadata_json, created_at, updated_at, attachment_status, model_content_ref, current_version)
-      VALUES ('${firstResourceId}', '${workspaceId}', 'document', 'fixture', 'Current',
-              'text/plain', 'original-2', '{"size":6}', '2026-08-27T01:00:00.000Z',
-              '2026-08-27T02:00:00.000Z', 'attached', 'model-2', 2);
-      INSERT INTO resource_versions
-        (resource_id, workspace_id, version, resource_type, provider, title, mime_type,
-         content_ref, metadata_json, model_content_ref, captured_at)
-      VALUES ('${firstResourceId}', '${workspaceId}', 1, 'document', 'fixture', 'First',
-              'text/plain', 'original-1', '{"size":5}', 'model-1', '2026-08-27T01:00:00.000Z'),
-             ('${firstResourceId}', '${workspaceId}', 2, 'document', 'fixture', 'Current',
-              'text/plain', 'original-2', '{"size":6}', 'model-2', '2026-08-27T02:00:00.000Z');
-    `);
+    // The history lives in a real WorkspaceDO, written by its own capture
+    // triggers rather than seeded: an insert records version 1, and the
+    // content swap after it is what makes version 2 exist.
+    const regional = new DatabaseSync(":memory:");
+    const workspaceObject = createTestWorkspaceDO({
+      workspaceId,
+      regionalDatabase: regional,
+    });
+    const database = workspaceObject.objectDatabase;
+    database.prepare(
+      `INSERT INTO resources
+         (id, workspace_id, resource_type, provider, title, mime_type, content_ref,
+          model_content_ref, metadata_json, attachment_status, created_at, updated_at)
+       VALUES (?, ?, 'document', 'fixture', 'First', 'text/plain', 'original-1',
+               'model-1', '{"size":5}', 'attached', '2026-08-27T01:00:00.000Z',
+               '2026-08-27T01:00:00.000Z')`,
+    ).run(firstResourceId, workspaceId);
+    database.prepare(
+      `UPDATE resources
+          SET title = 'Current', content_ref = 'original-2', model_content_ref = 'model-2',
+              metadata_json = '{"size":6}', updated_at = '2026-08-27T02:00:00.000Z'
+        WHERE id = ?`,
+    ).run(firstResourceId);
     const service = new ResourceService(createTestEnv({
-      DB: sqliteD1(database),
+      DB: sqliteD1(regional),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspaceObject.instance, [
+        "listResourceVersions",
+        "executeRuntimeSql",
+      ]),
       PAYLOADS: {
         async get(key: string) {
           return {

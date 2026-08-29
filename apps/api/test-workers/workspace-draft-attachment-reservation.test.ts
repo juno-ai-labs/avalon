@@ -24,8 +24,30 @@ function workspace() {
   ));
 }
 
+/**
+ * The seeded draft's age, minted against real time on purpose.
+ *
+ * `reapExpiredDraftResources` deletes an unattached `avalon_upload` draft once
+ * `created_at` is more than `DRAFT_ATTACHMENT_TTL_HOURS` (24) old, and the
+ * workspace alarm runs that pass in the background of these tests. This
+ * fixture used a fixed `2026-08-28T12:00:00.000Z`, which was inside the window
+ * when it was written and silently left it: from 12:00 UTC on the 29th the
+ * seeded row was reapable, and the release test — which ends with no
+ * reservation holding the row and its status back at `draft`, the exact shape
+ * the reap looks for — lost it between the release and the assertion. It began
+ * failing on every branch at once, by the clock rather than by a commit.
+ *
+ * Minting it now keeps the row inside the TTL however long this suite lives,
+ * which is what `docs/testing.md` means about ordering fixture timestamps
+ * against real time rather than against a literal.
+ */
+function seededAt(): string {
+  return new Date().toISOString();
+}
+
 beforeEach(async () => {
   await workspace().initializeWorkspace(WORKSPACE_ID, "wnam");
+  const seeded = seededAt();
   await runInDurableObject(workspace(), (_instance, state) => {
     state.storage.sql.exec("DELETE FROM pending_attachment_reservations");
     state.storage.sql.exec("DELETE FROM workspace_workstream_resource_links");
@@ -40,8 +62,8 @@ beforeEach(async () => {
       RESOURCE_ID,
       WORKSPACE_ID,
       USER_ID,
-      "2026-08-28T12:00:00.000Z",
-      "2026-08-28T12:00:00.000Z",
+      seeded,
+      seeded,
     );
   });
 });

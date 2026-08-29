@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Region } from "@rally/contracts";
 import type { Env } from "../src/env";
@@ -11,6 +11,10 @@ import {
 } from "../src/services/resend-inbound-email-service";
 import { __resendRouteTesting, resendInboundRoutes } from "../src/routes/resend";
 import { createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
@@ -78,13 +82,6 @@ interface AutomationReceipt extends RegionalReceipt {
   automationRunId: string | null;
 }
 
-interface StoredResource {
-  id: string;
-  workspaceId: string;
-  providerResourceId: string;
-  contentRef: string;
-}
-
 class FakeDatabase {
   prepareCalls = 0;
   fullAddressRegistry = true;
@@ -97,7 +94,6 @@ class FakeDatabase {
     automation_subscription_id: string | null;
   }>();
   readonly routeReceipts = new Map<string, RouteReceipt>();
-  readonly regionalReceipts = new Map<string, RegionalReceipt>();
   readonly automationReceipts = new Map<string, AutomationReceipt>();
   automation: {
     id: string;
@@ -107,7 +103,6 @@ class FakeDatabase {
     ownerUserId: string | null;
   } | null = null;
   readonly activeMembers = new Map<string, string>();
-  readonly resources: StoredResource[] = [];
   /**
    * The work stream's own object.
    *
@@ -116,6 +111,58 @@ class FakeDatabase {
    * another arm of the matcher below.
    */
   readonly objectStore: DatabaseSync = objectStoreFor();
+  /**
+   * The workspace's own object.
+   *
+   * The email receipt lease and the email's resource row are WorkspaceDO
+   * product state reached as typed methods now, so they live in a real
+   * object over its real schema; the matcher below keeps only the regional
+   * control-plane arms.
+   */
+  readonly workspaceObject = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: registeredDatabase(),
+    register: (created) => { identityStores.push(created); },
+  });
+
+  emailResources(): Array<Record<string, unknown>> {
+    return this.workspaceObject.objectDatabase.prepare(
+      "SELECT id, provider_resource_id, content_ref FROM resources ORDER BY created_at",
+    ).all() as Array<Record<string, unknown>>;
+  }
+
+  emailReceipt(resendEmailId: string, workstreamId: string): RegionalReceipt | undefined {
+    const row = this.workspaceObject.objectDatabase.prepare(
+      `SELECT processed_at, error_json, payload_ref, lease_token, lease_expires_at
+         FROM workstream_email_receipts WHERE resend_email_id = ? AND workstream_id = ?`,
+    ).get(resendEmailId, workstreamId) as Record<string, string | null> | undefined;
+    if (!row) return undefined;
+    return {
+      processedAt: row.processed_at ?? null,
+      errorJson: row.error_json ?? null,
+      payloadRef: row.payload_ref ?? null,
+      leaseToken: row.lease_token ?? null,
+      leaseExpiresAt: row.lease_expires_at ?? null,
+    };
+  }
+
+  seedEmailReceipt(resendEmailId: string, workstreamId: string, receipt: RegionalReceipt): void {
+    this.workspaceObject.objectDatabase.prepare(
+      `INSERT INTO workstream_email_receipts
+         (resend_email_id, workstream_id, workspace_id, svix_id, payload_ref,
+          received_at, processed_at, error_json, lease_token, lease_expires_at)
+       VALUES (?, ?, ?, 'seeded-svix', ?, '2026-08-02T17:59:00.000Z', ?, ?, ?, ?)`,
+    ).run(
+      resendEmailId,
+      workstreamId,
+      WORKSPACE_ID,
+      receipt.payloadRef,
+      receipt.processedAt,
+      receipt.errorJson,
+      receipt.leaseToken,
+      receipt.leaseExpiresAt,
+    );
+  }
   readonly attachments: Array<{ workstreamId: string; resourceId: string }> = [];
 
   recordAttachment(workstreamId: string, resourceId: string): void {
@@ -202,21 +249,6 @@ class FakeDatabase {
         ? { id: WORKSTREAM_ID, workspace_id: WORKSPACE_ID, email_address: EMAIL_ADDRESS }
         : null;
     }
-    if (sql.includes("FROM workstream_email_receipts")) {
-      const receipt = this.regionalReceipts.get(regionalReceiptKey(String(values[0]), String(values[1])));
-      return receipt ? {
-        processed_at: receipt.processedAt,
-        error_json: receipt.errorJson,
-        payload_ref: receipt.payloadRef,
-        lease_token: receipt.leaseToken,
-        lease_expires_at: receipt.leaseExpiresAt,
-      } : null;
-    }
-    if (sql.includes("FROM resources")) {
-      const resource = this.resources.find((candidate) =>
-        candidate.workspaceId === values[0] && candidate.providerResourceId === values[1]);
-      return resource ? { id: resource.id } : null;
-    }
     throw new Error(`Unexpected first query: ${sql}`);
   }
 
@@ -229,7 +261,16 @@ class FakeDatabase {
         .slice(0, 2);
       return createTestD1Result({ success: true, results: routes });
     }
-    throw new Error(`Unexpected all query: ${sql}`);
+    // Regional statements reach this database through the workspace runtime
+    // port now that the environment carries WORKSPACE_DOS, and that port reads
+    // and writes through `.all()` alone — so the single-row and mutation arms
+    // above serve it from here.
+    if (/^\s*SELECT/iu.test(sql)) {
+      const row = this.first(sql, values);
+      return createTestD1Result({ success: true, results: row ? [row] : [], meta: { changes: 0 } });
+    }
+    const outcome = this.run(sql, values);
+    return createTestD1Result({ success: true, results: [], meta: outcome.meta });
   }
 
   run(sql: string, values: unknown[]): D1Result {
@@ -265,18 +306,6 @@ class FakeDatabase {
       if (receipt) receipt.errorJson = String(values[0]);
       return result(receipt ? 1 : 0);
     }
-    if (sql.includes("INSERT OR IGNORE INTO workstream_email_receipts")) {
-      const key = regionalReceiptKey(String(values[0]), String(values[1]));
-      if (this.regionalReceipts.has(key)) return result(0);
-      this.regionalReceipts.set(key, {
-        processedAt: null,
-        errorJson: null,
-        payloadRef: null,
-        leaseToken: String(values[5]),
-        leaseExpiresAt: String(values[6]),
-      });
-      return result(1);
-    }
     if (sql.includes("INSERT OR IGNORE INTO automation_email_receipts")) {
       const key = automationReceiptKey(String(values[0]), String(values[1]));
       if (this.automationReceipts.has(key)) return result(0);
@@ -299,60 +328,6 @@ class FakeDatabase {
       receipt.leaseToken = null;
       receipt.leaseExpiresAt = null;
       return result(1);
-    }
-    if (sql.includes("UPDATE workstream_email_receipts") && sql.includes("SET lease_token = ?")) {
-      const receipt = this.regionalReceipts.get(regionalReceiptKey(String(values[2]), String(values[3])));
-      if (
-        !receipt
-        || receipt.processedAt
-        || (receipt.leaseToken && receipt.leaseExpiresAt && receipt.leaseExpiresAt > String(values[4]))
-      ) return result(0);
-      receipt.leaseToken = String(values[0]);
-      receipt.leaseExpiresAt = String(values[1]);
-      receipt.errorJson = null;
-      return result(1);
-    }
-    if (sql.includes("UPDATE workstream_email_receipts SET lease_expires_at = ?")) {
-      const receipt = this.regionalReceipts.get(regionalReceiptKey(String(values[1]), String(values[2])));
-      if (!receipt || receipt.processedAt || receipt.leaseToken !== values[3]) return result(0);
-      receipt.leaseExpiresAt = String(values[0]);
-      return result(1);
-    }
-    if (sql.includes("UPDATE workstream_email_receipts") && sql.includes("SET error_json = ?")) {
-      const receipt = this.regionalReceipts.get(regionalReceiptKey(String(values[1]), String(values[2])));
-      if (!receipt || receipt.processedAt || receipt.leaseToken !== values[3]) return result(0);
-      receipt.errorJson = String(values[0]);
-      receipt.leaseToken = null;
-      receipt.leaseExpiresAt = null;
-      return result(1);
-    }
-    if (sql.includes("UPDATE workstream_email_receipts") && sql.includes("payload_ref =")) {
-      const receipt = this.regionalReceipts.get(regionalReceiptKey(String(values[2]), String(values[3])));
-      if (!receipt || receipt.leaseToken !== values[4]) return result(0);
-      receipt.payloadRef = String(values[0]);
-      receipt.processedAt = String(values[1]);
-      receipt.errorJson = null;
-      receipt.leaseToken = null;
-      receipt.leaseExpiresAt = null;
-      return result(1);
-    }
-    if (sql.includes("INSERT OR IGNORE INTO resources")) {
-      const workspaceId = String(values[1]);
-      const providerResourceId = String(values[2]);
-      if (this.resources.some((candidate) =>
-        candidate.workspaceId === workspaceId && candidate.providerResourceId === providerResourceId)) return result(0);
-      this.resources.push({
-        id: String(values[0]),
-        workspaceId,
-        providerResourceId,
-        contentRef: String(values[4]),
-      });
-      return result(1);
-    }
-    if (sql.includes("UPDATE resources SET")) {
-      const resource = this.resources.find((candidate) => candidate.id === values[5] && candidate.workspaceId === values[6]);
-      if (resource) resource.contentRef = String(values[1]);
-      return result(resource ? 1 : 0);
     }
     throw new Error(`Unexpected run query: ${sql}`);
   }
@@ -728,7 +703,7 @@ describe("regional Resend email ingestion", () => {
     // object and before the resource row, so a stranger who guesses the
     // address cannot make us store their content or spend a run on it.
     expect(bucket.values.size).toBe(0);
-    expect(database.resources).toHaveLength(0);
+    expect(database.emailResources()).toHaveLength(0);
     expect(storedMessages(database)).toHaveLength(0);
     expect(admitInboundEmail).not.toHaveBeenCalled();
     expect(screenInboundEmail).toHaveBeenCalledWith(expect.objectContaining({
@@ -781,7 +756,7 @@ describe("regional Resend email ingestion", () => {
       messageId: null,
       resourceId: expect.any(String),
     });
-    expect(database.resources).toHaveLength(1);
+    expect(database.emailResources()).toHaveLength(1);
     expect(admitInboundEmail).toHaveBeenCalledOnce();
   });
 
@@ -878,8 +853,10 @@ describe("regional Resend email ingestion", () => {
   });
 
   it("rejects a concurrent delivery while its processing lease is active", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
     const database = new FakeDatabase();
-    database.regionalReceipts.set(regionalReceiptKey(RESEND_EMAIL_ID, WORKSTREAM_ID), {
+    database.seedEmailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID, {
       processedAt: null,
       errorJson: null,
       payloadRef: null,
@@ -895,13 +872,15 @@ describe("regional Resend email ingestion", () => {
     await expect(service.ingest(regionalInput()))
       .rejects.toMatchObject({ status: 503, code: "email_processing_in_progress" });
     expect(fetcher).not.toHaveBeenCalled();
-    expect(database.regionalReceipts.get(regionalReceiptKey(RESEND_EMAIL_ID, WORKSTREAM_ID)))
+    expect(database.emailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID))
       .toMatchObject({ leaseToken: "other-worker", leaseExpiresAt: "2026-08-02T18:05:00.000Z" });
   });
 
   it("atomically reclaims an expired processing lease after Worker interruption", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
     const database = new FakeDatabase();
-    database.regionalReceipts.set(regionalReceiptKey(RESEND_EMAIL_ID, WORKSTREAM_ID), {
+    database.seedEmailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID, {
       processedAt: null,
       errorJson: null,
       payloadRef: null,
@@ -926,7 +905,7 @@ describe("regional Resend email ingestion", () => {
       duplicate: false,
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(database.regionalReceipts.get(regionalReceiptKey(RESEND_EMAIL_ID, WORKSTREAM_ID)))
+    expect(database.emailReceipt(RESEND_EMAIL_ID, WORKSTREAM_ID))
       .toMatchObject({
         processedAt: "2026-08-02T18:00:00.000Z",
         leaseToken: null,
@@ -975,8 +954,18 @@ describe("Resend text normalization", () => {
 /** Object stores opened for the identity gate, closed after each test. */
 const identityStores: DatabaseSync[] = [];
 
+/** A fresh in-memory database whose close is owned by the shared afterEach. */
+function registeredDatabase(): DatabaseSync {
+  const database = new DatabaseSync(":memory:");
+  identityStores.push(database);
+  return database;
+}
+
 afterEach(() => {
   while (identityStores.length > 0) identityStores.pop()?.close();
+  // The lease tests pin the wall clock, because the workspace object compares
+  // a lease's expiry against its own clock rather than a caller-supplied one.
+  vi.useRealTimers();
 });
 
 /**
@@ -1038,6 +1027,16 @@ function environment(
     // this file asserts on what the storage classes wrote. Only the resource
     // attachment stands in — it is what these tests are about.
     SUBSTREAM_AGENTS: agent,
+    // The email receipt lease and the email's resource are typed methods on
+    // the workspace object; the real WorkspaceDO answers them over its own
+    // schema, so replay, takeover and settlement below are the object's.
+    WORKSPACE_DOS: testWorkspaceObjectBinding(database.workspaceObject.instance, [
+      "claimInboundEmailReceipt",
+      "renewInboundEmailLease",
+      "settleInboundEmailProcessed",
+      "recordInboundEmailFailure",
+      "upsertInboundEmailResource",
+    ]),
     AUTOMATION_AGENTS: testSubstreamAgentsBinding(database.objectStore, {
       extra: automationAgent,
     }),
@@ -1126,10 +1125,6 @@ function exactArrayBuffer(value: Uint8Array): ArrayBuffer {
 
 function bytesToBase64(value: Uint8Array): string {
   return btoa(String.fromCharCode(...value));
-}
-
-function regionalReceiptKey(emailId: string, workstreamId: string): string {
-  return `${emailId}\0${workstreamId}`;
 }
 
 function automationReceiptKey(emailId: string, automationId: string): string {
