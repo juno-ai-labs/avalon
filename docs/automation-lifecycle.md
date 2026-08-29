@@ -38,7 +38,7 @@ retired WorkspaceDO subscription-row design and is not implementation guidance.
 | `apps/api/src/services/resend-inbound-email-service.ts` | Screens inbound mail against the agent before storing anything, then admits it. |
 | `apps/desktop/src/renderer/screens/automation.tsx` | The stable `/automations/:id` route; `new-automation.tsx` is its draft adapter and `automation-overview.tsx` its accepted one. |
 | `apps/desktop/src/renderer/lib/use-automation-agent-socket.ts` | The draft feed: ticket, snapshot, compiler stream, heartbeat, and reconnect. |
-| `scripts/cutover-automation-agents.mjs`, `.github/workflows/deploy-api.yml` | The one-shot authority cutover and the deploy gates around it. |
+| `scripts/cutover-automation-agents.mjs` | The one-shot authority cutover, now an operator tool rather than a deploy step — see the changelog for 2026-08-29. Idempotent per workspace. |
 
 ## How it works
 
@@ -265,22 +265,31 @@ snapshot on connect and rebroadcasts on every durable change.
 
 ### The one-shot cutover
 
-The implementation ships in one merge and one coordinated deployment, and the
-workflow refuses to deploy a single region while the cutover is pending — a build
-whose authoring refuses in the region it skipped, and whose legacy timers never
-fire there again, is worse than no deploy.
+**This ran on 2026-08-28 and the deploy steps that carried it are gone.** What
+follows is the record of what the cutover did, kept because the mechanism still
+governs any workspace that has to be cut over by hand; it is no longer a
+description of what a deploy does. An operator running it now invokes
+`scripts/cutover-automation-agents.mjs` directly with the Cloudflare credentials
+the deploy job used to assert — see
+[`runbook.md`](runbook.md#deployments-and-release-workflows) for the shared-queue
+hazard to check first.
 
-Inside the deploy job, before either Worker is replaced,
-`cutover-automation-agents.mjs --preflight` compares each region's D1 workspace
+It shipped in one merge and one coordinated deployment, and the workflow refused
+to deploy a single region while the cutover was pending — a build whose authoring
+refuses in the region it skipped, and whose legacy timers never fire there again,
+is worse than no deploy.
+
+Inside that deploy job, before either Worker was replaced,
+`cutover-automation-agents.mjs --preflight` compared each region's D1 workspace
 inventory (read in keyset pages, because an unpaged D1 query silently truncates)
-against the Durable Object namespace listing, refuses a mismatch, and wakes every
+against the Durable Object namespace listing, refused a mismatch, and woke every
 stored WorkspaceDO by opaque ID through the existing migration-command Queue.
-That establishes a historical migration ledger, which is how the new build tells
+That established a historical migration ledger, which is how the new build tells
 a genuinely fresh object from a carried-over one.
 
-The workflow then deploys EU, deploys Global, applies Worker-first D1 migrations,
-and checks both health endpoints. `--apply` sends one named, idempotent cutover
-command per workspace through the same Queues. Each WorkspaceDO witnesses and
+The workflow then deployed EU, deployed Global, applied Worker-first D1
+migrations, and checked both health endpoints. `--apply` sends one named,
+idempotent cutover command per workspace through the same Queues. Each WorkspaceDO witnesses and
 hashes every value the destructive half can remove, checks the draft inventory it
 was told to expect, imports each accepted automation into its named
 AutomationAgent, verifies the returned receipt hash, re-hashes the source to
@@ -293,9 +302,10 @@ grammar cannot express becomes an `unsupported_trigger` attention code.
 
 The apply loop waits one poll interval before its first backlog read — Queue
 metrics are eventually consistent, and an immediate read can report the
-pre-dispatch count and "prove" a drain that never happened — refuses any increase
-in either region's dead-letter queue, and is followed by a second two-region
-health check.
+pre-dispatch count and "prove" a drain that never happened — and refuses any
+increase in either region's dead-letter queue. In the 2026-08-28 release a second
+two-region health check followed it; an operator running the script by hand
+checks regional health themselves.
 
 A workspace born on the new build still creates the legacy tables, because they
 live in WorkspaceDO's frozen migration 1 and a released migration is never
@@ -398,9 +408,14 @@ email is addressed and rendered
   as `email_rate_limit_exceeded` and no run is created.
 - **The cutover's drain wait is deliberately open.** `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS`
   in `scripts/cutover-automation-agents.mjs` is `+Infinity` and carries a
-  `LIMIT UNSET` marker: the guard exists, the number is the team's, and until it
-  is set a wedged consumer holds the deploy open until GitHub's own job timeout.
-  See [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md).
+  `LIMIT UNSET` marker: the guard exists and the number is the team's. Until it
+  is set, a drain that never completes hangs whoever ran the script — an
+  operator's terminal, not a release, since 2026-08-29. A deterministically
+  failing message is not what hangs it; the queues carry five retries and a
+  dead-letter queue and the loop already fails on any rise in that count. A slow
+  fleet-wide drain does, and so does a backlog held above zero by the migration
+  tracker's own fan-out into the same queue. See
+  [`adding-security-defensive-and-other-limits.md`](adding-security-defensive-and-other-limits.md).
 - **A workspace has not been cut over yet.** Authoring answers 503
   `automation_cutover_in_progress` rather than writing into an object whose
   legacy source has not been imported.
@@ -501,9 +516,13 @@ out to both.
 ## Operations
 
 The automation section of [`runbook.md`](runbook.md) owns the cutover and its DLQ
-rehearsal. A failed preflight, health check, cutover command, or increased
-dead-letter backlog is a visible release failure; there is no dual-write fallback
-and no rollback to legacy authority.
+handling. The cutover ran on 2026-08-28 and is no longer part of any deploy, so a
+failed preflight, cutover command, or rising dead-letter backlog is now an
+operator-run failure rather than a release failure — it stops the person who
+invoked the script, and nothing else. What has not changed is that there is no
+dual-write fallback and no rollback to legacy authority: the remedy for a
+workspace found holding legacy state is to run the script again, which is
+idempotent per workspace.
 
 ## Changelog
 
