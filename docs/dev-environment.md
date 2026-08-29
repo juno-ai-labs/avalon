@@ -349,11 +349,21 @@ that forced it: Node sets its default ceiling at roughly half of physical memory
 about 3.5 GB each are the whole machine before the first program is even built.
 That arithmetic is why the fix is structural rather than a larger runner.
 
-Nothing here pins a heap ceiling. `--max-old-space-size` is the lever if a
-runner still runs out — it is worth roughly another 2 GB — but the number it
-takes is a cap on how large this repository's lint may grow, so it belongs to
-whoever is willing to own the day it starts failing, not to the measurement
-above.
+`pnpm lint` itself pins no heap ceiling, so a local run gets Node's default.
+CI sets one: the `lint` and `typecheck-and-build-invariants` lanes in
+`ci.yml` carry `NODE_OPTIONS: --max-old-space-size=8192`, as do the macOS
+release job's verification steps. **A matrix key named `env` is only a
+variable — Actions gives it no meaning of its own** — so `ci.yml` names it
+explicitly on the run step, and a lane that sets nothing gets an empty
+`NODE_OPTIONS`, which Node ignores. A ceiling that is never named there is a
+ceiling that never applies, and the step's own `env:` group in the job log is
+where to check.
+
+Lowering that ceiling is the remaining lever if a runner still runs out, and it
+cuts both ways: `--max-old-space-size=2048` brought the same run to 1.9 GB in
+53s, faster than the 4.0 GB it takes unbounded, because a smaller heap is less
+to mark and compact. The number is a cap on how large this repository's lint may
+grow, so it is the team's to move rather than a measurement's to set.
 
 ## How many test workers to run
 
