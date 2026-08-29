@@ -264,6 +264,55 @@ import {
   type WorkspaceTerminalPolicyPreviewRequest,
 } from "./workspace-terminal-network-protocol";
 import {
+  claimWorkspaceSlackIngressJob,
+  claimWorkspaceSlackThread,
+  clearWorkspaceSlackPendingPrompt,
+  completeWorkspaceSlackIngressJob,
+  enqueueWorkspaceSlackIngressJob,
+  failWorkspaceSlackIngressJob,
+  recoverableWorkspaceSlackIngressJobs,
+  releaseWorkspaceSlackThreadClaim,
+  rememberWorkspaceSlackPendingPrompt,
+  sweepWorkspaceSlackIngress,
+  workspaceSlackPendingPrompt,
+  workspaceSlackThreadRoutable,
+} from "./workspace-slack-storage";
+import {
+  WorkspaceSlackIngressClaimRequestSchema,
+  WorkspaceSlackIngressCompleteRequestSchema,
+  WorkspaceSlackIngressEnqueueRequestSchema,
+  WorkspaceSlackIngressFailRequestSchema,
+  WorkspaceSlackIngressRecoverableRequestSchema,
+  WorkspaceSlackIngressSweepRequestSchema,
+  WorkspaceSlackPendingPromptClearRequestSchema,
+  WorkspaceSlackPendingPromptRequestSchema,
+  WorkspaceSlackPendingPromptStoreRequestSchema,
+  WorkspaceSlackThreadClaimRequestSchema,
+  WorkspaceSlackThreadReleaseRequestSchema,
+  WorkspaceSlackThreadRoutableRequestSchema,
+  type WorkspaceSlackIngressClaimRequest,
+  type WorkspaceSlackIngressClaimResult,
+  type WorkspaceSlackIngressCompleteRequest,
+  type WorkspaceSlackIngressEnqueueRequest,
+  type WorkspaceSlackIngressEnqueueResult,
+  type WorkspaceSlackIngressFailRequest,
+  type WorkspaceSlackIngressFailResult,
+  type WorkspaceSlackIngressRecoverableRequest,
+  type WorkspaceSlackIngressRecoverableResult,
+  type WorkspaceSlackIngressSettleResult,
+  type WorkspaceSlackIngressSweepRequest,
+  type WorkspaceSlackIngressSweepResult,
+  type WorkspaceSlackPendingPromptClearRequest,
+  type WorkspaceSlackPendingPromptRequest,
+  type WorkspaceSlackPendingPromptResult,
+  type WorkspaceSlackPendingPromptStoreRequest,
+  type WorkspaceSlackThreadClaimRequest,
+  type WorkspaceSlackThreadClaimResult,
+  type WorkspaceSlackThreadReleaseRequest,
+  type WorkspaceSlackThreadRoutableRequest,
+  type WorkspaceSlackThreadRoutableResult,
+} from "./workspace-slack-protocol";
+import {
   appendWorkspaceNoteSegment,
   archiveWorkspaceNote,
   commitWorkspaceNoteGeneration,
@@ -6398,6 +6447,197 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceDiscoveredResourcesRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     upsertWorkspaceDiscoveredResources(this.state.storage, request);
+  }
+
+  /**
+   * Admit one Slack ingress job, or say what already stands under its id.
+   *
+   * A replay of the same delivery converges; Slack reusing an event identity
+   * with different content is a conflict the caller refuses. The decision is
+   * the row's own witness inside one transaction, never an affected-row count.
+   */
+  async enqueueSlackIngressJob(
+    input: WorkspaceSlackIngressEnqueueRequest,
+  ): Promise<WorkspaceSlackIngressEnqueueResult> {
+    await this.initialized;
+    const request = WorkspaceSlackIngressEnqueueRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = enqueueWorkspaceSlackIngressJob(this.state.storage, request);
+    if (result.outcome === "queued") this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    return result;
+  }
+
+  /**
+   * Claim one ingress job for processing under a lease this object mints.
+   *
+   * A job at the attempt ceiling is unavailable; a `processing` job whose
+   * lease has expired is reclaimed, because its worker died before recording
+   * an outcome. The lease fences the completion and failure settlements.
+   */
+  async claimSlackIngressJob(
+    input: WorkspaceSlackIngressClaimRequest,
+  ): Promise<WorkspaceSlackIngressClaimResult> {
+    await this.initialized;
+    const request = WorkspaceSlackIngressClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = claimWorkspaceSlackIngressJob(this.state.storage, request);
+    if (result.outcome === "claimed") this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    return result;
+  }
+
+  /** Settle a claimed ingress job as done, clearing its stored payload. */
+  async completeSlackIngressJob(
+    input: WorkspaceSlackIngressCompleteRequest,
+  ): Promise<WorkspaceSlackIngressSettleResult> {
+    await this.initialized;
+    const request = WorkspaceSlackIngressCompleteRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = completeWorkspaceSlackIngressJob(this.state.storage, request);
+    if (result.outcome === "settled") this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    return result;
+  }
+
+  /**
+   * Record a claimed job's failure and decide the exhaustion notice with it,
+   * in one transaction, so concurrent exhaustions produce one first report.
+   */
+  async failSlackIngressJob(
+    input: WorkspaceSlackIngressFailRequest,
+  ): Promise<WorkspaceSlackIngressFailResult> {
+    await this.initialized;
+    const request = WorkspaceSlackIngressFailRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = failWorkspaceSlackIngressJob(this.state.storage, request);
+    if (result.outcome === "failed") this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    return result;
+  }
+
+  /** The ingress jobs whose payload survives and whose processing went quiet. */
+  async recoverableSlackIngressJobs(
+    input: WorkspaceSlackIngressRecoverableRequest,
+  ): Promise<WorkspaceSlackIngressRecoverableResult> {
+    await this.initialized;
+    const request = WorkspaceSlackIngressRecoverableRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return recoverableWorkspaceSlackIngressJobs(this.state.storage, request);
+  }
+
+  /**
+   * One maintenance pass over the Slack ingress spine, returning the standing
+   * exhausted report the pass leaves behind. The workspace alarm's
+   * `slack_ingress` arm counts with the same predicates these reaps apply.
+   */
+  async sweepSlackIngress(
+    input: WorkspaceSlackIngressSweepRequest,
+  ): Promise<WorkspaceSlackIngressSweepResult> {
+    await this.initialized;
+    const request = WorkspaceSlackIngressSweepRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    // Deliberately no `refreshScheduleAfterSlackWrite`. This method has one
+    // caller, `SlackAgentService.maintainIngress`, reached only as the
+    // `slack_ingress` maintenance target — always inside this object's own
+    // alarm drain, whose statements go through the local executor rather than
+    // `executeRuntimeSql` and so never carried that auto-refresh. Adding it
+    // here would start a `waitUntil` reconcile from a target list read
+    // mid-drain and let it land after `schedule_reconcile` has written the
+    // correct one, which is exactly what the comment on that end-of-drain
+    // refresh exists to prevent. The drain reconciles; this pass does not.
+    return sweepWorkspaceSlackIngress(this.state.storage, request);
+  }
+
+  /**
+   * Whether a bare Slack thread reply belongs to Rally: an existing agent
+   * session, or this member's live pending prompt awaiting `try again`.
+   */
+  async slackThreadRoutable(
+    input: WorkspaceSlackThreadRoutableRequest,
+  ): Promise<WorkspaceSlackThreadRoutableResult> {
+    await this.initialized;
+    const request = WorkspaceSlackThreadRoutableRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackThreadRoutable(this.state.storage, request);
+  }
+
+  /** The prompt this Slack member is still owed a retry of, if unexpired. */
+  async pendingSlackPrompt(
+    input: WorkspaceSlackPendingPromptRequest,
+  ): Promise<WorkspaceSlackPendingPromptResult> {
+    await this.initialized;
+    const request = WorkspaceSlackPendingPromptRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceSlackPendingPrompt(this.state.storage, request);
+  }
+
+  /** Retain a denied prompt so `try again` can replay it once the cause is fixed. */
+  async rememberSlackPendingPrompt(
+    input: WorkspaceSlackPendingPromptStoreRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackPendingPromptStoreRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    rememberWorkspaceSlackPendingPrompt(this.state.storage, request);
+    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+  }
+
+  /** Drop a retained prompt: the request it held has been taken or superseded. */
+  async clearSlackPendingPrompt(
+    input: WorkspaceSlackPendingPromptClearRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackPendingPromptClearRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    clearWorkspaceSlackPendingPrompt(this.state.storage, request);
+    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+  }
+
+  /**
+   * Take the right to initialize one Slack thread's session, under a lease
+   * this object mints; a live claim by anyone else answers `held`.
+   */
+  async claimSlackThread(
+    input: WorkspaceSlackThreadClaimRequest,
+  ): Promise<WorkspaceSlackThreadClaimResult> {
+    await this.initialized;
+    const request = WorkspaceSlackThreadClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = claimWorkspaceSlackThread(this.state.storage, request);
+    if (result.outcome === "claimed") this.refreshScheduleAfterSlackWrite(request.workspaceId);
+    return result;
+  }
+
+  /** Give a thread-initialization claim back, if it is still the caller's. */
+  async releaseSlackThreadClaim(
+    input: WorkspaceSlackThreadReleaseRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceSlackThreadReleaseRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    releaseWorkspaceSlackThreadClaim(this.state.storage, request);
+    this.refreshScheduleAfterSlackWrite(request.workspaceId);
+  }
+
+  /**
+   * Re-derive the workspace alarm after a typed write to an alarm-source
+   * Slack table, exactly as `executeRuntimeSql` does for a generic statement
+   * naming one — without it, a job admitted or a prompt retained through a
+   * typed method would wait for an unrelated write to arm the alarm that
+   * recovers or reaps it. Failures are logged and swallowed for the same
+   * reason as there: the alarm's own end-of-drain refresh is the backstop.
+   *
+   * Callers gate this on an outcome that moved a row. `executeRuntimeSql` could
+   * not: it keys on the table names in the SQL text and has no idea whether the
+   * statement matched anything, so a losing claim or a stale settlement paid for
+   * a full reconcile there. A typed method can see its own refusal, and a
+   * refusal changed no due time. Read-only methods never call this at all, and
+   * neither does `sweepSlackIngress` — see the comment on it for why.
+   */
+  private refreshScheduleAfterSlackWrite(workspaceId: string): void {
+    this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {
+      logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
+        workspace_id: workspaceId,
+        code: error instanceof Error ? error.message : "unknown_error",
+      });
+    }));
   }
 
   /**

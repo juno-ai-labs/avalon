@@ -24,6 +24,8 @@ listed in [`slack-permissions.md`](slack-permissions.md) rather than here.
 | `apps/api/src/services/connection-service.ts` | OAuth and connection lifecycle. |
 | `apps/api/src/services/slack-routing-service.ts` | The Global team-to-region route, and nothing else Global holds. |
 | `apps/api/src/services/slack-agent-service.ts` | Agent sessions, App Home, interactions, unfurls, delivery. |
+| `apps/api/src/durable-objects/workspace-slack-protocol.ts` | The typed request/result contracts for the ingress spine: jobs, thread claims, pending prompts, the maintenance sweep. |
+| `apps/api/src/durable-objects/workspace-slack-storage.ts` | The SQL behind those methods, inside WorkspaceDO's own storage. |
 | `apps/api/src/services/slack-notification-service.ts` | Workspace-bot delivery of the two things Rally tells one person about a work stream: a mention, and being added to it. |
 | `apps/api/src/routes/slack.ts` | The three signed ingress routes. |
 | `apps/api/src/durable-objects/substream-agent.ts` | The run-settlement output sink that reaches Slack. |
@@ -704,6 +706,7 @@ not own:
 | `apps/api/test/slack-routing.test.ts` | The Global team route and the regional hand-off. |
 | `apps/api/test/slack-unfurl-refresh.test.ts` | The unfurl card and its refresh sweep — owned by [`workstream-links.md`](workstream-links.md). |
 | `apps/api/test/slack-workspace-assignment.test.ts` | The one-team-one-workspace invariant, the ingress re-drive, the link-challenge reap and the `slack_ingress` due time it clears, the operator notice an exhausted job posts, and the connector principal: a linked member's create and reply present exactly the marked auth to the object, and the object's refusal stays retryable without flipping the installation. |
+| `apps/api/test-workers/workspace-slack-ingress.test.ts` | The ingress spine on real workerd: admission and its dedupe, the claim lease and both settlement fences, the one-notice exhaustion episode, the maintenance sweep, thread claims, pending prompts, and the workspace identity fence. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/slack-agent-ingress.test.ts` — the
@@ -795,6 +798,91 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-08-29 — The ingress spine became typed WorkspaceDO methods
+
+**What changed:** Admitting an ingress job, claiming it for processing,
+settling it as completed or failed, the recovery scan, the maintenance sweep,
+thread-initialization claims, pending prompts, and the bare-reply routability
+read are typed methods on WorkspaceDO
+(`workspace-slack-protocol.ts` / `workspace-slack-storage.ts`), and
+`SlackAgentService` calls them instead of sending those statements through the
+workspace runtime facade. The facade still carries the rest of the Slack
+domain — sessions, contexts, feedback, delivery preferences, user links, the
+link-challenge mint/redeem flow, unfurls, and every statement that joins
+`connector_connections` — and the Slack tables stay on
+`WORKSPACE_LOCAL_TABLES` so a stray generic statement still reaches the object
+rather than falling through to D1.
+
+**Why:** The facade routes by the table names it finds in the SQL, and this
+domain has already been burned by that twice: `slackUserIsLinked` joined
+`slack_user_links` to `workspace_members` and executed inside an object with
+no such table, failing every run-outcome delivery in production, and the
+`automation_directory` gap in the router's list answered
+`no such table` from D1 (#401). A typed method cannot be routed to the wrong
+database. The spine was converted first because it is where the claim shapes
+live: the enqueue decided "duplicate" from the adapter's `meta.changes` —
+the physical-write counter `durable-object-sqlite.md` forbids — and the
+exhaustion notice read for a sibling episode in a second statement, so two
+jobs exhausting at once could both notify. Both are now single transactions
+answering from returned witnesses, and the job and thread leases are minted
+inside the object.
+
+**Considered and rejected:** Converting the whole domain at once. Sixty-odd
+statements at this quality bar (real-object Node fixtures, workerd coverage,
+every test proven able to fail) is more than one reviewable change, and the
+session, link, and unfurl areas lean on `connector_connections` joins whose
+home is decided by that domain's own conversion. Also rejected: passing the
+caller's lease ids and attempt ceiling over the RPC — the object owns
+lifecycle time and randomness per `durable-object-sqlite.md`, so callers carry
+only the lease they were handed.
+
+**Consequences:** New ingress lifecycle states belong in the protocol and
+storage files, not in service SQL — the object refuses nothing yet, so a raw
+statement naming these tables still executes, and adding one reopens the path
+this closed. The attempt ceiling is one exported constant,
+`SLACK_INGRESS_ATTEMPT_LIMIT` in `workspace-slack-protocol.ts`, interpolated by
+the claim and recovery SQL inside the object, by the reauthorization re-drive in
+`slack-agent-service.ts`, and by the alarm's due-time arm in
+`workspace-schedule-execution.ts` — it sits in the protocol rather than beside
+the claim so a service can import it without dragging `DurableObjectStorage`
+along. It was briefly three literals with a comment saying they must move
+together; a comment is only as good as the next person reading all three files.
+
+Typed *mutations* re-derive the workspace alarm the way `executeRuntimeSql` did,
+so a mutating method added to this family must call
+`refreshScheduleAfterSlackWrite` or its table's due time goes stale — but two
+exceptions are load-bearing and must be preserved. Reads never call it. And
+neither does `sweepSlackIngress`, whose only caller is the `slack_ingress`
+maintenance target: that runs inside this object's own alarm drain, whose
+statements go through the local executor and so never carried the auto-refresh,
+and whose end-of-drain `schedule_reconcile` is the authoritative pass. A
+`waitUntil` refresh started mid-drain reads the target list before later targets
+advance their rows and can land after that reconcile, replacing a correct index
+with a stale one — the failure the comment on the end-of-drain refresh exists to
+prevent. Mutating methods additionally gate the refresh on an outcome that moved
+a row: `executeRuntimeSql` could not, because it keys on table names in the SQL
+text and cannot see whether the statement matched anything, so a losing claim
+or a stale settlement paid for a full reconcile there.
+
+`processQueuedIngress` and `maintainIngress` now require the workspace id as a
+leading parameter — the legacy trailing-optional forms are gone, and with them a
+runtime throw no caller could reach.
+
+The recovery scan's predicate mirrors the claim's, and must keep doing so: it
+re-enqueues what that claim will take. The facade statement applied the attempt
+ceiling to every row including a `processing` one whose lease had expired, which
+the claim reclaims regardless of attempt count. That stranded a job whose worker
+died on its twentieth attempt — permanently `processing`, permanently due
+because the alarm reads a processing row's due time as its `lease_expires_at`,
+never re-enqueued, and taken by no reap — so the alarm woke, swept nothing, and
+re-armed on the same instant. Fixed here by scoping the ceiling to
+`queued`/`failed`.
+
+Still on the facade, deliberately: everything listed under "what changed" as
+remaining, for a later part of this stack.
+
+Shipped in the facade-to-RPC stack, 9/9 part 1.
 
 ### 2026-08-28 — The shared code classifier landed, and the chunker deliberately stayed out of it
 

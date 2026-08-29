@@ -95,6 +95,35 @@ export function createTestWorkspaceDO(input: {
 }
 
 /**
+ * The object surface a Slack ingress flow reaches on `WORKSPACE_DOS`.
+ *
+ * The typed Slack methods plus `executeRuntimeSql`, because the flows under
+ * test mix both: a thread claim is a typed call while the session row beside
+ * it is still a facade statement, and serving the two from different stores
+ * would split one workspace's state across two databases mid-test. Listing
+ * the port here keeps every WorkspaceDO-authority table in the object's own
+ * database, which is where production has them.
+ */
+export const SLACK_WORKSPACE_OBJECT_METHODS = [
+  "executeRuntimeSql",
+  // Read on the way into every activity-shaped event; a fresh object answers
+  // "inactive", which is the stubbed `false` these suites used to hand-write.
+  "hasActiveExternalEventRegistration",
+  "enqueueSlackIngressJob",
+  "claimSlackIngressJob",
+  "completeSlackIngressJob",
+  "failSlackIngressJob",
+  "recoverableSlackIngressJobs",
+  "sweepSlackIngress",
+  "slackThreadRoutable",
+  "pendingSlackPrompt",
+  "rememberSlackPendingPrompt",
+  "clearSlackPendingPrompt",
+  "claimSlackThread",
+  "releaseSlackThreadClaim",
+] as const satisfies readonly (keyof WorkspaceDO)[];
+
+/**
  * The typed resource-maintenance methods, over an existing fixture database.
  *
  * For a suite whose subject still writes `resources` through the D1-shaped
