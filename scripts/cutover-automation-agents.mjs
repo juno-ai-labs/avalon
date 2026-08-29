@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Run the one-shot WorkspaceDO -> AutomationAgent authority cutover after both
- * regional Workers are healthy. Workspace identities come from regional D1;
- * all product-state audit, import, verification, and table removal happens in
- * the named WorkspaceDO reached through the existing regional command Queue.
+ * Cut workspaces over from WorkspaceDO-owned automations to AutomationAgent.
+ *
+ * This ran fleet-wide on 2026-08-28 and is **no longer part of any deploy**. It
+ * is kept as an operator remedy for a workspace later found still holding
+ * legacy automation state, which `--workspace=` targets directly; `--apply` is
+ * idempotent per workspace, so a completed one is a no-op.
+ *
+ * Workspace identities come from regional D1; all product-state audit, import,
+ * verification, and table removal happens in the named WorkspaceDO reached
+ * through the existing regional command Queue.
  */
 import { readFile } from "node:fs/promises";
 
@@ -77,9 +83,30 @@ function parseArguments(argv) {
   const apply = args.includes("--apply");
   const preflight = args.includes("--preflight");
   if (apply && preflight) throw new Error("--apply and --preflight are mutually exclusive");
+  // One workspace, which is what a remedy actually needs. Without it the
+  // smallest thing this can do is a whole region: one command per workspace
+  // fanned into `avalon-<region>-migration-commands`, waking every WorkspaceDO
+  // in it to tell all but one of them they are already done. That is the herd
+  // `durable-object-migration-tracking.md` warns about, it shares a queue with
+  // the migration tracker, and it is the case whose drain wait is unbounded —
+  // a lot of exposure to re-cut over a single workspace.
+  const workspace = args.find((argument) => argument.startsWith("--workspace="))
+    ?.slice("--workspace=".length) ?? null;
+  if (workspace !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(workspace)) {
+    throw new Error(`Unsupported workspace ${workspace}`);
+  }
+  // Refused rather than ignored. `--preflight` addresses objects by opaque ID
+  // from the Durable Object namespace listing and asserts that listing against
+  // D1's whole workspace inventory, so there is no coherent one-workspace
+  // meaning for it — silently widening back to the fleet is the wrong answer
+  // for a flag whose entire purpose is to narrow.
+  if (workspace !== null && preflight) {
+    throw new Error("--workspace and --preflight are mutually exclusive");
+  }
   return {
     apply,
     preflight,
+    workspace,
     regions: regionValue === "all" ? REGIONS : [regionValue],
   };
 }
@@ -113,7 +140,17 @@ function rows(result) {
  * across separate requests, and a workspace created between two of them shifts
  * every later offset by one, dropping a row that was already there.
  */
-async function workspaceIds(cloudflare, databaseId, region) {
+async function workspaceIds(cloudflare, databaseId, region, workspace = null) {
+  if (workspace !== null) {
+    const result = await cloudflare(`/d1/database/${databaseId}/query`, {
+      method: "POST",
+      body: JSON.stringify({
+        sql: "SELECT id FROM workspaces WHERE region = ? AND id = ?",
+        params: [region, workspace],
+      }),
+    });
+    return rows(result).map((row) => row.id);
+  }
   const ids = [];
   for (let after = ""; ;) {
     const result = await cloudflare(`/d1/database/${databaseId}/query`, {
@@ -164,7 +201,7 @@ async function workspaceObjectIds(cloudflare, region) {
  * changed shape, or an error body that still parsed, would read as "the queue is
  * empty", which is the exact condition the drain loop treats as proof that every
  * workspace was cut over. An absent number is an unknown, and an unknown has to
- * stop the deploy rather than end the wait.
+ * stop the run rather than end the wait.
  */
 async function queueMetrics(cloudflare, queueId) {
   const result = await cloudflare(`/queues/${queueId}/metrics`);
@@ -220,7 +257,7 @@ export async function cutoverAutomationAgents({
     const queueId = queues.get(queueName(region));
     const deadLetterQueueId = queues.get(deadLetterQueueName(region));
     if (!queueId || !deadLetterQueueId) throw new Error(`${region}_automation_cutover_queue_missing`);
-    const ids = await workspaceIds(cloudflare, databaseIdFromWranglerConfig(config), region);
+    const ids = await workspaceIds(cloudflare, databaseIdFromWranglerConfig(config), region, options.workspace);
     const objectIds = options.preflight ? await workspaceObjectIds(cloudflare, region) : [];
     if (options.preflight && objectIds.length !== ids.length) {
       throw new Error(`${region}_workspace_do_inventory_mismatch:d1=${ids.length}:stored=${objectIds.length}`);
@@ -265,9 +302,8 @@ export async function cutoverAutomationAgents({
   // consistent, so a backlog read taken the instant the last batch was accepted
   // can still answer with the pre-dispatch count — zero — and break the loop
   // having proved nothing at all about the messages just sent. Sleeping one
-  // poll interval before the first read costs a single interval on a deploy
-  // that already waits minutes, and removes the one way this loop can report a
-  // drain that never happened.
+  // poll interval before the first read costs the operator one interval, and
+  // removes the one way this loop can report a drain that never happened.
   const deadline = Number.isFinite(drainTimeoutMs) ? Date.now() + drainTimeoutMs : null;
   for (;;) {
     await wait(QUEUE_DRAIN_POLL_MS);

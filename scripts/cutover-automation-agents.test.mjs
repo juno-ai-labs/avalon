@@ -25,13 +25,14 @@ function fixture({ inventory = workspaces, metrics = { backlog_count: 0 } } = {}
       ]);
     } else if (url.pathname.includes("/d1/database/")) {
       const region = url.pathname.includes("099eb3bf") ? "eu" : "global";
-      // Honour the keyset the script sends, so a test can prove it actually
-      // walks the pages rather than reading the first one twice.
-      const [, after, limit] = JSON.parse(init.body).params;
-      result = [{
-        success: true,
-        results: inventory[region].filter((id) => id > after).slice(0, limit).map((id) => ({ id })),
-      }];
+      // Two query shapes: the keyset page, and the single-workspace lookup
+      // `--workspace=` sends. Honouring both is what lets a test prove the
+      // script walks its pages, and that a targeted run reads one row.
+      const params = JSON.parse(init.body).params;
+      const matched = params.length === 2
+        ? inventory[region].filter((id) => id === params[1])
+        : inventory[region].filter((id) => id > params[1]).slice(0, params[2]);
+      result = [{ success: true, results: matched.map((id) => ({ id })) }];
     } else if (url.pathname.endsWith("/workers/durable_objects/namespaces")) {
       result = ["eu", "global"].map((region) => ({
         id: `${region}-workspace-namespace`,
@@ -91,6 +92,49 @@ test("apply sends one typed named-WorkspaceDO command per workspace and waits fo
     "global:00000000-0000-7000-8000-0000000000f2",
   ]);
   assert.equal(messages.every((message) => message.automationCutover.workspaceId), true);
+});
+
+test("targets one workspace instead of waking the whole region", async () => {
+  const subject = fixture();
+  const target = workspaces.global[1];
+  const result = await cutoverAutomationAgents({
+    argv: ["--apply", `--workspace=${target}`], environment,
+    fetcher: subject.fetcher, read: subject.read, wait: async () => {}, logger: { log() {} },
+  });
+
+  // The point of the flag: one message, not one per workspace in the region.
+  // A fleet-wide fan-out to re-cut a single workspace shares a queue with the
+  // migration tracker and has an unbounded drain wait.
+  const messages = subject.requests
+    .filter(({ url }) => url.pathname.endsWith("/messages/batch"))
+    .flatMap(({ init }) => JSON.parse(init.body).messages.map((message) => message.body));
+  assert.equal(result.dispatched, 1);
+  assert.deepEqual(messages.map((message) => message.automationCutover.workspaceId), [target]);
+  assert.deepEqual(messages.map((message) => message.objectName), [`global:${target}`]);
+  // EU does not hold it, so EU sends nothing rather than failing.
+  assert.equal(result.regions.eu.workspaces, 0);
+});
+
+test("refuses a workspace target for the fleet-wide preflight", async () => {
+  const subject = fixture();
+  await assert.rejects(
+    cutoverAutomationAgents({
+      argv: ["--preflight", `--workspace=${workspaces.global[0]}`], environment,
+      fetcher: subject.fetcher, read: subject.read, wait: async () => {}, logger: { log() {} },
+    }),
+    /--workspace and --preflight are mutually exclusive/u,
+  );
+});
+
+test("refuses a workspace target that is not an identifier", async () => {
+  const subject = fixture();
+  await assert.rejects(
+    cutoverAutomationAgents({
+      argv: ["--apply", "--workspace=all"], environment,
+      fetcher: subject.fetcher, read: subject.read, wait: async () => {}, logger: { log() {} },
+    }),
+    /Unsupported workspace all/u,
+  );
 });
 
 test("reads the whole regional inventory when it spans more than one keyset page", async () => {
