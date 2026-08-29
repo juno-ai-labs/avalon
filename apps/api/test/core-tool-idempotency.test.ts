@@ -16,7 +16,8 @@ import {
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000000");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000001");
@@ -58,11 +59,15 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv: Env; env: Env } {
+function fixture(): {
+  database: DatabaseSync;
+  objectDatabase: DatabaseSync;
+  objectStore: DatabaseSync;
+  baseEnv: Env;
+  env: Env;
+} {
   const database = legacyProductSqliteDatabase();
   openDatabases.push(database);
-  // The resource tools project the alias WorkspaceDO keeps beside each UUID.
-  applyWorkspaceResourceSchema(database, WORKSPACE_ID);
   database.exec(`
     INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at)
@@ -94,6 +99,14 @@ function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv
 
   seedWorkstreamRun(objectStore, { id: HARNESS_RUN_ID,
     executionPrincipalJson: JSON.stringify({ type: "user", userId: USER_ID }) });
+  // The note and resource rows live in a real WorkspaceDO over its own schema:
+  // NoteService reaches the notes as typed methods, and the resource tools'
+  // runtime SQL routes to the same object through its compatibility port.
+  const workspaceObject = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: database,
+    register: (created) => { openDatabases.push(created); },
+  });
   const baseEnv = createTestEnv({
     DB: sqliteD1(database),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>(new MemoryBucket()),
@@ -103,12 +116,23 @@ function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv
     // scheduling port rather than the runtime router, so the fixture needs the
     // binding that port dispatches through — over this same object store.
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(objectStore, {
+      extra: workspaceObjectRpcs(workspaceObject.instance, [
+        "noteWithSegments",
+        "updateNote",
+        "executeRuntimeSql",
+      ]),
+    }),
   });
   return {
     database,
+    objectDatabase: workspaceObject.objectDatabase,
     objectStore,
     baseEnv,
-    env: baseEnv,
+    // The env under test is the routed execution environment the harness
+    // wraps before handing its tools out; with the workspace object attached,
+    // the identity wrap the fixture used to get away with routes nothing.
+    env: withWorkspaceRuntimeDatabase(baseEnv, WORKSPACE_ID),
   };
 }
 
@@ -120,12 +144,12 @@ function fixture(): { database: DatabaseSync; objectStore: DatabaseSync; baseEnv
  * inserts — attachment is a product operation, not a runtime SQL write.
  */
 function attachResourceLink(
-  database: DatabaseSync,
+  workspaceObjectDatabase: DatabaseSync,
   objectStore: DatabaseSync,
   resourceId: string,
   attachedAt: string,
 ): void {
-  const resource = database.prepare(
+  const resource = workspaceObjectDatabase.prepare(
     `SELECT id, connection_id, resource_type, provider, provider_resource_id, title,
             mime_type, content_ref, canonical_url, metadata_json
        FROM resources WHERE id = ?`,
@@ -182,7 +206,7 @@ function context(providerIdempotencyKey?: string) {
 
 describe("Avalon core write-tool idempotency", () => {
   it("revokes private note access from workspace-principal resource tools", async () => {
-    const { database, objectStore, env } = fixture();
+    const { objectDatabase, objectStore, env } = fixture();
     const noteService = new NoteService(env, {
       sessionId: "note-owner-session",
       userId: USER_ID,
@@ -195,7 +219,7 @@ describe("Avalon core write-tool idempotency", () => {
       title: "Sensitive note",
       scope: "personal",
     });
-    attachResourceLink(database, objectStore, note.resourceId, "2026-08-07T18:00:00.000Z");
+    attachResourceLink(objectDatabase, objectStore, note.resourceId, "2026-08-07T18:00:00.000Z");
     const workspaceInput = workflowInput();
     workspaceInput.executionPrincipal = { type: "workspace", workspaceId: WORKSPACE_ID };
     const tools = __integrationTesting.createAvalonTools(env, workspaceInput);
@@ -225,7 +249,7 @@ describe("Avalon core write-tool idempotency", () => {
     await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
       .resolves.toMatchObject({ output: expect.objectContaining({ title: "Sensitive note" }) });
 
-    database.prepare("UPDATE notes SET archived_at = ? WHERE id = ?")
+    objectDatabase.prepare("UPDATE notes SET archived_at = ? WHERE id = ?")
       .run("2026-08-07T19:00:00.000Z", note.id);
     await expect(ownerReadResource.execute({ resourceId: note.resourceId }, context()))
       .rejects.toMatchObject({ code: "resource_not_found" });

@@ -211,7 +211,10 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
   expired_drafts: async (ctx) => progressedIf(await reapExpiredDraftResources(ctx.workspaceEnv, ctx.workspaceId)),
   resource_slugs: async (ctx) => progressedIf(await backfillResourceSlugs(ctx.workspaceEnv, ctx.workspaceId)),
   note_objects: async (ctx) => progressedIf(await reapDeletedNoteObjects(ctx.workspaceEnv, ctx.workspaceId)),
-  note_privacy: async (ctx) => progressedIf(await processPendingNotePrivacyNotifications(ctx.workspaceEnv)),
+  note_privacy: async (ctx) => progressedIf(await processPendingNotePrivacyNotifications(
+    ctx.workspaceEnv,
+    { workspaceId: ctx.workspaceId },
+  )),
   memory_index: async (ctx) => progressedIf(await processMemoryIndexOutbox(ctx.workspaceEnv, 50, ctx.workspaceId)),
   notification_intents: async (ctx) => progressedIf((
     await ctx.notificationIntents.reapSettledWorkstreamNotificationIntents({

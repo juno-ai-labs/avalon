@@ -18,7 +18,28 @@ import {
   workstreamObjectParticipantRows,
   workstreamObjectRootRow,
 } from "./helpers/durable-authority";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
+
+/**
+ * Every note decision is the WorkspaceDO's now, so the suite exposes the real
+ * object's typed methods — plus its runtime SQL port, which the `create`
+ * batch still crosses — rather than re-implementing any of them in a fixture.
+ */
+const NOTE_OBJECT_METHODS = [
+  "noteWithSegments",
+  "listNoteSidebar",
+  "updateNote",
+  "archiveNote",
+  "appendNoteSegment",
+  "commitNoteGeneration",
+  "visibleNoteResourceIds",
+  "pendingNotePrivacyTransitions",
+  "markNotePrivacyTransitionProcessed",
+  "noteResourceDeletionOutbox",
+  "retireNoteResourceDeletion",
+  "executeRuntimeSql",
+] as const;
 
 const userId = asUserId("00000000-0000-4000-8000-000000000201");
 const otherUserId = asUserId("00000000-0000-4000-8000-000000000202");
@@ -96,10 +117,11 @@ afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
 });
 
-function fixture(options: { openAuthority?: boolean } = {}): {
+function fixture(): {
   auth: AuthContext;
   bucket: MemoryBucket;
   database: DatabaseSync;
+  objectDatabase: DatabaseSync;
   objectStores: Map<string, DatabaseSync>;
   env: Env;
 } {
@@ -107,8 +129,8 @@ function fixture(options: { openAuthority?: boolean } = {}): {
   openDatabases.push(database);
   // Resource visibility and note privacy notification branch on the open
   // Durable-Object authority, so the fixture opens it the way a production
-  // stack runs. A test of the pre-cutover D1 arms opts out.
-  if (options.openAuthority !== false) openWorkstreamAuthorityForTest(database);
+  // stack runs.
+  openWorkstreamAuthorityForTest(database);
   database.exec(`
     INSERT INTO users
       (id, google_subject, email, name, created_at, updated_at)
@@ -119,17 +141,25 @@ function fixture(options: { openAuthority?: boolean } = {}): {
       (id, name, slug, region, created_by_user_id, created_at, updated_at)
     VALUES ('${workspaceId}', 'Notes', 'notes', 'global', '${userId}', '2026-01-01', '2026-01-01');
   `);
+  // The notes, their segments, both outboxes and the note resource rows live
+  // in a real WorkspaceDO over its own schema — STRICT, identity-fenced, and
+  // without the legacy D1 triggers the old fixture carried.
+  const workspaceObject = createTestWorkspaceDO({
+    workspaceId,
+    regionalDatabase: database,
+    register: (created) => { openDatabases.push(created); },
+  });
   const bucket = new MemoryBucket();
   const objectStores = new Map<string, DatabaseSync>();
   return {
     database,
     bucket,
+    objectDatabase: workspaceObject.objectDatabase,
     objectStores,
     env: createTestEnv({
       DB: sqliteD1(database),
       PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
       AVALON_REGION: "global",
-      ...(options.openAuthority === false ? {} : {
       SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
       // The privacy notifier asks the WorkspaceDO directory which work
       // streams hold the resource; the stub answers from the per-workstream
@@ -137,6 +167,7 @@ function fixture(options: { openAuthority?: boolean } = {}): {
       // the production directory is projected from.
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
+          ...workspaceObjectRpcs(workspaceObject.instance, NOTE_OBJECT_METHODS),
           resourceAccess: async (input: { workspaceId: string; resourceId: string; userId: string }) => ({
             items: [...objectStores.entries()].flatMap(([linkedWorkstreamId, store]) => {
               const linked = store.prepare(
@@ -168,7 +199,6 @@ function fixture(options: { openAuthority?: boolean } = {}): {
           }),
         },
       }),
-      }),
     }),
     auth: {
       sessionId: "note-session",
@@ -182,7 +212,7 @@ function fixture(options: { openAuthority?: boolean } = {}): {
 
 describe("NoteService", () => {
   it("stores editable notes and timestamped transcript segments without creating a work stream", async () => {
-    const { auth, bucket, database, env } = fixture();
+    const { auth, bucket, database, objectDatabase, env } = fixture();
     const service = new NoteService(env, auth);
     const created = await service.create({ id: noteId, title: "Customer interview", scope: "personal" });
 
@@ -230,10 +260,10 @@ describe("NoteService", () => {
       [1, 1_250, 4_750, "The current import takes too many steps."],
       [2, 5_000, 8_500, "I want to bring everything over at once."],
     ]);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM note_transcript_segments WHERE note_id = ?").get(noteId))
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM note_transcript_segments WHERE note_id = ?").get(noteId))
       .toEqual({ count: 2 });
 
-    const resource = database.prepare(
+    const resource = objectDatabase.prepare(
       "SELECT content_ref, model_content_ref FROM resources WHERE id = ?",
     ).get(created.resourceId) as { content_ref: string; model_content_ref: string };
     const humanDocument = bucket.objects.get(resource.content_ref);
@@ -283,7 +313,7 @@ describe("NoteService", () => {
   });
 
   it("injects an authored message only into workstreams that lose access when a note becomes private", async () => {
-    const { auth, database, objectStores, env } = fixture();
+    const { auth, database, objectDatabase, objectStores, env } = fixture();
     const service = new NoteService(env, auth);
     const note = await service.create({ id: noteId, title: "Shared research", scope: "workspace" });
     const templateId = "00000000-0000-4000-8000-000000000220";
@@ -417,17 +447,17 @@ describe("NoteService", () => {
       expect(workstreamObjectGet(store, "SELECT COUNT(*) AS count FROM runs")).toEqual({ count: 0 });
       expect(workstreamObjectParticipantRows(store)).toEqual([]);
     }
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT COUNT(*) AS count FROM note_privacy_change_outbox WHERE processed_at IS NOT NULL",
     ).get()).toEqual({ count: 1 });
 
-    await processPendingNotePrivacyNotifications(env, { noteId });
+    await processPendingNotePrivacyNotifications(env, { workspaceId, noteId });
     expect(objectMessages()).toHaveLength(3);
 
     await service.update(noteId, { scope: "workspace" });
     await service.update(noteId, { scope: "personal" });
     expect(objectMessages()).toHaveLength(6);
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT COUNT(*) AS count FROM note_privacy_change_outbox WHERE processed_at IS NOT NULL",
     ).get()).toEqual({ count: 2 });
   });
@@ -518,7 +548,7 @@ describe("NoteService", () => {
   });
 
   it("bounds model context without silently cutting off either end", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, objectDatabase, env } = fixture();
     let captured: GenerateMeetingNotesRequest | undefined;
     const service = new NoteService(env, auth, {
       generate: vi.fn(async (input: GenerateMeetingNotesRequest) => {
@@ -530,7 +560,7 @@ describe("NoteService", () => {
     const manualNotes = `manual-start\n\n${"m".repeat(30_000)}\n\nmanual-end`;
     const liveNotes = `live-start\n\n${"l".repeat(30_000)}\n\nlive-end`;
     await service.update(noteId, { manualNotes });
-    database.prepare("UPDATE notes SET live_notes_markdown = ? WHERE id = ?").run(liveNotes, noteId);
+    objectDatabase.prepare("UPDATE notes SET live_notes_markdown = ? WHERE id = ?").run(liveNotes, noteId);
     await service.appendSegment(noteId, {
       clientSegmentId: "00000000-0000-4000-8000-000000000213",
       startOffsetMs: 0,
@@ -617,7 +647,7 @@ describe("NoteService", () => {
   });
 
   it("archives a note out of every listing without destroying its transcript", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, objectDatabase, env } = fixture();
     const ownerService = new NoteService(env, auth);
     const created = await ownerService.create({ id: noteId, title: "Finished interview", scope: "workspace" });
     await ownerService.appendSegment(noteId, {
@@ -642,7 +672,7 @@ describe("NoteService", () => {
     await ownerService.update(noteId, { recordingStatus: "recording" });
     await expect(ownerService.archive(noteId))
       .rejects.toMatchObject({ status: 409, code: "note_recording" });
-    expect(database.prepare("SELECT archived_at FROM notes WHERE id = ?").get(noteId))
+    expect(objectDatabase.prepare("SELECT archived_at FROM notes WHERE id = ?").get(noteId))
       .toEqual({ archived_at: null });
     await ownerService.update(noteId, { recordingStatus: "complete" });
 
@@ -658,56 +688,46 @@ describe("NoteService", () => {
     // Archiving twice is the same answer as archiving something that is gone.
     await expect(ownerService.archive(noteId)).rejects.toMatchObject({ status: 404, code: "note_not_found" });
 
-    expect(database.prepare("SELECT archived_at FROM notes WHERE id = ?").get(noteId))
+    expect(objectDatabase.prepare("SELECT archived_at FROM notes WHERE id = ?").get(noteId))
       .toMatchObject({ archived_at: expect.any(String) });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT COUNT(*) AS count FROM note_transcript_segments WHERE note_id = ?",
     ).get(noteId)).toEqual({ count: 1 });
   });
 
-  it("deletes the owned resource row when a note is deleted", async () => {
-    // The D1 deletion-outbox trigger this test exercises is confined by 0089
-    // to the phases where D1 is still the authority; post-cutover the
-    // WorkspaceDO owns note object lifecycle. The pre-open stack is the one
-    // place this arm still runs, so the test stays in that regime.
-    const { auth, bucket, database, env } = fixture({ openAuthority: false });
+  it("retires deletion-outbox entries only once their R2 objects are gone", async () => {
+    // The legacy D1 trigger that fed this outbox did not travel to the
+    // WorkspaceDO schema, and 0090 dropped its D1 source, so nothing writes
+    // the table any more — the pass exists to drain whatever the cutover
+    // imported. The rows are seeded here the way an import left them.
+    const { auth, bucket, objectDatabase, env } = fixture();
     const noteService = new NoteService(env, auth);
     const created = await noteService.create({ id: noteId, title: "Disposable", scope: "personal" });
-
-    database.prepare("DELETE FROM notes WHERE id = ?").run(noteId);
-
-    expect(database.prepare("SELECT id FROM resources WHERE id = ?").get(created.resourceId)).toBeUndefined();
-    expect(database.prepare(
-      "SELECT resource_id, content_ref, model_content_ref FROM note_resource_deletion_outbox WHERE resource_id = ?",
-    ).get(created.resourceId)).toMatchObject({
-      resource_id: created.resourceId,
-      content_ref: expect.stringContaining("/note.md"),
-      model_content_ref: expect.stringContaining("/note-model.md"),
-    });
-    const foreignKeys = database.prepare("PRAGMA foreign_key_list(automation_resources)").all() as Array<Record<string, unknown>>;
-    expect(foreignKeys.find((row) => row.table === "resources")?.on_delete).toBe("CASCADE");
-
-    const secondNoteId = "00000000-0000-4000-8000-000000000214";
-    const second = await noteService.create({ id: secondNoteId, title: "Resource-deleted", scope: "personal" });
-    database.prepare("DELETE FROM resources WHERE id = ?").run(second.resourceId);
-    expect(database.prepare("SELECT id FROM notes WHERE id = ?").get(secondNoteId)).toBeUndefined();
-    expect(database.prepare(
-      "SELECT resource_id FROM note_resource_deletion_outbox WHERE resource_id = ?",
-    ).get(second.resourceId)).toEqual({ resource_id: second.resourceId });
+    const resource = objectDatabase.prepare(
+      "SELECT content_ref, model_content_ref FROM resources WHERE id = ?",
+    ).get(created.resourceId) as { content_ref: string; model_content_ref: string };
+    objectDatabase.prepare(
+      `INSERT INTO note_resource_deletion_outbox
+         (resource_id, content_ref, model_content_ref, created_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(created.resourceId, resource.content_ref, resource.model_content_ref, "2026-08-07T18:00:00.000Z");
 
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     bucket.failNextDelete = true;
-    await reapDeletedNoteObjects(env);
-    expect(database.prepare("SELECT COUNT(*) AS count FROM note_resource_deletion_outbox").get())
+    // The R2 delete failed, so the entry must survive for the next pass — a
+    // retirement here would leak the objects forever.
+    expect(await reapDeletedNoteObjects(env, workspaceId)).toBe(0);
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM note_resource_deletion_outbox").get())
       .toEqual({ count: 1 });
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
       event: "note_object_cleanup_failed",
       reason: "temporary R2 outage",
     }));
 
-    await reapDeletedNoteObjects(env);
-    expect(bucket.objects.size).toBe(0);
-    expect(database.prepare(
+    expect(await reapDeletedNoteObjects(env, workspaceId)).toBe(1);
+    expect(bucket.objects.has(resource.content_ref)).toBe(false);
+    expect(bucket.objects.has(resource.model_content_ref)).toBe(false);
+    expect(objectDatabase.prepare(
       "SELECT resource_id FROM note_resource_deletion_outbox WHERE resource_id = ?",
     ).get(created.resourceId)).toBeUndefined();
     warning.mockRestore();

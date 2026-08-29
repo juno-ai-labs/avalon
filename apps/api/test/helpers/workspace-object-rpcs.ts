@@ -57,6 +57,9 @@ export function createTestWorkspaceDO(input: {
       blockConcurrencyWhile: async <T,>(body: () => Promise<T>) => body(),
       setWebSocketAutoResponse: () => undefined,
       waitUntil: () => undefined,
+      // A method that writes a sidebar-visible table publishes the list to
+      // every subscribed socket afterwards; here there are none to publish to.
+      getWebSockets: () => [],
       storage,
     }),
     createTestEnv({
