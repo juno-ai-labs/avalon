@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectorError, SlackWorkspaceBotScopes } from "@rally/connectors";
 import type { Env } from "../src/env";
@@ -7,10 +8,15 @@ import { __slackAgentTesting, SlackAgentService } from "../src/services/slack-ag
 import { slackChannelIsExternallyShared, workstreamUnfurlBlocks } from "../src/services/slack-workstream-card";
 import {
   createCloudflareTestBinding,
-  createTestD1Database,
   createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
+import { migratedSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  createTestWorkspaceDO,
+  SLACK_WORKSPACE_OBJECT_METHODS,
+  workspaceObjectRpcs,
+} from "./helpers/workspace-object-rpcs";
 
 // The logger only reads the observability bindings off the environment.
 const logEnv = createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error" });
@@ -18,81 +24,107 @@ const logEnv = createTestEnv({ AVALON_REGION: "global", LOG_LEVEL: "error" });
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  for (const database of databases.splice(0)) database.close();
 });
 
-interface Job {
-  id: string;
-  bodyHash: string;
-  status: string;
-}
+const INGRESS_WORKSPACE = "22222222-2222-4222-8222-222222222222";
+const INGRESS_CONNECTION = "11111111-1111-4111-8111-111111111111";
 
-class IngressStatement {
-  private values: unknown[] = [];
-  constructor(private readonly database: IngressDatabase, private readonly sql: string) {}
-  bind(...values: unknown[]) { this.values = values; return this; }
-  first<T>() { return this.database.first(this.sql, this.values) as Promise<T | null>; }
-  all<T>() { return this.database.all(this.sql, this.values) as Promise<D1Result<T>>; }
-  run<T>() { return this.database.run(this.sql, this.values) as Promise<D1Result<T>>; }
-}
-
+/**
+ * The durable ingress over a real WorkspaceDO: the enqueue, its dedupe, and
+ * the thread-routability read are typed methods now, so the SQL under these
+ * tests is the object's own rather than a re-implementation keyed on SQL
+ * substrings. Only the activity-registration answer stays a hand stub — that
+ * surface is the connector-event domain's, not this one's.
+ */
 class IngressDatabase {
-  readonly jobs = new Map<string, Job>();
-  readonly sessions = new Set<string>();
-  readonly pendingPrompts = new Set<string>();
+  readonly regional = migratedSqliteDatabase();
+  readonly objectDatabase: DatabaseSync;
+  readonly instance: ReturnType<typeof createTestWorkspaceDO>["instance"];
   readonly activityEventTypes = new Set<string>();
   readonly semanticActivityEventTypes: Array<string | null> = [];
-  prepare(sql: string) { return new IngressStatement(this, sql); }
 
-  async first(sql: string, values: unknown[]) {
-    if (sql.includes("FROM slack_installation_routes") && sql.includes("team_id = ?")) {
-      return {
-        workspace_id: "22222222-2222-4222-8222-222222222222",
-        connection_id: "11111111-1111-4111-8111-111111111111",
-      };
-    }
-    if (sql.includes("FROM connector_connections") && sql.includes("provider_account_id = ?")) {
-      return {
-        id: "11111111-1111-4111-8111-111111111111",
-        workspace_id: "22222222-2222-4222-8222-222222222222",
-        provider_account_id: String(values.at(-1)),
-        encrypted_credentials: "encrypted",
-        credential_iv: "iv",
-        status: "healthy",
-      };
-    }
-    if (sql.includes("SELECT body_hash, status FROM slack_ingress_jobs")) {
-      const job = this.jobs.get(String(values[0]));
-      return job ? { body_hash: job.bodyHash, status: job.status } : null;
-    }
-    if (sql.includes("SELECT 1 AS routable")) {
-      const sessionKey = `${String(values[0])}:${String(values[1])}:${String(values[2])}`;
-      const pendingKey = `${String(values[3])}:${String(values[4])}:${String(values[5])}:${String(values[6])}`;
-      return this.sessions.has(sessionKey) || this.pendingPrompts.has(pendingKey)
-        ? { routable: 1 }
-        : null;
-    }
-    throw new Error(`Unexpected first query: ${sql}`);
+  constructor() {
+    databases.push(this.regional);
+    this.regional.prepare(
+      `INSERT INTO slack_installation_routes
+         (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+       VALUES ('T1', 'global', ?, ?, 'active', '2026-01-01', '2026-01-01')`,
+    ).run(INGRESS_WORKSPACE, INGRESS_CONNECTION);
+    const created = createTestWorkspaceDO({
+      workspaceId: INGRESS_WORKSPACE,
+      regionalDatabase: this.regional,
+      register: (database) => { databases.push(database); },
+    });
+    this.instance = created.instance;
+    this.objectDatabase = created.objectDatabase;
+    // The enqueue path reads the connection row but never decrypts it, so the
+    // credential fields carry the same placeholders the old double answered.
+    this.objectDatabase.prepare(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+          display_name, encrypted_credentials, credential_iv, credential_key_version,
+          granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+          model_plugin_id)
+       VALUES (?, ?, 'slack', 'workspace', NULL, 'T1', 'Slack', 'encrypted', 'iv', 1,
+               '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+               'plugin_slack_workspace')`,
+    ).run(INGRESS_CONNECTION, INGRESS_WORKSPACE);
   }
 
-  async all(sql: string, values: unknown[]) {
-    const row = await this.first(sql, values);
-    return {
-      success: true,
-      results: row ? [row] : [],
-      meta: {} as D1Meta & Record<string, unknown>,
-    };
+  jobCount(): number {
+    return Number((this.objectDatabase.prepare(
+      "SELECT COUNT(*) AS count FROM slack_ingress_jobs",
+    ).get() as { count: number }).count);
   }
 
-  async run(sql: string, values: unknown[]) {
-    if (sql.includes("INSERT INTO slack_ingress_jobs")) {
-      const id = String(values[0]);
-      if (this.jobs.has(id)) return result(0);
-      this.jobs.set(id, { id, bodyHash: String(values[4]), status: "queued" });
-      return result(1);
-    }
-    throw new Error(`Unexpected run query: ${sql}`);
+  hasJob(id: string): boolean {
+    return this.objectDatabase.prepare(
+      "SELECT 1 AS present FROM slack_ingress_jobs WHERE id = ?",
+    ).get(id) !== undefined;
+  }
+
+  seedCompletedJob(id: string, bodyHash: string): void {
+    this.objectDatabase.prepare(
+      `INSERT INTO slack_ingress_jobs
+         (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
+          status, attempt_count, received_at, updated_at, completed_at)
+       VALUES (?, ?, ?, 'T1', ?, 'event', NULL, 'completed', 1,
+               '2026-01-01', '2026-01-01', '2026-01-01')`,
+    ).run(id, INGRESS_WORKSPACE, INGRESS_CONNECTION, bodyHash);
+  }
+
+  seedSessionThread(channelId: string, threadTs: string): void {
+    this.objectDatabase.prepare(
+      `INSERT INTO slack_agent_sessions
+         (id, workspace_id, connection_id, linked_user_id, execution_scope,
+          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+          opening_client_message_id, workstream_id, invocation_kind, channel_type,
+          context_json, created_at, updated_at)
+       VALUES (?, ?, ?, NULL, 'workspace', 'T1', 'U1', ?, ?, 'seed', ?, 'app_mention',
+               'public', '{}', '2026-01-01', '2026-01-01')`,
+    ).run(
+      `session-${channelId}-${threadTs}`,
+      INGRESS_WORKSPACE,
+      INGRESS_CONNECTION,
+      channelId,
+      threadTs,
+      `workstream-${channelId}-${threadTs}`,
+    );
+  }
+
+  seedPendingPrompt(channelId: string, threadTs: string, slackUserId: string): void {
+    this.objectDatabase.prepare(
+      `INSERT INTO slack_agent_pending_prompts
+         (connection_id, slack_channel_id, slack_thread_ts, slack_user_id, prompt,
+          denial_reason, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'retry me', 'policy', '2099-01-01T00:00:00.000Z',
+               '2026-01-01', '2026-01-01')`,
+    ).run(INGRESS_CONNECTION, channelId, threadTs, slackUserId);
   }
 }
+
+const databases: DatabaseSync[] = [];
 
 describe("Slack Agent durable ingress", () => {
   it("bounds and normalizes Slack Agent active-view context", () => {
@@ -403,7 +435,7 @@ describe("Slack Agent durable ingress", () => {
 
   it("deduplicates completed events without publishing another queue message", async () => {
     const database = new IngressDatabase();
-    database.jobs.set("event:Ev1", { id: "event:Ev1", bodyHash: "body-hash", status: "completed" });
+    database.seedCompletedJob("event:Ev1", "body-hash");
     const send = vi.fn(async () => undefined);
     const service = new SlackAgentService(environment(database, send));
 
@@ -420,9 +452,9 @@ describe("Slack Agent durable ingress", () => {
     await expect(service.processEvent(channelMessagePayload("EvIgnored", "unrelated", "1.0"), "ignored-hash"))
       .resolves.toEqual({ ok: true });
     expect(send).not.toHaveBeenCalled();
-    expect(database.jobs.size).toBe(0);
+    expect(database.jobCount()).toBe(0);
 
-    database.sessions.add("11111111-1111-4111-8111-111111111111:C1:1.0");
+    database.seedSessionThread("C1", "1.0");
     await expect(service.processEvent(channelMessagePayload("EvSession", "continue", "1.0"), "session-hash"))
       .resolves.toEqual({ ok: true });
     expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvSession" }));
@@ -435,17 +467,17 @@ describe("Slack Agent durable ingress", () => {
 
     await expect(service.processEvent(channelMessagePayload("EvMentionCopy", "<@UBOT> continue", "1.0"), "mention-copy-hash"))
       .resolves.toEqual({ ok: true });
-    expect(database.jobs.has("event:EvMentionCopy")).toBe(false);
+    expect(database.hasJob("event:EvMentionCopy")).toBe(false);
 
     await expect(service.processEvent(channelMessagePayload("EvUnrecognizedRetry", "try again", "2.0"), "retry-hash"))
       .resolves.toEqual({ ok: true });
-    expect(database.jobs.has("event:EvUnrecognizedRetry")).toBe(false);
+    expect(database.hasJob("event:EvUnrecognizedRetry")).toBe(false);
 
-    database.pendingPrompts.add("11111111-1111-4111-8111-111111111111:C1:2.0:U1");
+    database.seedPendingPrompt("C1", "2.0", "U1");
     await expect(service.processEvent(channelMessagePayload("EvRetry", "try again", "2.0"), "pending-retry-hash"))
       .resolves.toEqual({ ok: true });
     expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ jobId: "event:EvRetry" }));
-    expect(database.jobs.size).toBe(3);
+    expect(database.jobCount()).toBe(3);
   });
 
   it("queues an otherwise unrelated channel message when an exact Slack activity trigger is listening", async () => {
@@ -457,7 +489,7 @@ describe("Slack Agent durable ingress", () => {
     await expect(service.processEvent(channelMessagePayload("EvAutomation", "customer escalation"), "activity-hash"))
       .resolves.toEqual({ ok: true });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ jobId: "event:EvAutomation" }));
-    expect(database.jobs.has("event:EvAutomation")).toBe(true);
+    expect(database.hasJob("event:EvAutomation")).toBe(true);
   });
 
   it("admits reaction activity only while an exact Slack automation source is active", async () => {
@@ -481,12 +513,12 @@ describe("Slack Agent durable ingress", () => {
     };
 
     await expect(service.processEvent(payload, "ignored-hash")).resolves.toEqual({ ok: true });
-    expect(database.jobs.size).toBe(0);
+    expect(database.jobCount()).toBe(0);
     expect(send).not.toHaveBeenCalled();
 
     database.activityEventTypes.add("slack.reaction.added");
     await expect(service.processEvent(payload, "activity-hash")).resolves.toEqual({ ok: true });
-    expect(database.jobs.has("event:EvReaction")).toBe(true);
+    expect(database.hasJob("event:EvReaction")).toBe(true);
     expect(send).toHaveBeenCalledOnce();
   });
 
@@ -557,21 +589,11 @@ function channelMessagePayload(
 
 function environment(database: IngressDatabase, send: (body: unknown) => Promise<void>): Env {
   const workspaceStub = {
-    executeRuntimeSql: async (input: {
-      statements: Array<{ sql: string; params: Array<string | number | null> }>;
-    }) => ({
-      status: 200,
-      bodyJson: JSON.stringify({
-        results: await Promise.all(input.statements.map(async ({ sql, params }) => {
-          if (/^\s*SELECT/iu.test(sql)) {
-            const row = await database.first(sql, params) as Record<string, string | number | null> | null;
-            return { columns: row ? Object.keys(row) : [], rows: row ? [row] : [], changes: 0 };
-          }
-          const result = await database.run(sql, params);
-          return { columns: [], rows: [], changes: Number(result.meta.changes ?? 0) };
-        })),
-      }),
-    }),
+    // The real object's typed Slack methods and its runtime SQL port, so
+    // every WorkspaceDO-authority statement lands in the object's own store.
+    ...workspaceObjectRpcs(database.instance, SLACK_WORKSPACE_OBJECT_METHODS),
+    // The one hand stub left: activity registrations belong to the
+    // connector-event domain, and these tests toggle them as a fact.
     hasActiveExternalEventRegistration: async (input: { eventType: string }) => ({
       active: database.activityEventTypes.has(input.eventType)
         || database.semanticActivityEventTypes.includes(input.eventType),
@@ -582,16 +604,12 @@ function environment(database: IngressDatabase, send: (body: unknown) => Promise
     get: () => workspaceStub,
   });
   return createTestEnv({
-    DB: createTestD1Database(database),
+    DB: sqliteD1(database.regional),
     ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send }),
     WORKSPACE_DOS: workspaceNamespace,
     AVALON_REGION: "global",
     SLACK_APP_ID: "A1",
   });
-}
-
-function result<T = unknown>(changes: number): D1Result<T> {
-  return { success: true, results: [], meta: { changes } as D1Meta & Record<string, unknown> };
 }
 
 describe("work-stream link unfurl card", () => {

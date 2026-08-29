@@ -14,7 +14,13 @@ import {
 } from "../src/services/workspace-schedule-execution";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import { applyWorkspaceResourceSchema, createWorkspaceObjectTable } from "./helpers/workspace-object-tables";
+import {
+  createTestWorkspaceDO,
+  SLACK_WORKSPACE_OBJECT_METHODS,
+  workspaceObjectRpcs,
+} from "./helpers/workspace-object-rpcs";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
+import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import {
   openWorkstreamAuthorityForTest,
   seedCanonicalConversationTurn,
@@ -638,8 +644,11 @@ describe("Slack workspace workstream assignment", () => {
   });
 });
 
-async function seedLinkedSlackMember(database: DatabaseSync, credentialsKey: string): Promise<void> {
-  await seedSlackInstallation(database, credentialsKey);
+async function linkedSlackMemberFixture(
+  database: DatabaseSync,
+  credentialsKey: string,
+): Promise<{ instance: WorkspaceDO; objectDatabase: DatabaseSync }> {
+  const fixture = await slackInstallationFixture(database, credentialsKey);
   database.exec(`
     INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
     VALUES ('019fc4e0-4444-7000-8000-000000000044', 'google-linked',
@@ -648,6 +657,8 @@ async function seedLinkedSlackMember(database: DatabaseSync, credentialsKey: str
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('22222222-2222-4222-8222-222222222222',
             '019fc4e0-4444-7000-8000-000000000044', 'member', 'active', '2026-01-01');
+  `);
+  fixture.objectDatabase.exec(`
     INSERT INTO slack_user_links
       (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
        status, created_at, updated_at)
@@ -656,11 +667,8 @@ async function seedLinkedSlackMember(database: DatabaseSync, credentialsKey: str
             '11111111-1111-4111-8111-111111111111',
             '019fc4e0-4444-7000-8000-000000000044', 'T123', 'U456',
             'active', '2026-01-01', '2026-01-01');
-    INSERT INTO slack_installation_routes
-      (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
-    VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
-            '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01');
   `);
+  return fixture;
 }
 
 describe("Slack connector principal delivery", () => {
@@ -683,11 +691,12 @@ describe("Slack connector principal delivery", () => {
 
   function deliveryEnv(
     database: DatabaseSync,
+    instance: WorkspaceDO,
     credentialsKey: string,
     substreamAgents: DurableObjectNamespace,
   ): Env {
     return createTestEnv({
-      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      ...slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
@@ -697,6 +706,7 @@ describe("Slack connector principal delivery", () => {
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
+          ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           hasWorkstreamDirectory: vi.fn(async () => true),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
@@ -707,12 +717,12 @@ describe("Slack connector principal delivery", () => {
   it("presents the connector principal to the work-stream object, not a login session", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedLinkedSlackMember(database, credentialsKey);
-    insertSlackEventJob(database, "event:principal", appMention("EvPrincipal"));
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:principal", appMention("EvPrincipal"));
     const { fetcher } = slackTaskApiFetcher(database, { ok: true });
     vi.stubGlobal("fetch", fetcher);
     let initializeAuth: unknown = null;
-    const env = deliveryEnv(database, credentialsKey, testSubstreamAgentsBinding(database, {
+    const env = deliveryEnv(database, instance, credentialsKey, testSubstreamAgentsBinding(database, {
         product: {
           initialize: (request) => {
             initializeAuth = request.auth;
@@ -770,11 +780,11 @@ describe("Slack connector principal delivery", () => {
     // whole workspace's connection flipped to `needs_reconnect`.
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedLinkedSlackMember(database, credentialsKey);
-    insertSlackEventJob(database, "event:race", appMention("EvRace"));
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:race", appMention("EvRace"));
     const { fetcher } = slackTaskApiFetcher(database, { ok: true });
     vi.stubGlobal("fetch", fetcher);
-    const env = deliveryEnv(database, credentialsKey, testSubstreamAgentsBinding(database, {
+    const env = deliveryEnv(database, instance, credentialsKey, testSubstreamAgentsBinding(database, {
         extra: {
           handleProductRequest: vi.fn(() => ({
             status: 401,
@@ -793,11 +803,11 @@ describe("Slack connector principal delivery", () => {
 
     // Failed but retryable: the attempt count stays where the claim put it
     // rather than being jumped to the ceiling.
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:race'",
     ).get()).toEqual({ status: "failed", attempt_count: 1, error_code: "connector_member_revoked" });
     // One member's refusal says nothing about the installation's grant.
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).get()).toEqual({ status: "healthy" });
   });
@@ -808,7 +818,7 @@ describe("Slack connector principal delivery", () => {
     // under.
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedLinkedSlackMember(database, credentialsKey);
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
     database.exec(`
       INSERT INTO workstreams
         (id, workspace_id, title, objective, origin_type, created_by_user_id,
@@ -816,6 +826,8 @@ describe("Slack connector principal delivery", () => {
       VALUES ('7a000000-0000-4000-8000-0000000000aa', '22222222-2222-4222-8222-222222222222',
               'Investigate', 'Investigate', 'ad_hoc', NULL, 'completed', 2,
               '2026-01-01', '2026-01-01', '2026-01-01');
+    `);
+    objectDatabase.exec(`
       INSERT INTO slack_agent_sessions
         (id, workspace_id, connection_id, linked_user_id, execution_scope,
          slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
@@ -833,11 +845,11 @@ describe("Slack connector principal delivery", () => {
       { workstreamId: "7a000000-0000-4000-8000-0000000000aa", workspaceId: "22222222-2222-4222-8222-222222222222" },
       { title: "Investigate", objective: "Investigate", createdByUserId: null, exactState: "completed" },
     );
-    insertSlackEventJob(database, "event:reply", appMention("EvReply", { threadTs: "1.0", ts: "2.0" }));
+    insertSlackEventJob(objectDatabase, "event:reply", appMention("EvReply", { threadTs: "1.0", ts: "2.0" }));
     const { fetcher } = slackTaskApiFetcher(database, { ok: true });
     vi.stubGlobal("fetch", fetcher);
     const captured: Array<{ operation: string; auth: unknown }> = [];
-    const env = deliveryEnv(database, credentialsKey, testSubstreamAgentsBinding(database, {
+    const env = deliveryEnv(database, instance, credentialsKey, testSubstreamAgentsBinding(database, {
         objectStores,
         product: {
           create_message: (request) => {
@@ -868,14 +880,14 @@ describe("Slack public channel membership", () => {
   it("durably schedules a full public-channel sync after workspace authorization", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const send = vi.fn(async () => { throw new Error("queue unavailable"); });
-    const env = slackMembershipEnvironment(database, credentialsKey, send);
+    const env = slackMembershipEnvironment(database, instance, credentialsKey, send);
 
     await new SlackAgentService(env).schedulePublicChannelSync("11111111-1111-4111-8111-111111111111");
 
-    const job = database.prepare(
+    const job = objectDatabase.prepare(
       "SELECT id, team_id, kind, payload_json, status FROM slack_ingress_jobs",
     ).get() as Record<string, unknown>;
     expect(job).toMatchObject({ team_id: "T123", kind: "event", status: "queued" });
@@ -896,12 +908,12 @@ describe("Slack public channel membership", () => {
   it("continues a rate-limited full sync with Slack's requested queue delay", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     const send = vi.fn(async () => undefined);
-    const service = new SlackAgentService(slackMembershipEnvironment(database, credentialsKey, send));
+    const service = new SlackAgentService(slackMembershipEnvironment(database, instance, credentialsKey, send));
     await service.schedulePublicChannelSync("11111111-1111-4111-8111-111111111111");
-    const initial = database.prepare("SELECT id FROM slack_ingress_jobs").get() as { id: string };
+    const initial = objectDatabase.prepare("SELECT id FROM slack_ingress_jobs").get() as { id: string };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith("conversations.list")) return new Response(JSON.stringify({
@@ -915,9 +927,9 @@ describe("Slack public channel membership", () => {
       });
     }));
 
-    await service.processQueuedIngress(initial.id);
+    await service.processQueuedIngress("22222222-2222-4222-8222-222222222222", initial.id);
 
-    const jobs = database.prepare(
+    const jobs = objectDatabase.prepare(
       "SELECT id, status FROM slack_ingress_jobs ORDER BY received_at, id",
     ).all() as Array<{ id: string; status: string }>;
     expect(jobs).toHaveLength(2);
@@ -932,15 +944,9 @@ describe("Slack public channel membership", () => {
   it("joins a newly created public channel from its durable Slack event", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.exec(`
-      INSERT INTO slack_installation_routes
-        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
-      VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
-              '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01')
-    `);
-    seedSlackActivitySubscription(database, "slack.channel.created");
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    seedSlackActivitySubscription(objectDatabase, "slack.channel.created");
+    objectDatabase.prepare(
       `INSERT INTO slack_ingress_jobs
        (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
         status, attempt_count, received_at, updated_at)
@@ -969,12 +975,16 @@ describe("Slack public channel membership", () => {
     const hasActiveExternalEventRegistration = vi.fn(async () => ({ active: true }));
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       activityQueueSend,
       undefined,
       {
         WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>(testSubstreamAgentsBinding(database, {
-          extra: { hasActiveExternalEventRegistration },
+          extra: {
+            ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
+            hasActiveExternalEventRegistration,
+          },
         })),
       },
     )).processQueuedIngress(
@@ -1011,7 +1021,7 @@ describe("Slack public channel membership", () => {
         }),
       }),
     }));
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, payload_json, completed_at FROM slack_ingress_jobs WHERE id = 'event:EvChannelCreated'",
     ).get()).toMatchObject({ status: "completed", payload_json: null });
   });
@@ -1019,8 +1029,8 @@ describe("Slack public channel membership", () => {
   it("does not turn Avalon's own reaction events into automation activity", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:own-reaction", {
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:own-reaction", {
       type: "event_callback",
       team_id: "T123",
       api_app_id: "A1",
@@ -1039,9 +1049,10 @@ describe("Slack public channel membership", () => {
 
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       activityQueueSend,
-    )).processQueuedIngress("event:own-reaction");
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:own-reaction");
 
     expect(database.prepare("SELECT COUNT(*) AS count FROM activities").get()).toEqual({ count: 0 });
     expect(activityQueueSend).not.toHaveBeenCalled();
@@ -1050,8 +1061,8 @@ describe("Slack public channel membership", () => {
   it("adds eyes to the triggering message before starting Slack task processing", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:acknowledge", appMention("EvAcknowledge"));
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:acknowledge", appMention("EvAcknowledge"));
     const methods: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
@@ -1097,18 +1108,18 @@ describe("Slack public channel membership", () => {
       throw new Error(`Unexpected Slack request ${url}`);
     }));
     const env = createTestEnv({
-      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      ...slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
     });
 
-    await new SlackAgentService(env).processQueuedIngress("event:acknowledge");
+    await new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:acknowledge");
 
     expect(methods.indexOf("reactions.add")).toBeGreaterThan(methods.indexOf("users.info"));
     expect(methods.indexOf("reactions.add")).toBeLessThan(methods.indexOf("assistant.threads.setStatus"));
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, payload_json FROM slack_ingress_jobs WHERE id = 'event:acknowledge'",
     ).get()).toEqual({ status: "completed", payload_json: null });
   });
@@ -1119,19 +1130,19 @@ describe("Slack public channel membership", () => {
   ] as const)("continues an admitted task when reactions.add returns %s", async (reactionError, expectedStatus) => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, `event:${reactionError}`, appMention(`Ev${reactionError}`));
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, `event:${reactionError}`, appMention(`Ev${reactionError}`));
     const { fetcher, methods } = slackTaskApiFetcher(database, { ok: false, error: reactionError });
     vi.stubGlobal("fetch", fetcher);
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const env = createTestEnv({
-      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      ...slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
     });
 
-    await new SlackAgentService(env).processQueuedIngress(`event:${reactionError}`);
+    await new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", `event:${reactionError}`);
 
     expect(methods.indexOf("reactions.add")).toBeLessThan(methods.indexOf("assistant.threads.setStatus"));
     expect(warning).toHaveBeenCalledWith(expect.objectContaining({
@@ -1139,10 +1150,10 @@ describe("Slack public channel membership", () => {
       reason: reactionError,
     }));
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).get()).toEqual({ status: expectedStatus });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       `SELECT status, payload_json FROM slack_ingress_jobs WHERE id = 'event:${reactionError}'`,
     ).get()).toEqual({ status: "completed", payload_json: null });
   });
@@ -1150,23 +1161,24 @@ describe("Slack public channel membership", () => {
   it("uses the installed Slack capability grants for activation", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    objectDatabase.prepare(
       "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).run();
-    insertSlackEventJob(database, "event:missing-capability", appMention("EvMissingCapability"));
+    insertSlackEventJob(objectDatabase, "event:missing-capability", appMention("EvMissingCapability"));
     const { fetcher, methods } = slackTaskApiFetcher(database, { ok: true });
     vi.stubGlobal("fetch", fetcher);
 
     await expect(new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).processQueuedIngress("event:missing-capability")).rejects.toThrow(/has not granted slack\.agent/iu);
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:missing-capability")).rejects.toThrow(/has not granted slack\.agent/iu);
 
     expect(methods).not.toContain("reactions.add");
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:missing-capability'",
     ).get()).toEqual({
       status: "failed",
@@ -1178,7 +1190,7 @@ describe("Slack public channel membership", () => {
   it("acknowledges linked-user activation without external actor lookup", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
       VALUES ('44444444-4444-4444-8444-444444444444', 'google-linked',
@@ -1186,6 +1198,8 @@ describe("Slack public channel membership", () => {
       INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
       VALUES ('22222222-2222-4222-8222-222222222222',
               '44444444-4444-4444-8444-444444444444', 'member', 'active', '2026-01-01');
+    `);
+    objectDatabase.exec(`
       INSERT INTO slack_user_links
         (id, workspace_id, connection_id, user_id, slack_team_id, slack_user_id,
          status, created_at, updated_at)
@@ -1195,13 +1209,7 @@ describe("Slack public channel membership", () => {
               '44444444-4444-4444-8444-444444444444', 'T123', 'U456',
               'active', '2026-01-01', '2026-01-01');
     `);
-    database.exec(`
-      INSERT INTO slack_installation_routes
-        (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
-      VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
-              '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01');
-    `);
-    insertSlackEventJob(database, "event:linked", appMention("EvLinked"));
+    insertSlackEventJob(objectDatabase, "event:linked", appMention("EvLinked"));
     const { fetcher, methods } = slackTaskApiFetcher(database, { ok: true });
     vi.stubGlobal("fetch", fetcher);
     // A linked member creates through the object creation coordinator. Capture
@@ -1209,7 +1217,7 @@ describe("Slack public channel membership", () => {
     // D1 retains only the identity anchor.
     let initializeInput: Record<string, unknown> | null = null;
     const env = createTestEnv({
-      ...slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined)),
+      ...slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined)),
       APP_ENV: "test",
       OPENROUTER_PRIMARY_MODEL: "test-model",
       SESSION_SIGNING_KEY: "test-session-signing-key-with-32-characters",
@@ -1255,6 +1263,7 @@ describe("Slack public channel membership", () => {
       }),
       WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
         extra: {
+          ...workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
           hasWorkstreamDirectory: vi.fn(async () => true),
           hasActiveExternalEventRegistration: vi.fn(async () => false),
         },
@@ -1282,16 +1291,17 @@ describe("Slack public channel membership", () => {
   it("makes deterministic ingress failures terminal in the durable job row", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:invalid", { type: 42 });
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:invalid", { type: 42 });
 
     await expect(new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).processQueuedIngress("event:invalid")).rejects.toBeDefined();
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:invalid")).rejects.toBeDefined();
 
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:invalid'",
     ).get()).toMatchObject({ status: "failed", attempt_count: 20 });
   });
@@ -1299,8 +1309,8 @@ describe("Slack public channel membership", () => {
   it("retries an access-token expiration without poisoning the Slack connection", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:expired", {
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:expired", {
       type: "event_callback",
       team_id: "T123",
       api_app_id: "A1",
@@ -1314,14 +1324,15 @@ describe("Slack public channel membership", () => {
 
     await expect(new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).processQueuedIngress("event:expired")).rejects.toMatchObject({ message: "token_expired" });
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:expired")).rejects.toMatchObject({ message: "token_expired" });
 
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, attempt_count, error_code FROM slack_ingress_jobs WHERE id = 'event:expired'",
     ).get()).toEqual({ status: "failed", attempt_count: 1, error_code: "token_expired" });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).get()).toEqual({ status: "healthy" });
   });
@@ -1329,8 +1340,8 @@ describe("Slack public channel membership", () => {
   it("accepts an unlinked private-channel task regardless of legacy policy rows", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    objectDatabase.prepare(
       `INSERT INTO slack_agent_policies
        (connection_id, allow_unlinked_workspace_tasks, public_channel_mode, private_channel_mode,
         allow_direct_messages, allow_commands, allow_shortcuts, created_at, updated_at)
@@ -1338,7 +1349,7 @@ describe("Slack public channel membership", () => {
     ).run("11111111-1111-4111-8111-111111111111");
     const payload = appMention("EvWideLatitude");
     (payload.event as Record<string, unknown>).channel_type = "group";
-    insertSlackEventJob(database, "event:wide-latitude", payload);
+    insertSlackEventJob(objectDatabase, "event:wide-latitude", payload);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith("conversations.info")) {
@@ -1379,10 +1390,11 @@ describe("Slack public channel membership", () => {
     const objectStores = new Map<string, DatabaseSync>();
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
       objectStores,
-    )).processQueuedIngress("event:wide-latitude");
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:wide-latitude");
 
     // The created work stream's product row lives in its object; the regional
     // row is only the bootstrap identity anchor and keeps its placeholder.
@@ -1400,7 +1412,7 @@ describe("Slack public channel membership", () => {
       workspace_id: "22222222-2222-4222-8222-222222222222",
       do_identity_anchor: 1,
     });
-    expect(database.prepare("SELECT execution_scope, channel_type FROM slack_agent_sessions").get()).toEqual({
+    expect(objectDatabase.prepare("SELECT execution_scope, channel_type FROM slack_agent_sessions").get()).toEqual({
       execution_scope: "workspace",
       channel_type: "private",
     });
@@ -1409,8 +1421,8 @@ describe("Slack public channel membership", () => {
   it("marks a missing channel-lookup scope for reconnect before unlinked dispatch", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:missing-scope", appMention("EvMissingScope"));
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:missing-scope", appMention("EvMissingScope"));
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
       if (url.pathname.endsWith("conversations.info")) {
@@ -1431,14 +1443,15 @@ describe("Slack public channel membership", () => {
 
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).processQueuedIngress("event:missing-scope");
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:missing-scope");
 
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, error_json FROM connector_connections WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).get()).toMatchObject({ status: "needs_reconnect" });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status FROM slack_ingress_jobs WHERE id = 'event:missing-scope'",
     ).get()).toEqual({ status: "completed" });
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -1447,8 +1460,8 @@ describe("Slack public channel membership", () => {
   it("asks for the request again when a legacy retry has no recoverable prompt", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:legacy-retry-missing", {
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:legacy-retry-missing", {
       type: "event_callback",
       team_id: "T123",
       api_app_id: "A1",
@@ -1489,13 +1502,14 @@ describe("Slack public channel membership", () => {
 
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).processQueuedIngress("event:legacy-retry-missing");
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:legacy-retry-missing");
 
     expect(postedMessages).toEqual([expect.stringContaining("couldn’t find the original request")]);
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 0 });
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status FROM slack_ingress_jobs WHERE id = 'event:legacy-retry-missing'",
     ).get()).toEqual({ status: "completed" });
   });
@@ -1508,11 +1522,11 @@ describe("Slack public channel membership", () => {
     // very bot token that proves the installation works.
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    objectDatabase.prepare(
       "UPDATE connector_connections SET status = 'needs_reconnect' WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).run();
-    insertSlackEventJob(database, "event:unhealthy", appMention("EvUnhealthy"));
+    insertSlackEventJob(objectDatabase, "event:unhealthy", appMention("EvUnhealthy"));
     const postedMessages: string[] = [];
     const threadTitles: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1568,10 +1582,11 @@ describe("Slack public channel membership", () => {
     const objectStores = new Map<string, DatabaseSync>();
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
       objectStores,
-    )).processQueuedIngress("event:unhealthy");
+    )).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:unhealthy");
 
     expect(postedMessages).not.toContainEqual(expect.stringContaining("connection needs attention"));
     // The created work stream's product row lives in its object; the regional
@@ -1590,7 +1605,7 @@ describe("Slack public channel membership", () => {
       workspace_id: "22222222-2222-4222-8222-222222222222",
       do_identity_anchor: 1,
     });
-    expect(database.prepare("SELECT COUNT(*) AS count FROM slack_agent_pending_prompts").get())
+    expect(objectDatabase.prepare("SELECT COUNT(*) AS count FROM slack_agent_pending_prompts").get())
       .toEqual({ count: 0 });
     expect(threadTitles).toEqual(["investigate this"]);
   });
@@ -1670,7 +1685,30 @@ function seedElicitationRetry(
   });
 }
 
-async function seedSlackInstallation(database: DatabaseSync, credentialsKey: string): Promise<void> {
+/**
+ * A real `WorkspaceDO` for the standard installation workspace, seeded with
+ * the same connection the regional fixture used to carry: the connection and
+ * the Slack tables are WorkspaceDO-authority state, so the object's own
+ * database is where the facade and the typed ingress methods both find them.
+ */
+async function slackInstallationFixture(
+  database: DatabaseSync,
+  credentialsKey: string,
+): Promise<{ instance: WorkspaceDO; objectDatabase: DatabaseSync }> {
+  const { instance, objectDatabase } = createTestWorkspaceDO({
+    workspaceId: "22222222-2222-4222-8222-222222222222",
+    regionalDatabase: database,
+    register: (created) => { databases.push(created); },
+  });
+  await seedSlackInstallation(database, objectDatabase, credentialsKey);
+  return { instance, objectDatabase };
+}
+
+async function seedSlackInstallation(
+  database: DatabaseSync,
+  objectDatabase: DatabaseSync,
+  credentialsKey: string,
+): Promise<void> {
   const encrypted = await encryptString(
     JSON.stringify({ botAccessToken: "xoxb-test", botUserId: "UBOT" }),
     credentialsKey,
@@ -1685,6 +1723,12 @@ async function seedSlackInstallation(database: DatabaseSync, credentialsKey: str
             'user-owner', '2026-01-01', '2026-01-01');
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('22222222-2222-4222-8222-222222222222', 'user-owner', 'owner', 'active', '2026-01-01');
+    INSERT INTO slack_installation_routes
+      (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+    VALUES ('T123', 'global', '22222222-2222-4222-8222-222222222222',
+            '11111111-1111-4111-8111-111111111111', 'active', '2026-01-01', '2026-01-01');
+  `);
+  objectDatabase.exec(`
     INSERT INTO connector_connections
       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
        display_name, encrypted_credentials, credential_iv, credential_key_version,
@@ -1699,42 +1743,51 @@ async function seedSlackInstallation(database: DatabaseSync, credentialsKey: str
 }
 
 describe("Slack ingress re-drive after reauthorization", () => {
-  async function strandedJob(id: string): Promise<{ database: DatabaseSync; credentialsKey: string }> {
+  interface StrandedJobFixture {
+    database: DatabaseSync;
+    credentialsKey: string;
+    instance: WorkspaceDO;
+    objectDatabase: DatabaseSync;
+  }
+
+  async function strandedJob(id: string): Promise<StrandedJobFixture> {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, id, appMention("EvStranded"));
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, id, appMention("EvStranded"));
+    objectDatabase.prepare(
       `UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 20,
          error_code = 'unauthorized', received_at = ?, updated_at = '2026-01-02'
        WHERE id = ?`,
     ).run(new Date().toISOString(), id);
-    return { database, credentialsKey };
+    return { database, credentialsKey, instance, objectDatabase };
   }
 
-  function sweep(database: DatabaseSync, credentialsKey: string): Promise<unknown[]> {
+  function sweep(fixture: StrandedJobFixture): Promise<unknown[]> {
     const sent: unknown[] = [];
     return new SlackAgentService(slackMembershipEnvironment(
-      database,
-      credentialsKey,
+      fixture.database,
+      fixture.instance,
+      fixture.credentialsKey,
       vi.fn(async (body: unknown) => { sent.push(body); }),
-    )).maintainIngress().then(() => sent);
+    )).maintainIngress("22222222-2222-4222-8222-222222222222", 100).then(() => sent);
   }
 
   it("re-drives an authorization failure once the installation is reauthorized", async () => {
     // Slack reports `link_shared` exactly once and never redelivers it, so an
     // event that failed while the grant was dead is lost permanently unless
     // something lifts the retry ceiling after the reconnect.
-    const { database, credentialsKey } = await strandedJob("event:stranded");
-    database.prepare(
+    const fixture = await strandedJob("event:stranded");
+    const { objectDatabase } = fixture;
+    objectDatabase.prepare(
       `UPDATE connector_connections SET status = 'healthy', updated_at = '2026-01-03'
        WHERE id = '11111111-1111-4111-8111-111111111111'`,
     ).run();
 
-    const sent = await sweep(database, credentialsKey);
+    const sent = await sweep(fixture);
 
     expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:stranded")).toHaveLength(1);
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, attempt_count FROM slack_ingress_jobs WHERE id = 'event:stranded'",
     ).get()).toMatchObject({ status: "queued", attempt_count: 0 });
   });
@@ -1745,25 +1798,27 @@ describe("Slack ingress re-drive after reauthorization", () => {
     // through the marking write — so N stranded jobs re-drove each other
     // forever, on a signal that meant "something failed again" rather than
     // "someone reconnected". Only a return to `healthy` is a reconnect.
-    const { database, credentialsKey } = await strandedJob("event:still-broken");
-    database.prepare(
+    const fixture = await strandedJob("event:still-broken");
+    const { objectDatabase } = fixture;
+    objectDatabase.prepare(
       `UPDATE connector_connections SET status = 'needs_reconnect', updated_at = '2026-01-03'
        WHERE id = '11111111-1111-4111-8111-111111111111'`,
     ).run();
 
-    const sent = await sweep(database, credentialsKey);
+    const sent = await sweep(fixture);
 
     expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:still-broken")).toHaveLength(0);
   });
 
   it("leaves a job alone when nothing about its connection has changed", async () => {
-    const { database, credentialsKey } = await strandedJob("event:untouched");
-    database.prepare(
+    const fixture = await strandedJob("event:untouched");
+    const { objectDatabase } = fixture;
+    objectDatabase.prepare(
       `UPDATE connector_connections SET status = 'healthy', updated_at = '2026-01-01'
        WHERE id = '11111111-1111-4111-8111-111111111111'`,
     ).run();
 
-    const sent = await sweep(database, credentialsKey);
+    const sent = await sweep(fixture);
 
     expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:untouched")).toHaveLength(0);
   });
@@ -1771,16 +1826,17 @@ describe("Slack ingress re-drive after reauthorization", () => {
   it("re-drives only failures a reauthorization can repair", async () => {
     // A job that died on malformed data is not fixed by a reconnect, and
     // re-driving it every time a connection is written is pure waste.
-    const { database, credentialsKey } = await strandedJob("event:bad-data");
-    database.prepare(
+    const fixture = await strandedJob("event:bad-data");
+    const { objectDatabase } = fixture;
+    objectDatabase.prepare(
       "UPDATE slack_ingress_jobs SET error_code = 'invalid_slack_data' WHERE id = 'event:bad-data'",
     ).run();
-    database.prepare(
+    objectDatabase.prepare(
       `UPDATE connector_connections SET status = 'healthy', updated_at = '2026-01-03'
        WHERE id = '11111111-1111-4111-8111-111111111111'`,
     ).run();
 
-    const sent = await sweep(database, credentialsKey);
+    const sent = await sweep(fixture);
 
     expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:bad-data")).toHaveLength(0);
   });
@@ -1788,16 +1844,17 @@ describe("Slack ingress re-drive after reauthorization", () => {
   it("does not replay an event older than the age bound", async () => {
     // Unfurling a message from three weeks ago answers nobody, and Slack may
     // refuse it outright.
-    const { database, credentialsKey } = await strandedJob("event:ancient");
-    database.prepare(
+    const fixture = await strandedJob("event:ancient");
+    const { objectDatabase } = fixture;
+    objectDatabase.prepare(
       "UPDATE slack_ingress_jobs SET received_at = '2026-01-01' WHERE id = 'event:ancient'",
     ).run();
-    database.prepare(
+    objectDatabase.prepare(
       `UPDATE connector_connections SET status = 'healthy', updated_at = ?
        WHERE id = '11111111-1111-4111-8111-111111111111'`,
     ).run(new Date().toISOString());
 
-    const sent = await sweep(database, credentialsKey);
+    const sent = await sweep(fixture);
 
     expect(sent.filter((body) => (body as { jobId?: string }).jobId === "event:ancient")).toHaveLength(0);
   });
@@ -1805,8 +1862,9 @@ describe("Slack ingress re-drive after reauthorization", () => {
   it("re-drives the vocabulary a real authorization failure actually emits", async () => {
     // Closes the loop between `slackIngressErrorCode` and the allowlist: a
     // drift in either would silently disable the whole sweep.
-    const { database } = await strandedJob("event:vocabulary");
-    const emitted = database.prepare(
+    const fixture = await strandedJob("event:vocabulary");
+    const { objectDatabase } = fixture;
+    const emitted = objectDatabase.prepare(
       "SELECT error_code FROM slack_ingress_jobs WHERE id = 'event:vocabulary'",
     ).get() as { error_code: string };
     expect(__slackAgentTesting.SLACK_AUTHORIZATION_ERROR_CODES).toContain(emitted.error_code);
@@ -1818,12 +1876,12 @@ describe("Slack ingress maintenance reaps link challenges", () => {
   const WORKSPACE_ID = "22222222-2222-4222-8222-222222222222";
 
   function seedChallenge(
-    database: DatabaseSync,
+    objectDatabase: DatabaseSync,
     tokenHash: string,
     expiresAt: string,
     consumedAt: string | null = null,
   ): void {
-    database.prepare(
+    objectDatabase.prepare(
       `INSERT INTO slack_link_challenges
          (token_hash, connection_id, slack_team_id, slack_user_id, expires_at, consumed_at, created_at)
        VALUES (?, ?, 'T123', 'U456', ?, ?, '2026-01-01T00:00:00.000Z')`,
@@ -1833,26 +1891,27 @@ describe("Slack ingress maintenance reaps link challenges", () => {
   it("reaps a spent challenge a day later, not after the 30-day retention", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
     const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
     const soon = new Date(Date.now() + 600_000).toISOString();
     // A day and an hour past expiry: the row the retention-bound reap kept,
     // and the alarm counted as due, for a month.
-    seedChallenge(database, await sha256("expired-long-ago"), hoursAgo(25));
+    seedChallenge(objectDatabase, await sha256("expired-long-ago"), hoursAgo(25));
     // An hour past expiry: still inside the grace that lets a late click be
     // refused as expired rather than unknown.
-    seedChallenge(database, await sha256("expired-recently"), hoursAgo(1));
-    seedChallenge(database, await sha256("consumed-long-ago"), soon, hoursAgo(25));
-    seedChallenge(database, await sha256("consumed-recently"), soon, hoursAgo(1));
-    seedChallenge(database, await sha256("live"), soon);
+    seedChallenge(objectDatabase, await sha256("expired-recently"), hoursAgo(1));
+    seedChallenge(objectDatabase, await sha256("consumed-long-ago"), soon, hoursAgo(25));
+    seedChallenge(objectDatabase, await sha256("consumed-recently"), soon, hoursAgo(1));
+    seedChallenge(objectDatabase, await sha256("live"), soon);
 
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).maintainIngress();
+    )).maintainIngress("22222222-2222-4222-8222-222222222222", 100);
 
-    const kept = database.prepare("SELECT token_hash FROM slack_link_challenges").all() as { token_hash: string }[];
+    const kept = objectDatabase.prepare("SELECT token_hash FROM slack_link_challenges").all() as { token_hash: string }[];
     expect(kept.map((row) => row.token_hash).sort()).toEqual([
       await sha256("consumed-recently"),
       await sha256("expired-recently"),
@@ -1866,19 +1925,15 @@ describe("Slack ingress maintenance reaps link challenges", () => {
     // that instant in the past for as long as the row lasts, and the workspace
     // alarm comes back for it as fast as it can: the 2026-08-22 hot loop.
     const database = migratedDatabase();
-    // The alarm's draft arm reads the object's links table, which no regional
-    // snapshot has ever carried, plus its pending reservation ledger.
-    createWorkspaceObjectTable(database, "workspace_workstream_resource_links");
-    // The alias arm reads a column the object added to `resources`.
-    applyWorkspaceResourceSchema(database, WORKSPACE_ID);
-
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    seedChallenge(database, await sha256("expired"), "2026-01-01T00:15:00.000Z");
-    const env = slackMembershipEnvironment(database, credentialsKey, vi.fn(async () => undefined));
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    seedChallenge(objectDatabase, await sha256("expired"), "2026-01-01T00:15:00.000Z");
+    const env = slackMembershipEnvironment(database, instance, credentialsKey, vi.fn(async () => undefined));
     const ctx: WorkspaceScheduleContext = {
       env,
-      workspaceEnv: env,
+      // Routed the way the alarm's own context is: the due-time queries read
+      // the object's tables, and the reap they schedule removes rows there.
+      workspaceEnv: withWorkspaceRuntimeDatabase(env, WORKSPACE_ID),
       workspaceId: WORKSPACE_ID,
       directory: {
         workstreamScheduleTargets: async () => ({ items: [] }),
@@ -1937,25 +1992,26 @@ describe("Slack ingress jobs given up on", () => {
   it("posts one ops notification when a job reaches the attempt ceiling", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    objectDatabase.prepare(
       "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).run();
-    insertSlackEventJob(database, "event:exhausted", appMention("EvExhausted"));
+    insertSlackEventJob(objectDatabase, "event:exhausted", appMention("EvExhausted"));
     const posted = captureOpsPosts(slackTaskApiFetcher(database, { ok: true }).fetcher);
     const failure = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const env = slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
       undefined,
       { APP_ENV: "production", ...OPS_SECRETS },
     );
 
-    await expect(new SlackAgentService(env).processQueuedIngress("event:exhausted"))
+    await expect(new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:exhausted"))
       .rejects.toThrow(/has not granted slack\.agent/iu);
 
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT attempt_count FROM slack_ingress_jobs WHERE id = 'event:exhausted'",
     ).get()).toEqual({ attempt_count: 20 });
     // The row first, then the notice.
@@ -1973,9 +2029,9 @@ describe("Slack ingress jobs given up on", () => {
     // The Queue redelivers a message whose processing threw. A job at the
     // ceiling is no longer claimable, so the redelivery is acknowledged
     // without running, pinning, or reporting it again.
-    await expect(new SlackAgentService(env).processQueuedIngress("event:exhausted")).resolves.toBeUndefined();
+    await expect(new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:exhausted")).resolves.toBeUndefined();
 
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT status, attempt_count FROM slack_ingress_jobs WHERE id = 'event:exhausted'",
     ).get()).toEqual({ status: "failed", attempt_count: 20 });
     expect(posted).toHaveLength(1);
@@ -1986,24 +2042,25 @@ describe("Slack ingress jobs given up on", () => {
     // first exhausted job is the notice; the rest within the hour are rows.
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    objectDatabase.prepare(
       "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).run();
-    insertSlackEventJob(database, "event:first", appMention("EvFirst"));
-    insertSlackEventJob(database, "event:second", appMention("EvSecond"));
+    insertSlackEventJob(objectDatabase, "event:first", appMention("EvFirst"));
+    insertSlackEventJob(objectDatabase, "event:second", appMention("EvSecond"));
     const posted = captureOpsPosts(slackTaskApiFetcher(database, { ok: true }).fetcher);
     const failure = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const env = slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
       undefined,
       { APP_ENV: "production", ...OPS_SECRETS },
     );
 
-    await expect(new SlackAgentService(env).processQueuedIngress("event:first")).rejects.toThrow();
-    await expect(new SlackAgentService(env).processQueuedIngress("event:second")).rejects.toThrow();
+    await expect(new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:first")).rejects.toThrow();
+    await expect(new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:second")).rejects.toThrow();
 
     expect(posted).toHaveLength(1);
     expect(posted[0]).toContain("• job_id: event:first");
@@ -2014,24 +2071,25 @@ describe("Slack ingress jobs given up on", () => {
   it("claims a job one attempt short of the ceiling, and refuses it past it", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    database.prepare(
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    objectDatabase.prepare(
       "UPDATE connector_connections SET granted_scopes_json = '[]' WHERE id = '11111111-1111-4111-8111-111111111111'",
     ).run();
-    insertSlackEventJob(database, "event:nineteen", appMention("EvNineteen"));
-    database.prepare("UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 19 WHERE id = 'event:nineteen'").run();
+    insertSlackEventJob(objectDatabase, "event:nineteen", appMention("EvNineteen"));
+    objectDatabase.prepare("UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 19 WHERE id = 'event:nineteen'").run();
     const posted = captureOpsPosts(slackTaskApiFetcher(database, { ok: true }).fetcher);
     const env = slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
       undefined,
       { APP_ENV: "production", ...OPS_SECRETS },
     );
 
-    await expect(new SlackAgentService(env).processQueuedIngress("event:nineteen")).rejects.toThrow();
+    await expect(new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:nineteen")).rejects.toThrow();
 
-    expect(database.prepare("SELECT attempt_count FROM slack_ingress_jobs WHERE id = 'event:nineteen'").get())
+    expect(objectDatabase.prepare("SELECT attempt_count FROM slack_ingress_jobs WHERE id = 'event:nineteen'").get())
       .toEqual({ attempt_count: 20 });
     expect(posted).toHaveLength(1);
   });
@@ -2041,12 +2099,12 @@ describe("Slack ingress jobs given up on", () => {
     // under fifty thousand lines an hour.
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
     for (const id of ["event:dead-1", "event:dead-2", "event:dead-3"]) {
-      insertSlackEventJob(database, id, appMention(id));
+      insertSlackEventJob(objectDatabase, id, appMention(id));
       // Failed today: the pass keeps an exhausted job for 30 days, and one
       // older than that is reaped before it is counted.
-      database.prepare(
+      objectDatabase.prepare(
         `UPDATE slack_ingress_jobs SET status = 'failed', attempt_count = 20,
            error_code = 'session_revoked', updated_at = ? WHERE id = ?`,
       ).run(new Date().toISOString(), id);
@@ -2056,9 +2114,10 @@ describe("Slack ingress jobs given up on", () => {
 
     await new SlackAgentService(slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
-    )).maintainIngress();
+    )).maintainIngress("22222222-2222-4222-8222-222222222222", 100);
 
     const summaries = warning.mock.calls.map((call) => call[0] as { event?: string; count?: number; job_ids?: string[]; error_codes?: string[] })
       .filter((entry) => entry.event === "slack_ingress_exhausted_jobs");
@@ -2072,8 +2131,8 @@ describe("Slack ingress jobs given up on", () => {
   it("stays quiet for a failure the queue will retry", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
-    await seedSlackInstallation(database, credentialsKey);
-    insertSlackEventJob(database, "event:expired", {
+    const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
+    insertSlackEventJob(objectDatabase, "event:expired", {
       type: "event_callback",
       team_id: "T123",
       api_app_id: "A1",
@@ -2086,24 +2145,25 @@ describe("Slack ingress jobs given up on", () => {
     }), { status: 200, headers: { "content-type": "application/json" } }));
     const env = slackMembershipEnvironment(
       database,
+      instance,
       credentialsKey,
       vi.fn(async () => undefined),
       undefined,
       { APP_ENV: "production", ...OPS_SECRETS },
     );
 
-    await expect(new SlackAgentService(env).processQueuedIngress("event:expired"))
+    await expect(new SlackAgentService(env).processQueuedIngress("22222222-2222-4222-8222-222222222222", "event:expired"))
       .rejects.toMatchObject({ message: "token_expired" });
 
-    expect(database.prepare(
+    expect(objectDatabase.prepare(
       "SELECT attempt_count FROM slack_ingress_jobs WHERE id = 'event:expired'",
     ).get()).toEqual({ attempt_count: 1 });
     expect(posted).toEqual([]);
   });
 });
 
-function insertSlackEventJob(database: DatabaseSync, id: string, payload: unknown): void {
-  database.prepare(
+function insertSlackEventJob(objectDatabase: DatabaseSync, id: string, payload: unknown): void {
+  objectDatabase.prepare(
     `INSERT INTO slack_ingress_jobs
      (id, workspace_id, connection_id, team_id, body_hash, kind, payload_json,
       status, attempt_count, received_at, updated_at)
@@ -2113,8 +2173,8 @@ function insertSlackEventJob(database: DatabaseSync, id: string, payload: unknow
   ).run(id, JSON.stringify(payload));
 }
 
-function seedSlackActivitySubscription(database: DatabaseSync, eventType: string): void {
-  database.prepare(
+function seedSlackActivitySubscription(objectDatabase: DatabaseSync, eventType: string): void {
+  objectDatabase.prepare(
     `INSERT INTO automation_templates
        (id, workspace_id, owner_user_id, name, description, sharing_state,
         latest_version_number, created_at, updated_at)
@@ -2122,7 +2182,7 @@ function seedSlackActivitySubscription(database: DatabaseSync, eventType: string
              'user-owner', 'Slack activity', 'Test Slack activity', 'workspace',
              1, '2026-01-01', '2026-01-01')`,
   ).run();
-  database.prepare(
+  objectDatabase.prepare(
     `INSERT INTO automation_template_versions
        (id, template_id, version_number, instructions, trigger_definitions_json,
         required_capabilities_json, expected_outputs_json, default_behavior_json,
@@ -2137,7 +2197,7 @@ function seedSlackActivitySubscription(database: DatabaseSync, eventType: string
     eventTypes: [eventType],
     deterministicFilters: {},
   }]));
-  database.prepare(
+  objectDatabase.prepare(
     `INSERT INTO automation_subscriptions
        (id, workspace_id, template_id, template_version_id, scope, owner_user_id,
         execution_principal_json, connector_bindings_json, activity_trigger_bindings_json,
@@ -2231,6 +2291,7 @@ function slackTaskApiFetcher(
 
 function slackMembershipEnvironment(
   database: DatabaseSync,
+  instance: WorkspaceDO,
   credentialsKey: string,
   send: (body: unknown) => Promise<void>,
   objectStores?: Map<string, DatabaseSync>,
@@ -2246,6 +2307,12 @@ function slackMembershipEnvironment(
     PUBLIC_API_BASE_URL: "https://api.with-avalon.test",
     WORKSTREAM_EMAIL_ADDRESS_KEY: "test-workstream-email-address-key",
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, objectStores ? { objectStores } : {}),
+    // The typed ingress methods and the runtime SQL port both answer from the
+    // real workspace object, so every WorkspaceDO-authority table lives in
+    // one store the way production has it.
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: workspaceObjectRpcs(instance, SLACK_WORKSPACE_OBJECT_METHODS),
+    }),
     SLACK_APP_ID: "A1",
     SLACK_CLIENT_ID: "client",
     SLACK_CLIENT_SECRET: "secret",
