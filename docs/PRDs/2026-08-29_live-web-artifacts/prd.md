@@ -9,8 +9,10 @@
 > Terminal publish tool — widened to accept a directory, no new tool — and
 > Rally serves it from an isolated per-artifact origin on Cloudflare's Worker
 > Loader (Dynamic Workers), statically or with model-written server code as
-> the request demands. Companion:
-> [state](state.md). Siblings:
+> the request demands. Companions:
+> [state](state.md),
+> [site authoring skill draft](site-authoring-skill.md) (the complete
+> loadable-skill text the Agent behavior section commissions). Siblings:
 > [terminal artifact generation](../2026-08-27_terminal-artifact-generation/prd.md)
 > (the document pipeline this extends),
 > [resource versioning](../2026-08-27_resource-versioning/prd.md) (the history
@@ -782,13 +784,44 @@ a page that silently forgets. Participant overrides win in all directions ("just
 code" publishes files as ordinary resources; "make it a real page" builds
 the site; "zip that up" publishes the directory as an archive). Same
 render conditions as the document policy — ordinary participant-triggered
-runs with Terminal available — and the same byte-budget discipline; if
-the module no longer fits the standing-policy ceiling, the escalation is
-the skill path, decided at implementation.
+runs with Terminal available — and the same byte-budget discipline.
+
+**The build craft ships as a loadable skill.** The guidance splits
+across the three layers the harness already has, each carrying what it
+is cheapest to carry: the *standing policy* holds the trigger and the
+manners (above — always rendered, evaluated on every request); the
+*plugin activation message* holds the mechanics (the kind conventions
+and the typed `ASSETS` declaration — present whenever the tools are);
+and the deep build craft — static-versus-active judgement, directory
+layout, the fetch-handler shape and asset-fallback route pattern, the
+statelessness rules and their anti-patterns, data-as-files, the
+revise-in-place loop — ships as a new loadable skill,
+**`building-live-sites`** (`ownerPlugin: rally:terminal`, so it is
+offered only where the Terminal plugin is in scope), loaded when the
+model is about to write a site's files. That keeps hundreds of lines of
+craft out of the every-request byte budget while making them available
+at exactly the moment they matter, and it is the pattern Cloudflare's
+own Dynamic Workers guidance models: teach the handler shape and the
+bindings with typed declarations and one worked example. The complete
+skill text — catalog line, body, worked-example resource — is authored
+in [`site-authoring-skill.md`](site-authoring-skill.md) in this folder
+and is normative for the implementing change, written to
+[`writing-skills.md`](../../writing-skills.md)'s rules (behavior
+nudges rather than wire tool names, medium-model bar at both the
+routing and execution moments, byte-stable). Its **deferred
+extension** — facet-backed stateful sites, drafted so the facet
+branch's teaching cost is visible in Future research — is explicitly
+*not* installed in V1: it teaches a capability non-goal 11 removes,
+and it ships only with the state follow-up PRD, revised against that
+PRD's actual contract.
 
 **Model-usability acceptance.** Schema snapshot and contract tests for the
 widened tool's shapes, kind resolution, and failures, walked through the
-real sanitizer like the rest of the family — including the
+real sanitizer like the rest of the family; the skill covered at both of
+its moments per the skill-authoring rules — the catalog line routes a
+site-shaped request to `building-live-sites` (and a document-shaped one
+away from it) on the routed models, and the body executes to a working
+publish without frontier-level inference — including the
 misnamed-entry path: an intended site published as an archive must be
 recoverable from the result alone, by rename and republish, in one step.
 The kind conventions are exercised on the routed models, not only the
@@ -1046,7 +1079,12 @@ already locks):
      today's attachment rails. The facet branch must build the wrapper,
      the two-tool family, and the workerd proofs to reach the same
      agent experience; that build is a real cost charged against
-     facets when the follow-up PRD weighs these directions.
+     facets when the follow-up PRD weighs these directions. Its
+     *teaching* cost is likewise already drafted:
+     [`site-authoring-skill.md`](site-authoring-skill.md)'s deferred
+     extension is the model-facing guidance the facet branch would
+     install, and its length beside the stateless body is part of the
+     same ledger.
 3. **Artifact state as platform data: writes land in a store the agent
    and the product share.** The direction the removal was made for.
    Artifact writes travel through a Rally-injected binding into

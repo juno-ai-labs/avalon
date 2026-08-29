@@ -1,0 +1,309 @@
+# Skill draft: `building-live-sites`
+
+> Part of [the live web artifacts PRD](prd.md); normative for the
+> implementing change. This file is the complete authored draft of the
+> loadable skill that teaches the model how to build a site for Rally's
+> artifact runtime, written to [`writing-skills.md`](../../writing-skills.md)
+> and cribbing its patterns from Cloudflare's Dynamic Workers guidance
+> (the fetch-handler shape, the assets-fallback route pattern, the
+> typed-declaration teaching style). The **Deferred extension** at the end
+> is *not* installed in V1 — it teaches facet-backed storage, which
+> non-goal 11 removes — and ships only with the state follow-up PRD, per
+> the house rule that a skill never teaches a capability that does not
+> exist.
+
+The V1 skill, as the implementing change installs it (authored in
+TypeScript per the harness convention; this markdown is the content):
+
+- **name**: `building-live-sites`
+- **ownerPlugin**: `rally:terminal` — the procedure is meaningless
+  without the Terminal workspace, so the skill is offered only to runs
+  whose frozen scope includes it.
+- **description**: "How to build a live web page or small web app as a
+  published site: choose static or active, lay out the directory, write
+  a stateless request handler against the injected asset binding, and
+  revise it in place."
+- **whenToUse**: "When a request is site-shaped — a page, dashboard,
+  calculator, or small app someone will open — and you are about to
+  write its files, beyond what the standing guidance already covers."
+
+## Body
+
+You are building a **live site**: a directory of files that Rally will
+serve at a stable URL to everyone in the work stream. The standing
+guidance told you *when* to build one; this skill is *how* to build one
+that works the first time.
+
+1. **Decide the site's kind by what the request needs, and express it
+   only in files.** There is no mode setting anywhere — the layout is
+   the decision:
+   - The page just shows things (content, layout, client-side
+     interactivity)? Write **`index.html`** at the directory root and
+     assets beside it. This is a **static** site and the default; do
+     not add a server the page does not need.
+   - The page needs **request-time computation** — server-side search
+     or filtering over data you publish with it, a small JSON API the
+     page calls? Also write **`index.js`** at the directory root. This
+     makes the site **active**.
+   - The request needs the site to **remember something between
+     visits** — a poll, sign-ups, anything visitors add to? A live
+     site cannot do that: nothing persists between requests. Say so
+     plainly in chat and offer the nearest working alternative
+     (collect the answers in the work stream itself, or a page that
+     presents data you maintain and republish). Never publish a page
+     that looks like it saves and silently forgets.
+
+2. **Lay out one stable directory** beneath the workspace's resource
+   output directory, named for the site (`launch-checklist/`, not
+   `output/` or `tmp/`). Everything the page needs goes inside it:
+   pages, styles, scripts, images, and data files. Reference assets by
+   relative path. Publish every byte the page depends on — do not lean
+   on external CDNs or fonts; a page that carries its own assets renders
+   the same for every viewer, every time. Keep the entry names exact:
+   `index.html`, and `index.js` only when the site is active — an entry
+   under any other name (`app.js`, `main.js`, `home.html`) is not an
+   entry, and the publish will not treat the directory as a site.
+
+3. **If the site is active, write `index.js` as one ES module
+   default-exporting a fetch handler.** The whole server is:
+
+   ```js
+   export default {
+     async fetch(request, env) {
+       const url = new URL(request.url);
+       if (url.pathname.startsWith("/api/")) {
+         // your computed routes
+         return Response.json({ /* … */ });
+       }
+       // everything else: serve the published files
+       return env.ASSETS.fetch(request);
+     },
+   };
+   ```
+
+   Handle your computed routes first; end with the asset fallback so
+   every other path serves the published files. `env.ASSETS` is the
+   only binding you have, declared as:
+
+   ```ts
+   interface Env {
+     /** Serves the published files of this site. Request paths are
+      *  resolved against the published directory; "/" serves
+      *  index.html. Returns 404 for paths that are not published
+      *  files. */
+     ASSETS: { fetch(request: Request | string): Promise<Response> };
+   }
+   ```
+
+4. **Treat every request as the first request.** The runtime starts and
+   stops instances whenever it likes; two requests may or may not share
+   one. So: no module-level variables as state, no counters, no caches
+   you expect to survive, no timers that outlive the response. Compute
+   the response from the request and the published files, return it,
+   and be done. If two viewers should see the same thing, it must come
+   from the published files — which is another way of saying: data the
+   page presents is a file in the directory.
+
+5. **Ship data as files, read it through the asset binding.** Put the
+   dataset beside the page — `signups.json`, `metrics.csv` — and in an
+   active site read it server-side:
+
+   ```js
+   const data = await (await env.ASSETS.fetch("/signups.json")).json();
+   ```
+
+   Keep `index.js` free of large inline data: a data change should be a
+   data-file edit, not a code edit.
+
+6. **There is no network and no identity — design within the fence.**
+   `fetch()` to anywhere outside the site throws; there is no way to
+   call an external API, load a remote resource server-side, or find
+   out who is viewing. Do not write code paths that try. A request that
+   genuinely needs outside data means you fetch it *yourself, now, in
+   the workspace* and publish the result as a data file with the site.
+
+7. **Let failures be loud and legible.** If the handler throws, viewers
+   see a plain error page and the failure lands in the site's error log
+   in the work stream — so throw early with a clear message rather than
+   returning a half-rendered page. Validate your own routes' inputs and
+   return real HTTP statuses (`400` with a short JSON body beats a
+   `200` full of undefined).
+
+8. **Revise in place, never fork.** A change request means: edit the
+   files in the workspace (re-import the site's source from the
+   published resource first if the workspace no longer has it), then
+   publish **the same directory path** again. Same URL, same rail
+   entry, new version — viewers see it on their next load. Publishing
+   a renamed or copied directory mints a second site and strands the
+   URL people already have; do not do it. Keep chat narration short
+   and free of the site's code, and announce the artifact with an
+   embed citation.
+
+## Anti-patterns
+
+- **State smuggled into module scope** (`let hits = 0` above the
+  handler). It resets whenever the runtime feels like it and differs
+  between instances. Do instead: derive everything from the request and
+  the published files; if it must be remembered, see step 1's third
+  bullet — say the honest no.
+- **`localStorage` as shared state.** It is per-viewer, per-browser —
+  fine for one person's UI preference, never for anything two viewers
+  should both see. Do instead: shared content is a published file.
+- **A misnamed entry.** `app.js` or `main.html` at the root publishes
+  your directory as a downloadable archive, not a site. The publish
+  result tells you what it made — read it; if it says archive where you
+  meant site, rename to the exact entry name and republish the same
+  path.
+- **External `<script src>`, CDN CSS, or web fonts.** A page that
+  phones out renders differently per viewer and may not render at all.
+  Do instead: vendor the file into the directory and reference it
+  relatively.
+- **A server for a static page.** An `index.js` that only ever falls
+  through to `env.ASSETS.fetch(request)` is overhead with no behavior.
+  Do instead: delete it; `index.html` alone serves faster and can never
+  throw.
+- **Streaming the site into chat.** The transcript gets a sentence and
+  a citation; the code lives in the files. If someone asks to see the
+  code, publish the files as ordinary resources or read out the
+  specific part they asked about.
+
+## Tier-3 resource: `reference/worked-examples.md`
+
+Two complete, minimal examples the body's rules produce — read this
+before your first site, not on every one.
+
+**Static: a launch checklist page.** `launch-checklist/index.html`
+(semantic markup, a `<style>` block or `styles.css` beside it,
+checklist content in the page), nothing else. No `index.js` — the page
+has no server behavior.
+
+**Active: a searchable signups page.**
+
+`beta-signups/index.html` — renders a search box and a results list;
+its script calls `/api/search?q=…` and renders the JSON.
+
+`beta-signups/signups.json` — the dataset, one array of records.
+
+`beta-signups/index.js`:
+
+```js
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/search") {
+      const q = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+      if (q.length === 0) return Response.json({ results: [] });
+      const rows = await (await env.ASSETS.fetch("/signups.json")).json();
+      const results = rows.filter((r) =>
+        [r.name, r.email, r.company].some(
+          (f) => typeof f === "string" && f.toLowerCase().includes(q),
+        ),
+      );
+      return Response.json({ results });
+    }
+    return env.ASSETS.fetch(request);
+  },
+};
+```
+
+Everything the body teaches is visible here: exact entry names, the
+API-then-assets route order, data as a file read through the binding,
+no module-level state, real statuses, nothing external.
+
+---
+
+## Deferred extension: stateful sites on facet storage
+
+**Not installed in V1.** This section ships as part of the skill only
+if and when the state follow-up PRD lands on the facet direction
+(Future research, direction 2), and its text is revised against that
+PRD's actual contract. It is drafted now so the teaching cost of the
+facet branch is visible when the directions are weighed. Everything
+above it remains true for stateless sites; this extension *adds* the
+stateful path rather than changing the stateless one.
+
+When a site may remember, the request-shaped test in step 1 changes:
+a poll, an RSVP list, a sign-up sheet becomes buildable. A stateful
+site adds one file — a storage class — and keeps everything else.
+
+1. **Export a storage class from `index.js` alongside the handler.**
+   The class extends the platform's Durable Object shape and owns the
+   site's database; Rally runs it with its own isolated SQLite:
+
+   ```js
+   import { DurableObject } from "cloudflare:workers";
+
+   export class SiteData extends DurableObject {
+     constructor(ctx, env) {
+       super(ctx, env);
+       // Schema on first touch, idempotently — this runs on every
+       // start, so guard with IF NOT EXISTS, never DROP.
+       this.ctx.storage.sql.exec(
+         `CREATE TABLE IF NOT EXISTS rsvps (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            answer TEXT NOT NULL CHECK (answer IN ('yes','no','maybe')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          )`,
+       );
+     }
+
+     addRsvp(name, answer) {
+       this.ctx.storage.sql.exec(
+         "INSERT INTO rsvps (name, answer) VALUES (?, ?)", name, answer,
+       );
+     }
+
+     listRsvps() {
+       return this.ctx.storage.sql
+         .exec("SELECT name, answer FROM rsvps ORDER BY created_at")
+         .toArray();
+     }
+   }
+   ```
+
+   The fetch handler reaches it through the binding the runtime
+   injects, and stays as thin as before: parse, call a method, return
+   JSON.
+
+2. **SQL is synchronous and local — use it plainly.** Queries run
+   against the site's own SQLite in the same place the class runs: no
+   `await` on `sql.exec`, no connection handling, no pooling. Simple
+   `kv`-style storage (`this.ctx.storage.kv.get/put`) is there for a
+   single counter or setting; use SQL the moment there is a second
+   column.
+
+3. **Schemas are additive, forever.** The database outlives every
+   version of your code, and a later version's class starts against the
+   tables an earlier version created. So: `CREATE TABLE IF NOT EXISTS`
+   and `ALTER TABLE … ADD COLUMN` only; never rename, drop, or rewrite
+   a table in a revision. If a revision needs a new shape, add a new
+   table and write to both until the old one is unused.
+
+4. **Design the data to be read from outside.** The work stream's agent
+   answers questions about this data with read-only SQL against your
+   schema ("who hasn't voted?"), and participants see it in the rail's
+   data view and exports. Clear table and column names in plain words
+   are part of the site's interface, not private internals. Never store
+   who a viewer is — the runtime does not tell you, and recording
+   guesses is prohibited; store what was submitted, not who submitted
+   it, unless the page explicitly asks for a name as content.
+
+5. **Prior versions run read-only.** When someone views an old version
+   of the site, your old code runs but every write throws. Write
+   handlers so a read-only pass still renders (render the list even if
+   the submit path would fail), and let the write failure surface as
+   the labeled read-only state, not a crash on load.
+
+### Anti-patterns (stateful)
+
+- **Treating the database as a cache for computed values.** It is the
+  system of record and it is versioned by nothing — recompute derived
+  values per request; store only what cannot be recomputed.
+- **Destructive migrations in a revision** (`DROP TABLE`, `DELETE FROM`
+  on start). Participants' submissions are the product; a revision that
+  clears them is data loss, not a fresh start. Do instead: additive
+  schema changes, and ask in chat before any deliberate reset.
+- **Storing viewer identity or fingerprints.** The fence withholds
+  identity on purpose. Do instead: store submissions as content; if
+  attribution matters, make the page ask for a name as an input field.
