@@ -29,7 +29,6 @@
     "test:crashpad": "node scripts/telemetry-crashpad-fixture.mjs"
   },
   "dependencies": {
-    "@rally/contracts": "workspace:*",
     "@radix-ui/react-avatar": "latest",
     "@radix-ui/react-context-menu": "latest",
     "@radix-ui/react-dialog": "latest",
@@ -37,9 +36,11 @@
     "@radix-ui/react-scroll-area": "latest",
     "@radix-ui/react-select": "latest",
     "@radix-ui/react-tooltip": "latest",
+    "@rally/contracts": "workspace:*",
     "@tabler/icons-react": "^3.46.0",
     "@tanstack/react-query": "latest",
     "@tanstack/react-virtual": "latest",
+    "@thesvg/react": "^3.3.1",
     "clsx": "latest",
     "electron-updater": "6.8.9",
     "lucide-react": "latest",

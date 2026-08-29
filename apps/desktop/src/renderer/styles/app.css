@@ -2112,6 +2112,16 @@ pre {
 .provider-card-heading > div:last-child { display: flex; flex-direction: column; min-width: 0; }
 .provider-card-heading strong { font-size: 11.5px; }
 .provider-card-heading span { color: var(--av-sys-color-text-muted); font-size: 9.5px; margin-top: 1px; }
+/* The card keeps its tinted chip — this is a control a person clicks, unlike a
+   transcript row's bare mark — and only the glyph inside it becomes the real
+   company mark. `--av-sys-color-brand-ink` is the chip's own foreground, so the
+   mark is painted in it like the line icon it replaced.
+
+   Sized through the surface that owns it, as every other mark here is: a bare
+   `.provider-mark` ties with `.connector-mark` on specificity and loses on
+   order, so the rule was inert and the chip drew a 16px mark. */
+.provider-icon .connector-mark { height: 19px; width: 19px; }
+
 .provider-icon {
   align-items: center;
   background: color-mix(in srgb, var(--av-sys-color-brand-base) 11%, var(--av-sys-color-surface-raised));
@@ -2170,6 +2180,11 @@ pre {
   vertical-align: middle;
 }
 .settings-connection-name { align-items: center; display: flex; gap: 9px; }
+/* Between the status dot and the name, at the row's own text colour, and sized
+   through the row that owns it — a bare class here ties with `.connector-mark`
+   and loses on order. The gap above spaces it from both without a rule of its
+   own. */
+.settings-connection-name .connector-mark { height: 14px; width: 14px; }
 .settings-connection-table td:last-child { text-align: right; }
 .settings-connection-actions { align-items: center; display: inline-flex; justify-content: flex-end; }
 .settings-connection-empty-row td { height: auto; padding: 0; }
@@ -3938,6 +3953,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
     transition-duration: 0.001ms !important;
   }
   .status-running .status-dot { opacity: 1; }
+  .plugin-face-active { opacity: 1; }
 }
 
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
@@ -4126,30 +4142,63 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   min-height: 34px;
 }
 
+/* Bare, by design: no chip, no ring, no per-connector brand fill. A column of
+   enclosed glyphs down the transcript reads as a toolbar of controls, and these
+   are labels. The single neutral is also the only colour with guaranteed
+   contrast here — a connector's brand foreground was chosen against its own
+   chip, and this transcript has four themes and no chip. */
 .plugin-face {
   align-items: center;
-  background: var(--av-sys-color-surface-raised-hover);
-  border: 2px solid var(--av-ref-color-line-1);
-  border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-ref-color-neutral-11);
   display: inline-flex;
   flex: 0 0 auto;
-  height: 24px;
+  height: 20px;
   justify-content: center;
-  margin-right: 3px;
-  position: relative;
-  width: 24px;
+  width: 20px;
 }
 
-.plugin-face-brand-github { background: var(--av-cmp-connector-github-background); color: var(--av-cmp-connector-github-foreground); }
-.plugin-face-brand-google { background: var(--av-cmp-connector-google-background); color: var(--av-cmp-connector-google-foreground); }
-.plugin-face-brand-google-drive { background: var(--av-cmp-connector-drive-background); color: var(--av-cmp-connector-drive-foreground); }
-.plugin-face-brand-notion { background: var(--av-sys-color-surface-raised-hover); color: var(--av-ref-color-neutral-13); }
-.plugin-face-brand-slack { background: var(--av-cmp-connector-slack-background); color: var(--av-cmp-connector-slack-foreground); }
-.plugin-face-linear { background: var(--av-cmp-connector-linear-background); color: var(--av-cmp-connector-linear-foreground); }
-.plugin-face-webhook { background: var(--av-cmp-connector-webhook-background); color: var(--av-cmp-connector-webhook-foreground); }
-.plugin-face-world-search { background: var(--av-cmp-connector-search-background); color: var(--av-cmp-connector-search-foreground); }
-.plugin-face-plug { background: var(--av-cmp-connector-plug-background); color: var(--av-cmp-connector-plug-foreground); }
+/* `.rally-mark` paints itself in the brand ink — the one colour in the row that
+   is not the shared neutral, and on the light themes the one with no contrast to
+   spare. Inside a plugin face it is a mark like any other. Company marks take
+   the row's colour through `.connector-mark`, above. */
+.plugin-face-mark { color: inherit; height: 17px; width: 17px; }
+
+/* A company mark is solid where the line icons beside it are 1.8px strokes, so
+   it is drawn two pixels smaller to land at the same visual weight — matched by
+   eye against the Tabler glyphs in the same column, not by geometry. */
+.connector-mark {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
+/* `pointer-events: none` because the monochrome art carries an SVG `<title>`,
+   which a browser shows as a native tooltip on hover — over rows that already
+   name the connector, and beside a `.plugin-face` that sets its own `title`. */
+.connector-mark > svg { height: 100%; pointer-events: none; width: 100%; }
+
+/* One neutral for every company. The package's `mono` art already paints in
+   `currentColor`; the two brands that ship none arrive with their palette on
+   the paths, and a CSS `fill` beats a presentation attribute, so this recolours
+   them to match. `[fill="none"]` is left alone — those shapes are deliberately
+   hollow, and filling them turns a mark into a blob. */
+.connector-mark svg [fill]:not([fill='none']) { fill: currentColor; }
+.connector-mark svg [stroke]:not([stroke='none']) { stroke: currentColor; }
+
+/* In a transcript row a company mark is solid where the line icons beside it are
+   1.8px strokes, so it is drawn two pixels smaller than the box to land at the
+   same visual weight — matched by eye against the Tabler glyphs in the same
+   column, not by geometry. */
+.plugin-face .connector-mark { height: 15px; width: 15px; }
+
+/* The group's "still going" signal, in place of the spinner each plugin row
+   used to carry. The reduced-motion block near the end of this file cuts the
+   animation to a single 0.001ms iteration; with no fill mode the mark settles
+   on its own full opacity, and the rule beside that block pins it there. */
+.plugin-face-active { animation: active-pulse 1.8s ease-in-out infinite; }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-icon {
   color: var(--av-ref-color-neutral-9);

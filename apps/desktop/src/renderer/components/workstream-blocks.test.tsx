@@ -1055,6 +1055,63 @@ describe('MessageBlock tool rows', () => {
   });
 });
 
+describe('MessageBlock plugin activity rows', () => {
+  const pluginRow = (id: string, pluginActivity: NonNullable<Message['pluginActivity']>): Message => ({
+    ...baseMessage,
+    id,
+    authorType: 'agent',
+    author: undefined,
+    messageType: 'plugin_activity',
+    text: undefined,
+    pluginActivity,
+  });
+
+  it('names the plugin rather than the calls it made, and pulses its mark while it works', () => {
+    const { container } = render(<MessageBlock {...actions} message={pluginRow('message-slack', {
+      groupKey: 'name:Slack', name: 'Slack', icon: 'slack', active: true, durationMs: 242_000,
+    })} />);
+
+    expect(screen.getByText('Slack is working for 4m 02s')).toBeVisible();
+    // Stable while the number ticks; the elapsed time is not read aloud.
+    expect(screen.getByRole('status')).toHaveAccessibleName('Slack is working');
+    const mark = screen.getByRole('img', { name: 'Plugin: Slack' });
+    expect(mark).toHaveClass('plugin-face-active');
+    // The mark replaces the spinner rather than joining it.
+    expect(container.querySelector('.agent-work-timing-orb')).toBeNull();
+  });
+
+  it('settles to the past tense with a still mark once the plugin is done', () => {
+    render(<MessageBlock {...actions} message={pluginRow('message-slack-done', {
+      groupKey: 'name:Slack', name: 'Slack', icon: 'slack', active: false, durationMs: 302_000,
+    })} />);
+
+    expect(screen.getByText('Slack worked for 5m 02s')).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Plugin: Slack' })).not.toHaveClass('plugin-face-active');
+  });
+
+  it('draws a company mark in the row\'s own colour, as real markup', () => {
+    // The mark is a React component, so nothing is injected as HTML, and the
+    // monochrome variant paints in `currentColor` — which is what keeps eight
+    // companies legible on four grounds without per-theme artwork.
+    const { container } = render(<MessageBlock {...actions} message={pluginRow('message-granola', {
+      groupKey: 'name:Granola', name: 'Granola', icon: 'granola', active: false, durationMs: 3_000,
+    })} />);
+
+    const mark = container.querySelector('.plugin-face-mark.connector-mark');
+    expect(mark?.querySelector('svg')).toBeTruthy();
+    expect(mark?.innerHTML).not.toContain('data:image/svg+xml');
+  });
+
+  it('gives the virtual groups their own names and marks', () => {
+    render(<MessageBlock {...actions} message={pluginRow('message-rally', {
+      groupKey: 'rally', name: 'Rally', icon: 'rally', active: false, durationMs: 4_000,
+    })} />);
+
+    expect(screen.getByText('Rally worked for 4s')).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Plugin: Rally' })).toBeVisible();
+  });
+});
+
 describe('splitStreamingMarkdown', () => {
   it('cuts settled segments at blank-line boundaries and reassembles losslessly', () => {
     // The cut before the final line is deferred until that line completes —
