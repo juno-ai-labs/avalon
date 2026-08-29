@@ -25,14 +25,17 @@ function memberName(node) {
 // Throw rather than return `false` when it is missing. Degrading quietly would
 // leave this rule reporting nothing on files nobody meant to exempt, and a guard
 // that passes everything looks exactly like a guard that found nothing wrong.
-function returnsPromise(parserServices, callback) {
+function returnsPromise(parserServices, callback, filename) {
   const program = parserServices?.program;
   const nodeMap = parserServices?.esTreeNodeToTSNodeMap;
   if (!program || !nodeMap) {
+    // Name the file. A thrown rule error reaches a thousand-file CLI run as a
+    // stack trace through ESLint's internals, which says nothing about which
+    // glob is missing a `projectService`.
     throw new Error(
-      "rally/durable-object-sync-transaction needs type information. Widen the "
-      + "`projectService` block in eslint.config.mjs to cover the files this rule "
-      + "is enabled on.",
+      `rally/durable-object-sync-transaction needs type information, and ${filename} has none. `
+      + "The rule and `projectService` share one config object in eslint.config.mjs; "
+      + "whatever enabled the rule on this file has to give it a program too.",
     );
   }
 
@@ -83,7 +86,7 @@ export const durableObjectSyncTransactionRule = {
           callback.type === "ArrowFunctionExpression"
           || callback.type === "FunctionExpression"
         ) && callback.async;
-        if (!syntacticallyAsync && !returnsPromise(context.sourceCode.parserServices, callback)) return;
+        if (!syntacticallyAsync && !returnsPromise(context.sourceCode.parserServices, callback, context.filename)) return;
 
         context.report({ node: callback, messageId: "promise", data: { boundary } });
       },

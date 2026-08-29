@@ -274,12 +274,12 @@ an older worktree so the smoke test sees both fixtures.
 ## Quality gate caches
 
 `pnpm lint` and `pnpm typecheck` both cache, which is the difference between a
-warm run of a few seconds and a cold one of about forty-five. Both caches are
+warm run of a few seconds and a cold one of about a minute. Both caches are
 gitignored, and CI checks out fresh, so neither changes what CI proves.
 
 | Gate | Cold | Warm | Cache |
 | --- | --- | --- | --- |
-| `pnpm lint` | ~45s | ~2s | `.eslintcache` |
+| `pnpm lint` | ~60s | ~2s | `.eslintcache` |
 | `pnpm typecheck` | ~45s | ~14s | `*.tsbuildinfo` beside each tsconfig |
 
 **The typecheck cache is sound.** TypeScript records the module graph it actually
@@ -295,14 +295,20 @@ contents and nothing else:
   of the key. Rewriting one to report on every file flagged 889 files cold and 1
   warm — the one being the rule file itself, which had changed. **Run
   `pnpm lint:fresh` after touching a rule.**
-- **A cross-file verdict would be too**, if any rule reached for one. Only
-  `rally/durable-object-sync-transaction` reads types, and it is confined to
-  `apps/api/src` — see [below](#what-pnpm-lint-costs-in-memory). This section
-  previously named `consistent-type-imports` as a second unsound case, on the
+- **A verdict that depends on another file is too**, and one rule reaches for
+  exactly that. `rally/durable-object-sync-transaction` asks the type checker
+  whether the callback handed to a synchronous boundary returns a Promise, which
+  an imported callee's own signature decides. Demonstrated: a helper exporting
+  `() => string`, passed as `transactionSync(() => prepare())`, lints clean;
+  flipping *only* the helper to `async` leaves the calling file byte-identical,
+  so a warm run reuses its cached pass while a cold run reports the violation.
+  **Run `pnpm lint:fresh` after changing the return type of anything passed into
+  `transactionSync`, `commitRuntimeMutation`, or `commitWithRegionalEffects`.**
+
+  `consistent-type-imports` used to be named here as a second such case, on the
   belief that it asks the exporting file whether a symbol is a type. It does not:
-  the rule reads only how the import is used in the importing file, and flipping
-  an export from `const Thing` to `type Thing` leaves its verdict unchanged.
-  There is no known second case.
+  it reads only how the import is used in the importing file, and flipping an
+  export from `const Thing` to `type Thing` leaves its verdict unchanged.
 
 Both were accepted deliberately: the p90 run changes neither, and CI runs cold.
 When a local green looks implausible, `pnpm lint:fresh` is the first thing to
