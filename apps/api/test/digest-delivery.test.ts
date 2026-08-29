@@ -1,15 +1,23 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Recorded rather than real so a test can see what the terminal event said;
+// everything else on the module stays the real implementation.
+const emitProductUsageTelemetry = vi.hoisted(() =>
+  vi.fn<(env: unknown, input: unknown) => Promise<void>>(async () => undefined));
+vi.mock("../src/telemetry/product-usage", async (importOriginal) => ({
+  ...await importOriginal<typeof ProductUsageModule>(),
+  emitProductUsageTelemetry,
+}));
+
+import type * as ProductUsageModule from "../src/telemetry/product-usage";
 import type { Env } from "../src/env";
 import { deliverDigest } from "../src/services/digest-delivery-service";
 import { settleDigestRun } from "../src/services/digest-run-settlement";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
-import {
-  createTestD1Database,
-  createTestD1PreparedStatement,
-  createTestEnv,
-} from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
+import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
@@ -49,20 +57,46 @@ const DIGEST = [
 const databases: DatabaseSync[] = [];
 /** The digest work stream's own object database, rebuilt per fixture. */
 let objectStore: DatabaseSync;
+/** The real WorkspaceDO the fixture stands up, and its own database — where the digest rows live. */
+let workspaceDO: WorkspaceDO;
+let workspaceStore: DatabaseSync;
 afterEach(() => {
   for (const database of databases.splice(0)) database.close();
+  emitProductUsageTelemetry.mockClear();
 });
 
 /**
  * `sendResendEmail` refuses to send outside production, so these run as
  * production against a stubbed transport — the accounting under test is exactly
- * what the non-production short circuit skips.
+ * what the non-production short circuit skips. The digest tables are served by
+ * the real `WorkspaceDO` the fixture stood up, so settlement's claim and the
+ * per-target delivery records are the object's own decisions rather than a
+ * re-implementation of them.
  */
-function envFor(database: DatabaseSync): Env {
+function envFor(
+  database: DatabaseSync,
+  extra: Record<string, unknown> = {},
+  substreamExtra: Record<string, unknown> = {},
+): Env {
   return createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, {
       objectStores: new Map([[WORKSTREAM, objectStore]]),
+      extra: substreamExtra,
+    }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: {
+        ...workspaceObjectRpcs(workspaceDO, [
+          "digestDeliveryContext",
+          "recordDigestSummary",
+          "settleDigestDelivery",
+          "digestTerminalTelemetryContext",
+          "digestDeliveryTargets",
+          "markDigestTargetDelivered",
+          "markDigestTargetFailed",
+        ]),
+        ...extra,
+      },
     }),
     AVALON_REGION: "global",
     APP_ENV: "production",
@@ -101,6 +135,21 @@ function seededDatabase(status = "running"): DatabaseSync {
     VALUES ('${WORKSPACE}', 'Avalon Studio', 'avalon-studio', 'global', '${OWNER}', '2026-01-01', '2026-01-01');
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('${WORKSPACE}', '${OWNER}', 'owner', 'active', '2026-01-01');
+    INSERT INTO workstreams
+      (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
+       next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
+    VALUES ('${WORKSTREAM}', '${WORKSPACE}', 'Digest · Owner · Tuesday 11 August · 9:00 AM', '',
+            'ad_hoc', '${OWNER}', 'running', 2, '2026-08-11', '2026-08-11', '2026-08-11',
+            'digest', 'personal');
+  `);
+  const built = createTestWorkspaceDO({
+    workspaceId: WORKSPACE,
+    regionalDatabase: database,
+    register: (created) => databases.push(created),
+  });
+  workspaceDO = built.instance;
+  workspaceStore = built.objectDatabase;
+  workspaceStore.exec(`
     INSERT INTO digest_schedules
       (id, workspace_id, user_id, day_mask, enabled, execution_principal_json,
        version, created_at, updated_at)
@@ -111,12 +160,6 @@ function seededDatabase(status = "running"): DatabaseSync {
        status, created_at, updated_at)
     VALUES ('${TARGET}', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}', 'email', 'owner@example.com',
             'active', '2026-01-01', '2026-01-01');
-    INSERT INTO workstreams
-      (id, workspace_id, title, objective, origin_type, created_by_user_id, harness_status,
-       next_sequence_number, last_activity_at, created_at, updated_at, system_kind, scope)
-    VALUES ('${WORKSTREAM}', '${WORKSPACE}', 'Digest · Owner · Tuesday 11 August · 9:00 AM', '',
-            'ad_hoc', '${OWNER}', 'running', 2, '2026-08-11', '2026-08-11', '2026-08-11',
-            'digest', 'personal');
     INSERT INTO digest_deliveries
       (id, workspace_id, digest_schedule_id, user_id, planned_for, cursor_from,
        cursor_through, event_count, highlight_count, workstream_id, status, created_at, updated_at)
@@ -165,8 +208,8 @@ function recordingTransport() {
   );
 }
 
-function deliveryStatus(database: DatabaseSync): { status: string; error_json: string | null } {
-  return database.prepare("SELECT status, error_json FROM digest_deliveries WHERE id = ?")
+function deliveryStatus(): { status: string; error_json: string | null } {
+  return workspaceStore.prepare("SELECT status, error_json FROM digest_deliveries WHERE id = ?")
     .get(DELIVERY) as { status: string; error_json: string | null };
 }
 
@@ -178,7 +221,7 @@ describe("digest delivery", () => {
     const result = await deliverDigest(envFor(database), context, request as unknown as typeof fetch);
 
     expect(result).toEqual({ delivered: 1, skipped: 0, failed: 0 });
-    expect(database.prepare(
+    expect(workspaceStore.prepare(
       "SELECT last_delivered_delivery_id, status FROM digest_delivery_targets WHERE id = ?",
     ).get(TARGET)).toMatchObject({ last_delivered_delivery_id: DELIVERY, status: "active" });
   });
@@ -204,8 +247,27 @@ describe("digest delivery", () => {
     // A frozen address the provider will keep rejecting never fixes itself, so
     // it is surfaced rather than failing the step on every occurrence forever.
     expect(result).toEqual({ delivered: 0, skipped: 0, failed: 1 });
-    expect(database.prepare("SELECT status FROM digest_delivery_targets WHERE id = ?").get(TARGET))
+    expect(workspaceStore.prepare("SELECT status FROM digest_delivery_targets WHERE id = ?").get(TARGET))
       .toEqual({ status: "needs_input" });
+  });
+
+  it("does not count a send against a target that vanished before it was recorded", async () => {
+    const database = seededDatabase();
+    // A settings save mid-delivery deletes and re-inserts every target row
+    // under fresh ids. The transport stands in for that moment: the send
+    // lands, and by the time the record is written the row is gone.
+    const request = vi.fn(async () => {
+      workspaceStore.exec(`DELETE FROM digest_delivery_targets WHERE id = '${TARGET}'`);
+      return new Response(JSON.stringify({ id: "resend-1" }), { status: 200 });
+    });
+
+    const result = await deliverDigest(envFor(database), context, request as unknown as typeof fetch);
+
+    // Counting it delivered would settle the occurrence with no idempotency
+    // marker written anywhere, and a retried step would send the recreated
+    // target a second copy on that authority. Skipped is the honest count:
+    // nothing was recorded, and nothing is left claiming it was.
+    expect(result).toEqual({ delivered: 0, skipped: 1, failed: 0 });
   });
 
   it("rethrows a retryable failure so the workflow step retries it", async () => {
@@ -214,7 +276,7 @@ describe("digest delivery", () => {
 
     await expect(deliverDigest(envFor(database), context, request as unknown as typeof fetch))
       .rejects.toBeDefined();
-    expect(database.prepare("SELECT status FROM digest_delivery_targets WHERE id = ?").get(TARGET))
+    expect(workspaceStore.prepare("SELECT status FROM digest_delivery_targets WHERE id = ?").get(TARGET))
       .toEqual({ status: "active" });
   });
 });
@@ -226,8 +288,8 @@ describe("settling a digest run", () => {
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
 
-    expect(deliveryStatus(database).status).toBe("delivered");
-    expect(database.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
+    expect(deliveryStatus().status).toBe("delivered");
+    expect(workspaceStore.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
       .toEqual({ summary_markdown: DIGEST });
   });
 
@@ -256,22 +318,12 @@ describe("settling a digest run", () => {
   it("still notes a delivered digest when telemetry context lookup fails", async () => {
     const database = seededDatabase();
     withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
-    const env = envFor(database);
-    const databaseBinding = env.DB;
-    env.DB = createTestD1Database({
-      prepare(query: string) {
-        const statement = databaseBinding.prepare(query);
-        if (!query.includes("SELECT DISTINCT target_type")) return statement;
-        return createTestD1PreparedStatement({
-          bind(...values: unknown[]) {
-            statement.bind(...values);
-            return createTestD1PreparedStatement({
-              all: async () => { throw new Error("telemetry lookup unavailable"); },
-            });
-          },
-        });
+    // The lookup is a typed object method now, so the failure is injected at
+    // the same boundary production crosses.
+    const env = envFor(database, {
+      digestTerminalTelemetryContext: async () => {
+        throw new Error("telemetry lookup unavailable");
       },
-      batch: databaseBinding.batch.bind(databaseBinding),
     });
 
     await expect(settleDigestRun(env, WORKSPACE, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
@@ -294,14 +346,61 @@ describe("settling a digest run", () => {
     // must still land rather than fail the whole run over a missing note.
     seedWorkstreamRun(objectStore, { id: RUN, status: "completed", origin: "scheduled_digest",
       executionPrincipalJson: JSON.stringify({ type: "user", userId: OWNER }) });
-    database.exec(`
+    workspaceStore.exec(`
       UPDATE digest_deliveries
          SET workstream_id = NULL, harness_run_id = '${RUN}' WHERE id = '${DELIVERY}';
     `);
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
 
-    expect(deliveryStatus(database).status).toBe("delivered");
+    expect(deliveryStatus().status).toBe("delivered");
+    expect(workstreamObjectGet(
+      objectStore,
+      "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = ?",
+      `digest-delivered:${DELIVERY}`,
+    )).toEqual({ count: 0 });
+  });
+
+  it("keeps the terminal event when a target type this build does not know appears", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    // `target_type` is bare TEXT in the object schema — the value list is
+    // enforced on the write path, not by a CHECK — so a newer build or a
+    // backfill can leave a type this one has never heard of. It must cost one
+    // array entry, never the whole terminal event.
+    workspaceStore.exec(`
+      INSERT INTO digest_delivery_targets
+        (id, workspace_id, digest_schedule_id, user_id, target_type, connection_id,
+         provider_tenant_id, provider_user_id, status, created_at, updated_at)
+      VALUES ('00000000-0000-7000-8000-00000000000a', '${WORKSPACE}', '${SCHEDULE}', '${OWNER}',
+              'carrier_pigeon', '00000000-0000-7000-8000-00000000000b', 'tenant-1', 'pigeon-1',
+              'disabled', '2026-01-01', '2026-01-01');
+    `);
+
+    await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
+
+    expect(deliveryStatus().status).toBe("delivered");
+    const terminal = emitProductUsageTelemetry.mock.calls
+      .map(([, input]) => input as { name: string; properties: { targetTypes: string[] } })
+      .find((input) => input.name === "digest_delivery_terminal");
+    expect(terminal?.properties.targetTypes).toEqual(["email"]);
+  });
+
+  it("keeps a settled delivery when the transcript note cannot be written", async () => {
+    const database = seededDatabase();
+    withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
+    const env = envFor(database, {}, {
+      executeMessageOperation: () => {
+        throw new Error("transcript authority offline");
+      },
+    });
+
+    await expect(settleDigestRun(env, WORKSPACE, DELIVERY, "completed", DIGEST)).resolves.toBeUndefined();
+
+    // The settle has already won. Failing the step over the note would make
+    // the retry read `already_settled` and return before writing one — the
+    // note would be lost either way, with a failed run as the extra price.
+    expect(deliveryStatus().status).toBe("delivered");
     expect(workstreamObjectGet(
       objectStore,
       "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details WHERE client_message_id = ?",
@@ -316,8 +415,8 @@ describe("settling a digest run", () => {
 
     // A placeholder sentence describing the run is not a digest. Failing here
     // keeps the window unconsumed, so its events reach the next occurrence.
-    expect(deliveryStatus(database).status).toBe("failed");
-    expect(deliveryStatus(database).error_json).toContain("digest_run_completed");
+    expect(deliveryStatus().status).toBe("failed");
+    expect(deliveryStatus().error_json).toContain("digest_run_completed");
   });
 
   it("refuses a final message too short to be a digest, and keeps the window", async () => {
@@ -331,12 +430,12 @@ describe("settling a digest run", () => {
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", receipt);
 
-    expect(deliveryStatus(database).status).toBe("failed");
-    expect(deliveryStatus(database).error_json).toContain("digest_run_completed");
+    expect(deliveryStatus().status).toBe("failed");
+    expect(deliveryStatus().error_json).toContain("digest_run_completed");
     // Nothing was mailed and nothing was stored, so the cursor did not move and
     // this window is folded into the next occurrence rather than lost.
     expect(request).not.toHaveBeenCalled();
-    expect(database.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
+    expect(workspaceStore.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
       .toEqual({ summary_markdown: null });
   });
 
@@ -348,21 +447,21 @@ describe("settling a digest run", () => {
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
 
-    expect(deliveryStatus(database).status).toBe("failed");
-    expect(deliveryStatus(database).error_json).toContain("digest_not_delivered");
+    expect(deliveryStatus().status).toBe("failed");
+    expect(deliveryStatus().error_json).toContain("digest_not_delivered");
   });
 
   it("still consumes the window when nothing was sent but nothing failed", async () => {
     const database = seededDatabase();
     withTransport(() => new Response(JSON.stringify({ id: "resend-1" }), { status: 200 }));
     // Already served on an earlier attempt of this same step.
-    database.exec(
+    workspaceStore.exec(
       `UPDATE digest_delivery_targets SET last_delivered_delivery_id = '${DELIVERY}' WHERE id = '${TARGET}'`,
     );
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
 
-    expect(deliveryStatus(database).status).toBe("delivered");
+    expect(deliveryStatus().status).toBe("delivered");
   });
 
   it("settles once, so a retried step does not send the digest again", async () => {
@@ -371,7 +470,7 @@ describe("settling a digest run", () => {
 
     await settleDigestRun(envFor(database), WORKSPACE, DELIVERY, "completed", DIGEST);
 
-    expect(database.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
+    expect(workspaceStore.prepare("SELECT summary_markdown FROM digest_deliveries WHERE id = ?").get(DELIVERY))
       .toEqual({ summary_markdown: null });
   });
 
@@ -386,7 +485,7 @@ describe("settling a digest run", () => {
       "What did you mean?",
     );
 
-    expect(deliveryStatus(database).status).toBe("failed");
+    expect(deliveryStatus().status).toBe("failed");
   });
 
   it("carries the frozen counts into the email rather than recounting them", async () => {
