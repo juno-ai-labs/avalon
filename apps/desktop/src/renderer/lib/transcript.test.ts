@@ -1371,6 +1371,41 @@ describe('grouping tool calls by plugin', () => {
     expect(grouped[0]!.pluginActivity).toMatchObject({ active: true, durationMs: 1_000 });
   });
 
+  it('keeps every concurrently running plugin ticking, not just the last one seen', () => {
+    // Bind runs a batch's non-activation tool calls concurrently, so two
+    // first-party plugins in the Rally group are genuinely active at the same
+    // time. Their completed times are summed, so the live row has to advance by
+    // both — keeping only the last start advanced it by one, and the number
+    // jumped up to the real total the moment they settled.
+    const running = (id: string, monotonicStartedAt: number): Message =>
+      row(id, {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'rally', name: 'Rally', icon: 'rally',
+          active: true, durationMs: 3_000, monotonicStartedAt: [monotonicStartedAt],
+        },
+      });
+    const grouped = groupPluginToolMessages([running('memory', 1_000), running('tables', 1_002)]);
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]!.pluginActivity).toMatchObject({ active: true, durationMs: 6_000 });
+    expect(grouped[0]!.pluginActivity?.monotonicStartedAt).toEqual([1_000, 1_002]);
+  });
+
+  it('carries a lone running plugin as one start', () => {
+    const grouped = groupPluginToolMessages([
+      row('slack-activity', {
+        messageType: 'plugin_activity',
+        pluginActivity: {
+          groupKey: 'name:Slack', name: 'Slack', icon: 'slack',
+          active: true, durationMs: 2_000, monotonicStartedAt: [500],
+        },
+      }),
+    ]);
+
+    expect(grouped[0]!.pluginActivity?.monotonicStartedAt).toEqual([500]);
+  });
+
   it('renumbers the rows it kept so the feed stays densely ordered', () => {
     const grouped = groupPluginToolMessages([
       toolRow('slack-1', 'connection:one', 'Slack'),

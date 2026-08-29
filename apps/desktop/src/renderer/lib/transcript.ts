@@ -476,7 +476,7 @@ export function orderedTranscriptMessages(
         timingAccuracy: timing.timingAccuracy,
         ...(timing.monotonicStartedAt === undefined
           ? {}
-          : { monotonicStartedAt: timing.monotonicStartedAt }),
+          : { monotonicStartedAt: [timing.monotonicStartedAt] }),
       },
     });
     messageOrder.set(activity.activityId, {
@@ -844,7 +844,7 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     activityDurationMs: number;
     toolDurationMs: number;
     sawActivity: boolean;
-    monotonicStartedAt?: number;
+    monotonicStartedAt: number[];
     upperBound: boolean;
   }
   const groups: GroupTiming[] = [];
@@ -874,6 +874,7 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         activityDurationMs: 0,
         toolDurationMs: 0,
         sawActivity: false,
+        monotonicStartedAt: [],
         upperBound: false,
       };
       open.set(contribution.key, group);
@@ -896,9 +897,10 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     } else {
       group.toolDurationMs += contribution.activity.durationMs;
     }
-    if (contribution.activity.monotonicStartedAt !== undefined) {
-      group.monotonicStartedAt = contribution.activity.monotonicStartedAt;
-    }
+    // Every running contribution, not the last one seen: they run at the same
+    // time and the completed total counts them all, so the live number has to
+    // advance by all of them or it jumps at settle.
+    group.monotonicStartedAt.push(...(contribution.activity.monotonicStartedAt ?? []));
     if (contribution.activity.timingAccuracy === 'upper_bound') group.upperBound = true;
   }
   for (const group of groups) {
@@ -909,7 +911,7 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
         ...group.identity,
         active: group.active,
         durationMs: group.sawActivity ? group.activityDurationMs : group.toolDurationMs,
-        ...(group.monotonicStartedAt === undefined
+        ...(group.monotonicStartedAt.length === 0
           ? {}
           : { monotonicStartedAt: group.monotonicStartedAt }),
         ...(group.upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
