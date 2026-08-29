@@ -151,6 +151,13 @@ was chosen against its own chip and the transcript has four themes and no chip.
   summed call durations only when it has none.** The two are not additive: an
   activity already contains the calls. Adding them would roughly double a
   plugin's reported time.
+- **The live number advances by every contribution still running, not by one of
+  them.** Bind runs a batch's non-activation tool calls concurrently, so two
+  first-party plugins in the Rally group are active at the same time and the
+  row's completed total counts both. A single start would advance the row at
+  half the rate its own total accrues, and the number would jump to the real
+  total at the moment they settled. This is why `monotonicStartedAt` is a list
+  on both `PluginActivityData` and `AgentWorkTiming`.
 - **A group row's position is its plugin's first row in the run, never its
   last.** The feed's order is the order work started in; the alternative makes a
   row jump downward as the plugin is used again.
@@ -245,6 +252,39 @@ renderer's `['ordered-transcript', <id>]` query, which exercises the whole
 projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
+
+### 2026-08-29 — A grouped row times every plugin running in it at once
+
+**What changed:** `monotonicStartedAt` became a list, on `PluginActivityData` and
+on `AgentWorkTiming`. A grouped row now advances by the elapsed time of every
+contribution still running rather than by the last one the grouping pass saw.
+
+**Why:** Bind executes a batch's non-activation tool calls concurrently, pooled
+per tool name, so `rally:memory` and `rally:tables` in one model turn are two
+plugin activities active at the same instant — and both land in the Rally row,
+whose completed total sums them. Keeping one start advanced the live number at
+half the rate its own total was accruing, so the row ticked up slowly and then
+jumped to the real figure the moment both activities settled. Found by Codex's
+review on the pull request and confirmed against Bind's tool loop, which
+documents the concurrent pool.
+
+**Considered and rejected:** Making the group's duration wall-clock — the union
+of its activities' intervals rather than their sum — which is arguably the more
+truthful number, since summing overlapping work reports more time than the
+reader watched pass. It was rejected here for scope and risk, not merit: the
+union needs interval data this projection deliberately reduces to a scalar, and
+the only interval bounds available are server UTC timestamps, which is exactly
+the clock-skew coupling `activityTiming` avoids by working from elapsed
+durations. The sum is also what the per-plugin rows this feature replaced showed
+between them. Worth revisiting as its own change.
+
+**Consequences:** A caller passing a freshly built array must not put it in an
+effect's dependencies — `AgentWorkTiming` keys its interval on the starts'
+values for that reason. The row can still report more time than the run's own
+timer when plugins in one group overlap; that is the sum semantics above, not a
+regression, and it is what the rejected alternative would address.
+
+Shipped in #412.
 
 ### 2026-08-29 — A connector's mark belongs to the connector, so Settings wears it too
 

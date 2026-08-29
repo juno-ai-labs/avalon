@@ -67,6 +67,39 @@ describe('AgentWorkTiming', () => {
     expect(screen.getByTestId('thinking-orb')).toHaveAttribute('data-speed', '0');
   });
 
+  it('advances by every segment running at once, so the total never jumps at settle', () => {
+    // A batch's tool calls run concurrently in Bind, so a grouped plugin row can
+    // be timing two plugins at the same time and its completed total counts
+    // both. Advancing by one start would under-count the live number and let it
+    // jump to the real total the moment they settled.
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(10_000);
+    try {
+      const { rerender } = render(
+        <AgentWorkTiming active durationMs={6_000} monotonicStartedAt={[8_000, 8_000]} />,
+      );
+
+      // 6s completed, plus 2s elapsed on each of the two running segments.
+      expect(screen.getByText('working for 10s')).toBeInTheDocument();
+
+      // Settling records what both segments actually ran, and the live number
+      // was already there rather than stepping up to meet it.
+      rerender(<AgentWorkTiming active={false} durationMs={10_000} />);
+      expect(screen.getByText('worked for 10s')).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('takes a lone start as a number, the shape every other caller passes', () => {
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(10_000);
+    try {
+      render(<AgentWorkTiming active durationMs={3_000} monotonicStartedAt={8_000} />);
+      expect(screen.getByText('working for 5s')).toBeInTheDocument();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it('qualifies a recovered terminal duration as an upper bound', () => {
     render(
       <AgentWorkTiming
