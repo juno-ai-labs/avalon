@@ -10,6 +10,12 @@ import { TERMINAL_OPERATION_LEASE_MS } from "../src/durable-objects/workstream-t
 import type { TerminalSandboxProvider } from "../src/services/terminal/daytona-provider";
 import { compileTerminalNetworkPolicy } from "../src/services/terminal/network-policy";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
+import type { DatabaseSync } from "node:sqlite";
 import {
   seedToolReceipt,
   seedWorkstreamRun,
@@ -27,9 +33,11 @@ const RUN_ID = "00000000-0000-4000-8000-000000000003";
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000004");
 
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
+const objectDatabases: DatabaseSync[] = [];
 
 afterEach(() => {
   for (const database of openDatabases.splice(0)) database.close();
+  for (const database of objectDatabases.splice(0)) database.close();
 });
 
 function fixture() {
@@ -87,7 +95,18 @@ function fixture() {
   return {
     database,
     objectStore,
-    db: sqliteD1(database),
+    env: createTestEnv({
+      DB: sqliteD1(database),
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      // The network policy is decided by a real WorkspaceDO over its own
+      // schema; the coordinator asks it rather than issuing SQL at a router.
+      WORKSPACE_DOS: testWorkspaceObjectBinding(createTestWorkspaceDO({
+        workspaceId: WORKSPACE_ID,
+        regionalDatabase: database,
+        register: (created) => { objectDatabases.push(created); },
+      }).instance, ["terminalNetworkSettings"]),
+    }),
     provider,
     clock,
     advance(minutes: number) { now = new Date(now.getTime() + minutes * 60_000); },
@@ -107,9 +126,9 @@ function context(userId = USER_ID): HarnessToolContext {
 
 describe("Terminal sandbox coordinator", () => {
   it("creates lazily on first tool use and reuses one sandbox per work stream", async () => {
-    const { objectStore, db,  provider, clock } = fixture();
+    const { objectStore, env,  provider, clock } = fixture();
     const acquisitionObserved = vi.fn(async () => undefined);
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider,
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider,
       clock,
       undefined,
       false,
@@ -130,7 +149,7 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("recovers an ambiguous create by the stable provider name", async () => {
-    const { db, objectStore, provider, clock } = fixture();
+    const { env, objectStore, provider, clock } = fixture();
     vi.mocked(provider.createSandbox).mockRejectedValueOnce(new Error("provider timeout"));
     provider.prepareSandbox = vi.fn(async (id: string, expectedDomainAllowList: string[]) => ({
       id,
@@ -138,7 +157,7 @@ describe("Terminal sandbox coordinator", () => {
       state: "running" as const,
       domainAllowList: expectedDomainAllowList,
     }));
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
 
     await expect(coordinator.acquire(context())).resolves.toMatchObject({
       providerSandboxId: "sandbox-recovered",
@@ -152,14 +171,14 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("fails closed when a new sandbox does not report the requested trusted policy", async () => {
-    const { objectStore, db,  provider, clock } = fixture();
+    const { objectStore, env,  provider, clock } = fixture();
     vi.mocked(provider.createSandbox).mockImplementationOnce(async (input) => ({
       id: "sandbox-policy-mismatch",
       name: input.stableName,
       state: "running",
       domainAllowList: [],
     }));
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
 
     await expect(coordinator.acquire(context())).rejects.toMatchObject({
       code: "network_policy_unverified",
@@ -175,8 +194,8 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("destroys and reprovisions before reuse when execution authority changes", async () => {
-    const { database, db, objectStore, provider, clock } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    const { database, env, objectStore, provider, clock } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     database.exec(`
       INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
@@ -192,8 +211,8 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("starts stopped sandboxes and refreshes lifecycle deadlines without polling", async () => {
-    const { objectStore, db, provider, clock, advance } = fixture();
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    const { objectStore, env, provider, clock, advance } = fixture();
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
     workstreamObjectRun(
       objectStore,
@@ -215,14 +234,14 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("serializes mutating runs with the durable operation lease", async () => {
-    const { objectStore, db,  provider, clock } = fixture();
+    const { objectStore, env,  provider, clock } = fixture();
     const otherRun = "00000000-0000-4000-8000-000000000099";
     // Scheduled, not running: the object admits at most one mutating run per
     // substream (`runs_mutating_substream_uq`), so the contender waits in the
     // admitted state while the fixture run holds the lease.
     seedWorkstreamRun(objectStore, { id: otherRun, status: "admitted",
       executionPrincipalJson: `{"type":"user","userId":"${USER_ID}"}` });
-    const coordinator = new TerminalSandboxCoordinator(db, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
+    const coordinator = new TerminalSandboxCoordinator(env, testTerminalPortFactory(objectStore), testResourcePortFactory(objectStore), provider, clock);
     await coordinator.acquire(context());
 
     await expect(coordinator.acquire({ ...context(), harnessRunId: otherRun, toolCallId: "other-call" }))
@@ -241,10 +260,10 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("settles every retained task before handing the lease to a linked run", async () => {
-    const { objectStore, db, provider, clock } = fixture();
+    const { objectStore, env, provider, clock } = fixture();
     const otherRun = "00000000-0000-4000-8000-000000000099";
     const coordinator = new TerminalSandboxCoordinator(
-      db,
+      env,
       testTerminalPortFactory(objectStore),
       testResourcePortFactory(objectStore),
       provider,
@@ -295,11 +314,11 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("retires a planned task before linked handoff", async () => {
-    const { objectStore, db, provider, clock } = fixture();
+    const { objectStore, env, provider, clock } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000099";
     const effectId = "planned-recovery-effect";
     const coordinator = new TerminalSandboxCoordinator(
-      db,
+      env,
       testTerminalPortFactory(objectStore),
       testResourcePortFactory(objectStore),
       provider,
@@ -352,13 +371,13 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("retires a mixed generation before a later submitting task can overlap handoff", async () => {
-    const { objectStore, db, provider, clock } = fixture();
+    const { objectStore, env, provider, clock } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000099";
     const runningEffect = "mixed-running-effect";
     const submittingEffect = "mixed-submitting-effect";
     const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID);
     const coordinator = new TerminalSandboxCoordinator(
-      db,
+      env,
       testTerminalPortFactory(objectStore),
       testResourcePortFactory(objectStore),
       provider,
@@ -435,12 +454,12 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("releases a transient recovery claim without publishing a stale failure", async () => {
-    const { objectStore, db, provider, clock } = fixture();
+    const { objectStore, env, provider, clock } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000099";
     const effectId = "transient-recovery-effect";
     const terminal = testTerminalPortFactory(objectStore)(WORKSPACE_ID, WORKSTREAM_ID);
     const coordinator = new TerminalSandboxCoordinator(
-      db,
+      env,
       testTerminalPortFactory(objectStore),
       testResourcePortFactory(objectStore),
       provider,
@@ -494,7 +513,7 @@ describe("Terminal sandbox coordinator", () => {
   });
 
   it("does not stop a successor after recovery renewal loses its exact token", async () => {
-    const { objectStore, db, provider, clock, advance } = fixture();
+    const { objectStore, env, provider, clock, advance } = fixture();
     const linkedRun = "00000000-0000-4000-8000-000000000098";
     const successorRun = "00000000-0000-4000-8000-000000000099";
     const effectId = "renew-race-effect";
@@ -519,7 +538,7 @@ describe("Terminal sandbox coordinator", () => {
       };
     }) satisfies typeof baseFactory;
     const coordinator = new TerminalSandboxCoordinator(
-      db,
+      env,
       interceptingFactory,
       testResourcePortFactory(objectStore),
       provider,
