@@ -1,16 +1,14 @@
 import { asWorkspaceId } from "@rally/contracts";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Env } from "../src/env";
-import { WorkspaceDO } from "../src/durable-objects/workspace-do";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import {
   createCloudflareTestBinding,
-  createTestDurableObjectId,
   createTestEnv,
 } from "./helpers/cloudflare-test";
-import { createTestSqlStorage } from "./helpers/sql-storage";
+import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
 import {
   openWorkstreamAuthorityForTest,
   testSubstreamAgentsBinding,
@@ -74,57 +72,49 @@ afterEach(() => {
   launchWorkstreamHarness.mockClear();
 });
 
-/**
- * The activity log moved into the WorkspaceDO's own storage with the cutover,
- * and its semantics — audience filtering, the digestible subset, the window
- * cap, target relations — are exactly what these tests exercise. So the three
- * activity RPCs are served by a real `WorkspaceDO` over a real object-schema
- * database rather than by a re-implementation whose bugs would be this file's
- * own. Everything else on the WORKSPACE_DOS stub keeps the migrated D1
- * database as its store, the way the runtime SQL port stub does.
- */
-function workspaceActivityRpcs(database: DatabaseSync): Record<string, unknown> {
-  const doDatabase = new DatabaseSync(":memory:");
-  databases.push(doDatabase);
-  const storage = createCloudflareTestBinding<DurableObjectStorage>({
-    getAlarm: async () => null,
-    setAlarm: async () => undefined,
-    deleteAlarm: async () => undefined,
-    transactionSync: <T,>(body: () => T) => body(),
-    sql: createTestSqlStorage(doDatabase),
-  });
-  // The constructor registers the runtime-only websocket auto-response pair.
-  vi.stubGlobal("WebSocketRequestResponsePair", class {
-    constructor(readonly request: string, readonly response: string) {}
-  });
-  const workspaceDO = new WorkspaceDO(
-    createCloudflareTestBinding<DurableObjectState>({
-      id: createTestDurableObjectId("workspace-do"),
-      blockConcurrencyWhile: async <T,>(body: () => Promise<T>) => body(),
-      setWebSocketAutoResponse: () => undefined,
-      waitUntil: () => undefined,
-      storage,
-    }),
-    createTestEnv({ DB: sqliteD1(database), AVALON_REGION: "global", APP_ENV: "test" }),
-  );
-  doDatabase.prepare(
-    `INSERT INTO workspace_identity
-       (id, workspace_id, region, placement_affinity, created_at, updated_at)
-     VALUES (1, ?, 'global', 'wnam', 0, 0)`,
-  ).run(WORKSPACE);
-  return {
-    recordActivityEvent: (input: unknown) => workspaceDO.recordActivityEvent(input as never),
-    listActivityEvents: (input: unknown) => workspaceDO.listActivityEvents(input as never),
-    latestActivityEventCursor: (input: unknown) => workspaceDO.latestActivityEventCursor(input as never),
-  };
-}
+/** The WorkspaceDO's own database, rebuilt by each `envFor`; digest rows live here. */
+let workspaceStore: DatabaseSync;
 
-function envFor(database: DatabaseSync): Env {
+/**
+ * The activity log and the digest tables both live in the WorkspaceDO's own
+ * storage now, and their semantics — audience filtering, the digestible
+ * subset, the window cap, the occurrence claim — are exactly what these tests
+ * exercise. So the activity and digest RPCs are served by a real `WorkspaceDO`
+ * over a real object-schema database rather than by a re-implementation whose
+ * bugs would be this file's own. Everything else on the WORKSPACE_DOS stub
+ * keeps the migrated D1 database as its store, the way the runtime SQL port
+ * stub does.
+ */
+function envFor(database: DatabaseSync, digestEnabled = 1): Env {
   objectStores = new Map();
+  const { instance, objectDatabase } = createTestWorkspaceDO({
+    workspaceId: WORKSPACE,
+    regionalDatabase: database,
+    register: (created) => databases.push(created),
+  });
+  workspaceStore = objectDatabase;
+  objectDatabase.prepare(
+    `INSERT INTO digest_schedules
+       (id, workspace_id, user_id, day_mask, enabled,
+        execution_principal_json, version, created_at, updated_at)
+     VALUES (?, ?, ?, 62, ?, ?, 1, '2026-01-01', '2026-01-01')`,
+  ).run(SCHEDULE, WORKSPACE, OWNER, digestEnabled, JSON.stringify({ type: "user", userId: OWNER }));
   return createTestEnv({
     DB: sqliteD1(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
-    WORKSPACE_DOS: testSubstreamAgentsBinding(database, { extra: workspaceActivityRpcs(database) }),
+    WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      extra: workspaceObjectRpcs(instance, [
+        "recordActivityEvent",
+        "listActivityEvents",
+        "latestActivityEventCursor",
+        "digestScheduleForFire",
+        "latestDigestCursor",
+        "claimDigestDelivery",
+        "recordDigestDeliveryWorkstream",
+        "markDigestDeliveryRunning",
+        "releaseDigestDeliveryClaim",
+      ]),
+    }),
     AVALON_REGION: "global",
     APP_ENV: "test",
     PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
@@ -144,7 +134,7 @@ function objectStoreFor(workstreamId: string): DatabaseSync {
   return store;
 }
 
-function seededDatabase(enabled = 1): DatabaseSync {
+function seededDatabase(): DatabaseSync {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
   // Every occurrence creates its work stream through the Durable-Object
@@ -159,11 +149,6 @@ function seededDatabase(enabled = 1): DatabaseSync {
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('${WORKSPACE}', '${OWNER}', 'owner', 'active', '2026-01-01'),
            ('${WORKSPACE}', '${OTHER}', 'member', 'active', '2026-01-01');
-    INSERT INTO digest_schedules
-      (id, workspace_id, user_id, day_mask, enabled,
-       execution_principal_json, version, created_at, updated_at)
-    VALUES ('${SCHEDULE}', '${WORKSPACE}', '${OWNER}', 62, ${enabled},
-            '{"type":"user","userId":"${OWNER}"}', 1, '2026-01-01', '2026-01-01');
   `);
   return database;
 }
@@ -215,7 +200,7 @@ describe("firing a digest occurrence", () => {
 
     expect(outcome.started).toBe(true);
     expect(launchWorkstreamHarness).toHaveBeenCalledTimes(1);
-    const delivery = database.prepare(
+    const delivery = workspaceStore.prepare(
       "SELECT status, event_count, cursor_from, cursor_through FROM digest_deliveries",
     ).get() as { status: string; event_count: number; cursor_from: number | null; cursor_through: number };
     expect(delivery).toMatchObject({ status: "running", event_count: 2, cursor_from: null });
@@ -245,7 +230,7 @@ describe("firing a digest occurrence", () => {
 
     await fireDigestSchedule(env, { scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR });
 
-    const delivery = database.prepare(
+    const delivery = workspaceStore.prepare(
       "SELECT event_count, cursor_through FROM digest_deliveries",
     ).get() as { event_count: number; cursor_through: number };
     // One event digested, and the cursor past all four. Stopping at the last
@@ -286,7 +271,7 @@ describe("firing a digest occurrence", () => {
     // morning briefing about continuous integration.
     expect(outcome).toEqual({ started: false, reason: "empty" });
     expect(launchWorkstreamHarness).not.toHaveBeenCalled();
-    expect(database.prepare("SELECT status, cursor_through FROM digest_deliveries").get())
+    expect(workspaceStore.prepare("SELECT status, cursor_through FROM digest_deliveries").get())
       .toEqual({ status: "empty", cursor_through: 1 });
   });
 
@@ -304,7 +289,7 @@ describe("firing a digest occurrence", () => {
     // Unlike an empty window, this occurrence is never claimed: no delivery
     // row and no cursor advance, so turning the flag back on lets the next
     // occurrence pick up this event along with whatever arrives after it.
-    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get())
+    expect(workspaceStore.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get())
       .toEqual({ count: 0 });
   });
 
@@ -329,7 +314,7 @@ describe("firing a digest occurrence", () => {
     const env = envFor(database);
     await recordEvent(env, "message:1");
     await fireDigestSchedule(env, { scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR });
-    database.exec("UPDATE digest_deliveries SET status = 'delivered'");
+    workspaceStore.exec("UPDATE digest_deliveries SET status = 'delivered'");
     await recordEvent(env, "message:2");
 
     await fireDigestSchedule(env, {
@@ -339,7 +324,7 @@ describe("firing a digest occurrence", () => {
     // Nothing carries between occurrences but the cursor. A shared work stream
     // would hand this run the previous digest as replayed assistant history,
     // unlabelled and uncheckable against a window the projector drops.
-    const deliveries = database.prepare(
+    const deliveries = workspaceStore.prepare(
       "SELECT workstream_id FROM digest_deliveries ORDER BY planned_for",
     ).all() as Array<{ workstream_id: string }>;
     expect(deliveries).toHaveLength(2);
@@ -403,7 +388,7 @@ describe("firing a digest occurrence", () => {
     // Releasing the claim would let a retry digest this window a second time,
     // and deleting the work stream would cascade the transcript away beneath
     // the run still reading it.
-    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 1 });
+    expect(workspaceStore.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 1 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
     expect(workstreamObjectGet(onlyObjectStore(), "SELECT COUNT(*) AS count FROM canonical_conversation_turn_details"))
       .toEqual({ count: 1 });
@@ -424,7 +409,7 @@ describe("firing a digest occurrence", () => {
     // a Durable Object identity cannot join the claim's transaction — so the
     // release leaves the D1 anchor and archives the object root instead: a
     // durable, unlistable tombstone, transcript and all.
-    expect(database.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 0 });
+    expect(workspaceStore.prepare("SELECT COUNT(*) AS count FROM digest_deliveries").get()).toEqual({ count: 0 });
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
     const tombstone = workstreamObjectRootRow<{ system_kind: string; archived_at: number | null }>(
       onlyObjectStore(),
@@ -441,14 +426,14 @@ describe("firing a digest occurrence", () => {
     const env = envFor(database);
     await recordEvent(env, "message:1");
     await fireDigestSchedule(env, { scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR });
-    database.exec("UPDATE digest_deliveries SET status = 'delivered'");
+    workspaceStore.exec("UPDATE digest_deliveries SET status = 'delivered'");
     await recordEvent(env, "message:2");
 
     await fireDigestSchedule(env, {
       scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: "2026-08-11T20:00:00.000Z",
     });
 
-    const [, second] = database.prepare(
+    const [, second] = workspaceStore.prepare(
       "SELECT cursor_from, cursor_through, event_count FROM digest_deliveries ORDER BY planned_for",
     ).all() as Array<{ cursor_from: number | null; cursor_through: number; event_count: number }>;
     // The second window starts exactly where the first stopped.
@@ -476,7 +461,7 @@ describe("firing a digest occurrence", () => {
 
     expect(outcome).toEqual({ started: false, reason: "empty" });
     expect(launchWorkstreamHarness).not.toHaveBeenCalled();
-    expect(database.prepare("SELECT status FROM digest_deliveries").get()).toEqual({ status: "empty" });
+    expect(workspaceStore.prepare("SELECT status FROM digest_deliveries").get()).toEqual({ status: "empty" });
   });
 
   it("refuses a second run for an occurrence a retried alarm already claimed", async () => {
@@ -494,8 +479,8 @@ describe("firing a digest occurrence", () => {
   });
 
   it("does not fire a disabled digest", async () => {
-    const database = seededDatabase(0);
-    const env = envFor(database);
+    const database = seededDatabase();
+    const env = envFor(database, 0);
     await recordEvent(env, "message:1");
 
     expect(await fireDigestSchedule(env, {
@@ -523,17 +508,17 @@ describe("firing a digest occurrence", () => {
 
     await fireDigestSchedule(env, { scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: PLANNED_FOR });
 
-    const delivery = database.prepare(
+    const delivery = workspaceStore.prepare(
       "SELECT event_count, cursor_through FROM digest_deliveries",
     ).get() as { event_count: number; cursor_through: number };
     expect(delivery.event_count).toBe(200);
     expect(delivery.cursor_through).toBe(200);
 
-    database.exec("UPDATE digest_deliveries SET status = 'delivered'");
+    workspaceStore.exec("UPDATE digest_deliveries SET status = 'delivered'");
     await fireDigestSchedule(env, {
       scheduleId: SCHEDULE, workspaceId: WORKSPACE, plannedFor: "2026-08-11T20:00:00.000Z",
     });
-    const [, second] = database.prepare(
+    const [, second] = workspaceStore.prepare(
       "SELECT cursor_from, event_count FROM digest_deliveries ORDER BY planned_for",
     ).all() as Array<{ cursor_from: number; event_count: number }>;
     // The five that did not fit are digested next time rather than lost.
@@ -565,7 +550,7 @@ describe("firing a digest occurrence", () => {
 
     // Counted against the window the run was given, so a later read cannot
     // disagree by re-deriving the audience filter or the look-back floor.
-    expect(database.prepare("SELECT event_count, highlight_count FROM digest_deliveries").get())
+    expect(workspaceStore.prepare("SELECT event_count, highlight_count FROM digest_deliveries").get())
       .toEqual({ event_count: 2, highlight_count: 1 });
   });
 });
