@@ -330,10 +330,13 @@ ceiling nothing bounds.** Two things decide the number:
   `parserOptions.projectService` opens each linted file in a TypeScript language
   service, which loads that file's whole tsconfig program and keeps it for the
   life of the process. So the cost is the *sum* over every package the run
-  touches: `apps/api` alone measured 2.6 GB, `apps/desktop` 1.8 GB, `packages/*`
-  1.1 GB, and a repo-wide `projectService` 4.5 GB against 0.9 GB with no type
-  information at all. `eslint.config.mjs` therefore scopes it to
-  `apps/api/src`, the only files a type-aware rule is enabled on.
+  touches: linted alone, `apps/api` measured 2.7 GB, `apps/desktop` 1.9 GB, and
+  `packages/*` 1.1 GB; a repo-wide `projectService` over the whole tree cost
+  4.7 GB against 0.9 GB with no type information at all. `eslint.config.mjs`
+  therefore scopes it to `apps/api/src`, and puts it in the same config object
+  as the rule that needs it so the two cannot drift apart. **Every figure in
+  this section is peak resident memory summed across the run's Node processes**
+  — what the machine has to supply, which is what a runner runs out of.
 - **V8's default heap limit is half of physical memory, so RSS tracks the
   machine rather than the workload.** The live set is far smaller than the peak:
   the same run completes under `--max-old-space-size=1536` at 1.6 GB, and only
@@ -362,8 +365,15 @@ where to check.
 Lowering that ceiling is the remaining lever if a runner still runs out, and it
 cuts both ways: `--max-old-space-size=2048` brought the same run to 1.9 GB in
 53s, faster than the 4.0 GB it takes unbounded, because a smaller heap is less
-to mark and compact. The number is a cap on how large this repository's lint may
-grow, so it is the team's to move rather than a measurement's to set.
+to mark and compact. Below about 1 GB the run dies; at 1024 MB it survives but
+takes 98s, thrashing the collector.
+
+**That number is not lint's alone.** The same 8192 is on
+`typecheck-and-build-invariants`, which runs `pnpm typecheck`, two Wrangler
+dry-run builds, and the desktop release invariants — four Node processes whose
+memory nobody here has measured. It caps how large any of that may grow, so it
+is the team's to move rather than a measurement's to set, and a lane that starts
+failing on it wants its own measurement first.
 
 ## How many test workers to run
 
