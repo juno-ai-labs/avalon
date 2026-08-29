@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Run the one-shot WorkspaceDO -> AutomationAgent authority cutover after both
- * regional Workers are healthy. Workspace identities come from regional D1;
- * all product-state audit, import, verification, and table removal happens in
- * the named WorkspaceDO reached through the existing regional command Queue.
+ * Cut workspaces over from WorkspaceDO-owned automations to AutomationAgent.
+ *
+ * This ran fleet-wide on 2026-08-28 and is **no longer part of any deploy**. It
+ * is kept as an operator remedy for a workspace later found still holding
+ * legacy automation state, which `--workspace=` targets directly; `--apply` is
+ * idempotent per workspace, so a completed one is a no-op.
+ *
+ * Workspace identities come from regional D1; all product-state audit, import,
+ * verification, and table removal happens in the named WorkspaceDO reached
+ * through the existing regional command Queue.
  */
 import { readFile } from "node:fs/promises";
 
@@ -20,15 +26,27 @@ const INVENTORY_PAGE_SIZE = 1_000;
  * LIMIT UNSET — open, enforcing nothing. Awaiting a value from the team; see
  * docs/adding-security-defensive-and-other-limits.md.
  *
- * Bounds: wall-clock milliseconds the cutover waits for both regional command
- *   queues to drain before it gives up and fails the deploy.
- * Without it: a consumer that cannot make progress — a WorkspaceDO wedged on a
- *   throwing migration, so every message retries forever without ever reaching
- *   the dead-letter queue the loop does watch — leaves this poll spinning, and
- *   the deploy job holds the release open until GitHub's own job timeout kills
- *   it hours later with no statement of what was stuck. Only our own operators
- *   can cause it, but the guard is not standing in for a bug: the wait is over a
- *   fleet-wide fan-out whose slowest member is not knowable from here.
+ * Bounds: wall-clock milliseconds this run waits for both regional command
+ *   queues to drain before it gives up.
+ * Without it: the poll below has no exit but success, so a drain that never
+ *   completes hangs the caller indefinitely. Two ways that happens, and
+ *   neither is the one an earlier version of this comment claimed. A message
+ *   that fails deterministically is *not* one of them: the queues are
+ *   configured with five retries and a dead-letter queue, and the loop already
+ *   fails the moment the dead-letter count rises above its baseline.
+ *
+ *   The first is a drain that is merely slow. One message per workspace, each
+ *   waking a cold WorkspaceDO that imports its automations over RPC, metered
+ *   in batches of a hundred with a ten-second gathering window; on a large
+ *   enough fleet that is simply a long time, and nothing here says how long is
+ *   too long.
+ *
+ *   The second is the one to design against: `avalon-<region>-migration-commands`
+ *   is not this script's private queue. It is the migration tracker's
+ *   "Force a migration" queue, and the tracker can fan a whole Durable Object
+ *   class into it. An operator forcing a migration while this runs keeps the
+ *   backlog above zero for reasons that have nothing to do with the cutover,
+ *   and this loop waits on a number that is no longer about its own work.
  * Direction: a deadline; the open value is +Infinity, enforced through the
  *   finiteness guard below so no deadline is computed at all while it is open.
  * Trips: the run throws `automation_cutover_drain_timeout`, naming each region
@@ -37,8 +55,12 @@ const INVENTORY_PAGE_SIZE = 1_000;
  * Derive from: the fan-out against the queue's own throughput, not a benchmark.
  *   One message per workspace, each waking one WorkspaceDO that imports its
  *   automations over RPC; pick the wait from how long the slowest workspace's
- *   import may take multiplied by the batches ahead of it, plus the margin a
- *   failing deploy should not eat.
+ *   import may take multiplied by the batches ahead of it, plus the margin the
+ *   operator running this should not have to sit through.
+ *
+ *   Note the urgency changed on 2026-08-28: the cutover has run in production
+ *   and this script is no longer part of the deploy, so an unbounded wait now
+ *   costs an operator's afternoon rather than a stuck release.
  */
 export const AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 
@@ -61,9 +83,30 @@ function parseArguments(argv) {
   const apply = args.includes("--apply");
   const preflight = args.includes("--preflight");
   if (apply && preflight) throw new Error("--apply and --preflight are mutually exclusive");
+  // One workspace, which is what a remedy actually needs. Without it the
+  // smallest thing this can do is a whole region: one command per workspace
+  // fanned into `avalon-<region>-migration-commands`, waking every WorkspaceDO
+  // in it to tell all but one of them they are already done. That is the herd
+  // `durable-object-migration-tracking.md` warns about, it shares a queue with
+  // the migration tracker, and it is the case whose drain wait is unbounded —
+  // a lot of exposure to re-cut over a single workspace.
+  const workspace = args.find((argument) => argument.startsWith("--workspace="))
+    ?.slice("--workspace=".length) ?? null;
+  if (workspace !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(workspace)) {
+    throw new Error(`Unsupported workspace ${workspace}`);
+  }
+  // Refused rather than ignored. `--preflight` addresses objects by opaque ID
+  // from the Durable Object namespace listing and asserts that listing against
+  // D1's whole workspace inventory, so there is no coherent one-workspace
+  // meaning for it — silently widening back to the fleet is the wrong answer
+  // for a flag whose entire purpose is to narrow.
+  if (workspace !== null && preflight) {
+    throw new Error("--workspace and --preflight are mutually exclusive");
+  }
   return {
     apply,
     preflight,
+    workspace,
     regions: regionValue === "all" ? REGIONS : [regionValue],
   };
 }
@@ -91,14 +134,23 @@ function rows(result) {
  * that body, so an unpaged `SELECT id FROM workspaces` stops being the
  * inventory at some account size and starts being a prefix of it — silently,
  * because a short answer and a complete one are the same shape. The workspaces
- * past the cut would never be sent a cutover command, and the deploy that
- * replaces both Workers would still report success; each of them would then be
- * left serving `automation_cutover_in_progress` with no record of having been
- * skipped. Keyset on the primary key rather than OFFSET: the pages are read
+ * past the cut would never be sent a cutover command, and this run would still
+ * print a success summary; each of them would then be left serving
+ * `automation_cutover_in_progress` with no record of having been skipped. Keyset on the primary key rather than OFFSET: the pages are read
  * across separate requests, and a workspace created between two of them shifts
  * every later offset by one, dropping a row that was already there.
  */
-async function workspaceIds(cloudflare, databaseId, region) {
+async function workspaceIds(cloudflare, databaseId, region, workspace = null) {
+  if (workspace !== null) {
+    const result = await cloudflare(`/d1/database/${databaseId}/query`, {
+      method: "POST",
+      body: JSON.stringify({
+        sql: "SELECT id FROM workspaces WHERE region = ? AND id = ?",
+        params: [region, workspace],
+      }),
+    });
+    return rows(result).map((row) => row.id);
+  }
   const ids = [];
   for (let after = ""; ;) {
     const result = await cloudflare(`/d1/database/${databaseId}/query`, {
@@ -149,7 +201,7 @@ async function workspaceObjectIds(cloudflare, region) {
  * changed shape, or an error body that still parsed, would read as "the queue is
  * empty", which is the exact condition the drain loop treats as proof that every
  * workspace was cut over. An absent number is an unknown, and an unknown has to
- * stop the deploy rather than end the wait.
+ * stop the run rather than end the wait.
  */
 async function queueMetrics(cloudflare, queueId) {
   const result = await cloudflare(`/queues/${queueId}/metrics`);
@@ -205,7 +257,7 @@ export async function cutoverAutomationAgents({
     const queueId = queues.get(queueName(region));
     const deadLetterQueueId = queues.get(deadLetterQueueName(region));
     if (!queueId || !deadLetterQueueId) throw new Error(`${region}_automation_cutover_queue_missing`);
-    const ids = await workspaceIds(cloudflare, databaseIdFromWranglerConfig(config), region);
+    const ids = await workspaceIds(cloudflare, databaseIdFromWranglerConfig(config), region, options.workspace);
     const objectIds = options.preflight ? await workspaceObjectIds(cloudflare, region) : [];
     if (options.preflight && objectIds.length !== ids.length) {
       throw new Error(`${region}_workspace_do_inventory_mismatch:d1=${ids.length}:stored=${objectIds.length}`);
@@ -250,9 +302,8 @@ export async function cutoverAutomationAgents({
   // consistent, so a backlog read taken the instant the last batch was accepted
   // can still answer with the pre-dispatch count — zero — and break the loop
   // having proved nothing at all about the messages just sent. Sleeping one
-  // poll interval before the first read costs a single interval on a deploy
-  // that already waits minutes, and removes the one way this loop can report a
-  // drain that never happened.
+  // poll interval before the first read costs the operator one interval, and
+  // removes the one way this loop can report a drain that never happened.
   const deadline = Number.isFinite(drainTimeoutMs) ? Date.now() + drainTimeoutMs : null;
   for (;;) {
     await wait(QUEUE_DRAIN_POLL_MS);
