@@ -79,6 +79,13 @@ async function addVersion(input: { ownerUserId?: string; templateId?: string } =
   );
 }
 
+/** Add a version, failing the test rather than the narrowing if it was refused. */
+async function addedVersion(input: Parameters<typeof addVersion>[0] = {}) {
+  const result = await addVersion(input);
+  if (result.outcome !== "added") throw new Error(`expected a version, got ${result.outcome}`);
+  return result.versionNumber;
+}
+
 async function gallery() {
   return WorkspaceAutomationTemplateListSchema.parse(
     await workspace().listAutomationTemplates({ workspaceId: WORKSPACE_ID }),
@@ -108,8 +115,8 @@ describe("automation template gallery", () => {
 
   it("gives each new version the next number, one at a time", async () => {
     await publish();
-    expect((await addVersion()).versionNumber).toBe(2);
-    expect((await addVersion()).versionNumber).toBe(3);
+    expect(await addedVersion()).toBe(2);
+    expect(await addedVersion()).toBe(3);
     expect((await gallery()).items[0]?.latestVersionNumber).toBe(3);
   });
 
@@ -119,42 +126,77 @@ describe("automation template gallery", () => {
     // refused the second. Inside the object each call is its own critical
     // section, so the numbers are consecutive rather than colliding.
     await publish();
-    const results = await Promise.all([addVersion(), addVersion(), addVersion()]);
-    expect(results.map((result) => result.versionNumber).sort()).toEqual([2, 3, 4]);
+    const numbers = await Promise.all([addedVersion(), addedVersion(), addedVersion()]);
+    expect(numbers.sort((left, right) => left - right)).toEqual([2, 3, 4]);
     expect((await gallery()).items[0]?.latestVersionNumber).toBe(4);
   });
 
   it("refuses a version from somebody who does not own the template", async () => {
     await publish();
-    expect(await addVersion({ ownerUserId: OTHER_MEMBER })).toEqual({
-      outcome: "template_not_found",
-      versionNumber: null,
-    });
+    expect(await addVersion({ ownerUserId: OTHER_MEMBER }))
+      .toEqual({ outcome: "template_not_found" });
     expect((await gallery()).items[0]?.latestVersionNumber).toBe(1);
   });
 
   it("says so rather than writing a version for a template that is not there", async () => {
-    expect(await addVersion({ templateId: "00000000-0000-7000-8000-000000000bbe" })).toEqual({
-      outcome: "template_not_found",
-      versionNumber: null,
-    });
+    expect(await addVersion({ templateId: "00000000-0000-7000-8000-000000000bbe" }))
+      .toEqual({ outcome: "template_not_found" });
   });
 
   it("serves the gallery at each template's latest version", async () => {
     await publish();
-    await addVersion();
+    await addedVersion();
     const items = (await gallery()).items;
     expect(items).toHaveLength(1);
     expect(items[0]?.latestVersionNumber).toBe(2);
   });
 
+  it("reports ownership before a caller's draft is looked at", async () => {
+    // The preflight the service asks first. Without it, adding a version to a
+    // template that is missing, archived, or somebody else's answers with a
+    // connector error from validating the draft — a different status than the
+    // endpoint has ever given, and one that describes connector state the
+    // caller has no claim on.
+    await publish();
+    const ownership = (input: { templateId?: string; ownerUserId?: string }) =>
+      workspace().automationTemplateOwnership({
+        workspaceId: WORKSPACE_ID,
+        templateId: input.templateId ?? TEMPLATE,
+        ownerUserId: input.ownerUserId ?? OWNER,
+      });
+    expect(await ownership({})).toEqual({ owned: true });
+    expect(await ownership({ ownerUserId: OTHER_MEMBER })).toEqual({ owned: false });
+    expect(await ownership({ templateId: "00000000-0000-7000-8000-000000000bbf" }))
+      .toEqual({ owned: false });
+  });
+
+  it("stops reporting ownership once the template is archived", async () => {
+    await publish();
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE automation_templates SET archived_at = ? WHERE id = ?`,
+        AT,
+        TEMPLATE,
+      );
+    });
+    expect(await workspace().automationTemplateOwnership({
+      workspaceId: WORKSPACE_ID,
+      templateId: TEMPLATE,
+      ownerUserId: OWNER,
+    })).toEqual({ owned: false });
+  });
+
   it("refuses a request addressed to a different workspace", async () => {
-    // Settled once, by hand: an RPC promise is a pipelining thenable, and
-    // `rejects.toThrow` reads through it a second time, which surfaces the same
-    // rejection again as an unhandled error and fails the run.
-    const outcome = await workspace().listAutomationTemplates({
-      workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000bae"),
-    }).then(() => null, (error: unknown) => error);
+    // Called on the instance rather than through a stub. An RPC call returns a
+    // pipelining proxy that rejects separately from the promise the assertion
+    // attaches to, so a refusal asserted over RPC leaves that second rejection
+    // unhandled — noise in every run of this file, and a failure the day the
+    // runner treats those as fatal. The subject is `assertWorkspace`, not the
+    // transport.
+    const outcome = await runInDurableObject(workspace(), async (instance) =>
+      instance.listAutomationTemplates({
+        workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000bae"),
+      }).then(() => null, (error: unknown) => error));
     expect(String(outcome)).toContain("workspace_object_identity_mismatch");
   });
 });
