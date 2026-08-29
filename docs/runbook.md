@@ -878,15 +878,23 @@ workspace is ever found still holding legacy automation state, the remedy is to
 run the retained script directly:
 
 ```bash
-CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… node scripts/cutover-automation-agents.mjs --apply
+CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… \
+  node scripts/cutover-automation-agents.mjs --apply --workspace=<workspace-id>
 ```
+
+**Name the workspace.** Without `--workspace=` the smallest unit is a whole
+region: one command per workspace fanned into
+`avalon-<region>-migration-commands`, waking every WorkspaceDO in it to tell all
+but one that it is already done. That is a herd for a single repair, it shares a
+queue with the migration tracker, and its drain wait is the unbounded one. A
+targeted run sends one message and drains in seconds.
 
 It needs the Cloudflare credentials the deploy job used to assert, and
 `pnpm migrate:automation-agents` runs it in dry-run mode first, which inventories
-both regions and sends nothing. **Check the migration tracker before you start**:
-`avalon-<region>-migration-commands` is shared with its "Force a migration"
-fan-out, and a class-wide force running concurrently holds the backlog above zero
-so the drain loop waits on work that is not yours.
+both regions and sends nothing. If you do run it region-wide, **check the
+migration tracker before you start**: that queue is shared with its "Force a
+migration" fan-out, and a class-wide force running concurrently holds the backlog
+above zero so the drain loop waits on work that is not yours.
 
 The cutover is roll-forward only. A failed workspace command stays retryable from
 its WorkspaceDO campaign ledger; do not deploy an older Worker or recreate
@@ -905,12 +913,18 @@ them the same way: the delta across a run is the signal, the absolute number is
 history nobody has cleared. Never copy an EU payload into a Global fixture or
 diagnostic.
 
-What a member sees if their workspace is somehow still waiting: creating a new
-automation answers `503 automation_cutover_in_progress` — WorkspaceDO refuses to
-mint an automation id until its campaign row reads `completed` — and existing
-accepted automations keep running from their imported objects. So a report of "I
-can't make a new automation" is that gate, not a fault; check the region's
-command-queue backlog and campaign state before treating it as one.
+**A `503 automation_cutover_in_progress` is now a repair, not a wait.** While the
+cutover was running it meant "your turn is coming"; there is no cutover deploy
+any more, so today it means this workspace was carried over and never completed —
+exactly the stranded case the script above is retained for. WorkspaceDO refuses
+to mint an automation id until its campaign row reads `completed`, so a member
+reports "I can't make a new automation" while their existing accepted automations
+keep running from their imported objects. Confirm the campaign state, then run
+the targeted `--apply` for that workspace; do not wait it out. A workspace
+created after the cutover cannot produce this — `WorkspaceDO` seeds its campaign
+row as `completed` when it writes its identity — so this only ever names an
+object that predates 2026-08-28.
+
 Every other automation failure a person can hit has its own status and sentence
 in `apps/api/src/services/automation-agent-errors.ts`; a `500 internal_error`
 from an automation route means the object threw a code that table does not name,

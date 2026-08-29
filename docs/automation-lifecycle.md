@@ -533,8 +533,11 @@ the single-region refusal, the preflight ledger wake, and the `--apply` — are
 gone from `deploy-api.yml`, along with the two workflow tests that asserted
 their ordering and the release summary paragraph that asked for their removal.
 `scripts/cutover-automation-agents.mjs` stays, as an operator tool rather than
-a deploy step. The `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS` justification is
-corrected.
+a deploy step, and gains `--workspace=<id>` so that repairing one workspace is
+one message rather than a regional fan-out. The
+`AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS` justification is corrected, as is every
+neighbouring comment and document section that still described the script as
+something a deploy runs.
 
 **Why:** The cutover ran in production on 2026-08-28 and cannot run again
 meaningfully; every step above was written to be temporary. The refusal is the
@@ -561,8 +564,11 @@ a dead file and losing it strands any workspace the sweep missed.
 
 **Consequences:** A single-region deploy is possible again. Anyone reviving the
 script by hand needs the Cloudflare credentials the deploy job used to assert,
-and should check the migration tracker first — a forced migration running
-concurrently keeps the backlog above zero and the drain loop waits on it.
+and should name the workspace: a region-wide run wakes every WorkspaceDO in it,
+shares a queue with the migration tracker's force-migration fan-out, and is the
+case whose drain wait is unbounded. A `503 automation_cutover_in_progress` is no
+longer a wait — with no cutover deploy left it names a workspace that was
+carried over and never finished, and the targeted `--apply` is its repair.
 
 ### 2026-08-28 — One durable authority replaces the wizard and the subscription split
 
