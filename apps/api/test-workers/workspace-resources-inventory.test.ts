@@ -21,7 +21,7 @@ import { workspaceDOName } from "../src/durable-objects/names";
 import type { WorkspaceDO } from "../src/durable-objects/workspace-do";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ca0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ea0");
 const UPLOADER = asUserId("00000000-0000-7000-8000-000000000ca1");
 const OTHER_MEMBER = asUserId("00000000-0000-7000-8000-000000000ca2");
 const CONNECTION = "00000000-0000-7000-8000-000000000cc0";
@@ -546,7 +546,7 @@ describe("workspace identity", () => {
     // reports as an uncaught exception even when the test handles its own.
     await runInDurableObject(workspace(), async (instance: WorkspaceDO) => {
       const outcome = await instance.resourceExists({
-        workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000cae"),
+        workspaceId: asWorkspaceId("00000000-0000-7000-8000-000000000eae"),
         resourceId: "00000000-0000-7000-8000-00000000ffef",
       }).then(() => null, (error: unknown) => error);
       expect(String(outcome)).toContain("workspace_object_identity_mismatch");
