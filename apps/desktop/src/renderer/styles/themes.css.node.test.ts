@@ -245,10 +245,13 @@ describe('token references', () => {
     '--composer-line-height', '--composer-text-padding', '--system-message-lines',
     '--tw-fade-scrollbar-thumb', '--tw-fade-scrollbar-width', '--av-cmp-sidebar-width'];
 
-  // Set at runtime rather than in CSS: two by components as inline styles, three
+  // Set at runtime rather than in CSS: four by components as inline styles, three
   // by libraries on their own elements. They cannot be checked from this file,
-  // so they are listed to say they were considered.
+  // so they are listed to say they were considered. `--plugin-mark` carries one
+  // company's artwork as a mask URL, which is data rather than a colour and so
+  // is never a theme's to declare.
   const RUNTIME = ['--rail-width', '--person-accent', '--markdown-table-columns', '--arrival-index',
+    '--plugin-mark',
     '--radix-select-content-available-height', '--radix-select-trigger-width'];
 
   it('names only tokens the registry declares', () => {

@@ -260,6 +260,9 @@ importers:
       remark-gfm:
         specifier: 4.0.1
         version: 4.0.1
+      thesvg:
+        specifier: ^3.3.1
+        version: 3.3.1
       thinking-orbs:
         specifier: 0.2.0
         version: 0.2.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -2502,6 +2505,10 @@ packages:
         optional: true
       '@types/react-dom':
         optional: true
+
+  '@thesvg/icons@3.3.1':
+    resolution: {integrity: sha512-lEU5R2QEkUIeR52uklDtg+VETTKQSuho4h8lwnMiKsOH9fmpEAoKhNfP2AdWMsjEJgMyBc9iWvuY1v6WRoejlA==}
+    engines: {node: '>=18'}
 
   '@types/aria-query@5.0.4':
     resolution: {integrity: sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==}
@@ -4890,6 +4897,10 @@ packages:
 
   thenify@3.3.1:
     resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
+
+  thesvg@3.3.1:
+    resolution: {integrity: sha512-oMgEuNxcUQMdMOq3Di5kSLV7iIgOtFSE2a3yzKAewPoa92t6k2dB3Sh8Z9vfK144zT39XwK7sWg4RSm++7FHDw==}
+    engines: {node: '>=18'}
 
   thinking-orbs@0.2.0:
     resolution: {integrity: sha512-CQux/YsLlB9nY60BDpZ/uW7knAvXg+U2T/gzrzuLRw8xlzfJPLXZxAg2tbbIBGp/nE2Kol1GfbMOJnoH+tcb/A==}
@@ -7383,6 +7394,8 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.18
       '@types/react-dom': 19.2.5(@types/react@19.2.18)
+
+  '@thesvg/icons@3.3.1': {}
 
   '@types/aria-query@5.0.4': {}
 
@@ -10292,6 +10305,10 @@ snapshots:
   thenify@3.3.1:
     dependencies:
       any-promise: 1.3.0
+
+  thesvg@3.3.1:
+    dependencies:
+      '@thesvg/icons': 3.3.1
 
   thinking-orbs@0.2.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:

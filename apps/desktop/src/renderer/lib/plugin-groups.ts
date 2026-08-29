@@ -1,13 +1,37 @@
 import type { AutomationPluginIcon } from '@rally/contracts';
+import type { PluginBrandMark } from './plugin-marks';
 
 /**
- * The glyph a grouped activity row draws.
+ * The glyph a plugin row draws.
  *
- * The connector icons are the contract's, so a connector that already declares
- * one keeps it. The two extra marks belong to the virtual groups below, which
- * no connector owns and the backend therefore never names.
+ * A brand draws its own mark, from `plugin-marks.ts`. The rest are the shapes
+ * no company owns: the two virtual groups, the public web, an unbranded
+ * webhook, and the plug a connector with no mark of its own falls back to.
  */
-export type PluginGroupIcon = AutomationPluginIcon | 'computer' | 'rally';
+export type PluginGroupIcon = PluginBrandMark | 'computer' | 'plug' | 'rally' | 'web' | 'webhook';
+
+/**
+ * The glyph for one of the backend's own icon names.
+ *
+ * The contract enum is what a live tool-invocation row and the automation draft
+ * wizard carry, and it predates this vocabulary: it calls a Drive mark
+ * `brand-google-drive` and a web search `world-search`. Translating rather than
+ * widening the contract keeps the glyph a presentation decision — and the
+ * contract has no name at all for X, whose mark this renderer can now draw.
+ */
+export function pluginGroupIconForContract(icon: AutomationPluginIcon): PluginGroupIcon {
+  switch (icon) {
+    case 'brand-github': return 'github';
+    case 'brand-google': return 'google';
+    case 'brand-google-drive': return 'google-drive';
+    case 'brand-notion': return 'notion';
+    case 'brand-slack': return 'slack';
+    case 'linear': return 'linear';
+    case 'webhook': return 'webhook';
+    case 'world-search': return 'web';
+    case 'plug': return 'plug';
+  }
+}
 
 export interface PluginGroup {
   /** Two plugins that share this key share one row. */
@@ -60,19 +84,26 @@ function isUnnamedFirstPartyPlugin(pluginId: string, displayName: string | undef
  * — `connection:<uuid>` — which says nothing about which service it is, and
  * the icon the backend does resolve travels only on the live tool-invocation
  * row. So the name is the signal here, and it is a stable one: these are
- * manifest strings, not user input. It mirrors the backend's own mapping in
- * `connectorAutomationPluginIcon`, including that Granola and X have adapters
- * but no brand glyph and so share the generic plug.
+ * manifest strings, not user input.
+ *
+ * Every connector Rally has an adapter for is named here, because every one of
+ * them has a mark in `thesvg`. The plug is for a connector that arrives before
+ * this list learns about it — the case to keep working, not the case to design
+ * for.
  */
 function connectorIconForName(displayName: string): PluginGroupIcon {
   const name = displayName.toLowerCase();
-  if (name.startsWith('google')) return name.includes('drive') ? 'brand-google-drive' : 'brand-google';
-  if (name.startsWith('slack')) return 'brand-slack';
-  if (name.startsWith('github')) return 'brand-github';
-  if (name.startsWith('notion')) return 'brand-notion';
+  if (name.startsWith('google')) return name.includes('drive') ? 'google-drive' : 'google';
+  if (name.startsWith('slack')) return 'slack';
+  if (name.startsWith('github')) return 'github';
+  if (name.startsWith('notion')) return 'notion';
   if (name.startsWith('linear')) return 'linear';
+  if (name.startsWith('granola')) return 'granola';
+  // Exactly "X", which is the connector's whole manifest name. A prefix match
+  // on one letter would claim every later connector that starts with it.
+  if (name === 'x') return 'x';
   if (name.includes('webhook')) return 'webhook';
-  if (name.startsWith('web')) return 'world-search';
+  if (name.startsWith('web')) return 'web';
   return 'plug';
 }
 
