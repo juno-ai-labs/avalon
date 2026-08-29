@@ -488,7 +488,7 @@ describe('Workspace settings', () => {
     // connecting produced: both reach it from the connector's own type.
     const card = screen.getByText('Slack').closest('.provider-card');
     const cardMark = card?.querySelector('.connector-mark');
-    expect(cardMark?.getAttribute('style')).toBe(rowMark?.getAttribute('style'));
+    expect(cardMark?.innerHTML).toBe(rowMark?.innerHTML);
 
     // Each mark carries `connector-mark` and nothing else. A second class here
     // is how the sizes went dead: a bare `.provider-mark` ties `.connector-mark`

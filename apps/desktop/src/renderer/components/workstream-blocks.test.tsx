@@ -1089,17 +1089,17 @@ describe('MessageBlock plugin activity rows', () => {
     expect(screen.getByRole('img', { name: 'Plugin: Slack' })).not.toHaveClass('plugin-face-active');
   });
 
-  it('paints a company mark through a mask so it takes the row\'s own colour', () => {
-    // A brand's palette never reaches the document: the mask reads the
-    // artwork's alpha and `currentColor` fills it, which is what keeps eight
+  it('draws a company mark in the row\'s own colour, as real markup', () => {
+    // The mark is a React component, so nothing is injected as HTML, and the
+    // monochrome variant paints in `currentColor` — which is what keeps eight
     // companies legible on four grounds without per-theme artwork.
     const { container } = render(<MessageBlock {...actions} message={pluginRow('message-granola', {
       groupKey: 'name:Granola', name: 'Granola', icon: 'granola', active: false, durationMs: 3_000,
     })} />);
 
-    const mark = container.querySelector('.plugin-face-mark');
-    expect(mark?.getAttribute('style')).toContain('data:image/svg+xml');
-    expect(container.querySelector('svg')).toBeNull();
+    const mark = container.querySelector('.plugin-face-mark.connector-mark');
+    expect(mark?.querySelector('svg')).toBeTruthy();
+    expect(mark?.innerHTML).not.toContain('data:image/svg+xml');
   });
 
   it('gives the virtual groups their own names and marks', () => {

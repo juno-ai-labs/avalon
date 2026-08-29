@@ -533,8 +533,9 @@ describe('company mark sizing', () => {
 
     expect(markRules.length).toBeGreaterThan(1);
     for (const prelude of markRules) {
-      // The shared default is the one rule allowed to be a bare class.
-      if (prelude === '.connector-mark') continue;
+      // The shared default and its own descendants are the rules allowed to
+      // lead with the class; a *surface* override is what has to out-specify.
+      if (prelude.startsWith('.connector-mark')) continue;
       expect(prelude, `${prelude} ties .connector-mark and loses on order`)
         .toMatch(/\.[a-z-]+\s+\.connector-mark/u);
     }

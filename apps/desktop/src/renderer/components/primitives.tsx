@@ -24,23 +24,25 @@ export function RallyMark({ className }: { className?: string }): React.JSX.Elem
 }
 
 /**
- * A company's mark, painted as `currentColor` through the artwork's own alpha.
+ * A company's mark, drawn in the surrounding text's own colour.
  *
  * Every surface that draws a connector draws it through here, so the mark, its
- * colour, and the way it is put on the page are decided once. Nothing about a
- * brand's palette reaches the document — see `lib/plugin-marks.ts` for why the
- * artwork is a mask rather than markup.
+ * colour, and the way it is put on the page are decided once.
+ *
+ * `variant="mono"` is the package's own single-colour art, which paints in
+ * `currentColor`. Two brands ship no `mono` and fall back to their colour art,
+ * so `.connector-mark` recolours any painted shape inside — see the rule beside
+ * it. Nothing here reads a theme: one neutral covers all four.
  */
 export function ConnectorMark({ className, mark }: {
   className?: string;
   mark: PluginBrandMark;
 }): React.JSX.Element {
+  const brand = PLUGIN_BRAND_MARKS[mark];
   return (
-    <span
-      aria-hidden="true"
-      className={clsx('connector-mark', className)}
-      style={{ '--plugin-mark': PLUGIN_BRAND_MARKS[mark] } as React.CSSProperties}
-    />
+    <span aria-hidden="true" className={clsx('connector-mark', className)}>
+      {brand.mono ? <brand.Mark variant="mono" /> : <brand.Mark />}
+    </span>
   );
 }
 
