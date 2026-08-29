@@ -8,15 +8,18 @@
  */
 import { asUserId, asWorkspaceId, ResourceRevisionSchema } from "@rally/contracts";
 import { z } from "zod";
-import type { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AuthContext } from "../src/env";
+import type { AuthContext, Env } from "../src/env";
 import { sha256Hex } from "../src/lib/crypto";
 import { ResourceService } from "../src/services/resource-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
-import { workspaceObjectSqliteDatabase } from "./helpers/workspace-object-tables";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const workspaceId = asWorkspaceId("00000000-0000-7000-8000-0000000000c1");
 const userId = asUserId("00000000-0000-7000-8000-0000000000c2");
@@ -35,22 +38,40 @@ const auth: AuthContext = {
 const open: DatabaseSync[] = [];
 afterEach(() => { for (const database of open.splice(0)) database.close(); });
 
-function fixture(): DatabaseSync {
-  const database = workspaceObjectSqliteDatabase(workspaceId);
-  open.push(database);
-  return database;
-}
-
-function environmentFor(database: DatabaseSync, stored = new Map<string, string>()) {
-  return createTestEnv({
-    AVALON_REGION: "global",
-    MAX_ATTACHMENT_BYTES: "25000000",
-    DB: sqliteD1(database),
-    PAYLOADS: {
-      async put(key: string, value: string) { stored.set(key, value); },
-      async delete(key: string) { stored.delete(key); },
-    },
+function fixture(stored = new Map<string, string>()): { database: DatabaseSync; env: Env } {
+  const regional = new DatabaseSync(":memory:");
+  open.push(regional);
+  // A real WorkspaceDO over its own ledger schema: the swap sites are typed
+  // methods on the object, and the capture their writes drive is its triggers.
+  const workspaceObject = createTestWorkspaceDO({
+    workspaceId,
+    regionalDatabase: regional,
+    register: (created) => { open.push(created); },
   });
+  return {
+    database: workspaceObject.objectDatabase,
+    env: createTestEnv({
+      AVALON_REGION: "global",
+      APP_ENV: "test",
+      MAX_ATTACHMENT_BYTES: "25000000",
+      SESSION_SIGNING_KEY: "0".repeat(64),
+      DB: sqliteD1(regional),
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspaceObject.instance, [
+        "resourceExists",
+        "createUploadDraftResource",
+        "refreshResourceHydration",
+        "publishResourceHydration",
+        "listResourceVersions",
+        "claimResourceSlug",
+        // The connection/note visibility joins still ride the runtime port.
+        "executeRuntimeSql",
+      ]),
+      PAYLOADS: {
+        async put(key: string, value: string) { stored.set(key, value); },
+        async delete(key: string) { stored.delete(key); },
+      },
+    }),
+  };
 }
 
 function seedConnectorResource(database: DatabaseSync, contentSha256 = "1".repeat(64)): void {
@@ -87,8 +108,8 @@ function hydrationRegistry(value: unknown): NonNullable<ConstructorParameters<ty
 
 describe("resource version provenance", () => {
   it("attributes an uploaded draft's first version to the member who uploaded it", async () => {
-    const database = fixture();
-    const service = new ResourceService(environmentFor(database), auth);
+    const { database, env } = fixture();
+    const service = new ResourceService(env, auth);
 
     await service.upload(new File(["hello"], "notes.txt", { type: "text/plain" }), undefined, draftId);
 
@@ -99,13 +120,9 @@ describe("resource version provenance", () => {
   });
 
   it("attributes a connector re-fetch to the connection that served it", async () => {
-    const database = fixture();
+    const { database, env } = fixture();
     seedConnectorResource(database);
-    const service = new ResourceService(
-      environmentFor(database),
-      auth,
-      hydrationRegistry({ revision: 2 }),
-    );
+    const service = new ResourceService(env, auth, hydrationRegistry({ revision: 2 }));
 
     await service.hydrate(resourceId);
 
@@ -125,12 +142,12 @@ describe("resource version provenance", () => {
   });
 
   it("reports history that predates provenance as unattributed rather than guessing", async () => {
-    const database = fixture();
+    const { database, env } = fixture();
     seedConnectorResource(database);
     // What an object upgraded through the provenance migration holds: rows
     // recording which pointers a state had, and nothing about who moved them.
     database.exec("UPDATE resource_versions SET author_kind = NULL, author_connection_id = NULL, cause = NULL");
-    const service = new ResourceService(environmentFor(database), auth);
+    const service = new ResourceService(env, auth);
 
     await expect(service.versions(resourceId)).resolves.toMatchObject([
       { version: 1, author: null, cause: null, storageKind: "object" },
@@ -138,16 +155,12 @@ describe("resource version provenance", () => {
   });
 
   it("attributes a re-fetch that resolved to the same bytes to the same connection", async () => {
-    const database = fixture();
+    const { database, env } = fixture();
     // Seeded already holding the bytes the connector is about to return, so
     // the service takes its unchanged-content branch. A re-observation is
     // still a new state of the resource, and it is still the connector's.
     seedConnectorResource(database, await sha256Hex(JSON.stringify({ revision: 2 })));
-    const service = new ResourceService(
-      environmentFor(database),
-      auth,
-      hydrationRegistry({ revision: 2 }),
-    );
+    const service = new ResourceService(env, auth, hydrationRegistry({ revision: 2 }));
 
     await service.hydrate(resourceId);
 
@@ -158,10 +171,10 @@ describe("resource version provenance", () => {
   });
 
   it("projects a history the route's own contract accepts, unattributed rows included", async () => {
-    const database = fixture();
+    const { database, env } = fixture();
     seedConnectorResource(database);
     database.exec("UPDATE resource_versions SET author_kind = NULL, author_connection_id = NULL, cause = NULL");
-    const service = new ResourceService(environmentFor(database), auth);
+    const service = new ResourceService(env, auth);
 
     // `GET /resources/:id/versions` parses what this returns before answering.
     // A projection the contract rejects is not a missing field on one row — it
@@ -171,13 +184,13 @@ describe("resource version provenance", () => {
   });
 
   it("reports one unreadable identity as unattributed rather than failing the whole history", async () => {
-    const database = fixture();
+    const { database, env } = fixture();
     seedConnectorResource(database);
     // Not reachable through the fence, which refuses this on insert — reachable
     // through a row that predates it. One bad row must not take the history
     // the rail is asking for down with it.
     database.exec("UPDATE resource_versions SET author_connection_id = 'not-an-id' WHERE version = 1");
-    const service = new ResourceService(environmentFor(database), auth);
+    const service = new ResourceService(env, auth);
 
     const projected = await service.versions(resourceId);
     expect(z.array(ResourceRevisionSchema).parse(projected)).toMatchObject([{ version: 1, author: null }]);
