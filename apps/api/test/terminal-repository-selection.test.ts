@@ -16,7 +16,12 @@ import {
 } from "../src/services/terminal/workstream-state";
 import { withWorkspaceRuntimeDatabase } from "../src/services/workspace-runtime-database";
 import type { WorkstreamRuntimeResourceAttachment } from "../src/services/workstream-object-client";
+import type { DatabaseSync } from "node:sqlite";
 import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 import {
   openWorkstreamAuthorityForTest,
   seedWorkstreamObjectRoot,
@@ -39,10 +44,12 @@ const R = "71000000-0000-4000-8000-000000000004";
 const PERSONAL = "71000000-0000-4000-8000-000000000005";
 const WORKSPACE = "71000000-0000-4000-8000-000000000006";
 const databases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
+const objectDatabases: DatabaseSync[] = [];
 
 afterEach(() => {
   vi.unstubAllGlobals();
   for (const database of databases.splice(0)) database.close();
+  for (const database of objectDatabases.splice(0)) database.close();
 });
 
 async function fixture(input?: {
@@ -208,6 +215,12 @@ async function fixture(input?: {
         }),
       },
     }),
+    // The coordinator asks the object for the workspace's network policy.
+    WORKSPACE_DOS: testWorkspaceObjectBinding(createTestWorkspaceDO({
+      workspaceId: W,
+      regionalDatabase: database,
+      register: (created) => { objectDatabases.push(created); },
+    }).instance, ["terminalNetworkSettings"]),
   });
   const env = baseEnv;
   const context: HarnessToolContext = {
@@ -232,7 +245,7 @@ async function fixture(input?: {
       provider,
       catalog,
       new TerminalSandboxCoordinator(
-        env.DB,
+        env,
         testTerminalPortFactory(objectStore),
         testResourcePortFactory(objectStore),
         provider,

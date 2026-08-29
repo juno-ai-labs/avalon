@@ -11,6 +11,10 @@ import { errorHandler } from "../src/middleware/errors";
 import { workspaceRoutes } from "../src/routes/workspace";
 import { workstreamRoutes } from "../src/routes/workstreams";
 import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createTestWorkspaceDO,
+  workspaceObjectRpcs,
+} from "./helpers/workspace-object-rpcs";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import type { DatabaseSync } from "node:sqlite";
 import {
@@ -26,8 +30,12 @@ const W = asWorkspaceId("72000000-0000-4000-8000-000000000001");
 const S = "72000000-0000-4000-8000-000000000002";
 const U = asUserId("72000000-0000-4000-8000-000000000003");
 const databases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
+const objectDatabases: DatabaseSync[] = [];
 
-afterEach(() => { for (const database of databases.splice(0)) database.close(); });
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+  for (const database of objectDatabases.splice(0)) database.close();
+});
 
 function fixture(options: { authenticated?: boolean; role?: "owner" | "member" } = {}): { app: Hono<HonoAppEnv>; env: Env } {
   const database = preRetirementProductSqliteDatabase();
@@ -69,6 +77,20 @@ function fixture(options: { authenticated?: boolean; role?: "owner" | "member" }
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
+        // A real WorkspaceDO decides the network policy, so the route test
+        // exercises the object's revision fencing rather than a stand-in.
+        ...workspaceObjectRpcs(createTestWorkspaceDO({
+          workspaceId: W,
+          regionalDatabase: database,
+          register: (created) => { objectDatabases.push(created); },
+        }).instance, [
+          "terminalNetworkSettings",
+          "terminalNetworkMode",
+          "recordTerminalPolicyPreview",
+          "claimTerminalPolicyApplication",
+          "failTerminalPolicyApplication",
+          "commitTerminalPolicyApplication",
+        ]),
         canReadWorkstream: async () => true,
         listWorkstreams: async () => ({
           items: [testWorkstreamContract({

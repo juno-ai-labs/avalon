@@ -12,6 +12,14 @@ import type { AuthContext, Env } from "../../env";
 import { ApiError } from "../../lib/api-error";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
+import { workspaceDOName } from "../../durable-objects/names";
+import {
+  WorkspaceTerminalNetworkSettingsSchema,
+  WorkspaceTerminalPolicyClaimResultSchema,
+  type WorkspaceTerminalNetworkPolicy,
+} from "../../durable-objects/workspace-terminal-network-protocol";
+import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
+import { asWorkspaceId } from "@rally/contracts";
 import { parseTerminalRegionConfiguration } from "./contract";
 import type { TerminalSandboxProvider } from "./daytona-provider";
 import { createTerminalFinalDiffPreserver } from "./lifecycle";
@@ -27,24 +35,6 @@ import {
 
 type PreviewInput = z.infer<typeof PreviewTerminalNetworkPolicyRequestSchema>;
 type ApplyInput = z.infer<typeof ApplyTerminalNetworkPolicyRequestSchema>;
-
-interface PolicyRow {
-  mode: TerminalNetworkMode;
-  revision: number;
-  verification_state: "pending" | "verified" | "failed";
-  baseline_manifest_version: string;
-  failure_code: string | null;
-}
-
-interface MutationRow {
-  id: string;
-  expected_revision: number;
-  proposed_mode: TerminalNetworkMode;
-  proposed_domains_json: string;
-  effective_domains_json: string;
-  affected_sandboxes_json: string;
-  state: "preview" | "pending" | "verified" | "failed" | "conflict";
-}
 
 interface SandboxRow {
   workstream_id: string;
@@ -64,15 +54,22 @@ export class TerminalSettingsService {
     auth: AuthContext,
     provider: TerminalSandboxProvider | null,
   ) {
+    // Still routed, deliberately. The policy statements left `env.DB` for typed
+    // methods, but this service is not the only thing that reads it: `apply`
+    // hands this environment to `createTerminalFinalDiffPreserver`, which
+    // writes `resources` and `resource_object_deletion_outbox` through
+    // `env.DB`. Both are WorkspaceDO tables that migration 0090 dropped from
+    // regional D1, so an unrouted handle turns a policy change made while any
+    // sandbox holds a diff into `no such table` — the same routing defect this
+    // change exists to remove, arriving from the other side.
     this.env = withWorkspaceRuntimeDatabase(env, auth.workspaceId);
     this.auth = auth;
     this.provider = provider;
   }
 
   async get(): Promise<TerminalWorkspaceSettings> {
-    const policy = await this.loadOrCreatePolicy();
-    const domains = await this.customDomains();
-    const compiled = compileTerminalNetworkPolicy(policy.mode, domains);
+    const { policy, customDomains } = await this.settings();
+    const compiled = compileTerminalNetworkPolicy(policy.mode, customDomains);
     const configuration = parseTerminalRegionConfiguration(this.env);
     return {
       availability: configuration.capability === "unsupported"
@@ -80,17 +77,17 @@ export class TerminalSettingsService {
         : configuration.emergencyDisabled ? "emergency_disabled" : "supported",
       mode: policy.mode,
       revision: policy.revision,
-      verificationState: policy.verification_state,
+      verificationState: policy.verificationState,
       customDomains: compiled.customDomains,
       remainingCustomSlots: compiled.remainingCustomSlots,
-      failureCode: policy.failure_code,
+      failureCode: policy.failureCode,
     };
   }
 
   async preview(input: PreviewInput): Promise<TerminalNetworkPolicyPreview> {
     this.requireAdmin();
-    const policy = await this.loadOrCreatePolicy();
-    if (policy.verification_state !== "verified") {
+    const { policy, customDomains: currentDomains } = await this.settings();
+    if (policy.verificationState !== "verified") {
       throw new ApiError(409, "terminal_policy_application_pending", "A Terminal network policy change is still being reconciled. Reload settings after it finishes.");
     }
     if (policy.revision !== input.expectedRevision) {
@@ -107,7 +104,7 @@ export class TerminalSettingsService {
     } catch (error) {
       throw new ApiError(422, "invalid_terminal_network_policy", error instanceof Error ? error.message : "The Terminal network policy is invalid");
     }
-    const currentCompiled = compileTerminalNetworkPolicy(policy.mode, await this.customDomains());
+    const currentCompiled = compileTerminalNetworkPolicy(policy.mode, currentDomains);
     if (
       policy.mode === input.mode
       && currentCompiled.customDomains.join("\n") === compiled.customDomains.join("\n")
@@ -118,24 +115,17 @@ export class TerminalSettingsService {
     const affectedWorkstreamIds = sandboxes.map((sandbox) => sandbox.workstream_id);
     const mutationId = newId();
     const timestamp = nowIso();
-    await this.env.DB.prepare(
-      `INSERT INTO workspace_sandbox_network_policy_mutations
-       (id, workspace_id, expected_revision, proposed_mode, proposed_domains_json,
-        effective_domains_json, affected_sandboxes_json, state, requested_by_user_id,
-        created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'preview', ?, ?, ?)`,
-    ).bind(
+    await (await this.workspace()).recordTerminalPolicyPreview({
+      workspaceId: this.auth.workspaceId,
       mutationId,
-      this.auth.workspaceId,
-      input.expectedRevision,
-      input.mode,
-      JSON.stringify(compiled.customDomains),
-      JSON.stringify(compiled.effectiveDomains),
-      JSON.stringify(affectedWorkstreamIds),
-      this.auth.userId,
-      timestamp,
-      timestamp,
-    ).run();
+      requestedByUserId: this.auth.userId,
+      expectedRevision: input.expectedRevision,
+      proposedMode: input.mode,
+      proposedDomains: compiled.customDomains,
+      effectiveDomains: compiled.effectiveDomains,
+      affectedWorkstreamIds,
+      at: timestamp,
+    });
     return {
       mutationId,
       expectedRevision: input.expectedRevision,
@@ -152,49 +142,38 @@ export class TerminalSettingsService {
 
   async apply(input: ApplyInput): Promise<TerminalWorkspaceSettings> {
     this.requireAdmin();
-    const mutation = await this.env.DB.prepare(
-      `SELECT id, expected_revision, proposed_mode, proposed_domains_json,
-              effective_domains_json, affected_sandboxes_json, state
-         FROM workspace_sandbox_network_policy_mutations
-        WHERE workspace_id = ? AND id = ? AND requested_by_user_id = ?`,
-    ).bind(this.auth.workspaceId, input.mutationId, this.auth.userId).first<MutationRow>();
-    if (!mutation || mutation.state !== "preview" || mutation.expected_revision !== input.expectedRevision) {
+    const timestamp = nowIso();
+    // One claim rather than four statements. Reading the preview, checking the
+    // revision, taking the policy row and taking the preview row are a single
+    // transaction inside the object, so there is no window where the policy is
+    // `pending` with nobody applying anything — which is what the old
+    // `restoreCurrentPolicy` compensation existed to clean up, and which a
+    // failing compensation could leave behind anyway.
+    const claim = WorkspaceTerminalPolicyClaimResultSchema.parse(
+      await (await this.workspace()).claimTerminalPolicyApplication({
+        workspaceId: this.auth.workspaceId,
+        mutationId: input.mutationId,
+        requestedByUserId: this.auth.userId,
+        expectedRevision: input.expectedRevision,
+        at: timestamp,
+      }),
+    );
+    if (claim.outcome === "preview_stale") {
       throw new ApiError(409, "terminal_policy_preview_stale", "This preview is no longer current. Reload settings and preview the policy again before confirming.");
     }
-    const current = await this.loadOrCreatePolicy();
-    if (current.revision !== input.expectedRevision) {
-      await this.markMutation(mutation.id, "conflict", "revision_conflict");
+    if (claim.outcome === "revision_conflict") {
       throw new ApiError(409, "terminal_policy_revision_conflict", "The Terminal network policy changed; reload settings and preview the policy again.");
     }
-    const customDomains = JSON.parse(mutation.proposed_domains_json) as string[];
-    const effectiveDomains = JSON.parse(mutation.effective_domains_json) as string[];
-    const previousCustomDomains = await this.customDomains();
+    const { mutation, current } = claim;
+    const customDomains = mutation.proposedDomains;
+    const effectiveDomains = mutation.effectiveDomains;
+    const previousCustomDomains = claim.currentCustomDomains;
     const currentDomains = compileTerminalNetworkPolicy(current.mode, previousCustomDomains).effectiveDomains;
     const resultingRevision = current.revision + 1;
-    const timestamp = nowIso();
-    const claimed = await this.env.DB.prepare(
-      `UPDATE workspace_sandbox_network_policies
-          SET verification_state = 'pending', failure_code = NULL, updated_at = ?
-        WHERE workspace_id = ? AND revision = ? AND verification_state = 'verified'
-        RETURNING revision`,
-    ).bind(timestamp, this.auth.workspaceId, input.expectedRevision).first<{ revision: number }>();
-    if (!claimed) {
-      throw new ApiError(409, "terminal_policy_revision_conflict", "The Terminal network policy changed; reload settings and preview the policy again.");
-    }
-    const mutationClaimed = await this.env.DB.prepare(
-      `UPDATE workspace_sandbox_network_policy_mutations
-          SET state = 'pending', resulting_revision = ?, confirmed_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND id = ? AND state = 'preview'
-        RETURNING id`,
-    ).bind(resultingRevision, timestamp, timestamp, this.auth.workspaceId, mutation.id).first<{ id: string }>();
-    if (!mutationClaimed) {
-      await this.restoreCurrentPolicy(current, "preview_stale");
-      throw new ApiError(409, "terminal_policy_preview_stale", "This preview is no longer current. Reload settings and preview the policy again before confirming.");
-    }
 
     const affected = await this.loadActiveSandboxes();
     if (affected.length > 0 && !this.provider) {
-      await this.failApplication(mutation.id, current, "terminal_provider_unavailable");
+      await this.failApplication(input.mutationId, current, "terminal_provider_unavailable");
       throw new ApiError(503, "terminal_provider_unavailable", "Terminal is unavailable in this region, so active sandbox network policy cannot be changed.");
     }
 
@@ -265,13 +244,13 @@ export class TerminalSettingsService {
     }
 
     if (failures.length === 0) {
-      const expected = mutation.proposed_mode === "trusted_only" ? [...effectiveDomains].sort() : [];
+      const expected = mutation.proposedMode === "trusted_only" ? [...effectiveDomains].sort() : [];
       for (const sandbox of affected) {
         if (deleted.has(sandbox.workstream_id)) continue;
         try {
           await this.provider!.updateNetworkPolicy(
             sandbox.provider_sandbox_id,
-            mutation.proposed_mode === "trusted_only" ? effectiveDomains : null,
+            mutation.proposedMode === "trusted_only" ? effectiveDomains : null,
           );
           const observed = await this.provider!.getSandbox(sandbox.provider_sandbox_id);
           if (observed.domainAllowList.slice().sort().join("\n") !== expected.join("\n")) throw new Error("provider_policy_mismatch");
@@ -311,7 +290,7 @@ export class TerminalSettingsService {
           }).catch(() => undefined);
         }
       }
-      await this.failApplication(mutation.id, current, "provider_policy_mismatch");
+      await this.failApplication(input.mutationId, current, "provider_policy_mismatch");
       throw new ApiError(502, "terminal_policy_verification_failed", "Daytona did not confirm the requested network policy. Rally stopped or quarantined every affected sandbox and kept the last verified policy; retry the settings change or contact support.", {
         reason: failures.slice(0, 10).join("; "),
         sandboxOutcomes: affected.slice(0, 100).map((sandbox) => ({
@@ -327,13 +306,6 @@ export class TerminalSettingsService {
       });
     }
 
-    const domainDeletes = this.env.DB.prepare(
-      "DELETE FROM workspace_sandbox_network_domains WHERE workspace_id = ?",
-    ).bind(this.auth.workspaceId);
-    const domainInserts = customDomains.map((domain) => this.env.DB.prepare(
-      `INSERT INTO workspace_sandbox_network_domains
-       (workspace_id, domain, created_by_user_id, created_at) VALUES (?, ?, ?, ?)`,
-    ).bind(this.auth.workspaceId, domain, this.auth.userId, timestamp));
     for (const sandbox of affected.filter((entry) => !deleted.has(entry.workstream_id))) {
       await createTerminalPortFactory(this.env)(
         this.auth.workspaceId,
@@ -349,25 +321,17 @@ export class TerminalSettingsService {
         now: Date.parse(timestamp),
       });
     }
-    await this.env.DB.batch([
-      domainDeletes,
-      ...domainInserts,
-      this.env.DB.prepare(
-        `UPDATE workspace_sandbox_network_policies
-            SET mode = ?, revision = ?, verification_state = 'verified',
-                effective_domains_json = ?, failure_code = NULL,
-                last_verified_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND revision = ? AND verification_state = 'pending'`,
-      ).bind(
-        mutation.proposed_mode, resultingRevision, JSON.stringify(effectiveDomains), timestamp,
-        timestamp, this.auth.workspaceId, current.revision,
-      ),
-      this.env.DB.prepare(
-        `UPDATE workspace_sandbox_network_policy_mutations
-            SET state = 'verified', completed_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND id = ? AND state = 'pending'`,
-      ).bind(timestamp, timestamp, this.auth.workspaceId, mutation.id),
-    ]);
+    await (await this.workspace()).commitTerminalPolicyApplication({
+      workspaceId: this.auth.workspaceId,
+      mutationId: input.mutationId,
+      createdByUserId: this.auth.userId,
+      mode: mutation.proposedMode,
+      claimedRevision: current.revision,
+      resultingRevision,
+      customDomains,
+      effectiveDomains,
+      at: timestamp,
+    });
     const telemetryMode = (mode: TerminalNetworkMode, domains: string[]) => mode === "full_internet"
       ? "unrestricted" as const
       : domains.length > 0 ? "custom" as const : "restricted" as const;
@@ -377,13 +341,13 @@ export class TerminalSettingsService {
       name: "terminal_policy_changed",
       properties: {
         previousMode: telemetryMode(current.mode, previousCustomDomains),
-        appliedMode: telemetryMode(mutation.proposed_mode, customDomains),
+        appliedMode: telemetryMode(mutation.proposedMode, customDomains),
         customDomainCount: telemetryCountBucket(customDomains.length),
         activeSandboxCount: telemetryCountBucket(affected.length),
         result: "success",
       },
-      operationId: mutation.id,
-      eventId: mutation.id,
+      operationId: input.mutationId,
+      eventId: input.mutationId,
     }).catch(() => undefined);
     return this.get();
   }
@@ -424,28 +388,18 @@ export class TerminalSettingsService {
     return rows;
   }
 
-  private async restoreCurrentPolicy(current: PolicyRow, failureCode: string): Promise<void> {
-    await this.env.DB.prepare(
-      `UPDATE workspace_sandbox_network_policies
-          SET verification_state = 'verified', failure_code = ?, updated_at = ?
-        WHERE workspace_id = ? AND revision = ?`,
-    ).bind(failureCode, nowIso(), this.auth.workspaceId, current.revision).run();
-  }
-
-  private async failApplication(mutationId: string, current: PolicyRow, failureCode: string): Promise<void> {
-    const timestamp = nowIso();
-    await this.env.DB.batch([
-      this.env.DB.prepare(
-        `UPDATE workspace_sandbox_network_policies
-            SET verification_state = 'verified', failure_code = ?, updated_at = ?
-          WHERE workspace_id = ? AND revision = ?`,
-      ).bind(failureCode, timestamp, this.auth.workspaceId, current.revision),
-      this.env.DB.prepare(
-        `UPDATE workspace_sandbox_network_policy_mutations
-            SET state = 'failed', failure_code = ?, completed_at = ?, updated_at = ?
-          WHERE workspace_id = ? AND id = ?`,
-      ).bind(failureCode, timestamp, timestamp, this.auth.workspaceId, mutationId),
-    ]);
+  private async failApplication(
+    mutationId: string,
+    current: WorkspaceTerminalNetworkPolicy,
+    failureCode: string,
+  ): Promise<void> {
+    await (await this.workspace()).failTerminalPolicyApplication({
+      workspaceId: this.auth.workspaceId,
+      mutationId,
+      revision: current.revision,
+      failureCode,
+      at: nowIso(),
+    });
   }
 
   private requireAdmin(): void {
@@ -454,43 +408,35 @@ export class TerminalSettingsService {
     }
   }
 
-  private async loadOrCreatePolicy(): Promise<PolicyRow> {
-    const compiled = compileTerminalNetworkPolicy("trusted_only", []);
-    const timestamp = nowIso();
-    await this.env.DB.prepare(
-      `INSERT INTO workspace_sandbox_network_policies
-       (workspace_id, mode, revision, verification_state, baseline_manifest_version,
-        effective_domains_json, last_verified_at, created_at, updated_at)
-       VALUES (?, 'trusted_only', 1, 'verified', ?, ?, ?, ?, ?)
-       ON CONFLICT(workspace_id) DO NOTHING`,
-    ).bind(
-      this.auth.workspaceId,
-      TERMINAL_NETWORK_MANIFEST_VERSION,
-      JSON.stringify(compiled.effectiveDomains),
-      timestamp,
-      timestamp,
-      timestamp,
-    ).run();
-    const row = await this.env.DB.prepare(
-      `SELECT mode, revision, verification_state, baseline_manifest_version, failure_code
-         FROM workspace_sandbox_network_policies WHERE workspace_id = ?`,
-    ).bind(this.auth.workspaceId).first<PolicyRow>();
-    if (!row) throw new Error("Unable to initialize Terminal network settings");
-    return row;
+  /** The WorkspaceDO that owns this workspace's Terminal network policy. */
+  private workspace() {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(this.auth.workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(this.auth.workspaceId)),
+    );
   }
 
-  private async customDomains(): Promise<string[]> {
-    const rows = await this.env.DB.prepare(
-      "SELECT domain FROM workspace_sandbox_network_domains WHERE workspace_id = ? ORDER BY domain",
-    ).bind(this.auth.workspaceId).all<{ domain: string }>();
-    return (rows.results ?? []).map((row) => row.domain);
+  /**
+   * The policy and its domains, in one question.
+   *
+   * They were two statements and every caller wanted both: the policy alone
+   * cannot be compiled into what a person sees. The object creates the
+   * workspace's default row if this is the first read.
+   */
+  private async settings() {
+    // Parsed here rather than trusting the return type: the value crossed an
+    // RPC boundary, and the object it came from may be running an older
+    // deployment than this Worker.
+    return WorkspaceTerminalNetworkSettingsSchema.parse(
+      await (await this.workspace()).terminalNetworkSettings({
+        workspaceId: this.auth.workspaceId,
+        baselineManifestVersion: TERMINAL_NETWORK_MANIFEST_VERSION,
+        defaultEffectiveDomains: compileTerminalNetworkPolicy("trusted_only", []).effectiveDomains,
+        at: nowIso(),
+      }),
+    );
   }
 
-  private async markMutation(id: string, state: "conflict" | "failed", failureCode: string): Promise<void> {
-    await this.env.DB.prepare(
-      `UPDATE workspace_sandbox_network_policy_mutations
-          SET state = ?, failure_code = ?, completed_at = ?, updated_at = ?
-        WHERE workspace_id = ? AND id = ?`,
-    ).bind(state, failureCode, nowIso(), nowIso(), this.auth.workspaceId, id).run();
-  }
 }

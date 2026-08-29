@@ -585,6 +585,67 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-29 — The Terminal network policy moves behind typed WorkspaceDO methods
+
+**What changed:** `terminalNetworkSettings`, `terminalNetworkMode`,
+`recordTerminalPolicyPreview`, `claimTerminalPolicyApplication`,
+`failTerminalPolicyApplication` and `commitTerminalPolicyApplication` replace
+the fifteen statements `terminal/settings.ts`, `terminal/plugin.ts` and
+`terminal/coordinator.ts` sent through the workspace runtime facade. The SQL
+lives in `workspace-terminal-network-storage.ts`. `TerminalSandboxCoordinator`
+now takes the Worker environment rather than a D1 handle, because it needs the
+object as well as the regional reads it still makes. The apply path's
+`restoreCurrentPolicy` compensation and its `markMutation` helper are deleted.
+
+**Why:** the facade routes by table name and sends anything it does not
+recognise to the regional database — the defect that took automation run work
+streams down. The apply path had a second problem the routing risk hides:
+reading the preview, checking the revision, claiming the policy row and
+claiming the preview row were four round trips, so the policy could be left
+`pending` with nobody applying anything. The service carried
+`restoreCurrentPolicy` for exactly that window, and a compensating write can
+fail too. One `transactionSync` has no window and needs no compensation: a
+refused claim wrote nothing.
+
+Settlement is fenced on the mutation rather than on the revision. A failed
+application leaves the revision unchanged, so the next preview claims the same
+number; fenced on revision alone, a retried failure for the first application
+would release the second's claim, and a replayed commit would replace the
+domain rows a person is looking at. Both settlements now transition their own
+ledger row first, on a returned witness, and answer `stale` having written
+nothing when it is not theirs.
+
+**Considered and rejected:** giving the agent path the same creating read the
+settings screen uses. It runs on every turn, and a workspace that has never
+opened the setting would have a policy row written for it by the agent loop.
+`terminalNetworkMode` answers `null` instead and the caller applies the same
+default. Also rejected: keeping `coordinator.ts` on a bare `D1Database` and
+passing a stub separately — two ways to reach the same workspace, and the next
+read would have had to choose.
+
+**What a future change has to respect:** `parseEffectiveDomains` changed twice
+here, both fail-closed, and both rest on the same assumption. An empty stored
+list is now an error rather than an allow-list of nothing, and the
+malformed-JSON guard is gone because `policyView` parses the column directly.
+Neither is reachable while `compileTerminalNetworkPolicy` always emits the
+platform baseline for `trusted_only` and only this code writes the column — a
+manifest that could compile to nothing would turn the first into a hard error
+on every sandbox acquisition, and a corrupt column now reaches the agent as an
+opaque RPC failure rather than the actionable "ask a workspace owner to save
+and verify it again" the deleted `catch` produced.
+
+`effective_domains_json` is returned as stored rather than recompiled on read. It is what the sandbox provider was
+actually told, and recompiling would answer what the current manifest *would*
+send — identical until the manifest changes, and silently wrong afterwards.
+The three tables stay named in `WORKSPACE_LOCAL_TABLES` even though nothing
+routes to them now, so an accidental generic statement reaches the object
+rather than falling through to regional D1. Whether the object then refuses it
+is a second decision, made by `WORKSPACE_TYPED_RPC_ONLY_TABLES` in
+`workspace-do.ts`; these three are not in that list, so such a statement still
+executes. Adding them would close the domain the way the notification-intent
+table is closed, and is the obvious follow-up once the ledger has no other
+reader.
+
 ### 2026-08-28 — Generated files stay staged until their pointer commits
 
 **What changed:** `publish_resource`, final-diff preservation, and repository
