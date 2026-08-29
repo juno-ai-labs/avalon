@@ -279,6 +279,8 @@ with itself. Six Lucide icons left `workspace-settings.tsx` with the catalog
 entries that used them. An inbound webhook is not a company and deliberately
 draws nothing rather than a placeholder; a row's status dot and name carry it.
 
+Shipped in #412.
+
 ### 2026-08-29 — Company marks come from `thesvg`, drawn as masks
 
 **What changed:** Every connector now draws its own company mark instead of a
@@ -316,6 +318,8 @@ the bundle, about 10 kB — so importing a ninth is cheap, but a barrel
 `brand-use` rather than an open licence, meaning it is the company's mark shown
 under its own guidelines; identifying a connector by its logo is the ordinary
 use, but it is not a public-domain asset to reuse elsewhere.
+
+Shipped in #412.
 
 ### 2026-08-29 — Tool calls collapse into one row per plugin
 
@@ -355,3 +359,5 @@ a connector splits its row for the length of one run. The `--av-cmp-connector-*`
 background and foreground tokens are no longer referenced by any rule; they are
 left declared because the vocabulary is still a valid one for a connector chip
 elsewhere.
+
+Shipped in #412.
