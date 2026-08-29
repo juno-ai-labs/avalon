@@ -5,10 +5,11 @@
 > A work stream's participants can ask Rally for a working web page or small
 > web application — a landing page, a dashboard, a calculator, a poll — and
 > get a hosted, openable, revisable site rather than a code listing. The model
-> builds the site in the Terminal sandbox, publishes it as a new kind of
-> generated resource, and Rally serves it from an isolated per-artifact origin
-> on Cloudflare's Worker Loader (Dynamic Workers), statically or with
-> model-written server code as the request demands. Companion:
+> builds the site in the Terminal sandbox and publishes it with the existing
+> Terminal publish tool — widened to accept a directory, no new tool — and
+> Rally serves it from an isolated per-artifact origin on Cloudflare's Worker
+> Loader (Dynamic Workers), statically or with model-written server code as
+> the request demands. Companion:
 > [state](state.md). Siblings:
 > [terminal artifact generation](../2026-08-27_terminal-artifact-generation/prd.md)
 > (the document pipeline this extends),
@@ -29,19 +30,25 @@ PRD gives the same treatment to a *site-shaped* request: "make a signup page
 for the launch", "build a little dashboard over these numbers", "put up a
 poll for the offsite date". The model writes the site's files in the work
 stream's Terminal sandbox exactly as it writes a document, then publishes the
-directory with one new tool. The publish creates a **live artifact**: a
+directory with the same `terminal_publish_resource` call that publishes a
+document — the tool widens to accept a directory, and gains no new
+parameters. The publish creates a **live artifact**: a
 generated resource of a new site kind that Rally also *serves*, at a stable
 per-artifact HTTPS origin, to every participant who opens it.
 
-The model chooses the artifact's nature per request. A page with no behavior
-publishes as a **static** artifact — assets only, served from the region's
-bucket. A page that needs server behavior — shared state, form handling, an
-API the page calls — additionally names a **server module**, model-written
-JavaScript that Rally executes per request as a Cloudflare Dynamic Worker
-inside a capability-fenced sandbox: no network egress, no ambient bindings,
-only an asset binding and a per-artifact storage binding Rally hands it.
-Because the storage is shared, an active artifact is multiplayer for free:
-two participants opening the same poll see and move the same tally.
+The model chooses the artifact's nature per request, and expresses the
+choice entirely in what it writes to disk — there is no mode parameter to
+drift out of agreement with the files. An `index.js` at the directory root
+publishes an **active** artifact: that module is model-written JavaScript
+Rally executes per request as a Cloudflare Dynamic Worker inside a
+capability-fenced sandbox — no network egress, no ambient bindings, only an
+asset binding and a per-artifact storage binding Rally hands it. Because the
+storage is shared, an active artifact is multiplayer for free: two
+participants opening the same poll see and move the same tally. No
+`index.js` but an `index.html` at the root publishes a **static** artifact —
+assets only, served from the region's bucket. A directory with neither entry
+publishes as one downloadable **archive** resource rather than failing:
+publishing a directory is a total operation, and no layout is a dead end.
 
 Viewing and revising are both multiplayer in the way the work stream already
 is. Every participant with visibility of the work stream can open the
@@ -168,9 +175,10 @@ document-generation standing policy:
 1. Loads the Terminal plugin and writes the site as ordinary files in a
    stable directory beneath the sandbox's resource-output directory —
    `offsite-rsvp/index.html`, `offsite-rsvp/style.css`, and, because RSVPs
-   are shared state, `offsite-rsvp/server.js`.
-2. Publishes the directory with the new `terminal_publish_site` tool,
-   naming the server module. The publish returns the artifact's URL.
+   are shared state, `offsite-rsvp/index.js`.
+2. Publishes the directory with `terminal_publish_resource`, exactly as it
+   publishes a document; the root `index.js` is what makes the publish an
+   active site, and the result returns the artifact's URL.
 3. Says, in chat, a short framing with an embed citation of the artifact —
    "The RSVP page is live in this work stream — open it and tell me what
    to change." — and none of the site's code.
@@ -181,11 +189,15 @@ published), then the message. The artifact appears in the right rail under
 action, a **Copy link** action, and — via the versioning layer — the
 version list.
 
-**The model's choice of static versus active** is the model's, per request:
-the policy steers it to publish assets alone when the page has no server
-behavior, and to write a server module only when the request needs shared
-state, form handling, or an API. A participant can override in either
-direction in plain words, exactly as the document policy's overrides work.
+**The model's choice of static versus active** is expressed in file layout,
+never in a parameter: the policy steers it to write only assets (an
+`index.html` root) when the page has no server behavior, and to add a root
+`index.js` only when the request needs shared state, form handling, or an
+API. A directory with neither — a folder of generated outputs, say —
+publishes as one downloadable archive, which is also how "zip that folder up
+for me" becomes a single call. A participant can override the
+site/document/archive shape in plain words, exactly as the document policy's
+overrides work.
 
 **Viewing.** **Open** opens the artifact in the desktop's artifact window —
 a dedicated, isolated window locked to that artifact's origin (see Security
@@ -219,10 +231,13 @@ version, and nothing is lost.
 - *Terminal unavailable* (EU, origin rules): the site guidance does not
   render; behavior is today's. Same asymmetry, and same honesty, as the
   document PRD.
-- *Publish fails* (missing `index.html` for a static publish, server
-  module outside the directory, size guard): the standard tool failure
-  surfaces on its activity row with a recovery instruction, and the model
-  repairs and retries per its ordinary loop.
+- *Publish fails* (empty directory, size guard, or a republish that would
+  silently downgrade a live site to an archive — the kind rules under Agent
+  behavior): the standard tool failure surfaces on its activity row with a
+  recovery instruction, and the model repairs and retries per its ordinary
+  loop. A directory that merely lacks a site entry is not a failure at all:
+  it publishes as an archive, and the result says so plainly, so a
+  misnamed entry is a one-step rename-and-republish recovery.
 - *Server module throws at serve time*: the viewer gets a plain Rally
   error page from the serving Worker (never a stack trace); the error —
   message, stack, request path — is recorded to a bounded per-artifact
@@ -304,9 +319,9 @@ None yet.
    KV in this repository and this PRD does not introduce one (Cloudflare's
    own guidance prefers R2 for larger assets, and version-immutable keys
    make long asset cache TTLs safe). The publish stores a manifest —
-   paths, content types, hashes, the server module name — beside the
-   assets; the serving Worker's asset binding resolves requests against
-   the manifest, static-site conventions included (`/` → `/index.html`).
+   paths, content types, hashes, the resolved mode — beside the assets;
+   the serving Worker's asset binding resolves requests against the
+   manifest, static-site conventions included (`/` → `/index.html`).
 4. **One supervisor Durable Object per artifact.** A new
    jurisdiction-pinned `ArtifactHostDO` (one per artifact, addressed
    through the same stub helper every other DO uses) owns the artifact's
@@ -320,7 +335,9 @@ None yet.
    plainest mechanism. Facets are the named upgrade path if artifacts
    outgrow key-value state.
 5. **Active artifacts are a fetch handler plus two injected bindings,
-   nothing else.** A server module is one ES module default-exporting
+   nothing else.** The server module is the directory's root `index.js` —
+   the loader's `mainModule`, under the single most conventional entry
+   name in the training data — one ES module default-exporting
    `fetch(request, env)`. Its entire environment is injected by the
    loader per Cloudflare's bindings pattern (`ctx.exports` entrypoint
    stubs with per-artifact `props`): `env.ASSETS.fetch(request)` serving
@@ -344,20 +361,46 @@ None yet.
    an identifier grants nothing; *long-lived tokens in URLs* — the ticket
    rule already keeps credentials out of URLs, and single-use redemption
    honors it. Session lifetime is an open limit.
-7. **Publish identity follows the document rule, one level up.** The
-   artifact's identity is `(work stream, normalized directory path)` —
-   the directory-shaped twin of `terminal_publish_resource`'s frozen
-   path-scoped identity. Republish updates in place; equal-content
-   republish (manifest hash) returns the artifact untouched, which also
-   absorbs replays; version capture rides the same pointer-swap site the
-   versioning layer already owns. Like the file rule, the derivation
-   freezes the moment real artifacts exist.
+7. **Publish identity is the file rule, unchanged, covering directories.**
+   The artifact's identity is `(work stream, normalized path)` — the same
+   frozen derivation `terminal_publish_resource` already applies to files,
+   with the path now allowed to name a directory. Republish updates in
+   place; equal-content republish (manifest hash) returns the artifact
+   untouched, which also absorbs replays; version capture rides the same
+   pointer-swap site the versioning layer already owns. What a path
+   published *as* is recorded on the resource, not encoded in the
+   identity — and a republish is never allowed to silently downgrade it
+   (decision 9).
 8. **Serving stays in-region end to end.** The two wildcard hosts are
    region-distinct (`*.g.…` to the Global Worker, `*.eu.…` to the EU
    Worker), so an EU artifact's bytes never transit a Global Worker and
    no cross-region bridge is added. Rejected: a single global router
    fanning out over RPC — it would move workspace content across the
    boundary that regionalization says has no path.
+9. **No new tool: `terminal_publish_resource` widens to directories, and
+   file layout is the whole contract.** The tool's input does not change
+   by a single property; what a directory publishes as is decided by
+   what the model wrote — root `index.js` → active site, else root
+   `index.html` → static site, else a downloadable archive that Rally
+   compresses server-side (the model never tars its own bundle; the
+   sandbox holds no path to the bucket anyway). Rejected: *a dedicated
+   `publish_site` tool* — a tenth family member whose path rules,
+   identity derivation, and publish semantics would be identical to the
+   ninth's, added only to carry two parameters this design deletes;
+   *mode and server-module parameters* — a parameter restating what the
+   files already say is a parameter that can disagree with them.
+   Two consequences are accepted with eyes open. First, the archive
+   fallback trades a sliver of fail-loud for totality: a model that
+   meant a site but named its entry `app.js` gets an archive, not an
+   error. That is *visibly* wrong rather than silently wrong — the
+   result names the kind it published — and recovery is one rename and
+   republish under the same identity, so the trade is taken. Second,
+   kind changes across republishes of one path are asymmetric by rule:
+   archive→site upgrades freely, but a republish that would turn a live
+   site back into an archive fails loudly — a URL participants hold is
+   never killed by an accident of file layout. The archive format —
+   zip's double-click familiarity for this product's audience versus
+   tar.gz — is the team's product call, held open below.
 
 ## Data model
 
@@ -366,13 +409,17 @@ authoritative.
 
 - `resources` gains the site kind: `resource_type = 'generated_site'`,
   provider `avalon_generated`, provider identity
-  `terminal-site:<workstream-id>:<normalized-directory>`. The existing
-  slug, version-number, and lifecycle columns apply unchanged.
+  `terminal:<workstream-id>:<normalized-path>` — the same derivation file
+  publishes use, unchanged; the row's resource type, not its identity,
+  records what the path published as. A directory that publishes as an
+  archive is an ordinary `generated_file` row holding the archive Rally
+  produced. The existing slug, version-number, and lifecycle columns
+  apply unchanged.
 - A new `artifact_registry` table beside the resource authority in
   WorkspaceDO: `artifact_id`, `resource_id`, `workstream_id`, the
   allocated hostname `label` (unique, region-wide via the label
-  allocator), `mode` (`static` | `active`), `server_module` (nullable),
-  `current_version`, `manifest_ref`, timestamps.
+  allocator), `mode` (`static` | `active`, derived at publish from the
+  directory's root entry), `current_version`, `manifest_ref`, timestamps.
 - Version history: the existing versioning layer's rows, unchanged — a
   site republish is one more pointer swap at the same capture site, with
   `storage_kind` naming the manifest-shaped reference.
@@ -445,83 +492,95 @@ The new trust surface is the point of this PRD, so it is stated in full.
 
 ## Agent behavior
 
-This PRD adds one tool to the Terminal plugin family and extends the
-document-generation standing policy. Everything below lands in the
-[`agent-tools.md`](../../agent-tools.md) Terminal registry and the plugin
-prompt in the implementing change.
+This PRD adds no tool and no plugin. It widens one existing tool —
+`terminal_publish_resource` accepts a directory — extends
+`terminal_import_resource` to materialize what that widening publishes,
+and extends the document-generation standing policy. Everything below
+lands in the [`agent-tools.md`](../../agent-tools.md) Terminal registry
+and the plugin prompt in the implementing change; the house rule that a
+*changed* Terminal tool carries the same registry, schema, and test
+burden as a new one applies in full.
 
-**Plugin contract.** No new plugin. `publish_site` joins the deferred
-`rally:terminal` plugin's serial, single-workspace tool family
-(model-facing `terminal_publish_site`), available exactly where the plugin
-is available today — same regions, same origins, same lease, same frozen
-authority. Loading still starts nothing. The plugin's activation message
-gains one paragraph: site directories are written beneath the resource
-output directory like documents; a static site needs an `index.html` at
-the directory root; an active site names one server module inside the
-directory, an ES module default-exporting `fetch(request, env)` with
-`env.ASSETS` and `env.STORAGE` as declared (the message carries the typed
-declarations verbatim).
+**Plugin contract.** Unchanged: same nine tools, same availability,
+regions, origins, lease, and frozen authority; loading still starts
+nothing. The plugin's activation message gains one short paragraph — the
+kind conventions: a published directory with `index.js` at its root is a
+live site with server behavior (`index.js` is an ES module
+default-exporting `fetch(request, env)`, with `env.ASSETS` and
+`env.STORAGE` as declared; the message carries the typed declarations
+verbatim); with `index.html` and no `index.js`, a static live site; with
+neither, a downloadable archive.
 
-**Tool contract.**
+**Tool contract — `publish_resource`, widened.**
 
-- Name: `publish_site`. Capability: the Terminal publish capability.
-  `mode: "write"`, `idempotency: "record_before_execute"`, serial like
-  the rest of the family. Timeout: the family's publish ceiling.
-- Strict input (`additionalProperties: false`, strict zod parse in the
-  executor): `{ directoryPath: string, displayName?: string,
-  description?: string, serverModule?: string }`. `directoryPath` is
-  relative to `AVALON_RESOURCE_DIR`, `/`-separated, rejecting absolute
-  paths, backslash, NUL, and `..`, per the family's path rules.
-  `serverModule` is a path relative to `directoryPath`, must name an
-  existing `.js` file inside it, and its presence is what makes the
-  artifact active — there is no separate mode parameter to drift out of
-  agreement with reality.
-- Successful `output`: `{ resourceId, slug, resourceType:
-  "generated_site", url, mode: "static" | "active", version, fileCount,
-  totalBytes, manifestSha256, createdAt }` — the URL and slug because the
-  model's next step is citing the artifact; `version` because the next
-  republish's activity narration wants it; persisted values on replay,
-  per the family rule.
-- Identity and replay: `(work stream, normalized directoryPath)` per key
-  design decision 7. Equal manifest hash returns the existing artifact
-  untouched; a different hash updates in place and returns the same
-  `resourceId` with the incremented `version`. `createdAt` stays the
-  first publish's timestamp and is not a witness that this call's bytes
-  landed — same caveat as `publish_resource`.
-- Failures, designed as loop repairs in the family's vocabulary:
-  `not_found` / `path_outside_root` (inspect with `pwd`/`ls`, use one
-  relative path); `directory_empty` and `missing_index` (a static site
-  publishes a directory containing `index.html` at its root — create it,
-  or name a server module); `server_module_invalid` (the server module
-  must be a `.js` file inside the published directory — fix the path or
-  extension; no code execution happens at publish, so deeper validation
-  is deliberately not promised); `limit_exceeded` /
-  `resource_limit_exceeded` (reduce or split the site; the bundle guard's
-  value is an open limit); `resource_not_ready` (finish producers, then
-  publish the stable directory); `tool_receipt_missing` and retryable
-  provider failures (retry the exact call so the receipt reconciles).
+- Everything declared today stands: name, capability, `mode: "write"`,
+  `idempotency: "record_before_execute"`, serial execution, timeout,
+  and the strict input `{ filePath: string, displayName?: string,
+  description?: string }` with the family's path rules. The one widening
+  is that `filePath` may now name a directory beneath
+  `AVALON_RESOURCE_DIR`. No parameter is added: the publish kind is
+  resolved from the directory's root entry per key design decision 9.
+- Successful `output`, by what the path resolved to: a *file* returns
+  today's shape, byte-for-byte unchanged. A *site* directory returns
+  `{ resourceId, slug, resourceType: "generated_site", url, mode:
+  "static" | "active", version, fileCount, totalBytes, manifestSha256,
+  createdAt }` — the URL and slug because the model's next step is
+  citing the artifact; `version` because revision narration wants it. An
+  *archive* directory returns the existing download-only archive shape
+  (`resourceType: "generated_file"`, `attachmentKind: "other"`, the
+  archive's mime type and size) plus `fileCount` and `totalBytes` for
+  what was bundled. In every case the result names the kind it
+  published, which is what makes the archive fallback recoverable at a
+  glance. Persisted values on replay, per the family rule.
+- Identity and replay: `(work stream, normalized path)` per key design
+  decision 7, files and directories alike. Equal content (manifest hash
+  for a directory) returns the existing resource untouched; a different
+  hash updates in place and returns the same `resourceId` with the
+  incremented `version`. `createdAt` stays the first publish's timestamp
+  and is not a witness that this call's bytes landed — today's caveat,
+  unchanged. Kind transitions across republishes of one path follow
+  decision 9: archive→site upgrades freely; site→archive is refused.
+- Failures: the family's existing vocabulary carries almost everything —
+  `not_found` / `path_outside_root`, `resource_empty` (now also an empty
+  directory), `limit_exceeded` / `resource_limit_exceeded` (reduce or
+  split the bundle; the guard's value is an open limit),
+  `resource_not_ready`, `tool_receipt_missing` and retryable provider
+  failures (retry the exact call so the receipt reconciles). One code is
+  added: `site_entry_removed` — "This path serves a live site and the
+  republish has no `index.js` or `index.html` at its root. Restore an
+  entry file, or publish the files under a different path." No
+  `missing_index` exists, because a missing entry is not an error; and
+  no publish-time code validation is promised — `index.js` is executed
+  at serve time, never at publish.
 - Discovery and sequencing: the directory is discovered with the CLI the
-  model already has (`ls`, `find`); revision re-imports current source
-  with the existing `terminal_import_resource` per file, edits, and
-  republishes the same `directoryPath`; nothing needs an id the family
-  does not already return.
+  model already has (`ls`, `find`). Revision after a sandbox recycle
+  uses the existing recovery rail, widened to match:
+  `terminal_import_resource` of a site resource materializes the
+  published directory back into the sandbox (of an archive resource, the
+  archive file), so the loop stays list → import → edit → republish the
+  same path. Nothing needs an id the family does not already return.
 
 **Standing-policy extension.** The document-generation policy gains the
 site trigger and manners: a request whose natural output is a web page or
 small application — explicitly named ("build a page/app/dashboard/poll"),
-or implied by interactivity a document cannot carry — becomes files and a
-`publish_site`, static unless the behavior needs a server, with chat
-narration short and code-free and the artifact announced with an embed
-citation; participant overrides win in both directions ("just show me the
+or implied by interactivity a document cannot carry — becomes a directory
+with its entry at `index.html`, adding `index.js` only when the behavior
+needs a server, published with the ordinary publish tool; chat narration
+stays short and code-free and the artifact is announced with an embed
+citation. Participant overrides win in all directions ("just show me the
 code" publishes files as ordinary resources; "make it a real page" builds
-the site). Same render conditions as the document policy — ordinary
-participant-triggered runs with Terminal available — and the same
-byte-budget discipline; if the module no longer fits the standing-policy
-ceiling, the escalation is the skill path, decided at implementation.
+the site; "zip that up" publishes the directory as an archive). Same
+render conditions as the document policy — ordinary participant-triggered
+runs with Terminal available — and the same byte-budget discipline; if
+the module no longer fits the standing-policy ceiling, the escalation is
+the skill path, decided at implementation.
 
 **Model-usability acceptance.** Schema snapshot and contract tests for the
-new tool's shapes and failures, walked through the real sanitizer like the
-rest of the family; prompt evaluation remains the document PRD's posture —
+widened tool's shapes, kind resolution, and failures, walked through the
+real sanitizer like the rest of the family — including the
+misnamed-entry path: an intended site published as an archive must be
+recoverable from the result alone, by rename and republish, in one step.
+Prompt evaluation remains the document PRD's posture —
 Rally has no evaluation suite, so acceptance is the manual flows below,
 dogfooded on the models the route plan serves, and that gap is named
 rather than papered over.
@@ -539,9 +598,9 @@ rather than papered over.
 ## Rollout
 
 1. Infrastructure first, dark: the serving Workers, domain, DO class,
-   and publish path deploy with the standing-policy module absent — the
-   tool exists but nothing steers to it, so dogfooding is by explicit
-   ask.
+   and the widened publish path deploy with the standing-policy module
+   absent — directory publishing works but nothing steers to it, so
+   dogfooding is by explicit ask.
 2. `live-artifacts-enabled` ships as a client feature flag in the
    established fail-closed pattern — presentation-only, gating the rail's
    site-artifact detail (Open, link, error log) and the artifact window;
@@ -572,9 +631,9 @@ rather than papered over.
 ## Acceptance
 
 1. "Build a page that shows our launch checklist" yields file-writes and
-   a `publish_site`, a site resource in the rail, and an artifact that
-   opens in the artifact window rendering the page — with no code in chat
-   and no code listing as the primary resource.
+   one directory publish, a site resource in the rail, and an artifact
+   that opens in the artifact window rendering the page — with no code in
+   chat and no code listing as the primary resource.
 2. "Make a poll for the offsite date" yields an active artifact; two
    different participants opening it vote and both see the combined
    tally; the module's `fetch()` egress attempt (added in a test
@@ -588,11 +647,18 @@ rather than papered over.
    serves the neutral page.
 5. A server module that throws serves the plain error page and the
    error appears in the rail's error log.
-6. Prior versions are listed and their source opens read-only through the
+6. Publishing a directory with neither root entry yields exactly one
+   downloadable archive resource; renaming its entry to `index.js` and
+   republishing the same path upgrades it to a live site under the same
+   resource identity.
+7. Republishing a live site's path with its root entry removed fails
+   loudly with the recovery instruction; the site keeps serving its
+   current version.
+8. Prior versions are listed and their source opens read-only through the
    versioning layer's preview.
-7. Where Terminal is unavailable, behavior is byte-identical to today;
+9. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render.
-8. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+10. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
    workerd suite pass; every new test shown to fail when its protected
    behavior is broken; the rail, artifact window, and error surfaces
    captured from a real window.
@@ -617,3 +683,7 @@ rather than papered over.
    title bar naming the artifact and its work stream, a refresh action)
    — settle against real screenshots during implementation, per house
    practice.
+5. **The archive format.** Zip double-clicks open for the workplace
+   audience Rally actually has; tar.gz is the engineer's default and the
+   cheaper streaming write. A product call, the team's to make before
+   the archive fallback ships; nothing else in the design depends on it.
