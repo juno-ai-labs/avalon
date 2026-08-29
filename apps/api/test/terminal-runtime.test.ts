@@ -25,6 +25,12 @@ import {
   type TerminalPublishedResourceOutput,
 } from "../src/services/terminal/tools";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import type { DatabaseSync } from "node:sqlite";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 import {
   seedWorkstreamObjectRoot,
   seedWorkstreamRun,
@@ -45,7 +51,11 @@ const U = asUserId("00000000-0000-4000-8000-000000000014");
 const I = "00000000-0000-4000-8000-000000000015";
 
 const openDatabases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
-afterEach(() => { for (const database of openDatabases.splice(0)) database.close(); });
+const objectDatabases: DatabaseSync[] = [];
+afterEach(() => {
+  for (const database of openDatabases.splice(0)) database.close();
+  for (const database of objectDatabases.splice(0)) database.close();
+});
 
 function fixture(
   clock: { now(): Date } = { now: () => new Date("2026-08-13T12:00:00.000Z") },
@@ -180,9 +190,18 @@ function fixture(
       pullRequest: { number: 1, url: "https://github.com/o/r/pull/1", title: "Ship", state: "open" },
     })),
   };
-  const db = sqliteD1(database);
+  const coordinatorEnv = createTestEnv({
+    DB: sqliteD1(database),
+    AVALON_REGION: "global",
+    APP_ENV: "test",
+    WORKSPACE_DOS: testWorkspaceObjectBinding(createTestWorkspaceDO({
+      workspaceId: W,
+      regionalDatabase: database,
+      register: (created) => { objectDatabases.push(created); },
+    }).instance, ["terminalNetworkSettings"]),
+  });
   const coordinator = new TerminalSandboxCoordinator(
-    db,
+    coordinatorEnv,
     testTerminalPortFactory(objectStore),
     testResourcePortFactory(objectStore),
     provider,

@@ -47,6 +47,9 @@ import {
   telemetryJourneyDuration,
 } from "../../telemetry/product-usage";
 import { withWorkspaceRuntimeDatabase } from "../workspace-runtime-database";
+import { workspaceDOName } from "../../durable-objects/names";
+import { WorkspaceTerminalNetworkModeSchema } from "../../durable-objects/workspace-terminal-network-protocol";
+import { durableObjectStubForWorkspace } from "../../lib/durable-object-namespace";
 import type { WorkstreamRuntimeResourceAttacher } from "../workstream-object-client";
 import {
   createTerminalToolTrace,
@@ -111,7 +114,7 @@ export async function createAvalonTerminalPlugin(
     },
   });
   const coordinator = new TerminalSandboxCoordinator(
-    env.DB,
+    env,
     terminalPort,
     createResourcePortFactory(env),
     provider,
@@ -272,10 +275,18 @@ export async function createAvalonTerminalPlugin(
       }
     },
   ])) as TerminalToolExecutors;
-  const policy = await env.DB.prepare(
-    "SELECT mode FROM workspace_sandbox_network_policies WHERE workspace_id = ?",
-  ).bind(input.workspaceId).first<{ mode: "trusted_only" | "full_internet" }>();
-  const egressGuidance = policy?.mode === "full_internet"
+  // A typed read rather than SQL through the runtime facade, and deliberately
+  // the non-creating one: this runs on every agent turn, and a workspace that
+  // has never opened the setting should not have a row written for it here.
+  const policy = WorkspaceTerminalNetworkModeSchema.parse(
+    await (await durableObjectStubForWorkspace(
+      env,
+      env.WORKSPACE_DOS,
+      asWorkspaceId(input.workspaceId),
+      workspaceDOName(env.AVALON_REGION, asWorkspaceId(input.workspaceId)),
+    )).terminalNetworkMode({ workspaceId: input.workspaceId }),
+  );
+  const egressGuidance = policy.mode === "full_internet"
     ? " Current workspace egress is Full internet."
     : " Current workspace egress is Trusted only; a network failure may mean the destination is not approved, so ask a workspace owner to review Terminal network targets instead of trying to bypass it.";
   const plugin = createTerminalPlugin(
