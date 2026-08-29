@@ -153,6 +153,10 @@ while every newly opened MCP session uses the Rally initialization identity.
   the original value retained at activation. A later operation whose raw name
   equals that alias cannot inherit the confirmed call, and a fresh catalog with
   new canonical-name collisions fails closed.
+- **Provider-specific deadlines are keyed by the exact remote name.** A hosted
+  MCP declaration may assign a Rally-authored timeout to a known operation
+  without copying its schema or making that operation part of Rally's catalog.
+  Unnamed and newly introduced operations keep the shared 30-second deadline.
 - **Personal and workspace identities remain separate.** Hosted MCP acts with
   the authorizing member's provider identity. A public app or bot connection
   stays workspace-scoped even when a human approved its OAuth screen.
@@ -245,6 +249,31 @@ current `tools/list` response when a formerly working prompt loses a tool—do n
 patch a historical snapshot into Rally.
 
 ## Changelog
+
+### 2026-08-29 — Granola meeting queries may run for five minutes
+
+**What changed:** Granola's exact hosted-MCP operation
+`query_granola_meetings` now advertises a five-minute tool deadline. The shared
+hosted-MCP declaration accepts trusted per-operation deadline overrides; all
+other Granola operations and other hosted-MCP providers retain the 30-second
+default.
+
+**Why:** A production natural-language meeting query was still progressing when
+the inherited 30-second deadline interrupted it. The team selected five minutes
+for this operation. Cloudflare documents no hard wall-time limit for
+[Durable Object RPC/HTTP](https://developers.cloudflare.com/durable-objects/platform/limits/)
+while the caller remains connected, and network waits do not consume the
+object's active CPU allowance, so this deadline is supported by the runtime
+path. Checked 2026-08-29.
+
+**Considered and rejected:** Raising the shared hosted-MCP deadline would make
+every current and future provider operation wait five minutes, including writes.
+Hard-coding Granola's observed tool schema would create a second catalog that
+could drift from `tools/list`.
+
+**Consequences:** A stalled Granola meeting query can hold its run and provider
+connection for up to five minutes before Rally interrupts it. Receipt
+persistence, cancellation, and ambiguous-outcome handling are unchanged.
 
 ### 2026-08-25 — The Rally client identity is pinned as one hosted-MCP contract
 
