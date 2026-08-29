@@ -290,7 +290,11 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
     scoped: true,
     // Counts exactly what `reapExpiredDraftResources` removes. A draft a work
     // stream has linked is kept on purpose, and counting it here would leave
-    // the pass due at an instant it can never move.
+    // the pass due at an instant it can never move. The `'+24 hours'` below is
+    // DRAFT_ATTACHMENT_TTL_HOURS in the object's own
+    // `durable-objects/workspace-resources-storage.ts`, spelled in SQL on this
+    // side of the authority boundary — the two must move together, or the
+    // alarm fires for drafts the reap will not take.
     sql: `SELECT 'maintenance' AS target_kind, 'expired_drafts' AS id,
                  strftime('%Y-%m-%dT%H:%M:%SZ', MIN(created_at), '+24 hours', '+1 second') AS due_at
             FROM resources

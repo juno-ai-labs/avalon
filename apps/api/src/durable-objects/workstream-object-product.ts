@@ -836,28 +836,25 @@ export class WorkstreamObjectProductService {
     if ((members.results ?? []).length !== candidateMemberIds.length) {
       throw new ApiError(422, "invalid_workspace_member", "A participant is not an active workspace member");
     }
-    const workspaceDatabase = this.workspaceDatabase(input.workspaceId);
-    const attachments = input.attachmentIds.length === 0 ? [] : (await workspaceDatabase.prepare(
-      `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
-              content_sha256, canonical_url, metadata_json, model_content_ref, model_mime_type,
-              model_content_sha256, model_metadata_json, model_content_status,
-              model_content_extractor_version, model_content_error_code, created_at, updated_at
-         FROM resources WHERE workspace_id = ? AND uploaded_by_user_id = ?
-          AND attachment_status = 'draft'
-          AND id IN (${input.attachmentIds.map(() => "?").join(",")})`,
-    ).bind(input.workspaceId, input.creatorUserId, ...input.attachmentIds)
-      .all<Record<string, unknown>>()).results ?? [];
+    // Typed reads against the workspace object that owns `resources`: the
+    // draft filter travels with the request so somebody else's draft — or an
+    // already sent one — cannot be attached by id.
+    const workspaceObject = await this.workspaceDirectory(input.workspaceId);
+    const attachments = input.attachmentIds.length === 0 ? [] : (await workspaceObject
+      .resourceDescriptors({
+        workspaceId: input.workspaceId,
+        resourceIds: [...new Set(input.attachmentIds)],
+        draftUploadedByUserId: input.creatorUserId,
+      })).items;
     if (attachments.length !== input.attachmentIds.length) {
       throw new ApiError(422, "invalid_message_attachment", "One or more attachments are unavailable or already sent");
     }
-    const originResources = input.originResourceIds.length === 0 ? [] : (await workspaceDatabase.prepare(
-      `SELECT id, connection_id, resource_type, provider, provider_resource_id, title, mime_type, content_ref,
-              content_sha256, canonical_url, metadata_json, created_at, updated_at,
-              model_content_ref, model_mime_type, model_content_sha256, model_metadata_json,
-              model_content_status, model_content_extractor_version, model_content_error_code
-         FROM resources WHERE workspace_id = ?
-          AND id IN (${input.originResourceIds.map(() => "?").join(",")})`,
-    ).bind(input.workspaceId, ...input.originResourceIds).all<Record<string, unknown>>()).results ?? [];
+    const originResources = input.originResourceIds.length === 0 ? [] : (await workspaceObject
+      .resourceDescriptors({
+        workspaceId: input.workspaceId,
+        resourceIds: [...new Set(input.originResourceIds)],
+        draftUploadedByUserId: null,
+      })).items;
     if (originResources.length !== new Set(input.originResourceIds).size) {
       throw new ApiError(422, "invalid_origin_resource", "One or more origin resources are unavailable");
     }
@@ -1984,14 +1981,14 @@ export class WorkstreamObjectProductService {
   private async messageResources(ids: readonly string[]): Promise<Map<string, Record<string, unknown>>> {
     if (ids.length === 0) return new Map();
     const workspaceId = this.root().parent_workspace_key;
-    const database = this.workspaceDatabase(workspaceId);
-    const results = await database.batch<Record<string, unknown>>(chunks(ids, D1_ID_CHUNK_SIZE - 1)
-      .map((chunk) => database.prepare(
-        `SELECT id, title, mime_type, metadata_json, content_ref, created_at
-           FROM resources WHERE workspace_id = ? AND id IN (${chunk.map(() => "?").join(",")})`,
-      ).bind(workspaceId, ...chunk)));
-    return new Map(results.flatMap((result) => result.results ?? [])
-      .map((resource) => [String(resource.id), resource]));
+    // One typed request; the workspace object chunks the id list under the
+    // engine's bound-parameter ceiling itself.
+    const descriptors = await (await this.workspaceDirectory(workspaceId)).resourceDescriptors({
+      workspaceId,
+      resourceIds: [...new Set(ids)],
+      draftUploadedByUserId: null,
+    });
+    return new Map(descriptors.items.map((resource) => [resource.id, resource]));
   }
 
   private async participants(): Promise<WorkstreamDetail["participants"]> {
@@ -2432,11 +2429,11 @@ export class WorkstreamObjectProductService {
     if (root.parent_workspace_key !== workspaceId) {
       throw new ApiError(409, "workstream_object_identity_mismatch", "The object identity does not match");
     }
-    const resource = await this.workspaceDatabase(workspaceId).prepare(
-      `SELECT id, connection_id, resource_type, provider, provider_resource_id, title,
-              mime_type, content_ref, canonical_url, metadata_json
-         FROM resources WHERE id = ? AND workspace_id = ?`,
-    ).bind(resourceId, workspaceId).first<Record<string, unknown>>();
+    const resource = (await (await this.workspaceDirectory(workspaceId)).resourceDescriptors({
+      workspaceId,
+      resourceIds: [resourceId],
+      draftUploadedByUserId: null,
+    })).items[0];
     if (!resource) throw new ApiError(404, "resource_not_found", "Resource not found");
     const descriptor = {
       id: resourceId,
