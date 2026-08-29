@@ -171,7 +171,12 @@ describe("workspace notes", () => {
       appendSegment({ clientSegmentId: nextId() }),
     ]);
     expect(results.map((result) => result.outcome)).toEqual(["appended", "appended", "appended"]);
-    expect(results.map((result) => result.segment?.sequenceNumber).sort()).toEqual([1, 2, 3]);
+    // A comparator, not the default lexicographic sort: this passes at three
+    // appends and would fail at ten on `[1, 10, 2]`, for a reason that has
+    // nothing to do with what the test is about.
+    expect(results
+      .map((result) => result.segment?.sequenceNumber ?? 0)
+      .sort((left, right) => left - right)).toEqual([1, 2, 3]);
   });
 
   it("answers a replayed segment with the stored row instead of a second copy", async () => {
@@ -352,5 +357,76 @@ describe("workspace notes", () => {
       access: "view",
     }).then(() => null, (error: unknown) => error);
     expect(String(outcome)).toContain("workspace_object_identity_mismatch");
+  });
+
+  describe("the visibility fence", () => {
+    // The only converted method reached from outside the notes service:
+    // `hasRevokedImportedResource` asks it whether a sandbox may still read a
+    // note it imported. A `false` there means a running sandbox keeps reading a
+    // note that was just made private, so each arm of the predicate is asserted
+    // rather than described.
+    const PERSONAL_RESOURCE = "00000000-0000-7000-8000-000000000cb1";
+    const SHARED_RESOURCE = "00000000-0000-7000-8000-000000000cb2";
+    const ARCHIVED_RESOURCE = "00000000-0000-7000-8000-000000000cb3";
+
+    async function visible(userId: string | null, resourceIds: string[]) {
+      return WorkspaceNoteVisibilityResultSchema.parse(
+        await workspace().visibleNoteResourceIds({
+          workspaceId: WORKSPACE_ID,
+          userId,
+          resourceIds,
+        }),
+      ).resourceIds.sort();
+    }
+
+    beforeEach(async () => {
+      await seedNote({
+        noteId: "00000000-0000-7000-8000-000000000cc1",
+        resourceId: PERSONAL_RESOURCE,
+        scope: "personal",
+      });
+      await seedNote({
+        noteId: "00000000-0000-7000-8000-000000000cc2",
+        resourceId: SHARED_RESOURCE,
+        scope: "workspace",
+      });
+      await seedNote({
+        noteId: "00000000-0000-7000-8000-000000000cc3",
+        resourceId: ARCHIVED_RESOURCE,
+        scope: "workspace",
+      });
+      await runInDurableObject(workspace(), (_instance, state) => {
+        state.storage.sql.exec(
+          `UPDATE notes SET archived_at = ? WHERE id = ?`,
+          AT,
+          "00000000-0000-7000-8000-000000000cc3",
+        );
+      });
+    });
+
+    it("shows an owner their own personal note and the workspace's", async () => {
+      expect(await visible(OWNER, [PERSONAL_RESOURCE, SHARED_RESOURCE]))
+        .toEqual([PERSONAL_RESOURCE, SHARED_RESOURCE].sort());
+    });
+
+    it("hides another member's personal note", async () => {
+      expect(await visible(OTHER_MEMBER, [PERSONAL_RESOURCE, SHARED_RESOURCE]))
+        .toEqual([SHARED_RESOURCE]);
+    });
+
+    it("shows a non-user principal only workspace-scoped notes", async () => {
+      // The null arm is behaviour this conversion states rather than inherits.
+      // What this pins is that a non-user principal sees no personal note: the
+      // comparison against a null parameter yields null, not a match. It does
+      // not pin a change from `=` to `IS`, and cannot — `notes.owner_user_id`
+      // is `NOT NULL`, so `owner_user_id IS NULL` matches no row either way.
+      expect(await visible(null, [PERSONAL_RESOURCE, SHARED_RESOURCE]))
+        .toEqual([SHARED_RESOURCE]);
+    });
+
+    it("drops an archived note for everyone", async () => {
+      expect(await visible(OWNER, [ARCHIVED_RESOURCE])).toEqual([]);
+      expect(await visible(null, [ARCHIVED_RESOURCE])).toEqual([]);
+    });
   });
 });
