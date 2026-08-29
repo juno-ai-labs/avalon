@@ -5,6 +5,7 @@ import {
   ElicitationSchema,
   type TranscriptActivity,
   type PendingTranscriptInput,
+  type TranscriptPluginRun,
   type TranscriptRange,
   type TranscriptTurn,
   type WorkstreamTranscriptSnapshot,
@@ -225,6 +226,19 @@ export function orderedTranscriptMessages(
     if (activity.scope !== 'plugin' || !activity.parentActivityId) continue;
     pluginActivitiesByTurnActivity.set(`${activity.parentActivityId}\u0000${activity.subjectId}`, activity);
   }
+  // The server's own answer, when it gives one. `pluginRuns` states which
+  // plugin ran in which turn, for how long, and which calls it made, so a row
+  // built from it needs none of the joins above — which is the point: every one
+  // of those joins could miss, and when one did the row claimed `0ms` rather
+  // than admitting it could not see the timing.
+  //
+  // Empty means the API predates the field, not that no plugin ran, so the
+  // activity-tree derivation below stays as the fallback until every deployed
+  // API reports runs.
+  const pluginRunByToolCallId = new Map<string, TranscriptPluginRun>();
+  for (const run of snapshot.pluginRuns) {
+    for (const toolCallId of run.toolCallIds) pluginRunByToolCallId.set(toolCallId, run);
+  }
   const lastTurnByResponseActivityId = new Map<string, TranscriptTurn>();
   for (const turn of orderedTurns) {
     const assistantActivity = turn.activityId ? activities.get(turn.activityId) : undefined;
@@ -441,7 +455,54 @@ export function orderedTranscriptMessages(
       tieBreaker: activity.activityId,
     });
   }
-  for (const activity of snapshot.activities) {
+  for (const run of snapshot.pluginRuns) {
+    const lastTurn = turnsById.get(run.turnId);
+    if (!lastTurn) continue;
+    // Position the row at the plugin's last call in the turn, the same place
+    // the derivation below puts it. `toolCallIds` is the server's own list, so
+    // this no longer depends on a block's `pluginId` matching an activity's
+    // subject — the join that could silently leave a plugin unrepresented.
+    const calls = new Set(run.toolCallIds);
+    const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) =>
+      block.type === 'tool' && calls.has(block.toolCallId) ? [block.blockIndex] : []));
+    if (!Number.isFinite(lastToolIndex)) continue;
+    const group = pluginGroup(run.pluginId, run.displayName);
+    if (!group) continue;
+    const timing = pluginRunTiming(run);
+    messages.push({
+      id: run.pluginRunId,
+      transcriptTurnId: lastTurn.turnId,
+      transcriptSequence: lastTurn.transcriptSequence,
+      workstreamId,
+      sequenceNumber: 0,
+      attentionSequenceNumber: null,
+      authorType: 'agent',
+      messageType: 'plugin_activity',
+      createdAt: lastTurn.createdAtUtc,
+      pluginActivity: {
+        groupKey: group.key,
+        name: group.name,
+        icon: group.icon,
+        activeVerb: group.activeVerb,
+        completedVerb: group.completedVerb,
+        active: run.state === 'active',
+        durationMs: run.durationMs,
+        timingAccuracy: run.timingAccuracy,
+        ...(timing.monotonicStartedAt === undefined
+          ? {}
+          : { monotonicStartedAt: [timing.monotonicStartedAt] }),
+      },
+    });
+    messageOrder.set(run.pluginRunId, {
+      turnSequence: lastTurn.transcriptSequence,
+      position: lastToolIndex * 2 + 1,
+      tieBreaker: run.pluginRunId,
+    });
+  }
+  // Fallback for an API that predates `pluginRuns`. It rebuilds the same row
+  // from the activity tree, and is the code whose joins this change exists to
+  // stop depending on; it is kept only until every deployed API reports runs.
+  for (const activity of snapshot.pluginRuns.length > 0 ? [] : snapshot.activities) {
     if (activity.scope !== 'plugin') continue;
     const parent = activity.parentActivityId
       ? activities.get(activity.parentActivityId)
@@ -471,6 +532,8 @@ export function orderedTranscriptMessages(
         groupKey: group.key,
         name: group.name,
         icon: group.icon,
+        activeVerb: group.activeVerb,
+        completedVerb: group.completedVerb,
         active: activity.state === 'active',
         durationMs: timing.durationMs,
         timingAccuracy: timing.timingAccuracy,
@@ -791,8 +854,12 @@ function pluginGroupContribution(message: Message): {
       groupKey: group.key,
       name: group.name,
       icon: group.icon,
+      activeVerb: group.activeVerb,
+      completedVerb: group.completedVerb,
       active: tool.status === 'started',
-      durationMs: tool.durationMs ?? 0,
+      // Undefined here is an unknown duration, not a zero one: the row carries
+      // a time only when its tool-call activity reached the snapshot.
+      durationMs: tool.durationMs ?? null,
     },
     authoritativeDuration: false,
   };
@@ -839,10 +906,13 @@ function continuesPluginActivityRun(message: Message): boolean {
 export function groupPluginToolMessages(messages: readonly Message[]): Message[] {
   interface GroupTiming {
     row: number;
-    identity: Pick<PluginActivityData, 'groupKey' | 'icon' | 'name'>;
+    identity: Pick<PluginActivityData, 'activeVerb' | 'completedVerb' | 'groupKey' | 'icon' | 'name'>;
     active: boolean;
     activityDurationMs: number;
     toolDurationMs: number;
+    /** Cleared by any contribution whose own duration is unknown. */
+    activityDurationKnown: boolean;
+    toolDurationKnown: boolean;
     sawActivity: boolean;
     monotonicStartedAt: number[];
     upperBound: boolean;
@@ -866,13 +936,15 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
     }
     let group = open.get(contribution.key);
     if (!group) {
-      const { groupKey, icon, name } = contribution.activity;
+      const { activeVerb, completedVerb, groupKey, icon, name } = contribution.activity;
       group = {
         row: rows.length,
-        identity: { groupKey, icon, name },
+        identity: { activeVerb, completedVerb, groupKey, icon, name },
         active: false,
         activityDurationMs: 0,
         toolDurationMs: 0,
+        activityDurationKnown: true,
+        toolDurationKnown: true,
         sawActivity: false,
         monotonicStartedAt: [],
         upperBound: false,
@@ -898,9 +970,15 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
       });
     }
     group.active ||= contribution.activity.active;
+    // One unknown piece makes the whole total unknowable rather than smaller:
+    // adding up only the parts that reported would understate the work by
+    // exactly the part that did not, and present the result as certain.
     if (contribution.authoritativeDuration) {
       group.sawActivity = true;
-      group.activityDurationMs += contribution.activity.durationMs;
+      if (contribution.activity.durationMs === null) group.activityDurationKnown = false;
+      else group.activityDurationMs += contribution.activity.durationMs;
+    } else if (contribution.activity.durationMs === null) {
+      group.toolDurationKnown = false;
     } else {
       group.toolDurationMs += contribution.activity.durationMs;
     }
@@ -917,7 +995,9 @@ export function groupPluginToolMessages(messages: readonly Message[]): Message[]
       pluginActivity: {
         ...group.identity,
         active: group.active,
-        durationMs: group.sawActivity ? group.activityDurationMs : group.toolDurationMs,
+        durationMs: group.sawActivity
+          ? group.activityDurationKnown ? group.activityDurationMs : null
+          : group.toolDurationKnown ? group.toolDurationMs : null,
         ...(group.monotonicStartedAt.length === 0
           ? {}
           : { monotonicStartedAt: group.monotonicStartedAt }),
@@ -1189,6 +1269,39 @@ export function mergeRealtimeTranscriptActivity(
   };
 }
 
+/**
+ * The local monotonic anchor a still-running plugin row ticks from.
+ *
+ * The server reports how long the run has been going as of the snapshot, never
+ * a wall-clock start: the two clocks are not the same one, and subtracting a
+ * server timestamp from a local `Date.now()` reports the skew between them as
+ * work. So the client stamps `performance.now()` the first time it sees a given
+ * elapsed reading and counts forward from there, re-stamping only when the
+ * server sends a new one.
+ */
+const pluginRunReceiptMonotonic = new Map<string, {
+  elapsedMsAtSnapshot: number;
+  receivedAt: number;
+}>();
+
+function pluginRunTiming(run: TranscriptPluginRun): { monotonicStartedAt?: number } {
+  if (run.state !== 'active' || run.elapsedMsAtSnapshot === null) {
+    pluginRunReceiptMonotonic.delete(run.pluginRunId);
+    return {};
+  }
+  const cached = pluginRunReceiptMonotonic.get(run.pluginRunId);
+  const receivedAt = cached && cached.elapsedMsAtSnapshot === run.elapsedMsAtSnapshot
+    ? cached.receivedAt
+    // The reading was already `elapsedMsAtSnapshot` old when it was taken, so
+    // the segment began that far before this moment.
+    : performance.now() - run.elapsedMsAtSnapshot;
+  pluginRunReceiptMonotonic.set(run.pluginRunId, {
+    elapsedMsAtSnapshot: run.elapsedMsAtSnapshot,
+    receivedAt,
+  });
+  return { monotonicStartedAt: receivedAt };
+}
+
 function activityDuration(activity: TranscriptActivity | undefined): number {
   if (!activity) return 0;
   return activity.intervals.reduce(
@@ -1227,4 +1340,61 @@ function activityTiming(activity: TranscriptActivity | undefined): {
     monotonicStartedAt: receivedAt,
     timingAccuracy,
   };
+}
+
+/**
+ * Move a finished response's total onto the message it produced.
+ *
+ * A response-level timer is progress while it runs, so it stays a row of its
+ * own and the reader watches it climb. The moment it settles it is no longer
+ * progress — it is a fact about the answer above it — and a spent timer parked
+ * under that answer reads like another step still to come. Folding it into the
+ * header puts it where the rest of the message's provenance already is:
+ * "Rally · 11 minutes ago · Worked for 2m 52s".
+ *
+ * Only the response scope moves. A turn's thinking row stays where it is: it
+ * annotates one step inside the run rather than summarizing the whole of it,
+ * and several of them can belong to a single message.
+ */
+export function foldSettledWorkIntoMessages(messages: readonly Message[]): Message[] {
+  const rows: Message[] = [];
+  for (const message of messages) {
+    const thought = message.thoughtEvent;
+    const settledResponseWork = thought !== undefined
+      && message.messageType === 'thought'
+      && thought.status !== 'started'
+      // 'thinking' is a turn's own reasoning; 'working' is the whole response.
+      && (thought.activeVerb ?? 'working') === 'working';
+    if (!settledResponseWork) {
+      rows.push(message);
+      continue;
+    }
+    // The answer this total belongs to is the nearest agent text above it from
+    // the same turn. `findLastIndex` would say it more directly, but the
+    // renderer's lib target predates it.
+    let host = -1;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const candidate = rows[index]!;
+      if (candidate.authorType === 'agent'
+        && candidate.messageType === 'text'
+        && candidate.transcriptTurnId === message.transcriptTurnId) {
+        host = index;
+        break;
+      }
+    }
+    if (host === -1) {
+      // Nothing to attach to — an answer that was omitted or has not arrived.
+      // The row stays rather than taking the timing out of the feed entirely.
+      rows.push(message);
+      continue;
+    }
+    rows[host] = {
+      ...rows[host]!,
+      workSummary: {
+        durationMs: thought.durationMs,
+        ...(thought.timingAccuracy === undefined ? {} : { timingAccuracy: thought.timingAccuracy }),
+      },
+    };
+  }
+  return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }

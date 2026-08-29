@@ -3266,6 +3266,10 @@ pre {
 .suggested-prompt-error { color: var(--av-sys-color-danger-base); font-size: 10px; margin: 4px 8px 0; text-align: left; }
 .new-workstream-home > .suggested-prompt-list { margin-left: 0; margin-top: 35px; max-width: none; }
 .message-context-label { color: var(--av-ref-color-neutral-9); font-size: 9px; font-weight: 450; }
+/* A settled response's total, beside the author and time it belongs with. It
+   reads as provenance rather than as progress, so it takes the timestamp's
+   muted treatment rather than the feed's body colour. */
+.message-work-summary { color: var(--av-ref-color-neutral-9); font-size: 9px; font-weight: 450; }
 .template-path { align-items: center; background: transparent; color: var(--av-sys-color-accent-base); display: inline-flex; font-size: 10.5px; gap: 4px; margin-top: 19px; }
 .automation-composer-wrap { bottom: 13px; left: 50%; max-width: 920px; position: fixed; transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - 76px); z-index: 4; }
 .rail-open .automation-composer-wrap { transform: translateX(calc(-50% + var(--av-cmp-sidebar-width) / 2 - var(--rail-slot) / 2)); width: calc(100% - var(--av-cmp-sidebar-width) - var(--rail-slot) - 76px); }

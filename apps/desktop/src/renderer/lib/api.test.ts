@@ -100,6 +100,7 @@ const detail = {
     ranges: [],
     activities: [],
     activeActivities: [],
+    pluginRuns: [],
     activeTurns: [],
     pendingInputs: [],
   },

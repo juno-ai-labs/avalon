@@ -1056,14 +1056,24 @@ describe('MessageBlock tool rows', () => {
 });
 
 describe('MessageBlock plugin activity rows', () => {
-  const pluginRow = (id: string, pluginActivity: NonNullable<Message['pluginActivity']>): Message => ({
+  // Most rows use the default phrasing, so the helper supplies it and a case
+  // that cares about wording overrides it explicitly.
+  const pluginRow = (
+    id: string,
+    pluginActivity: Omit<NonNullable<Message['pluginActivity']>, 'activeVerb' | 'completedVerb'>
+      & Partial<Pick<NonNullable<Message['pluginActivity']>, 'activeVerb' | 'completedVerb'>>,
+  ): Message => ({
     ...baseMessage,
     id,
     authorType: 'agent',
     author: undefined,
     messageType: 'plugin_activity',
     text: undefined,
-    pluginActivity,
+    pluginActivity: {
+      activeVerb: `${pluginActivity.name} is working`,
+      completedVerb: `${pluginActivity.name} worked`,
+      ...pluginActivity,
+    },
   });
 
   it('names the plugin rather than the calls it made, and pulses its mark while it works', () => {

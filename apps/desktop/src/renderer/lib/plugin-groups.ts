@@ -38,10 +38,42 @@ export interface PluginGroup {
   key: string;
   name: string;
   icon: PluginGroupIcon;
+  /**
+   * How the row reads, running and settled.
+   *
+   * Rally is the one plugin that is the agent, so it is the subject of its own
+   * sentence: "Rally is working", "Rally worked". Every other row names a tool
+   * Rally reached for, and reads as something Rally did with it — "Using
+   * Slack", "Used Slack" — because a connector did not decide to do anything;
+   * it was used. Carrying both phrasings on the group keeps that a property of
+   * the group rather than a special case in the component that draws it.
+   */
+  activeVerb: string;
+  completedVerb: string;
 }
 
-const RALLY_GROUP: PluginGroup = { key: 'rally', name: 'Rally', icon: 'rally' };
-const COMPUTER_GROUP: PluginGroup = { key: 'computer', name: 'Computer', icon: 'computer' };
+/** The default phrasing: Rally used this plugin. */
+function usedGroupVerbs(subject: string): Pick<PluginGroup, 'activeVerb' | 'completedVerb'> {
+  return { activeVerb: `Using ${subject}`, completedVerb: `Used ${subject}` };
+}
+
+const RALLY_GROUP: PluginGroup = {
+  key: 'rally',
+  name: 'Rally',
+  icon: 'rally',
+  // Rally is not something Rally used.
+  activeVerb: 'Rally is working',
+  completedVerb: 'Rally worked',
+};
+const COMPUTER_GROUP: PluginGroup = {
+  key: 'computer',
+  name: 'Computer',
+  icon: 'computer',
+  // The only group whose name is a common noun rather than a proper one, so it
+  // is the only one that needs an article: "Used a computer", not "Used
+  // Computer". Every connector is a name and takes none.
+  ...usedGroupVerbs('a computer'),
+};
 
 /**
  * The plugins a reader has no reason to tell apart.
@@ -140,7 +172,14 @@ export function pluginGroup(
   // rather than the id. It is also the only key the live pre-canonical row and
   // the canonical block that replaces it can both produce: they identify the
   // same plugin by different ids.
-  if (displayName) return { key: `name:${displayName}`, name: displayName, icon: connectorIconForName(displayName) };
+  if (displayName) {
+    return {
+      key: `name:${displayName}`,
+      name: displayName,
+      icon: connectorIconForName(displayName),
+      ...usedGroupVerbs(displayName),
+    };
+  }
   // A plugin id this table cannot name is not a row. `connection:<uuid>` is the
   // shape that reaches here — a connector block whose plugin activity has not
   // arrived, or never will — and a row reading "connection:9c1f… worked for
