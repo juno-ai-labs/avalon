@@ -3258,7 +3258,7 @@ async function createDeepLinkErrorWindow(message: string): Promise<void> {
     return;
   }
 
-  deepLinkErrorWindow = new BrowserWindow({
+  const failureWindow = new BrowserWindow({
     width: 420,
     height: 260,
     resizable: false,
@@ -3282,17 +3282,37 @@ async function createDeepLinkErrorWindow(message: string): Promise<void> {
     },
   });
 
-  installWindowDiagnostics(deepLinkErrorWindow, 'deep-link-error');
-  deepLinkErrorWindow.setMenuBarVisibility(false);
-  deepLinkErrorWindow.once('ready-to-show', () => deepLinkErrorWindow?.show());
-  deepLinkErrorWindow.on('closed', () => {
+  deepLinkErrorWindow = failureWindow;
+  installWindowDiagnostics(failureWindow, 'deep-link-error');
+  failureWindow.setMenuBarVisibility(false);
+  failureWindow.once('ready-to-show', () => failureWindow.show());
+  failureWindow.on('closed', () => {
+    // Only if this is still *the* window. A window disposed below has already
+    // been replaced in the singleton by the time its `closed` arrives, and
+    // clearing then would take the live window's message with it.
+    if (deepLinkErrorWindow !== failureWindow) return;
     deepLinkErrorWindow = null;
     // Closing the window *is* the acknowledgement, whether that was the button
     // or the title bar. Leaving the message behind would hand it to the next
     // failure's window as though it had just happened.
     deepLinkErrorMessage = null;
   });
-  await loadRenderer(deepLinkErrorWindow, rendererUrl('deep-link-error'), 'deep-link-error');
+  try {
+    await loadRenderer(failureWindow, rendererUrl('deep-link-error'), 'deep-link-error');
+  } catch (error) {
+    // A window that never loaded must not stay in the singleton. Left there it
+    // is worse than no window at all: the next failure takes the re-show branch
+    // above, raises a blank window with no Continue button in it, and *resolves*
+    // — so the reporter reads it as delivered and its own fallback never runs
+    // either. One failed load would disable every later notice for the lifetime
+    // of the process. Disposing here means the next report builds a fresh one.
+    if (deepLinkErrorWindow === failureWindow) {
+      deepLinkErrorWindow = null;
+      deepLinkErrorMessage = null;
+    }
+    if (!failureWindow.isDestroyed()) failureWindow.destroy();
+    throw error;
+  }
 }
 
 async function createSettingsWindow(section?: DesktopSettingsSection): Promise<void> {

@@ -53,6 +53,27 @@ describe('the deep-link failure window', () => {
     expect(screen.queryByText('Rally could not open that note link.')).toBeNull();
   });
 
+  it('keeps a message pushed while the opening read was still in flight', async () => {
+    // The read is a snapshot taken when main served the invoke. A failure that
+    // lands before it settles is newer, and letting the read win would put the
+    // older link's message back and leave it there.
+    let resolveRead: (message: string | null) => void = () => undefined;
+    state.getDeepLinkError.mockReturnValue(new Promise<string | null>((resolve) => {
+      resolveRead = resolve;
+    }));
+    render(<DeepLinkErrorScreen />);
+
+    await waitFor(() => expect(state.changed).toBeDefined());
+    state.changed?.('Rally received an unexpected sign-in link.');
+    expect(await screen.findByText('Rally received an unexpected sign-in link.')).toBeVisible();
+
+    resolveRead('Rally could not open that note link.');
+    await Promise.resolve();
+
+    expect(await screen.findByText('Rally received an unexpected sign-in link.')).toBeVisible();
+    expect(screen.queryByText('Rally could not open that note link.')).toBeNull();
+  });
+
   it('closes the window through main when Continue is pressed', async () => {
     state.getDeepLinkError.mockResolvedValue('Rally received an invalid sign-in link.');
     render(<DeepLinkErrorScreen />);
