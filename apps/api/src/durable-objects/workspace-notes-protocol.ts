@@ -72,7 +72,12 @@ export const WorkspaceNoteStateRequestSchema = z.object({
   access: WorkspaceNoteAccessSchema,
 }).strict();
 
-/** The note and its ordered transcript in one read; both empty on a miss. */
+/**
+ * The note and its ordered transcript in one read; both empty on a miss, and
+ * the transcript deliberately empty for `any` access — that mode answers
+ * existence, and its caller re-reads under the view guard before showing
+ * anything.
+ */
 export const WorkspaceNoteStateSchema = z.object({
   note: WorkspaceNoteRecordSchema.nullable(),
   segments: z.array(WorkspaceNoteSegmentRecordSchema),
