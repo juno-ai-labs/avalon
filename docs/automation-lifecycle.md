@@ -507,6 +507,44 @@ and no rollback to legacy authority.
 
 ## Changelog
 
+### 2026-08-29 — The cutover has run, and its deploy scaffolding is removed
+
+**What changed:** The three one-shot steps that carried the authority cutover —
+the single-region refusal, the preflight ledger wake, and the `--apply` — are
+gone from `deploy-api.yml`, along with the two workflow tests that asserted
+their ordering and the release summary paragraph that asked for their removal.
+`scripts/cutover-automation-agents.mjs` stays, as an operator tool rather than
+a deploy step. The `AUTOMATION_CUTOVER_DRAIN_TIMEOUT_MS` justification is
+corrected.
+
+**Why:** The cutover ran in production on 2026-08-28 and cannot run again
+meaningfully; every step above was written to be temporary. The refusal is the
+one that costs something if it stays: it bans an EU-only or Global-only deploy
+outright, so the next person needing a one-region hotfix would be blocked by a
+gate naming a cutover that finished months earlier, with nothing to tell them
+it had already happened.
+
+The limit's stated reason was simply wrong, which is worse than terse. It
+claimed a failing message would retry forever without reaching the dead-letter
+queue; the command queues carry five retries and a dead-letter queue, and the
+drain loop already fails on any rise in that count. The real exposure is a
+drain that is slow, or a backlog that never reads zero because
+`avalon-<region>-migration-commands` is shared with the migration tracker's
+"Force a migration" fan-out — a case nobody had written down.
+
+**Considered and rejected:** Deleting `cutoverWorkspaceAutomations`, the
+campaign table, and the script outright. That is the honest end state, but it
+requires knowing every workspace completed, and the cutover proves completion
+only negatively — an empty backlog and a flat dead-letter count. There is no
+per-workspace receipt to read, which is a gap the original change already
+recorded. Until something can answer that positively, keeping the remedy costs
+a dead file and losing it strands any workspace the sweep missed.
+
+**Consequences:** A single-region deploy is possible again. Anyone reviving the
+script by hand needs the Cloudflare credentials the deploy job used to assert,
+and should check the migration tracker first — a forced migration running
+concurrently keeps the backlog above zero and the drain loop waits on it.
+
 ### 2026-08-28 — One durable authority replaces the wizard and the subscription split
 
 **What changed:** `AutomationAgent` is a new Durable Object class that owns an
