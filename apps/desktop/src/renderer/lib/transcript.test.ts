@@ -805,7 +805,7 @@ describe('ordered turn rendering', () => {
       message.messageType === 'plugin_activity' || message.messageType === 'thought')
       .map((message) => message.transcriptSequence)).toEqual([2, 2]);
     expect(composed.find((message) => message.id === 'github')?.pluginActivity)
-      .toMatchObject({ groupKey: 'name:GitHub', icon: 'brand-github', name: 'GitHub' });
+      .toMatchObject({ groupKey: 'name:GitHub', icon: 'github', name: 'GitHub' });
   });
 
   it('uses the server elapsed baseline and a local monotonic start for mid-stream opens', () => {
@@ -1268,13 +1268,13 @@ describe('grouping tool calls by plugin', () => {
       },
     });
 
-  const activityRow = (id: string, group: { groupKey: string; name: string; icon: 'plug' | 'rally' | 'brand-slack' }, durationMs: number, active = false): Message =>
+  const activityRow = (id: string, group: { groupKey: string; name: string; icon: 'plug' | 'rally' | 'slack' }, durationMs: number, active = false): Message =>
     row(id, {
       messageType: 'plugin_activity',
       pluginActivity: { ...group, active, durationMs },
     });
 
-  const slack = { groupKey: 'name:Slack', name: 'Slack', icon: 'brand-slack' } as const;
+  const slack = { groupKey: 'name:Slack', name: 'Slack', icon: 'slack' } as const;
 
   it('shows one row per plugin, where that plugin first worked', () => {
     const grouped = groupPluginToolMessages([

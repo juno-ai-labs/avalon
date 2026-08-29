@@ -4142,10 +4142,27 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   width: 20px;
 }
 
-/* `.rally-mark` paints itself in the brand ink, which is the one colour in the
-   row that is not the shared neutral and, on the light themes, the one with no
-   contrast to spare. Inside a plugin face it is a mark like any other. */
+/* Every mark in a plugin face is painted the same way: `currentColor` shown
+   through the artwork's own alpha. `.rally-mark` already carried its own mask
+   and only has to stop painting itself in the brand ink — the one colour in the
+   row that is not the shared neutral, and on the light themes the one with no
+   contrast to spare. A company mark brings its mask on `--plugin-mark`, set
+   from `plugin-marks.ts`. Nothing here draws a brand's palette: a mask reads
+   alpha only, which is what keeps eight companies legible on four grounds. */
 .plugin-face-mark { color: inherit; height: 17px; width: 17px; }
+
+/* A company mark is solid where the line icons beside it are 1.8px strokes, so
+   it is drawn two pixels smaller to land at the same visual weight — matched by
+   eye against the Tabler glyphs in the same column, not by geometry. */
+.plugin-face-mark:not(.rally-mark) {
+  background: currentColor;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 15px;
+  -webkit-mask: var(--plugin-mark) center / contain no-repeat;
+  mask: var(--plugin-mark) center / contain no-repeat;
+  width: 15px;
+}
 
 /* The group's "still going" signal, in place of the spinner each plugin row
    used to carry. The reduced-motion block near the end of this file cuts the

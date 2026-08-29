@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pluginGroup } from './plugin-groups';
+import { pluginGroup, pluginGroupIconForContract } from './plugin-groups';
 
 describe('pluginGroup', () => {
   it.each([
@@ -34,7 +34,7 @@ describe('pluginGroup', () => {
 
   it('leaves a named first-party plugin its own row', () => {
     expect(pluginGroup('rally:web', 'Web')).toEqual(
-      { key: 'name:Web', name: 'Web', icon: 'world-search' },
+      { key: 'name:Web', name: 'Web', icon: 'web' },
     );
   });
 
@@ -44,22 +44,39 @@ describe('pluginGroup', () => {
     expect(pluginGroup('connection:aaaaaaaa-0000-4000-8000-000000000001', 'Slack'))
       .toEqual(pluginGroup('plugin_slack', 'Slack'));
     expect(pluginGroup('connection:aaaaaaaa-0000-4000-8000-000000000002', 'Slack'))
-      .toEqual({ key: 'name:Slack', name: 'Slack', icon: 'brand-slack' });
+      .toEqual({ key: 'name:Slack', name: 'Slack', icon: 'slack' });
   });
 
   it.each([
-    ['GitHub', 'brand-github'],
-    ['Google Mail + Calendar', 'brand-google'],
-    ['Google Drive + Docs + Sheets', 'brand-google-drive'],
+    ['GitHub', 'github'],
+    ['Google Mail + Calendar', 'google'],
+    ['Google Drive + Docs + Sheets', 'google-drive'],
     ['Linear', 'linear'],
-    ['Notion', 'brand-notion'],
+    ['Notion', 'notion'],
+    ['Slack', 'slack'],
+    ['Granola', 'granola'],
+    ['X', 'x'],
     ['Generic webhook', 'webhook'],
-    // Adapters with no brand glyph in the icon set share the generic plug,
-    // exactly as the backend's own mapping does.
-    ['Granola', 'plug'],
-    ['X', 'plug'],
-  ])('draws %s with the %s mark', (displayName, icon) => {
+  ])('draws %s with its own mark', (displayName, icon) => {
     expect(pluginGroup('connection:one', displayName)?.icon).toBe(icon);
+  });
+
+  it('gives every connector Rally has an adapter for a mark of its own', () => {
+    // The plug is the fallback for a connector this list has not learned about,
+    // and every shipped adapter is on the list. A new one that reaches the feed
+    // still drawing a plug means this mapping was not updated with it.
+    const shipped = ['GitHub', 'Google Workspace', 'Granola', 'Linear', 'Notion', 'Slack', 'X'];
+    expect(shipped.filter((name) => pluginGroup('connection:one', name)?.icon === 'plug')).toEqual([]);
+  });
+
+  it('does not claim a later connector that merely starts with x', () => {
+    expect(pluginGroup('connection:one', 'Xero')?.icon).toBe('plug');
+  });
+
+  it('keeps the backend icon names working for the rows that still carry them', () => {
+    expect(pluginGroupIconForContract('brand-google-drive')).toBe('google-drive');
+    expect(pluginGroupIconForContract('world-search')).toBe('web');
+    expect(pluginGroupIconForContract('plug')).toBe('plug');
   });
 
   it('declines to group a tool whose owner the transcript has not named yet', () => {
