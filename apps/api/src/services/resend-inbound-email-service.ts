@@ -14,7 +14,8 @@ import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 import { createMessageObjectPort } from "../runtime/message-port";
 import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
-import { automationAgentName } from "../durable-objects/names";
+import { automationAgentName, workspaceDOName } from "../durable-objects/names";
+import type { WorkspaceDO } from "../durable-objects/workspace-do";
 
 const RESEND_RECEIVED_EMAIL_URL = "https://api.resend.com/emails/receiving";
 const DEFAULT_WORKSTREAM_EMAIL_DOMAIN = WORKSTREAM_EMAIL_DOMAIN;
@@ -114,14 +115,6 @@ interface WebhookReceiptRow {
   event_type: string;
   routed_at: string | null;
   error_json: string | null;
-}
-
-interface RegionalReceiptRow {
-  processed_at: string | null;
-  error_json: string | null;
-  payload_ref: string | null;
-  lease_token: string | null;
-  lease_expires_at: string | null;
 }
 
 interface LocalWorkstreamRow {
@@ -537,56 +530,27 @@ export class ResendRegionalEmailService {
       throw new ApiError(404, "email_workstream_not_found", "The email address is not attached to an active work stream");
     }
 
-    // Once the WorkspaceDO route is open the receipt is object-local product
-    // state, and every lease operation below must serialize in that object.
-    // Before the cutover it must stay in regional D1, because the legacy
-    // settle path below fences the lease inside one D1 batch with the message
-    // insert — a claim and its settle may never live in different stores.
-    const receiptsDb = this.env.DB;
-    const leaseToken = newId();
-    const leaseExpiresAt = this.leaseExpiration();
-    const claimed = await receiptsDb.prepare(
-      `INSERT OR IGNORE INTO workstream_email_receipts
-       (resend_email_id, workstream_id, workspace_id, svix_id, payload_ref,
-        received_at, processed_at, error_json, lease_token, lease_expires_at)
-       VALUES (?, ?, ?, ?, NULL, ?, NULL, NULL, ?, ?)`,
-    ).bind(
-      input.resendEmailId,
-      input.workstreamId,
-      input.workspaceId,
-      input.svixId,
-      input.receivedAt,
-      leaseToken,
-      leaseExpiresAt,
-    ).run();
-    if (changes(claimed) === 0) {
-      const existing = await receiptsDb.prepare(
-        `SELECT processed_at, error_json, payload_ref, lease_token, lease_expires_at
-         FROM workstream_email_receipts
-         WHERE resend_email_id = ? AND workstream_id = ?`,
-      ).bind(input.resendEmailId, input.workstreamId).first<RegionalReceiptRow>();
-      if (existing?.processed_at) {
-        return { accepted: true, duplicate: true, messageId: null, resourceId: null };
-      }
-      if (!existing) {
-        throw new ApiError(503, "email_processing_unavailable", "The inbound email receipt could not be claimed");
-      }
-      const reclaimed = await receiptsDb.prepare(
-        `UPDATE workstream_email_receipts
-         SET lease_token = ?, lease_expires_at = ?, error_json = NULL
-         WHERE resend_email_id = ? AND workstream_id = ? AND processed_at IS NULL
-           AND (lease_token IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)`,
-      ).bind(
-        leaseToken,
-        leaseExpiresAt,
-        input.resendEmailId,
-        input.workstreamId,
-        new Date(this.now()).toISOString(),
-      ).run();
-      if (changes(reclaimed) === 0) {
-        throw new ApiError(503, "email_processing_in_progress", "The inbound email is already being processed");
-      }
+    // The receipt is WorkspaceDO product state, and every lease operation
+    // below serializes in that object. The insert, the duplicate read and the
+    // expired-lease takeover used to be three facade round trips; the typed
+    // claim is one critical section, and it mints the lease token every later
+    // transition presents.
+    const workspace = await this.workspaceObject(input.workspaceId);
+    const claim = await workspace.claimInboundEmailReceipt({
+      workspaceId: input.workspaceId,
+      resendEmailId: input.resendEmailId,
+      workstreamId: input.workstreamId,
+      svixId: input.svixId,
+      receivedAt: input.receivedAt,
+      leaseExpiresAt: this.leaseExpiration(),
+    });
+    if (claim.outcome === "already_processed") {
+      return { accepted: true, duplicate: true, messageId: null, resourceId: null };
     }
+    if (claim.outcome === "in_progress" || claim.leaseToken === null) {
+      throw new ApiError(503, "email_processing_in_progress", "The inbound email is already being processed");
+    }
+    const leaseToken = claim.leaseToken;
 
     try {
       const email = await this.retrieveReceivedEmail(input.resendEmailId);
@@ -608,12 +572,12 @@ export class ResendRegionalEmailService {
       });
 
       const resourceId = await this.upsertEmailResource(input, safeEmail, payloadRef);
-      await this.renewRegionalLease(receiptsDb, input, leaseToken);
+      await this.renewRegionalLease(workspace, input, leaseToken);
       const clientMessageId = await emailClientMessageId(input.resendEmailId);
       const messages = createMessageObjectPort(this.env, input.workspaceId, input.workstreamId);
       const replayed = await messages.messageByClientId({ clientMessageId });
       if (replayed) {
-        await this.markRegionalProcessed(receiptsDb, input, payloadRef, leaseToken);
+        await this.markRegionalProcessed(workspace, input, payloadRef, leaseToken);
         return { accepted: true, duplicate: true, messageId: replayed.id, resourceId };
       }
 
@@ -677,14 +641,14 @@ export class ResendRegionalEmailService {
         producedByRunId: null,
         now: Date.parse(createdAt),
       });
-      await this.markRegionalProcessed(receiptsDb, input, payloadRef, leaseToken);
+      await this.markRegionalProcessed(workspace, input, payloadRef, leaseToken);
       if (appended.outcome === "replayed") {
         return { accepted: true, duplicate: true, messageId: appended.messageId, resourceId };
       }
 
       return { accepted: true, duplicate: false, messageId, resourceId };
     } catch (error) {
-      await this.recordRegionalFailure(receiptsDb, input, leaseToken, stableErrorCode(error));
+      await this.recordRegionalFailure(workspace, input, leaseToken, stableErrorCode(error));
       throw error;
     }
   }
@@ -818,96 +782,58 @@ export class ResendRegionalEmailService {
     email: SafeReceivedEmail,
     payloadRef: string,
   ): Promise<string> {
-    const candidateId = newId();
-    const at = new Date(this.now()).toISOString();
-    const metadata = JSON.stringify({
-      untrusted: true,
-      from: email.from,
-      to: email.to,
-      subject: email.subject,
-      messageId: email.messageId,
-      attachmentCount: email.attachments.length,
-    });
-    await this.env.DB.prepare(
-      `INSERT OR IGNORE INTO resources
-       (id, workspace_id, connection_id, resource_type, provider, provider_resource_id,
-        title, mime_type, content_ref, canonical_url, metadata_json, last_hydrated_at,
-        created_at, updated_at)
-       VALUES (?, ?, NULL, 'email', 'resend', ?, ?, 'application/json', ?, NULL, ?, ?, ?, ?)`,
-    ).bind(
-      candidateId,
-      input.workspaceId,
-      input.resendEmailId,
-      resourceTitle(email.subject),
-      payloadRef,
-      metadata,
-      at,
-      at,
-      at,
-    ).run();
-    const resource = await this.env.DB.prepare(
-      `SELECT id FROM resources
-       WHERE workspace_id = ? AND provider = 'resend' AND provider_resource_id = ?
-       LIMIT 1`,
-    ).bind(input.workspaceId, input.resendEmailId).first<{ id: string }>();
-    if (!resource) {
-      throw new ApiError(500, "email_resource_failed", "The inbound email resource could not be persisted");
-    }
-    await this.env.DB.prepare(
-      `UPDATE resources SET title = ?, mime_type = 'application/json', content_ref = ?,
-       metadata_json = ?, last_hydrated_at = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ?`,
-    ).bind(
-      resourceTitle(email.subject),
-      payloadRef,
-      metadata,
-      at,
-      at,
-      resource.id,
-      input.workspaceId,
-    ).run();
-    return resource.id;
+    const resource = await (await this.workspaceObject(input.workspaceId))
+      .upsertInboundEmailResource({
+        workspaceId: input.workspaceId,
+        candidateResourceId: newId(),
+        resendEmailId: input.resendEmailId,
+        title: resourceTitle(email.subject),
+        contentRef: payloadRef,
+        metadataJson: JSON.stringify({
+          untrusted: true,
+          from: email.from,
+          to: email.to,
+          subject: email.subject,
+          messageId: email.messageId,
+          attachmentCount: email.attachments.length,
+        }),
+        at: new Date(this.now()).toISOString(),
+      });
+    return resource.resourceId;
   }
 
   private async markRegionalProcessed(
-    receiptsDb: D1Database,
+    workspace: DurableObjectStub<WorkspaceDO>,
     input: WorkstreamRegionalEmailInput,
     payloadRef: string,
     leaseToken: string,
   ): Promise<void> {
-    const processed = await receiptsDb.prepare(
-      `UPDATE workstream_email_receipts
-       SET payload_ref = ?, processed_at = ?, error_json = NULL,
-           lease_token = NULL, lease_expires_at = NULL
-       WHERE resend_email_id = ? AND workstream_id = ? AND lease_token = ?`,
-    ).bind(
-      payloadRef,
-      new Date(this.now()).toISOString(),
-      input.resendEmailId,
-      input.workstreamId,
+    const settled = await workspace.settleInboundEmailProcessed({
+      workspaceId: input.workspaceId,
+      resendEmailId: input.resendEmailId,
+      workstreamId: input.workstreamId,
       leaseToken,
-    ).run();
-    if (changes(processed) === 0) {
+      payloadRef,
+      processedAt: new Date(this.now()).toISOString(),
+    });
+    if (settled.outcome === "lease_lost") {
       throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
     }
   }
 
   private async renewRegionalLease(
-    receiptsDb: D1Database,
+    workspace: DurableObjectStub<WorkspaceDO>,
     input: WorkstreamRegionalEmailInput,
     leaseToken: string,
   ): Promise<void> {
-    const renewed = await receiptsDb.prepare(
-      `UPDATE workstream_email_receipts SET lease_expires_at = ?
-       WHERE resend_email_id = ? AND workstream_id = ?
-         AND processed_at IS NULL AND lease_token = ?`,
-    ).bind(
-      this.leaseExpiration(),
-      input.resendEmailId,
-      input.workstreamId,
+    const renewed = await workspace.renewInboundEmailLease({
+      workspaceId: input.workspaceId,
+      resendEmailId: input.resendEmailId,
+      workstreamId: input.workstreamId,
       leaseToken,
-    ).run();
-    if (changes(renewed) === 0) {
+      leaseExpiresAt: this.leaseExpiration(),
+    });
+    if (renewed.outcome === "lease_lost") {
       throw new ApiError(503, "email_processing_lease_lost", "The inbound email processing lease expired");
     }
   }
@@ -939,26 +865,32 @@ export class ResendRegionalEmailService {
   }
 
   private async recordRegionalFailure(
-    receiptsDb: D1Database,
+    workspace: DurableObjectStub<WorkspaceDO>,
     input: WorkstreamRegionalEmailInput,
     leaseToken: string,
     code: string,
   ): Promise<void> {
     try {
-      await receiptsDb.prepare(
-        `UPDATE workstream_email_receipts
-         SET error_json = ?, lease_token = NULL, lease_expires_at = NULL
-         WHERE resend_email_id = ? AND workstream_id = ?
-           AND processed_at IS NULL AND lease_token = ?`,
-      ).bind(
-        JSON.stringify({ code }),
-        input.resendEmailId,
-        input.workstreamId,
+      await workspace.recordInboundEmailFailure({
+        workspaceId: input.workspaceId,
+        resendEmailId: input.resendEmailId,
+        workstreamId: input.workstreamId,
         leaseToken,
-      ).run();
+        errorCode: code,
+      });
     } catch {
       // Keep the original provider or persistence failure authoritative.
     }
+  }
+
+  /** The WorkspaceDO that owns this workspace's email receipts and resources. */
+  private workspaceObject(workspaceId: string) {
+    return durableObjectStubForWorkspace(
+      this.env,
+      this.env.WORKSPACE_DOS,
+      asWorkspaceId(workspaceId),
+      workspaceDOName(this.env.AVALON_REGION, asWorkspaceId(workspaceId)),
+    );
   }
 
   private bindings(): ResendInboundEnvBindings {
