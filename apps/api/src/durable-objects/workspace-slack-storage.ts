@@ -30,22 +30,8 @@ import {
   type WorkspaceSlackThreadReleaseRequest,
   type WorkspaceSlackThreadRoutableRequest,
   type WorkspaceSlackThreadRoutableResult,
+  SLACK_INGRESS_ATTEMPT_LIMIT,
 } from "./workspace-slack-protocol";
-
-/**
- * The retry ceiling one ingress job gets before only a reauthorization
- * re-drive can bring it back.
- *
- * Unchanged from the `20` the service spelled at every site it replaced,
- * moved beside the claim that enforces it. Two spellings of the same number
- * deliberately remain on the other side of the boundary and must move with
- * it: the reauthorization re-drive in `services/slack-agent-service.ts`
- * (`attempt_count >= 20`, still a facade statement because it joins
- * `connector_connections`) and the workspace alarm's due-time arm in
- * `services/workspace-schedule-execution.ts` (`attempt_count >= 20`), which
- * must count exactly the rows these methods will and will not act on.
- */
-const SLACK_INGRESS_ATTEMPT_LIMIT = 20;
 
 /**
  * How long one worker's claim on an ingress job holds before another may take
@@ -245,7 +231,23 @@ export function failWorkspaceSlackIngressJob(
   });
 }
 
-/** The jobs whose payload survives and whose processing has gone quiet. */
+/**
+ * The jobs whose payload survives and whose processing has gone quiet.
+ *
+ * The predicate mirrors `claimWorkspaceSlackIngressJob`'s, and that alignment
+ * is the point: this scan re-enqueues what that claim will take. The facade
+ * statement applied the attempt ceiling to every row, including a `processing`
+ * one whose lease had expired — which the claim reclaims regardless of attempt
+ * count, because a dead worker recorded no outcome. That left one row nothing
+ * could advance: a job whose worker died on its twentieth attempt stays
+ * `processing` for ever, the alarm's `slack_ingress` arm reads a `processing`
+ * row's due time as its `lease_expires_at` and so finds it permanently due,
+ * this scan skipped it, and neither reap takes a `processing` row. The alarm
+ * then wakes, sweeps nothing, and re-arms on the same instant. Applying the
+ * ceiling only to `queued`/`failed` closes it: the reclaim settles the job,
+ * a failure at the ceiling becomes `failed`, and `failed` has a reap and a
+ * 30-day horizon.
+ */
 export function recoverableWorkspaceSlackIngressJobs(
   storage: DurableObjectStorage,
   request: WorkspaceSlackIngressRecoverableRequest,
@@ -253,8 +255,9 @@ export function recoverableWorkspaceSlackIngressJobs(
   const rows = storage.sql.exec<{ id: string }>(
     `SELECT id FROM slack_ingress_jobs
      WHERE workspace_id = ? AND payload_json IS NOT NULL
-       AND attempt_count < ${SLACK_INGRESS_ATTEMPT_LIMIT}
-       AND ((status IN ('queued', 'failed') AND updated_at < ?)
+       AND ((status IN ('queued', 'failed')
+             AND attempt_count < ${SLACK_INGRESS_ATTEMPT_LIMIT}
+             AND updated_at < ?)
          OR (status = 'processing' AND lease_expires_at < ?))
      ORDER BY received_at ASC LIMIT ?`,
     request.workspaceId,

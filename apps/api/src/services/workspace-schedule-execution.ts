@@ -38,6 +38,7 @@ import type {
   WorkspaceNotificationIntentReapRequest,
   WorkspaceNotificationIntentReapResult,
 } from "../durable-objects/workspace-notification-intent-protocol";
+import { SLACK_INGRESS_ATTEMPT_LIMIT } from "../durable-objects/workspace-slack-protocol";
 import { nextRRuleOccurrence } from "../lib/recurrence";
 import { uuidV7 } from "../lib/uuid-v7";
 import { logStructuredEvent } from "../observability/logger";
@@ -219,7 +220,7 @@ const MAINTENANCE_TASKS: Record<string, (ctx: WorkspaceScheduleContext) => Promi
       limit: 500,
     })
   ).reapedIntentIds.length),
-  slack_ingress: async (ctx) => { await new SlackAgentService(ctx.workspaceEnv).maintainIngress(100, ctx.workspaceId); },
+  slack_ingress: async (ctx) => { await new SlackAgentService(ctx.workspaceEnv).maintainIngress(ctx.workspaceId, 100); },
   slack_unfurls: async (ctx) => { await refreshSlackWorkstreamUnfurls(ctx.workspaceEnv, ctx.workspaceId); },
 };
 
@@ -342,7 +343,7 @@ const SCHEDULE_TARGET_QUERIES: readonly { sql: string; scoped: boolean }[] = [
               SELECT MIN(CASE
                        WHEN status = 'processing' THEN lease_expires_at
                        WHEN status = 'completed' THEN strftime('%Y-%m-%dT%H:%M:%SZ', completed_at, '+30 days', '+1 second')
-                       WHEN status = 'failed' AND attempt_count >= 20
+                       WHEN status = 'failed' AND attempt_count >= ${SLACK_INGRESS_ATTEMPT_LIMIT}
                          THEN strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+30 days', '+1 second')
                        ELSE strftime('%Y-%m-%dT%H:%M:%SZ', updated_at, '+2 minutes', '+1 second') END) AS due_at
                 FROM slack_ingress_jobs WHERE workspace_id = ?1
