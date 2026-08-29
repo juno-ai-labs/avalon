@@ -272,8 +272,10 @@ Hard-coding Granola's observed tool schema would create a second catalog that
 could drift from `tools/list`.
 
 **Consequences:** A stalled Granola meeting query can hold its run and provider
-connection for up to five minutes before Rally interrupts it. Receipt
-persistence, cancellation, and ambiguous-outcome handling are unchanged.
+connection for up to five minutes before Rally interrupts it. If it is still
+unsettled then, it still ends as `ambiguous_external_write`; the longer deadline
+gives the provider more time to finish and does not change receipt persistence,
+cancellation, or ambiguous-outcome handling.
 
 ### 2026-08-25 — The Rally client identity is pinned as one hosted-MCP contract
 

@@ -22,6 +22,7 @@ export const HOSTED_MCP_PROTOCOL_VERSION = "2025-06-18";
 
 const HOSTED_MCP_CLIENT_NAME = "Rally";
 const HOSTED_MCP_CLIENT_VERSION = "1.0.0";
+const HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const DEFAULT_RESPONSE_BYTES = 2_000_000;
 const MAX_TOOL_COUNT = 128;
 const MAX_TOOL_PAGES = 20;
@@ -319,7 +320,7 @@ export function hostedMcpToolDefinitions(
     wireNames.add(wireName);
     const timeoutMs = Object.hasOwn(toolTimeoutMsByName, tool.name)
       ? toolTimeoutMsByName[tool.name]!
-      : 30_000;
+      : HOSTED_MCP_DEFAULT_TOOL_TIMEOUT_MS;
     definitions.push({
       name: canonicalName,
       providerOperationName: tool.name,

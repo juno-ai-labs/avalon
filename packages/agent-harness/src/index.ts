@@ -1224,6 +1224,7 @@ export interface AutomationCreatorPluginCatalogEntry {
     capability: string;
     mode: "read" | "write";
     idempotency?: "safe" | "provider_key" | "record_before_execute";
+    timeoutMs?: number;
     inputSchema: Record<string, unknown>;
     execute?: HarnessTool["execute"];
   }>;
@@ -1614,6 +1615,7 @@ export async function compileAutomation(input: {
             capability: tool.capability,
             mode: tool.mode,
             idempotency: tool.idempotency ?? "safe",
+            ...(tool.timeoutMs === undefined ? {} : { timeoutMs: tool.timeoutMs }),
             inputSchema: tool.inputSchema,
           },
           execute: tool.execute,

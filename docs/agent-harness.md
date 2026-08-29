@@ -1015,6 +1015,29 @@ silently return every test to the shared key while each still passes alone.
 
 ## Changelog
 
+### 2026-08-29 — Automation authoring preserves connector tool deadlines
+
+**What changed:** The automation creator's connector catalog now carries each
+tool's optional `timeoutMs` from API discovery into the executable `HarnessTool`
+that Bind receives.
+
+**Why:** The ordinary work-stream path already honored Granola's five-minute
+`query_granola_meetings` deadline, but automation authoring copied only the
+tool's schema and safety fields into its intermediate catalog. Reconstructing
+the tool without the deadline silently restored the shared 30-second default,
+so the same provider query still failed in one supported invocation path.
+
+**What was rejected:** Special-casing Granola inside the automation compiler.
+The deadline is part of the trusted `ToolDefinition` selected by the connector;
+every catalog projection must preserve that contract regardless of provider.
+
+**What a future change has to respect:** Any intermediate representation that
+reconstructs an executable tool must carry execution policy fields as well as
+model-visible schema. Omitting an optional field is a behavioral change even
+when the model-facing catalog looks identical. Bind still combines each tool
+deadline with its caller's parent signal: preserving a five-minute tool value
+does not widen automation compilation's independent 180-second run ceiling.
+
 ### 2026-08-29 — `runHarness` imports the Bind runtime statically
 
 **What changed:** `runHarness` in `packages/agent-harness/src/index.ts` calls
