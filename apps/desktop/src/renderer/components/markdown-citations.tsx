@@ -7,7 +7,7 @@ import {
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { File, FileText, Link2 } from 'lucide-react';
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 
 /**
  * Citations, as the desktop draws them.
@@ -54,6 +54,16 @@ export interface CitationContext {
   resolve: (resourceId: string) => CitationResource | undefined;
   /** Where an opened citation goes. The host owns the route; this owns the click. */
   open: (target: CitationTarget) => void;
+  /**
+   * The resource's markdown-converted text for the embed card's preview, or
+   * `undefined` for a resource this context cannot resolve. The text is the
+   * preview route's derivative — a Word file's markdown, a PDF's OCR — not the
+   * source bytes, and the promise settles only once the route has stopped
+   * answering "still preparing"; the card shows its skeleton exactly as long
+   * as the promise is open. Optional because a surface with no work stream
+   * behind it has no route to read, and the card then simply keeps its room.
+   */
+  preview?: (resourceId: string) => Promise<string> | undefined;
 }
 
 /**
@@ -154,12 +164,45 @@ function ResourceChip({ label, resource, onOpen }: {
  * It is drawn as a file tile — the kind badge at the head, the title and kind at
  * the foot, room between — rather than as a list row, so an announced resource
  * reads as a thing that was produced, not as another line of the sentence.
+ *
+ * The room is not always empty: when the host can read the resource's
+ * markdown-converted text, the card shows the opening lines of it between the
+ * badge and the title, clipped by the stylesheet — never scrolled — and shows
+ * a shimmering skeleton for exactly as long as the derivative is still being
+ * prepared. The preview is presentation, so it is `aria-hidden` and the
+ * button's label stays the title alone. A still render skips it entirely:
+ * a picture serialized mid-skeleton would keep the skeleton forever.
  */
-function ResourceEmbedCard({ label, resource, onOpen }: {
+function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   label: React.ReactNode;
   resource: CitationResource;
   onOpen: () => void;
+  preview?: ((resourceId: string) => Promise<string> | undefined) | undefined;
 }): React.JSX.Element {
+  const [excerpt, setExcerpt] = useState<{ for: string; text?: string; open?: boolean }>({ for: '' });
+  useEffect(() => {
+    const request = preview?.(resource.id);
+    if (!request) {
+      setExcerpt({ for: resource.id });
+      return;
+    }
+    let cancelled = false;
+    setExcerpt({ for: resource.id, open: true });
+    request
+      .then((text) => {
+        if (!cancelled) setExcerpt({ for: resource.id, text: previewExcerpt(text) });
+      })
+      .catch(() => {
+        // Every rejection — unavailable, unconvertible, retries spent — means
+        // the same thing here: the card keeps its empty room, exactly as it
+        // stands on a surface that offers no preview at all.
+        if (!cancelled) setExcerpt({ for: resource.id });
+      });
+    return () => { cancelled = true; };
+  }, [preview, resource.id]);
+  // A commit can hand this mounted card a different resource before the effect
+  // re-runs; matching on the id keeps the old resource's text off the new one.
+  const settled = excerpt.for === resource.id ? excerpt : { for: resource.id };
   return (
     <button
       aria-label={`Open ${resource.title}`}
@@ -169,12 +212,33 @@ function ResourceEmbedCard({ label, resource, onOpen }: {
       type="button"
     >
       <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resource.resourceType} /></span>
+      {settled.open && (
+        <span aria-hidden="true" className="citation-card-preview-skeleton">
+          <span /><span /><span />
+        </span>
+      )}
+      {settled.text !== undefined && settled.text !== '' && (
+        <span aria-hidden="true" className="citation-card-preview">{settled.text}</span>
+      )}
       <span className="citation-card-text">
         <strong className="citation-card-title">{label}</strong>
         <small className="citation-card-kind">{resourceKindLabel(resource.resourceType)}</small>
       </span>
     </button>
   );
+}
+
+/**
+ * The slice of a derivative the preview actually shows.
+ *
+ * Blank-line runs collapse so the clamp spends its lines on text rather than
+ * on paragraph seams, and the tail beyond a few times the visible clamp is not
+ * put in the DOM at all — the stylesheet clips at four lines, so shipping a
+ * whole document into the box would render the same pixels at many times the
+ * node weight.
+ */
+function previewExcerpt(text: string): string {
+  return text.replace(/\r\n/gu, '\n').replace(/\n{2,}/gu, '\n').trim().slice(0, 600);
 }
 
 /**
@@ -395,7 +459,11 @@ const IMAGE_CELLS: Matrix<ImageArgs> = {
     const resource = resolved(args);
     const onOpen = opener(args.render, args.target);
     if (!resource || !onOpen) return <>{args.label}</>;
-    return <ResourceEmbedCard label={args.label} onOpen={onOpen} resource={resource} />;
+    // A still keeps the empty room: the saved card is serialized at one
+    // moment, and a skeleton or a half-loaded excerpt caught in that moment
+    // would be printed into the picture forever.
+    const preview = args.render.still ? undefined : args.render.citations?.preview;
+    return <ResourceEmbedCard label={args.label} onOpen={onOpen} preview={preview} resource={resource} />;
   },
   // Deliberately *not* a citation. The renderer's CSP permits external images
   // and markdown images render today, so this syntax is live and means what it
