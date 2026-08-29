@@ -6,8 +6,13 @@ import type { AuthContext, Env } from "../src/env";
 import { encryptString, sha256 } from "../src/lib/crypto";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { SlackAgentService } from "../src/services/slack-agent-service";
-import { createTestEnv } from "./helpers/cloudflare-test";
+import { createCloudflareTestBinding, createTestEnv } from "./helpers/cloudflare-test";
 import { testSubstreamAgentsBinding } from "./helpers/durable-authority";
+import {
+  createTestWorkspaceDO,
+  SLACK_WORKSPACE_OBJECT_METHODS,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const credentialsKey = "slack-account-link-test-key";
 const workspaceId = "00000000-0000-7000-8000-000000000001";
@@ -24,11 +29,21 @@ afterEach(() => {
 describe("Slack account linking", () => {
   it("publishes App Home for an unlinked member without minting a link challenge", async () => {
     const database = await seededDatabase();
+    // The event travels the durable ingress: the enqueue and the claim are
+    // typed methods on a real WorkspaceDO, so this test carries the object and
+    // the route the router resolves it through.
+    const { instance, objectDatabase } = await seededWorkspaceObject(database);
     const slack = stubSlack();
-    const service = new SlackAgentService(environment(database));
+    const service = new SlackAgentService(environment(database, {
+      WORKSPACE_DOS: testWorkspaceObjectBinding(instance, [
+        ...SLACK_WORKSPACE_OBJECT_METHODS,
+        "recentWorkstreamDirectory",
+        "listAutomationDirectory",
+      ]),
+    }));
 
     await expect(service.processEvent(appHomeOpened(), "home-hash")).resolves.toEqual({ ok: true });
-    await service.processQueuedIngress("event:EvHome");
+    await service.processQueuedIngress(workspaceId, "event:EvHome");
 
     const published = slack.calls.find((call) => call.method === "views.publish");
     const connect = connectButton(published?.body.view as Record<string, unknown>);
@@ -36,6 +51,7 @@ describe("Slack account linking", () => {
     // The whole point: App Home is published once and stays on screen
     // indefinitely, so it must not carry anything that can expire on it.
     expect(connect).not.toHaveProperty("url");
+    expect(challengeCount(objectDatabase)).toBe(0);
     expect(challengeCount(database)).toBe(0);
   });
 
@@ -291,12 +307,12 @@ describe("Slack account linking", () => {
        VALUES ('T123', 'global', ?, ?, 'active', '2026-01-01', '2026-01-01')`,
     ).run(workspaceId, connectionId);
     const service = new SlackAgentService(environment(database, {
-      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+      WORKSPACE_DOS: createCloudflareTestBinding<Env["WORKSPACE_DOS"]>(testSubstreamAgentsBinding(database, {
         extra: {
           recentWorkstreamDirectory: async () => ({ items: [] }),
           listAutomationDirectory: async () => ({ items: [] }),
         },
-      }),
+      })),
     }));
 
     await expect(service.linkUser(auth(), "fresh-token")).resolves.toMatchObject({ linked: true, slackUserId: "U456" });
@@ -379,6 +395,44 @@ async function seedChallenge(
   ).run(await sha256(token), options.expiresAt, options.consumedAt ?? null);
 }
 
+/**
+ * The real workspace object the durable ingress test runs against, seeded
+ * with the same installation the regional fixture carries — the connection is
+ * a WorkspaceDO table, so the object is where the routed reads find it.
+ */
+async function seededWorkspaceObject(database: DatabaseSync): Promise<{
+  instance: ReturnType<typeof createTestWorkspaceDO>["instance"];
+  objectDatabase: DatabaseSync;
+}> {
+  database.prepare(
+    `INSERT INTO slack_installation_routes
+       (team_id, region, workspace_id, connection_id, status, created_at, updated_at)
+     VALUES ('T123', 'global', ?, ?, 'active', '2026-01-01', '2026-01-01')`,
+  ).run(workspaceId, connectionId);
+  const { instance, objectDatabase } = createTestWorkspaceDO({
+    workspaceId,
+    regionalDatabase: database,
+    register: (created) => { databases.push(created); },
+  });
+  const encrypted = await encryptString(
+    JSON.stringify({ botAccessToken: "xoxb-test" }),
+    credentialsKey,
+    connectionId,
+  );
+  objectDatabase.exec(`
+    INSERT INTO connector_connections
+      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+       display_name, encrypted_credentials, credential_iv, credential_key_version,
+       granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+       model_plugin_id)
+    VALUES ('${connectionId}', '${workspaceId}', 'slack', 'workspace', NULL, 'T123',
+            'Juno Labs', '${encrypted.ciphertext}', '${encrypted.iv}', 1,
+            '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+            'plugin_slack_workspace');
+  `);
+  return { instance, objectDatabase };
+}
+
 async function seededDatabase(): Promise<DatabaseSync> {
   const database = preRetirementProductSqliteDatabase();
   databases.push(database);
@@ -410,7 +464,7 @@ async function seededDatabase(): Promise<DatabaseSync> {
 
 function environment(
   database: DatabaseSync,
-  overrides: { WORKSPACE_DOS?: DurableObjectNamespace } = {},
+  overrides: { WORKSPACE_DOS?: Env["WORKSPACE_DOS"] } = {},
 ): Env {
   return createTestEnv({
     DB: sqliteD1(database),
