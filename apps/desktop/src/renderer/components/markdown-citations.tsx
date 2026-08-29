@@ -6,7 +6,7 @@ import {
   parseCitationHref,
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
-import { ChevronRight, File, FileText, Link2 } from 'lucide-react';
+import { File, FileText, Link2 } from 'lucide-react';
 import { createContext, useContext } from 'react';
 
 /**
@@ -150,6 +150,10 @@ function ResourceChip({ label, resource, onOpen }: {
  * Models put image syntax on its own line by training, the way they treat actual
  * images, so the card lands between sentences rather than cutting one into three
  * — no renderer heuristic has to guess where a block belongs.
+ *
+ * It is drawn as a file tile — the kind badge at the head, the title and kind at
+ * the foot, room between — rather than as a list row, so an announced resource
+ * reads as a thing that was produced, not as another line of the sentence.
  */
 function ResourceEmbedCard({ label, resource, onOpen }: {
   label: React.ReactNode;
@@ -164,14 +168,111 @@ function ResourceEmbedCard({ label, resource, onOpen }: {
       onClick={onOpen}
       type="button"
     >
-      <span aria-hidden="true" className="citation-card-icon"><ResourceIcon type={resource.resourceType} /></span>
+      <span aria-hidden="true" className="citation-card-badge"><ResourceIcon type={resource.resourceType} /></span>
       <span className="citation-card-text">
         <strong className="citation-card-title">{label}</strong>
         <small className="citation-card-kind">{resourceKindLabel(resource.resourceType)}</small>
       </span>
-      <ChevronRight aria-hidden="true" className="citation-card-chevron" size={15} />
     </button>
   );
+}
+
+/**
+ * The slice of a hast node the embed-row pass reads and rewrites. Structural
+ * rather than imported: the renderer depends on `hast` only transitively
+ * through react-markdown, and four optional fields are the whole contract.
+ */
+interface EmbedRowNode {
+  type: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: EmbedRowNode[];
+}
+
+function isWhitespaceNode(node: EmbedRowNode): boolean {
+  return node.type === 'text' && typeof node.value === 'string' && node.value.trim() === '';
+}
+
+/**
+ * The resource images of a paragraph that holds nothing else, or `null` for
+ * any other node. Only the `resource:` scheme counts: an identity card or a
+ * real image beside an embed keeps its paragraph exactly as written.
+ */
+function embedImages(node: EmbedRowNode): EmbedRowNode[] | null {
+  if (node.type !== 'element' || node.tagName !== 'p' || !node.children) return null;
+  const images: EmbedRowNode[] = [];
+  for (const child of node.children) {
+    if (isWhitespaceNode(child)) continue;
+    const src = child.type === 'element' && child.tagName === 'img' ? String(child.properties?.src ?? '') : undefined;
+    if (src !== undefined && citationScheme(src) === 'resource') {
+      images.push(child);
+      continue;
+    }
+    return null;
+  }
+  return images.length > 0 ? images : null;
+}
+
+/**
+ * Consecutive embeds share one row.
+ *
+ * The announcement form arrives one card per paragraph — models write each
+ * image on a line of its own — so a run of them renders as a column of tiles
+ * between two sentences. This pass merges adjacent embed-only paragraphs (and
+ * several embeds inside one paragraph) into a single `.citation-card-row`,
+ * which the stylesheet lets scroll sideways. A lone embed keeps its paragraph:
+ * the row exists for runs, and rewriting the common case would change the DOM
+ * every existing surface asserts on.
+ *
+ * It runs on hast, after the markdown has been parsed and before the citation
+ * matrix decides what each image is — an image the matrix later refuses simply
+ * renders its label inside the row, which says no more than it would have said
+ * in its own paragraph.
+ */
+export function rehypeCitationEmbedRows(): (tree: unknown) => void {
+  return (tree) => {
+    const root = tree as EmbedRowNode;
+    if (!root.children) return;
+    const source = root.children;
+    const rebuilt: EmbedRowNode[] = [];
+    let index = 0;
+    while (index < source.length) {
+      const first = embedImages(source[index]!);
+      if (!first) {
+        rebuilt.push(source[index]!);
+        index += 1;
+        continue;
+      }
+      const run = [...first];
+      let end = index + 1;
+      let cursor = end;
+      while (cursor < source.length) {
+        if (isWhitespaceNode(source[cursor]!)) {
+          cursor += 1;
+          continue;
+        }
+        const more = embedImages(source[cursor]!);
+        if (!more) break;
+        run.push(...more);
+        cursor += 1;
+        end = cursor;
+      }
+      if (run.length < 2) {
+        rebuilt.push(source[index]!);
+        index += 1;
+        continue;
+      }
+      rebuilt.push({
+        type: 'element',
+        tagName: 'div',
+        properties: { className: ['citation-card-row'] },
+        children: run,
+      });
+      index = end;
+    }
+    root.children = rebuilt;
+  };
 }
 
 /**

@@ -47,6 +47,7 @@ import {
   CitationImage,
   CitationLink,
   CitationsProvider,
+  rehypeCitationEmbedRows,
   type CitationContext,
   type CitationRender,
 } from './markdown-citations';
@@ -446,6 +447,7 @@ function renderIdentity(
 }
 
 const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeCitationEmbedRows];
 
 type MarkdownComponents = NonNullable<React.ComponentProps<typeof ReactMarkdown>['components']>;
 type MarkdownUrlTransform = NonNullable<React.ComponentProps<typeof ReactMarkdown>['urlTransform']>;
@@ -577,6 +579,7 @@ const SettledMarkdownSegment = memo(function SettledMarkdownSegment({ components
   return (
     <ReactMarkdown
       components={components}
+      rehypePlugins={REHYPE_PLUGINS}
       remarkPlugins={REMARK_PLUGINS}
       remarkRehypeOptions={rehypeOptions}
       urlTransform={urlTransform}
@@ -724,6 +727,7 @@ export function MarkdownBody({
       return (
         <ReactMarkdown
           components={components}
+          rehypePlugins={REHYPE_PLUGINS}
           remarkPlugins={REMARK_PLUGINS}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}
@@ -746,6 +750,7 @@ export function MarkdownBody({
         ))}
         <ReactMarkdown
           components={components}
+          rehypePlugins={REHYPE_PLUGINS}
           remarkPlugins={REMARK_PLUGINS}
           remarkRehypeOptions={rehypeOptions}
           urlTransform={urlTransform}

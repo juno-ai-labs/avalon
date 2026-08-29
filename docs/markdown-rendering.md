@@ -102,7 +102,13 @@ when it cannot. What it adds is a second syntax form and a second position.
 `[Title](resource://<id>)` renders as an inline chip.
 `![Title](resource://<id>)` renders as a block embed card — image syntax, because
 models place an image on its own line by training, so the card lands between
-sentences with no renderer heuristic guessing where a block belongs. A GFM
+sentences with no renderer heuristic guessing where a block belongs. A run of
+consecutive embeds — adjacent embed-only paragraphs, or several in one
+paragraph — is merged by `rehypeCitationEmbedRows` into a single
+`.citation-card-row` that scrolls sideways; a lone embed keeps its paragraph.
+While a message streams, embeds in different settled segments stay separate
+cards, and the whole-body re-render at completion merges them — the same
+healing every other cross-segment construct gets. A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
 inline numbered pill with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
@@ -444,6 +450,41 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-29 — The embed card becomes a file tile, and runs of them a row
+
+**What changed:** `ResourceEmbedCard` reshaped from a one-line row — icon,
+title, kind, trailing chevron — into a fixed-width tile: the kind badge (a
+bordered square holding the resource icon) at the head, the title and kind at
+the foot, empty room between. The chevron is gone. In `app.css` the card now
+draws from `surface-elevated`, `radius-lg` and the line ramp, and the kind
+label takes the theme's own label voice (`sys.label.*`) instead of a hardcoded
+size. `rehypeCitationEmbedRows` — a hast pass run by every `MarkdownBody`
+render — merges consecutive embed-only paragraphs into one `.citation-card-row`
+that scrolls horizontally, so a run of announced resources costs one card's
+height instead of a column.
+
+**Why:** The row form read as another line of the sentence; the announcement
+form exists to say "a thing was produced here", and the file-tile shape —
+the one attachment cards across chat products have converged on — says that at
+a glance. Styling stayed entirely in semantic tokens rather than per-theme
+rules, which is what lets one rule land as a white sheet with a hairline border
+on Terra Light, a raised dark panel on Terra, and a near-borderless warm card
+in Air's letterspaced label voice, with no component knowing which theme is
+running.
+
+**Considered and rejected:** a `cmp.citation-card.*` token group. Every value
+the card needs already has a semantic answer (`surface-elevated`, the line
+ramp, `sys.label.*`), and a component group would be twelve values restated in
+four themes to express decisions the vocabulary already makes.
+
+**What a future change has to respect:** the exported message card mirrors this
+markup with its own fixed-light rules in `message-export.ts` — a reshape here
+is a redraw there, in the same change. The kind label's transform belongs to
+the theme; hardcoding a `text-transform` here would overwrite Air's voice. The
+row pass groups only the `resource:` scheme and only runs of two or more: a
+lone embed keeps the paragraph every existing assertion and surface expects,
+and a real image or identity card beside an embed keeps the run ungrouped.
 
 ### 2026-08-28 — A preview still being prepared is not a preview that failed
 
