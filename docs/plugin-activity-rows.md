@@ -16,7 +16,7 @@ this document is only about the machinery underneath them.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/plugin-groups.ts` | The only place that decides which row a plugin belongs to, what that row is called, and which glyph it draws. |
-| `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, taken from `thesvg` and turned into CSS masks, and `connectorBrandMark` — the one table saying which mark a connector wears. |
+| `apps/desktop/src/renderer/lib/plugin-marks.ts` | The company marks, one `@thesvg/react` component per brand, and `connectorBrandMark` — the one table saying which mark a connector wears. |
 | `apps/desktop/src/renderer/components/primitives.tsx` | `ConnectorMark`, the one component that draws one. |
 | `apps/desktop/src/renderer/screens/workspace-settings.tsx` | Settings' provider cards and installed-connection rows, both reaching a mark from the connector's own type. |
 | `apps/desktop/src/renderer/lib/transcript.ts` | `orderedTranscriptMessages` projects tool blocks and plugin activities out of the canonical snapshot; `groupPluginToolMessages` collapses the composed feed. |
@@ -104,23 +104,24 @@ two ways is a table that can disagree with itself.
 
 Two things about how a mark is drawn are load-bearing:
 
-- **It is a CSS mask, not markup.** `thesvg` hands out SVG as a string and its
-  own documentation renders one with `dangerouslySetInnerHTML`. Nothing in this
-  renderer injects HTML, and a brand glyph is not the feature to start with —
-  the strings are build-time constants, but the pattern the next person copies
-  would not be. The browser reads the file for its alpha channel and paints
-  `currentColor` through it, so a malformed icon can only fail to draw. It is
-  also how `.rally-mark` has always worked.
-- **A mask reads alpha, so the mark is monochrome by construction.** That is
-  what this feed wants: one contrasting neutral across four themes, instead of
-  eight brand palettes of which several vanish against one ground or the other —
-  X and Notion on a dark theme, Granola on a light one. It also means no
-  per-theme artwork and no component that knows which theme is on.
+- **It is a React component, not markup and not a string.** Each brand is a
+  component imported from its own subpath, so a mark reaches the page as real
+  React elements — nothing is injected, and `dangerouslySetInnerHTML` stays
+  absent from this renderer. It also has to be imported one subpath at a time:
+  the barrel costs a cold CI lint run its heap.
+  [`using-company-brand-icons.md`](using-company-brand-icons.md) holds the
+  measurement and `scripts/eslint-rules/thesvg-subpath-imports.mjs` enforces it.
+- **The mark is monochrome.** That is what this feed wants: one contrasting
+  neutral across four themes, instead of eight brand palettes of which several
+  vanish against one ground or the other — X and Notion on a dark theme, Granola
+  on a light one. It also means no per-theme artwork and no component that knows
+  which theme is on.
 
-The one consequence of masking on alpha is that colour art which is a solid
-silhouette of an outlined mark masks to a blob. Google is exactly that, so the
-package's `mono` variant is preferred wherever it ships one. Slack and Granola
-ship none, and their colour art masks to the shape a monochrome treatment would.
+Monochrome is asked for rather than imposed. Six of the eight brands ship a
+`mono` variant already drawn in `currentColor`, and `PLUGIN_BRAND_MARKS` records
+which ones — so a brand that gains or loses `mono` upstream fails that table
+rather than the render. Slack and Granola ship none, and `.connector-mark`
+recolours their palette in CSS instead.
 
 ### Where a run ends
 
@@ -255,7 +256,7 @@ It deliberately does **not** cover:
 | Suite | Command | What it proves |
 | --- | --- | --- |
 | `lib/plugin-groups.test.ts` | `pnpm --filter @rally/desktop exec vitest run src/renderer/lib/plugin-groups.test.ts` | The map: the two virtual groups, the unnamed-first-party fallback, name keying across the two id families, every glyph, and that no shipped connector still draws the plug. |
-| `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: a mask rather than markup, the monochrome variant preferred, and one distinct mark per brand. |
+| `lib/plugin-marks.test.ts` | same, `src/renderer/lib/plugin-marks.test.ts` | The marks: the monochrome variant asked for wherever a brand ships one, and one distinct mark per brand. |
 | `lib/transcript.test.ts` | same, `src/renderer/lib/transcript.test.ts` | Grouping over a composed feed: position, run boundaries, which timing wins, dropped rows, renumbering. |
 | `components/workstream-blocks.test.tsx` | same, `src/renderer/components/workstream-blocks.test.tsx` | The row: its wording in both tenses, its stable accessible name while the number ticks, the pulsing mark, and the absent orb. |
 | `screens/workspace-settings.test.tsx` | same, `src/renderer/screens/workspace-settings.test.tsx` | Settings: an installed row and the provider card it came from carrying the same mark, and a webhook carrying none. |
