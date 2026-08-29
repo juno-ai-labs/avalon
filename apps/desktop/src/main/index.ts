@@ -55,6 +55,7 @@ import type {
   DesktopWorkspaceOnboardingState,
   MeetingAudioPermissionKind,
   RuntimeConfig,
+  DesktopDeepLinkErrorNotice,
 } from '../common/desktop';
 import {
   applicationIconArtworkFileName,
@@ -452,7 +453,10 @@ const DEEP_LINK_ERROR_MESSAGE_LIMIT = Number.POSITIVE_INFINITY;
 let deepLinkErrorWindow: BrowserWindow | null = null;
 // Held in main rather than passed in the URL so that re-showing the singleton
 // with a later failure does not have to reload the window to change its text.
-let deepLinkErrorMessage: string | null = null;
+// Carries an id because the window's acknowledgement is matched against it: see
+// `deep-link-error:dismiss`.
+let deepLinkErrorNotice: DesktopDeepLinkErrorNotice | null = null;
+let deepLinkErrorNoticesShown = 0;
 const meetingWindows = new Set<BrowserWindow>();
 const meetingWindowsAllowedToClose = new WeakSet<BrowserWindow>();
 let rendererReady = false;
@@ -2703,10 +2707,21 @@ function registerIpc(): void {
   });
   ipcMain.handle('deep-link-error:get', (event) => {
     assertDeepLinkErrorIpcSender(event);
-    return deepLinkErrorMessage;
+    return deepLinkErrorNotice;
   });
-  ipcMain.handle('deep-link-error:dismiss', (event) => {
+  ipcMain.handle('deep-link-error:dismiss', (event, rawNoticeId: unknown) => {
     assertDeepLinkErrorIpcSender(event);
+    if (typeof rawNoticeId !== 'number' || !Number.isSafeInteger(rawNoticeId)) {
+      throw new Error('Invalid deep-link failure notice id');
+    }
+    // Acknowledging is scoped to what was read. A failure reported between the
+    // person reading this one and their click arriving has already replaced the
+    // text — duplicate reports of one connector completion are the normal case
+    // here — and closing on a stale acknowledgement would take that newer notice
+    // with it, resolving the report that carried it and leaving nothing on
+    // screen. Ignoring the stale click leaves the window up on the newer text,
+    // which is the one thing nobody has acknowledged yet.
+    if (deepLinkErrorNotice?.id !== rawNoticeId) return;
     deepLinkErrorWindow?.close();
   });
   ipcMain.handle('system:open-meeting-notes', async (event, rawNoteId: unknown) => {
@@ -3249,12 +3264,23 @@ function requestSettingsSection(window: BrowserWindow, section: DesktopSettingsS
  * and a native box on Linux is drawn by whatever toolkit is installed.
  */
 async function createDeepLinkErrorWindow(message: string): Promise<void> {
-  deepLinkErrorMessage = message;
+  deepLinkErrorNotice = { id: deepLinkErrorNoticesShown += 1, message };
   if (deepLinkErrorWindow && !deepLinkErrorWindow.isDestroyed()) {
-    deepLinkErrorWindow.webContents.send('deep-link-error:changed', message);
-    if (deepLinkErrorWindow.isMinimized()) deepLinkErrorWindow.restore();
-    deepLinkErrorWindow.show();
-    deepLinkErrorWindow.focus();
+    deepLinkErrorWindow.webContents.send('deep-link-error:changed', deepLinkErrorNotice);
+    // Not while the first load is still in flight, which is the *common* case
+    // here rather than a rare one: a connector completion is reported by both
+    // renderers microseconds apart, so the second report routinely arrives
+    // while the window created by the first is still loading. `show: false`
+    // plus `ready-to-show` below exists to keep an unpainted window off the
+    // screen, and showing one here would step around it — an empty always-on-top
+    // 420x260 rectangle over everything until the renderer paints. The message
+    // is not lost by waiting: it is in `deepLinkErrorNotice` above, and the
+    // mounting renderer reads that.
+    if (!deepLinkErrorWindow.webContents.isLoadingMainFrame()) {
+      if (deepLinkErrorWindow.isMinimized()) deepLinkErrorWindow.restore();
+      deepLinkErrorWindow.show();
+      deepLinkErrorWindow.focus();
+    }
     return;
   }
 
@@ -3286,17 +3312,28 @@ async function createDeepLinkErrorWindow(message: string): Promise<void> {
   installWindowDiagnostics(failureWindow, 'deep-link-error');
   failureWindow.setMenuBarVisibility(false);
   failureWindow.once('ready-to-show', () => failureWindow.show());
-  failureWindow.on('closed', () => {
-    // Only if this is still *the* window. A window disposed below has already
-    // been replaced in the singleton by the time its `closed` arrives, and
-    // clearing then would take the live window's message with it.
+  // Closing the window *is* the acknowledgement, whether that was the button or
+  // the title bar. Leaving the message behind would hand it to the next
+  // failure's window as though it had just happened.
+  //
+  // Bound to `close` as well as `closed`, and that is the important half: a
+  // window between the two is still non-destroyed, so a report landing in that
+  // gap would take the re-show branch above, hand its message to a renderer that
+  // is going away, and *resolve* — and then `closed` would null the message it
+  // had just accepted. Releasing on `close` means such a report finds no window
+  // and builds a fresh one. `destroy()` skips `close` entirely, which is why
+  // both are bound; whichever runs first does the work.
+  //
+  // Only ever for the window that is still *the* window: a disposed one's event
+  // arrives after the singleton has moved on, and clearing then would take the
+  // live window's message with it.
+  const releaseFailureWindow = (): void => {
     if (deepLinkErrorWindow !== failureWindow) return;
     deepLinkErrorWindow = null;
-    // Closing the window *is* the acknowledgement, whether that was the button
-    // or the title bar. Leaving the message behind would hand it to the next
-    // failure's window as though it had just happened.
-    deepLinkErrorMessage = null;
-  });
+    deepLinkErrorNotice = null;
+  };
+  failureWindow.on('close', releaseFailureWindow);
+  failureWindow.on('closed', releaseFailureWindow);
   try {
     await loadRenderer(failureWindow, rendererUrl('deep-link-error'), 'deep-link-error');
   } catch (error) {
@@ -3308,7 +3345,7 @@ async function createDeepLinkErrorWindow(message: string): Promise<void> {
     // of the process. Disposing here means the next report builds a fresh one.
     if (deepLinkErrorWindow === failureWindow) {
       deepLinkErrorWindow = null;
-      deepLinkErrorMessage = null;
+      deepLinkErrorNotice = null;
     }
     if (!failureWindow.isDestroyed()) failureWindow.destroy();
     throw error;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { DesktopDeepLinkErrorNotice } from '../../common/desktop';
 import { desktopBridge } from '../lib/platform';
 import { Button } from '../components/primitives';
 
@@ -14,7 +15,7 @@ import { Button } from '../components/primitives';
  */
 export function DeepLinkErrorScreen(): React.JSX.Element {
   const bridge = useMemo(() => desktopBridge(), []);
-  const [message, setMessage] = useState<string | null>(null);
+  const [notice, setNotice] = useState<DesktopDeepLinkErrorNotice | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,11 +31,11 @@ export function DeepLinkErrorScreen(): React.JSX.Element {
     const unsubscribe = bridge.onDeepLinkErrorChanged((next) => {
       if (cancelled) return;
       pushed = true;
-      setMessage(next);
+      setNotice(next);
     });
     void bridge.getDeepLinkError()
       .then((current) => {
-        if (!cancelled && !pushed) setMessage(current);
+        if (!cancelled && !pushed) setNotice(current);
       })
       .catch(() => undefined);
     return () => {
@@ -50,13 +51,21 @@ export function DeepLinkErrorScreen(): React.JSX.Element {
         {/* Empty only in the instant between mount and the read returning. The
             window is already on screen by then, so a title with nothing under it
             is better than a spinner that flashes and is gone. */}
-        <p className="deep-link-error-copy">{message}</p>
+        <p className="deep-link-error-copy">{notice?.message}</p>
       </div>
       <div className="deep-link-error-actions">
         <Button
           autoFocus
           className="button-primary"
-          onClick={() => void bridge.dismissDeepLinkError().catch(() => window.close())}
+          disabled={notice === null}
+          /* Acknowledges the notice this window is showing, by id. A failure
+             reported between reading it and this click has already replaced the
+             text, and main ignores the stale acknowledgement rather than closing
+             the window on a message nobody has read. */
+          onClick={() => {
+            if (!notice) return;
+            void bridge.dismissDeepLinkError(notice.id).catch(() => window.close());
+          }}
         >
           Continue
         </Button>
