@@ -3938,6 +3938,7 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
     transition-duration: 0.001ms !important;
   }
   .status-running .status-dot { opacity: 1; }
+  .plugin-face-active { opacity: 1; }
 }
 
 /* Work-stream conversation refinement: continuous transcript, compact human turns,
@@ -4126,30 +4127,31 @@ button.project-space-icon:focus-visible { outline: 2px solid var(--av-sys-color-
   min-height: 34px;
 }
 
+/* Bare, by design: no chip, no ring, no per-connector brand fill. A column of
+   enclosed glyphs down the transcript reads as a toolbar of controls, and these
+   are labels. The single neutral is also the only colour with guaranteed
+   contrast here — a connector's brand foreground was chosen against its own
+   chip, and this transcript has four themes and no chip. */
 .plugin-face {
   align-items: center;
-  background: var(--av-sys-color-surface-raised-hover);
-  border: 2px solid var(--av-ref-color-line-1);
-  border-radius: var(--av-sys-size-radius-pill);
   color: var(--av-ref-color-neutral-11);
   display: inline-flex;
   flex: 0 0 auto;
-  height: 24px;
+  height: 20px;
   justify-content: center;
-  margin-right: 3px;
-  position: relative;
-  width: 24px;
+  width: 20px;
 }
 
-.plugin-face-brand-github { background: var(--av-cmp-connector-github-background); color: var(--av-cmp-connector-github-foreground); }
-.plugin-face-brand-google { background: var(--av-cmp-connector-google-background); color: var(--av-cmp-connector-google-foreground); }
-.plugin-face-brand-google-drive { background: var(--av-cmp-connector-drive-background); color: var(--av-cmp-connector-drive-foreground); }
-.plugin-face-brand-notion { background: var(--av-sys-color-surface-raised-hover); color: var(--av-ref-color-neutral-13); }
-.plugin-face-brand-slack { background: var(--av-cmp-connector-slack-background); color: var(--av-cmp-connector-slack-foreground); }
-.plugin-face-linear { background: var(--av-cmp-connector-linear-background); color: var(--av-cmp-connector-linear-foreground); }
-.plugin-face-webhook { background: var(--av-cmp-connector-webhook-background); color: var(--av-cmp-connector-webhook-foreground); }
-.plugin-face-world-search { background: var(--av-cmp-connector-search-background); color: var(--av-cmp-connector-search-foreground); }
-.plugin-face-plug { background: var(--av-cmp-connector-plug-background); color: var(--av-cmp-connector-plug-foreground); }
+/* `.rally-mark` paints itself in the brand ink, which is the one colour in the
+   row that is not the shared neutral and, on the light themes, the one with no
+   contrast to spare. Inside a plugin face it is a mark like any other. */
+.plugin-face-mark { color: inherit; height: 17px; width: 17px; }
+
+/* The group's "still going" signal, in place of the spinner each plugin row
+   used to carry. The reduced-motion block near the end of this file cuts the
+   animation to a single 0.001ms iteration; with no fill mode the mark settles
+   on its own full opacity, and the rule beside that block pins it there. */
+.plugin-face-active { animation: active-pulse 1.8s ease-in-out infinite; }
 
 :is(.workstream-screen, .automation-chat-surface) .tool-icon {
   color: var(--av-ref-color-neutral-9);
