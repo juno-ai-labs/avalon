@@ -965,7 +965,11 @@ describe("durable UI-to-model transcript projection", () => {
         fetch: fetcher,
         maxIterations: 2,
         maxToolCalls: 4,
-        maxWallClockMs: 1_000,
+        // A real Bind run deadline, not a test budget: on a starved machine
+        // 1s aborted the run before its scripted turns finished and the
+        // completed-status assertion failed for the scheduler. Wide, and well
+        // inside the suite's 15s test budget.
+        maxWallClockMs: 10_000,
         toolTimeoutMs: 100,
         maxWebResults: 4,
       },

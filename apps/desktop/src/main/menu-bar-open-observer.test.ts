@@ -3,8 +3,9 @@ import { MenuBarOpenObserver } from './menu-bar-open-observer';
 
 describe('MenuBarOpenObserver', () => {
   it('coalesces the tray click and menu callback for one open, then resets on close', () => {
+    const now = 0;
     const onOpen = vi.fn();
-    const observer = new MenuBarOpenObserver(onOpen);
+    const observer = new MenuBarOpenObserver(onOpen, () => now);
 
     observer.opened();
     observer.opened();

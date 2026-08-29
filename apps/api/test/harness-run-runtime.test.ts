@@ -1450,7 +1450,9 @@ describe("durable harness attempt runtime", () => {
         fetch: fetcher,
         maxIterations: 4,
         maxToolCalls: 4,
-        maxWallClockMs: 2_000,
+        // Present only so a real run deadline never outranks the provider arm in
+        // an assertion about the inference ledger; the loop itself is in-memory.
+        maxWallClockMs: 120_000,
         toolTimeoutMs: 100,
         maxWebResults: 4,
         completionDefectRetries: 1,

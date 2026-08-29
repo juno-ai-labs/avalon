@@ -13,7 +13,10 @@ import {
 
 import { workspaceDOName } from "../src/durable-objects/names";
 
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009a0");
+// 09f0, not 09a0: external-event-routing.test.ts owns 09a0, and a shared
+// object name is a shared input gate across files (test:scripts enforces
+// the split).
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009f0");
 const OWNER = asUserId("00000000-0000-7000-8000-0000000009a1");
 const MEMBER = asUserId("00000000-0000-7000-8000-0000000009a2");
 const INACTIVE = asUserId("00000000-0000-7000-8000-0000000009a3");

@@ -30,6 +30,7 @@ import {
 } from "../src/durable-objects/names";
 import { durableObjectSelfForId } from "../src/lib/durable-object-self";
 import {
+  boot,
   seedWorkstreamRoot,
   WORKSPACE_ID,
   WORKSTREAM_ID,
@@ -137,7 +138,7 @@ describe("a Durable Object's registration of its own identity", () => {
   it("lets a WorkstreamDO recognize itself with or without its metadata", async () => {
     const name = workstreamDOName("global", WORKSPACE_ID, WORKSTREAM_ID);
     const stub = env.WORKSTREAM_DOS.get(env.WORKSTREAM_DOS.idFromName(name));
-    await stub.fetch("https://workstream.test/health");
+    await boot(stub);
 
     await runInDurableObject(stub, (instance, state) => {
       const held = internals(instance);
@@ -169,7 +170,7 @@ describe("a Durable Object's registration of its own identity", () => {
   it("lets a BlockDashboardAgent recognize itself with or without its block identity", async () => {
     const name = blockDashboardAgentName("global", WORKSPACE_ID, WORKSTREAM_ID, BLOCK_ID);
     const stub = env.BLOCK_DASHBOARD_AGENTS.get(env.BLOCK_DASHBOARD_AGENTS.idFromName(name));
-    await stub.fetch("https://block-dashboard.test/health");
+    await boot(stub);
 
     await runInDurableObject(stub, (instance, state) => {
       const held = internals(instance);

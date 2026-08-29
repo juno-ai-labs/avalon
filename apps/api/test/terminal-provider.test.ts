@@ -168,7 +168,8 @@ describe("Daytona Terminal provider", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+    // The budget covers forking a real bash on a contended machine, not the assertion.
+  }, 30_000);
 
   it("fails before the next operation when Daytona advertises an unreadable Git CA path", () => {
     const directory = mkdtempSync(join(tmpdir(), "avalon-terminal-ca-"));
@@ -193,7 +194,8 @@ describe("Daytona Terminal provider", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+    // The budget covers forking a real bash twice on a contended machine, not the assertion.
+  }, 30_000);
 
   it("creates a private managed sandbox with native policy and lifecycle backstops", async () => {
     const executeCommand = vi.fn()

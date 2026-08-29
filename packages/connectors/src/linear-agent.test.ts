@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { neverAborts } from "./test-signals";
 import {
   createLinearAgentAcknowledgement,
   createLinearNativeAgentProtocol,
@@ -159,7 +160,7 @@ describe("Linear native agent protocol", () => {
         cursor: {},
         config: {},
       },
-      signal: AbortSignal.timeout(1_000),
+      signal: neverAborts(),
     };
 
     await expect(acknowledgeConnectorAgentActivation(

@@ -304,6 +304,49 @@ Both were accepted deliberately: the p90 run changes neither, and CI runs cold.
 When a local green looks implausible, `pnpm lint:fresh` is the first thing to
 try.
 
+**Both caches are per *checkout*, not per session.** The `*.tsbuildinfo` file
+beside each package's tsconfig and the root `.eslintcache` live at fixed paths
+in the tree, so two
+sessions running the gates at the same time in one clone write the same files
+non-atomically. The usual outcome is a discarded cache and a slower full check;
+the one that matters is a buildinfo that parses yet describes a graph state that
+never existed, letting `tsc` skip files it should have re-checked — a green
+typecheck that proves less than it says. CI runs cold, so the merge gate is
+unaffected; locally, give the second session
+[its own worktree](#working-in-a-second-checkout-or-worktree) rather than
+sharing the clone.
+
+## How many test workers to run
+
+`pnpm test` starts every package's suite at once, and `apps/api` and
+`apps/desktop` each claim `availableParallelism()` workers (four on the sandbox)
+while the rest claim three — so one session peaks at roughly sixteen worker
+threads on four cores, and `pnpm --filter @rally/api test` is itself a Node run
+followed by a workerd run. The configs' comments record that this costs nothing
+in total runtime, and that measurement stands: capping every run at two workers
+came out at 233s against 234s uncapped.
+
+**It was measured for one session on an otherwise idle machine, which is the
+axis that matters least here.** What a timeout is measured against is the
+maximum stall a single thread sees between schedules, and that grows with the
+oversubscription: two sessions on this box is ~32 worker threads on four cores,
+three is ~48. Every fixed budget in the suites — the 15s in
+`packages/db`, `apps/api`, `apps/desktop`, `packages/agent-harness`,
+`packages/connectors`, `apps/ace` and `apps/site`, and the 30s in
+`apps/api/vitest.workers.config.ts` — is a floor sized for contention from
+sibling suites, not a ceiling.
+
+The lever is `VITEST_MAX_WORKERS`, which Vitest applies *after* the config
+resolves and therefore overrides an explicit `maxWorkers`:
+
+```bash
+VITEST_MAX_WORKERS=2 pnpm test
+```
+
+Reach for it when a machine is hosting more than one session, or when a suite
+starts timing out in a different test on every run. The committed defaults are
+right for a solo run and are deliberately left alone.
+
 ## Working in a second checkout or worktree
 
 `node_modules`, `.env.local`, `apps/api/.dev.vars.*`, and `.wrangler/state/` are

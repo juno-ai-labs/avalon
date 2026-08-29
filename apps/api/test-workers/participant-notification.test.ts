@@ -44,6 +44,13 @@ const SECOND_INVITEE_ID = "00000000-0000-7000-8000-0000000006a7";
 const MISSING_RECIPIENT_ID = "00000000-0000-7000-8000-0000000006a8";
 const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
 
+/**
+ * A wall-clock budget: the probes spend Durable Object round trips out of it,
+ * so it is sized for a contended run, not for the promotion itself — and it
+ * stays well inside the suite's 30s test budget so its own failure reports.
+ */
+const POLL_BUDGET_MS = 10_000;
+
 const AUTH: AuthContext = {
   sessionId: SESSION_ID,
   userId: CREATOR_ID,
@@ -103,7 +110,12 @@ beforeEach(async () => {
     workspaceDOName("global", WORKSPACE_ID),
   ));
   await workspace.initializeWorkspace(WORKSPACE_ID, "wnam");
-});
+  // Generous, and only because of the interleave: a sibling file's `reset()`
+  // holds every object's gate, so this hook can wait out a full reset before it
+  // gets to run at all. The work itself — reset, the D1 seed, and the
+  // `initializeWorkspace` RPC — takes milliseconds, so a failure here is a hang,
+  // never a slow query.
+}, 30_000);
 
 function agentStub(workstreamId = WORKSTREAM_ID): DurableObjectStub {
   return env.SUBSTREAM_AGENTS.get(env.SUBSTREAM_AGENTS.idFromName(
@@ -186,29 +198,33 @@ async function openWorkstream(
  * The parent keeps them because nothing here drains it: `wrangler.test.jsonc`
  * declares the activity queue as a producer with no consumer, so no Queue
  * message ever arrives to acknowledge an effect out of `durable_outbox`. Its
- * own alarm only marks rows `inflight`. The one thing that *does* ack without a
- * consumer is `deliverDirectoryEffectsEagerly`, which runs inside
- * `acceptSubstreamEffects` under `waitUntil` and covers directory effects only
- * — so a directory assertion here is read back before that lands rather than
- * guaranteed, and `directoryEffectFor` below waits for it to settle instead.
+ * own alarm only marks rows `inflight`, and `deliverDirectoryEffectsEagerly` —
+ * the one other path that reaches these rows, running inside
+ * `acceptSubstreamEffects` under `waitUntil` — deliberately delivers without
+ * acknowledging (`workstream-do.ts`), leaving the outbox untouched. So a
+ * directory assertion here reads rows nothing can take away.
  */
 /**
  * Wait for a pending message's promotion to land its canonical turn. Admission
  * stores immutable pending input; the loop's activation alarm delivers it a
  * beat later, so canonical rows — the turn, its mentions, the seat a confirmed
  * target gets — are not observable the instant `create_message` returns.
+ *
+ * The suite's 30s test budget also covers each caller's `openWorkstream`,
+ * request and assertions, so this poll's tighter budget is what fails
+ * legibly when promotion never lands.
  */
 async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Promise<void> {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    const present = await runInDurableObject(stub, (_instance, state) =>
+  // Read-only, so the probe can neither advance nor duplicate the promotion; a
+  // turn that never lands fails as the poll's own `expected 0 to be 1`.
+  await expect.poll(
+    () => runInDurableObject(stub, (_instance, state) =>
       state.storage.sql.exec<{ count: number }>(
         `SELECT COUNT(*) AS count FROM participant_transcript_turns WHERE turn_id = ?`,
         turnId,
-      ).one().count);
-    if (present === 1) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`canonical turn never landed for ${turnId}`);
+      ).one().count),
+    { timeout: POLL_BUDGET_MS, interval: 50 },
+  ).toBe(1);
 }
 
 async function deliveredEffects(
