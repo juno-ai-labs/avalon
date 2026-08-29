@@ -33,6 +33,7 @@ import {
   type WorkstreamRegionalEffectEnvelope,
 } from "../src/durable-objects/workstream-regional-effect";
 import { processWorkstreamNotificationIntent } from "../src/services/workstream-regional-effect-service";
+import { useOpenRouterDouble } from "./helpers/openrouter-double";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
@@ -50,6 +51,15 @@ const ATTACHMENT_ID = "00000000-0000-7000-8000-0000000006a9";
  * stays well inside the suite's 30s test budget so its own failure reports.
  */
 const POLL_BUDGET_MS = 10_000;
+
+/**
+ * The opening run this file starts reaches inference, so the provider is
+ * doubled rather than left to a real outbound request that cannot succeed and
+ * does not fail quickly (`docs/testing.md`). One turn of plain text is all the
+ * run needs: nothing here asserts on what the model said, only that the loop
+ * settles so the elicitation assertions run against a loop at rest.
+ */
+useOpenRouterDouble(() => ({ say: "Noted." }));
 
 const AUTH: AuthContext = {
   sessionId: SESSION_ID,

@@ -19,6 +19,9 @@ import {
 import { createParser, type EventSourceMessage } from "eventsource-parser";
 import { createStreamWatchdog } from "@juno-ai/bind/completion";
 import { z } from "zod";
+// Cycle: `bind-runtime` imports back from this module. Sound because every
+// value it takes is read inside a function body — see `runHarness` below.
+import { runHarnessWithBind } from "./bind-runtime";
 import {
   renderAddressingMessages,
   renderAutomationCompilerMessages,
@@ -3417,8 +3420,27 @@ export function memberSafeHarnessFailureMessage(code: HarnessFailureCode): strin
   return MEMBER_SAFE_HARNESS_FAILURE_MESSAGES[code];
 }
 
+/**
+ * Statically imported, not `await import("./bind-runtime")`.
+ *
+ * The dynamic form never settled under `@cloudflare/vitest-pool-workers`: the
+ * promise stayed pending past 36 seconds while a 2-second timer kept firing in
+ * the same isolate, so the isolate was live and the module load simply never
+ * completed. Every workers test that let a run reach inference therefore hung
+ * in `runHarness` and failed as a timeout somewhere unrelated, which is what
+ * `docs/testing.md` means by a run that has to be kept away from the model.
+ *
+ * `bind-runtime` imports seven runtime values back from this module, so this is
+ * a cycle. It is a sound one: all seven are read inside function bodies rather
+ * than at module top level, so neither module observes the other's bindings
+ * before they initialize.
+ *
+ * Why the import was dynamic in the first place is not recorded — the line
+ * arrives with the repository's initial import and carries no rationale — so a
+ * change that needs the lazy form back should establish its reason afresh
+ * rather than restore it on the strength of this note.
+ */
 export async function runHarness(input: RunHarnessInput): Promise<HarnessOutcome> {
-  const { runHarnessWithBind } = await import("./bind-runtime");
   return runHarnessWithBind(input);
 }
 
