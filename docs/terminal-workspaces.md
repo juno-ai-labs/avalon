@@ -585,6 +585,22 @@ update lag before changing the default.
 
 ## Changelog
 
+### 2026-08-29 — The revoked-import note check asks WorkspaceDO a typed question
+
+**What changed:** `hasRevokedImportedResource` in `terminal/coordinator.ts`
+resolves note visibility through `WorkspaceDO.visibleNoteResourceIds` instead
+of a `notes` SELECT through the workspace runtime facade. The predicate is
+unchanged — unarchived, and workspace-scoped or owned by the run's principal,
+with a non-user principal seeing only workspace-scoped notes.
+
+**Why:** Part of the notes half of the facade-to-RPC conversion
+([`meeting-notes.md`](meeting-notes.md) has the full entry): the facade routes
+by table name, and a note table it did not recognise would be answered by the
+regional database as `no such table`. The `resources` reads beside it stay on
+the routed `env.DB` handle deliberately — that domain converts separately, and
+removing the routing for statements that still need it is how PR #404's
+regression happened.
+
 ### 2026-08-29 — The Terminal network policy moves behind typed WorkspaceDO methods
 
 **What changed:** `terminalNetworkSettings`, `terminalNetworkMode`,

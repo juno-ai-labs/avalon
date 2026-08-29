@@ -82,12 +82,7 @@ import {
   SocketAccessRevocationSchema,
   type SocketAccessRevocation,
 } from "../services/access-revocation";
-import {
-  NOTE_SIDEBAR_SQL,
-  NoteSidebarRowSchema,
-  SIDEBAR_LIST_LIMIT,
-  toNoteSummary,
-} from "../services/sidebar-reads";
+import { SIDEBAR_LIST_LIMIT } from "../services/sidebar-reads";
 import {
   applyDurableObjectSqliteMigrations,
   type DurableObjectSqliteMigration,
@@ -235,6 +230,54 @@ import {
   type WorkspaceTerminalPolicyFailRequest,
   type WorkspaceTerminalPolicyPreviewRequest,
 } from "./workspace-terminal-network-protocol";
+import {
+  appendWorkspaceNoteSegment,
+  archiveWorkspaceNote,
+  commitWorkspaceNoteGeneration,
+  markWorkspaceNotePrivacyTransitionProcessed,
+  pendingWorkspaceNotePrivacyTransitions,
+  retireWorkspaceNoteResourceDeletion,
+  updateWorkspaceNote,
+  visibleWorkspaceNoteResourceIds,
+  workspaceNoteResourceDeletionOutbox,
+  workspaceNoteSidebar,
+  workspaceNoteState,
+} from "./workspace-notes-storage";
+import {
+  WorkspaceNoteArchiveRequestSchema,
+  WorkspaceNoteDeletionOutboxRequestSchema,
+  WorkspaceNoteDeletionRetireRequestSchema,
+  WorkspaceNoteGenerationCommitRequestSchema,
+  WorkspaceNotePrivacyMarkRequestSchema,
+  WorkspaceNotePrivacyPendingRequestSchema,
+  WorkspaceNoteSegmentAppendRequestSchema,
+  WorkspaceNoteSidebarRequestSchema,
+  WorkspaceNoteStateRequestSchema,
+  WorkspaceNoteUpdateRequestSchema,
+  WorkspaceNoteVisibilityRequestSchema,
+  type WorkspaceNoteArchiveRequest,
+  type WorkspaceNoteArchiveResult,
+  type WorkspaceNoteDeletionOutbox,
+  type WorkspaceNoteDeletionOutboxRequest,
+  type WorkspaceNoteDeletionRetireRequest,
+  type WorkspaceNoteDeletionRetireResult,
+  type WorkspaceNoteGenerationCommitRequest,
+  type WorkspaceNoteGenerationCommitResult,
+  type WorkspaceNotePrivacyMarkRequest,
+  type WorkspaceNotePrivacyMarkResult,
+  type WorkspaceNotePrivacyPendingRequest,
+  type WorkspaceNotePrivacyPendingResult,
+  type WorkspaceNoteSegmentAppendRequest,
+  type WorkspaceNoteSegmentAppendResult,
+  type WorkspaceNoteSidebarList,
+  type WorkspaceNoteSidebarRequest,
+  type WorkspaceNoteState,
+  type WorkspaceNoteStateRequest,
+  type WorkspaceNoteUpdateRequest,
+  type WorkspaceNoteUpdateResult,
+  type WorkspaceNoteVisibilityRequest,
+  type WorkspaceNoteVisibilityResult,
+} from "./workspace-notes-protocol";
 import {
   admitWorkspaceTranscriptionSession,
   releaseWorkspaceTranscriptionSession,
@@ -5496,6 +5539,163 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return addWorkspaceAutomationTemplateVersion(this.state.storage, request);
   }
 
+  /**
+   * Re-derive the alarm after a typed method moved an outbox due time.
+   *
+   * `executeRuntimeSql` does this for any facade statement that writes an
+   * alarm-source table; a typed method that writes `note_privacy_change_outbox`
+   * or `note_resource_deletion_outbox` owes the alarm the same refresh, or the
+   * pass those rows are due for never wakes.
+   */
+  private refreshScheduleAfterWrite(workspaceId: string): void {
+    this.state.waitUntil(this.refreshSchedule(workspaceId).catch((error: unknown) => {
+      // Swallowed silently, a failed refresh here leaves a schedule dark until
+      // something else reconciles; this line is how anyone finds out the
+      // alarm's own end-of-drain backstop was needed.
+      logWarn(this.env, "workspace_schedule_auto_refresh_failed", {
+        workspace_id: workspaceId,
+        code: error instanceof Error ? error.message : "unknown_error",
+      });
+    }));
+  }
+
+  /** One note and its whole transcript, behind the requested access fence. */
+  async noteWithSegments(input: WorkspaceNoteStateRequest): Promise<WorkspaceNoteState> {
+    await this.initialized;
+    const request = WorkspaceNoteStateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceNoteState(this.state.storage, request);
+  }
+
+  /** The notes the sidebar opens with, from the statement the socket also serves. */
+  async listNoteSidebar(input: WorkspaceNoteSidebarRequest): Promise<WorkspaceNoteSidebarList> {
+    await this.initialized;
+    const request = WorkspaceNoteSidebarRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return {
+      items: workspaceNoteSidebar(
+        this.state.storage,
+        request.workspaceId,
+        request.userId,
+        Math.min(request.limit, SIDEBAR_LIST_LIMIT),
+      ),
+    };
+  }
+
+  /**
+   * Apply an owner's edit, deciding `becamePrivate` from the row the write
+   * replaced — and recording the workspace-to-personal transition in the
+   * privacy outbox within the same transaction. The D1 trigger that used to
+   * write that row did not travel to this object at cutover, so the "now
+   * private" notices had silently stopped.
+   */
+  async updateNote(input: WorkspaceNoteUpdateRequest): Promise<WorkspaceNoteUpdateResult> {
+    await this.initialized;
+    const request = WorkspaceNoteUpdateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = updateWorkspaceNote(this.state.storage, request);
+    if (result.outcome === "updated") this.publishSidebarList("notes");
+    if (result.becamePrivate) this.refreshScheduleAfterWrite(request.workspaceId);
+    return result;
+  }
+
+  /**
+   * Archive, or say why not: a live recording refuses distinctly, because
+   * archiving under it would 404 the next segment save while capture kept
+   * running. As a write and a fallback read through the facade the two
+   * refusals were classified a round trip apart.
+   */
+  async archiveNote(input: WorkspaceNoteArchiveRequest): Promise<WorkspaceNoteArchiveResult> {
+    await this.initialized;
+    const request = WorkspaceNoteArchiveRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = archiveWorkspaceNote(this.state.storage, request);
+    if (result.outcome === "archived") this.publishSidebarList("notes");
+    return result;
+  }
+
+  /**
+   * Store one transcript segment: fence, duplicate check, sequence allocation
+   * and both writes in one critical section, with a replayed save answered by
+   * the stored segment rather than a constraint error.
+   */
+  async appendNoteSegment(
+    input: WorkspaceNoteSegmentAppendRequest,
+  ): Promise<WorkspaceNoteSegmentAppendResult> {
+    await this.initialized;
+    const request = WorkspaceNoteSegmentAppendRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = appendWorkspaceNoteSegment(this.state.storage, request);
+    if (result.outcome === "appended") this.publishSidebarList("notes");
+    return result;
+  }
+
+  /** Land a generated briefing only if the cursor pair it was read against still holds. */
+  async commitNoteGeneration(
+    input: WorkspaceNoteGenerationCommitRequest,
+  ): Promise<WorkspaceNoteGenerationCommitResult> {
+    await this.initialized;
+    const request = WorkspaceNoteGenerationCommitRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = commitWorkspaceNoteGeneration(this.state.storage, request);
+    if (result.outcome === "committed") this.publishSidebarList("notes");
+    return result;
+  }
+
+  /** Which of these note resources the principal may currently see; reads only. */
+  async visibleNoteResourceIds(
+    input: WorkspaceNoteVisibilityRequest,
+  ): Promise<WorkspaceNoteVisibilityResult> {
+    await this.initialized;
+    const request = WorkspaceNoteVisibilityRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return visibleWorkspaceNoteResourceIds(this.state.storage, request);
+  }
+
+  /** The privacy transitions the notifier has not yet delivered. */
+  async pendingNotePrivacyTransitions(
+    input: WorkspaceNotePrivacyPendingRequest,
+  ): Promise<WorkspaceNotePrivacyPendingResult> {
+    await this.initialized;
+    const request = WorkspaceNotePrivacyPendingRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return pendingWorkspaceNotePrivacyTransitions(this.state.storage, request);
+  }
+
+  /** Settle one delivered privacy transition; a replay learns it was not pending. */
+  async markNotePrivacyTransitionProcessed(
+    input: WorkspaceNotePrivacyMarkRequest,
+  ): Promise<WorkspaceNotePrivacyMarkResult> {
+    await this.initialized;
+    const request = WorkspaceNotePrivacyMarkRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = markWorkspaceNotePrivacyTransitionProcessed(this.state.storage, request);
+    if (result.outcome === "processed") this.refreshScheduleAfterWrite(request.workspaceId);
+    return result;
+  }
+
+  /** The note R2 objects still waiting for cleanup, one pass's worth. */
+  async noteResourceDeletionOutbox(
+    input: WorkspaceNoteDeletionOutboxRequest,
+  ): Promise<WorkspaceNoteDeletionOutbox> {
+    await this.initialized;
+    const request = WorkspaceNoteDeletionOutboxRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceNoteResourceDeletionOutbox(this.state.storage);
+  }
+
+  /** Retire one cleanup entry once its R2 objects are gone. */
+  async retireNoteResourceDeletion(
+    input: WorkspaceNoteDeletionRetireRequest,
+  ): Promise<WorkspaceNoteDeletionRetireResult> {
+    await this.initialized;
+    const request = WorkspaceNoteDeletionRetireRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    const result = retireWorkspaceNoteResourceDeletion(this.state.storage, request);
+    if (result.outcome === "retired") this.refreshScheduleAfterWrite(request.workspaceId);
+    return result;
+  }
+
   /** The Terminal network policy and its domains, creating the default if absent. */
   async terminalNetworkSettings(
     input: WorkspaceTerminalNetworkSettingsRequest,
@@ -6615,12 +6815,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
   }
 
   private listSidebarNotes(workspaceId: string, userId: string): NoteSummary[] {
-    return this.state.storage.sql.exec<Record<string, SqlStorageValue>>(
-      NOTE_SIDEBAR_SQL,
-      workspaceId,
-      userId,
-      SIDEBAR_LIST_LIMIT,
-    ).toArray().map((row) => toNoteSummary(NoteSidebarRowSchema.parse(row)));
+    return workspaceNoteSidebar(this.state.storage, workspaceId, userId, SIDEBAR_LIST_LIMIT);
   }
 
   private pinnedDirectoryRows(userId: string, includeSystem: boolean): WorkspaceDirectoryRow[] {

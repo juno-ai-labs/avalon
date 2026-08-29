@@ -28,7 +28,7 @@ import {
 } from "../src/durable-objects/workspace-transcription-storage";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009e0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000ea0");
 const USER = asUserId("00000000-0000-7000-8000-0000000009e1");
 const NOW_S = 1_800_000_000;
 

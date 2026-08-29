@@ -24,7 +24,7 @@ import { workspaceDOName } from "../src/durable-objects/names";
 import { WorkspaceAutomationOriginLabelSchema } from "../src/durable-objects/workspace-directory-protocol";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000009a0");
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000da0");
 const AUTHOR = asUserId("00000000-0000-7000-8000-0000000009a1");
 const AUTOMATION_ID = "00000000-0000-7000-8000-0000000009c0";
 const OTHER_AUTOMATION_ID = "00000000-0000-7000-8000-0000000009c1";
