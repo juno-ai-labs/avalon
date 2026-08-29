@@ -16,7 +16,7 @@ link does; [`domain-migration.md`](domain-migration.md) owns the scheme.
 | Path | Responsibility |
 | --- | --- |
 | `apps/desktop/src/renderer/lib/app-session.tsx` | Decides that a link is refused and writes the message. `reportDeepLinkFailure` is the single place that chooses where a message goes. |
-| `apps/desktop/src/main/index.ts` | Owns the window: `createDeepLinkErrorWindow`, the `deepLinkErrorMessage` it holds, the three `deep-link-error:*` IPC handlers, and `assertDeepLinkErrorIpcSender`. |
+| `apps/desktop/src/main/index.ts` | Owns the window: `createDeepLinkErrorWindow`, the `deepLinkErrorNotice` it holds, the three `deep-link-error:*` IPC handlers, and `assertDeepLinkErrorIpcSender`. |
 | `apps/desktop/src/renderer/screens/deep-link-error.tsx` | The whole contents of that window. |
 | `apps/desktop/src/renderer/App.tsx` | Routes `?surface=deep-link-error`, above the session gate. |
 | `apps/desktop/src/preload/index.ts` | The four bridge methods and the `deep-link-error:changed` channel. |
@@ -65,8 +65,8 @@ lands on is the correct surface by the same argument.
 
 ### The window
 
-`createDeepLinkErrorWindow` is a singleton. Main holds the current message in
-`deepLinkErrorMessage`; the window reads it once on mount through
+`createDeepLinkErrorWindow` is a singleton. Main holds the current notice — an
+id and a message — in `deepLinkErrorNotice`; the window reads it once on mount through
 `deep-link-error:get` and subscribes to `deep-link-error:changed` for any that
 arrive after. That split exists because the window is created *with* a message —
 the renderer does not exist yet to be told about the first one — and can then
