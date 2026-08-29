@@ -41,8 +41,10 @@ jobs:
             command: pnpm --filter @rally/api exec vitest run --shard=2/3
           - name: api-tests-3-of-n
             command: pnpm --filter @rally/api exec vitest run --shard=3/3
-          - name: api-tests-workers
-            command: pnpm --filter @rally/api test:workers
+          - name: api-tests-workers-1-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/2
+          - name: api-tests-workers-2-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/2
           - name: crash-symbolicator-container
             command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests
