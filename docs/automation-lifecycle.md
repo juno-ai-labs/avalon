@@ -559,8 +559,14 @@ it to would put a regional identity read behind a workspace-product method.
 **What a future change has to respect:** `usedBy` is zero because nothing
 counts subscriptions any more — the cutover moved them to AutomationAgent and
 dropped the table the count joined. The literal `0 AS use_count` in the old
-query said the same thing less clearly. If the count comes back it is
-AutomationAgent's to answer, not this gallery's.
+query said the same thing less clearly, and making it plain in code does not
+make it right: `new-automation.tsx` renders the value into "by {author} · used
+by {count}", so every card in the gallery has read "used by 0" for every
+template in every workspace since the cutover. That is a user-visible defect
+this change documents rather than fixes, and the honest options are to drop the
+field from the route contract and the desktop row, or to have AutomationAgent
+answer the count. It is not settled, and nobody should read "reports zero
+rather than a number it cannot know" as "the interface is fine".
 
 ### 2026-08-29 — The cutover has run, and its deploy scaffolding is removed
 

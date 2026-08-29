@@ -79,6 +79,13 @@ async function addVersion(input: { ownerUserId?: string; templateId?: string } =
   );
 }
 
+/** Add a version, failing the test rather than the narrowing if it was refused. */
+async function addedVersion(input: Parameters<typeof addVersion>[0] = {}) {
+  const result = await addVersion(input);
+  if (result.outcome !== "added") throw new Error(`expected a version, got ${result.outcome}`);
+  return result.versionNumber;
+}
+
 async function gallery() {
   return WorkspaceAutomationTemplateListSchema.parse(
     await workspace().listAutomationTemplates({ workspaceId: WORKSPACE_ID }),
@@ -108,8 +115,8 @@ describe("automation template gallery", () => {
 
   it("gives each new version the next number, one at a time", async () => {
     await publish();
-    expect((await addVersion()).versionNumber).toBe(2);
-    expect((await addVersion()).versionNumber).toBe(3);
+    expect(await addedVersion()).toBe(2);
+    expect(await addedVersion()).toBe(3);
     expect((await gallery()).items[0]?.latestVersionNumber).toBe(3);
   });
 
@@ -119,30 +126,26 @@ describe("automation template gallery", () => {
     // refused the second. Inside the object each call is its own critical
     // section, so the numbers are consecutive rather than colliding.
     await publish();
-    const results = await Promise.all([addVersion(), addVersion(), addVersion()]);
-    expect(results.map((result) => result.versionNumber).sort()).toEqual([2, 3, 4]);
+    const numbers = await Promise.all([addedVersion(), addedVersion(), addedVersion()]);
+    expect(numbers.sort((left, right) => left - right)).toEqual([2, 3, 4]);
     expect((await gallery()).items[0]?.latestVersionNumber).toBe(4);
   });
 
   it("refuses a version from somebody who does not own the template", async () => {
     await publish();
-    expect(await addVersion({ ownerUserId: OTHER_MEMBER })).toEqual({
-      outcome: "template_not_found",
-      versionNumber: null,
-    });
+    expect(await addVersion({ ownerUserId: OTHER_MEMBER }))
+      .toEqual({ outcome: "template_not_found" });
     expect((await gallery()).items[0]?.latestVersionNumber).toBe(1);
   });
 
   it("says so rather than writing a version for a template that is not there", async () => {
-    expect(await addVersion({ templateId: "00000000-0000-7000-8000-000000000bbe" })).toEqual({
-      outcome: "template_not_found",
-      versionNumber: null,
-    });
+    expect(await addVersion({ templateId: "00000000-0000-7000-8000-000000000bbe" }))
+      .toEqual({ outcome: "template_not_found" });
   });
 
   it("serves the gallery at each template's latest version", async () => {
     await publish();
-    await addVersion();
+    await addedVersion();
     const items = (await gallery()).items;
     expect(items).toHaveLength(1);
     expect(items[0]?.latestVersionNumber).toBe(2);

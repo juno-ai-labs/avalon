@@ -138,10 +138,12 @@ export class AutomationService {
     this.assertActivityTriggerBindings(draft.triggers, activitySourcePluginIds, connectorSelection);
     const id = newId();
     const at = nowIso();
-    // Ownership, the version number and both writes are one decision in the
-    // object. As a read here and a batch afterwards, two revisions published at
-    // the same moment read the same number and the unique constraint refused
-    // the second — a 500 rather than the next version.
+    // One round trip, where it used to be a read here and a batch afterwards:
+    // two revisions published at the same moment read the same number and the
+    // unique constraint refused the second, a 500 rather than the next version.
+    // The object's input gate is what serializes it; the transaction inside
+    // keeps the counter and the version rows consistent, which is a different
+    // guarantee.
     const result = WorkspaceAutomationTemplateVersionResultSchema.parse(
       await (await this.workspace()).addAutomationTemplateVersion({
         workspaceId: this.auth.workspaceId,
@@ -165,7 +167,7 @@ export class AutomationService {
     if (result.outcome === "template_not_found") {
       throw new ApiError(404, "template_not_found", "Automation template not found");
     }
-    return { id, versionNumber: result.versionNumber! };
+    return { id, versionNumber: result.versionNumber };
   }
 
   /** The WorkspaceDO that owns this workspace's template gallery. */
