@@ -61,6 +61,13 @@ that works the first time.
    `index.html`, and `index.js` only when the site is active — an entry
    under any other name (`app.js`, `main.js`, `home.html`) is not an
    entry, and the publish will not treat the directory as a site.
+   Include a short `README.md` in the directory saying what the site is
+   and anything a future revision needs to know that the code does not
+   show — the next run to touch this site may know nothing you know
+   now. A new request for a new thing gets a **new directory**: "now
+   make a countdown page" in a work stream that already has a poll is a
+   second site at a second path, not an edit to the first — only a
+   request *about* an existing site is a revision of it.
 
 3. **If the site is active but keeps nothing, write `index.js` as one
    ES module default-exporting a fetch handler** (a site that must
@@ -122,14 +129,23 @@ that works the first time.
    genuinely needs outside data means you fetch it *yourself, now, in
    the workspace* and publish the result as a data file with the site.
 
-7. **Let failures be loud and legible.** If the handler throws, viewers
+7. **Design the page for where it actually lives.** The primary viewing
+   surface is a narrow pane in Rally's right rail (roughly phone-width),
+   then a pop-out window, then a browser tab — so build narrow-first
+   responsive layouts that also breathe at desktop width. The page's
+   own UI carries every interaction: never `alert()`, `confirm()`, or
+   `prompt()` (build inline messages and confirmations instead), and
+   never a Print, Save, or Export button — saving and exporting are the
+   platform's chrome, not the page's; keep layouts print-friendly with
+   `@media print` so future platform export renders well.
+8. **Let failures be loud and legible.** If the handler throws, viewers
    see a plain error page and the failure lands in the site's error log
    in the work stream — so throw early with a clear message rather than
    returning a half-rendered page. Validate your own routes' inputs and
    return real HTTP statuses (`400` with a short JSON body beats a
    `200` full of undefined).
 
-8. **Revise in place, never fork.** A change request means: edit the
+9. **Revise in place, never fork.** A change request means: edit the
    files in the workspace (re-import the site's source from the
    published resource first if the workspace no longer has it), then
    publish **the same directory path** again. Same URL, same rail
@@ -300,6 +316,26 @@ shape of `index.js`.
    treat the current version's rendering of existing rows as part of
    every revision's job: after a schema addition, the page must still
    render the rows older code wrote.
+6. **Storage is the truth; instance fields are at most a cache.** The
+   class restarts whenever the runtime likes, so a field like
+   `this.subscriberCount` silently resets. Write every fact that
+   matters to `this.ctx.storage` the moment it exists, and treat any
+   in-memory copy as rebuildable from storage on the next start.
+7. **Multiplayer without identity, by design.** The runtime tells the
+   page nothing about who is viewing, and clients reload freely with
+   no session to hold — so never build "log in as yourself" flows.
+   For a game or anything with roles, let any client *claim* any
+   player from the page (a name field, a seat picker), allow the same
+   seat from two windows, and make every submission carry what it
+   needs as content. This is the shape that works; fighting it
+   produces pages that break on reload.
+8. **Freshness comes from polling, not push.** Nothing pushes updates
+   into an open page; another viewer's vote appears when the page asks
+   again. For shared-state pages, have the client re-fetch its own API
+   on a modest interval (a few seconds is plenty for a poll — this is
+   a workplace tool, not a game engine) and after every submission, so
+   the page feels live without hammering the server. The page may only
+   fetch its own origin; there is nowhere else to poll.
 
 ### Anti-patterns (stateful)
 
