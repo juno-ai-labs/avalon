@@ -1,21 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import {
-  AtSign,
   Building2,
-  CalendarDays,
   Check,
   Clock3,
   Copy,
-  FileText,
   GitBranch,
   Globe2,
-  HardDrive,
   LockKeyhole,
   LoaderCircle,
   LogOut,
   MailPlus,
-  MessageSquare,
   MonitorCog,
   Newspaper,
   PanelTop,
@@ -29,7 +24,6 @@ import {
   Users,
   Wifi,
   Webhook,
-  Workflow,
   Wrench,
   X,
   type LucideIcon,
@@ -47,7 +41,8 @@ import type { ConnectorOAuthProvider, ConnectorOAuthStart } from '@rally/contrac
 import { parseDesktopSettingsSection } from '../../common/settings';
 import type { DesktopSettingsSection } from '../../common/settings';
 import type { DesktopApplicationSettings, DesktopTelemetryInspectorEntry } from '../../common/desktop';
-import { Avatar, Badge, Button, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
+import { Avatar, Badge, Button, ConnectorMark, DropdownSelect, EmptyState, InlineError, Modal } from '../components/primitives';
+import { connectorBrandMark } from '../lib/plugin-marks';
 import { ApplicationIconPicker } from '../components/application-icon-picker';
 import { ThemePicker } from '../components/theme-picker';
 import { DigestSettings } from '../components/digest-settings';
@@ -247,7 +242,7 @@ const connectorProviders = [
     provider: 'google' as const,
     name: 'Google Mail + Calendar',
     description: 'Search Gmail, create drafts, send mail, and work with calendar events.',
-    icon: CalendarDays,
+    mark: 'google' as const,
     scopes: ['you'] as const,
     capabilities: ['gmail.read', 'gmail.draft', 'gmail.send', 'calendar.read', 'calendar.write'],
   },
@@ -256,7 +251,7 @@ const connectorProviders = [
     provider: 'google' as const,
     name: 'Google Drive + Docs + Sheets',
     description: 'Read Drive files and work with Google Docs and Sheets content.',
-    icon: HardDrive,
+    mark: 'google-drive' as const,
     scopes: ['you', 'workspace'] as const,
     capabilities: ['drive.read', 'docs.read', 'docs.write', 'sheets.read', 'sheets.write'],
   },
@@ -265,7 +260,7 @@ const connectorProviders = [
     provider: 'github' as const,
     name: 'GitHub',
     description: 'Repositories, issues, pull requests, checks, and development events.',
-    icon: GitBranch,
+    mark: 'github' as const,
     scopes: ['you', 'workspace'] as const,
     capabilities: ['github.metadata.read', 'github.contents.read', 'github.issues.read', 'github.issues.write', 'github.pull_requests.read', 'github.pull_requests.write', 'github.actions.read', 'github.checks.read'],
   },
@@ -274,7 +269,7 @@ const connectorProviders = [
     provider: 'granola' as const,
     name: 'Granola',
     description: 'Personal meeting context through Granola MCP, or workspace notes and transcripts through an admin API key.',
-    icon: FileText,
+    mark: 'granola' as const,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['granola.personal.read'],
     capabilities: ['granola.workspace.read'],
@@ -284,7 +279,7 @@ const connectorProviders = [
     provider: 'linear' as const,
     name: 'Linear',
     description: 'Connect personally to act as you, or install Rally for shared workspace access and real-time activity.',
-    icon: Workflow,
+    mark: 'linear' as const,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: [
       'linear.read',
@@ -305,7 +300,7 @@ const connectorProviders = [
     provider: 'slack' as const,
     name: 'Slack',
     description: 'Messages, files, people, canvases, conversations, and the Rally workspace Agent.',
-    icon: MessageSquare,
+    mark: 'slack' as const,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: SLACK_PERSONAL_CAPABILITIES,
     capabilities: ['slack.agent', 'slack.notifications.write'],
@@ -315,7 +310,7 @@ const connectorProviders = [
     provider: 'notion' as const,
     name: 'Notion',
     description: 'Your Notion through its live MCP tools, or selected pages and change notifications shared with your Rally workspace.',
-    icon: FileText,
+    mark: 'notion' as const,
     scopes: ['you', 'workspace'] as const,
     personalCapabilities: ['notion.personal.mcp'],
     capabilities: ['notion.read', 'notion.insert', 'notion.update', 'notion.comment.read', 'notion.comment.insert'],
@@ -334,11 +329,25 @@ const connectorProviders = [
     provider: 'x' as const,
     name: 'Public X via TwitterAPI.io',
     description: 'Read-only public X timelines, threads, replies, and Lists using a Rally-managed third-party API key.',
-    icon: AtSign,
+    mark: 'x' as const,
     scopes: ['workspace'] as const,
     capabilities: ['x.read'],
   },
 ] as const;
+
+/**
+ * The mark an installed connection wears, or nothing.
+ *
+ * A row reaches the mark from the connector type it already carries, which is
+ * the same route the provider card above it takes — so the card somebody
+ * connected from and the row it produced always show the same company. An
+ * inbound webhook is not a company and draws no mark; the status dot and the
+ * name carry the row on their own.
+ */
+function InstalledConnectionMark({ connection }: { connection: WorkstreamConnection }): React.JSX.Element | null {
+  const mark = connectorBrandMark(connection.connectorType, connection.displayName);
+  return mark ? <ConnectorMark mark={mark} /> : null;
+}
 
 function invitationStatusLabel(status: WorkspaceInvitation['status']): string {
   switch (status) {
@@ -1414,6 +1423,7 @@ export function WorkspaceSettingsScreen({
                                 <td>
                                   <span className="settings-connection-name">
                                     <span className={`connection-provider-dot ${connection.status}`} aria-hidden="true" />
+                                    <InstalledConnectionMark connection={connection} />
                                     <span className="settings-connection-copy"><strong>{connection.displayName}</strong></span>
                                   </span>
                                 </td>
@@ -1492,7 +1502,8 @@ export function WorkspaceSettingsScreen({
                   <p className="settings-section-copy">Personal connections are available only to you and act with your provider identity. Workspace connections expose granted capabilities to every member; workspace automations use only the connections explicitly bound to them.</p>
                   <div className="provider-grid">
                     {visibleProviders.map((provider) => {
-                      const Icon = provider.icon;
+                      const mark = 'mark' in provider ? provider.mark : null;
+                      const Icon = 'icon' in provider ? provider.icon : null;
                       const connected = providerHasConnection(provider, connections.data ?? []);
                       const providerAvailable = connectorCatalog.data?.includes(provider.provider) ?? false;
                       const awaitingProvider = pendingConnectorOAuth?.provider === provider.provider;
@@ -1524,7 +1535,11 @@ export function WorkspaceSettingsScreen({
                       return (
                         <article className="provider-card" key={provider.id}>
                           <div className="provider-card-heading">
-                            <div className="provider-icon"><Icon aria-hidden="true" size={18} /></div>
+                            <div className="provider-icon">
+                              {mark
+                                ? <ConnectorMark mark={mark} />
+                                : Icon && <Icon aria-hidden="true" size={18} />}
+                            </div>
                             <div><strong>{provider.name}</strong><span>{awaitingProvider ? 'Waiting for authorization' : connected ? 'Connected' : connectorCatalog.isLoading ? 'Checking availability' : providerAvailable ? 'Available' : 'Unavailable'}</span></div>
                           </div>
                           <p>{provider.description}</p>

@@ -398,7 +398,14 @@ export function mapToolInvocation(invocation: z.infer<typeof WireToolInvocationS
     name: invocation.activityName ?? invocation.toolName,
     summary: invocation.outputSummary ?? invocation.inputSummary,
     status: invocation.status === 'pending' ? 'started' : invocation.status,
-    ...(invocation.plugin ? { plugin: invocation.plugin } : {}),
+    // The live row identifies a connector plugin by its model-facing id while
+    // the canonical block identifies the same plugin by its connection. Both
+    // carry the display name, which is what the grouped row keys on, so the
+    // pre-canonical row and the block that replaces it land on one row rather
+    // than two — see `pluginGroup`.
+    ...(invocation.plugin
+      ? { plugin: invocation.plugin, pluginName: invocation.plugin.displayName }
+      : {}),
     ...(Number.isFinite(started) && Number.isFinite(completed) ? { durationMs: completed - started } : {}),
     input: invocation.inputSummary,
     ...(invocation.outputSummary ? { output: invocation.outputSummary } : {}),

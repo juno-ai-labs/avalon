@@ -1,4 +1,5 @@
-import type { ElicitationData, Message, ToolEventData, WorkspaceMember } from './types';
+import type { ElicitationData, Message, PluginActivityData, ToolEventData, WorkspaceMember } from './types';
+import { pluginGroup } from './plugin-groups';
 import {
   ActivitySuggestionSchema,
   ElicitationSchema,
@@ -215,6 +216,15 @@ export function orderedTranscriptMessages(
     }
   }
   const turnsById = new Map(orderedTurns.map((turn) => [turn.turnId, turn]));
+  // A plugin activity is addressed by the turn it hangs off and the plugin it
+  // is about; its own id is the backend's composition of exactly those two.
+  // Reading it back through the parent link rather than rebuilding that string
+  // keeps this projection independent of how the id happens to be spelled.
+  const pluginActivitiesByTurnActivity = new Map<string, TranscriptActivity>();
+  for (const activity of snapshot.activities) {
+    if (activity.scope !== 'plugin' || !activity.parentActivityId) continue;
+    pluginActivitiesByTurnActivity.set(`${activity.parentActivityId}\u0000${activity.subjectId}`, activity);
+  }
   const lastTurnByResponseActivityId = new Map<string, TranscriptTurn>();
   for (const turn of orderedTurns) {
     const assistantActivity = turn.activityId ? activities.get(turn.activityId) : undefined;
@@ -338,6 +348,9 @@ export function orderedTranscriptMessages(
           };
         }
         const activity = block.activityId ? activities.get(block.activityId) : undefined;
+        const owner = block.pluginId
+          ? pluginActivitiesByTurnActivity.get(`${turn.activityId ?? ''}\u0000${block.pluginId}`)
+          : undefined;
         rememberOrder(block.blockId);
         return {
           ...base,
@@ -346,6 +359,8 @@ export function orderedTranscriptMessages(
           toolEvent: {
             id: block.toolCallId,
             toolCallId: block.toolCallId,
+            ...(block.pluginId ? { pluginId: block.pluginId } : {}),
+            ...(owner ? { pluginName: owner.label } : {}),
             name: block.toolName,
             status: block.status === 'planned' || block.status === 'started'
               ? 'started'
@@ -438,6 +453,8 @@ export function orderedTranscriptMessages(
     const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) =>
       block.type === 'tool' && block.pluginId === activity.subjectId ? [block.blockIndex] : []));
     if (!Number.isFinite(lastToolIndex)) continue;
+    const group = pluginGroup(activity.subjectId, activity.label);
+    if (!group) continue;
     const timing = activityTiming(activity);
     const activeInterval = activity.intervals.find((interval) => interval.stoppedAtUtc === null);
     messages.push({
@@ -448,17 +465,18 @@ export function orderedTranscriptMessages(
       sequenceNumber: 0,
       attentionSequenceNumber: null,
       authorType: 'agent',
-      messageType: 'thought',
+      messageType: 'plugin_activity',
       createdAt: activeInterval?.startedAtUtc ?? lastTurn.createdAtUtc,
-      thoughtEvent: {
-        status: activity.state === 'active' ? 'started' : 'completed',
+      pluginActivity: {
+        groupKey: group.key,
+        name: group.name,
+        icon: group.icon,
+        active: activity.state === 'active',
         durationMs: timing.durationMs,
         timingAccuracy: timing.timingAccuracy,
         ...(timing.monotonicStartedAt === undefined
           ? {}
-          : { monotonicStartedAt: timing.monotonicStartedAt }),
-        activeVerb: `${activity.label} working`,
-        completedVerb: `${activity.label} worked`,
+          : { monotonicStartedAt: [timing.monotonicStartedAt] }),
       },
     });
     messageOrder.set(activity.activityId, {
@@ -744,6 +762,170 @@ export function composeTranscript(
   }
   composed.push(...visibleCanonical.slice(canonicalIndex));
   return composed.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
+}
+
+/**
+ * What one row contributes to its plugin's group, or null when the row is not
+ * plugin activity at all.
+ */
+function pluginGroupContribution(message: Message): {
+  key: string;
+  activity: PluginActivityData;
+  /** Plugin-activity rows carry the authoritative aggregate; tool rows do not. */
+  authoritativeDuration: boolean;
+} | null {
+  if (message.pluginActivity) {
+    return {
+      key: message.pluginActivity.groupKey,
+      activity: message.pluginActivity,
+      authoritativeDuration: true,
+    };
+  }
+  const tool = message.toolEvent;
+  if (!tool) return null;
+  const group = pluginGroup(tool.pluginId, tool.pluginName ?? tool.plugin?.displayName);
+  if (!group) return null;
+  return {
+    key: group.key,
+    activity: {
+      groupKey: group.key,
+      name: group.name,
+      icon: group.icon,
+      active: tool.status === 'started',
+      durationMs: tool.durationMs ?? 0,
+    },
+    authoritativeDuration: false,
+  };
+}
+
+/**
+ * Whether a row leaves the run of activity around it open.
+ *
+ * Thinking rows do not close it. The model thinks between every pair of tool
+ * calls, so closing on one would mean nothing ever grouped — the two Granola
+ * calls a run makes either side of a thought are one stretch of Granola work,
+ * and that is the case this feature exists for. Anything a person reads or
+ * answers does close it: a sentence from Rally is a report on the work above
+ * it, and folding work that came after the sentence back into a row printed
+ * before it would put the feed out of order with its own narration.
+ */
+function continuesPluginActivityRun(message: Message): boolean {
+  return message.messageType === 'tool_event'
+    || message.messageType === 'plugin_activity'
+    || message.messageType === 'thought';
+}
+
+/**
+ * Collapse tool calls into one row per plugin per run of uninterrupted agent
+ * activity.
+ *
+ * The tools themselves are not what this audience reads — `table_insert_rows`
+ * and `slack_read_thread` are implementation, and a screenful of them buries
+ * the conversation they belong to. What a reader does want is which places
+ * Rally is working in and for how long, so that is the whole row: a plugin's
+ * mark, its name, and its time.
+ *
+ * A group sits where its plugin's *first* call in the run sat, not where its
+ * last one did, which keeps the feed's order the order work started in. The
+ * run ends at the first thing a person reads — see `continuesPluginActivityRun`
+ * — so a plugin picked up again after Rally has said something starts a second
+ * row under that sentence rather than reopening the one above it.
+ *
+ * Timing comes from the plugin activity when the transcript carries one — it
+ * measures the plugin, including the time between its calls. Summed tool
+ * durations are the fallback for a row whose activity has not arrived, and
+ * they undercount by exactly that gap, so an activity always displaces them.
+ */
+export function groupPluginToolMessages(messages: readonly Message[]): Message[] {
+  interface GroupTiming {
+    row: number;
+    identity: Pick<PluginActivityData, 'groupKey' | 'icon' | 'name'>;
+    active: boolean;
+    activityDurationMs: number;
+    toolDurationMs: number;
+    sawActivity: boolean;
+    monotonicStartedAt: number[];
+    upperBound: boolean;
+  }
+  const groups: GroupTiming[] = [];
+  let open = new Map<string, GroupTiming>();
+  const rows: Message[] = [];
+  for (const message of messages) {
+    if (!continuesPluginActivityRun(message)) {
+      open = new Map();
+      rows.push(message);
+      continue;
+    }
+    const contribution = pluginGroupContribution(message);
+    if (!contribution) {
+      // A tool row that named no plugin is dropped rather than shown: all it
+      // carries is a tool name, which is the thing this feed hides, and the
+      // canonical block names its owner a beat later under a row of its own.
+      if (!message.toolEvent) rows.push(message);
+      continue;
+    }
+    let group = open.get(contribution.key);
+    if (!group) {
+      const { groupKey, icon, name } = contribution.activity;
+      group = {
+        row: rows.length,
+        identity: { groupKey, icon, name },
+        active: false,
+        activityDurationMs: 0,
+        toolDurationMs: 0,
+        sawActivity: false,
+        monotonicStartedAt: [],
+        upperBound: false,
+      };
+      open.set(contribution.key, group);
+      groups.push(group);
+      rows.push({
+        ...message,
+        id: `${message.id}:plugin-group:${contribution.key}`,
+        messageType: 'plugin_activity',
+        pluginActivity: contribution.activity,
+        // A group row stands for machinery, not for something a person read, so
+        // it carries no attention ordinal — the same reason the projected
+        // plugin-activity row above sets this null. The tool row it is built
+        // from carries its *turn's* ordinal, which is also the ordinal of that
+        // turn's text, so spreading it would let a group scrolling into view
+        // acknowledge an answer still below the fold.
+        attentionSequenceNumber: null,
+        // The tool call and its own thinking row are what this replaces;
+        // nothing downstream should read them back off the group.
+        toolEvent: undefined,
+        thoughtEvent: undefined,
+      });
+    }
+    group.active ||= contribution.activity.active;
+    if (contribution.authoritativeDuration) {
+      group.sawActivity = true;
+      group.activityDurationMs += contribution.activity.durationMs;
+    } else {
+      group.toolDurationMs += contribution.activity.durationMs;
+    }
+    // Every running contribution, not the last one seen: they run at the same
+    // time and the completed total counts them all, so the live number has to
+    // advance by all of them or it jumps at settle.
+    group.monotonicStartedAt.push(...(contribution.activity.monotonicStartedAt ?? []));
+    if (contribution.activity.timingAccuracy === 'upper_bound') group.upperBound = true;
+  }
+  for (const group of groups) {
+    const row = rows[group.row]!;
+    rows[group.row] = {
+      ...row,
+      pluginActivity: {
+        ...group.identity,
+        active: group.active,
+        durationMs: group.sawActivity ? group.activityDurationMs : group.toolDurationMs,
+        ...(group.monotonicStartedAt.length === 0
+          ? {}
+          : { monotonicStartedAt: group.monotonicStartedAt }),
+        ...(group.upperBound ? { timingAccuracy: 'upper_bound' as const } : {}),
+      },
+    };
+  }
+  return rows.map((message, index) => ({ ...message, sequenceNumber: index + 1 }));
 }
 
 /** Union the intervals the backend inspected; row presence is not coverage. */
