@@ -1029,24 +1029,46 @@ pre {
 .mobile-only { display: none; }
 .header-menu-button { display: none; }
 
-.connection-banner {
-  align-items: center;
-  background: var(--av-sys-color-warning-wash);
-  border-bottom: 1px solid var(--av-sys-color-warning-edge);
-  color: var(--av-sys-color-warning-soft);
+/* Deep-link failure window
+   Its own renderer, so this is the whole window rather than a layer inside one:
+   no overlay, no dialog chrome, and the card is the page. */
+
+.deep-link-error-window {
+  background: var(--av-sys-color-surface-subtle);
+  box-sizing: border-box;
   display: flex;
-  font-size: 11px;
-  gap: 12px;
-  justify-content: center;
-  left: 0;
-  min-height: 28px;
-  position: absolute;
-  right: 0;
-  top: 0;
-  z-index: 22;
+  flex-direction: column;
+  gap: 16px;
+  height: 100vh;
+  justify-content: space-between;
+  padding: 24px;
 }
 
-.connection-banner button { background: transparent; color: var(--av-sys-color-warning-strong); font-weight: 600; padding: 2px 4px; text-decoration: underline; }
+/* The window cannot be resized and the message is not always short — the
+   sign-in branch interpolates the link's own error parameter — so the message
+   scrolls and the button below it stays put. Left to grow, a long message
+   pushes Continue past the bottom edge of a window with no way to scroll or
+   resize to it, and the one action there is becomes unreachable.
+   `min-height: 0` is what allows the shrink: a flex item defaults to
+   `min-height: auto` and refuses to be smaller than its content. */
+.deep-link-error-card {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.deep-link-error-title { font-size: 15px; margin: 0; }
+.deep-link-error-copy {
+  color: var(--av-sys-color-text-muted);
+  margin: 0;
+  /* The message can be one long unbroken token — the sign-in branch
+     interpolates the link's own error parameter — and the window does not
+     resize, so it wraps rather than reaching past the edge. */
+  overflow-wrap: anywhere;
+}
+.deep-link-error-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; }
 
 /* Onboarding and setup */
 

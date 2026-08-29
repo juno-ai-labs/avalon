@@ -93,6 +93,7 @@ export type AppSessionDesktopBridge = Pick<
   | 'openExternal'
   | 'openSettings'
   | 'refreshSession'
+  | 'showDeepLinkError'
 >;
 
 function regionForSession(runtime: RuntimeConfig, session: DesktopSession): Region {
@@ -374,17 +375,43 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
     // OAuth callback could be consumed and rejected solely because config was
     // still pending.
     if (!runtime) return undefined;
+    /**
+     * Report a refused link where the person will actually see it.
+     *
+     * Once there is a workspace, the window that handled the link is not
+     * reliably the window in front: a connector completion is delivered to the
+     * settings renderer, which raises and focuses itself, and settings renders
+     * no shell — so anything drawn from here lands either behind the settings
+     * window or nowhere at all. Main owns a window for exactly this, above
+     * whichever one is focused.
+     *
+     * Signed out there is one window and the sign-in screen already shows this
+     * text under the buttons that answer it, so it stays inline: opening a
+     * second window over the top of the fix helps nobody.
+     *
+     * A rejection means main could not open the window at all — this renderer
+     * is trusted and the message is its own copy, so nothing else refuses one.
+     * The message is kept in state anyway: that is the copy the sign-in screen
+     * shows if this session then ends, and it is the only one left.
+     */
+    const reportDeepLinkFailure = (message: string): void => {
+      if (!sessionRef.current?.workspace) {
+        setDeepLinkError(message);
+        return;
+      }
+      void bridge.showDeepLinkError(message).catch(() => setDeepLinkError(message));
+    };
     const handleDeepLink = (navigation: DesktopDeepLinkNavigation): void => {
       let deepLink: URL;
       try {
         deepLink = new URL(navigation.url);
       } catch {
-        setDeepLinkError('Rally received an invalid sign-in link.');
+        reportDeepLinkFailure('Rally received an invalid sign-in link.');
         return;
       }
       if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams' && deepLink.pathname === '/new') {
         if (!session?.workspace) {
-          setDeepLinkError('Sign in before starting a work stream.');
+          reportDeepLinkFailure('Sign in before starting a work stream.');
           return;
         }
         setDeepLinkError(null);
@@ -395,7 +422,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
       if (isDesktopDeepLinkProtocol(deepLink.protocol) && deepLink.hostname === 'workstreams') {
         const workstreamId = deepLink.pathname.slice(1);
         if (!session?.workspace || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(workstreamId)) {
-          setDeepLinkError('Sign in before opening this work-stream link.');
+          reportDeepLinkFailure('Sign in before opening this work-stream link.');
           return;
         }
         setDeepLinkError(null);
@@ -411,11 +438,11 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         // between an instruction someone can act on and one that cannot help:
         // signing in again does nothing about a link that names no note.
         if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/iu.test(noteId)) {
-          setDeepLinkError('Rally could not open that note link.');
+          reportDeepLinkFailure('Rally could not open that note link.');
           return;
         }
         if (!session?.workspace) {
-          setDeepLinkError('Sign in before opening this note.');
+          reportDeepLinkFailure('Sign in before opening this note.');
           return;
         }
         setDeepLinkError(null);
@@ -444,7 +471,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         && deepLink.search === ''
       ) {
         if (!session?.workspace) {
-          setDeepLinkError('Sign in before creating an automation.');
+          reportDeepLinkFailure('Sign in before creating an automation.');
           return;
         }
         setDeepLinkError(null);
@@ -459,7 +486,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           && [...deepLink.searchParams.keys()].every((key) => key === 'token')
           && deepLink.searchParams.getAll('token').length === 1;
         if (!exactToken || !session?.workspace || !api) {
-          setDeepLinkError('Sign in to the matching Rally workspace before connecting your Slack account.');
+          reportDeepLinkFailure('Sign in to the matching Rally workspace before connecting your Slack account.');
           return;
         }
         setDeepLinkError(null);
@@ -501,7 +528,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             } catch (error: unknown) {
               // The link committed and is useful on its own. Surface the
               // failure without retracting what already succeeded.
-              setDeepLinkError(
+              reportDeepLinkFailure(
                 error instanceof Error
                   ? `Slack was linked, but personal Slack tools could not be connected: ${error.message}`
                   : 'Slack was linked, but personal Slack tools could not be connected.',
@@ -509,7 +536,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             }
           })
           .catch((error: unknown) => {
-            setDeepLinkError(error instanceof Error ? error.message : 'Your Slack account could not be linked.');
+            reportDeepLinkFailure(error instanceof Error ? error.message : 'Your Slack account could not be linked.');
           });
         return;
       }
@@ -517,7 +544,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         const token = deepLink.searchParams.get('token');
         const inviteRegion = deepLink.searchParams.get('region');
         if (!token || token.length < 20 || (inviteRegion !== 'global' && inviteRegion !== 'eu')) {
-          setDeepLinkError('Rally received an invalid organization invitation.');
+          reportDeepLinkFailure('Rally received an invalid organization invitation.');
           return;
         }
         setPendingInvitation({ token, region: inviteRegion });
@@ -529,7 +556,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         return;
       }
       if (!isDesktopDeepLinkProtocol(deepLink.protocol) || deepLink.hostname !== 'auth' || deepLink.pathname !== '/complete') {
-        setDeepLinkError('Rally received an unexpected sign-in link.');
+        reportDeepLinkFailure('Rally received an unexpected sign-in link.');
         return;
       }
       const connectionId = deepLink.searchParams.get('connection');
@@ -545,7 +572,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           || deepLink.searchParams.getAll('connection').length !== 1
           || deepLink.searchParams.getAll('status').length !== 1
         ) {
-          setDeepLinkError('Rally received an invalid connector completion link.');
+          reportDeepLinkFailure('Rally received an invalid connector completion link.');
           return;
         }
         setDeepLinkError(null);
@@ -587,7 +614,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           && /^[a-z0-9_-]{1,100}$/u.test(connectorError)
           && (attemptId === null || (hasSingleValue('attempt') && /^[A-Za-z0-9_-]{43}$/u.test(attemptId)));
         if (!activeSession?.workspace || !connectorName || callbackRegion !== activeSession.workspace.region || (!validSuccess && !validFailure)) {
-          setDeepLinkError('Rally received an invalid connector completion link.');
+          reportDeepLinkFailure('Rally received an invalid connector completion link.');
           return;
         }
         if (validSuccess) {
@@ -598,7 +625,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
             queryClient.invalidateQueries({ queryKey: ['automation'] }),
           ]);
         } else {
-          setDeepLinkError(
+          reportDeepLinkFailure(
             connectorStatus === 'denied'
               ? `${connectorName} authorization was cancelled.`
               : `${connectorName} could not be connected. Try again from Connections.`,
@@ -612,22 +639,22 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
         if (failedAttemptId && /^[A-Za-z0-9_-]{43}$/u.test(failedAttemptId)) {
           void bridge.cancelDesktopAuthAttempt(failedAttemptId);
         }
-        setDeepLinkError(`Sign in could not be completed: ${connectionError.replace(/[_-]+/gu, ' ')}`);
+        reportDeepLinkFailure(`Sign in could not be completed: ${connectionError.replace(/[_-]+/gu, ' ')}`);
         return;
       }
       const ticket = deepLink.searchParams.get('ticket');
       if (!ticket) {
-        setDeepLinkError('The sign-in link did not contain a desktop ticket.');
+        reportDeepLinkFailure('The sign-in link did not contain a desktop ticket.');
         return;
       }
       const callbackRegion = deepLink.searchParams.get('region');
       if (callbackRegion !== 'global') {
-        setDeepLinkError('The sign-in link did not match Rally’s identity service.');
+        reportDeepLinkFailure('The sign-in link did not match Rally’s identity service.');
         return;
       }
       const attemptId = deepLink.searchParams.get('attempt');
       if (!attemptId || !/^[A-Za-z0-9_-]{43}$/u.test(attemptId)) {
-        setDeepLinkError('The sign-in link did not match a native authentication attempt.');
+        reportDeepLinkFailure('The sign-in link did not match a native authentication attempt.');
         return;
       }
       setDeviceSelectedRegion(callbackRegion);
@@ -649,7 +676,7 @@ export function AppSessionProvider({ children }: PropsWithChildren): React.JSX.E
           setSession(nextSession);
         })
         .catch((error: unknown) => {
-          setDeepLinkError(error instanceof Error ? error.message : 'Sign in could not be completed.');
+          reportDeepLinkFailure(error instanceof Error ? error.message : 'Sign in could not be completed.');
         })
         .finally(() => setExchangingTicket(false));
     };

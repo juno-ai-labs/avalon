@@ -27,6 +27,7 @@ const queuedDeepLinks: DesktopDeepLinkNavigation[] = [];
 const settingsSectionListeners = new Set<(section: DesktopSettingsSection) => void>();
 let queuedSettingsSection: DesktopSettingsSection | null = null;
 const meetingCloseListeners = new Set<(reason: MeetingCloseReason) => void>();
+const deepLinkErrorListeners = new Set<(message: string | null) => void>();
 let meetingCloseQueued: MeetingCloseReason | null = null;
 const applicationForegroundListeners = new Set<(foregrounded: boolean) => void>();
 const realtimeSocketListeners = new Set<(event: DesktopRealtimeSocketEvent) => void>();
@@ -74,6 +75,14 @@ ipcRenderer.on('settings:section-requested', (_event, rawSection: unknown) => {
     return;
   }
   for (const listener of settingsSectionListeners) listener(section);
+});
+
+// The failure window reads the current message once it has mounted, so unlike
+// the settings section there is nothing to queue: a change arriving before React
+// is listening is already in main, and the mount's own read collects it.
+ipcRenderer.on('deep-link-error:changed', (_event, rawMessage: unknown) => {
+  const message = typeof rawMessage === 'string' ? rawMessage : null;
+  for (const listener of deepLinkErrorListeners) listener(message);
 });
 
 ipcRenderer.on('meeting:close-requested', (_event, rawReason: unknown) => {
@@ -193,6 +202,13 @@ const bridge: RallyDesktopBridge = {
     }
     return () => settingsSectionListeners.delete(listener);
   },
+  showDeepLinkError: (message) => ipcRenderer.invoke('deep-link-error:show', message) as Promise<void>,
+  getDeepLinkError: () => ipcRenderer.invoke('deep-link-error:get') as Promise<string | null>,
+  onDeepLinkErrorChanged: (listener) => {
+    deepLinkErrorListeners.add(listener);
+    return () => deepLinkErrorListeners.delete(listener);
+  },
+  dismissDeepLinkError: () => ipcRenderer.invoke('deep-link-error:dismiss') as Promise<void>,
   consumePendingDeepLinks: () => ipcRenderer.invoke('auth:consume-pending-deep-links') as Promise<DesktopDeepLinkNavigation[]>,
   onDeepLink: (listener) => {
     deepLinkListeners.add(listener);
