@@ -51,6 +51,23 @@ are canonical storage services, not authorization layers.
   sandbox. Its bridge exposes a small named API and never exposes `ipcRenderer`,
   environment variables, filesystem paths, or arbitrary channel names.
 - Every IPC argument is parsed before use.
+- Four windows are trusted IPC senders: main, settings, meeting, and the
+  deep-link failure window. Handlers that must not be reachable from every one of
+  them narrow further — `assertDeepLinkErrorIpcSender` admits only the failure
+  window, because its channels read and close that window. The failure window's
+  message travels as a string, and one deep-link message interpolates the link's
+  own `error` parameter, so text chosen outside Rally can be displayed
+  always-on-top under Rally's name; `DEEP_LINK_ERROR_MESSAGE_LIMIT` bounds it and
+  is currently open. See
+  [`deep-link-failures.md`](deep-link-failures.md#failure-modes-and-limits).
+  Admitting that window to the shared check widens what it *could* call to every
+  handler behind `assertTrustedIpcSender` — `system:open-settings` and
+  `system:open-external` among them — which it has no reason to. It is kept
+  there because its renderer is the application's own error telemetry and theme
+  code, which does invoke on that boundary, and because the window renders one
+  string with no scripting, no session, and no network of its own. That balance
+  holds only while the window stays this small: give it any further UI and its
+  privileges should be narrowed to the channels it actually uses first.
 - Navigation and popup creation are denied by default; OAuth opens in the system
   browser.
 - A strict Content Security Policy allows bundled content and the configured
@@ -676,6 +693,32 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-29 — The deep-link failure window joins the trusted-sender set
+
+**What changed:** A fourth BrowserWindow, showing a refused deep link, is a
+trusted IPC sender. Its own three channels are gated by a narrower check that
+admits only that window, and the message it displays is validated in main against
+an open length limit.
+
+**Why:** The failure had no visible surface at all for the case that matters
+most — a connector completion is delivered to the settings window, which renders
+no application shell — so the message had to leave the renderer, and a window
+that main owns is a new sender on the boundary this section defines. The narrower
+check exists because `deep-link-error:dismiss` closes a window: reachable from
+every renderer, any of them could discard a message the person had not read.
+
+**Considered and rejected:** Reusing `assertTrustedIpcSender` alone for all three
+channels. It is the check every other handler uses, but it admits four windows to
+a channel that only one of them has any business calling.
+
+**Consequences:** Anything that enumerates Rally windows must tolerate one that
+can appear with no session behind it. The message is a string rather than a
+closed set of codes, so untrusted text from a `rally://` link can reach an
+always-on-top window; bounding it at the point it is built is the real fix, and
+the limit is the backstop until then.
+
+Shipped in #TBD.
 
 ### 2026-08-26 — Broker fallback and payload policy stay inside the capability
 

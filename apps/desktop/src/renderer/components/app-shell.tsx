@@ -2,7 +2,6 @@ import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-q
 import { useEffect, useMemo, useRef, type CSSProperties, type PropsWithChildren } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import type { CreateProjectRequest, ProjectDirectory, ProjectSummary, WorkstreamBatchFilter } from '@rally/contracts';
-import { ApiError } from '../lib/api';
 import { useAppSession } from '../lib/app-session';
 import { desktopBridge } from '../lib/platform';
 import { useUiStore } from '../lib/ui-store';
@@ -192,7 +191,7 @@ export function useSocketOwnedList<T>(queryKey: readonly unknown[]): UseQueryRes
 }
 
 export function AppShell({ workspace, children }: AppShellProps): React.JSX.Element {
-  const { api, clearDeepLinkError, deepLinkError, signOut } = useAppSession();
+  const { api, signOut } = useAppSession();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -521,22 +520,6 @@ export function AppShell({ workspace, children }: AppShellProps): React.JSX.Elem
         workstreams={workstreams.data ?? []}
       />
         <main className="main-pane">
-        {deepLinkError && (
-          <div className="connection-banner" role="alert">
-            <span>{deepLinkError}</span>
-            <button onClick={clearDeepLinkError} type="button">Dismiss</button>
-          </div>
-        )}
-        {(automations.error || workstreams.error || notes.error) && (
-          <div className="connection-banner" role="status">
-            <span>
-              {automations.error instanceof ApiError && automations.error.status === 0
-                ? 'Regional service offline. Existing views may be stale.'
-                : 'Some navigation data could not be refreshed.'}
-            </span>
-            <button onClick={() => void Promise.all([automations.refetch(), workstreams.refetch(), notes.refetch()])} type="button">Retry</button>
-          </div>
-        )}
           {children}
         </main>
       </div>

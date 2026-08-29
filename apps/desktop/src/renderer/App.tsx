@@ -25,6 +25,7 @@ import { watchSystemAppearance, watchThemeBroadcast } from './lib/theme';
 import { WorkstreamSocketResumeProvider } from './lib/workstream-socket-resume';
 import { WorkspaceSocketProvider } from './lib/workspace-socket';
 import { AutomationScreen } from './screens/automation';
+import { DeepLinkErrorScreen } from './screens/deep-link-error';
 import { MeetingNotesScreen } from './screens/meeting-notes';
 import { NoteDetailScreen } from './screens/note-detail';
 import { NewWorkstreamScreen } from './screens/new-workstream';
@@ -346,6 +347,19 @@ export default function App(): React.JSX.Element {
   // so that a later change of choice does not need to re-subscribe.
   useEffect(() => watchSystemAppearance(), []);
   useEffect(() => watchThemeBroadcast(), []);
+  // Above the session gate rather than beside the other surfaces, and that
+  // placement is the point: a refused deep link is most worth showing when
+  // there is no session to gate on — an expired one, or a link that arrived
+  // while the application was still booting. Everything below this line waits
+  // on a session, a workspace, or a socket, and this window needs none of the
+  // three to say one sentence.
+  if (new URLSearchParams(window.location.search).get('surface') === 'deep-link-error') {
+    return (
+      <ErrorBoundary>
+        <DeepLinkErrorScreen />
+      </ErrorBoundary>
+    );
+  }
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
