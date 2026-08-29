@@ -661,10 +661,13 @@ domains stays on the facade until its other side has an owner to talk to.
 the facade, so the six table names stay on `WORKSPACE_LOCAL_TABLES`; do not
 remove them when those joins convert — an accidental generic statement must
 reach the object's refusal rather than D1's misleading `no such table`. The
-fresh-insert path of the inbound-email resource upsert no longer runs the
-follow-up refresh, so a first ingestion records one version instead of a
-phantom second (the unconditional `UPDATE` re-assigned versioned columns,
-which fires the semantic-version trigger even when nothing changed). Node
+inbound-email resource upsert writes only when something changed: the old
+unconditional refresh re-assigned versioned columns — which fires the
+semantic-version trigger even when their values are unchanged — so a first
+ingestion recorded a phantom second version, and a lease-takeover replay,
+whose values re-derive byte-identical from the same retrieved message,
+recorded another. A fresh insert skips the refresh and an identical replay
+writes nothing at all. Node
 suites reach these tables through `createTestWorkspaceDO` — a real object over
 its real schema — rather than hand-written fixture tables, and
 `test-workers/workspace-resources-inventory.test.ts` proves the object's

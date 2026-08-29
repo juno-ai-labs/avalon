@@ -131,6 +131,7 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId: string):
         workspaceId,
         objectRef: object.object_ref,
         errorCode: truncateUtf16Safe(reason, 120),
+        at: new Date().toISOString(),
       });
       logWarn(env, "resource_object_cleanup_failed", {
         resource_id: object.resource_id,

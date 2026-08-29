@@ -70,6 +70,10 @@ export const MAXIMUM_RESOURCE_CLEANUP_BATCH = 100;
  *
  * Unchanged from the service-side constant it replaces, moved beside the
  * delete that enforces it for the same reason as the batch bound above.
+ * The workspace alarm's due-time query in
+ * `services/workspace-schedule-execution.ts` spells the same 24 hours as
+ * `'+24 hours'` in SQL on the other side of the authority boundary — the two
+ * must move together, or the alarm fires for drafts the reap will not take.
  */
 const DRAFT_ATTACHMENT_TTL_HOURS = 24;
 
@@ -89,7 +93,6 @@ export function workspaceResourceDescriptors(
     ? ""
     : ` AND attachment_status = 'draft' AND uploaded_by_user_id = ?`;
   for (const chunk of boundParameterChunks(request.resourceIds)) {
-    if (chunk.length === 0) continue;
     items.push(...storage.sql.exec<Record<string, string | number | null>>(
       `SELECT ${DESCRIPTOR_COLUMNS}
          FROM resources
@@ -131,8 +134,9 @@ export function createWorkspaceUploadDraft(
 ): WorkspaceUploadDraftCreateResult {
   return storage.transactionSync(() => {
     const existing = storage.sql.exec(
-      `SELECT 1 AS present FROM resources WHERE id = ?`,
+      `SELECT 1 AS present FROM resources WHERE id = ? AND workspace_id = ?`,
       request.resourceId,
+      request.workspaceId,
     ).toArray()[0];
     if (existing) {
       return WorkspaceUploadDraftCreateResultSchema.parse({ outcome: "draft_exists" });
@@ -480,7 +484,7 @@ export function recordWorkspaceResourceObjectCleanupFailure(
         SET attempt_count = attempt_count + 1, last_error_code = ?, updated_at = ?
       WHERE workspace_id = ? AND object_ref = ?`,
     request.errorCode,
-    new Date().toISOString(),
+    request.at,
     request.workspaceId,
     request.objectRef,
   );
@@ -718,19 +722,27 @@ export function recordWorkspaceInboundEmailFailure(
  * The resource for one inbound email, created or refreshed — one critical
  * section instead of insert-or-ignore, re-read, and unconditional update.
  *
- * A fresh insert deliberately skips the refresh: the insert already carries
- * every value the update would write, and the unconditional update after an
- * `INSERT OR IGNORE` re-assigned versioned columns — which fires the
- * semantic-version trigger even when nothing changed, so every first
- * ingestion recorded a phantom second version of the email.
+ * A write that changes nothing is skipped outright, not narrowed: SQLite's
+ * `AFTER UPDATE OF` triggers fire on a column appearing in the SET list, not
+ * on its value changing, so the old unconditional refresh recorded a phantom
+ * second version of every email — on first ingestion (after its own insert)
+ * and again on every lease-takeover replay, whose title, payload pointer and
+ * metadata all re-derive byte-identical from the same retrieved message. Even
+ * refreshing `last_hydrated_at` alone would fire the trigger, so an identical
+ * replay writes nothing at all.
  */
 export function upsertWorkspaceInboundEmailResource(
   storage: DurableObjectStorage,
   request: WorkspaceInboundEmailResourceRequest,
 ): WorkspaceInboundEmailResourceResult {
   return storage.transactionSync(() => {
-    const existing = storage.sql.exec<{ id: string }>(
-      `SELECT id FROM resources
+    const existing = storage.sql.exec<{
+      id: string;
+      title: string;
+      content_ref: string | null;
+      metadata_json: string;
+    }>(
+      `SELECT id, title, content_ref, metadata_json FROM resources
         WHERE workspace_id = ? AND provider = 'resend' AND provider_resource_id = ?`,
       request.workspaceId,
       request.resendEmailId,
@@ -755,6 +767,13 @@ export function upsertWorkspaceInboundEmailResource(
       return WorkspaceInboundEmailResourceResultSchema.parse({
         resourceId: request.candidateResourceId,
       });
+    }
+    if (
+      existing.title === request.title
+      && existing.content_ref === request.contentRef
+      && existing.metadata_json === request.metadataJson
+    ) {
+      return WorkspaceInboundEmailResourceResultSchema.parse({ resourceId: existing.id });
     }
     storage.sql.exec(
       `UPDATE resources SET title = ?, mime_type = 'application/json', content_ref = ?,
