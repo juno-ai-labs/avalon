@@ -1,25 +1,10 @@
+import { asWorkspaceId } from "@rally/contracts";
+
+import { workspaceDOName } from "../durable-objects/names";
 import type { Env } from "../env";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
 import { truncateUtf16Safe } from "../lib/text";
 import { logWarn } from "../observability/logger";
-import { withWorkspaceRuntimeDatabase } from "./workspace-runtime-database";
-
-/**
- * How many rows one workspace maintenance pass over resources takes.
- *
- * Exported because the alias backfill is the same alarm doing the same kind of
- * bounded work over the same table; two literals would be two decisions
- * nobody had made.
- */
-export const MAXIMUM_CLEANUP_BATCH = 100;
-const DRAFT_ATTACHMENT_TTL_HOURS = 24;
-
-interface PendingResourceObject {
-  object_ref: string;
-  workspace_id: string;
-  resource_id: string;
-  object_kind: "original" | "derivative" | "receipt";
-  cleanup_eligible: number;
-}
 
 function boundedCleanupErrorCode(error: unknown): string {
   const candidate = error && typeof error === "object" && "code" in error
@@ -65,7 +50,7 @@ export async function putStagedResourceObject(input: {
   objectRef: string;
   workspaceId: string;
   resourceId: string;
-  objectKind: PendingResourceObject["object_kind"];
+  objectKind: "original" | "derivative" | "receipt";
   value: ArrayBuffer | Uint8Array | string;
   options?: R2PutOptions;
   at: string;
@@ -99,101 +84,54 @@ export async function putStagedResourceObject(input: {
   }
 }
 
-/** Returns how many outbox rows the pass retired; the alarm reads it as progress. */
-export async function reapDeletedResourceObjects(env: Env, workspaceId?: string): Promise<number> {
-  if (!workspaceId && env.WORKSPACE_DOS) throw new Error("resource_cleanup_workspace_required");
-  if (workspaceId) env = withWorkspaceRuntimeDatabase(env, workspaceId);
-  const pending = await env.DB.prepare(
-    `SELECT pending.object_ref, pending.workspace_id, pending.resource_id,
-            pending.object_kind, pending.cleanup_eligible
-       FROM resource_object_deletion_outbox pending
-      WHERE pending.cleanup_eligible = 1
-         OR EXISTS (
-           SELECT 1 FROM resources current_resource
-            WHERE current_resource.workspace_id = pending.workspace_id
-              AND (current_resource.content_ref = pending.object_ref
-                OR current_resource.model_content_ref = pending.object_ref)
-         )
-         OR EXISTS (
-           SELECT 1 FROM resource_versions historical_version
-            WHERE historical_version.workspace_id = pending.workspace_id
-              AND (historical_version.content_ref = pending.object_ref
-                OR historical_version.model_content_ref = pending.object_ref)
-         )
-     ORDER BY pending.created_at ASC, pending.object_ref ASC
-     LIMIT ?`,
-  ).bind(MAXIMUM_CLEANUP_BATCH).all<PendingResourceObject>();
+/** The WorkspaceDO whose resource inventory a maintenance pass works over. */
+function workspaceObject(env: Env, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
+}
 
+/** Returns how many outbox rows the pass retired; the alarm reads it as progress. */
+export async function reapDeletedResourceObjects(env: Env, workspaceId: string): Promise<number> {
+  const workspace = await workspaceObject(env, workspaceId);
+  const pending = await workspace.listReapableResourceObjects({ workspaceId });
   let retired = 0;
-  for (const object of pending.results) {
+  for (const object of pending.items) {
     try {
-      const active = await env.DB.prepare(
-        `SELECT 1 AS active FROM resources
-          WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
-         UNION ALL
-         SELECT 1 AS active FROM resource_versions
-          WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
-         LIMIT 1`,
-      ).bind(
-        object.workspace_id,
-        object.object_ref,
-        object.object_ref,
-        object.workspace_id,
-        object.object_ref,
-        object.object_ref,
-      ).first();
-      if (active) {
-        // Recheck the reference inside the same WorkspaceDO statement that
-        // retires staging. A resource deletion can otherwise promote the row
-        // after the read above and before an unconditional delete here.
-        const result = await env.DB.prepare(
-          `DELETE FROM resource_object_deletion_outbox
-            WHERE workspace_id = ? AND object_ref = ?
-              AND (
-                EXISTS (
-                  SELECT 1 FROM resources
-                   WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
-                )
-                OR EXISTS (
-                  SELECT 1 FROM resource_versions
-                   WHERE workspace_id = ? AND (content_ref = ? OR model_content_ref = ?)
-                )
-              )`,
-        ).bind(
-          object.workspace_id,
-          object.object_ref,
-          object.workspace_id,
-          object.object_ref,
-          object.object_ref,
-          object.workspace_id,
-          object.object_ref,
-          object.object_ref,
-        ).run();
-        if ((result.meta.changes ?? 0) > 0) retired += 1;
+      // Whether a pointer still names the object and the retirement of its
+      // row are one critical section in the object now; as two statements a
+      // resource deletion could promote the row between them. The R2 delete
+      // stays between the claim and the final retirement, because the row is
+      // the durable record that bytes may still exist.
+      const claim = await workspace.claimResourceObjectRemoval({
+        workspaceId,
+        objectRef: object.object_ref,
+      });
+      if (claim.outcome === "retired") {
+        retired += 1;
         continue;
       }
       // A publisher owns this object until it either commits a resource
       // pointer or explicitly releases the row. The alarm can run between the
       // R2 put and that commit; treating "not active yet" as "abandoned"
       // deletes the bytes underneath the pointer the writer is about to save.
-      if (object.cleanup_eligible === 0) continue;
+      if (claim.outcome !== "removable") continue;
       await env.PAYLOADS.delete(object.object_ref);
-      await env.DB.prepare(
-        "DELETE FROM resource_object_deletion_outbox WHERE workspace_id = ? AND object_ref = ?",
-      ).bind(object.workspace_id, object.object_ref).run();
-      retired += 1;
+      const settled = await workspace.retireResourceObjectStaging({
+        workspaceId,
+        objectRef: object.object_ref,
+      });
+      if (settled.retired) retired += 1;
     } catch (error) {
       const reason = boundedCleanupErrorCode(error);
-      await env.DB.prepare(
-        `UPDATE resource_object_deletion_outbox
-         SET attempt_count = attempt_count + 1, last_error_code = ?, updated_at = ?
-         WHERE workspace_id = ? AND object_ref = ?`,
-      ).bind(
-        truncateUtf16Safe(reason, 120),
-        new Date().toISOString(),
-        object.workspace_id,
-        object.object_ref,
-      ).run();
+      await workspace.recordResourceObjectCleanupFailure({
+        workspaceId,
+        objectRef: object.object_ref,
+        errorCode: truncateUtf16Safe(reason, 120),
+      });
       logWarn(env, "resource_object_cleanup_failed", {
         resource_id: object.resource_id,
         object_kind: object.object_kind,
@@ -209,43 +147,7 @@ export async function reapDeletedResourceObjects(env: Env, workspaceId?: string)
  * R2 cleanup. Returns how many it removed, which the alarm reads as progress.
  */
 export async function reapExpiredDraftResources(env: Env, workspaceId: string): Promise<number> {
-  env = withWorkspaceRuntimeDatabase(env, workspaceId);
-  const cutoff = new Date(
-    Date.now() - DRAFT_ATTACHMENT_TTL_HOURS * 60 * 60 * 1_000,
-  ).toISOString();
-  const stale = await env.DB.prepare(
-    `SELECT id FROM resources resource
-      WHERE resource.workspace_id = ?
-        AND resource.provider = 'avalon_upload'
-        AND resource.attachment_status = 'draft'
-        AND resource.created_at < ?
-        AND NOT EXISTS (
-          SELECT 1 FROM workspace_workstream_resource_links link
-           WHERE link.resource_id = resource.id
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM pending_attachment_reservations reservation
-           WHERE reservation.resource_id = resource.id
-        )
-      ORDER BY resource.created_at, resource.id
-      LIMIT ?`,
-  ).bind(workspaceId, cutoff, MAXIMUM_CLEANUP_BATCH).all<{ id: string }>();
-  if (stale.results.length === 0) return 0;
-  const deleted = await env.DB.batch(stale.results.map((resource) => env.DB.prepare(
-    `DELETE FROM resources
-      WHERE id = ? AND workspace_id = ? AND provider = 'avalon_upload'
-        AND attachment_status = 'draft' AND created_at < ?
-        AND NOT EXISTS (
-          SELECT 1 FROM workspace_workstream_resource_links link
-           WHERE link.resource_id = resources.id
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM pending_attachment_reservations reservation
-           WHERE reservation.resource_id = resources.id
-        )
-      RETURNING id`,
-  ).bind(resource.id, workspaceId, cutoff)));
-  // The rows the batch removed, not the rows the select found: a draft that
-  // was attached between the two is progress the select would have claimed.
-  return deleted.reduce((count, result) => count + result.results.length, 0);
+  const { removed } = await (await workspaceObject(env, workspaceId))
+    .reapExpiredDraftResources({ workspaceId });
+  return removed;
 }

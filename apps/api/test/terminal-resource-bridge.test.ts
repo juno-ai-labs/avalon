@@ -25,6 +25,7 @@ import {
 } from "./helpers/durable-authority";
 import { preRetirementProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
 import { applyWorkspaceResourceSchema } from "./helpers/workspace-object-tables";
+import { workspaceResourceMaintenanceBinding } from "./helpers/workspace-object-rpcs";
 
 const W = "10000000-0000-4000-8000-000000000001";
 const S = "10000000-0000-4000-8000-000000000002";
@@ -115,7 +116,12 @@ function fixture(
     delete: vi.fn(async (key: string) => { objects.delete(key); }),
   });
   const baseEnv = createTestEnv({
-    DB: workspaceDatabase(database), PAYLOADS: bucket, AVALON_REGION: "global", MAX_ATTACHMENT_BYTES: "25000000",
+    DB: workspaceDatabase(database), PAYLOADS: bucket, AVALON_REGION: "global", APP_ENV: "test",
+    MAX_ATTACHMENT_BYTES: "25000000",
+    // The reaper's decisions are typed WorkspaceDO methods now. They run the
+    // object's own storage functions over this fixture's database, because a
+    // second real object could not see the rows the bridge writes here.
+    WORKSPACE_DOS: workspaceResourceMaintenanceBinding(database),
     SUBSTREAM_AGENTS: testSubstreamAgentsBinding(objectStore, {
       extra: {
         attachRuntimeResource: vi.fn((request: {
@@ -338,7 +344,7 @@ describe("Terminal resource bridge", () => {
       // R2 has the bytes at this point, while publishResource has not yet
       // inserted the resource row. This is the production race that left the
       // press-release citation valid but its preview and download at 404.
-      expect(await reapDeletedResourceObjects(state.env)).toBe(0);
+      expect(await reapDeletedResourceObjects(state.env, W)).toBe(0);
     });
 
     const result = await state.bridge.publishResource(
