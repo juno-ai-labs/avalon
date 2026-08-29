@@ -212,6 +212,34 @@ import {
   type WorkspaceAutomationTemplateVersionResult,
 } from "./workspace-automation-template-protocol";
 import {
+  abandonWorkspaceConnectorOAuthAttempt,
+  bindWorkspaceConnectorOAuthAttemptTelemetry,
+  claimWorkspaceWebhookReceipt,
+  extendWorkspaceConnectorOAuthAttempt,
+  finishWorkspaceConnectorOAuthAttempt,
+  readWorkspaceConnectorOAuthAttempt,
+  startWorkspaceConnectorOAuthAttempt,
+} from "./workspace-connections-storage";
+import {
+  WorkspaceConnectorOAuthAttemptAbandonRequestSchema,
+  WorkspaceConnectorOAuthAttemptExtendRequestSchema,
+  WorkspaceConnectorOAuthAttemptFinishRequestSchema,
+  WorkspaceConnectorOAuthAttemptReadRequestSchema,
+  WorkspaceConnectorOAuthAttemptStartRequestSchema,
+  WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema,
+  WorkspaceWebhookReceiptClaimRequestSchema,
+  type WorkspaceConnectorOAuthAttemptAbandonRequest,
+  type WorkspaceConnectorOAuthAttemptExtendRequest,
+  type WorkspaceConnectorOAuthAttemptFinishRequest,
+  type WorkspaceConnectorOAuthAttemptFinishResult,
+  type WorkspaceConnectorOAuthAttemptReadRequest,
+  type WorkspaceConnectorOAuthAttemptReadResult,
+  type WorkspaceConnectorOAuthAttemptStartRequest,
+  type WorkspaceConnectorOAuthAttemptTelemetryBindRequest,
+  type WorkspaceWebhookReceiptClaimRequest,
+  type WorkspaceWebhookReceiptClaimResult,
+} from "./workspace-connections-protocol";
+import {
   claimWorkspaceTerminalPolicyApplication,
   commitWorkspaceTerminalPolicyApplication,
   failWorkspaceTerminalPolicyApplication,
@@ -298,6 +326,94 @@ import {
   type WorkspaceTranscriptionRenewResult,
   type WorkspaceTranscriptionSessionRequest,
 } from "./workspace-transcription-protocol";
+import {
+  claimWorkspaceInboundEmailReceipt,
+  claimWorkspaceResourceObjectRemoval,
+  claimWorkspaceResourceSlug,
+  createWorkspaceUploadDraft,
+  deleteWorkspaceUploadDraft,
+  disableWorkspaceResourceWatch,
+  enableWorkspaceResourceWatch,
+  listWorkspaceReapableResourceObjects,
+  listWorkspaceResourcesAwaitingSlug,
+  listWorkspaceResourceVersions,
+  publishWorkspaceResourceHydration,
+  reapWorkspaceExpiredDraftResources,
+  recordWorkspaceInboundEmailFailure,
+  recordWorkspaceResourceObjectCleanupFailure,
+  refreshWorkspaceResourceHydration,
+  renewWorkspaceInboundEmailLease,
+  resolveWorkspaceConnectorResource,
+  retireWorkspaceResourceObjectStaging,
+  settleWorkspaceInboundEmailProcessed,
+  upsertWorkspaceDiscoveredResources,
+  upsertWorkspaceInboundEmailResource,
+  workspaceResourceDescriptors,
+  workspaceResourceExists,
+} from "./workspace-resources-storage";
+import {
+  WorkspaceConnectorResourceResolveRequestSchema,
+  WorkspaceDiscoveredResourcesRequestSchema,
+  WorkspaceExpiredDraftReapRequestSchema,
+  WorkspaceInboundEmailClaimRequestSchema,
+  WorkspaceInboundEmailFailureRequestSchema,
+  WorkspaceInboundEmailLeaseRequestSchema,
+  WorkspaceInboundEmailResourceRequestSchema,
+  WorkspaceInboundEmailSettleRequestSchema,
+  WorkspaceReapableResourceObjectListRequestSchema,
+  WorkspaceResourceDescriptorsRequestSchema,
+  WorkspaceResourceExistsRequestSchema,
+  WorkspaceResourceHydrationPublishRequestSchema,
+  WorkspaceResourceHydrationRefreshRequestSchema,
+  WorkspaceResourceObjectFailureRequestSchema,
+  WorkspaceResourceObjectRefRequestSchema,
+  WorkspaceResourceSlugBacklogRequestSchema,
+  WorkspaceResourceSlugClaimRequestSchema,
+  WorkspaceResourceVersionListRequestSchema,
+  WorkspaceResourceWatchDisableRequestSchema,
+  WorkspaceResourceWatchEnableRequestSchema,
+  WorkspaceUploadDraftCreateRequestSchema,
+  WorkspaceUploadDraftDeleteRequestSchema,
+  type WorkspaceConnectorResourceResolveRequest,
+  type WorkspaceConnectorResourceResolveResult,
+  type WorkspaceDiscoveredResourcesRequest,
+  type WorkspaceExpiredDraftReapRequest,
+  type WorkspaceExpiredDraftReapResult,
+  type WorkspaceInboundEmailClaimRequest,
+  type WorkspaceInboundEmailClaimResult,
+  type WorkspaceInboundEmailFailureRequest,
+  type WorkspaceInboundEmailLeaseRequest,
+  type WorkspaceInboundEmailLeaseResult,
+  type WorkspaceInboundEmailResourceRequest,
+  type WorkspaceInboundEmailResourceResult,
+  type WorkspaceInboundEmailSettleRequest,
+  type WorkspaceInboundEmailSettleResult,
+  type WorkspaceReapableResourceObjectList,
+  type WorkspaceReapableResourceObjectListRequest,
+  type WorkspaceResourceDescriptorList,
+  type WorkspaceResourceDescriptorsRequest,
+  type WorkspaceResourceExistsRequest,
+  type WorkspaceResourceExistsResult,
+  type WorkspaceResourceHydrationPublishRequest,
+  type WorkspaceResourceHydrationRefreshRequest,
+  type WorkspaceResourceHydrationResult,
+  type WorkspaceResourceObjectFailureRequest,
+  type WorkspaceResourceObjectRefRequest,
+  type WorkspaceResourceObjectRemovalResult,
+  type WorkspaceResourceObjectRetireResult,
+  type WorkspaceResourceSlugBacklog,
+  type WorkspaceResourceSlugBacklogRequest,
+  type WorkspaceResourceSlugClaimRequest,
+  type WorkspaceResourceSlugClaimResult,
+  type WorkspaceResourceVersionList,
+  type WorkspaceResourceVersionListRequest,
+  type WorkspaceResourceWatchDisableRequest,
+  type WorkspaceResourceWatchEnableRequest,
+  type WorkspaceUploadDraftCreateRequest,
+  type WorkspaceUploadDraftCreateResult,
+  type WorkspaceUploadDraftDeleteRequest,
+  type WorkspaceUploadDraftDeleteResult,
+} from "./workspace-resources-protocol";
 import type { WorkstreamRegionalEffectEnvelope } from "./workstream-regional-effect";
 import {
   WorkspaceReleaseDraftAttachmentsRequestSchema,
@@ -496,6 +612,14 @@ const WORKSPACE_TYPED_RPC_ONLY_TABLES = [
   "automation_directory",
   "realtime_transcription_sessions",
   "realtime_transcription_ticket_receipts",
+  // Claims live on `claimWebhookReceipt`; the only generic statements left
+  // naming this table are the connection service's pre-cutover branches, which
+  // run only when WORKSPACE_DOS is unbound and so never reach this object.
+  // `connector_oauth_attempts` is deliberately absent: the attempt-bind
+  // statement batched with a connection mutation in
+  // `persistConnectionMutation` still arrives generically, and refusing the
+  // table here would break that atomic pair.
+  "webhook_receipts",
 ] as const;
 
 function typedRpcOnlyWorkspaceTable(sql: string): string | null {
@@ -5729,6 +5853,95 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     return result;
   }
 
+  /** Record a started connector OAuth handoff, pending until settled. */
+  async startConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptStartRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptStartRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    startWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /** Delete a pending start whose regional state receipt failed to write. */
+  async abandonConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptAbandonRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptAbandonRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    abandonWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /** Revive an attempt for GitHub's install-then-authorize second leg. */
+  async extendConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptExtendRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptExtendRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    extendWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /**
+   * One attempt, optionally settling a due expiry in the same transaction.
+   *
+   * Through the facade the expiry sweep and the read were two round trips;
+   * asked here they are one critical section, and a member-scoped request
+   * cannot expire or observe another member's attempt.
+   */
+  async connectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptReadRequest,
+  ): Promise<WorkspaceConnectorOAuthAttemptReadResult> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptReadRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return readWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /**
+   * Settle an attempt on a returned witness, or report how it already ended.
+   *
+   * A replayed callback converges rather than erring; a genuinely different
+   * settlement answers `conflict` as an outcome, keeping the service's 409 and
+   * its sentence rather than losing both to a thrown RPC error.
+   */
+  async finishConnectorOAuthAttempt(
+    input: WorkspaceConnectorOAuthAttemptFinishRequest,
+  ): Promise<WorkspaceConnectorOAuthAttemptFinishResult> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptFinishRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return finishWorkspaceConnectorOAuthAttempt(this.state.storage, request);
+  }
+
+  /** Attach the client's telemetry operation to an attempt, first writer wins. */
+  async bindConnectorOAuthAttemptTelemetry(
+    input: WorkspaceConnectorOAuthAttemptTelemetryBindRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    bindWorkspaceConnectorOAuthAttemptTelemetry(this.state.storage, request);
+  }
+
+  /**
+   * Claim one webhook delivery and sweep the connection's expired receipts.
+   *
+   * The duplicate branch is decided by the insert's returned witness rather
+   * than by the facade's physical `rowsWritten` counter, and the sweep —
+   * which the granola path never had, so its receipts grew without bound —
+   * runs in the same transaction as the claim it makes room for.
+   */
+  async claimWebhookReceipt(
+    input: WorkspaceWebhookReceiptClaimRequest,
+  ): Promise<WorkspaceWebhookReceiptClaimResult> {
+    await this.initialized;
+    const request = WorkspaceWebhookReceiptClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceWebhookReceipt(this.state.storage, request);
+  }
+
   /** The Terminal network policy and its domains, creating the default if absent. */
   async terminalNetworkSettings(
     input: WorkspaceTerminalNetworkSettingsRequest,
@@ -5844,6 +6057,275 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceTranscriptionRenewRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return renewWorkspaceTranscriptionSession(this.state.storage, request);
+  }
+
+  /** The named resources, in the columns the cross-authority readers consume. */
+  async resourceDescriptors(
+    input: WorkspaceResourceDescriptorsRequest,
+  ): Promise<WorkspaceResourceDescriptorList> {
+    await this.initialized;
+    const request = WorkspaceResourceDescriptorsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceResourceDescriptors(this.state.storage, request);
+  }
+
+  /** Whether any resource — draft or attached — already holds this id. */
+  async resourceExists(
+    input: WorkspaceResourceExistsRequest,
+  ): Promise<WorkspaceResourceExistsResult> {
+    await this.initialized;
+    const request = WorkspaceResourceExistsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceResourceExists(this.state.storage, request.workspaceId, request.resourceId);
+  }
+
+  /**
+   * Commit an upload draft and adopt its staged object, or write neither.
+   *
+   * A duplicate draft id is an outcome rather than a primary-key throw: the
+   * separate existence check the service ran first could lose a race to a
+   * concurrent upload of the same id, and the loser surfaced as a 500.
+   */
+  async createUploadDraftResource(
+    input: WorkspaceUploadDraftCreateRequest,
+  ): Promise<WorkspaceUploadDraftCreateResult> {
+    await this.initialized;
+    const request = WorkspaceUploadDraftCreateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return createWorkspaceUploadDraft(this.state.storage, request);
+  }
+
+  /** Delete an unsent, unreserved draft the caller uploaded, or say it is gone. */
+  async deleteUploadDraftResource(
+    input: WorkspaceUploadDraftDeleteRequest,
+  ): Promise<WorkspaceUploadDraftDeleteResult> {
+    await this.initialized;
+    const request = WorkspaceUploadDraftDeleteRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return deleteWorkspaceUploadDraft(this.state.storage, request);
+  }
+
+  /**
+   * The canonical row for a connector resource, created if absent.
+   *
+   * One critical section instead of the read, insert-or-ignore and re-read
+   * round trips the service used to make through the runtime facade.
+   */
+  async resolveConnectorResource(
+    input: WorkspaceConnectorResourceResolveRequest,
+  ): Promise<WorkspaceConnectorResourceResolveResult> {
+    await this.initialized;
+    const request = WorkspaceConnectorResourceResolveRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return resolveWorkspaceConnectorResource(this.state.storage, request);
+  }
+
+  /** The resource's version history, newest first — or one version of it. */
+  async listResourceVersions(
+    input: WorkspaceResourceVersionListRequest,
+  ): Promise<WorkspaceResourceVersionList> {
+    await this.initialized;
+    const request = WorkspaceResourceVersionListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return listWorkspaceResourceVersions(this.state.storage, request);
+  }
+
+  /** Record a re-fetch that produced the content the row already holds. */
+  async refreshResourceHydration(
+    input: WorkspaceResourceHydrationRefreshRequest,
+  ): Promise<WorkspaceResourceHydrationResult> {
+    await this.initialized;
+    const request = WorkspaceResourceHydrationRefreshRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return refreshWorkspaceResourceHydration(this.state.storage, request);
+  }
+
+  /**
+   * Swap in newly hydrated content, fenced on the content the caller read.
+   *
+   * `updated: false` means the fence refused the write — a concurrent
+   * hydration moved the row — and the caller releases the object it staged.
+   */
+  async publishResourceHydration(
+    input: WorkspaceResourceHydrationPublishRequest,
+  ): Promise<WorkspaceResourceHydrationResult> {
+    await this.initialized;
+    const request = WorkspaceResourceHydrationPublishRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return publishWorkspaceResourceHydration(this.state.storage, request);
+  }
+
+  /** Enable — or re-enable, keeping the row's identity — one attachment watch. */
+  async enableResourceWatch(input: WorkspaceResourceWatchEnableRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceResourceWatchEnableRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    enableWorkspaceResourceWatch(this.state.storage, request);
+  }
+
+  /** Pause a watch, keeping its cursor for a later re-enable. */
+  async disableResourceWatch(input: WorkspaceResourceWatchDisableRequest): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceResourceWatchDisableRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    disableWorkspaceResourceWatch(this.state.storage, request);
+  }
+
+  /** Outbox rows the object-deletion reaper should look at, one bounded batch. */
+  async listReapableResourceObjects(
+    input: WorkspaceReapableResourceObjectListRequest,
+  ): Promise<WorkspaceReapableResourceObjectList> {
+    await this.initialized;
+    const request = WorkspaceReapableResourceObjectListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return listWorkspaceReapableResourceObjects(this.state.storage, request.workspaceId);
+  }
+
+  /**
+   * Decide what one outbox row wants from the reaper, in one critical section.
+   *
+   * The reference check and the retirement used to be two round trips guarded
+   * by re-stating the check inside the delete; one transaction has no window
+   * for a deletion to promote the row between them.
+   */
+  async claimResourceObjectRemoval(
+    input: WorkspaceResourceObjectRefRequest,
+  ): Promise<WorkspaceResourceObjectRemovalResult> {
+    await this.initialized;
+    const request = WorkspaceResourceObjectRefRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceResourceObjectRemoval(
+      this.state.storage,
+      request.workspaceId,
+      request.objectRef,
+    );
+  }
+
+  /** Retire one staging row after its bytes were deleted from R2. */
+  async retireResourceObjectStaging(
+    input: WorkspaceResourceObjectRefRequest,
+  ): Promise<WorkspaceResourceObjectRetireResult> {
+    await this.initialized;
+    const request = WorkspaceResourceObjectRefRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return retireWorkspaceResourceObjectStaging(
+      this.state.storage,
+      request.workspaceId,
+      request.objectRef,
+    );
+  }
+
+  /** Count a failed R2 delete against its outbox row. */
+  async recordResourceObjectCleanupFailure(
+    input: WorkspaceResourceObjectFailureRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceResourceObjectFailureRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    recordWorkspaceResourceObjectCleanupFailure(this.state.storage, request);
+  }
+
+  /**
+   * Remove expired, unattached, unreserved upload drafts — the staleness
+   * check and the delete as one statement, so a draft attached between a read
+   * and a write cannot be lost.
+   */
+  async reapExpiredDraftResources(
+    input: WorkspaceExpiredDraftReapRequest,
+  ): Promise<WorkspaceExpiredDraftReapResult> {
+    await this.initialized;
+    const request = WorkspaceExpiredDraftReapRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return reapWorkspaceExpiredDraftResources(this.state.storage, request.workspaceId);
+  }
+
+  /** Give the resource the candidate alias, or say exactly why not. */
+  async claimResourceSlug(
+    input: WorkspaceResourceSlugClaimRequest,
+  ): Promise<WorkspaceResourceSlugClaimResult> {
+    await this.initialized;
+    const request = WorkspaceResourceSlugClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceResourceSlug(this.state.storage, request);
+  }
+
+  /** Resources still waiting for an alias, oldest first, one bounded batch. */
+  async listResourcesAwaitingSlug(
+    input: WorkspaceResourceSlugBacklogRequest,
+  ): Promise<WorkspaceResourceSlugBacklog> {
+    await this.initialized;
+    const request = WorkspaceResourceSlugBacklogRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return listWorkspaceResourcesAwaitingSlug(this.state.storage, request.workspaceId);
+  }
+
+  /**
+   * Claim — or reclaim after an expired lease — one inbound email's
+   * processing. The insert, the duplicate read and the expired-lease takeover
+   * used to be three separate round trips through the runtime facade.
+   */
+  async claimInboundEmailReceipt(
+    input: WorkspaceInboundEmailClaimRequest,
+  ): Promise<WorkspaceInboundEmailClaimResult> {
+    await this.initialized;
+    const request = WorkspaceInboundEmailClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceInboundEmailReceipt(this.state.storage, request);
+  }
+
+  /** Extend a held inbound-email lease, or report that it was lost. */
+  async renewInboundEmailLease(
+    input: WorkspaceInboundEmailLeaseRequest,
+  ): Promise<WorkspaceInboundEmailLeaseResult> {
+    await this.initialized;
+    const request = WorkspaceInboundEmailLeaseRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return renewWorkspaceInboundEmailLease(this.state.storage, request);
+  }
+
+  /** Settle a processed inbound email under its lease, releasing the lease. */
+  async settleInboundEmailProcessed(
+    input: WorkspaceInboundEmailSettleRequest,
+  ): Promise<WorkspaceInboundEmailSettleResult> {
+    await this.initialized;
+    const request = WorkspaceInboundEmailSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return settleWorkspaceInboundEmailProcessed(this.state.storage, request);
+  }
+
+  /** Record an inbound-email processing failure and release its lease. */
+  async recordInboundEmailFailure(
+    input: WorkspaceInboundEmailFailureRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceInboundEmailFailureRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    recordWorkspaceInboundEmailFailure(this.state.storage, request);
+  }
+
+  /**
+   * The resource for one inbound email, created or refreshed in one critical
+   * section — a fresh insert deliberately skips the follow-up refresh, which
+   * used to fire the semantic-version trigger and record a phantom second
+   * version of every newly ingested email.
+   */
+  async upsertInboundEmailResource(
+    input: WorkspaceInboundEmailResourceRequest,
+  ): Promise<WorkspaceInboundEmailResourceResult> {
+    await this.initialized;
+    const request = WorkspaceInboundEmailResourceRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return upsertWorkspaceInboundEmailResource(this.state.storage, request);
+  }
+
+  /** Register the resources a provider webhook mentioned for one connection. */
+  async upsertDiscoveredResources(
+    input: WorkspaceDiscoveredResourcesRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceDiscoveredResourcesRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    upsertWorkspaceDiscoveredResources(this.state.storage, request);
   }
 
   /**

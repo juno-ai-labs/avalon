@@ -812,6 +812,8 @@ about which providers can deliver is written into the API or the client.
 | `apps/api/test/connector-poll-reliability.test.ts` | `normalizeHighWatermark` on both load and commit, the bounded retries, and backlog scheduling. |
 | `apps/api/test/connector-event-authority.test.ts` | WorkspaceDO event admission/replay and frozen pre-cutover activity rows ignored once object authority is open. |
 | `apps/api/test-workers/durable-object-runtime.test.ts` | Real-workerd WorkspaceDO schema, Queue/provider replay dedupe, Queue claim fencing and recovery, and terminal settlement. |
+| `apps/api/test-workers/workspace-connections.test.ts` | The typed OAuth attempt lifecycle across the real RPC boundary — settlement witnesses, replay convergence, the member-scoped lazy expiry, the succeeded-over-expiry override — plus webhook receipt claims, their same-transaction expired-receipt sweep, and the generic port's refusal of `webhook_receipts`. |
+| `apps/api/test/connector-oauth-handoff.test.ts`, `apps/api/test/connector-outcome-telemetry.test.ts`, `apps/api/test/granola-connector.test.ts` | The connection service over a real `WorkspaceDO` via `test/helpers/workspace-object-rpcs.ts` — attempt expiry/reconciliation through the service, single-emission outcome telemetry, and that no plaintext credential crosses the recorded RPC boundary during webhook ingestion. |
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
@@ -826,6 +828,77 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-29 — OAuth attempts and webhook receipt claims become typed WorkspaceDO methods
+
+**What changed:** The connector OAuth attempt lifecycle — start, abandon,
+extend, lazy expiry, settlement, telemetry binding — and webhook receipt claims
+moved from SQL statements through the workspace runtime facade to typed
+WorkspaceDO methods (`workspace-connections-protocol.ts`,
+`workspace-connections-storage.ts`). The receipt claim returns a
+`claimed`/`duplicate` outcome from an `INSERT … RETURNING` witness and sweeps
+the connection's expired receipts in the same transaction; an attempt's expiry
+sweep and the read that reports it are one member-scoped transaction; a
+finish's replay-convergence check runs in the same transaction as its
+compare-and-set. The generic WorkspaceDO SQL port now refuses
+`webhook_receipts` by name. `connector_connections`, `external_user_identities`
+and the attempt-bind statement batched with a connection mutation stay on the
+facade.
+
+**Why:** The facade routes by table name and decides mutation outcomes from
+workerd's physical `rowsWritten` counter — the mechanism behind the
+notification-intent production incident, still live here: a receipt claim's
+duplicate branch was `meta.changes === 0`, and an attempt settlement re-read
+the row in a second round trip after a refused update. The conversion also
+surfaced that nothing ever deleted expired `webhook_receipts` rows on the
+Granola path — the rows carry `expires_at` and an index on it, but only
+generic-webhook ingestion pruned, so a Granola connection's receipts grew
+without bound in the object's storage. These tables are also credential-free,
+which makes them the right first slice of this domain: the typed schemas carry
+only handoff state and delivery identities, never ciphertext or a secret.
+
+**Considered and rejected:** Converting `connector_connections` in the same
+change. That table carries the AES-GCM credential envelope, is joined from
+nearly every other domain in the facade-to-RPC stack, and its lifecycles
+interlock with regional control-plane writes (`oauth_states`,
+`connector_ingress_routes`, `audit_events`) and with the attempt-bind batch in
+`persistConnectionMutation` that must stay atomic with a connection mutation.
+Also rejected: refusing `connector_oauth_attempts` at the generic port — that
+batch still reaches it generically, and refusing the table would break the
+atomic pair. Also rejected: an unbounded receipt sweep, which is how this first
+landed. The connections that would pay for it are exactly the ones the fix is
+for — a Granola connection whose receipts were never pruned arrives at this
+deploy with the whole backlog, and its first claim would have had to delete all
+of it inside the claim's own transaction. If that transaction outruns the
+request's budget the claim never commits, and every retried delivery re-attempts
+the same oversized delete: a webhook path that cannot make progress, on the
+connections where the fix mattered most. Also rejected: sweeping from the
+workspace alarm instead, which decouples the drain from the deliveries that
+create the rows and adds a scheduled path to reason about for a table that is
+already visited on every claim.
+
+**Consequences:** New attempt states or receipt semantics are added to the
+protocol and storage together, with both sides parsing. The attempt-bind
+statement in `persistConnectionMutation` must move in the same change that
+converts `connector_connections`, and only then can `connector_oauth_attempts`
+join `WORKSPACE_TYPED_RPC_ONLY_TABLES`. A redelivery whose receipt has expired
+is now claimable again on every path — acceptable because provider replay
+windows (minutes) end long before the shortest receipt lifetime (a day). The
+sweep is bounded, and a future change must keep it so: the claim deletes the
+incoming `(connection_id, signature_hash)` row unconditionally — without that
+an expired row for the key being claimed answers `duplicate` forever, since the
+outcome comes from a unique-index conflict — and then drains at most
+`RECEIPT_SWEEP_BATCH` further expired rows, oldest first. That constant is the
+bound the generic-webhook prune already shipped with, carried over rather than
+re-chosen, so the cutover changes *which* connections get swept without changing
+what one delivery pays. A backlog therefore drains over several deliveries
+instead of one, which is the intended trade: the claim always commits. If a
+connection's backlog is ever seen to outrun its delivery rate, raising the
+constant is the change, and by then it is a decision with evidence rather than a
+guess. The
+pre-cutover branches in `ConnectionService.ingestWebhook`/`ingestGranolaWebhook`
+still write `webhook_receipts` through plain regional SQL; they run only when
+`WORKSPACE_DOS` is unbound and never reach the object.
 
 ### 2026-08-28 — One event engine serves automations and watched work streams
 
