@@ -17,12 +17,20 @@ import {
   workstreamObjectGet,
   workstreamObjectRun,
 } from "./helpers/durable-authority";
+import {
+  createTestWorkspaceDO,
+  workspaceObjectRpcs,
+} from "./helpers/workspace-object-rpcs";
 
 const W = asWorkspaceId("50000000-0000-4000-8000-000000000001");
 const S = "50000000-0000-4000-8000-000000000002";
 const U = asUserId("50000000-0000-4000-8000-000000000003");
 const databases: ReturnType<typeof preRetirementProductSqliteDatabase>[] = [];
-afterEach(() => { for (const database of databases.splice(0)) database.close(); });
+const objectDatabases: DatabaseSync[] = [];
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+  for (const database of objectDatabases.splice(0)) database.close();
+});
 
 /** Opens a work stream's own object and drops the sandbox row into it. */
 function seedSandboxObject(
@@ -82,6 +90,21 @@ function fixture(role: AuthContext["role"] = "owner") {
     // the stub serves it from the regional index the fixture seeds.
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
       extra: {
+        // The Terminal network policy is decided by a real WorkspaceDO over its
+        // own schema, so these tests assert the object's revision fencing and
+        // claim atomicity rather than a re-implementation of them.
+        ...workspaceObjectRpcs(createTestWorkspaceDO({
+          workspaceId: W,
+          regionalDatabase: database,
+          register: (created) => { objectDatabases.push(created); },
+        }).instance, [
+          "terminalNetworkSettings",
+          "terminalNetworkMode",
+          "recordTerminalPolicyPreview",
+          "claimTerminalPolicyApplication",
+          "failTerminalPolicyApplication",
+          "commitTerminalPolicyApplication",
+        ]),
         listWorkstreams: async () => {
           const rows = database.prepare(
             "SELECT id, title FROM workstreams WHERE workspace_id = ? ORDER BY id",
@@ -255,9 +278,15 @@ describe("Terminal workspace settings", () => {
       objectStores.get(second)!,
       "SELECT lifecycle_state FROM terminal_workspace WHERE id = 1",
     )).toEqual({ lifecycle_state: "stopped" });
-    expect(database.prepare(
-      "SELECT mode, revision, verification_state FROM workspace_sandbox_network_policies WHERE workspace_id = ?",
-    ).get(W)).toEqual({ mode: "trusted_only", revision: 1, verification_state: "verified" });
+    // The policy row is the object's, not the region's, so this reads what a
+    // person would see: the failed application kept the last verified policy
+    // and did not leave the workspace stuck in `pending`.
+    expect(await service.get()).toMatchObject({
+      mode: "trusted_only",
+      revision: 1,
+      verificationState: "verified",
+      failureCode: "provider_policy_mismatch",
+    });
   });
 
   it("reports a sandbox as quarantined when neither stop nor deletion is confirmed", async () => {

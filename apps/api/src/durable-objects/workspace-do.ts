@@ -200,6 +200,29 @@ import {
   type WorkspaceRegionalEffectApplyResult,
 } from "./workspace-directory-protocol";
 import {
+  claimWorkspaceTerminalPolicyApplication,
+  commitWorkspaceTerminalPolicyApplication,
+  failWorkspaceTerminalPolicyApplication,
+  recordWorkspaceTerminalPolicyPreview,
+  workspaceTerminalNetworkMode,
+  workspaceTerminalNetworkSettings,
+} from "./workspace-terminal-network-storage";
+import {
+  WorkspaceTerminalNetworkSettingsRequestSchema,
+  WorkspaceTerminalPolicyClaimRequestSchema,
+  WorkspaceTerminalPolicyCommitRequestSchema,
+  WorkspaceTerminalPolicyFailRequestSchema,
+  WorkspaceTerminalPolicyPreviewRequestSchema,
+  type WorkspaceTerminalNetworkMode,
+  type WorkspaceTerminalNetworkSettings,
+  type WorkspaceTerminalNetworkSettingsRequest,
+  type WorkspaceTerminalPolicyClaimRequest,
+  type WorkspaceTerminalPolicyClaimResult,
+  type WorkspaceTerminalPolicyCommitRequest,
+  type WorkspaceTerminalPolicyFailRequest,
+  type WorkspaceTerminalPolicyPreviewRequest,
+} from "./workspace-terminal-network-protocol";
+import {
   admitWorkspaceTranscriptionSession,
   releaseWorkspaceTranscriptionSession,
   renewWorkspaceTranscriptionSession,
@@ -5424,6 +5447,72 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
    * and a workspace at its cap are ordinary answers, and the sentence the
    * person reads is the service's to choose.
    */
+  /** The Terminal network policy and its domains, creating the default if absent. */
+  async terminalNetworkSettings(
+    input: WorkspaceTerminalNetworkSettingsRequest,
+  ): Promise<WorkspaceTerminalNetworkSettings> {
+    await this.initialized;
+    const request = WorkspaceTerminalNetworkSettingsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceTerminalNetworkSettings(this.state.storage, request);
+  }
+
+  /** The Terminal egress mode alone, for the agent path; writes nothing. */
+  async terminalNetworkMode(
+    input: { workspaceId: string },
+  ): Promise<WorkspaceTerminalNetworkMode> {
+    await this.initialized;
+    const workspaceId = IdSchema.parse(input.workspaceId);
+    this.assertWorkspace(workspaceId);
+    return workspaceTerminalNetworkMode(this.state.storage, workspaceId);
+  }
+
+  /** Record a previewed policy change so confirming it can be checked against it. */
+  async recordTerminalPolicyPreview(
+    input: WorkspaceTerminalPolicyPreviewRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceTerminalPolicyPreviewRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    recordWorkspaceTerminalPolicyPreview(this.state.storage, request);
+  }
+
+  /**
+   * Take the policy and its preview together, or take neither.
+   *
+   * The service used to claim them as two conditional updates over the runtime
+   * facade, and carried a compensating restore for the window where the first
+   * succeeded and the second did not. One transaction has no such window.
+   */
+  async claimTerminalPolicyApplication(
+    input: WorkspaceTerminalPolicyClaimRequest,
+  ): Promise<WorkspaceTerminalPolicyClaimResult> {
+    await this.initialized;
+    const request = WorkspaceTerminalPolicyClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceTerminalPolicyApplication(this.state.storage, request);
+  }
+
+  /** Release a claim with a reason, keeping the last verified policy. */
+  async failTerminalPolicyApplication(
+    input: WorkspaceTerminalPolicyFailRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceTerminalPolicyFailRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    failWorkspaceTerminalPolicyApplication(this.state.storage, request);
+  }
+
+  /** Publish the applied policy: domains, the new revision, and the ledger. */
+  async commitTerminalPolicyApplication(
+    input: WorkspaceTerminalPolicyCommitRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceTerminalPolicyCommitRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    commitWorkspaceTerminalPolicyApplication(this.state.storage, request);
+  }
+
   async admitTranscriptionSession(
     input: WorkspaceTranscriptionAdmitRequest,
   ): Promise<WorkspaceTranscriptionAdmitResult> {
