@@ -266,12 +266,18 @@ jobs:
       # together, so a release could publish from a commit whose CI ultimately
       # failed. Verify here, before the build is spent.
       - name: Lint
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm lint
 
       - name: Typecheck
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm typecheck
 
       - name: Test
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
         run: pnpm test
 
       - name: Run release invariants
