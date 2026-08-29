@@ -38,9 +38,9 @@ import {
 } from "../src/durable-objects/workspace-slack-protocol";
 
 /** Its own workspace: a shared id makes this file queue behind its siblings. */
-const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c1c00");
-const OTHER_WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-0000000c1c99");
-const CONNECTION = "00000000-0000-7000-8000-0000000c1c10";
+const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000c1d00");
+const OTHER_WORKSPACE = asWorkspaceId("00000000-0000-7000-8000-0000000c1d99");
+const CONNECTION = "00000000-0000-7000-8000-0000000c1d10";
 
 /**
  * A base instant one hour into the real future. Logical "expired" rows sit
@@ -479,7 +479,7 @@ describe("Slack pending prompts and thread routing", () => {
             opening_client_message_id, workstream_id, invocation_kind, channel_type,
             context_json, created_at, updated_at)
          VALUES ('session-1', ?, ?, NULL, 'workspace', 'T1', 'U1', 'C1', '2.0',
-                 'event:opening', '00000000-0000-7000-8000-0000000c1c50', 'app_mention',
+                 'event:opening', '00000000-0000-7000-8000-0000000c1d50', 'app_mention',
                  'public', '{}', ?, ?)`,
         WORKSPACE_ID,
         CONNECTION,
