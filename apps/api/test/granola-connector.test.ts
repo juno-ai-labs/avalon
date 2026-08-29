@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthContext, Env } from "../src/env";
 import { decryptString, encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
+import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
 import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
@@ -307,6 +308,75 @@ describe("Granola workspace connection", () => {
   });
 });
 
+describe("Granola personal automation catalog", () => {
+  it("preserves the meeting-query deadline from live discovery", async () => {
+    const { database, env } = fixture();
+    const connectionId = "00000000-0000-4000-8000-000000000011";
+    const encrypted = await encryptString(
+      JSON.stringify({ accessToken: "personal-token" }),
+      CREDENTIAL_KEY,
+      connectionId,
+    );
+    database.prepare(
+      `INSERT INTO connector_connections
+       (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+        display_name, encrypted_credentials, credential_iv, credential_key_version,
+        granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
+        created_at, updated_at)
+       VALUES (?, ?, 'granola', 'personal', ?, 'granola:person', 'Granola', ?, ?, 1,
+               '["granola.personal.read"]', 'plugin_granola', 'healthy', '{}', '{}',
+               '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+    ).run(connectionId, WORKSPACE_ID, USER_ID, encrypted.ciphertext, encrypted.iv);
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      const id = request.id as string;
+      if (request.method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: { protocolVersion: "2025-06-18", capabilities: {} },
+        }, { headers: { "mcp-session-id": "session-1" } });
+      }
+      return Response.json({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          tools: [
+            { name: "query_granola_meetings", inputSchema: { type: "object" } },
+            { name: "list_meetings", inputSchema: { type: "object" } },
+          ],
+        },
+      });
+    }));
+
+    const catalog = await __integrationTesting.loadAutomationCreatorPluginCatalog(
+      env,
+      WORKSPACE_ID,
+      USER_ID,
+    );
+
+    expect(catalog).toEqual([
+      expect.objectContaining({
+        pluginId: "plugin_granola",
+        tools: [
+          expect.objectContaining({
+            name: "granola_query_granola_meetings",
+            canonicalName: "query_granola_meetings",
+            timeoutMs: 300_000,
+          }),
+          expect.objectContaining({
+            name: "granola_list_meetings",
+            canonicalName: "list_meetings",
+            timeoutMs: 30_000,
+          }),
+        ],
+      }),
+    ]);
+  });
+});
+
 function fixture() {
   const database = new DatabaseSync(":memory:");
   databases.push(database);
@@ -332,6 +402,12 @@ function fixture() {
       updated_at TEXT NOT NULL
     );
     CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+    CREATE TABLE workspace_members (
+      workspace_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      PRIMARY KEY (workspace_id, user_id)
+    );
     CREATE TABLE audit_events (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -382,6 +458,8 @@ function fixture() {
       UNIQUE (connection_id, dedupe_key)
     );
     INSERT INTO users (id, name) VALUES ('${USER_ID}', 'Granola Admin');
+    INSERT INTO workspace_members (workspace_id, user_id, status)
+    VALUES ('${WORKSPACE_ID}', '${USER_ID}', 'active');
   `);
   const binding = createTestD1Database({
     prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
