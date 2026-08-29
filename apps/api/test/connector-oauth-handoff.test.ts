@@ -1,36 +1,18 @@
 import { asUserId, asWorkspaceId } from "@rally/contracts";
-import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import type { AuthContext, Env } from "../src/env";
 import { sealString } from "../src/lib/crypto";
 import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
-import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import { sqliteD1 } from "./helpers/sqlite-d1";
+import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000001");
 const OTHER_USER_ID = asUserId("00000000-0000-4000-8000-000000000002");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000003");
-
-class SqliteD1Statement {
-  private values: unknown[] = [];
-
-  constructor(private readonly statement: StatementSync) {}
-
-  bind(...values: unknown[]): SqliteD1Statement {
-    this.values = values;
-    return this;
-  }
-
-  async run(): Promise<D1Result<unknown>> {
-    const result = this.statement.run(...this.values as SQLInputValue[]);
-    return createTestD1Result<unknown>({ success: true, meta: { changes: Number(result.changes) } });
-  }
-
-  async first<T>(): Promise<T | null> {
-    return (this.statement.get(...this.values as SQLInputValue[]) as T | undefined) ?? null;
-  }
-}
 
 const databases: DatabaseSync[] = [];
 
@@ -38,29 +20,16 @@ afterEach(() => {
   for (const database of databases.splice(0)) database.close();
 });
 
-function fixture(): { database: DatabaseSync; env: Env; auth: AuthContext } {
-  const database = new DatabaseSync(":memory:");
-  databases.push(database);
-  database.exec(`
-    CREATE TABLE connector_oauth_attempts (
-      id TEXT PRIMARY KEY,
-      region TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      user_id TEXT NOT NULL,
-      workspace_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      connection_id TEXT,
-      error_code TEXT,
-      expires_at TEXT NOT NULL,
-      completed_at TEXT,
-      telemetry_operation_id TEXT,
-      telemetry_event_version INTEGER NOT NULL DEFAULT 1,
-      telemetry_scope TEXT,
-      telemetry_capability_count INTEGER,
-      telemetry_reconnect INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
+/**
+ * A real `WorkspaceDO` over its own schema answers the attempt RPCs, and the
+ * facade's remaining generic statements reach the same object through
+ * `executeRuntimeSql` — only the transport is doubled. `oauth_states` and the
+ * ingress-route projection stay on the regional database, as in production.
+ */
+function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; auth: AuthContext } {
+  const regional = new DatabaseSync(":memory:");
+  databases.push(regional);
+  regional.exec(`
     CREATE TABLE oauth_states (
       id TEXT PRIMARY KEY,
       region TEXT NOT NULL,
@@ -73,27 +42,42 @@ function fixture(): { database: DatabaseSync; env: Env; auth: AuthContext } {
       expires_at TEXT NOT NULL,
       consumed_at TEXT
     );
-    CREATE TABLE connector_connections (
-      id TEXT PRIMARY KEY,
+    CREATE TABLE connector_ingress_routes (
+      connection_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL,
       connector_type TEXT NOT NULL,
-      status TEXT NOT NULL
+      scope TEXT NOT NULL,
+      provider_account_id TEXT,
+      provider_user_id TEXT,
+      status TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
   `);
-  const binding = createTestD1Database({
-    prepare: (sql: string) => createTestD1PreparedStatement(new SqliteD1Statement(database.prepare(sql))),
-    batch: (statements: D1PreparedStatement[]) => Promise.all(
-      statements.map((statement) => (statement as unknown as SqliteD1Statement).run()),
-    ),
+  const workspace = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: regional,
+    register: (created) => { databases.push(created); },
   });
   return {
-    database,
+    regional,
+    object: workspace.objectDatabase,
     env: createTestEnv({
-      DB: binding,
+      DB: sqliteD1(regional),
       AVALON_REGION: "global",
+      APP_ENV: "test",
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
       OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
+      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, [
+        "startConnectorOAuthAttempt",
+        "abandonConnectorOAuthAttempt",
+        "extendConnectorOAuthAttempt",
+        "finishConnectorOAuthAttempt",
+        "connectorOAuthAttempt",
+        "bindConnectorOAuthAttemptTelemetry",
+        "executeRuntimeSql",
+      ]),
     }),
     auth: {
       sessionId: "session",
@@ -106,7 +90,7 @@ function fixture(): { database: DatabaseSync; env: Env; auth: AuthContext } {
 }
 
 function insertAttempt(
-  database: DatabaseSync,
+  object: DatabaseSync,
   input: {
     id: string;
     userId?: string;
@@ -116,7 +100,7 @@ function insertAttempt(
     expiresAt: string;
   },
 ): void {
-  database.prepare(
+  object.prepare(
     `INSERT INTO connector_oauth_attempts
      (id, region, provider, user_id, workspace_id, status, connection_id, error_code,
       expires_at, completed_at, created_at, updated_at)
@@ -132,6 +116,17 @@ function insertAttempt(
     new Date().toISOString(),
     new Date().toISOString(),
   );
+}
+
+function insertConnection(object: DatabaseSync, id: string): void {
+  object.prepare(
+    `INSERT INTO connector_connections
+     (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+      display_name, granted_scopes_json, status, cursor_json, config_json,
+      created_at, updated_at, model_plugin_id)
+     VALUES (?, ?, 'linear', 'workspace', NULL, NULL, 'Linear', '[]', 'healthy',
+             '{}', '{}', ?, ?, ?)`,
+  ).run(id, WORKSPACE_ID, new Date().toISOString(), new Date().toISOString(), `plugin_linear_${id.slice(-4)}`);
 }
 
 describe("connector OAuth handoff", () => {
@@ -171,9 +166,9 @@ describe("connector OAuth handoff", () => {
   });
 
   it("returns an active attempt only to its initiating workspace principal", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, object, env } = fixture();
     const attemptId = "a".repeat(43);
-    insertAttempt(database, { id: attemptId, expiresAt: "2099-01-01T00:00:00.000Z" });
+    insertAttempt(object, { id: attemptId, expiresAt: "2099-01-01T00:00:00.000Z" });
 
     await expect(new ConnectionService(env, auth).getOAuthAttempt(attemptId)).resolves.toEqual({
       attemptId,
@@ -188,36 +183,38 @@ describe("connector OAuth handoff", () => {
   });
 
   it("durably converts an expired pending attempt into a terminal failure", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, object, env } = fixture();
     const attemptId = "b".repeat(43);
-    insertAttempt(database, { id: attemptId, expiresAt: "2020-01-01T00:00:00.000Z" });
+    insertAttempt(object, { id: attemptId, expiresAt: "2020-01-01T00:00:00.000Z" });
 
     await expect(new ConnectionService(env, auth).getOAuthAttempt(attemptId)).resolves.toMatchObject({
       attemptId,
       status: "failed",
       errorCode: "oauth_attempt_expired",
     });
-    expect(database.prepare("SELECT status, error_code FROM connector_oauth_attempts WHERE id = ?")
+    expect(object.prepare("SELECT status, error_code FROM connector_oauth_attempts WHERE id = ?")
       .get(attemptId)).toEqual({ status: "failed", error_code: "oauth_attempt_expired" });
   });
 
   it("lets a callback that already consumed valid state win an expiry reconciliation race", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, object, env } = fixture();
     const attemptId = "c".repeat(43);
     const connectionId = "00000000-0000-7000-8000-000000000004";
-    insertAttempt(database, { id: attemptId, expiresAt: "2020-01-01T00:00:00.000Z" });
+    insertConnection(object, connectionId);
+    insertAttempt(object, { id: attemptId, expiresAt: "2020-01-01T00:00:00.000Z" });
     const service = new ConnectionService(env, auth);
 
     await service.getOAuthAttempt(attemptId);
     await (service as unknown as {
       finishOAuthAttempt(
+        workspaceId: string,
         id: string,
         status: "succeeded",
         result: { connectionId: string },
       ): Promise<void>;
-    }).finishOAuthAttempt(attemptId, "succeeded", { connectionId });
+    }).finishOAuthAttempt(WORKSPACE_ID, attemptId, "succeeded", { connectionId });
 
-    expect(database.prepare(
+    expect(object.prepare(
       "SELECT status, connection_id, error_code FROM connector_oauth_attempts WHERE id = ?",
     ).get(attemptId)).toEqual({
       status: "succeeded",
@@ -227,10 +224,10 @@ describe("connector OAuth handoff", () => {
   });
 
   it("extends and revives an expiry-reconciled attempt for GitHub's second OAuth leg", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, object, env } = fixture();
     const attemptId = "d".repeat(43);
     const expiresAt = "2099-01-01T00:10:00.000Z";
-    insertAttempt(database, {
+    insertAttempt(object, {
       id: attemptId,
       status: "failed",
       errorCode: "oauth_attempt_expired",
@@ -239,10 +236,10 @@ describe("connector OAuth handoff", () => {
     const service = new ConnectionService(env, auth);
 
     await (service as unknown as {
-      extendOAuthAttempt(id: string, nextExpiry: string): Promise<void>;
-    }).extendOAuthAttempt(attemptId, expiresAt);
+      extendOAuthAttempt(workspaceId: string, id: string, nextExpiry: string): Promise<void>;
+    }).extendOAuthAttempt(WORKSPACE_ID, attemptId, expiresAt);
 
-    expect(database.prepare(
+    expect(object.prepare(
       "SELECT status, error_code, completed_at, expires_at FROM connector_oauth_attempts WHERE id = ?",
     ).get(attemptId)).toEqual({
       status: "pending",
@@ -253,17 +250,20 @@ describe("connector OAuth handoff", () => {
   });
 
   it("reconciles a healthy committed connection as success after a later callback step fails", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, object, env, regional } = fixture();
     const attemptId = "e".repeat(43);
     const state = "s".repeat(32);
     const connectionId = "00000000-0000-7000-8000-000000000005";
-    insertAttempt(database, {
+    insertAttempt(object, {
       id: attemptId,
       status: "failed",
       errorCode: "oauth_state_already_used",
       expiresAt: "2099-01-01T00:00:00.000Z",
     });
     const service = new ConnectionService(env, auth);
+    // Prepared on the service's own routed database, as every production
+    // caller does: the facade refuses a statement prepared on a foreign port.
+    const routed = (service as unknown as { env: Env }).env;
     await (service as unknown as {
       persistConnectionMutation(
         statement: D1PreparedStatement,
@@ -271,8 +271,14 @@ describe("connector OAuth handoff", () => {
         connectionIdValue: string,
       ): Promise<D1Result<unknown>>;
     }).persistConnectionMutation(
-      env.DB.prepare(
-        "INSERT INTO connector_connections (id, workspace_id, connector_type, status) VALUES (?, ?, 'linear', 'healthy')",
+      routed.DB.prepare(
+        `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+          display_name, granted_scopes_json, status, cursor_json, config_json,
+          created_at, updated_at, model_plugin_id)
+         VALUES (?, ?, 'linear', 'workspace', NULL, NULL, 'Linear', '[]', 'healthy',
+                 '{}', '{}', '2026-08-18T00:00:00.000Z', '2026-08-18T00:00:00.000Z',
+                 'plugin_linear')`,
       ).bind(connectionId, WORKSPACE_ID),
       attemptId,
       connectionId,
@@ -281,7 +287,7 @@ describe("connector OAuth handoff", () => {
       JSON.stringify({ attemptId }),
       env.OAUTH_STATE_ENCRYPTION_KEY,
     );
-    database.prepare(
+    regional.prepare(
       `INSERT INTO oauth_states
        (id, region, provider, purpose, code_verifier_encrypted, user_id, workspace_id,
         return_uri, expires_at, consumed_at)
@@ -292,7 +298,7 @@ describe("connector OAuth handoff", () => {
 
     expect(target.searchParams.get("status")).toBe("connected");
     expect(target.searchParams.get("connection")).toBe(connectionId);
-    expect(database.prepare(
+    expect(object.prepare(
       "SELECT status, connection_id, error_code FROM connector_oauth_attempts WHERE id = ?",
     ).get(attemptId)).toEqual({
       status: "succeeded",
