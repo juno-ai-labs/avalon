@@ -38,6 +38,16 @@ import { useOpenRouterDouble } from "./helpers/openrouter-double";
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
 const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
 const SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a6");
+/**
+ * The "who a create is allowed to tell" cases. `initialize` on an already-
+ * authoritative root is a silent replay (200, no notifications), so these must
+ * not share an id with each other or with `WORKSTREAM_ID`. The replay test
+ * shares `CREATE_REPLAY_ID` between its two opens on purpose.
+ */
+const CREATE_WITHOUT_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b1");
+const CREATE_WITH_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b2");
+const CREATE_REPLAY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b3");
+const CREATE_NAMING_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b4");
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
@@ -1009,14 +1019,17 @@ describe("answering an elicitation in the ordered transcript", () => {
 
 describe("who a create is allowed to tell", () => {
   it("says nothing when the caller did not ask for it", async () => {
-    const stub = agentStub();
+    const stub = agentStub(CREATE_WITHOUT_NOTIFY_ID);
     // The shape a connector ingress sends. `slack-agent-service.ts` hands
     // `participantUserIds` a Slack channel's resolved roster — which
     // `CreateWorkstreamRequestSchema` says "can be hundreds" — and nobody in
     // that channel was added by anybody, so nobody is DMed about it.
-    await openWorkstream(stub, { participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID] });
+    await openWorkstream(stub, {
+      workstreamId: CREATE_WITHOUT_NOTIFY_ID,
+      participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID],
+    });
 
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, CREATE_WITHOUT_NOTIFY_ID);
     expect(envelopes.filter((envelope) => envelope.effect.kind === "participant_notification"))
       .toHaveLength(0);
     expect(envelopes.filter((envelope) => (
@@ -1031,13 +1044,14 @@ describe("who a create is allowed to tell", () => {
   });
 
   it("tells every person named, once each, gated on their own row", async () => {
-    const stub = agentStub();
+    const stub = agentStub(CREATE_WITH_NOTIFY_ID);
     await openWorkstream(stub, {
+      workstreamId: CREATE_WITH_NOTIFY_ID,
       participantUserIds: [INVITEE_ID, SECOND_INVITEE_ID],
       notifyParticipants: true,
     });
 
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, CREATE_WITH_NOTIFY_ID);
     const notifications = envelopes.flatMap((envelope) => (
       envelope.effect.kind === "participant_notification"
         ? [{ effect: envelope.effect, required: envelope.requiredProjectionVersion }]
@@ -1046,13 +1060,15 @@ describe("who a create is allowed to tell", () => {
     expect(notifications.map((entry) => entry.effect.recipientUserId).sort())
       .toEqual([INVITEE_ID, SECOND_INVITEE_ID].sort());
     expect(notifications.map((entry) => entry.effect.intentId).sort()).toEqual([
-      `participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`,
-      `participant_added:${WORKSTREAM_ID}:${SECOND_INVITEE_ID}:0`,
+      `participant_added:${CREATE_WITH_NOTIFY_ID}:${INVITEE_ID}:0`,
+      `participant_added:${CREATE_WITH_NOTIFY_ID}:${SECOND_INVITEE_ID}:0`,
     ].sort());
     // Each is gated on its *own* recipient's projection, not on whichever
     // viewer effect happened to be written last.
     for (const entry of notifications) {
-      expect(entry.required).toBe(await viewerProjectionVersion(entry.effect.recipientUserId));
+      expect(entry.required).toBe(
+        await viewerProjectionVersion(entry.effect.recipientUserId, CREATE_WITH_NOTIFY_ID),
+      );
     }
     expect(envelopes.flatMap((envelope) => (
       envelope.effect.kind === "activity_event"
@@ -1065,21 +1081,31 @@ describe("who a create is allowed to tell", () => {
   });
 
   it("replays the create without telling the person a second time", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
-    // The ambiguous-response retry, on the same `clientMessageId`. It must
-    // still answer 200: the whole reason the replay branch re-enqueues the
+    const stub = agentStub(CREATE_REPLAY_ID);
+    await openWorkstream(stub, {
+      workstreamId: CREATE_REPLAY_ID,
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
+    });
+    // The ambiguous-response retry, on this test's own workstream id and
+    // `clientMessageId`. Other cases must not share either — initialize on an
+    // already-authoritative root is a silent replay, not a second create. It
+    // must still answer 200: the whole reason the replay branch re-enqueues the
     // directory snapshot and nothing else is that a notification re-emitted
     // against a moved root would be refused as a hash conflict and wedge the
     // create. `openWorkstream` asserts the status.
-    await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
+    await openWorkstream(stub, {
+      workstreamId: CREATE_REPLAY_ID,
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
+    });
 
-    expect(await notificationReceipts(stub))
-      .toEqual([`effect:participant_added:${WORKSTREAM_ID}:${INVITEE_ID}:0`]);
+    expect(await notificationReceipts(stub, CREATE_REPLAY_ID))
+      .toEqual([`effect:participant_added:${CREATE_REPLAY_ID}:${INVITEE_ID}:0`]);
   });
 
   it("does not name a work stream the naming agent has not named yet", async () => {
-    const stub = agentStub();
+    const stub = agentStub(CREATE_NAMING_ID);
     // What `POST /workstreams` actually sends: the desktop client supplies no
     // title, so creation writes the opening message's first line and leaves
     // `titleStatus` at `naming` until the naming pass lands.
@@ -1088,7 +1114,7 @@ describe("who a create is allowed to tell", () => {
       auth: AUTH,
       input: {
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        workstreamId: CREATE_NAMING_ID,
         generation: 1,
         title: "Can someone dig into why the self-serve funnel dropped this week",
         objective: "Can someone dig into why the self-serve funnel dropped this week",
@@ -1097,7 +1123,7 @@ describe("who a create is allowed to tell", () => {
         emailAddress: null,
         creatorUserId: CREATOR_ID,
         openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
-        clientMessageId: "participant-open-naming",
+        clientMessageId: `participant-open-${CREATE_NAMING_ID}`,
         participantUserIds: [INVITEE_ID],
         notifyParticipants: true,
         attachmentIds: [],
@@ -1108,7 +1134,7 @@ describe("who a create is allowed to tell", () => {
     });
     expect(opened.status).toBe(200);
 
-    const notification = (await deliveredEffects(stub))
+    const notification = (await deliveredEffects(stub, CREATE_NAMING_ID))
       .flatMap((envelope) => envelope.effect.kind === "participant_notification" ? [envelope.effect] : []);
     expect(notification).toHaveLength(1);
     // The delivery templates read this to pick copy that does not quote a
