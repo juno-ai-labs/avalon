@@ -548,10 +548,13 @@ export class ConnectionService {
     let existing: StoredConnection | null = null;
     let existingCredentials: Record<string, unknown> = {};
     if (stateData.connectionId) {
-      existing = await this.env.DB.prepare(
-        `SELECT * FROM connector_connections
-         WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
-      ).bind(connectionId, row.workspace_id).first<StoredConnection>();
+      existing = WorkspaceConnectionResultSchema.parse(
+        await (await this.workspaceObject(String(row.workspace_id))).connection({
+          workspaceId: String(row.workspace_id),
+          connectionId,
+          connectorType: "google",
+        }),
+      ).connection;
       if (!existing) throw new ApiError(404, "connection_not_found", "Google connection not found");
       if (
         existing.scope !== stateData.scope ||
@@ -1046,31 +1049,36 @@ export class ConnectionService {
       // Starting "Connect" twice for the same Linear identity should repair the
       // existing authorization rather than create two competing webhook/tool
       // identities for one person or workspace.
-      existing = await this.env.DB.prepare(
-        `SELECT * FROM connector_connections
-         WHERE workspace_id = ? AND connector_type = 'linear' AND scope = ?
-           AND provider_account_id = ? AND status <> 'disabled'
-           AND ((scope = 'personal' AND owner_user_id = ?)
-             OR (scope = 'workspace' AND owner_user_id IS NULL))
-         ORDER BY created_at LIMIT 1`,
-      ).bind(
-        row.workspace_id,
-        stateData.scope,
-        providerAccountId,
-        row.user_id,
-      ).first<StoredConnection>();
+      existing = WorkspaceConnectionResultSchema.parse(
+        await (await this.workspaceObject(String(row.workspace_id))).findConnection({
+          workspaceId: String(row.workspace_id),
+          connectorType: "linear",
+          scope: stateData.scope,
+          providerAccountId,
+          // The scope decides the owner: a personal reconnect matches this
+          // member's row, a workspace one matches the ownerless row. Written as
+          // one `OR` before, which read as if either could match either scope.
+          ownerUserId: stateData.scope === "personal" ? String(row.user_id) : null,
+        }),
+      ).connection;
       if (existing) {
         connectionId = existing.id;
         existingCredentials = (await this.context(existing)).credentials;
       }
     } else if (provider === "slack") {
-      existing = await this.env.DB.prepare(
-        `SELECT * FROM connector_connections
-         WHERE connector_type = 'slack' AND scope = ? AND provider_account_id = ? AND status <> 'disabled'
-           AND ((scope = 'personal' AND workspace_id = ? AND owner_user_id = ?)
-             OR (scope = 'workspace'))
-         ORDER BY created_at LIMIT 1`,
-      ).bind(stateData.scope, providerAccountId, row.workspace_id, row.user_id).first<StoredConnection>();
+      // The workspace-scoped branch carried no `workspace_id` predicate, which
+      // was vestigial from when this table was regional: the facade already
+      // routed the statement into one workspace's object, so the fence was
+      // being applied by addressing rather than by SQL. It is explicit now.
+      existing = WorkspaceConnectionResultSchema.parse(
+        await (await this.workspaceObject(String(row.workspace_id))).findConnection({
+          workspaceId: String(row.workspace_id),
+          connectorType: "slack",
+          scope: stateData.scope,
+          providerAccountId,
+          ...(stateData.scope === "personal" ? { ownerUserId: String(row.user_id) } : {}),
+        }),
+      ).connection;
       if (existing) {
         if (existing.workspace_id !== row.workspace_id) {
           throw new ApiError(409, "slack_workspace_already_connected", "This Slack workspace is already connected to another Rally workspace");
@@ -1171,19 +1179,18 @@ export class ConnectionService {
           connectionId,
         });
       } catch (error) {
-        await this.env.DB.prepare(
-          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND connector_type = 'linear'`,
-        ).bind(
-          JSON.stringify({
+        await (await this.workspaceObject(String(row.workspace_id))).setConnectionStatus({
+          workspaceId: String(row.workspace_id),
+          connectionId: connectionId,
+          status: "error",
+          errorJson: JSON.stringify({
             code: "linear_route_registration_failed",
             message: "The shared Linear webhook route could not be registered",
             retryable: true,
           }),
-          nowIso(),
-          connectionId,
-          row.workspace_id,
-        ).run();
+          connectorType: "linear",
+          at: nowIso(),
+        });
         await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
         throw error;
       }
@@ -1203,19 +1210,18 @@ export class ConnectionService {
           connectionId,
         });
       } catch (error) {
-        await this.env.DB.prepare(
-          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND connector_type = 'notion'`,
-        ).bind(
-          JSON.stringify({
+        await (await this.workspaceObject(String(row.workspace_id))).setConnectionStatus({
+          workspaceId: String(row.workspace_id),
+          connectionId: connectionId,
+          status: "error",
+          errorJson: JSON.stringify({
             code: "notion_route_registration_failed",
             message: "The shared Notion webhook route could not be registered",
             retryable: true,
           }),
-          nowIso(),
-          connectionId,
-          row.workspace_id,
-        ).run();
+          connectorType: "notion",
+          at: nowIso(),
+        });
         await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
         throw error;
       }
@@ -1229,10 +1235,18 @@ export class ConnectionService {
           connectionId,
         });
       } catch (error) {
-        await this.env.DB.prepare(
-          `UPDATE connector_connections SET status = 'error', error_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND connector_type = 'slack'`,
-        ).bind(JSON.stringify({ code: "slack_route_registration_failed", message: error instanceof Error ? error.message : "Slack route registration failed", retryable: true }), nowIso(), connectionId, row.workspace_id).run();
+        await (await this.workspaceObject(String(row.workspace_id))).setConnectionStatus({
+          workspaceId: String(row.workspace_id),
+          connectionId,
+          status: "error",
+          errorJson: JSON.stringify({
+            code: "slack_route_registration_failed",
+            message: error instanceof Error ? error.message : "Slack route registration failed",
+            retryable: true,
+          }),
+          connectorType: "slack",
+          at: nowIso(),
+        });
         await publishConnectorWorkspaceSync(this.env, String(row.workspace_id));
         throw error;
       }
@@ -1319,10 +1333,14 @@ export class ConnectionService {
       existing?.connectionId
       && (existing.status === "pending" || existing.status === "failed")
     ) {
-      const committed = await this.env.DB.prepare(
-        `SELECT id FROM connector_connections
-         WHERE id = ? AND workspace_id = ? AND connector_type = ? AND status = 'healthy'`,
-      ).bind(existing.connectionId, row.workspace_id, provider).first<{ id: string }>();
+      const committed = WorkspaceConnectionResultSchema.parse(
+        await (await this.workspaceObject(String(row.workspace_id))).connection({
+          workspaceId: String(row.workspace_id),
+          connectionId: existing.connectionId,
+          connectorType: provider as WorkspaceConnection["connector_type"],
+          healthyOnly: true,
+        }),
+      ).connection;
       if (committed) {
         await this.finishOAuthAttempt(workspaceId, attemptId, "succeeded", { connectionId: committed.id });
         return this.connectorAttemptTarget({
@@ -1514,32 +1532,34 @@ export class ConnectionService {
         const displayLabel = stringField(context.credentials, "providerAccountName")
           ?? stringField(context.credentials, "workspaceName")
           ?? providerAccountId;
-        await this.env.DB.prepare(
-          `UPDATE connector_connections
-           SET provider_account_id = ?, display_name = ?, config_json = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND connector_type = 'granola' AND scope = 'personal'`,
-        ).bind(
+        await (await this.workspaceObject(connection.workspace_id)).setConnectionIdentity({
+          workspaceId: connection.workspace_id,
+          connectionId: connection.id,
+          connectorType: "granola",
+          scope: "personal",
           providerAccountId,
-          `Granola · ${displayLabel}`.slice(0, 180),
-          JSON.stringify({
+          displayName: `Granola · ${displayLabel}`.slice(0, 180),
+          configJson: JSON.stringify({
             region: this.env.AVALON_REGION,
             ...verifiedIdentityConfig("granola", context.credentials, providerAccountId),
           }),
-          nowIso(),
-          connection.id,
-          connection.workspace_id,
-        ).run();
+          at: nowIso(),
+        });
       }
     }
     if (repairOutcome) result = { ...result, message: `${result.message}. ${repairOutcome}` };
-    await this.env.DB.prepare(
-      `UPDATE connector_connections SET status = ?, error_json = ?, updated_at = ? WHERE id = ?`,
-    ).bind(
-      result.ok ? "healthy" : result.reconnectRequired ? "needs_reconnect" : "error",
-      result.ok ? null : JSON.stringify({ message: result.message, reconnectRequired: result.reconnectRequired ?? false }),
-      nowIso(),
-      id,
-    ).run();
+    await (await this.workspaceObject(connection.workspace_id)).setConnectionStatus({
+      workspaceId: connection.workspace_id,
+      connectionId: id,
+      status: result.ok ? "healthy" : result.reconnectRequired ? "needs_reconnect" : "error",
+      errorJson: result.ok
+        ? null
+        : JSON.stringify({
+          message: result.message,
+          reconnectRequired: result.reconnectRequired ?? false,
+        }),
+      at: nowIso(),
+    });
     const appliedHealth = result.ok ? "healthy" : result.reconnectRequired ? "needs_reconnect" : "error";
     await this.emitConnectorAction(
       connection,
@@ -1577,29 +1597,28 @@ export class ConnectionService {
       remoteRevocation = "failed";
     } finally {
       const disabledAt = nowIso();
-      await this.env.DB.prepare(
-        `UPDATE connector_connections SET status = 'disabled', encrypted_credentials = NULL,
-         credential_iv = NULL, next_poll_at = NULL, updated_at = ? WHERE id = ?`,
-      ).bind(disabledAt, id).run();
+      await (await this.workspaceObject(connection.workspace_id)).disableConnection({
+        workspaceId: connection.workspace_id,
+        connectionId: id,
+        at: disabledAt,
+      });
       // Object-local Terminal repository selections are immutable provenance,
       // not a copy of connector authority. Every bootstrap rechecks this
       // WorkspaceDO row, so a disabled connection is unusable without a fanout
       // write to every SubstreamAgent.
       await this.env.DB.prepare("UPDATE schedules SET enabled = 0, updated_at = ? WHERE connector_connection_id = ?")
         .bind(nowIso(), id).run();
-      await this.syncConnectorIngressRoute(id);
+      await this.syncConnectorIngressRoute(id, connection.workspace_id);
       await this.refreshScheduler(connection.workspace_id);
       if (connection.connector_type === "github" && connection.provider_account_id) {
-        const sibling = await this.env.DB.prepare(
-          `SELECT id FROM connector_connections
-           WHERE workspace_id = ? AND connector_type = 'github'
-             AND provider_account_id = ? AND status <> 'disabled' AND id <> ?
-           LIMIT 1`,
-        ).bind(
-          connection.workspace_id,
-          connection.provider_account_id,
-          connection.id,
-        ).first<{ id: string }>();
+        const sibling = WorkspaceConnectionResultSchema.parse(
+          await (await this.workspaceObject(connection.workspace_id)).findConnection({
+            workspaceId: connection.workspace_id,
+            connectorType: "github",
+            providerAccountId: connection.provider_account_id,
+            excludeConnectionId: connection.id,
+          }),
+        ).connection;
         if (!sibling) {
           try {
             await new GitHubRoutingService(this.env).setInstallationRouteStatus({
@@ -1753,7 +1772,7 @@ export class ConnectionService {
       this.assertWebhookCreationReplay(winner, input);
       return this.webhookConnectionResult(winner);
     }
-    await this.syncConnectorIngressRoute(id);
+    await this.syncConnectorIngressRoute(id, auth.workspaceId);
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
     });
@@ -1771,11 +1790,14 @@ export class ConnectionService {
 
   async rotateWebhookSecret(id: string) {
     const auth = this.requireAuth();
-    const connection = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections
-       WHERE id = ? AND workspace_id = ? AND connector_type = 'generic_webhook'
-         AND status <> 'disabled'`,
-    ).bind(id, auth.workspaceId).first<StoredConnection>();
+    const { connection } = WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(auth.workspaceId)).connection({
+        workspaceId: auth.workspaceId,
+        connectionId: id,
+        connectorType: "generic_webhook",
+        activeOnly: true,
+      }),
+    );
     if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
     if (connection.scope === "personal" && connection.owner_user_id !== auth.userId) {
       throw new ApiError(403, "connection_forbidden", "This personal webhook belongs to another user");
@@ -1787,18 +1809,17 @@ export class ConnectionService {
       this.env.CONNECTOR_CREDENTIALS_KEY,
       connection.id,
     );
-    await this.env.DB.prepare(
-      `UPDATE connector_connections
-       SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
-    ).bind(
-      encrypted.ciphertext,
-      encrypted.iv,
-      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-      nowIso(),
-      connection.id,
-      auth.workspaceId,
-    ).run();
+    await (await this.workspaceObject(auth.workspaceId)).setConnectionCredentials({
+      workspaceId: auth.workspaceId,
+      connectionId: connection.id,
+      credentials: {
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      },
+      activeOnly: true,
+      at: nowIso(),
+    });
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.credentials_rotated", id, {
       provider: "generic_webhook",
       scope: connection.scope,
@@ -1834,11 +1855,13 @@ export class ConnectionService {
       throw new ApiError(422, "invalid_connector_capabilities", "Choose supported X capabilities");
     }
 
-    const existing = await this.env.DB.prepare(
-      `SELECT id FROM connector_connections
-       WHERE workspace_id = ? AND connector_type = 'x' AND scope = 'workspace'
-         AND status <> 'disabled' LIMIT 1`,
-    ).bind(auth.workspaceId).first<{ id: string }>();
+    const existing = WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(auth.workspaceId)).findConnection({
+        workspaceId: auth.workspaceId,
+        connectorType: "x",
+        scope: "workspace",
+      }),
+    ).connection;
     if (existing) {
       throw new ApiError(
         409,
@@ -1858,26 +1881,25 @@ export class ConnectionService {
     const encrypted = await encryptString("{}", this.env.CONNECTOR_CREDENTIALS_KEY, id);
     const at = nowIso();
     const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "x");
-    await this.env.DB.prepare(
-      `INSERT INTO connector_connections
-       (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-        encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-        model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-       VALUES (?, ?, 'x', ?, ?, 'Public X via TwitterAPI.io', ?, ?, ?, ?, ?, 'healthy', '{}', '{}', ?, ?)`,
-    ).bind(
-      id,
-      auth.workspaceId,
-      input.scope,
-      null,
-      encrypted.ciphertext,
-      encrypted.iv,
-      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-      JSON.stringify(capabilities),
+    await this.writeConnection(auth.workspaceId, id, null, (object) => object.createConnection({
+      workspaceId: auth.workspaceId,
+      connectionId: id,
+      connectorType: "x",
+      scope: input.scope,
+      ownerUserId: null,
+      providerAccountId: null,
+      displayName: "Public X via TwitterAPI.io",
+      credentials: {
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      },
+      grantedScopesJson: JSON.stringify(capabilities),
       modelPluginId,
+      configJson: "{}",
+      nextPollAt: null,
       at,
-      at,
-    ).run();
-    await this.syncConnectorIngressRoute(id);
+    }));
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "x",
       scope: input.scope,
@@ -1902,11 +1924,13 @@ export class ConnectionService {
     if (capabilities.length !== 1 || capabilities[0] !== GranolaCapabilities.workspaceRead) {
       throw new ApiError(422, "invalid_connector_capabilities", "Choose the Granola workspace read capability");
     }
-    const existing = await this.env.DB.prepare(
-      `SELECT id FROM connector_connections
-       WHERE workspace_id = ? AND connector_type = 'granola' AND scope = 'workspace'
-         AND status <> 'disabled' LIMIT 1`,
-    ).bind(auth.workspaceId).first<{ id: string }>();
+    const existing = WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(auth.workspaceId)).findConnection({
+        workspaceId: auth.workspaceId,
+        connectorType: "granola",
+        scope: "workspace",
+      }),
+    ).connection;
     if (existing) throw new ApiError(409, "granola_workspace_connection_exists", "A Granola workspace connection already exists");
 
     const id = newId();
@@ -1931,26 +1955,25 @@ export class ConnectionService {
       const providerAccountId = `workspace:${(await sha256(apiKey)).slice(0, 32)}`;
       const at = nowIso();
       const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "granola");
-      await this.env.DB.prepare(
-          `INSERT INTO connector_connections
-           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-            display_name, encrypted_credentials, credential_iv, credential_key_version,
-            granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
-            created_at, updated_at)
-           VALUES (?, ?, 'granola', 'workspace', NULL, ?, 'Granola workspace', ?, ?, ?, ?, ?,
-                   'healthy', '{}', '{}', ?, ?)`,
-        ).bind(
-          id,
-          auth.workspaceId,
-          providerAccountId,
-          encrypted.ciphertext,
-          encrypted.iv,
-          Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-          JSON.stringify(capabilities),
-          modelPluginId,
-          at,
-          at,
-        ).run();
+      await (await this.workspaceObject(auth.workspaceId)).createConnection({
+        workspaceId: auth.workspaceId,
+        connectionId: id,
+        connectorType: "granola",
+        scope: "workspace",
+        ownerUserId: null,
+        providerAccountId,
+        displayName: "Granola workspace",
+        credentials: {
+          ciphertext: encrypted.ciphertext,
+          iv: encrypted.iv,
+          keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+        },
+        grantedScopesJson: JSON.stringify(capabilities),
+        modelPluginId,
+        configJson: "{}",
+        nextPollAt: null,
+        at,
+      });
       await this.env.DB.prepare(
           `INSERT INTO audit_events
            (id, workspace_id, actor_type, actor_user_id, action, target_type, target_id, metadata_json, created_at)
@@ -1963,7 +1986,7 @@ export class ConnectionService {
           JSON.stringify({ provider: "granola", scope: "workspace", capabilities }),
           at,
         ).run();
-      await this.syncConnectorIngressRoute(id);
+      await this.syncConnectorIngressRoute(id, auth.workspaceId);
     } catch (error) {
       try {
         await deleteGranolaWebhookEndpoint(apiKey, webhook.id, AbortSignal.timeout(10_000));
@@ -1996,11 +2019,16 @@ export class ConnectionService {
     if (rawBody.byteLength > numericEnv(this.env, "PROVIDER_WEBHOOK_MAX_BYTES", 1_000_000)) {
       throw new ApiError(413, "webhook_too_large", "Granola webhook payload exceeds the configured limit");
     }
-    await this.routeIngressConnection(connectionId, "granola");
-    const connection = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections
-       WHERE id = ? AND connector_type = 'granola' AND scope = 'workspace' AND status <> 'disabled'`,
-    ).bind(connectionId).first<StoredConnection>();
+    const routedWorkspaceId = await this.routeIngressConnection(connectionId, "granola");
+    const { connection } = WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(routedWorkspaceId)).connection({
+        workspaceId: routedWorkspaceId,
+        connectionId,
+        connectorType: "granola",
+        scope: "workspace",
+        activeOnly: true,
+      }),
+    );
     if (!connection) throw new ApiError(404, "connection_not_found", "Granola webhook connection not found");
     const context = await this.context(connection);
     const signingSecret = stringField(context.credentials, "webhookSigningSecret");
@@ -2132,10 +2160,15 @@ export class ConnectionService {
     } catch {
       throw new ApiError(400, "invalid_webhook_body", "Webhook body is not valid UTF-8");
     }
-    await this.routeIngressConnection(connectionId, "generic_webhook");
-    const connection = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE id = ? AND connector_type = 'generic_webhook' AND status <> 'disabled'`,
-    ).bind(connectionId).first<StoredConnection>();
+    const routedWorkspaceId = await this.routeIngressConnection(connectionId, "generic_webhook");
+    const { connection } = WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(routedWorkspaceId)).connection({
+        workspaceId: routedWorkspaceId,
+        connectionId,
+        connectorType: "generic_webhook",
+        activeOnly: true,
+      }),
+    );
     if (!connection) throw new ApiError(404, "connection_not_found", "Webhook connection not found");
     const context = await this.context(connection);
     const signingSecret = String(context.credentials.signingSecret ?? "");
@@ -2298,19 +2331,18 @@ export class ConnectionService {
     idempotencyKey: string,
   ): Promise<StoredConnection | null> {
     const auth = this.requireAuth();
-    return this.env.DB.prepare(
-      `SELECT * FROM connector_connections
-       WHERE workspace_id = ? AND connector_type = 'generic_webhook'
-         AND scope = ? AND COALESCE(owner_user_id, '') = ?
-         AND status != 'disabled'
-         AND json_extract(config_json, '$.creationIdempotencyKey') = ?
-       LIMIT 1`,
-    ).bind(
-      auth.workspaceId,
-      scope,
-      scope === "personal" ? auth.userId : "",
-      idempotencyKey,
-    ).first<StoredConnection>();
+    return WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(auth.workspaceId)).findConnection({
+        workspaceId: auth.workspaceId,
+        connectorType: "generic_webhook",
+        scope,
+        // `COALESCE(owner_user_id, '') = ?` compared NULL against the empty
+        // string to make one predicate serve both scopes. A workspace webhook
+        // has no owner, so the typed request says so.
+        ownerUserId: scope === "personal" ? auth.userId : null,
+        creationIdempotencyKey: idempotencyKey,
+      }),
+    ).connection;
   }
 
   private async resolveCanonicalWebhookActivity(
@@ -2387,14 +2419,28 @@ export class ConnectionService {
     return connectorRegistryForEnv(this.env);
   }
 
-  private async routeIngressConnection(connectionId: string, connectorType: string): Promise<void> {
+  /**
+   * Resolve which workspace a provider delivery belongs to, and say so.
+   *
+   * It returned `void` and re-scoped `this.env` as a side effect, which was
+   * enough while the reads after it were routed statements. They are typed
+   * calls now and have to name an object, so the workspace it resolved is the
+   * return value rather than something a later read rediscovers.
+   */
+  private async routeIngressConnection(
+    connectionId: string,
+    connectorType: string,
+  ): Promise<string> {
     if (!this.env.WORKSPACE_DOS) {
+      // The pre-cutover environment only: with no object binding, `this.env.DB`
+      // is regional D1 and this statement is answered there. It is unreachable
+      // in a deployment, which is why it can keep naming the table by hand.
       const legacy = await this.env.DB.prepare(
         `SELECT workspace_id FROM connector_connections
           WHERE id = ? AND connector_type = ? AND status <> 'disabled'`,
       ).bind(connectionId, connectorType).first<{ workspace_id: string }>();
       if (!legacy) throw new ApiError(404, "connection_not_found", "Connector route not found");
-      return;
+      return legacy.workspace_id;
     }
     const route = await workspaceRegionalDatabase(this.env).prepare(
       `SELECT workspace_id FROM connector_ingress_routes
@@ -2402,6 +2448,7 @@ export class ConnectionService {
     ).bind(connectionId, this.env.AVALON_REGION, connectorType).first<{ workspace_id: string }>();
     if (!route) throw new ApiError(404, "connection_not_found", "Connector route not found");
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
+    return route.workspace_id;
   }
 
   /**
@@ -2425,48 +2472,25 @@ export class ConnectionService {
     const result = WorkspaceConnectionWriteResultSchema.parse(
       await write(await this.workspaceObject(workspaceId)),
     );
-    if (result.outcome === "written") await this.syncConnectorIngressRoute(connectionId);
+    if (result.outcome === "written") await this.syncConnectorIngressRoute(connectionId, workspaceId);
     return result;
   }
 
-  private async persistConnectionMutation(
-    statement: D1PreparedStatement,
-    attemptId: string | null,
+  private async syncConnectorIngressRoute(
     connectionId: string,
-  ): Promise<D1Result<unknown>> {
-    const at = nowIso();
-    // Connection and attempt share WorkspaceDO authority, so the user-visible
-    // handoff can never remain pending after its connection commits. The D1
-    // ingress route is the recoverable post-commit control-plane edge.
-    const result = attemptId
-      ? (await this.env.DB.batch([
-          statement,
-          this.env.DB.prepare(
-            `UPDATE connector_oauth_attempts
-             SET connection_id = ?, updated_at = ?
-             WHERE id = ? AND region = ?
-               AND status IN ('pending', 'failed')`,
-          ).bind(connectionId, at, attemptId, this.env.AVALON_REGION),
-        ]))[0]
-      : await statement.run();
-    if (!result) {
-      throw new ApiError(500, "connector_persistence_failed", "The connector could not be persisted");
-    }
-    await this.syncConnectorIngressRoute(connectionId);
-    return result;
-  }
-
-  private async syncConnectorIngressRoute(connectionId: string): Promise<void> {
+    workspaceId: string,
+  ): Promise<void> {
     // Focused unit/legacy environments without WorkspaceDO authority still
     // write connector rows directly; migration triggers maintain the route in
     // a real deployment. Explicit synchronization is required only after the
     // connector row has moved into WorkspaceDO.
     if (!this.env.WORKSPACE_DOS) return;
-    const connection = await this.env.DB.prepare(
-      `SELECT id, workspace_id, connector_type, scope, provider_account_id,
-              status, config_json, updated_at
-         FROM connector_connections WHERE id = ?`,
-    ).bind(connectionId).first<ConnectorIngressRouteSource>();
+    const { connection } = WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(workspaceId)).connection({
+        workspaceId,
+        connectionId,
+      }),
+    );
     if (!connection) return;
     const route = connectorIngressRouteValues(connection, this.env.AVALON_REGION);
     await workspaceRegionalDatabase(this.env).prepare(
@@ -2950,17 +2974,16 @@ export class ConnectionService {
       this.env.CONNECTOR_CREDENTIALS_KEY,
       row.id,
     );
-    await this.env.DB.prepare(
-      `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
-       credential_key_version = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
-    ).bind(
-      encrypted.ciphertext,
-      encrypted.iv,
-      Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-      nowIso(),
-      row.id,
-      row.workspace_id,
-    ).run();
+    await (await this.workspaceObject(row.workspace_id)).setConnectionCredentials({
+      workspaceId: row.workspace_id,
+      connectionId: row.id,
+      credentials: {
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+      },
+      at: nowIso(),
+    });
   }
 
   private async createPollSchedule(workspaceId: string, connectionId: string, intervalSeconds: number): Promise<void> {

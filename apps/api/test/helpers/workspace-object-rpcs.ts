@@ -138,6 +138,43 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
 ] as const satisfies readonly (keyof WorkspaceDO)[];
 
 /**
+ * The connection surface a connector flow reaches on `WORKSPACE_DOS`.
+ *
+ * `executeRuntimeSql` rides along for the same reason it does in the Slack
+ * list: these flows mix converted and unconverted statements, and serving the
+ * two from different stores would split one workspace's rows across two
+ * databases mid-test.
+ */
+export const CONNECTION_WORKSPACE_OBJECT_METHODS = [
+  "executeRuntimeSql",
+  "connection",
+  "listConnections",
+  "findConnection",
+  "connectionPluginIds",
+  "createConnection",
+  "refreshConnection",
+  "setConnectionStatus",
+  "disableConnection",
+  "setConnectionCredentials",
+  "rotateConnectionEnvelope",
+  "claimConnectionCredentialLease",
+  "settleConnectionCredentialLease",
+  "releaseConnectionCredentialLease",
+  "setConnectionRepositoryAccess",
+  "setConnectionIdentity",
+  // The OAuth attempt lifecycle, because a connection write now settles its
+  // attempt in the same transaction — a fixture that bound one without the
+  // other would be asserting on half a critical section.
+  "startConnectorOAuthAttempt",
+  "abandonConnectorOAuthAttempt",
+  "extendConnectorOAuthAttempt",
+  "connectorOAuthAttempt",
+  "finishConnectorOAuthAttempt",
+  "bindConnectorOAuthAttemptTelemetry",
+  "claimWebhookReceipt",
+] as const satisfies readonly (keyof WorkspaceDO)[];
+
+/**
  * The typed resource-maintenance methods, over an existing fixture database.
  *
  * For a suite whose subject still writes `resources` through the D1-shaped

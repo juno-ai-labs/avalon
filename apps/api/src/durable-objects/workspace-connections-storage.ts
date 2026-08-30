@@ -1,3 +1,4 @@
+import { uuidV7 } from "../lib/uuid-v7";
 import {
   WorkspaceConnectorOAuthAttemptFinishResultSchema,
   WorkspaceConnectorOAuthAttemptReadResultSchema,
@@ -753,7 +754,7 @@ export function rotateWorkspaceConnectionEnvelope(
 /**
  * Claim the refresh lease, minting its id and expiry here.
  *
- * `crypto.randomUUID()` and the deadline are the object's to produce: a caller
+ * The lease id and the deadline are the object's to produce: a caller
  * that invented both could hand two workers the same lease id, and a caller
  * whose clock ran slow could set an expiry already past. The envelope comes
  * back with the claim because the winner needs it and a second read would let
@@ -763,7 +764,7 @@ export function claimWorkspaceConnectionCredentialLease(
   storage: DurableObjectStorage,
   request: WorkspaceConnectionLeaseClaimRequest,
 ): WorkspaceConnectionLeaseClaimResult {
-  const leaseId = crypto.randomUUID();
+  const leaseId = uuidV7();
   const expiresAt = new Date(Date.parse(request.at) + request.leaseMs).toISOString();
   const row = storage.sql.exec<{
     encrypted_credentials: string | null;
