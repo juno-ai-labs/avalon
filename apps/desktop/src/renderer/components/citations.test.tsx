@@ -180,20 +180,26 @@ describe('resource citations', () => {
     expect(preview).toHaveBeenCalledWith('board-deck');
 
     // The derivative is what shows — the markdown a Word file was converted
-    // into, not its bytes.
-    await act(async () => { deliver('## Revenue\n\nUp 14% on the quarter.'); });
+    // into, not its bytes. The card renders that markdown (a heading is a
+    // heading, emphasis is strong) rather than printing the markers.
+    await act(async () => { deliver('## Revenue\n\n**Author:** Product. Up 14% on the quarter.'); });
 
     const excerpt = document.querySelector('.citation-card-preview');
     expect(excerpt).not.toBeNull();
     expect(excerpt).toHaveTextContent('Up 14% on the quarter.');
-    // The heading's words survive; its hashes do not. At label size they are
-    // two characters of noise spending one of four clamped lines.
-    expect(excerpt).toHaveTextContent('Revenue');
+    expect(excerpt!.querySelector('.markdown-body')).not.toBeNull();
+    expect(excerpt!.querySelector('h2')).toHaveTextContent('Revenue');
     expect(excerpt!.textContent).not.toContain('#');
+    expect(excerpt!.querySelector('strong')).toHaveTextContent('Author:');
+    expect(excerpt!.textContent).not.toContain('**');
+    expect(excerpt).toHaveAttribute('inert');
     expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
-    // A preview is presentation: the button still announces the title alone.
+    // A preview is presentation: the button still announces the title alone,
+    // and nothing inside the glance is its own control.
     expect(excerpt).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByRole('button', { name: 'Open Q3 board deck' })).toBeInTheDocument();
+    expect(within(excerpt as HTMLElement).queryAllByRole('button')).toHaveLength(0);
+    expect(within(excerpt as HTMLElement).queryAllByRole('link')).toHaveLength(0);
   });
 
   it('keeps the card\'s empty room when a preview is unavailable or not offered', async () => {

@@ -527,7 +527,7 @@ describe('markdown list markers', () => {
     'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
   ];
 
-  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+  it.each([['.note-detail-article'], ['.meeting-notes-body'], ['.citation-card-preview']])(
     'leaves markdown element styling to the shared container in %s',
     (host) => {
       // Headings are absent from the list on purpose: a scale is a property of
@@ -548,7 +548,7 @@ describe('markdown list markers', () => {
   // silent visual regression as the missing markers, arriving the same way.
   // Naming `.markdown-body` in the selector settles it on specificity instead,
   // and this is what stops the class being tidied back out.
-  it.each([['.note-detail-article'], ['.meeting-notes-body']])(
+  it.each([['.note-detail-article'], ['.meeting-notes-body'], ['.citation-card-preview']])(
     'wins its heading scale on specificity rather than source order in %s',
     (host) => {
       const headingRules = preludes()
@@ -561,6 +561,12 @@ describe('markdown list markers', () => {
       }
     },
   );
+
+  it('draws the embed card preview in the faintest text tone', () => {
+    const preview = rule('.citation-card-preview');
+    expect(preview).toContain('var(--av-sys-color-text-disabled)');
+    expect(preview).not.toContain('--av-ref-color-neutral-9');
+  });
 });
 
 /**

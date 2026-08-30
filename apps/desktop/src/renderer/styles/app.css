@@ -2659,22 +2659,33 @@ pre {
 .citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
 /* The opening lines of the resource's own text, filling the room between the
    badge and the title. It is a *glance*, not a reader: the clamp cuts it at
-   four lines, `pre-wrap` keeps the derivative's own line breaks, and nothing
-   here scrolls in either axis — a scrollable box inside a card the whole of
-   which is one button would swallow the click it advertises. The kind label's
-   size and weight, deliberately, so the preview reads as the card's quietest
-   layer rather than competing with the title beneath it.
+   four lines, and nothing here scrolls in either axis — a scrollable box
+   inside a card the whole of which is one button would swallow the click it
+   advertises. The kind label's size and weight, deliberately, so the preview
+   reads as the card's quietest layer rather than competing with the title
+   beneath it. `pointer-events: none` plus `inert` on the node keep nested
+   markdown (a link, a code-block copy control) from becoming a second target
+   inside the card.
 
-   It is the one piece of text on the card that draws from the neutral ramp
-   rather than a `text.*` tone: a step below `text.muted` and a step above
-   `text.disabled`, which is the tone this wants and neither of those is. The
-   preview exists to hint at the document, not to be read here — the card is a
-   button, and type dark enough to read comfortably competes with the title for
-   the click. `text.disabled` would say something untrue about a control that
-   is very much enabled; `ref.color.neutral.9` is a contrast step, and the ramp
-   is ordered by contrast, so it dims the same way in a light theme as in a
-   dark one. */
-.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-ref-color-neutral-9); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+   The tone is `text.disabled`, the faintest step on `sys.color.text`
+   (strongest to faintest). The preview exists to hint at the document, not
+   to be read here — type as dark as `text.muted` (the kind label) competes
+   with the title for the click. The token names a contrast, not the button's
+   state: the card stays enabled, and this layer is the one that should recede.
+   `.markdown-body` restates the colour on itself because a colour on the host
+   does not inherit into that wrapper. */
+.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
+.citation-card-preview .markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
+/* A heading scale of one size: the shared scale's h1 is larger than this
+   tile, and a glance that spent its four lines on a title would hide the
+   sentence that distinguishes one card from another. */
+.citation-card-preview .markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+}
 /* What stands in for it while the derivative is still being converted. The
    card does not resize when the text lands because of its own `min-height` and
    the title block's `margin-top: auto`, not because these bars measure the
