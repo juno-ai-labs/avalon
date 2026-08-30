@@ -285,7 +285,21 @@ shape of `index.js`.
            return Response.json({ error: "sign in to RSVP" }, { status: 401 });
          const name =
            decodeURIComponent(request.headers.get("Rally-Viewer-Name") ?? "");
-         const { answer } = await request.json();
+         // Validate before touching SQL: bad client input is a 400,
+         // never an artifact-level failure.
+         let body;
+         try {
+           body = await request.json();
+         } catch {
+           return Response.json({ error: "expected JSON" }, { status: 400 });
+         }
+         const answer = body?.answer;
+         if (!["yes", "no", "maybe"].includes(answer)) {
+           return Response.json(
+             { error: "answer must be yes, no, or maybe" },
+             { status: 400 },
+           );
+         }
          // One RSVP per person: answering again updates your answer.
          this.ctx.storage.sql.exec(
            `INSERT INTO rsvps (viewer_id, name, answer)
