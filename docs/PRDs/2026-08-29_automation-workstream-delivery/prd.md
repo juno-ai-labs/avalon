@@ -240,7 +240,9 @@ storage, the model projector, and the renderer.
 
 `message_type` carries no `CHECK` constraint in the work stream's SQL, so a new
 value needs no migration and does not touch the byte-frozen ordered-transcript
-schema.
+schema. The one `CHECK` on a column of that name is in `0001_initial.sql`, on
+the retired D1 `messages` table — `0090_drop_legacy_product_tables.sql` drops
+that table outright, so it constrains nothing a live insert passes through.
 
 Its `textContent` is the run's final message. Its `structuredContent` is a
 typed **activation object**:
@@ -349,8 +351,14 @@ declaration. The trade is recorded in key design decision 10.
 
 The Google activity types gain `resourceRelationships`:
 `sheets.spreadsheet_changed` names `google_sheet`, `docs.document_changed`
-names `google_doc`, and `drive.file_changed` names `drive_file`. With that
-declared, the existing machinery does the rest: watching an attached Sheet
+names `google_doc`, and `drive.file_changed` names `drive_file`. Each needs a
+`relationship`, and none of the seven values
+`ConnectorResourceRelationshipSchema` allows today — `channel`, `folder`,
+`parent`, `project`, `repository`, `page`, `application` — describes a Drive
+file, so the enum gains `file`. That is a contracts change, not a manifest-only
+one; **Data model** carries the detail. Notion's `page` is the precedent for a
+relationship naming the watched entity itself rather than a container it sits
+in. With that declared, the existing machinery does the rest: watching an attached Sheet
 registers a resource-scoped evaluator, and each polled change appends a
 resource-update row to the watching work stream — the same system row every
 other watched connector produces. The events stay classified `operational`,
@@ -567,8 +575,28 @@ Two writes and one read change:
   `'0'` conversation turn today, and that emptiness is the thing to verify
   before shipping rather than assume.
 
-The Google `resourceRelationships` change is connector manifest code, not
-schema.
+The Google `resourceRelationships` change is **not** manifest code alone. A
+descriptor's `relationship` is validated against a closed enum, and no current
+value describes a Drive file, so `file` is added — in **two** places, because
+`ConnectorActivityTriggerDescriptorSchema` in `packages/contracts/src/index.ts`
+duplicates the literal rather than referencing the exported
+`ConnectorResourceRelationshipSchema` in `automation-evaluators.ts`. Adding a
+value to only one of them type-checks and then rejects the manifest at registry
+construction. That duplication is a pre-existing hazard this change is merely
+the first to walk into; de-duplicating it is a reasonable thing to do in the
+same commit and is not required by anything here.
+
+`AutomationDeliveryTargetTypeSchema` deliberately does **not** gain
+`workstream`. It reads `["slack_agent_dm", "email"]` and is shared with
+`DigestDeliveryTargetTypeSchema` and `ConnectorUserDeliverySchema` — the enum a
+*connector* draws from when it declares it can deliver to a person. A work
+stream is Rally's own surface, not a connector-provided destination, and adding
+it there would let a connector manifest declare something it cannot do. The new
+arm lives on `AutomationRunDeliveryTargetV1` and `AutomationDeliveryTargetSetSchema`
+only. The comment above that enum needs a word, though: it currently reads
+"Every run is always delivered to its Avalon work stream. These are the
+additional destinations…", and once a run can also be delivered to *another*
+work stream, "its" is doing load-bearing work it was never asked to do.
 
 ## Regional impact
 
@@ -693,6 +721,11 @@ The arithmetic the team needs to set it: an activation's admitted form is its
 wrapper plus the run's final message, so budget roughly the length of one
 automation result per row, against the run's context window and the 80%
 compaction trigger. A daily automation puts thirty in a month.
+
+Worth being explicit about when this stops being deferrable: the cost is paid
+whether or not activations are ever shown, because it is context, not
+presentation. So it wants a number before the first work stream carries a daily
+automation — not before open question 1 is answered.
 
 ### 1. Plugin contract
 
@@ -910,7 +943,12 @@ it is attributable to one commit and revertable without unwinding a delivery.
    unchanged**: nothing renders, no unread dot appears, and the sidebar row does
    not move. Send the same email twice; still one row.
 2. Attach a Google Sheet to a work stream, enable watch, edit the sheet; a
-   resource-update row appears within one poll cycle.
+   resource-update row appears within one poll cycle. Cover the enum change
+   directly too: a unit test that builds the registry and asserts a Google
+   descriptor carrying `{ relationship: "file", resourceType: "google_sheet" }`
+   is accepted. Registry construction is where a missing enum value fails, and
+   it fails for every connector at once, so this is worth its own assertion
+   rather than being inferred from the watch working.
 3. Accept a Monday-09:00 automation with work-stream plus email delivery; when
    it fires, the email arrives, the activation is recorded, and the run history
    shows two delivered receipts. Then open the work stream and ask its agent
