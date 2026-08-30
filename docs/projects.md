@@ -18,7 +18,7 @@ behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
 | `apps/api/src/durable-objects/workspace-project-storage.ts` | Synchronous project transactions, visibility filtering, and per-person ordering. |
 | `apps/api/src/services/project-service.ts` | Cross-object audience effects, membership settlement, and Queue publication. |
 | `apps/api/src/queues/activity-consumer.ts` | Fenced default-resource attachment through the regional activity Queue. |
-| `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. |
+| `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. Nested members render through the sidebar's work-stream row. |
 
 ## How it works
 
@@ -204,6 +204,31 @@ send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
 
 ## Changelog
+
+### 2026-08-30 — Nested project work streams use the sidebar's own row
+
+**What changed:** Expanding a project now renders each member through the same
+work-stream row the rest of the sidebar uses — title, description, marker, and
+context menu — starting where the accordion control ends. The project row
+itself wears the shared `.sidebar-row` hover fill, radius, and padding, and
+its plus control is visible only while that row is hovered or focused.
+
+**Why:** The accordion had been a second, thinner list: title-only children
+indented past the project icon, a private hover fill, and a standing column of
+pluses. That made a work stream inside a project look like a different object
+from the same work stream in the recent list, and the pluses competed with the
+names they sat beside.
+
+**Considered and rejected:** Restyling `.project-sidebar-workstream` to
+approximate the shared row. Matching font, hover, and a description by copying
+rules would have drifted the moment either surface moved, which is how the two
+lists got out of step. Passing the existing row in is the cheaper thing to
+keep true.
+
+**Consequences:** Nested members are the sidebar work-stream row, including
+its context menu and drag payload. Command-number hints stay on the
+pinned-then-recent run, not the accordion. The plus on the Projects heading
+stays visible; only the per-row plus is hover-revealed.
 
 ### 2026-08-27 — Direct participant removal keeps the project audience fence
 

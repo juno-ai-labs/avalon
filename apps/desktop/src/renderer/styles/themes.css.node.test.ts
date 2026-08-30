@@ -267,3 +267,10 @@ describe('token references', () => {
     }
   });
 });
+
+describe('Terra Light row hover', () => {
+  it('aliases hover to raised-hover so the fill is darker than the sidebar', () => {
+    const terraLight = themeFiles.find((theme) => theme.id === 'terra-light');
+    expect(terraLight?.tokens['cmp.row.background-hover']).toBe('{sys.color.surface.raised-hover}');
+  });
+});
