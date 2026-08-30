@@ -38,6 +38,10 @@ runs the Node suite *and then* the workerd suite — so a green `pnpm test`
 includes workerd. CI splits them: `api-tests-workers-1-of-n` and
 `api-tests-workers-2-of-n` each run the package-owned workers command with a
 Vitest shard, and the container and release suites are their own matrix jobs.
+`deploy-api.yml` must use those same two workers shards rather than appending
+unsharded `test:workers` onto a Node lane: that dumps the whole suite into one
+Miniflare, which is more `reset()` interleave than PR CI ever sees, and it is
+how a green pull request has already failed deploy verify on the same SHA.
 
 A test in any of these that fails once and passes on a rerun is a defect to fix
 in the change that met it —
@@ -272,6 +276,13 @@ beforeEach(async () => {
   budget in `vitest.workers.config.ts` is now that budget, 30 seconds for every
   test and hook in the directory, so a hook writes its own only to ask for
   *more* — with a comment saying the wait is the interleave and not the query.
+  The same interleave can also leave an object authoritative across tests in one
+  file. `initialize` on an already-authoritative root is the documented replay
+  path — 200, directory snapshot re-enqueued, notifications not re-emitted —
+  so a later create that reuses a workstream id / `clientMessageId` looks like
+  a silent product miss (`[]` where the named people should have been told).
+  Tests that are not *about* that replay must not share an id;
+  `participant-notification.test.ts` gives each case its own.
 - **Set up in `beforeEach`. No `beforeAll` in this directory.** A `beforeAll`
   that opens an object while a sibling file is resetting waits until it times
   out, and a wipe landing mid-file is then inherited by every test after it
