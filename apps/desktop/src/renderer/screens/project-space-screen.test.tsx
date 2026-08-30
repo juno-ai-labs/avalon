@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   listResources: vi.fn(),
   updateProject: vi.fn(),
   updateProjectAudience: vi.fn(),
+  restoreProject: vi.fn(),
 }));
 
 vi.mock('../lib/app-session', () => ({ useAppSession: () => ({ api }) }));
@@ -40,14 +41,15 @@ const project = ProjectSummarySchema.parse({
   updatedAt: '2026-08-27T00:00:00.000Z',
 });
 
-function renderProject(): QueryClient {
+function renderProject(summary = project): QueryClient {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  queryClient.setQueryData(['projects'], { waterline: 1, items: [project] });
-  queryClient.setQueryData(['projects-inactive'], { waterline: 1, items: [] });
+  const active = summary.status === 'active';
+  queryClient.setQueryData(['projects'], { waterline: 1, items: active ? [summary] : [] });
+  queryClient.setQueryData(['projects-inactive'], { waterline: 1, items: active ? [] : [summary] });
   render(
     <Tooltip.Provider>
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={[`/projects/${project.id}`]}>
+        <MemoryRouter initialEntries={[`/projects/${summary.id}`]}>
           <Routes><Route element={<ProjectSpaceScreen />} path="/projects/:projectId" /></Routes>
         </MemoryRouter>
       </QueryClientProvider>
@@ -159,5 +161,32 @@ describe('project space appearance', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add resources' }));
 
     await waitFor(() => expect(api.addProjectDefaultResource).toHaveBeenCalledWith(project.id, 'resource-1'));
+  });
+
+  it('exposes archive as a danger-colored icon-only control and opens the confirmation dialog', async () => {
+    renderProject();
+
+    const archive = screen.getByRole('button', { name: 'Archive project' });
+    expect(archive).toHaveClass('icon-button', 'icon-button-danger');
+    expect(archive).not.toHaveTextContent('Archive project');
+
+    fireEvent.click(archive);
+    const dialog = screen.getByRole('dialog', { name: 'Archive project?' });
+    expect(within(dialog).getByRole('button', { name: 'Archive project' })).toHaveClass('button-danger');
+  });
+
+  it('keeps restore as a labeled header button', async () => {
+    const archived = ProjectSummarySchema.parse({ ...project, status: 'archived' });
+    const restored = { ...project, status: 'active' as const };
+    api.restoreProject.mockResolvedValue(restored);
+    renderProject(archived);
+
+    const restore = screen.getByRole('button', { name: 'Restore project' });
+    expect(restore).toHaveClass('button');
+    expect(restore).not.toHaveClass('icon-button');
+    expect(restore).toHaveTextContent('Restore project');
+
+    fireEvent.click(restore);
+    await waitFor(() => expect(api.restoreProject).toHaveBeenCalledWith(archived.id));
   });
 });
