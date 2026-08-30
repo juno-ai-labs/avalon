@@ -34,8 +34,8 @@ a reader's expectations, and an activation should inherit none of them by
 default. `message_type` has no `CHECK` constraint, so the new value costs no
 migration.
 
-That record is invisible for now. The one read method behind both the human
-feed and the agent takes an audience argument: the people branch excludes the
+That record is invisible for now. The read method behind the human feed and the
+agent's transcript window takes an audience argument: the people branch excludes the
 new type, the model branch keeps it, and the append gives an activation no
 attention ordinal — the path a tool card already takes. Hiding is therefore
 server-side, so a client that has never heard of the type cannot show one by
@@ -129,7 +129,7 @@ avoid: nothing errors, nothing arrives, and nobody can tell why.
    type carrying a typed activation object — never as a reused system row.
 2. That record is invisible to people and silent: excluded server-side from the
    feed read, and given no attention ordinal, so it lights no unread marker.
-   Making it visible later is a bounded change to the people branch of one read
+   Making it visible later is a bounded change to the people branch of that read
    method, the renderer, and the append.
 3. The work stream's own agent can see the activation and decide for itself
    what to do about it.
@@ -281,9 +281,17 @@ small, explicit changes, and an earlier draft of this PRD got it wrong in a way
 worth recording, because the wrong version looks more elegant than the right
 one.
 
-The read path is one method. `messageRows` in `workstream-object-product.ts`
-serves both the human feed and — through `messagesForRuntime` — the agent, and
-it filters `WHERE substream_id = '0' AND visibility IN ('people', 'both')`. So:
+The read path is **three** methods, all in `workstream-object-product.ts` and
+all carrying their own copy of
+`WHERE substream_id = '0' AND visibility IN ('people', 'both')`:
+`messageRows`, which serves the human feed and — through `messagesForRuntime` —
+the agent's transcript window; `messageForRuntime(turnId)`, which reads one turn
+by id; and `openElicitationMessageForRuntime`. Only the first needs the audience
+argument, because it is the only one that returns a *set* an activation could
+appear in. The other two are scoped to an id the caller already holds — a run's
+own final turn, a pending elicitation — and an activation is never either, so
+they are left alone. Naming all three matters anyway: a fourth read added later
+would inherit the people predicate silently. So:
 
 - **`messageRows` takes an audience argument**, `people` or `model`. The people
   branch excludes `message_type = 'automation_activation'`; the model branch
@@ -520,9 +528,14 @@ None yet.
    it a no-op because nothing writes `'model'` today. It would instead have
    returned nothing at all, because the view labels every turn `'people'` —
    every run in every work stream would have lost its entire conversation
-   history while keeping its activations. The audience argument leaves the model
-   branch reading exactly what it reads now, plus the new type. Nothing about
-   what an existing run sees changes.
+   history while keeping its activations. It would also have broken result
+   delivery outright, because `deliverAgentRunResult` found the run's final
+   message by scanning that same call — every automation would have delivered
+   the "no text response" placeholder. That second consequence has since expired:
+   #433 gave delivery its own id-scoped `messageForRuntime(turnId)`. The context
+   loss has not. The audience argument leaves the model branch reading exactly
+   what it reads now, plus the new type, so nothing about what an existing run
+   sees changes.
 9. **The architect resolves the work stream; it does not accept a name at
    submission.** `agent-tools.md` principle 3 says to accept names and resolve
    them server-side, and a `workstreamName` field on `submit_draft` would do
@@ -1025,8 +1038,8 @@ compiler guidance in the same change as the removal, never the removal first.
 Reverting is deleting the tool's call site and restoring the predicate; there is
 no stored state to unwind, since the declaration is per run.
 
-The second is the audience split in `messageRows`, which touches the one method
-behind every feed read and every run's context. It changes nothing an existing
+The second is the audience split in `messageRows`, which touches the method
+behind every feed read and every run's transcript window. It changes nothing an existing
 work stream sees — the model branch keeps today's predicate exactly, and the
 people branch only excludes a type no existing row carries — but the blast
 radius if it is got wrong is fleet-wide, which an earlier revision of this PRD
