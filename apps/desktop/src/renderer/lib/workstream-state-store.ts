@@ -103,7 +103,16 @@ export function applyVersionedWorkstreamState(
     || input.stateVersion.commonWaterline > current.commonWaterline);
   const viewerApplied = !staleGeneration && (newerGeneration
     || input.stateVersion.viewerWaterline > current.viewerWaterline);
-  if (!commonApplied && !viewerApplied) return { commonApplied, viewerApplied };
+  const incomingIds = input.common.participantUserIds;
+  // A control seed can claim an empty pile at a waterline the later
+  // directory page shares. That page then looks like a duplicate and would
+  // otherwise be dropped, leaving the row blank for the session.
+  const canFillEmptyPile = input.visible
+    && incomingIds !== undefined
+    && incomingIds.length > 0;
+  if (!commonApplied && !viewerApplied && !canFillEmptyPile) {
+    return { commonApplied, viewerApplied };
+  }
 
   queryClient.setQueryData<Record<string, StoredWaterlines>>(
     WORKSTREAM_STATE_WATERLINES_KEY,
@@ -143,12 +152,14 @@ export function applyVersionedWorkstreamState(
     // directory page often shares. Without this, that page is rejected and
     // the row stays empty for the session. Workspace-scoped `[]` does not
     // fill — only a non-empty directory preview replacing an empty cache.
+    const incomingPileIds = input.common.participantUserIds;
     if (
       !commonApplied
       && (patched.participantUserIds?.length ?? 0) === 0
-      && (input.common.participantUserIds?.length ?? 0) > 0
+      && incomingPileIds
+      && incomingPileIds.length > 0
     ) {
-      patched.participantUserIds = input.common.participantUserIds;
+      patched.participantUserIds = incomingPileIds;
       patched.participantExtraCount = input.common.participantExtraCount ?? 0;
     }
     return withDerivedUnread(patched) as T;
