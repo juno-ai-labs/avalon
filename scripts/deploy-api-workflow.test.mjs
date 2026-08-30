@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const deployWorkflowPath = join(repositoryDirectory, '.github/workflows/deploy-api.yml');
@@ -30,6 +31,62 @@ function matrixCommand(workflow, lane) {
     .join(' ');
 }
 
+function assertInertFetchHandler(path, source) {
+  const sourceFile = ts.createSourceFile(
+    path,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const entrypoint = sourceFile.statements.find((statement) => (
+    ts.isClassDeclaration(statement)
+      && statement.modifiers?.some(({ kind }) => kind === ts.SyntaxKind.DefaultKeyword)
+      && statement.modifiers.some(({ kind }) => kind === ts.SyntaxKind.ExportKeyword)
+  ));
+  assert.ok(entrypoint && ts.isClassDeclaration(entrypoint), `${path} must default-export a class`);
+
+  const handler = entrypoint.members.find((member) => (
+    ts.isMethodDeclaration(member)
+      && ts.isIdentifier(member.name)
+      && member.name.text === 'fetch'
+  ));
+  assert.ok(handler && ts.isMethodDeclaration(handler), `${path} must register a fetch handler`);
+  assert.ok(
+    handler.modifiers?.some(({ kind }) => kind === ts.SyntaxKind.OverrideKeyword),
+    `${path} fetch handler must override WorkerEntrypoint.fetch`,
+  );
+  assert.equal(handler.body?.statements.length, 1, `${path} fetch handler must be inert`);
+
+  const [statement] = handler.body.statements;
+  assert.ok(
+    ts.isReturnStatement(statement) && statement.expression,
+    `${path} fetch handler must return a response`,
+  );
+  const response = statement.expression;
+  assert.ok(
+    ts.isNewExpression(response)
+      && ts.isIdentifier(response.expression)
+      && response.expression.text === 'Response',
+    `${path} fetch handler must return a Response`,
+  );
+  assert.equal(response.arguments?.length, 2, `${path} fetch handler must return only a status`);
+  assert.equal(response.arguments[0].kind, ts.SyntaxKind.NullKeyword, `${path} response body must be null`);
+
+  const options = response.arguments[1];
+  assert.ok(ts.isObjectLiteralExpression(options), `${path} response options must be literal`);
+  assert.equal(options.properties.length, 1, `${path} response must set only its status`);
+  const [status] = options.properties;
+  assert.ok(
+    ts.isPropertyAssignment(status)
+      && ts.isIdentifier(status.name)
+      && status.name.text === 'status'
+      && ts.isNumericLiteral(status.initializer)
+      && status.initializer.text === '404',
+    `${path} fetch handler must always return 404`,
+  );
+}
+
 test('a merge to main provisions every declared Queue before either regional deploy', async () => {
   const workflow = await readFile(deployWorkflowPath, 'utf8');
   const ensureQueues = workflow.indexOf(
@@ -48,11 +105,11 @@ test('a merge to main provisions every declared Queue before either regional dep
 
 test('private RPC Workers register Cloudflare-required inert fetch handlers', async () => {
   const entrypoints = await Promise.all(
-    capabilityEntrypointPaths.map((path) => readFile(path, 'utf8')),
+    capabilityEntrypointPaths.map(async (path) => [path, await readFile(path, 'utf8')]),
   );
 
-  for (const entrypoint of entrypoints) {
-    assert.match(entrypoint, /override fetch\(\): Response \{\s+return new Response\(null, \{ status: 404 \}\);\s+\}/u);
+  for (const [path, entrypoint] of entrypoints) {
+    assertInertFetchHandler(path, entrypoint);
   }
 });
 
