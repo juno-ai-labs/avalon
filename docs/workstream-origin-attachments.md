@@ -208,21 +208,23 @@ attaches it where it attaches the email.
   re-attach path that cannot tell them apart would drop the only record of where
   the work stream came from.
 
-  A person still can: `DELETE /workstreams/:id/resources/:resourceId` removes an
-  origin like any other attachment, and the rail's **Remove** button offers it,
-  because `WorkstreamDetail` does not carry `relationship_type`. That is
-  deliberate for now — somebody who does not want a private channel's name
-  visible in a shared work stream should be able to take it out, and protecting
-  the row would mean a contract field, a disabled control, and a refusal that
-  nobody has asked for. Revisit it together with those three, not on its own.
+  A person still can: `DELETE /workstreams/:id/resources/:resourceId` unlinks an
+  origin like any other attachment, and the rail's **Archive** control offers it
+  after a continue/cancel confirm, because `WorkstreamDetail` does not carry
+  `relationship_type`. That is deliberate for now — somebody who does not want a
+  private channel's name visible in a shared work stream should be able to take
+  it out, and protecting the row would mean a contract field, a disabled
+  control, and a refusal that nobody has asked for. Revisit it together with
+  those three, not on its own.
 
-  The rail's resource detail carries two more controls. The version list is
-  offered for any resource with more than one version. **Refresh from source**
-  additionally requires the server's `refreshSupported` capability, which is
-  true only when the deployed connector adapter implements `hydrateResource`.
-  An origin can therefore be refreshed only when its connector can fulfill the
-  same `POST /resources/:id/hydrate` request; a Slack channel origin never shows
-  a button whose endpoint would answer `hydration_not_supported`.
+  The rail's resource detail carries two more controls in the header. **Versions**
+  opens the resource's history, labelled with sparse relative dates. **Refresh
+  from source** still sits on the document itself and additionally requires the
+  server's `refreshSupported` capability, which is true only when the deployed
+  connector adapter implements `hydrateResource`. An origin can therefore be
+  refreshed only when its connector can fulfill the same
+  `POST /resources/:id/hydrate` request; a Slack channel origin never shows a
+  button whose endpoint would answer `hydration_not_supported`.
 - **An origin carries no provider content.** It records where something is, not
   what it said. Slack Agent policy makes this explicit — durably storing provider
   content gathered for surrounding context is forbidden — and the rule is the
@@ -373,6 +375,30 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-30 — Resource detail is the document, with Versions and Archive in the header
+
+**What changed:** Opening a resource puts its title in the rail header in place
+of "Details", drops the icon and the type/direction/version card, and renders
+last-updated with the markdown in the rail's own scroll rather than in a boxed
+inner preview. **Versions** and **Archive** are header icon buttons. Versions
+opens the history grouped under sparse relative dates (today, yesterday, this
+week, last week, this month, last month, or "Aug 2025"). Archive asks with a
+continue/cancel modal, then unlinks the resource the way **Remove** used to.
+
+**Why:** The boxed preview made a cited document look like a card about a
+document. The metadata rows were wiring, not what a person opens the rail to
+read. Versions belonged behind a control once the body became the whole pane;
+an unconfirmed unlink was too easy next to a document someone had just opened.
+
+**Considered and rejected:** A real `archived_at` on the resource row. Detach
+already leaves the workspace object in place and only drops the work-stream
+link, which is the soft-delete the rail can offer without a schema and a restore
+path nobody has asked for.
+
+**Consequences:** An origin is still unlinkable. The version list is no longer
+inline on the document, including for a resource that has only ever had one
+revision — opening Versions is how you see that one row.
 
 ### 2026-08-28 — Scope cut: an activity-triggered automation run loses its origin
 
