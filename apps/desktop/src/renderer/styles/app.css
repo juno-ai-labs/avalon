@@ -2643,9 +2643,10 @@ pre {
 
 /* Heading collapse. h2+ become a one-level accordion: the chevron lives in a
    gutter to the left of the heading, and a collapsed section keeps ~3 lines of
-   whatever follows (a paragraph, the top of a table) behind a strong opacity
-   fade so the next heading is what the eye lands on. Nested headings are
-   content, not nested accordions — an h3 under an h2 has no chevron. */
+   whatever follows (a paragraph, the top of a table) behind a fade that starts
+   at 60% opacity on the first pixel and reaches transparent on the last, so the
+   next heading is what the eye lands on. Nested headings are content, not
+   nested accordions — an h3 under an h2 has no chevron. */
 .markdown-body:has(> .markdown-collapse) {
   padding-left: 20px;
 }
@@ -2672,9 +2673,9 @@ pre {
 .markdown-collapse-chevron svg { display: block; transition: transform 140ms ease; }
 .markdown-collapse.is-expanded .markdown-collapse-chevron svg { transform: rotate(90deg); }
 .markdown-collapse.is-collapsed > .markdown-collapse-body {
-  -webkit-mask-image: linear-gradient(to bottom, var(--av-sys-color-text-default) 0%, var(--av-sys-color-text-default) 18%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent), transparent);
   -webkit-mask-mode: alpha;
-  mask-image: linear-gradient(to bottom, var(--av-sys-color-text-default) 0%, var(--av-sys-color-text-default) 18%, transparent 100%);
+  mask-image: linear-gradient(to bottom, color-mix(in srgb, var(--av-sys-color-text-default) 60%, transparent), transparent);
   mask-mode: alpha;
   max-height: 3lh;
   overflow: hidden;
