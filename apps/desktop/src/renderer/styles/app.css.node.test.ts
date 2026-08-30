@@ -752,4 +752,27 @@ describe('inspector resource document chrome', () => {
     expect(idle).not.toBeNull();
     expect(idle).toContain('color: var(--av-sys-color-danger-base);');
   });
+
+  // The rail is a grid with a definite width, but an implicit `auto` column
+  // will not shrink below the markdown's max-content, and `.rail-scroll`'s
+  // `overflow-x: hidden` then clips the unwrapped lines. Naming the column
+  // `minmax(0, 1fr)` and giving the scroller and the document host `min-width:
+  // 0` is what makes the preview take the rail rather than the file. HyperSight
+  // already had the scroller-side half on `.block-dashboard-panel`; dropping
+  // either half here returns the clip.
+  it('gives the rail a column that can shrink below the document min-content', () => {
+    const surface = rule('.rail-surface');
+    expect(surface).not.toBeNull();
+    expect(surface).toContain('grid-template-columns: minmax(0, 1fr);');
+    const scroll = rule('.rail-scroll');
+    expect(scroll).not.toBeNull();
+    expect(scroll).toContain('min-width: 0;');
+  });
+
+  it('sizes the document host to the rail rather than the markdown max-content', () => {
+    const host = rule('.inspector-detail-document');
+    expect(host).not.toBeNull();
+    expect(host).toContain('max-width: 100%;');
+    expect(host).toContain('min-width: 0;');
+  });
 });
