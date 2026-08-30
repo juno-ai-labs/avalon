@@ -196,6 +196,11 @@ describe('work-stream presentation rules', () => {
     expect(formatSparseRelativeDate(localDate(2026, 6, 15, 12), now)).toBe('last month');
     expect(formatSparseRelativeDate(localDate(2025, 7, 1, 12), now)).toBe('Aug 2025');
     expect(formatSparseRelativeDate('not-a-date', now)).toBe('Unknown time');
+    // A server stamp ahead of the desktop clock used to fall through an
+    // unbounded "this month" and group next year with August.
+    expect(formatSparseRelativeDate(localDate(2026, 7, 31, 9), now)).toBe('this month');
+    expect(formatSparseRelativeDate(localDate(2026, 8, 1, 9), now)).toBe('Sep 2026');
+    expect(formatSparseRelativeDate(localDate(2027, 0, 1, 9), now)).toBe('Jan 2027');
   });
 
   it('lets this week win over this month for a weekday that is neither today nor yesterday', () => {

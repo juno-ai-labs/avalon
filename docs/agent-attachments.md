@@ -615,6 +615,20 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-08-30 — Archive waits for the unlink before leaving the document
+
+**What changed:** Continue on the inspector **Archive** dialog awaits the detach
+mutation, stays open with the error if it fails, and only then returns to
+context. Image resources render in the document host.
+
+**Why:** Closing on click treated a refused DELETE as success and dropped
+keyboard focus with the Archive button. An image had no body once the metadata
+card went away.
+
+**What a future change has to respect:** the unlink is still detach, not a
+workspace-object delete. Do not clear the inspector until the mutation
+resolves.
+
 ### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
 
 **What changed:** **Versions** in the inspector header opens a dropdown of the

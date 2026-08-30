@@ -3389,6 +3389,7 @@ pre {
    a second scroller. Hosts may size the body; they may not restyle its
    elements — see markdown-rendering.md. */
 .inspector-detail-document .markdown-body { font-size: 13px; }
+.inspector-detail-image { display: block; height: auto; max-width: 100%; }
 .inspector-detail-preview-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 11.5px; gap: 6px; margin-bottom: 18px; }
 /* History in the header Versions dropdown. Group labels are the sparse
    calendar buckets; the rows themselves are who wrote that revision. */

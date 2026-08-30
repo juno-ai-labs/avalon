@@ -394,6 +394,35 @@ describe('InspectorRail details', () => {
     expect(screen.getByText('Rally could not load this history.')).toBeVisible();
   });
 
+  it('says versions are loading rather than that there are none', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={{ ...workstream, resources: [watched] }} />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
+
+    expect(screen.getByText('Loading versions…')).toBeVisible();
+    expect(screen.queryByText('No versions yet.')).toBeNull();
+  });
+
+  it('says there are no versions when the history loaded empty', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          resourceVersions={[]}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Versions' }));
+
+    expect(screen.getByText('No versions yet.')).toBeVisible();
+    expect(screen.queryByText('Loading versions…')).toBeNull();
+  });
+
   it('opens a prior version read-only rather than replacing what is current', () => {
     const onOpenResourceVersion = vi.fn();
     render(
@@ -520,7 +549,19 @@ describe('InspectorRail details', () => {
     expect(screen.getByRole('button', { name: 'Archive' })).toHaveClass('icon-button-danger');
   });
 
-  it('asks before archiving, and Continue unlinks the resource', () => {
+  it('hides Archive when nothing can unlink the resource', () => {
+    render(
+      <Tooltip.Provider>
+        <InspectorRail workstream={{ ...workstream, resources: [watched] }} />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+
+    expect(screen.getByRole('button', { name: 'Versions' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+  });
+
+  it('asks before archiving, and Continue unlinks the resource', async () => {
     const onDetachResource = vi.fn();
     render(
       <Tooltip.Provider>
@@ -534,15 +575,68 @@ describe('InspectorRail details', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
 
     const dialog = screen.getByRole('dialog', { name: 'Archive this resource?' });
-    expect(within(dialog).getByText(watched.title)).toBeVisible();
+    expect(dialog).toHaveAccessibleDescription(/will leave this work stream/u);
+    expect(within(dialog).getByText(new RegExp(watched.title, 'u'))).toBeVisible();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(onDetachResource).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
-    expect(onDetachResource).toHaveBeenCalledWith(expect.objectContaining({ id: 'resource-1' }));
+    await waitFor(() => {
+      expect(onDetachResource).toHaveBeenCalledWith(expect.objectContaining({ id: 'resource-1' }));
+    });
     expect(useUiStore.getState().inspector).toBeNull();
+  });
+
+  it('keeps the archive dialog open when the unlink fails', async () => {
+    const onDetachResource = vi.fn(async () => {
+      throw new Error('The work stream refused the unlink.');
+    });
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={onDetachResource}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
+
+    expect(await screen.findByText('The work stream refused the unlink.')).toBeVisible();
+    expect(screen.getByRole('dialog', { name: 'Archive this resource?' })).toBeVisible();
+    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
+  });
+
+  it('disables archive actions while the unlink is in flight', async () => {
+    let finish: (() => void) | undefined;
+    const onDetachResource = vi.fn(() => new Promise<void>((resolve) => {
+      finish = resolve;
+    }));
+    render(
+      <Tooltip.Provider>
+        <InspectorRail
+          onDetachResource={onDetachResource}
+          workstream={{ ...workstream, resources: [watched] }}
+        />
+      </Tooltip.Provider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Linear issue create: AVA-9/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Continue' })).toBeDisabled();
+    });
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(useUiStore.getState().inspector).toEqual({ type: 'resource', id: 'resource-1' });
+
+    finish?.();
+    await waitFor(() => {
+      expect(useUiStore.getState().inspector).toBeNull();
+    });
   });
 
   it('groups versions under sparse relative dates', () => {
@@ -626,6 +720,28 @@ describe('resource detail content preview', () => {
     expect(rule).not.toBeNull();
     expect(updated.compareDocumentPosition(rule!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(rule!.compareDocumentPosition(documentBody!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('renders an image resource in the detail instead of leaving it empty', async () => {
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:diagram');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const loadResourceContent = vi.fn(async () => new Blob(['PNG'], { type: 'image/png' }));
+    try {
+      openDetail({
+        ...note,
+        id: 'resource-image',
+        title: 'diagram.png',
+        mimeType: 'image/png',
+      }, loadResourceContent);
+
+      const image = await screen.findByRole('img', { name: 'diagram.png' });
+      expect(image).toHaveAttribute('src', 'blob:diagram');
+      expect(document.querySelector('.inspector-detail-document')).not.toBeNull();
+      expect(loadResourceContent).toHaveBeenCalledExactlyOnceWith('resource-image', expect.anything());
+    } finally {
+      createObjectURL.mockRestore();
+      revokeObjectURL.mockRestore();
+    }
   });
 
   it('re-reads the content when the resource is revised in place', async () => {
@@ -865,13 +981,6 @@ describe('resource detail content preview', () => {
         vi.useRealTimers();
       }
     });
-  });
-
-  it('does not try to render an image as text', () => {
-    const loadResourceContent = vi.fn();
-    openDetail({ ...note, mimeType: 'image/png', title: 'Screenshot.png' }, loadResourceContent);
-
-    expect(loadResourceContent).not.toHaveBeenCalled();
   });
 
   it.each([

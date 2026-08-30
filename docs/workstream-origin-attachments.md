@@ -210,19 +210,18 @@ attaches it where it attaches the email.
 
   A person still can: `DELETE /workstreams/:id/resources/:resourceId` unlinks an
   origin like any other attachment, and the rail's **Archive** control offers it
-  after a continue/cancel confirm, because `WorkstreamDetail` does not carry
-  `relationship_type`. That is deliberate for now — somebody who does not want a
-  private channel's name visible in a shared work stream should be able to take
-  it out, and protecting the row would mean a contract field, a disabled
-  control, and a refusal that nobody has asked for. Revisit it together with
-  those three, not on its own.
+  after a continue/cancel confirm. The client already has `relationshipType` on
+  each `WorkstreamResource`; the UI does not consult it, so Archive is available
+  on an origin the same as on any other row. Protecting the row would mean a
+  disabled control and a server refusal that nobody has asked for, not a new
+  contract field. Revisit it together with those two, not on its own.
 
-  The rail's resource detail carries two more controls in the header. **Versions**
-  opens the resource's history, labelled with sparse relative dates. **Refresh
-  from source** still sits on the document itself and additionally requires the
-  server's `refreshSupported` capability, which is true only when the deployed
-  connector adapter implements `hydrateResource`. An origin can therefore be
-  refreshed only when its connector can fulfill the same
+  The rail's resource detail carries two more controls in the header: **Versions**
+  and **Archive**. **Versions** opens the resource's history, labelled with sparse
+  relative dates. **Refresh from source** still sits on the document itself and
+  additionally requires the server's `refreshSupported` capability, which is true
+  only when the deployed connector adapter implements `hydrateResource`. An origin
+  can therefore be refreshed only when its connector can fulfill the same
   `POST /resources/:id/hydrate` request; a Slack channel origin never shows a
   button whose endpoint would answer `hydration_not_supported`.
 - **An origin carries no provider content.** It records where something is, not
@@ -375,6 +374,24 @@ entry point: the credentials it uses are refreshed by the door rather than by a
 step the ingress has to remember.
 
 ## Changelog
+
+### 2026-08-30 — Archive waits for the unlink; Versions distinguishes loading from none
+
+**What changed:** **Archive** stays open until `detachResource` succeeds, keeps
+an inline error on failure, and is absent when the rail has no unlink handler.
+The confirm copy is the dialog's accessible description. **Versions** treats a
+pending history fetch as loading rather than as an empty list, and the document
+host `.inspector-detail-document` joined the markdown-element stylesheet guard.
+
+**Why:** Continue used to fire `mutate` and clear the inspector in the same
+tick, so a refused DELETE left the resource attached while the reader was back
+on the list, and Radix returned focus to a button that had unmounted. The docs
+had also claimed `WorkstreamDetail` lacked `relationship_type`; the client
+already has `relationshipType` and simply does not gate Archive on it.
+
+**What a future change has to respect:** do not call `inspect(null)` until the
+unlink resolves. Pending disables Cancel and Continue the way the sidebar's
+note-archive dialog does.
 
 ### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
 
