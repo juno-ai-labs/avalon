@@ -82,7 +82,7 @@ describe("agent inference logging", () => {
       latencyMs: 340,
       disposition: "fallback",
       failureKind: "api",
-      providerError: { code: 400, message: "Provider returned error", providerName: "xAI" },
+      providerError: { code: 400, providerName: "xAI" },
     });
 
     expect(logged).toHaveBeenCalledTimes(1);

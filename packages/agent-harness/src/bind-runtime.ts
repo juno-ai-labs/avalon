@@ -52,6 +52,7 @@ import {
   HarnessPluginActivationError,
   OpenRouterClient,
   OpenRouterError,
+  OpenRouterRequestError,
   buildOpenRouterTracePayload,
   canonicalToolInputHash,
   modelMessageWithoutProvenance,
@@ -2056,6 +2057,7 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
           if (error instanceof FatalHarnessPortError || error instanceof HarnessLimitError || error instanceof AmbiguousExternalWriteError) {
             throw error;
           }
+          if (error instanceof OpenRouterRequestError) throw error;
           const target: AttemptTarget = {
             cursor,
             providerId: candidate.providerId,
