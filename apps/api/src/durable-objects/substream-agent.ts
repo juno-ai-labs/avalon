@@ -8,6 +8,7 @@ import {
   PersonalSocketEventSchema,
   ResourceRelationshipTypeSchema,
   SubstreamIdSchema,
+  TranscriptTurnIdSchema,
   UserIdSchema,
   type Region,
   type SubstreamId,
@@ -98,6 +99,10 @@ import {
 } from "../services/integrations";
 import { deliverFrozenAutomationResultEmail } from "../services/automation-email-service";
 import { settleDigestRun } from "../services/digest-run-settlement";
+import {
+  canonicalExternalResultText,
+  deliverCanonicalExternalResult,
+} from "../services/external-result-delivery";
 import { SlackAgentService } from "../services/slack-agent-service";
 import { refreshWorkstreamDescription } from "../services/workstream-description-service";
 import { refreshWorkstreamName } from "../services/workstream-naming-service";
@@ -297,7 +302,7 @@ const RuntimeBootstrapRequestSchema = z.object({
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
 const AgentTerminalOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
-  finalTurnId: z.string().min(1).max(180).optional(),
+  finalTurnId: TranscriptTurnIdSchema.optional(),
   error: z.object({ code: z.string(), message: z.string() }).optional(),
   metrics: HarnessRunMetricsSchema.optional(),
   cancellationReason: z.string().nullable().optional(),
@@ -3421,18 +3426,19 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     retryAt: number | null;
   }> {
     try {
-      await this.settleAgentRun(executionEnv, input, outcome);
+      const settlementDiagnosticCode = await this.settleAgentRun(executionEnv, input, outcome);
       this.state.storage.sql.exec(
         `UPDATE runs SET external_settled_at = ?, execution_available_at = NULL,
-                last_settlement_error_code = NULL, updated_at = ?
+                last_settlement_error_code = ?, updated_at = ?
           WHERE run_id = ? AND terminalized_at IS NOT NULL`,
         Date.now(),
+        settlementDiagnosticCode,
         Date.now(),
         input.harnessRunId,
       );
       return {
         status: outcome.status,
-        errorCode: outcome.error?.code ?? null,
+        errorCode: outcome.error?.code ?? settlementDiagnosticCode,
         retryAt: null,
       };
     } catch (error) {
@@ -3501,7 +3507,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     executionEnv: Env,
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
-  ): Promise<void> {
+  ): Promise<string | null> {
     await emitCorrelatedRunOutcome(executionEnv, input).catch(() => undefined);
     if (outcome.metrics) {
       recordHarnessRunObservation(this.env, {
@@ -3516,9 +3522,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     }
 
     await this.finalizeAutomation(executionEnv, input, outcome);
-    if (outcome.cancellationReason !== "superseded_by_follow_up") {
-      await this.deliverAgentRunResult(input, outcome);
-    }
+    const settlementDiagnosticCode = outcome.cancellationReason !== "superseded_by_follow_up"
+      ? await this.deliverAgentRunResult(input, outcome)
+      : null;
     await refreshWorkstreamName(executionEnv, {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
@@ -3527,36 +3533,49 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       workspaceId: input.workspaceId,
       workstreamId: input.workstreamId,
     });
+    return settlementDiagnosticCode;
   }
 
   private async deliverAgentRunResult(
     input: WorkstreamWorkflowInput,
     outcome: AgentTerminalOutcome,
-  ): Promise<void> {
+  ): Promise<string | null> {
     const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-    const messages = outcome.finalTurnId
-      ? (await this.product.messagesForRuntime(250)).items
-      : [];
-    const message = outcome.finalTurnId
-      ? messages.find((candidate) => candidate.id === outcome.finalTurnId)
-      : undefined;
-    const text = message?.textContent
-      ?? (outcome.status === "stopped"
-        ? "Avalon stopped this task."
-        : outcome.status === "needs_input"
-          ? "Avalon needs more information before it can continue this task."
-          : outcome.status === "failed"
-            ? outcome.error?.message ?? "Avalon could not complete this task."
-            : "Avalon completed the task without a text response.");
+    const finalMessage = outcome.finalTurnId
+      ? await this.product.messageForRuntime(outcome.finalTurnId)
+      : null;
+    const settlementDiagnosticCode = outcome.finalTurnId && !finalMessage
+      ? "agent_final_turn_not_saved"
+      : null;
+    if (settlementDiagnosticCode) {
+      // A null exact lookup is not a persistence race: the transcript write is
+      // awaited before terminalization, and both reads address the same durable
+      // authority. Preserve the diagnostic without leaving provider status and
+      // reactions stuck behind an unbounded retry.
+      logWarn(this.env, settlementDiagnosticCode, {
+        workspace_id: input.workspaceId,
+        workstream_id: input.workstreamId,
+        harness_run_id: input.harnessRunId,
+        final_turn_id: outcome.finalTurnId,
+      });
+    }
+    const elicitationMessage = outcome.status === "needs_input"
+      ? await this.product.openElicitationMessageForRuntime()
+      : null;
+    const message = elicitationMessage ?? finalMessage;
+    // External platforms are projections of durable transcript state. Status
+    // cleanup may still run without a final turn, but no adapter may invent or
+    // stream response prose that the canonical transcript does not contain.
+    const text = canonicalExternalResultText(message);
     if (input.digestDeliveryId) {
       await settleDigestRun(
         this.env,
         input.workspaceId,
         input.digestDeliveryId,
         outcome.status,
-        message?.textContent ?? null,
+        text,
       );
-      return;
+      return settlementDiagnosticCode;
     }
 
     const slack = new SlackAgentService(this.env);
@@ -3567,7 +3586,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       `${input.harnessRunId}:${outcome.status}`,
       outcome.status,
     );
-    if (!input.automationSubscriptionId) return;
+    if (!input.automationSubscriptionId) return settlementDiagnosticCode;
     const frozen = input.automationRunContext;
     if (!frozen || frozen.automationId !== input.automationSubscriptionId) {
       throw new Error("automation_run_context_not_found");
@@ -3593,8 +3612,8 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
         ? `email:${target.emailAddress.toLocaleLowerCase()}`
         : `slack_agent_dm:${target.connectionId}:${target.slackTeamId}:${target.slackUserId}`;
       try {
-        const state = target.type === "email"
-          ? await deliverFrozenAutomationResultEmail(workspaceEnv, {
+        const state = await deliverCanonicalExternalResult(text, (savedText) => target.type === "email"
+          ? deliverFrozenAutomationResultEmail(workspaceEnv, {
               workspaceId: input.workspaceId,
               automationSubscriptionId: frozen.automationId,
               automationRunId: frozen.runId,
@@ -3602,10 +3621,10 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               recipientEmail: target.emailAddress,
               recipientUserId: frozen.executionPrincipal.userId,
               title: frozen.definition.name,
-              text,
+              text: savedText,
               outcomeStatus: outcome.status,
             })
-          : await slack.deliverFrozenAutomationResult({
+          : slack.deliverFrozenAutomationResult({
               workspaceId: input.workspaceId,
               automationId: frozen.automationId,
               automationRunId: frozen.runId,
@@ -3615,9 +3634,9 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
               slackTeamId: target.slackTeamId,
               slackUserId: target.slackUserId,
               title: frozen.definition.name,
-              text,
+              text: savedText,
               outcomeStatus: outcome.status,
-            });
+            }));
         await automation.recordDeliveryReceipt({
           schemaVersion: 1,
           automationId: frozen.automationId,
@@ -3652,6 +3671,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       });
     }
     if (failures.length > 0) throw failures[0];
+    return settlementDiagnosticCode;
   }
 
   private async finalizeAutomation(

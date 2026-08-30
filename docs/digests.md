@@ -685,6 +685,27 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-29 — Digest settlement receives only saved canonical result text
+
+**What changed:** Digest terminal settlement now receives the same normalized
+text rendered from a reloaded canonical turn as other external destinations. A
+run with no saved result, or only whitespace, passes `null`; the digest
+settlement authority marks that occurrence failed and does not advance its
+cursor or synthesize a replacement summary.
+
+**Why:** External delivery previously manufactured a generic completion or
+failure sentence when a run had no result text. That made a host-authored
+sentence look like the digest the model was required to save and could consume
+the window without delivering its contents.
+
+**Considered and rejected:** Keeping a digest-only fallback because email is not
+a chat stream. The authority problem is the same for every destination: content
+that is absent from the canonical transcript cannot become the external result.
+
+**What a future change has to respect:** Digest delivery may format saved text,
+but it must not replace missing saved content with status prose. A missing result
+fails the occurrence so its events remain eligible for the next digest.
+
 ### 2026-08-29 — The digest tables answer to typed WorkspaceDO methods, not routed SQL
 
 **What changed:** Every digest statement the services sent through the
