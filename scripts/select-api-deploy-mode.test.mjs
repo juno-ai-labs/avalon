@@ -29,6 +29,8 @@ test('uses Wrangler direct deployment for platform state its Versions API cannot
     'apps/api/wrangler.eu.jsonc',
     'apps/api/wrangler.global.jsonc',
     'apps/api/wrangler.documents.eu.jsonc',
+    'apps/api/wrangler.documents.global.jsonc',
+    'apps/api/wrangler.terminal.eu.jsonc',
     'apps/api/wrangler.terminal.global.jsonc',
     'apps/api/crash-symbolicator/src/index.js',
   ]) {

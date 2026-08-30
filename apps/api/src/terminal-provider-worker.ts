@@ -1,7 +1,11 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import { createDaytonaTerminalProvider } from "./services/terminal/daytona-provider";
+import {
+  createDaytonaTerminalProvider,
+  type DaytonaTerminalProvider,
+} from "./services/terminal/daytona-provider";
 import type { TerminalSandboxProvider } from "./services/terminal/provider-contract";
+import { withTerminalProviderRpcAbort } from "./services/terminal/provider-rpc-cancellation";
 import type {
   SupportedTerminalConfiguration,
   TerminalCommandRpcInput,
@@ -16,7 +20,7 @@ export default class TerminalProviderWorker
   private provider(
     configuration: SupportedTerminalConfiguration,
     callbacks?: TerminalProviderRpcCallbacks,
-  ): TerminalSandboxProvider {
+  ): DaytonaTerminalProvider {
     return createDaytonaTerminalProvider(configuration, undefined, {
       ...(callbacks?.observe ? {
         observe: (measurement) => this.ctx.waitUntil(
@@ -36,7 +40,7 @@ export default class TerminalProviderWorker
   }
 
   prepareSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, allowList: string[], callbacks?: TerminalProviderRpcCallbacks) {
-    return this.provider(configuration, callbacks).prepareSandbox!(idOrName, allowList);
+    return this.provider(configuration, callbacks).prepareSandbox(idOrName, allowList);
   }
 
   getSandbox(configuration: SupportedTerminalConfiguration, idOrName: string, callbacks?: TerminalProviderRpcCallbacks) {
@@ -87,7 +91,7 @@ export default class TerminalProviderWorker
     bytes: Uint8Array,
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return this.withAbort(callbacks, (signal) =>
+    return withTerminalProviderRpcAbort(callbacks, (signal) =>
       this.provider(configuration, callbacks).writeFile(idOrName, path, bytes, signal));
   }
 
@@ -97,7 +101,7 @@ export default class TerminalProviderWorker
     input: TerminalUtilityCommandRpcInput,
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return this.withAbort(callbacks, (signal) =>
+    return withTerminalProviderRpcAbort(callbacks, (signal) =>
       this.provider(configuration, callbacks).runUtilityCommand(idOrName, { ...input, signal }));
   }
 
@@ -107,7 +111,7 @@ export default class TerminalProviderWorker
     input: TerminalCommandRpcInput,
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return this.withAbort(callbacks, (signal) =>
+    return withTerminalProviderRpcAbort(callbacks, (signal) =>
       this.provider(configuration, callbacks).runCommand(idOrName, {
         ...input,
         signal,
@@ -124,25 +128,7 @@ export default class TerminalProviderWorker
     taskName: string,
     callbacks?: TerminalProviderRpcCallbacks,
   ) {
-    return this.provider(configuration, callbacks).cleanupCommand!(idOrName, taskName);
+    return this.provider(configuration, callbacks).cleanupCommand(idOrName, taskName);
   }
 
-  private async withAbort<T>(
-    callbacks: TerminalProviderRpcCallbacks | undefined,
-    operation: (signal: AbortSignal) => Promise<T>,
-  ): Promise<T> {
-    const controller = new AbortController();
-    const abortObservation = callbacks?.waitForAbort?.().then(
-      (outcome) => {
-        if (outcome === "aborted") controller.abort(new Error("Terminal operation cancelled"));
-      },
-      () => controller.abort(new Error("Terminal caller disconnected")),
-    );
-    try {
-      return await operation(controller.signal);
-    } finally {
-      await callbacks?.finishAbortWait?.().catch(() => undefined);
-      await abortObservation;
-    }
-  }
 }
