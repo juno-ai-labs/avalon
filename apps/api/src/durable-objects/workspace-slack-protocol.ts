@@ -265,7 +265,7 @@ export const WorkspaceSlackThreadReleaseRequestSchema = z.object({
 
 /**
  * The agent-session lifecycle: the thread's Rally identity, its delivery
- * bookkeeping, and the status reaction Avalon keeps on the triggering message.
+ * bookkeeping, and the status reaction Rally keeps on the triggering message.
  *
  * `slack_agent_contexts` is keyed `(connection_id, slack_user_id)` and carries
  * no `workspace_id` of its own — the workspace is how the caller found the
@@ -413,8 +413,10 @@ export const WorkspaceSlackSessionStreamRequestSchema = z.object({
  * [`docs/durable-object-sqlite.md`](../../../../docs/durable-object-sqlite.md)
  * forbids deciding a logical outcome from.
  *
- * `expected` is nullable because NULL is a real state: it means Avalon has
- * placed nothing, so the predicate is `IS`, not `=`.
+ * `expected` is nullable because NULL is a real state: it means Rally has
+ * placed nothing, so the predicate is `IS`, not `=`. That predicate is carried
+ * forward from the statement this replaced, which already had it right; what
+ * moved is only how the outcome is decided.
  */
 export const WorkspaceSlackSessionReactionRequestSchema = z.object({
   workspaceId: IdSchema,
@@ -469,8 +471,10 @@ export const WorkspaceSlackContextStoreRequestSchema = z.object({
  * One feedback row per ingress job.
  *
  * `ingress_job_id` is `UNIQUE`, so a redelivered interaction is a replay rather
- * than an error: the insert reports which it was from its own witness instead
- * of leaving the service to interpret a constraint violation.
+ * than an error. The statement this replaced already ignored the conflict and
+ * was right to; what it could not do was say which case it had hit, because it
+ * discarded the result. The witness makes the replay reportable, which is the
+ * only thing a caller can usefully do with it.
  */
 export const WorkspaceSlackFeedbackRequestSchema = z.object({
   workspaceId: IdSchema,

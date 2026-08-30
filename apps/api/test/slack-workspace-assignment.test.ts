@@ -302,6 +302,139 @@ describe("Slack workspace workstream assignment", () => {
     expect(workstreamObjectRootRow(objectStore, "created_by_user_id")).toEqual({ created_by_user_id: "user-owner" });
   });
 
+  it("seats the connections behind a failed one instead of abandoning the loop", async () => {
+    // A workspace can carry more than one workspace-scoped Slack installation:
+    // `connector_connections_active_model_plugin_id_uq` is unique on
+    // `(workspace_id, model_plugin_id)`, and `allocateModelPluginId` suffixes
+    // (`plugin_slack_workspace_2`) rather than refusing, which is why the two
+    // rows here differ in that column and only in that column. Seating is a
+    // WorkspaceDO write that can fail transiently. When it
+    // does, only that connection is skipped: letting the throw out of the loop
+    // would silently leave every later installation unseated, which is the
+    // regression that arrives the moment the seating call shares the Slack
+    // lookup's `try` block or nothing at all.
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance: workspaceObject, objectDatabase } = createTestWorkspaceDO({
+      workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524",
+      regionalDatabase: database,
+      register: (created) => { databases.push(created); },
+    });
+    const failing = await encryptString(
+      JSON.stringify({ botAccessToken: "xoxb-a" }), credentialsKey, "connection-a",
+    );
+    const healthy = await encryptString(
+      JSON.stringify({ botAccessToken: "xoxb-b" }), credentialsKey, "connection-b",
+    );
+    const connections = `
+      INSERT INTO connector_connections
+        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+         display_name, encrypted_credentials, credential_iv, credential_key_version,
+         granted_scopes_json, status, cursor_json, config_json, created_at, updated_at,
+         model_plugin_id)
+      VALUES
+        ('connection-a', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T1',
+         'Slack A', '${failing.ciphertext}', '${failing.iv}', 1,
+         '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+         'plugin_slack_workspace'),
+        ('connection-b', '3f88f9ca-d7b3-4714-828e-b22187914524', 'slack', 'workspace', NULL, 'T2',
+         'Slack B', '${healthy.ciphertext}', '${healthy.iv}', 1,
+         '["slack.agent"]', 'healthy', '{}', '{}', '2026-01-01', '2026-01-01',
+         'plugin_slack_workspace_2');
+    `;
+    database.exec(`
+      INSERT INTO users (id, google_subject, email, name, created_at, updated_at)
+      VALUES
+        ('user-owner', 'google-owner', 'owner@example.com', 'Owner', '2026-01-01', '2026-01-01'),
+        ('a352221e-2577-4ad0-8889-5b24421f63fb', 'google-taylor', 'taylor@example.com', 'Taylor', '2026-01-01', '2026-01-01');
+      INSERT INTO workspaces
+        (id, name, slug, region, created_by_user_id, created_at, updated_at)
+      VALUES ('3f88f9ca-d7b3-4714-828e-b22187914524', 'Slack Workspace', 'slack-workspace', 'global',
+              'user-owner', '2026-01-01', '2026-01-01');
+      INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
+      VALUES
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'user-owner', 'owner', 'active', '2026-01-01'),
+        ('3f88f9ca-d7b3-4714-828e-b22187914524', 'a352221e-2577-4ad0-8889-5b24421f63fb', 'member', 'active', '2026-02-01');
+      ${connections}
+      INSERT INTO workstreams
+        (id, workspace_id, title, objective, origin_type, created_by_user_id,
+         harness_status, next_sequence_number, last_activity_at, created_at, updated_at)
+      VALUES ('7a000000-0000-4000-8000-000000000009', '3f88f9ca-d7b3-4714-828e-b22187914524', 'Later', 'Later',
+              'ad_hoc', NULL, 'completed', 2, '2026-01-01', '2026-01-01', '2026-01-01');
+    `);
+    // Only the second installation owns a session, so the count this returns is
+    // exactly the evidence that the loop reached it.
+    objectDatabase.exec(`
+      ${connections}
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-later', '3f88f9ca-d7b3-4714-828e-b22187914524', 'connection-b', NULL, 'workspace',
+              'T2', 'U456', 'C123', '1.0', 'event:later', '7a000000-0000-4000-8000-000000000009',
+              'app_mention', 'public', '{}', '2026-01-01', '2026-01-01');
+    `);
+    const objectStores = new Map<string, DatabaseSync>();
+    seedWorkstreamObject(
+      objectStores,
+      { workstreamId: "7a000000-0000-4000-8000-000000000009", workspaceId: "3f88f9ca-d7b3-4714-828e-b22187914524" },
+      { title: "Later", objective: "Later", createdByUserId: null, exactState: "completed" },
+    );
+    // Each installation is its own Slack team, so the lookup answers with the
+    // team belonging to the bot token it was called with — `validSlackHuman`
+    // rejects a member from another team, and a single-team stub would make
+    // the second connection look like a mismatch rather than a seating.
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const authorization = String(new Headers(init?.headers).get("authorization") ?? "");
+      return new Response(JSON.stringify({
+        ok: true,
+        user: {
+          id: "U456",
+          team_id: authorization.includes("xoxb-b") ? "T2" : "T1",
+          deleted: false,
+          is_bot: false,
+          profile: { email: "taylor@example.com" },
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    const rpcs = workspaceObjectRpcs(workspaceObject, SLACK_WORKSPACE_OBJECT_METHODS);
+    const env = createTestEnv({
+      DB: sqliteD1(database),
+      SUBSTREAM_AGENTS: testSubstreamAgentsBinding(database, { objectStores }),
+      WORKSPACE_DOS: testSubstreamAgentsBinding(database, {
+        extra: {
+          ...rpcs,
+          // The object refusing one installation's write, the way an overloaded
+          // object would. Everything else stays the real method.
+          assignSlackSessions: async (input: { connectionId: string }) => {
+            if (input.connectionId === "connection-a") throw new Error("workspace_object_overloaded");
+            return (rpcs.assignSlackSessions as (request: unknown) => unknown)(input);
+          },
+        },
+      }),
+      AVALON_REGION: "global",
+      CONNECTOR_CREDENTIALS_KEY: credentialsKey,
+      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      PUBLIC_API_BASE_URL: "https://api.with-avalon.com",
+      SLACK_CLIENT_ID: "client",
+      SLACK_CLIENT_SECRET: "secret",
+      SLACK_SIGNING_SECRET: "signing",
+    });
+
+    // One, not zero and not a throw: `connection-a` was skipped, `connection-b`
+    // was still seated.
+    await expect(new SlackAgentService(env).assignWorkspaceWorkstreamsForMember(
+      "3f88f9ca-d7b3-4714-828e-b22187914524",
+      "a352221e-2577-4ad0-8889-5b24421f63fb",
+      "taylor@example.com",
+    )).resolves.toBe(1);
+
+    expect(objectDatabase.prepare(
+      `SELECT assigned_user_id FROM slack_agent_sessions WHERE id = 'session-later'`,
+    ).get()).toEqual({ assigned_user_id: "a352221e-2577-4ad0-8889-5b24421f63fb" });
+  });
+
   it("does not answer the next external elicitation when a Slack event is retried", async () => {
     const database = migratedDatabase();
     const objectStores = new Map<string, DatabaseSync>();
