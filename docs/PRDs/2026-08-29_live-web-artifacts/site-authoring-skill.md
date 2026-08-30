@@ -248,6 +248,9 @@ shape of `index.js`.
    handler is also exported, it is ignored — `SiteData` serves.
 
    ```js
+   // The implementing change types this as
+   // `extends DurableObject<ArtifactEnv>` so `this.env` is declared;
+   // the example stays plain JavaScript.
    import { DurableObject } from "cloudflare:workers";
 
    export class SiteData extends DurableObject {
@@ -357,9 +360,12 @@ shape of `index.js`.
    (a few seconds is plenty for a poll — this is a workplace tool, not
    a game engine) and after every submission. Three rules make the loop
    a good citizen, and all three are mandatory:
-   - Poll only while visible: pause on `visibilitychange` to hidden and
-     on `pagehide`, resume with an immediate fetch when visible again.
-     A backgrounded tab asks for nothing.
+   - Poll only while visible: pause when `visibilitychange` reports
+     hidden, and resume with an immediate fetch when it reports visible
+     again. A backgrounded tab asks for nothing. (`pagehide` is a
+     different signal — the page is being torn down or frozen, not
+     paused — so if you listen for it at all, treat it as a final stop,
+     never as half of the visibility pair.)
    - Stop permanently on an auth failure (401/403): the viewer's
      session has ended; show the page's "reopen this from Rally" state
      and make no further requests. Never retry past an auth failure.

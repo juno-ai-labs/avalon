@@ -25,6 +25,7 @@
 > (how the chat references what was built). Subsystem references:
 > [Terminal work spaces](../../terminal-workspaces.md),
 > [architecture](../../architecture.md), [security](../../security.md),
+> [access revocation](../../access-revocation.md),
 > [regionalization](../../regionalization.md),
 > [domain migration](../../domain-migration.md). Standing contract:
 > [the Rally implementation brief](../2026-08-05_avalon-implementation-brief/prd.md).
@@ -199,7 +200,10 @@ motivation is structural, and stated as such.
     size, the per-session request-rate ceiling (the guard that bounds a
     buggy or hostile poll loop — key design decision 6, with rate
     ceiling × session lifetime × concurrent viewers as the worst-case
-    burn per artifact), query-tool row and time bounds, and error-log
+    burn per artifact), the visibility-cache interval (key design
+    decision 6 — how stale a work-stream visibility answer may be, and
+    so how long a viewer keeps artifact access after losing it),
+    query-tool row and time bounds, and error-log
     retention. Two were handed over and answered during this PRD's
     review, so they ship as values rather than open: the viewer-session
     lifetime is 24 hours (decision 6) and the per-artifact storage
@@ -300,7 +304,8 @@ interacting with the site inside it is interacting with the artifact, so
 the signups page can be searched without leaving the rail. **Pop out** opens the same
 artifact in the dedicated artifact window when the rail is too small for
 the site. **Copy link** copies the canonical artifact URL. **Open in
-browser** mints a fresh access link and hands it to the system browser.
+browser** mints a fresh access code and hands the system browser the
+open URL that carries it in a fragment (decision 6).
 The canonical URL always serves the most recent version, and so does every
 default entry point: a chip or embed citation in chat, the rail preview,
 the pop-out window, and a link someone saved all resolve to current — a
@@ -508,7 +513,12 @@ None yet.
    identity, as two trusted headers the serving side injects on every
    request regardless of method — `Rally-Viewer-Id` (the stable member
    id) and `Rally-Viewer-Name` (the display name, percent-encoded
-   UTF-8) — after first stripping any inbound headers of those names,
+   UTF-8; a header value is ASCII-only by RFC 7230, so a name needs
+   *some* encoding, and this one is deliberately the `decodeURIComponent`
+   idiom rather than RFC 8187's `UTF-8''…` form — chosen for how
+   reliably a small model decodes it, and called out here and in the
+   injection code so nobody mistakes a house convention for a standard
+   header encoding) — after first stripping any inbound headers of those names,
    so a page or proxy can never forge them (decision 13). The plugin
    prompt carries the TypeScript declarations, headers included, per
    Cloudflare's own advice that typed declarations are how an agent
@@ -517,14 +527,48 @@ None yet.
    agent) — Rally's artifacts keep plain HTTP `fetch`, the single most
    pretrained server contract there is, and the one that works
    identically in a browser tab.
-6. **Viewer access is Rally-minted, short-lived, and checked at the
-   artifact authority.** Opening an artifact calls the regional API
+6. **Viewer access is Rally-minted, short-lived, redeemed out of the
+   URL, and re-checked against the two authorities that own the
+   answers.** Opening an artifact calls the regional API
    (`POST /artifacts/:id/open`, authorized against current work-stream
-   visibility), which returns a single-use, purpose-scoped access link to
-   the artifact origin; the serving Worker redeems it with the
-   `ArtifactHostDO` and sets an `HttpOnly` viewer-session cookie scoped
-   to that one artifact origin, then serves. Requests re-check the
-   session against current visibility. The session's lifetime is
+   visibility), which returns a single-use, purpose-scoped access
+   **code**. The code never travels in a request URL: the desktop (or
+   the browser hand-off) lands on
+   `https://<label>.<region>.rallyusercontent.com/__rally/open#<code>`,
+   where a tiny Rally-served bootstrap page — not artifact code — reads
+   `location.hash`, `POST`s the code to `/__rally/redeem` in the request
+   body, and replaces the URL before anything else loads. A fragment is
+   never sent to a server, so the proof stays out of Cloudflare's
+   invocation log, the Logpush export, and trace spans. This is
+   `security.md`'s standing rule — *a new ticket audience never issues a
+   ticket in a URL* — and an artifact origin is exactly such a new
+   audience; single-use redemption bounds replay but does not keep a
+   secret out of a log, so it is not on its own compliance. Redemption
+   sets an `HttpOnly`, `Secure`, `SameSite=Lax` viewer-session cookie
+   scoped to that one artifact origin, and the serving Worker then
+   serves.
+
+   **Revocation is two questions with two mechanisms, and this design
+   answers both** — `access-revocation.md` is explicit that they must
+   never be merged, and an artifact host that answered neither would
+   hold a removed viewer's access open for the session's whole life:
+   - *Session and membership revocation is a D1 fact*, so it arrives the
+     way every other one does: `ArtifactHostDO` joins the existing
+     access-revocation queue's fan-out as a child the artifact's work
+     stream names, and drops the named principal's sessions when the
+     message reaches it. No new mechanism, one new hop in a walk that
+     already exists.
+   - *Work-stream visibility is not a D1 fact* — it lives in the owning
+     object's own SQL, and the same document rejects routing it through
+     the queue. So the artifact host does not guess: it asks the
+     authority that owns the scope. `ArtifactHostDO` resolves each
+     viewer's continued visibility against its owning `WorkstreamDO`,
+     which answers from its own SQL exactly as it does for a socket,
+     and caches that answer for a bounded interval (an open limit)
+     rather than per request, so a live artifact does not put a DO hop
+     in front of every asset byte.
+
+   The session's lifetime is
    **fixed from mint, never sliding** — and that shape, not just its
    number, is the artifact platform's sleep guarantee: nothing about an
    artifact executes without a viewer request (non-goal 6), so compute
@@ -546,10 +590,11 @@ None yet.
    tokens is the future fix, since an expired signed cookie could be
    rejected at the Worker without a DO wake. Rejected: *capability
    URLs* ("anyone with the link") — they contradict the house rule that
-   knowing an identifier grants nothing; *long-lived tokens in URLs* —
-   the ticket rule already keeps credentials out of URLs, and
-   single-use redemption honors it; *sliding renewal* — it reads as
-   viewer convenience and quietly deletes the compute ceiling, since an
+   knowing an identifier grants nothing; *any access proof in a request
+   URL*, single-use or not — Cloudflare records whole URLs into the
+   invocation log, Logpush, and traces, and no redaction in this
+   repository reaches them; *sliding renewal* — it reads as viewer
+   convenience and quietly deletes the compute ceiling, since an
    abandoned-but-visible page would then poll forever.
 7. **Publish identity is the file rule, unchanged, covering directories.**
    The artifact's identity is `(work stream, normalized path)` — the same
@@ -828,9 +873,11 @@ authoritative.
 - `ArtifactHostDO` (new DO class, both regions, jurisdiction-pinned):
   `artifact_state` (current version, resource linkage, whether a
   `SiteData` class is present), `viewer_sessions` (hashed session,
-  principal, issued/expires, single-use code redemption), `error_log`
-  (bounded ring; retention an open limit). The supervisor's own tables
-  never hold artifact data.
+  principal, issued/expires, single-use code redemption, and the
+  bounded-interval cache of that principal's last confirmed
+  work-stream visibility — decision 6), `error_log` (bounded ring;
+  retention an open limit). The supervisor's own tables never hold
+  artifact data.
 - The `"data"` facet (stateful artifacts only): the model's `SiteData`
   class under the Rally wrapper (decision 12), one isolated SQLite
   database per artifact with a model-designed schema. It rides the
@@ -873,13 +920,38 @@ The new trust surface is the point of this PRD, so it is stated in full.
   numbers, not Rally's to restate; the facet database's size is Rally's
   one added guard, 100 MB per artifact (team-set), enforced as a loud
   write refusal.
-- **Origin isolation, three ways.** Every artifact has its own origin on
-  a domain that is not `rallywith.ai`; artifacts are therefore never
-  same-origin with the application, the API, or each other (goal 6), and
-  a hostile artifact's scripts, storage, and cookies reach nothing but
-  itself. The viewer-session cookie is per-artifact-origin and `HttpOnly`;
-  it is stripped from the request before the request reaches the server
+- **Origin isolation, three ways — plus the same-site gap it does not
+  close on its own.** Every artifact has its own origin on a domain that
+  is not `rallywith.ai`; artifacts are therefore never same-origin with
+  the application, the API, or each other (goal 6), so a hostile
+  artifact cannot read another's storage, cookies, or DOM. The
+  viewer-session cookie is per-artifact-origin and `HttpOnly`; it is
+  stripped from the request before the request reaches the server
   module, so artifact code never sees a credential at all.
+
+  What separate origins do **not** buy, because every artifact is a
+  subdomain of one registrable domain: two artifacts are same-*site*.
+  `SameSite` is a site-level control, so it does not stop script in
+  artifact A from sending a **credentialed** request to artifact B —
+  B's cookie rides along, and while CORS stops A reading the response,
+  a simple `POST` needs no preflight, so B's model-written handler
+  still runs and can still write to B's database. Cross-artifact CSRF
+  is therefore a real attack this domain layout invites, and origin
+  separation alone would leave it open.
+
+  **The serving Worker closes it before untrusted code runs**, which is
+  the only place it can be closed once, for every artifact, without
+  trusting model-written handlers to defend themselves: every
+  authenticated request is admitted only when its fetch metadata says
+  it belongs to this artifact — `Sec-Fetch-Site: same-origin`, or
+  `none` for a genuine top-level navigation — and an `Origin` header,
+  when present, that matches the artifact's own origin exactly. A
+  `same-site` or `cross-site` request is refused before it reaches the
+  module, GETs included, because artifact code may treat any method as
+  a write and nothing about a model-written handler makes it safe by
+  method. Fetch metadata is unforgeable by page script (it is a
+  browser-set forbidden header); a client that sends none, such as a
+  non-browser caller, is treated as not same-origin and refused.
 - **The desktop viewers extend the export-window pattern, visibly.** Both
   presentation surfaces — the rail's embedded `WebContentsView` and the
   pop-out artifact window — are main-process-owned web contents sharing
@@ -904,11 +976,18 @@ The new trust surface is the point of this PRD, so it is stated in full.
   can draw whatever it likes inside its rectangle and nothing outside it;
   it cannot navigate the app, open windows, or reach another artifact's
   partition.
-- **Authorization is current-visibility, at the authority.** Open mints
-  access against work-stream visibility now; every artifact request
-  re-checks the session at the `ArtifactHostDO`; revocation and
-  visibility loss cut viewing without a new mechanism (the session check
-  simply fails). URLs grant nothing; codes are single-use and short-lived.
+- **Authorization is current-visibility, at whichever authority owns
+  the answer.** Open mints access against work-stream visibility now,
+  and every artifact request is admitted by `ArtifactHostDO` against a
+  live session. Staying admitted is the part that needs the two
+  mechanisms of key design decision 6, because the host owns neither
+  fact: membership and session revocation reach it through the existing
+  access-revocation queue, and continued work-stream visibility is
+  resolved against the owning `WorkstreamDO` on a bounded cache — never
+  inferred from the session's own existence, which is precisely the
+  regression `access-revocation.md` records. URLs grant nothing, and no
+  access proof ever travels in one; codes are single-use, short-lived,
+  and redeemed from a fragment through a request body.
 - **The serving Worker is a new deployment surface with a minimal
   waistline.** It holds the loader, the bucket, the DO namespace, and
   nothing else — no D1, no provider secrets, no Flagship. A compromise of
@@ -1195,7 +1274,14 @@ rather than papered over.
 3. The standing-policy module lands last, as its own deploy, once the
    serving path has survived explicit-ask dogfooding; its revert is the
    behavioral rollback, exactly as with documents.
-4. Rollback layers: revert the policy (no new artifacts are steered);
+4. The EU half deploys dark and stays that way: its Worker, wildcard
+   route, DO namespace, and bucket prefix all exist, and they accept no
+   artifact traffic until EU Terminal ships, because nothing can
+   publish an EU artifact before then (non-goal 9). Completion of the
+   EU Terminal workstream is what enables EU artifacts — no separate
+   artifact-side flip is needed, and an operator reading only this
+   section should not have to infer that from elsewhere.
+5. Rollback layers: revert the policy (no new artifacts are steered);
    disable the flag (surfaces hide; URLs participants already hold keep
    working through their session checks); tear down the serving route
    (artifacts stop serving; resources and history remain).
@@ -1247,58 +1333,74 @@ rather than papered over.
    the new header on reload.
 5. A non-participant workspace member without work-stream visibility
    cannot open the artifact, its Data view, or its data through the
-   read tools; a participant who loses visibility loses all three on
-   their next request; the bare URL without minted access serves the
-   neutral page.
-6. A server module that throws serves the plain error page and the
+   read tools; the bare URL without minted access serves the neutral
+   page. Revocation is proven on both of its paths, with a live session
+   open in each case: a membership or session revocation reaches
+   `ArtifactHostDO` through the access-revocation queue and its
+   sessions stop working, and a participant who loses *work-stream
+   visibility* — which that queue deliberately does not carry — loses
+   artifact access within the visibility cache's bounded interval,
+   proven against a real `WorkstreamDO` rather than a double.
+6. The access code never appears in a request URL: the open flow
+   redeems it from the fragment through a `POST` body, and an
+   end-to-end capture of the artifact origin's requests contains no
+   code. A credentialed request forged from a *second* artifact origin
+   on the same site is refused by the serving Worker before the module
+   runs — including a simple `POST` that needs no preflight, and
+   including a `GET` — while the artifact's own same-origin requests
+   and a genuine top-level navigation both succeed.
+7. A server module that throws serves the plain error page and the
    error appears in the rail's error log.
-7. Publishing a multi-file directory with neither root entry yields
+8. Publishing a multi-file directory with neither root entry yields
    exactly one downloadable zip resource; renaming its entry to
    `index.js` and republishing the same path upgrades it to a live site
    under the same resource identity.
-8. Publishing a one-file directory is refused with
+9. Publishing a one-file directory is refused with
    `single_file_directory`, and the model recovers in one corrected call
    publishing the file's own path; on every configured model routing
    stage, a document request yields a file publish and never an archive.
-9. Republishing a live site's path with its root entry removed fails
+10. Republishing a live site's path with its root entry removed fails
    loudly with the recovery instruction; the site keeps serving its
    current version.
-10. Opening a dialog, the command palette, and a lightbox each hides the
+11. Opening a dialog, the command palette, and a lightbox each hides the
    rail's preview behind its placeholder and restores it on close; the
    preview never paints over an app overlay. Voting in the poll inside
    the preview pane works, and the preview's navigation stays on the
    artifact's origin — an external link in the page opens the system
    browser, not the pane.
-11. The platform goes back to sleep: a backgrounded tab (visibility
+12. The platform goes back to sleep: a backgrounded tab (visibility
    hidden) makes no further requests until foregrounded; after the
    session's fixed lifetime expires, the page's loop stops on the
    first auth failure and shows its reopen state rather than
    retrying; a deliberately misbehaving test page polling past the
    rate ceiling receives `429`s; and with no requests arriving,
    nothing about the artifact executes at all.
-12. A chip or embed citation in chat always opens the current version.
+13. A chip or embed citation in chat always opens the current version.
    From the version list, a prior static or stateless-active version
    renders read-only on direct request — its frozen module over its
    frozen assets — while a prior version of a stateful artifact opens
    as source only (non-goal 13); source is always readable through the
    versioning layer's preview, and the canonical URL serves the newest
    version throughout.
-13. In a fresh run, "show me the site's source" leads through the
+14. In a fresh run, "show me the site's source" leads through the
    registry's redirect — a content read on the site resource returns the
    `terminal_import_resource` suggestion, the import materializes the
    directory, and the files are read there — with no dead end on any
    configured routing stage. A browser request for `/index.js` on an
    active artifact returns 404.
-14. Deleting a stateful artifact removes its facet database through the
+15. Deleting a stateful artifact removes its facet database through the
    deletion lifecycle; a subsequent publish at the same path starts
    empty.
-15. Where Terminal is unavailable, behavior is byte-identical to today;
+16. Where Terminal is unavailable, behavior is byte-identical to today;
    with the flag off, no artifact surfaces render — the preview pane
    and Data view included.
-16. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
-   workerd suite pass; every new test shown to fail when its protected
-   behavior is broken; the rail (preview and Data view), artifact
-   window, and error surfaces captured from a real window.
+17. The Rally implementation brief carries the artifact-runtime clause
+   this PRD proposes under **Impact on the product contract** — the
+   amendment lands with the implementing change, not after it.
+18. `pnpm lint` (zero warnings), `pnpm typecheck`, `pnpm test`, and the
+   workerd suite pass; every new test is shown to fail when its
+   protected behavior is broken; the rail (preview and Data view),
+   artifact window, and error surfaces are captured from a real window.
 
 ## Open questions
 
