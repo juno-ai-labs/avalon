@@ -617,6 +617,48 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-08-30 — Archive waits for the unlink before leaving the document
+
+**What changed:** Continue on the inspector **Archive** dialog awaits the detach
+mutation, stays open with the error if it fails, and only then returns to
+context. Image resources render in the document host.
+
+**Why:** Closing on click treated a refused DELETE as success and dropped
+keyboard focus with the Archive button. An image had no body once the metadata
+card went away.
+
+**What a future change has to respect:** the unlink is still detach, not a
+workspace-object delete. Do not clear the inspector until the mutation
+resolves.
+
+### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
+
+**What changed:** **Versions** in the inspector header opens a dropdown of the
+resource's history rather than replacing the document pane. **Archive** still
+asks continue/cancel, now from a danger-coloured icon.
+
+**Why:** Swapping the pane hid the file. The header dropdown is the existing
+pattern for a list of actions off an icon button. The unlink still has no restore,
+so the modal stays.
+
+**What a future change has to respect:** the version list is still newest-first
+and still marks current by list position, not by the detail's cached number.
+Sparse dates are calendar buckets, not `formatRelative`'s "3 hours ago".
+
+### 2026-08-30 — Resource versions move behind a header control
+
+**What changed:** The inspector rail's resource detail no longer lists versions
+under the document. **Versions** in the header opens them, grouped by sparse
+relative dates. **Archive** replaces **Remove** and confirms before unlinking.
+
+**Why:** Once the body became the document, an inline history under it was a
+second pane competing with the file. A header control keeps the document the
+default, and an unconfirmed unlink next to that document was the wrong weight.
+
+**What a future change has to respect:** the version list is still newest-first
+and still marks current by list position, not by the detail's cached number.
+Sparse dates are calendar buckets, not `formatRelative`'s "3 hours ago".
+
 ### 2026-08-29 — Resource statements become typed WorkspaceDO methods
 
 **What changed:** Every statement that named only resource-owned tables —
