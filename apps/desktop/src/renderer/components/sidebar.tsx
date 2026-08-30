@@ -350,7 +350,7 @@ function AutomationRow({
           {/* AutomationScreen dispatches the same durable route to either the
               draft conversation or accepted home from lifecycle state. */}
           <NavLink
-            className={({ isActive }) => clsx('sidebar-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            className={({ isActive }) => clsx('sidebar-row automation-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
