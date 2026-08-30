@@ -1948,6 +1948,7 @@ async function loadAutomationCreatorConnectionContext(
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
       id: frozen.connectionId,
+      workspace_id: String(row.workspace_id),
       encrypted_credentials: row.encrypted_credentials,
       credential_iv: row.credential_iv,
       credential_key_version: Number(row.credential_key_version || 1),
@@ -6370,6 +6371,7 @@ async function loadAuthorizedConnectionContext(
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
       id: frozen.connectionId,
+      workspace_id: String(row.workspace_id),
       encrypted_credentials: row.encrypted_credentials,
       credential_iv: row.credential_iv,
       credential_key_version: Number(row.credential_key_version || 1),
@@ -6671,7 +6673,7 @@ async function pluginAuthorizationFromHealth(
   // nothing about this run's authority.
   if (!health.reconnectRequired) return "indeterminate";
   await markConnectorNeedsReconnect(
-    env.DB,
+    env,
     { id: frozen.connectionId, workspaceId: frozen.workspaceId },
     "authorization_failed",
   );
@@ -6680,7 +6682,8 @@ async function pluginAuthorizationFromHealth(
 
 export type PluginAuthorizationEnv = Pick<
   Env,
-  "DB" | "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA"
+  "DB" | "WORKSPACE_DOS" | "LOG_LEVEL" | "AVALON_REGION" | "APP_VERSION" | "BUILD_SHA"
+  | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION" | "CONNECTOR_CREDENTIALS_KEYS_JSON"
 >;
 
 export type PluginAuthorizationInput = Pick<
@@ -7739,6 +7742,7 @@ export async function pollConnectorConnection(
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
       id: String(row.id),
+      workspace_id: String(row.workspace_id),
       encrypted_credentials: row.encrypted_credentials,
       credential_iv: row.credential_iv,
       credential_key_version: Number(row.credential_key_version || 1),
@@ -7811,6 +7815,7 @@ export async function hydrateConnectorActivitySource(
   if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
     credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
       id: String(row.id),
+      workspace_id: String(row.workspace_id),
       encrypted_credentials: row.encrypted_credentials,
       credential_iv: row.credential_iv,
       credential_key_version: Number(row.credential_key_version || 1),

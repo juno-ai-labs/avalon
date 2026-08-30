@@ -4,9 +4,12 @@ import {
   type AuthorizedConnectorConnection,
   type ConnectorConnectionContext,
 } from "@rally/connectors";
+import { asWorkspaceId } from "@rally/contracts";
 import { nowIso } from "@rally/db";
 import type { Env } from "../env";
 import { encryptString } from "../lib/crypto";
+import { durableObjectStubForWorkspace } from "../lib/durable-object-namespace";
+import { workspaceDOName } from "../durable-objects/names";
 import {
   ensureFreshConnectorCredentials,
   rotateConnectorCredentials,
@@ -14,8 +17,18 @@ import {
 } from "./connector-credential-refresh";
 
 type ConnectionAccessEnv = Pick<Env,
-  "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION" | "CONNECTOR_CREDENTIALS_KEYS_JSON"
+  "DB" | "WORKSPACE_DOS" | "AVALON_REGION"
+  | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION" | "CONNECTOR_CREDENTIALS_KEYS_JSON"
 >;
+
+function connectionObject(env: ConnectionAccessEnv, workspaceId: string) {
+  return durableObjectStubForWorkspace(
+    env as Env,
+    env.WORKSPACE_DOS,
+    asWorkspaceId(workspaceId),
+    workspaceDOName(env.AVALON_REGION, asWorkspaceId(workspaceId)),
+  );
+}
 
 /**
  * The one door through which a connector adapter is reached.
@@ -81,7 +94,7 @@ export async function withAuthorizedConnection<T>(
     // still worth storing ahead of the verdict that follows it.
     await persistIfChanged();
     const reason = reconnectReason(error);
-    await markConnectorNeedsReconnect(env.DB, connection, reason);
+    await markConnectorNeedsReconnect(env, connection, reason);
     throw new ConnectorError("unauthorized", "This connector connection needs reconnecting", {
       reconnectRequired: true,
       reason,
@@ -119,7 +132,7 @@ export function reconnectReason(error: ConnectorError): string {
 }
 
 export async function persistConnectorCredentials(
-  env: Pick<Env, "DB" | "CONNECTOR_CREDENTIALS_KEY" | "CONNECTOR_CREDENTIALS_KEY_VERSION">,
+  env: ConnectionAccessEnv,
   connection: ConnectorConnectionContext,
 ): Promise<void> {
   const encrypted = await encryptString(
@@ -127,47 +140,45 @@ export async function persistConnectorCredentials(
     env.CONNECTOR_CREDENTIALS_KEY,
     connection.id,
   );
-  await env.DB.prepare(
-    // Any row a person has not disabled. Filtered on `status = 'healthy'`, this
-    // silently dropped every credential an adapter rotated on a connection the
-    // row believed was broken — the one case where the rotation was most likely
-    // to be the thing that fixed it.
-    `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
-     credential_key_version = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status <> 'disabled'`,
-  ).bind(
-    encrypted.ciphertext,
-    encrypted.iv,
-    Number(env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-    nowIso(),
-    connection.id,
-    connection.workspaceId,
-  ).run();
+  // `activeOnly`: any row a person has not disabled. Filtered on
+  // `status = 'healthy'`, this silently dropped every credential an adapter
+  // rotated on a connection the row believed was broken — the one case where
+  // the rotation was most likely to be the thing that fixed it.
+  await (await connectionObject(env, connection.workspaceId)).setConnectionCredentials({
+    workspaceId: connection.workspaceId,
+    connectionId: connection.id,
+    credentials: {
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      keyVersion: Number(env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+    },
+    activeOnly: true,
+    at: nowIso(),
+  });
 }
 
 export async function markConnectorNeedsReconnect(
-  database: D1Database,
+  env: ConnectionAccessEnv,
   connection: Pick<ConnectorConnectionContext, "id" | "workspaceId">,
   reason: string,
 ): Promise<void> {
-  await database.prepare(
-    // `= 'healthy'`, not `!= 'disabled'`. This write carries a diagnosis, and a
-    // row that is already marked holds the first and most specific one. The
-    // door now runs for marked connections, so without this every later attempt
-    // would re-stamp them — which is exactly how a `missing_scopes:
-    // reactions:read` verdict was replaced by a bare `unauthorized` hours after
-    // the fact.
-    `UPDATE connector_connections SET status = 'needs_reconnect', error_json = ?, updated_at = ?
-     WHERE id = ? AND workspace_id = ? AND status = 'healthy'`,
-  ).bind(
-    JSON.stringify({
+  // `fromStatus: "healthy"`, not merely "not disabled". This write carries a
+  // diagnosis, and a row that is already marked holds the first and most
+  // specific one. The door now runs for marked connections, so without this
+  // every later attempt would re-stamp them — which is exactly how a
+  // `missing_scopes: reactions:read` verdict was replaced by a bare
+  // `unauthorized` hours after the fact.
+  await (await connectionObject(env, connection.workspaceId)).setConnectionStatus({
+    workspaceId: connection.workspaceId,
+    connectionId: connection.id,
+    status: "needs_reconnect",
+    errorJson: JSON.stringify({
       code: "connector_reauthorization_required",
       message: "Reconnect this connector account",
       reconnectRequired: true,
       reason,
     }),
-    nowIso(),
-    connection.id,
-    connection.workspaceId,
-  ).run();
+    fromStatus: "healthy",
+    at: nowIso(),
+  });
 }

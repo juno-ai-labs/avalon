@@ -215,6 +215,21 @@ import {
   abandonWorkspaceConnectorOAuthAttempt,
   bindWorkspaceConnectorOAuthAttemptTelemetry,
   claimWorkspaceWebhookReceipt,
+  workspaceConnection,
+  listWorkspaceConnections,
+  findWorkspaceConnection,
+  workspaceConnectionPluginIds,
+  createWorkspaceConnection,
+  refreshWorkspaceConnection,
+  setWorkspaceConnectionStatus,
+  disableWorkspaceConnection,
+  setWorkspaceConnectionCredentials,
+  rotateWorkspaceConnectionEnvelope,
+  claimWorkspaceConnectionCredentialLease,
+  settleWorkspaceConnectionCredentialLease,
+  releaseWorkspaceConnectionCredentialLease,
+  setWorkspaceConnectionRepositoryAccess,
+  setWorkspaceConnectionIdentity,
   extendWorkspaceConnectorOAuthAttempt,
   finishWorkspaceConnectorOAuthAttempt,
   readWorkspaceConnectorOAuthAttempt,
@@ -228,6 +243,42 @@ import {
   WorkspaceConnectorOAuthAttemptStartRequestSchema,
   WorkspaceConnectorOAuthAttemptTelemetryBindRequestSchema,
   WorkspaceWebhookReceiptClaimRequestSchema,
+  WorkspaceConnectionReadRequestSchema,
+  WorkspaceConnectionListRequestSchema,
+  WorkspaceConnectionFindRequestSchema,
+  WorkspaceConnectionPluginIdsRequestSchema,
+  WorkspaceConnectionCreateRequestSchema,
+  WorkspaceConnectionRefreshRequestSchema,
+  WorkspaceConnectionStatusRequestSchema,
+  WorkspaceConnectionDisableRequestSchema,
+  WorkspaceConnectionCredentialWriteRequestSchema,
+  WorkspaceConnectionEnvelopeRotateRequestSchema,
+  WorkspaceConnectionLeaseClaimRequestSchema,
+  WorkspaceConnectionLeaseSettleRequestSchema,
+  WorkspaceConnectionLeaseReleaseRequestSchema,
+  WorkspaceConnectionRepositoryAccessRequestSchema,
+  WorkspaceConnectionIdentityRequestSchema,
+  type WorkspaceConnectionReadRequest,
+  type WorkspaceConnectionResult,
+  type WorkspaceConnectionListRequest,
+  type WorkspaceConnectionListResult,
+  type WorkspaceConnectionFindRequest,
+  type WorkspaceConnectionPluginIdsRequest,
+  type WorkspaceConnectionPluginIdsResult,
+  type WorkspaceConnectionCreateRequest,
+  type WorkspaceConnectionRefreshRequest,
+  type WorkspaceConnectionWriteResult,
+  type WorkspaceConnectionStatusRequest,
+  type WorkspaceConnectionDisableRequest,
+  type WorkspaceConnectionCredentialWriteRequest,
+  type WorkspaceConnectionEnvelopeRotateRequest,
+  type WorkspaceConnectionSettleResult,
+  type WorkspaceConnectionLeaseClaimRequest,
+  type WorkspaceConnectionLeaseClaimResult,
+  type WorkspaceConnectionLeaseSettleRequest,
+  type WorkspaceConnectionLeaseReleaseRequest,
+  type WorkspaceConnectionRepositoryAccessRequest,
+  type WorkspaceConnectionIdentityRequest,
   type WorkspaceConnectorOAuthAttemptAbandonRequest,
   type WorkspaceConnectorOAuthAttemptExtendRequest,
   type WorkspaceConnectorOAuthAttemptFinishRequest,
@@ -6220,6 +6271,171 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     const request = WorkspaceWebhookReceiptClaimRequestSchema.parse(input);
     this.assertWorkspace(request.workspaceId);
     return claimWorkspaceWebhookReceipt(this.state.storage, request);
+  }
+
+  /**
+   * The connection rows themselves, as typed questions.
+   *
+   * `connector_connections` is the table every other domain in this object
+   * references, and it was the last one the services still reached as routed
+   * SQL. Reads are one method with the qualifications its callers used to
+   * write into a `WHERE` clause; writes answer `written` with the stored row
+   * or `missing`, from a `RETURNING` witness rather than from the facade's
+   * physical `rowsWritten`.
+   *
+   * None of these refresh the workspace alarm. `connector_connections` is not
+   * a schedule source — `next_poll_at` is drained by the connector-poll
+   * Workflow on its own cadence, not by this object's alarm — so there is no
+   * target whose due time a connection write could stale. That changes the day
+   * a schedule target reads this table.
+   */
+  async connection(
+    input: WorkspaceConnectionReadRequest,
+  ): Promise<WorkspaceConnectionResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionReadRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceConnection(this.state.storage, request);
+  }
+
+  /** Every connection a member may see: workspace-scoped, plus their own. */
+  async listConnections(
+    input: WorkspaceConnectionListRequest,
+  ): Promise<WorkspaceConnectionListResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionListRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return listWorkspaceConnections(this.state.storage, request);
+  }
+
+  /** The adoption search: an existing connection to re-authorize, or none. */
+  async findConnection(
+    input: WorkspaceConnectionFindRequest,
+  ): Promise<WorkspaceConnectionResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionFindRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return findWorkspaceConnection(this.state.storage, request);
+  }
+
+  /** The model plugin ids already spoken for, and this connection's own. */
+  async connectionPluginIds(
+    input: WorkspaceConnectionPluginIdsRequest,
+  ): Promise<WorkspaceConnectionPluginIdsResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionPluginIdsRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return workspaceConnectionPluginIds(this.state.storage, request);
+  }
+
+  /** Store a new connection, settling the attempt that authorized it. */
+  async createConnection(
+    input: WorkspaceConnectionCreateRequest,
+  ): Promise<WorkspaceConnectionWriteResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionCreateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return createWorkspaceConnection(this.state.storage, request);
+  }
+
+  /** Re-authorize an existing connection, settling its attempt with it. */
+  async refreshConnection(
+    input: WorkspaceConnectionRefreshRequest,
+  ): Promise<WorkspaceConnectionWriteResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionRefreshRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return refreshWorkspaceConnection(this.state.storage, request);
+  }
+
+  /** Move a connection's health, optionally only from the status it holds. */
+  async setConnectionStatus(
+    input: WorkspaceConnectionStatusRequest,
+  ): Promise<WorkspaceConnectionWriteResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionStatusRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return setWorkspaceConnectionStatus(this.state.storage, request);
+  }
+
+  /** Disable a connection and drop its credential envelope with it. */
+  async disableConnection(
+    input: WorkspaceConnectionDisableRequest,
+  ): Promise<WorkspaceConnectionWriteResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionDisableRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return disableWorkspaceConnection(this.state.storage, request);
+  }
+
+  /** Replace the credential envelope on a connection. */
+  async setConnectionCredentials(
+    input: WorkspaceConnectionCredentialWriteRequest,
+  ): Promise<WorkspaceConnectionWriteResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionCredentialWriteRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return setWorkspaceConnectionCredentials(this.state.storage, request);
+  }
+
+  /** Re-encrypt an envelope only if the one being replaced is still there. */
+  async rotateConnectionEnvelope(
+    input: WorkspaceConnectionEnvelopeRotateRequest,
+  ): Promise<WorkspaceConnectionSettleResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionEnvelopeRotateRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return rotateWorkspaceConnectionEnvelope(this.state.storage, request);
+  }
+
+  /** Take the credential-refresh lease, minted here, with the envelope. */
+  async claimConnectionCredentialLease(
+    input: WorkspaceConnectionLeaseClaimRequest,
+  ): Promise<WorkspaceConnectionLeaseClaimResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionLeaseClaimRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return claimWorkspaceConnectionCredentialLease(this.state.storage, request);
+  }
+
+  /** Write the refreshed envelope, only under the lease that claimed it. */
+  async settleConnectionCredentialLease(
+    input: WorkspaceConnectionLeaseSettleRequest,
+  ): Promise<WorkspaceConnectionSettleResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionLeaseSettleRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return settleWorkspaceConnectionCredentialLease(this.state.storage, request);
+  }
+
+  /** Hand the lease back without writing, for a refresh that gave up. */
+  async releaseConnectionCredentialLease(
+    input: WorkspaceConnectionLeaseReleaseRequest,
+  ): Promise<void> {
+    await this.initialized;
+    const request = WorkspaceConnectionLeaseReleaseRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    releaseWorkspaceConnectionCredentialLease(this.state.storage, request);
+  }
+
+  /** Advance GitHub's repository selection, conditional on its revision. */
+  async setConnectionRepositoryAccess(
+    input: WorkspaceConnectionRepositoryAccessRequest,
+  ): Promise<WorkspaceConnectionSettleResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionRepositoryAccessRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return setWorkspaceConnectionRepositoryAccess(this.state.storage, request);
+  }
+
+  /** Refresh the provider account and display name a connection reports. */
+  async setConnectionIdentity(
+    input: WorkspaceConnectionIdentityRequest,
+  ): Promise<WorkspaceConnectionWriteResult> {
+    await this.initialized;
+    const request = WorkspaceConnectionIdentityRequestSchema.parse(input);
+    this.assertWorkspace(request.workspaceId);
+    return setWorkspaceConnectionIdentity(this.state.storage, request);
   }
 
   /** The Terminal network policy and its domains, creating the default if absent. */

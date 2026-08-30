@@ -274,6 +274,7 @@ export function createGitHubTerminalCatalogGateway(env: Env): TerminalRepository
     }
     const credentials = JSON.parse(await decryptVersionedConnectorCredentials(env, {
       id: connection.id,
+      workspace_id: connection.workspace_id,
       encrypted_credentials: connection.encrypted_credentials,
       credential_iv: connection.credential_iv,
       credential_key_version: connection.credential_key_version,

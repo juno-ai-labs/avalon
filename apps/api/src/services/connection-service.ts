@@ -45,6 +45,15 @@ import { compatibleDesktopDeepLink, connectorAttemptTarget, normalizeConnectorOA
 import { createGitHubInstallState } from "../lib/github-install-state";
 import { createRegionRoutedState } from "../lib/region-routed-state";
 import { withAuthorizedConnection } from "./connector-connection-access";
+import {
+  WorkspaceConnectionListResultSchema,
+  WorkspaceConnectionPluginIdsResultSchema,
+  WorkspaceConnectionResultSchema,
+  WorkspaceConnectionSettleResultSchema,
+  WorkspaceConnectionWriteResultSchema,
+  type WorkspaceConnection,
+  type WorkspaceConnectionWriteResult,
+} from "../durable-objects/workspace-connections-protocol";
 import { decryptVersionedConnectorCredentials } from "./connector-credential-envelope";
 import { logWarn } from "../observability/logger";
 import { GitHubRoutingService } from "./github-routing-service";
@@ -117,18 +126,16 @@ const googleBroaderProviderScopeAliases: Readonly<Record<string, readonly string
   "https://www.googleapis.com/auth/drive.file": ["https://www.googleapis.com/auth/drive"],
 };
 
-interface StoredConnection extends Record<string, unknown> {
-  id: string;
-  workspace_id: string;
-  connector_type: string;
-  scope: Scope;
-  owner_user_id: string | null;
-  model_plugin_id: string;
-  status?: string;
-  encrypted_credentials?: string | null;
-  credential_iv?: string | null;
-  credential_key_version?: number;
-}
+/**
+ * The connection row, as the object defines it.
+ *
+ * This was a local interface listing a subset of the columns, which was
+ * workable while the service read the row with `SELECT *` and picked what it
+ * wanted. It is not workable now: every read parses through
+ * `WorkspaceConnectionSchema`, so a second declaration could only drift from
+ * the one the object actually answers with.
+ */
+type StoredConnection = WorkspaceConnection;
 
 interface ConnectorIngressRouteSource {
   id: string;
@@ -321,12 +328,12 @@ export class ConnectionService {
 
   async list(): Promise<Connection[]> {
     const auth = this.requireAuth();
-    const result = await this.env.DB.prepare(
-      `SELECT c.* FROM connector_connections c
-       WHERE c.workspace_id = ? AND (c.scope = 'workspace' OR c.owner_user_id = ?)
-       ORDER BY c.display_name COLLATE NOCASE`,
-    ).bind(auth.workspaceId, auth.userId).all<Record<string, unknown>>();
-    const rows = result.results ?? [];
+    const { connections: rows } = WorkspaceConnectionListResultSchema.parse(
+      await (await this.workspaceObject(auth.workspaceId)).listConnections({
+        workspaceId: auth.workspaceId,
+        userId: auth.userId,
+      }),
+    );
     const ownerIds = [...new Set(rows.flatMap((row) =>
       typeof row.owner_user_id === "string" ? [row.owner_user_id] : []))];
     const owners = ownerIds.length === 0 ? [] : (await workspaceRegionalDatabase(this.env).prepare(
@@ -399,21 +406,16 @@ export class ConnectionService {
       })),
     };
     const nextPolicyJson = JSON.stringify(nextPolicy);
-    const update = await this.env.DB.prepare(
-        `UPDATE connector_connections
-            SET config_json = json_set(COALESCE(config_json, '{}'), '$.githubRepositoryAccess', json(?)),
-                updated_at = ?
-          WHERE id = ? AND workspace_id = ? AND connector_type = 'github' AND status <> 'disabled'
-            AND COALESCE(CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER), 0) = ?
-          RETURNING id`,
-      ).bind(
-        nextPolicyJson,
-        updatedAt,
-        connection.id,
-        connection.workspace_id,
-        input.expectedRevision,
-      ).first<{ id: string }>();
-    if (!update || update.id !== connection.id) {
+    const update = WorkspaceConnectionSettleResultSchema.parse(
+      await (await this.workspaceObject(connection.workspace_id)).setConnectionRepositoryAccess({
+        workspaceId: connection.workspace_id,
+        connectionId: connection.id,
+        expectedRevision: input.expectedRevision,
+        accessJson: nextPolicyJson,
+        at: updatedAt,
+      }),
+    );
+    if (update.outcome !== "settled") {
       throw new ApiError(409, "github_repository_access_revision_conflict", "GitHub repository access changed. Reload these settings and apply your changes to the current revision.");
     }
     // No compensating write follows. The policy row above is the whole change:
@@ -576,54 +578,59 @@ export class ConnectionService {
       account.credentials,
       account.providerAccountId,
     ));
+    const envelope = {
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+    };
     if (stateData.connectionId) {
-      const updated = await this.persistConnectionMutation(this.env.DB.prepare(
-        `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?,
-         credential_key_version = ?, granted_scopes_json = ?, provider_account_id = ?, display_name = ?,
-         model_plugin_id = ?, status = 'healthy', error_json = NULL, config_json = ?,
-         next_poll_at = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND connector_type = 'google'`,
-      ).bind(
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        JSON.stringify(stateData.capabilities),
-        account.providerAccountId,
-        displayName,
-        modelPluginId,
-        identityConfig,
-        at,
-        at,
+      // `missing` rather than a row count. This 404 was decided from the
+      // facade's `meta.changes`, which is workerd's physical `rowsWritten`;
+      // it now comes from whether the update returned a row.
+      const updated = await this.writeConnection(
+        String(row.workspace_id),
         connectionId,
-        row.workspace_id,
-      ), attemptId, connectionId);
-      if (Number(updated.meta.changes ?? 0) === 0) {
+        attemptId,
+        (object) => object.refreshConnection({
+          workspaceId: String(row.workspace_id),
+          connectionId,
+          connectorType: "google",
+          providerAccountId: account.providerAccountId,
+          displayName,
+          credentials: envelope,
+          grantedScopesJson: JSON.stringify(stateData.capabilities),
+          modelPluginId,
+          configJson: identityConfig,
+          nextPollAt: at,
+          at,
+          ...(attemptId ? { bindAttempt: { attemptId, region: this.env.AVALON_REGION } } : {}),
+        }),
+      );
+      if (updated.outcome === "missing") {
         throw new ApiError(404, "connection_not_found", "Google connection not found");
       }
     } else {
-      await this.persistConnectionMutation(this.env.DB.prepare(
-        `INSERT INTO connector_connections
-         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
-          encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-          model_plugin_id, status, cursor_json, config_json, next_poll_at, created_at, updated_at)
-         VALUES (?, ?, 'google', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?, ?)`,
-      ).bind(
+      await this.writeConnection(
+        String(row.workspace_id),
         connectionId,
-        row.workspace_id,
-        stateData.scope,
-        stateData.scope === "personal" ? row.user_id : null,
-        account.providerAccountId,
-        displayName,
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        JSON.stringify(stateData.capabilities),
-        modelPluginId,
-        identityConfig,
-        at,
-        at,
-        at,
-      ), attemptId, connectionId);
+        attemptId,
+        (object) => object.createConnection({
+          workspaceId: String(row.workspace_id),
+          connectionId,
+          connectorType: "google",
+          scope: stateData.scope,
+          ownerUserId: stateData.scope === "personal" ? String(row.user_id) : null,
+          providerAccountId: account.providerAccountId,
+          displayName,
+          credentials: envelope,
+          grantedScopesJson: JSON.stringify(stateData.capabilities),
+          modelPluginId,
+          configJson: identityConfig,
+          nextPollAt: at,
+          at,
+          ...(attemptId ? { bindAttempt: { attemptId, region: this.env.AVALON_REGION } } : {}),
+        }),
+      );
       await this.createPollSchedule(String(row.workspace_id), connectionId, 300);
     }
     await this.refreshScheduler(String(row.workspace_id));
@@ -834,9 +841,13 @@ export class ConnectionService {
     let existing: StoredConnection | null = null;
     let existingCredentials: Record<string, unknown> = {};
     if (stateData.connectionId) {
-      existing = await this.env.DB.prepare(
-        `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND connector_type = 'github'`,
-      ).bind(connectionId, row.workspace_id).first<StoredConnection>();
+      existing = WorkspaceConnectionResultSchema.parse(
+        await (await this.workspaceObject(String(row.workspace_id))).connection({
+          workspaceId: String(row.workspace_id),
+          connectionId: connectionId,
+          connectorType: "github",
+        }),
+      ).connection;
       if (!existing) throw new ApiError(404, "connection_not_found", "GitHub connection not found");
       if (existing.scope !== stateData.scope || (existing.scope === "personal" && existing.owner_user_id !== row.user_id)) {
         throw new ApiError(401, "invalid_oauth_state", "The reconnect scope no longer matches the GitHub connection");
@@ -914,47 +925,47 @@ export class ConnectionService {
       },
       account: credentials["account"] ?? {},
     });
+    const envelope = {
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+    };
+    const bindAttempt = attemptId
+      ? { bindAttempt: { attemptId, region: this.env.AVALON_REGION } }
+      : {};
     if (existing) {
-      await this.persistConnectionMutation(this.env.DB.prepare(
-        `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
-         granted_scopes_json = ?, provider_account_id = ?, display_name = ?, model_plugin_id = ?, status = 'healthy', error_json = NULL,
-         config_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND connector_type = 'github'`,
-      ).bind(
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        JSON.stringify(stateData.capabilities),
-        providerAccountId,
-        displayName,
-        modelPluginId,
-        config,
-        at,
-        connectionId,
-        row.workspace_id,
-      ), attemptId, connectionId);
+      await this.writeConnection(String(row.workspace_id), connectionId, attemptId, (object) =>
+        object.refreshConnection({
+          workspaceId: String(row.workspace_id),
+          connectionId,
+          connectorType: "github",
+          providerAccountId,
+          displayName,
+          credentials: envelope,
+          grantedScopesJson: JSON.stringify(stateData.capabilities),
+          modelPluginId,
+          configJson: config,
+          at,
+          ...bindAttempt,
+        }));
     } else {
-      await this.persistConnectionMutation(this.env.DB.prepare(
-        `INSERT INTO connector_connections
-         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
-          encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-          model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-         VALUES (?, ?, 'github', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
-      ).bind(
-        connectionId,
-        row.workspace_id,
-        stateData.scope,
-        stateData.scope === "personal" ? row.user_id : null,
-        providerAccountId,
-        displayName,
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        JSON.stringify(stateData.capabilities),
-        modelPluginId,
-        config,
-        at,
-        at,
-      ), attemptId, connectionId);
+      await this.writeConnection(String(row.workspace_id), connectionId, attemptId, (object) =>
+        object.createConnection({
+          workspaceId: String(row.workspace_id),
+          connectionId,
+          connectorType: "github",
+          scope: stateData.scope,
+          ownerUserId: stateData.scope === "personal" ? String(row.user_id) : null,
+          providerAccountId,
+          displayName,
+          credentials: envelope,
+          grantedScopesJson: JSON.stringify(stateData.capabilities),
+          modelPluginId,
+          configJson: config,
+          nextPollAt: null,
+          at,
+          ...bindAttempt,
+        }));
     }
     await this.upsertGitHubRepositoryResources(
       String(row.workspace_id),
@@ -1016,9 +1027,13 @@ export class ConnectionService {
     let existing: StoredConnection | null = null;
     let existingCredentials: Record<string, unknown> = {};
     if (stateData.connectionId) {
-      existing = await this.env.DB.prepare(
-        `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ? AND connector_type = ?`,
-      ).bind(connectionId, row.workspace_id, provider).first<StoredConnection>();
+      existing = WorkspaceConnectionResultSchema.parse(
+        await (await this.workspaceObject(String(row.workspace_id))).connection({
+          workspaceId: String(row.workspace_id),
+          connectionId: connectionId,
+          connectorType: provider as WorkspaceConnection["connector_type"],
+        }),
+      ).connection;
       if (!existing) throw new ApiError(404, "connection_not_found", `${adapter.manifest.displayName} connection not found`);
       if (existing.scope !== stateData.scope || (existing.scope === "personal" && existing.owner_user_id !== row.user_id)) {
         throw new ApiError(401, "invalid_oauth_state", "The reconnect scope no longer matches the connection");
@@ -1090,56 +1105,52 @@ export class ConnectionService {
       provider,
       existing ? connectionId : null,
     );
+    const envelope = {
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+    };
+    const configJson = JSON.stringify({
+      region: this.env.AVALON_REGION,
+      ...verifiedIdentityConfig(provider, credentials, providerAccountId),
+    });
+    const bindAttempt = attemptId
+      ? { bindAttempt: { attemptId, region: this.env.AVALON_REGION } }
+      : {};
     if (existing) {
-      await this.persistConnectionMutation(this.env.DB.prepare(
-        `UPDATE connector_connections SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
-         granted_scopes_json = ?, provider_account_id = ?, display_name = ?, model_plugin_id = ?, status = 'healthy', error_json = NULL,
-         config_json = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND connector_type = ?`,
-      ).bind(
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        JSON.stringify(grantedCapabilities),
-        providerAccountId,
-        displayName,
-        modelPluginId,
-        JSON.stringify({
-          region: this.env.AVALON_REGION,
-          ...verifiedIdentityConfig(provider, credentials, providerAccountId),
-        }),
-        at,
-        connectionId,
-        row.workspace_id,
-        provider,
-      ), attemptId, connectionId);
-    } else {
-      try {
-        await this.persistConnectionMutation(this.env.DB.prepare(
-          `INSERT INTO connector_connections
-           (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id, display_name,
-            encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-            model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?)`,
-        ).bind(
+      await this.writeConnection(String(row.workspace_id), connectionId, attemptId, (object) =>
+        object.refreshConnection({
+          workspaceId: String(row.workspace_id),
           connectionId,
-          row.workspace_id,
-          provider,
-          stateData.scope,
-          stateData.scope === "personal" ? row.user_id : null,
+          connectorType: provider,
           providerAccountId,
           displayName,
-          encrypted.ciphertext,
-          encrypted.iv,
-          Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-          JSON.stringify(grantedCapabilities),
+          credentials: envelope,
+          grantedScopesJson: JSON.stringify(grantedCapabilities),
           modelPluginId,
-          JSON.stringify({
-            region: this.env.AVALON_REGION,
-            ...verifiedIdentityConfig(provider, credentials, providerAccountId),
-          }),
+          configJson,
           at,
-          at,
-        ), attemptId, connectionId);
+          ...bindAttempt,
+        }));
+    } else {
+      try {
+        await this.writeConnection(String(row.workspace_id), connectionId, attemptId, (object) =>
+          object.createConnection({
+            workspaceId: String(row.workspace_id),
+            connectionId,
+            connectorType: provider,
+            scope: stateData.scope,
+            ownerUserId: stateData.scope === "personal" ? String(row.user_id) : null,
+            providerAccountId,
+            displayName,
+            credentials: envelope,
+            grantedScopesJson: JSON.stringify(grantedCapabilities),
+            modelPluginId,
+            configJson,
+            nextPollAt: null,
+            at,
+            ...bindAttempt,
+          }));
       } catch (error) {
         if (provider === "linear" && isUniqueConstraintError(error)) {
           throw new ApiError(
@@ -1709,30 +1720,32 @@ export class ConnectionService {
     );
     const at = nowIso();
     const modelPluginId = await this.allocateModelPluginId(auth.workspaceId, "generic_webhook");
+    let created: WorkspaceConnectionWriteResult;
     try {
-      await this.env.DB.prepare(
-        `INSERT INTO connector_connections
-         (id, workspace_id, connector_type, scope, owner_user_id, display_name,
-          encrypted_credentials, credential_iv, credential_key_version, granted_scopes_json,
-          model_plugin_id, status, cursor_json, config_json, created_at, updated_at)
-         VALUES (?, ?, 'generic_webhook', ?, ?, ?, ?, ?, ?, '[]', ?, 'healthy', '{}', ?, ?, ?)`,
-      ).bind(
-        id,
-        auth.workspaceId,
-        input.scope,
-        input.scope === "personal" ? auth.userId : null,
-        input.displayName,
-        encrypted.ciphertext,
-        encrypted.iv,
-        Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-        modelPluginId,
-        JSON.stringify({
-          eventTypes: [...new Set(input.eventTypes)],
-          ...(input.idempotencyKey ? { creationIdempotencyKey: input.idempotencyKey } : {}),
+      created = WorkspaceConnectionWriteResultSchema.parse(
+        await (await this.workspaceObject(auth.workspaceId)).createConnection({
+          workspaceId: auth.workspaceId,
+          connectionId: id,
+          connectorType: "generic_webhook",
+          scope: input.scope,
+          ownerUserId: input.scope === "personal" ? auth.userId : null,
+          providerAccountId: null,
+          displayName: input.displayName,
+          credentials: {
+            ciphertext: encrypted.ciphertext,
+            iv: encrypted.iv,
+            keyVersion: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
+          },
+          grantedScopesJson: "[]",
+          modelPluginId,
+          configJson: JSON.stringify({
+            eventTypes: [...new Set(input.eventTypes)],
+            ...(input.idempotencyKey ? { creationIdempotencyKey: input.idempotencyKey } : {}),
+          }),
+          nextPollAt: null,
+          at,
         }),
-        at,
-        at,
-      ).run();
+      );
     } catch (error) {
       if (!input.idempotencyKey || !isUniqueConstraintError(error)) throw error;
       const winner = await this.findIdempotentWebhookConnection(input.scope, input.idempotencyKey);
@@ -1744,19 +1757,13 @@ export class ConnectionService {
     await this.recordConnectionAudit(auth.workspaceId, auth.userId, "connector.authorized", id, {
       provider: "generic_webhook", scope: input.scope, eventTypes: input.eventTypes,
     });
-    const stored: StoredConnection = {
-      id,
-      workspace_id: auth.workspaceId,
-      connector_type: "generic_webhook",
-      scope: input.scope,
-      owner_user_id: input.scope === "personal" ? auth.userId : null,
-      model_plugin_id: modelPluginId,
-      status: "healthy",
-      granted_scopes_json: "[]",
-      encrypted_credentials: encrypted.ciphertext,
-      credential_iv: encrypted.iv,
-      credential_key_version: Number(this.env.CONNECTOR_CREDENTIALS_KEY_VERSION || 1),
-    };
+    // The row the insert returned, rather than one rebuilt here from the same
+    // inputs. The hand-built copy listed eleven of twenty-two columns and had
+    // to be kept in step with the insert above it by hand.
+    if (created.outcome !== "written") {
+      throw new ApiError(500, "connector_persistence_failed", "The connector could not be persisted");
+    }
+    const stored = created.connection;
     await this.emitConnectorSetupCompleted(stored, "webhook", Date.now() - telemetryStartedAt, false)
       .catch(() => undefined);
     return this.webhookConnectionResult(stored, secret);
@@ -2397,6 +2404,31 @@ export class ConnectionService {
     this.env = withWorkspaceRuntimeDatabase(this.env, route.workspace_id);
   }
 
+  /**
+   * One connection write, plus the control-plane route it publishes.
+   *
+   * What `persistConnectionMutation` did, minus the D1 batch it no longer
+   * needs: the attempt bind travels *inside* the typed write and settles in
+   * the same `transactionSync`, so a member's handoff still cannot remain
+   * pending after its connection commits. The regional ingress route is
+   * written afterwards, exactly as before — it is the recoverable post-commit
+   * edge, and it lives in regional D1 rather than in this object.
+   */
+  private async writeConnection(
+    workspaceId: string,
+    connectionId: string,
+    _attemptId: string | null,
+    write: (
+      object: Awaited<ReturnType<ConnectionService["workspaceObject"]>>,
+    ) => Promise<unknown>,
+  ): Promise<WorkspaceConnectionWriteResult> {
+    const result = WorkspaceConnectionWriteResultSchema.parse(
+      await write(await this.workspaceObject(workspaceId)),
+    );
+    if (result.outcome === "written") await this.syncConnectorIngressRoute(connectionId);
+    return result;
+  }
+
   private async persistConnectionMutation(
     statement: D1PreparedStatement,
     attemptId: string | null,
@@ -2777,23 +2809,20 @@ export class ConnectionService {
     existingConnectionId: string | null = null,
   ): Promise<string> {
     const base = modelPluginIdBase(connectorType);
-    const active = await this.env.DB.prepare(
-      `SELECT id, model_plugin_id FROM connector_connections
-       WHERE workspace_id = ? AND status <> 'disabled' AND (? IS NULL OR id <> ?)`,
-    ).bind(workspaceId, existingConnectionId, existingConnectionId).all<{
-      id: string;
-      model_plugin_id: string;
-    }>();
-    const used = new Set(
-      (active.results ?? [])
-        .map((row) => row.model_plugin_id)
-        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    // Both reads answer from one critical section now. They were two round
+    // trips over the same table, so a connection created between them could be
+    // missing from `taken` while its name was already claimed — and the loser
+    // of that race is a unique-index violation on
+    // `connector_connections_active_model_plugin_id_uq`, not a retry.
+    const allocated = WorkspaceConnectionPluginIdsResultSchema.parse(
+      await (await this.workspaceObject(workspaceId)).connectionPluginIds({
+        workspaceId,
+        excludeConnectionId: existingConnectionId,
+      }),
     );
+    const used = new Set(allocated.taken.filter((value) => value.length > 0));
     if (existingConnectionId) {
-      const current = await this.env.DB.prepare(
-        `SELECT model_plugin_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
-      ).bind(existingConnectionId, workspaceId).first<{ model_plugin_id: string }>();
-      const currentId = current?.model_plugin_id;
+      const currentId = allocated.current;
       if (currentId && isModelPluginIdForBase(currentId, base) && !used.has(currentId)) return currentId;
     }
     if (!used.has(base)) return base;
@@ -2825,10 +2854,13 @@ export class ConnectionService {
 
   private async loadVisible(id: string): Promise<StoredConnection> {
     const auth = this.requireAuth();
-    const row = await this.env.DB.prepare(
-      `SELECT * FROM connector_connections WHERE id = ? AND workspace_id = ?
-       AND (scope = 'workspace' OR owner_user_id = ?)`,
-    ).bind(id, auth.workspaceId, auth.userId).first<StoredConnection>();
+    const { connection: row } = WorkspaceConnectionResultSchema.parse(
+      await (await this.workspaceObject(auth.workspaceId)).connection({
+        workspaceId: auth.workspaceId,
+        connectionId: id,
+        visibleToUserId: auth.userId,
+      }),
+    );
     if (!row) throw new ApiError(404, "connection_not_found", "Connection not found");
     return row;
   }
@@ -2894,6 +2926,7 @@ export class ConnectionService {
     if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
       credentials = JSON.parse(await decryptVersionedConnectorCredentials(this.env, {
         id: row.id,
+        workspace_id: row.workspace_id,
         encrypted_credentials: row.encrypted_credentials,
         credential_iv: row.credential_iv,
         credential_key_version: row.credential_key_version ?? null,

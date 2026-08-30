@@ -13,6 +13,34 @@ import {
   type WorkspaceConnectorOAuthAttemptTelemetryBindRequest,
   type WorkspaceWebhookReceiptClaimRequest,
   type WorkspaceWebhookReceiptClaimResult,
+  WorkspaceConnectionResultSchema,
+  WorkspaceConnectionListResultSchema,
+  WorkspaceConnectionWriteResultSchema,
+  WorkspaceConnectionSettleResultSchema,
+  WorkspaceConnectionLeaseClaimResultSchema,
+  WorkspaceConnectionPluginIdsResultSchema,
+  type WorkspaceConnection,
+  type WorkspaceConnectionResult,
+  type WorkspaceConnectionListResult,
+  type WorkspaceConnectionListRequest,
+  type WorkspaceConnectionReadRequest,
+  type WorkspaceConnectionFindRequest,
+  type WorkspaceConnectionCreateRequest,
+  type WorkspaceConnectionRefreshRequest,
+  type WorkspaceConnectionWriteResult,
+  type WorkspaceConnectionStatusRequest,
+  type WorkspaceConnectionDisableRequest,
+  type WorkspaceConnectionCredentialWriteRequest,
+  type WorkspaceConnectionEnvelopeRotateRequest,
+  type WorkspaceConnectionSettleResult,
+  type WorkspaceConnectionLeaseClaimRequest,
+  type WorkspaceConnectionLeaseClaimResult,
+  type WorkspaceConnectionLeaseSettleRequest,
+  type WorkspaceConnectionLeaseReleaseRequest,
+  type WorkspaceConnectionRepositoryAccessRequest,
+  type WorkspaceConnectionIdentityRequest,
+  type WorkspaceConnectionPluginIdsRequest,
+  type WorkspaceConnectionPluginIdsResult,
 } from "./workspace-connections-protocol";
 
 interface AttemptRow extends Record<string, SqlStorageValue> {
@@ -360,4 +388,505 @@ export function claimWorkspaceWebhookReceipt(
     }
     return WorkspaceWebhookReceiptClaimResultSchema.parse({ outcome: "duplicate" });
   });
+}
+
+/**
+ * Every column of `connector_connections`, named rather than `SELECT *`.
+ *
+ * The replaced statements were mostly `SELECT *`, which is why the readers
+ * downstream could each pick a different subset without anyone noticing when
+ * one of them stopped being written. Naming the columns here makes the row a
+ * contract: `WorkspaceConnectionSchema` is `.strict()`, so a column added to
+ * the table and not to both lists fails the parse in tests rather than
+ * arriving as an untyped extra at a call site.
+ */
+const CONNECTION_COLUMNS = `id, workspace_id, connector_type, scope, owner_user_id,
+       provider_account_id, display_name, encrypted_credentials, credential_iv,
+       credential_key_version, credential_refresh_lease_id,
+       credential_refresh_lease_expires_at, granted_scopes_json, status, cursor_json,
+       config_json, last_sync_at, next_poll_at, error_json, created_at, updated_at,
+       model_plugin_id`;
+
+function connectionResult(row: WorkspaceConnection | undefined): WorkspaceConnectionResult {
+  return WorkspaceConnectionResultSchema.parse({ connection: row ?? null });
+}
+
+/**
+ * The qualifications a read may add, as SQL fragments over code-owned text.
+ *
+ * Every fragment is a constant; only bindings vary. That is the rule the
+ * SQL-construction guidance asks for, and it is what lets one method stand in
+ * for the eleven near-identical `WHERE` clauses the services used to write.
+ */
+function readPredicate(request: {
+  connectorType?: string | undefined;
+  scope?: string | undefined;
+  activeOnly?: boolean | undefined;
+  healthyOnly?: boolean | undefined;
+  visibleToUserId?: string | undefined;
+}): { sql: string; bindings: (string | number)[] } {
+  const clauses: string[] = [];
+  const bindings: (string | number)[] = [];
+  if (request.connectorType !== undefined) {
+    clauses.push("AND connector_type = ?");
+    bindings.push(request.connectorType);
+  }
+  if (request.scope !== undefined) {
+    clauses.push("AND scope = ?");
+    bindings.push(request.scope);
+  }
+  if (request.activeOnly) clauses.push("AND status <> 'disabled'");
+  if (request.healthyOnly) clauses.push("AND status = 'healthy'");
+  if (request.visibleToUserId !== undefined) {
+    clauses.push("AND (scope = 'workspace' OR owner_user_id = ?)");
+    bindings.push(request.visibleToUserId);
+  }
+  return { sql: clauses.join("\n        "), bindings };
+}
+
+export function workspaceConnection(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionReadRequest,
+): WorkspaceConnectionResult {
+  const predicate = readPredicate(request);
+  return connectionResult(storage.sql.exec<WorkspaceConnection>(
+    `SELECT ${CONNECTION_COLUMNS} FROM connector_connections
+      WHERE id = ? AND workspace_id = ?
+        ${predicate.sql}`,
+    request.connectionId,
+    request.workspaceId,
+    ...predicate.bindings,
+  ).toArray()[0]);
+}
+
+export function listWorkspaceConnections(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionListRequest,
+): WorkspaceConnectionListResult {
+  return WorkspaceConnectionListResultSchema.parse({
+    connections: storage.sql.exec<WorkspaceConnection>(
+      `SELECT ${CONNECTION_COLUMNS} FROM connector_connections
+        WHERE workspace_id = ? AND (scope = 'workspace' OR owner_user_id = ?)
+        ORDER BY display_name COLLATE NOCASE`,
+      request.workspaceId,
+      request.userId,
+    ).toArray(),
+  });
+}
+
+/**
+ * The adoption search. Always active-only: every replaced statement carried
+ * `status <> 'disabled'`, because a disabled connection is a decision somebody
+ * made and re-adopting it would undo that silently.
+ */
+export function findWorkspaceConnection(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionFindRequest,
+): WorkspaceConnectionResult {
+  const clauses: string[] = [];
+  const bindings: (string | number)[] = [];
+  if (request.scope !== undefined) {
+    clauses.push("AND scope = ?");
+    bindings.push(request.scope);
+  }
+  if (request.providerAccountId !== undefined) {
+    if (request.providerAccountId === null) {
+      clauses.push("AND provider_account_id IS NULL");
+    } else {
+      clauses.push("AND provider_account_id = ?");
+      bindings.push(request.providerAccountId);
+    }
+  }
+  if (request.ownerUserId !== undefined) {
+    if (request.ownerUserId === null) {
+      clauses.push("AND owner_user_id IS NULL");
+    } else {
+      clauses.push("AND owner_user_id = ?");
+      bindings.push(request.ownerUserId);
+    }
+  }
+  if (request.excludeConnectionId !== undefined) {
+    clauses.push("AND id <> ?");
+    bindings.push(request.excludeConnectionId);
+  }
+  if (request.creationIdempotencyKey !== undefined) {
+    clauses.push("AND json_extract(config_json, '$.creationIdempotencyKey') = ?");
+    bindings.push(request.creationIdempotencyKey);
+  }
+  return connectionResult(storage.sql.exec<WorkspaceConnection>(
+    `SELECT ${CONNECTION_COLUMNS} FROM connector_connections
+      WHERE workspace_id = ? AND connector_type = ? AND status <> 'disabled'
+        ${clauses.join("\n        ")}
+      ORDER BY created_at
+      LIMIT 1`,
+    request.workspaceId,
+    request.connectorType,
+    ...bindings,
+  ).toArray()[0]);
+}
+
+export function workspaceConnectionPluginIds(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionPluginIdsRequest,
+): WorkspaceConnectionPluginIdsResult {
+  return storage.transactionSync(() => {
+    const taken = storage.sql.exec<{ model_plugin_id: string }>(
+      `SELECT model_plugin_id FROM connector_connections
+        WHERE workspace_id = ? AND status <> 'disabled' AND (? IS NULL OR id <> ?)`,
+      request.workspaceId,
+      request.excludeConnectionId,
+      request.excludeConnectionId,
+    ).toArray().map((row) => row.model_plugin_id);
+    const current = request.excludeConnectionId === null
+      ? null
+      : storage.sql.exec<{ model_plugin_id: string }>(
+        `SELECT model_plugin_id FROM connector_connections WHERE id = ? AND workspace_id = ?`,
+        request.excludeConnectionId,
+        request.workspaceId,
+      ).toArray()[0]?.model_plugin_id ?? null;
+    return WorkspaceConnectionPluginIdsResultSchema.parse({ taken, current });
+  });
+}
+
+/**
+ * Settle the attempt a connection write authorized, inside that write's
+ * transaction.
+ *
+ * The predicate is the one `persistConnectionMutation` used: only a pending or
+ * failed attempt binds, so a replayed callback cannot re-point an attempt that
+ * already succeeded at a different connection.
+ */
+function bindAttemptToConnection(
+  storage: DurableObjectStorage,
+  bind: { attemptId: string; region: string } | undefined,
+  connectionId: string,
+  at: string,
+): void {
+  if (!bind) return;
+  storage.sql.exec(
+    `UPDATE connector_oauth_attempts
+        SET connection_id = ?, updated_at = ?
+      WHERE id = ? AND region = ?
+        AND status IN ('pending', 'failed')`,
+    connectionId,
+    at,
+    bind.attemptId,
+    bind.region,
+  );
+}
+
+export function createWorkspaceConnection(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionCreateRequest,
+): WorkspaceConnectionWriteResult {
+  return storage.transactionSync(() => {
+    const row = storage.sql.exec<WorkspaceConnection>(
+      `INSERT INTO connector_connections
+         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
+          display_name, encrypted_credentials, credential_iv, credential_key_version,
+          granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
+          next_poll_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'healthy', '{}', ?, ?, ?, ?)
+       RETURNING ${CONNECTION_COLUMNS}`,
+      request.connectionId,
+      request.workspaceId,
+      request.connectorType,
+      request.scope,
+      request.ownerUserId,
+      request.providerAccountId,
+      request.displayName,
+      request.credentials?.ciphertext ?? null,
+      request.credentials?.iv ?? null,
+      request.credentials?.keyVersion ?? null,
+      request.grantedScopesJson,
+      request.modelPluginId,
+      request.configJson,
+      request.nextPollAt,
+      request.at,
+      request.at,
+    ).toArray()[0];
+    bindAttemptToConnection(storage, request.bindAttempt, request.connectionId, request.at);
+    return WorkspaceConnectionWriteResultSchema.parse(
+      row ? { outcome: "written", connection: row } : { outcome: "missing" },
+    );
+  });
+}
+
+export function refreshWorkspaceConnection(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionRefreshRequest,
+): WorkspaceConnectionWriteResult {
+  return storage.transactionSync(() => {
+    const pollAssignment = request.nextPollAt === undefined ? "" : ", next_poll_at = ?";
+    const pollBinding = request.nextPollAt === undefined ? [] : [request.nextPollAt];
+    const row = storage.sql.exec<WorkspaceConnection>(
+      `UPDATE connector_connections
+          SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
+              granted_scopes_json = ?, provider_account_id = ?, display_name = ?,
+              model_plugin_id = ?, status = 'healthy', error_json = NULL,
+              config_json = ?${pollAssignment}, updated_at = ?
+        WHERE id = ? AND workspace_id = ? AND connector_type = ?
+        RETURNING ${CONNECTION_COLUMNS}`,
+      request.credentials.ciphertext,
+      request.credentials.iv,
+      request.credentials.keyVersion,
+      request.grantedScopesJson,
+      request.providerAccountId,
+      request.displayName,
+      request.modelPluginId,
+      request.configJson,
+      ...pollBinding,
+      request.at,
+      request.connectionId,
+      request.workspaceId,
+      request.connectorType,
+    ).toArray()[0];
+    // The bind is skipped when nothing was refreshed: an attempt must not be
+    // pointed at a connection this call did not actually write.
+    if (row) bindAttemptToConnection(storage, request.bindAttempt, request.connectionId, request.at);
+    return WorkspaceConnectionWriteResultSchema.parse(
+      row ? { outcome: "written", connection: row } : { outcome: "missing" },
+    );
+  });
+}
+
+export function setWorkspaceConnectionStatus(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionStatusRequest,
+): WorkspaceConnectionWriteResult {
+  const clauses: string[] = [];
+  const bindings: (string | number)[] = [];
+  if (request.connectorType !== undefined) {
+    clauses.push("AND connector_type = ?");
+    bindings.push(request.connectorType);
+  }
+  if (request.fromStatus !== undefined) {
+    clauses.push("AND status = ?");
+    bindings.push(request.fromStatus);
+  }
+  const row = storage.sql.exec<WorkspaceConnection>(
+    `UPDATE connector_connections
+        SET status = ?, error_json = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+        ${clauses.join("\n        ")}
+      RETURNING ${CONNECTION_COLUMNS}`,
+    request.status,
+    request.errorJson,
+    request.at,
+    request.connectionId,
+    request.workspaceId,
+    ...bindings,
+  ).toArray()[0];
+  return WorkspaceConnectionWriteResultSchema.parse(
+    row ? { outcome: "written", connection: row } : { outcome: "missing" },
+  );
+}
+
+export function disableWorkspaceConnection(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionDisableRequest,
+): WorkspaceConnectionWriteResult {
+  const row = storage.sql.exec<WorkspaceConnection>(
+    `UPDATE connector_connections
+        SET status = 'disabled', encrypted_credentials = NULL, credential_iv = NULL,
+            next_poll_at = NULL, updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+      RETURNING ${CONNECTION_COLUMNS}`,
+    request.at,
+    request.connectionId,
+    request.workspaceId,
+  ).toArray()[0];
+  return WorkspaceConnectionWriteResultSchema.parse(
+    row ? { outcome: "written", connection: row } : { outcome: "missing" },
+  );
+}
+
+export function setWorkspaceConnectionCredentials(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionCredentialWriteRequest,
+): WorkspaceConnectionWriteResult {
+  const row = storage.sql.exec<WorkspaceConnection>(
+    `UPDATE connector_connections
+        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
+            updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+        ${request.activeOnly ? "AND status <> 'disabled'" : ""}
+      RETURNING ${CONNECTION_COLUMNS}`,
+    request.credentials.ciphertext,
+    request.credentials.iv,
+    request.credentials.keyVersion,
+    request.at,
+    request.connectionId,
+    request.workspaceId,
+  ).toArray()[0];
+  return WorkspaceConnectionWriteResultSchema.parse(
+    row ? { outcome: "written", connection: row } : { outcome: "missing" },
+  );
+}
+
+export function rotateWorkspaceConnectionEnvelope(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionEnvelopeRotateRequest,
+): WorkspaceConnectionSettleResult {
+  const settled = storage.sql.exec<{ id: string }>(
+    `UPDATE connector_connections
+        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
+            updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+        AND encrypted_credentials = ? AND credential_iv = ? AND credential_key_version = ?
+      RETURNING id`,
+    request.next.ciphertext,
+    request.next.iv,
+    request.next.keyVersion,
+    request.at,
+    request.connectionId,
+    request.workspaceId,
+    request.expected.ciphertext,
+    request.expected.iv,
+    request.expected.keyVersion,
+  ).toArray()[0];
+  return WorkspaceConnectionSettleResultSchema.parse({
+    outcome: settled ? "settled" : "raced",
+  });
+}
+
+/**
+ * Claim the refresh lease, minting its id and expiry here.
+ *
+ * `crypto.randomUUID()` and the deadline are the object's to produce: a caller
+ * that invented both could hand two workers the same lease id, and a caller
+ * whose clock ran slow could set an expiry already past. The envelope comes
+ * back with the claim because the winner needs it and a second read would let
+ * a rival's settle land between the two.
+ */
+export function claimWorkspaceConnectionCredentialLease(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionLeaseClaimRequest,
+): WorkspaceConnectionLeaseClaimResult {
+  const leaseId = crypto.randomUUID();
+  const expiresAt = new Date(Date.parse(request.at) + request.leaseMs).toISOString();
+  const row = storage.sql.exec<{
+    encrypted_credentials: string | null;
+    credential_iv: string | null;
+    credential_key_version: number | null;
+  }>(
+    `UPDATE connector_connections
+        SET credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?
+      WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
+        AND (credential_refresh_lease_id IS NULL
+             OR credential_refresh_lease_expires_at < ?)
+      RETURNING encrypted_credentials, credential_iv, credential_key_version`,
+    leaseId,
+    expiresAt,
+    request.connectionId,
+    request.workspaceId,
+    request.at,
+  ).toArray()[0];
+  if (!row) return WorkspaceConnectionLeaseClaimResultSchema.parse({ outcome: "held" });
+  const complete = row.encrypted_credentials !== null
+    && row.credential_iv !== null
+    && row.credential_key_version !== null;
+  return WorkspaceConnectionLeaseClaimResultSchema.parse({
+    outcome: "claimed",
+    leaseId,
+    // A connection can hold the lease and no envelope — a disabled-then-revived
+    // row, or one whose credentials were cleared. The caller decides what to do
+    // about that; the claim itself succeeded.
+    credentials: complete
+      ? {
+        ciphertext: row.encrypted_credentials,
+        iv: row.credential_iv,
+        keyVersion: row.credential_key_version,
+      }
+      : null,
+  });
+}
+
+export function settleWorkspaceConnectionCredentialLease(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionLeaseSettleRequest,
+): WorkspaceConnectionSettleResult {
+  const settled = storage.sql.exec<{ id: string }>(
+    `UPDATE connector_connections
+        SET encrypted_credentials = ?, credential_iv = ?, credential_key_version = ?,
+            credential_refresh_lease_id = NULL,
+            credential_refresh_lease_expires_at = NULL, updated_at = ?
+      WHERE id = ? AND workspace_id = ? AND status <> 'disabled'
+        AND credential_refresh_lease_id = ?
+      RETURNING id`,
+    request.credentials.ciphertext,
+    request.credentials.iv,
+    request.credentials.keyVersion,
+    request.at,
+    request.connectionId,
+    request.workspaceId,
+    request.leaseId,
+  ).toArray()[0];
+  return WorkspaceConnectionSettleResultSchema.parse({
+    outcome: settled ? "settled" : "raced",
+  });
+}
+
+export function releaseWorkspaceConnectionCredentialLease(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionLeaseReleaseRequest,
+): void {
+  storage.sql.exec(
+    `UPDATE connector_connections
+        SET credential_refresh_lease_id = NULL, credential_refresh_lease_expires_at = NULL
+      WHERE id = ? AND workspace_id = ? AND credential_refresh_lease_id = ?`,
+    request.connectionId,
+    request.workspaceId,
+    request.leaseId,
+  );
+}
+
+export function setWorkspaceConnectionRepositoryAccess(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionRepositoryAccessRequest,
+): WorkspaceConnectionSettleResult {
+  const settled = storage.sql.exec<{ id: string }>(
+    `UPDATE connector_connections
+        SET config_json = json_set(COALESCE(config_json, '{}'),
+                                   '$.githubRepositoryAccess', json(?)),
+            updated_at = ?
+      WHERE id = ? AND workspace_id = ? AND connector_type = 'github'
+        AND status <> 'disabled'
+        AND COALESCE(
+              CAST(json_extract(config_json, '$.githubRepositoryAccess.revision') AS INTEGER),
+              0
+            ) = ?
+      RETURNING id`,
+    request.accessJson,
+    request.at,
+    request.connectionId,
+    request.workspaceId,
+    request.expectedRevision,
+  ).toArray()[0];
+  return WorkspaceConnectionSettleResultSchema.parse({
+    outcome: settled ? "settled" : "raced",
+  });
+}
+
+export function setWorkspaceConnectionIdentity(
+  storage: DurableObjectStorage,
+  request: WorkspaceConnectionIdentityRequest,
+): WorkspaceConnectionWriteResult {
+  const row = storage.sql.exec<WorkspaceConnection>(
+    `UPDATE connector_connections
+        SET provider_account_id = ?, display_name = ?, config_json = ?, updated_at = ?
+      WHERE id = ? AND workspace_id = ? AND connector_type = ? AND scope = ?
+      RETURNING ${CONNECTION_COLUMNS}`,
+    request.providerAccountId,
+    request.displayName,
+    request.configJson,
+    request.at,
+    request.connectionId,
+    request.workspaceId,
+    request.connectorType,
+    request.scope,
+  ).toArray()[0];
+  return WorkspaceConnectionWriteResultSchema.parse(
+    row ? { outcome: "written", connection: row } : { outcome: "missing" },
+  );
 }

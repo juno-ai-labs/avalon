@@ -1123,6 +1123,7 @@ export class ProviderWebhookService {
     if (row.encrypted_credentials && row.credential_iv) {
       credentials = parseRecord(await decryptVersionedConnectorCredentials(this.env, {
         id: row.id,
+        workspace_id: row.workspace_id,
         encrypted_credentials: row.encrypted_credentials,
         credential_iv: row.credential_iv,
         credential_key_version: row.credential_key_version,

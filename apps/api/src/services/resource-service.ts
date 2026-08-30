@@ -628,6 +628,7 @@ export class ResourceService {
     if (typeof row.encrypted_credentials === "string" && typeof row.credential_iv === "string") {
       credentials = JSON.parse(await decryptVersionedConnectorCredentials(this.env, {
         id: String(row.id),
+        workspace_id: String(row.workspace_id),
         encrypted_credentials: row.encrypted_credentials,
         credential_iv: row.credential_iv,
         credential_key_version: Number(row.credential_key_version || 1),
