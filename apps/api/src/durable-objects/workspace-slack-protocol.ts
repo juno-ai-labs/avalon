@@ -263,6 +263,236 @@ export const WorkspaceSlackThreadReleaseRequestSchema = z.object({
   leaseId: z.string().min(1),
 }).strict();
 
+/**
+ * The agent-session lifecycle: the thread's Rally identity, its delivery
+ * bookkeeping, and the status reaction Rally keeps on the triggering message.
+ *
+ * `slack_agent_contexts` is keyed `(connection_id, slack_user_id)` and carries
+ * no `workspace_id` of its own — the workspace is how the caller found the
+ * object, not a column. Its requests still take `workspaceId` so the object can
+ * assert the caller reached the right one, exactly as every other method here.
+ */
+const SlackInvocationKindSchema = z.enum(["app_mention", "direct_message", "slash_command", "shortcut"]);
+const SlackChannelTypeSchema = z.enum(["public", "private", "im", "unknown"]);
+const SlackAssignmentMethodSchema = z.enum(["verified_email", "explicit_link"]);
+const SlackFeedbackRatingSchema = z.enum(["helpful", "needs_improvement"]);
+
+/** The session as its readers consume it, in the object's own column names. */
+export const WorkspaceSlackSessionSchema = z.object({
+  id: z.string().min(1),
+  workspace_id: z.string().min(1),
+  connection_id: z.string().min(1),
+  slack_team_id: z.string().min(1),
+  slack_user_id: z.string().min(1),
+  slack_channel_id: z.string().min(1),
+  slack_thread_ts: z.string().min(1),
+  slack_stream_ts: z.string().nullable(),
+  workstream_id: z.string().min(1),
+  last_delivery_key: z.string().nullable(),
+  opening_client_message_id: z.string(),
+  invocation_kind: SlackInvocationKindSchema,
+  channel_type: SlackChannelTypeSchema,
+  assigned_user_id: z.string().nullable(),
+  /** The triggering message Rally's status reaction sits on, not the root. */
+  reaction_channel_id: z.string().nullable(),
+  reaction_message_ts: z.string().nullable(),
+  /** Only what Rally placed itself, so a transition never takes a member's. */
+  reaction_current: z.string().nullable(),
+  reaction_cursor: z.number().int().nonnegative(),
+}).strict();
+
+export const WorkspaceSlackSessionResultSchema = z.object({
+  session: WorkspaceSlackSessionSchema.nullable(),
+}).strict();
+
+export const WorkspaceSlackSessionByIdRequestSchema = z.object({
+  workspaceId: IdSchema,
+  sessionId: z.string().min(1),
+}).strict();
+
+export const WorkspaceSlackSessionByThreadRequestSchema = z.object({
+  workspaceId: IdSchema,
+  connectionId: z.string().min(1),
+  channelId: z.string().min(1),
+  threadTs: z.string().min(1),
+}).strict();
+
+export const WorkspaceSlackSessionByWorkstreamRequestSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+}).strict();
+
+export const WorkspaceSlackSessionExistsRequestSchema = z.object({
+  workspaceId: IdSchema,
+  workstreamId: IdSchema,
+  connectionId: z.string().min(1),
+}).strict();
+
+export const WorkspaceSlackSessionExistsResultSchema = z.object({
+  sessionId: z.string().nullable(),
+}).strict();
+
+export const WorkspaceSlackSessionCreateRequestSchema = z.object({
+  workspaceId: IdSchema,
+  sessionId: z.string().min(1),
+  connectionId: z.string().min(1),
+  teamId: z.string().min(1),
+  slackUserId: z.string().min(1),
+  channelId: z.string().min(1),
+  threadTs: z.string().min(1),
+  openingClientMessageId: z.string().min(1).max(120),
+  workstreamId: IdSchema,
+  invocationKind: SlackInvocationKindSchema,
+  channelType: SlackChannelTypeSchema,
+  assignedUserId: z.string().nullable(),
+  assignedAt: TimestampSchema.nullable(),
+  assignmentMethod: SlackAssignmentMethodSchema.nullable(),
+  claimedBySlackUserId: z.string().nullable(),
+  claimedAt: TimestampSchema.nullable(),
+  contextJson: z.string().min(1),
+  at: TimestampSchema,
+}).strict();
+
+export const WorkspaceSlackSessionAssignRequestSchema = z.object({
+  workspaceId: IdSchema,
+  connectionId: z.string().min(1),
+  teamId: z.string().min(1),
+  slackUserId: z.string().min(1),
+  assignedUserId: z.string().min(1),
+  assignmentMethod: SlackAssignmentMethodSchema,
+  at: TimestampSchema,
+}).strict();
+
+/**
+ * The sessions this assignment moved, with the values it moved them *from*.
+ *
+ * The service read the matching rows and then updated them as two statements
+ * over the same predicate, which is a race: a session seated between the two
+ * was reconciled against a snapshot that no longer described it. Both run in
+ * one `transactionSync` here, and the previous assignment travels back because
+ * `reconcileSlackWorkstreamIdentity` needs it — `RETURNING` yields the new row,
+ * so the prior values have to be read inside the same critical section rather
+ * than inferred from the write.
+ *
+ * The count the service used to take from `meta.changes` is this array's
+ * length, decided by which rows the update actually returned.
+ */
+export const WorkspaceSlackSessionAssignResultSchema = z.object({
+  sessions: z.array(z.object({
+    id: z.string().min(1),
+    workspaceId: z.string().min(1),
+    workstreamId: z.string().min(1),
+    previousAssignedUserId: z.string().nullable(),
+    previousAssignmentMethod: SlackAssignmentMethodSchema.nullable(),
+  }).strict()),
+}).strict();
+
+export const WorkspaceSlackSessionDeliveryKeyRequestSchema = z.object({
+  workspaceId: IdSchema,
+  sessionId: z.string().min(1),
+  deliveryKey: z.string().min(1),
+  at: TimestampSchema,
+}).strict();
+
+export const WorkspaceSlackSessionStreamRequestSchema = z.object({
+  workspaceId: IdSchema,
+  sessionId: z.string().min(1),
+  streamTs: z.string().min(1).nullable(),
+  at: TimestampSchema,
+}).strict();
+
+/**
+ * Settle the status reaction, conditional on the emoji this transition removed.
+ *
+ * The compare-and-set spans a Slack API call — the caller reads what is placed,
+ * asks Slack to swap it, then records the result — so it cannot be one
+ * transaction. What it can be is honest about whether it won: the write
+ * returns the updated row as a witness, and `raced` is the *absence* of that
+ * witness rather than a `rowsWritten` of zero. The service decided this from
+ * `meta.changes` before, which is the physical counter
+ * [`docs/durable-object-sqlite.md`](../../../../docs/durable-object-sqlite.md)
+ * forbids deciding a logical outcome from.
+ *
+ * `expected` is nullable because NULL is a real state: it means Rally has
+ * placed nothing, so the predicate is `IS`, not `=`. That predicate is carried
+ * forward from the statement this replaced, which already had it right; what
+ * moved is only how the outcome is decided.
+ */
+export const WorkspaceSlackSessionReactionRequestSchema = z.object({
+  workspaceId: IdSchema,
+  sessionId: z.string().min(1),
+  expected: z.string().nullable(),
+  reaction: z.string().nullable(),
+  cursor: z.number().int().nonnegative().optional(),
+  at: TimestampSchema,
+}).strict();
+
+export const WorkspaceSlackSessionReactionResultSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("settled") }).strict(),
+  z.object({ outcome: z.literal("raced") }).strict(),
+]);
+
+/**
+ * Move the status reaction onto the message that made the newest prompt.
+ *
+ * A follow-up in an existing thread restarts the rotation rather than resuming
+ * the previous run's position, so the cursor resets to 0 here. Unconditional,
+ * unlike {@link WorkspaceSlackSessionReactionRequestSchema}: this is the run
+ * declaring where its status now lives, not a transition racing another.
+ */
+export const WorkspaceSlackSessionReactionAnchorRequestSchema = z.object({
+  workspaceId: IdSchema,
+  sessionId: z.string().min(1),
+  channelId: z.string().min(1),
+  messageTs: z.string().min(1),
+  reaction: z.string().nullable(),
+  at: TimestampSchema,
+}).strict();
+
+export const WorkspaceSlackContextRequestSchema = z.object({
+  workspaceId: IdSchema,
+  connectionId: z.string().min(1),
+  slackUserId: z.string().min(1),
+}).strict();
+
+export const WorkspaceSlackContextResultSchema = z.object({
+  contextJson: z.string().nullable(),
+}).strict();
+
+export const WorkspaceSlackContextStoreRequestSchema = z.object({
+  workspaceId: IdSchema,
+  connectionId: z.string().min(1),
+  slackUserId: z.string().min(1),
+  contextJson: z.string().min(1),
+  at: TimestampSchema,
+}).strict();
+
+/**
+ * One feedback row per ingress job.
+ *
+ * `ingress_job_id` is `UNIQUE`, so a redelivered interaction is a replay rather
+ * than an error. The statement this replaced already ignored the conflict and
+ * was right to; what it could not do was say which case it had hit, because it
+ * discarded the result. The witness makes the replay reportable, which is the
+ * only thing a caller can usefully do with it.
+ */
+export const WorkspaceSlackFeedbackRequestSchema = z.object({
+  workspaceId: IdSchema,
+  feedbackId: z.string().min(1),
+  ingressJobId: z.string().min(1),
+  workstreamId: IdSchema,
+  userId: IdSchema,
+  connectionId: z.string().min(1),
+  rating: SlackFeedbackRatingSchema,
+  comment: z.string().nullable(),
+  at: TimestampSchema,
+}).strict();
+
+export const WorkspaceSlackFeedbackResultSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("recorded") }).strict(),
+  z.object({ outcome: z.literal("replayed") }).strict(),
+]);
+
 export type WorkspaceSlackIngressEnqueueRequest = z.infer<typeof WorkspaceSlackIngressEnqueueRequestSchema>;
 export type WorkspaceSlackIngressEnqueueResult = z.infer<typeof WorkspaceSlackIngressEnqueueResultSchema>;
 export type WorkspaceSlackIngressClaimRequest = z.infer<typeof WorkspaceSlackIngressClaimRequestSchema>;
@@ -284,3 +514,23 @@ export type WorkspaceSlackPendingPromptClearRequest = z.infer<typeof WorkspaceSl
 export type WorkspaceSlackThreadClaimRequest = z.infer<typeof WorkspaceSlackThreadClaimRequestSchema>;
 export type WorkspaceSlackThreadClaimResult = z.infer<typeof WorkspaceSlackThreadClaimResultSchema>;
 export type WorkspaceSlackThreadReleaseRequest = z.infer<typeof WorkspaceSlackThreadReleaseRequestSchema>;
+export type WorkspaceSlackSession = z.infer<typeof WorkspaceSlackSessionSchema>;
+export type WorkspaceSlackSessionResult = z.infer<typeof WorkspaceSlackSessionResultSchema>;
+export type WorkspaceSlackSessionByIdRequest = z.infer<typeof WorkspaceSlackSessionByIdRequestSchema>;
+export type WorkspaceSlackSessionByThreadRequest = z.infer<typeof WorkspaceSlackSessionByThreadRequestSchema>;
+export type WorkspaceSlackSessionByWorkstreamRequest = z.infer<typeof WorkspaceSlackSessionByWorkstreamRequestSchema>;
+export type WorkspaceSlackSessionExistsRequest = z.infer<typeof WorkspaceSlackSessionExistsRequestSchema>;
+export type WorkspaceSlackSessionExistsResult = z.infer<typeof WorkspaceSlackSessionExistsResultSchema>;
+export type WorkspaceSlackSessionCreateRequest = z.infer<typeof WorkspaceSlackSessionCreateRequestSchema>;
+export type WorkspaceSlackSessionAssignRequest = z.infer<typeof WorkspaceSlackSessionAssignRequestSchema>;
+export type WorkspaceSlackSessionAssignResult = z.infer<typeof WorkspaceSlackSessionAssignResultSchema>;
+export type WorkspaceSlackSessionDeliveryKeyRequest = z.infer<typeof WorkspaceSlackSessionDeliveryKeyRequestSchema>;
+export type WorkspaceSlackSessionStreamRequest = z.infer<typeof WorkspaceSlackSessionStreamRequestSchema>;
+export type WorkspaceSlackSessionReactionRequest = z.infer<typeof WorkspaceSlackSessionReactionRequestSchema>;
+export type WorkspaceSlackSessionReactionResult = z.infer<typeof WorkspaceSlackSessionReactionResultSchema>;
+export type WorkspaceSlackContextRequest = z.infer<typeof WorkspaceSlackContextRequestSchema>;
+export type WorkspaceSlackContextResult = z.infer<typeof WorkspaceSlackContextResultSchema>;
+export type WorkspaceSlackContextStoreRequest = z.infer<typeof WorkspaceSlackContextStoreRequestSchema>;
+export type WorkspaceSlackFeedbackRequest = z.infer<typeof WorkspaceSlackFeedbackRequestSchema>;
+export type WorkspaceSlackFeedbackResult = z.infer<typeof WorkspaceSlackFeedbackResultSchema>;
+export type WorkspaceSlackSessionReactionAnchorRequest = z.infer<typeof WorkspaceSlackSessionReactionAnchorRequestSchema>;
