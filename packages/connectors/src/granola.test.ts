@@ -24,6 +24,45 @@ describe("Granola connector", () => {
     });
   });
 
+  it("gives only the natural-language meeting query a five-minute deadline", async () => {
+    const adapter = createGranolaConnector({
+      redirectUri: "https://api.example.test/connections/granola/callback",
+      fetch: async (_input, init) => {
+        if (init?.method === "DELETE") return new Response(null, { status: 204 });
+        const request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+        const id = request.id as string;
+        if (request.method === "initialize") {
+          return jsonResponse({
+            jsonrpc: "2.0",
+            id,
+            result: { protocolVersion: "2025-06-18", capabilities: {} },
+          }, 200, { "mcp-session-id": "session-1" });
+        }
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            tools: [
+              { name: "query_granola_meetings", inputSchema: { type: "object" } },
+              { name: "list_meetings", inputSchema: { type: "object" } },
+            ],
+          },
+        });
+      },
+    });
+
+    const definitions = await adapter.dynamicAgentTools!.discover(
+      personalConnection(),
+      AbortSignal.timeout(1_000),
+    );
+
+    expect(definitions).toEqual([
+      expect.objectContaining({ name: "query_granola_meetings", timeoutMs: 300_000 }),
+      expect.objectContaining({ name: "list_meetings", timeoutMs: 30_000 }),
+    ]);
+  });
+
   it("uses the documented workspace API endpoints and exact query parameters", async () => {
     const requested: URL[] = [];
     const adapter = createGranolaConnector({
@@ -409,6 +448,19 @@ function workspaceConnection(): AuthorizedConnectorConnection {
     ownerUserId: null,
     grantedScopes: [GranolaCapabilities.workspaceRead],
     credentials: { apiKey: workspaceApiKey },
+    cursor: {},
+    config: {},
+  });
+}
+
+function personalConnection(): AuthorizedConnectorConnection {
+  return authorizedConnection({
+    id: "granola-personal-connection",
+    workspaceId: asWorkspaceId("025a3f3d-6749-495a-8425-7640a0dbf27a"),
+    scope: "personal",
+    ownerUserId: "33333333-3333-4333-8333-333333333333",
+    grantedScopes: [GranolaCapabilities.personalRead],
+    credentials: { accessToken: "personal-token" },
     cursor: {},
     config: {},
   });
