@@ -108,6 +108,7 @@ export function applyVersionedWorkstreamState(
   // directory page shares. That page then looks like a duplicate and would
   // otherwise be dropped, leaving the row blank for the session.
   const canFillEmptyPile = input.visible
+    && input.common.scope !== 'workspace'
     && incomingIds !== undefined
     && incomingIds.length > 0;
   if (!commonApplied && !viewerApplied && !canFillEmptyPile) {
@@ -150,17 +151,23 @@ export function applyVersionedWorkstreamState(
     };
     // Control-socket seeds claim an empty pile at a waterline the later
     // directory page often shares. Without this, that page is rejected and
-    // the row stays empty for the session. Workspace-scoped `[]` does not
-    // fill — only a non-empty directory preview replacing an empty cache.
+    // the row stays empty for the session. Workspace-scoped rows never carry
+    // a pile — empty incoming `[]` does not fill, and a public row strips
+    // leftover ids from when it was personal.
     const incomingPileIds = input.common.participantUserIds;
     if (
       !commonApplied
+      && patched.scope !== 'workspace'
       && (patched.participantUserIds?.length ?? 0) === 0
       && incomingPileIds
       && incomingPileIds.length > 0
     ) {
       patched.participantUserIds = incomingPileIds;
       patched.participantExtraCount = input.common.participantExtraCount ?? 0;
+    }
+    if (patched.scope === 'workspace') {
+      patched.participantUserIds = [];
+      patched.participantExtraCount = 0;
     }
     return withDerivedUnread(patched) as T;
   };

@@ -1739,12 +1739,19 @@ describe('private work streams', () => {
   });
 
   it('marks a workspace-scoped work stream as public', () => {
-    renderWith([workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed')]);
+    renderWith([{
+      ...workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed'),
+      // Leftover ids from when the row was personal must not paint a pile.
+      participantUserIds: ['user-1', 'user-2'],
+      participantExtraCount: 3,
+    }]);
 
     const row = screen.getByRole('link', { name: /Launch/u });
     expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
     expect(within(row).queryByTitle('Adam')).not.toBeInTheDocument();
+    expect(within(row).queryByTitle('Ari')).not.toBeInTheDocument();
+    expect(within(row).queryByText('+3')).not.toBeInTheDocument();
   });
 
   it('paints the three newest faces and an overflow for everyone past that', () => {
