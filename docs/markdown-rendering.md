@@ -89,8 +89,14 @@ runs from that heading until the next heading of the same or higher rank
 accordion — nested collapse is how a scan of the document becomes worse than
 the scroll it was meant to shorten. An h1 is never collapsible; it closes
 the open section and the title that follows waits as preamble until the next
-h2+. Headings inside code are ignored, through the same `markdownLineKinds`
-answer the streaming splitter already uses.
+h2+. Lead text before that first h1 is preamble too — closing an h1 must
+flush it, or the bytes disappear from the reconstructed source.
+
+Headings inside code are ignored, through the same `markdownLineKinds`
+answer the streaming splitter already uses. Headings inside a list item or
+a blockquote stay in that container: `- Item 2\n---` is a list plus a
+thematic break, not a setext h2, and `  ## heading` under a list item is
+list content, not a section boundary.
 
 Default is collapsed. The heading stays fully visible; the body shows
 approximately the first three line-heights of whatever follows — a
@@ -99,7 +105,8 @@ opacity mask so the content fades into the next heading rather than
 cutting off as a hard clip. The chevron sits in a left gutter, coloured
 with `sys.color.text.muted` (the receding control tone, the same token the
 citation chip's icon uses), and carries a tooltip. Clicking the heading or
-the chevron toggles the section.
+the chevron toggles the section; a click that follows a text selection does
+not, so copying a heading does not collapse it.
 
 A glance is already a four-line clamp inside a button, and a still is a
 picture that cannot be toggled, so neither grows accordions. The exported
@@ -114,7 +121,15 @@ thing the reader has not chosen to open.
 Streaming keeps the existing settled-segment memo: complete sections
 render as memoised chunks, and only the last section's body goes through
 `splitStreamingMarkdown`. An expanded section stays expanded as its body
-grows.
+grows. Because collapse keeps one `react-markdown` mount per section even
+after the stream settles, GFM footnote definitions and link-reference
+definitions that live under a later heading are appended onto fragments
+that do not already carry them, so a `[^1]` or `[text][ref]` in Claims
+still resolves. The parse that already owns the definition is left
+untouched — identity of the fragment string is the signal — and a
+borrowed definition does not emit a second `.footnotes` list, which
+would duplicate `fn-` ids with the section that actually wrote the
+definition.
 
 ### Mentions
 
@@ -276,12 +291,19 @@ boundaries at all, settles nothing, and re-parses whole on every commit at
 the paced reveal's rate.
 
 Streaming rendering is therefore an approximation the settled re-render
-heals: each settled list item renders as its own single-item list while the
-message streams (ordered numbering survives via the `start` attribute; a
-loose item renders tight — without its paragraph wrapper — until the turn
-completes), and a reference link or a GFM footnote whose definition arrives
-in a later segment renders literally until then. The commit that ends the
-stream renders the source whole again.
+heals when heading collapse is off: each settled list item renders as its own
+single-item list while the message streams (ordered numbering survives via the
+`start` attribute; a loose item renders tight — without its paragraph wrapper
+— until the turn completes), and a reference link or a GFM footnote whose
+definition arrives in a later segment renders literally until then. The
+commit that ends the stream renders the source whole again.
+
+When collapse is on, that whole-document re-parse cannot happen — each
+section is still its own mount after settle — so definitions are copied
+onto fragments that do not already contain them. A reference whose
+definition has not arrived yet still renders literally, matching the
+streaming seam; once the definition exists anywhere in the document, every
+section parse can see it.
 
 This exists because the paced reveal
 ([`streaming-reveal.md`](streaming-reveal.md)) commits up to once per painted
@@ -554,6 +576,41 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — Heading collapse keeps footnotes, list structure, and lead text
+
+**What changed:** The splitter flushes lead text when an h1 arrives with no
+section open, so preamble before the first title is not dropped. Setext
+underlines after a list item (or blockquote) are not headings, and ATX
+inside a list item is not a section boundary. Each section parse receives
+GFM footnote and link-reference definitions that live elsewhere in the
+document, without emitting a second footnotes list. Clicking a heading
+after selecting its text no longer toggles the accordion. The collapse
+controller keeps section-id identity with setState during render rather
+than a ref write.
+
+**Why:** Collapse splits the source into one `react-markdown` mount per
+section, including after the stream settles. That is the shape streaming
+cannot avoid — a rehype wrap cannot span segment boundaries — but it also
+broke GFM's document-scoped definitions, which the pre-collapse renderer
+healed by re-parsing the whole source. Independently, the h1 path moved
+`cursor` without flushing when no section was open, so `Lead.\n\n# Title\n\n## Next`
+lost `Lead.` and violated the reconstruct invariant. List-item setext and
+indented ATX are CommonMark constructs the classifier's `prose` kind cannot
+see, because it does not distinguish a list from a paragraph.
+
+**Considered and rejected:** wrapping with a rehype plugin after a single
+parse, which still cannot span streaming segments. Re-parsing the whole
+document once the stream ends would restore footnotes but would throw away
+the per-section memo the paced reveal is built on. Using `#000` for the
+preview mask is still rejected: `app.css` cannot name that colour, and
+`text-default` plus `mask-mode: alpha` is the token-legal equivalent.
+
+**What a future change has to respect:** do not treat a heading inside a
+list or a fence as a section. Appended definitions must not land on the
+heading-only parse (that slot is the title, not the body). A nested
+`MarkdownBody` reuses the parent collapse controller only when the section
+ids match — the embed glance is `glance` and has none.
 
 ### 2026-08-30 — Headings h2 and below collapse, with a three-line preview
 
