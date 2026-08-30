@@ -6,7 +6,6 @@ import {
   useCallback,
   useContext,
   useMemo,
-  useRef,
   useState,
   type ComponentPropsWithoutRef,
   type ReactNode,
@@ -50,12 +49,13 @@ export function MarkdownCollapseController({
   );
   // Keep the same array identity while the heading set is unchanged so a
   // streaming tail append does not rebuild the collapse context (and with
-  // it every heading chevron) on every paced-reveal commit.
-  const sectionIdsRef = useRef(computedIds);
-  if (sectionIdsRef.current.join('\0') !== computedIds.join('\0')) {
-    sectionIdsRef.current = computedIds;
+  // it every heading chevron) on every paced-reveal commit. setState during
+  // render is the supported way to snap to a new snapshot; a ref write
+  // during render is not.
+  const [sectionIds, setSectionIds] = useState(computedIds);
+  if (computedIds.join('\0') !== sectionIds.join('\0')) {
+    setSectionIds(computedIds);
   }
-  const sectionIds = sectionIdsRef.current;
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = useCallback((id: string) => {
     setExpanded((current) => {
@@ -129,6 +129,7 @@ function CollapseHeading({
         props.onClick?.(event);
         if (event.defaultPrevented) return;
         if ((event.target as HTMLElement | null)?.closest?.('a')) return;
+        if (window.getSelection()?.isCollapsed === false) return;
         collapse.toggle(id);
       }}
     >

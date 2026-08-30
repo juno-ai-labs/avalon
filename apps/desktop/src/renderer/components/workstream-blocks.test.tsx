@@ -1283,6 +1283,24 @@ describe('MarkdownBody heading collapse', () => {
     expect(first).toHaveClass('is-collapsed');
   });
 
+  it('does not toggle a section when the heading text is selected', () => {
+    const { container } = render(<MarkdownBody>{markdown}</MarkdownBody>);
+    const selection = vi.spyOn(window, 'getSelection').mockReturnValue({ isCollapsed: false } as Selection);
+    fireEvent.click(container.querySelector('h2')!);
+    expect(container.querySelector('.markdown-collapse')).toHaveClass('is-collapsed');
+    selection.mockRestore();
+  });
+
+  it('resolves a reference-style link whose definition lives under a later heading', () => {
+    const { container } = render(
+      <MarkdownBody>
+        {['## Claims', '', 'See [the note][ref].', '', '## Sources', '', '[ref]: https://example.com/note', ''].join('\n')}
+      </MarkdownBody>,
+    );
+    const link = [...container.querySelectorAll('a')].find((anchor) => anchor.getAttribute('href') === 'https://example.com/note');
+    expect(link).toHaveTextContent('the note');
+  });
+
   it('does not collapse a glance or a still', () => {
     const glance = render(<MarkdownBody glance>{markdown}</MarkdownBody>);
     expect(glance.container.querySelector('.markdown-collapse')).toBeNull();
