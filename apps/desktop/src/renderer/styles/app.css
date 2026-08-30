@@ -2673,13 +2673,23 @@ pre {
    with the title for the click. The token names a contrast, not the button's
    state: the card stays enabled, and this layer is the one that should recede.
    `.markdown-body` restates the colour on itself because a colour on the host
-   does not inherit into that wrapper. */
+   does not inherit into that wrapper. The card and the wrapper's element are
+   named so this is (0,3,1): the feed's
+   `:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
+   (and the human-bubble twin) is (0,3,0), and a host written as
+   `.citation-card-preview .markdown-body` lost, so inherit never landed and the
+   glance painted at the turn's size and colour. `*` carries the tone into
+   descendants that `.markdown-body strong` (and `a`, `th`) paint themselves,
+   without naming a markdown element a host may not restyle. */
 .citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
-.citation-card-preview .markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
+.citation-card .citation-card-preview div.markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
+.citation-card .citation-card-preview div.markdown-body * { color: inherit; }
 /* A heading scale of one size: the shared scale's h1 is larger than this
    tile, and a glance that spent its four lines on a title would hide the
-   sentence that distinguishes one card from another. */
-.citation-card-preview .markdown-body :is(h1, h2, h3, h4, h5, h6) {
+   sentence that distinguishes one card from another. The same (0,3,1)-plus
+   element that wins the wrapper's inherit wins the scale, so a heading does
+   not keep the shared size while the wrapper's type recedes. */
+.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6) {
   color: inherit;
   font-size: inherit;
   font-weight: inherit;
