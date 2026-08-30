@@ -37,6 +37,7 @@ import {
 import { workstreamCanonicalUrl } from '@rally/contracts/workstream-links';
 import type { DesktopSession } from '../../common/desktop';
 import { useAppSession } from '../lib/app-session';
+import { useAutoOpenLatestEmbeddedResource } from '../lib/use-auto-open-embedded-resource';
 import { useCitations } from '../lib/use-citations';
 import { ApiError, type MentionIdentity } from '../lib/api';
 import { formatDateTime } from '../lib/format';
@@ -1208,6 +1209,18 @@ export function WorkstreamScreen(): React.JSX.Element {
     ),
     [canonicalTranscript, transcriptOverlays.data],
   );
+  // An embed card in the last two text turns opens the inspector onto that
+  // document: when this feed first belongs to the route, and again when a
+  // streamed turn announces a different one. `payloadBelongsToRoute` is the
+  // fence — WorkstreamScreen stays mounted across work streams, and a handoff
+  // render can still hold the previous transcript.
+  useAutoOpenLatestEmbeddedResource({
+    enabled: payloadBelongsToRoute,
+    open: citations.open,
+    resolve: citations.resolve,
+    transcript,
+    workstreamId: id,
+  });
   // Held here rather than in the row: the virtualizer unmounts a row that
   // leaves the window but keeps the height it measured, so an open row that
   // came back closed would shrink under a cache that still expects it open.
