@@ -1086,7 +1086,12 @@ ticket replay, and the read-only child socket.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
 mentions and attachment descriptors in an opening message, and member-authored
-elicitation answers. `test-workers/unseen-workstream-state.test.ts` covers
+elicitation answers. The notify-create, mention-confirmation, and elicitation
+cases each own an id so `initialize` cannot turn a later `it` into a silent
+replay when `reset()` interleaves. The rest of the file deliberately shares
+`WORKSTREAM_ID` so this file does not leave a draining object per case. The
+replay case reuses `CREATE_REPLAY_ID` across its own two opens because replay
+is what it asserts. `test-workers/unseen-workstream-state.test.ts` covers
 self-removal, removal of another participant by a member, and the transactional
 final-participant refusal on real Durable Object SQLite. `test-workers/message-authority.test.ts` and
 `test-workers/scheduling-authority.test.ts` cover typed part plus participant-turn
@@ -1416,6 +1421,48 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-30 — Mention-confirmation and elicitation tests get their own work-stream ids
+
+**What changed:** The three mention-confirmation cases and the elicitation
+answer case in `participant-notification.test.ts` each open a distinct
+work-stream id (`6b5`–`6b8`). The file's D1 seed is now `CREATE TABLE IF NOT
+EXISTS` / `INSERT OR REPLACE`, matching the documented workers-suite seed
+shape. Notify-create isolation and deploy worker sharding already landed in
+#428.
+
+**Why:** Release Rally for macOS 33290369991 (`pnpm test`, unsharded workers)
+failed two poll timeouts after #422 — `waitForCanonicalTurn` (0 vs 1) and
+`waitForQuietLoop` (`executing:1`). Those are silent-replay failures:
+`initialize` on an already-authoritative root returns 200 with no fresh loop,
+and these four still shared `WORKSTREAM_ID` with every add-afterwards
+neighbour. A third reported error, `CREATE TABLE workstream_authority_control
+already exists`, is a different layer: the next `beforeEach` after an
+incomplete `reset()` used plain `CREATE TABLE`. Unique ids do not govern D1,
+so isolation alone would leave that cascade standing. Product mention and
+elicitation code did not change.
+
+**Considered and rejected:** Minting a fresh id for every test in the file
+(`isolatedWorkstream()`). #428's first revision did that and CI shard 1/2 timed
+out the same promotion polls, then failed to wipe D1. Also rejected:
+`waitForQuietLoop` at the end of the three mention cases so isolation would
+not add draining objects. Those tests wait on the canonical turn row only; a
+quiet-loop poll would spend the 10s budget on a precondition they do not
+assert. Four extra live objects (on top of the six the file already named) is
+under the threshold that timed out shard 1/2 (a draining object per all 18
+`it`s).
+
+**Consequences:** A new wait-on-promotion case in this file that reuses
+`WORKSTREAM_ID` can fail the same poll timeouts on an unsharded workers run
+(release `pnpm test`, or a future deploy lane). Isolate that case; do not mint
+a unique id for the whole file. The isolation rule lives in
+[`testing.md`](testing.md#writing-a-workerd-test). The three
+mention-confirmation cases still return with their loops possibly executing —
+they poll the turn row only — so isolation costs three extra draining objects.
+That is under the 18-object threshold that timed out shard 1/2; do not add
+`waitForQuietLoop` there to recoup it. An incomplete `reset()` no longer
+fails the next `it` as `CREATE TABLE … already exists` in this file; other
+workers tests that still use plain `CREATE TABLE` can still cascade that way.
 
 ### 2026-08-29 — The origin label is a question to WorkspaceDO, not SQL through the facade
 
