@@ -147,11 +147,11 @@ describe('running work-stream message delivery', () => {
   it('keeps accepted pending messages visibly pending until canonical promotion', () => {
     expect(acceptedMessageOverlayDeliveryState('pending', 'steer')).toBe('steer_pending');
     expect(acceptedMessageOverlayDeliveryState('pending', 'queue')).toBe('queue_pending');
-    expect(acceptedMessageOverlayDeliveryState('pending', undefined)).toBe('steer_pending');
+    expect(acceptedMessageOverlayDeliveryState('pending', undefined)).toBe('queue_pending');
     expect(acceptedMessageOverlayDeliveryState('canonical', 'queue')).toBeUndefined();
   });
 
-  it('lets the person queue a message for the next loop and sends that exact choice', async () => {
+  it('queues a message for the in-flight loop without a delivery dropdown', async () => {
     const onSend = vi.fn(async () => undefined);
     render(
       <Tooltip.Provider>
@@ -172,9 +172,7 @@ describe('running work-stream message delivery', () => {
       </Tooltip.Provider>,
     );
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Message delivery' }), {
-      target: { value: 'queue' },
-    });
+    expect(screen.queryByRole('combobox', { name: 'Message delivery' })).not.toBeInTheDocument();
     const composer = screen.getByRole('textbox', { name: 'Message the work stream' });
     fireEvent.change(composer, { target: { value: 'Do this after the current loop stops' } });
     fireEvent.keyDown(composer, { key: 'Enter' });
@@ -185,7 +183,6 @@ describe('running work-stream message delivery', () => {
       undefined,
       'queue',
     ));
-    expect(screen.getByRole('combobox', { name: 'Message delivery' })).toHaveValue('steer');
   });
 });
 

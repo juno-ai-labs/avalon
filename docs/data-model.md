@@ -160,7 +160,8 @@ derived output, revision, epoch, and sequence;
 `block_dashboard_socket_ticket_receipts` provides one-time admission for the block's
 direct socket. It stores neither a copy of the source transcript nor one row per
 token. Each `SubstreamAgent` instead owns one stable `substream_loops` row,
-not-yet-canonical `pending_loop_inputs`, minimal immutable
+not-yet-canonical `pending_loop_inputs` whose prepared content is immutable
+and whose `input_sequence` is the live promotion order, minimal immutable
 `delivered_loop_inputs` replay receipts, exact `assistant_turn_reservations`,
 subordinate execution receipts in `runs`, and a
 Bind head rebuilt from canonical participant history when no stable projection
@@ -879,6 +880,28 @@ perform the regional audit/control write explicitly through
 `workspaceRegionalDatabase`, with idempotent repair on retry.
 
 ## Changelog
+
+### 2026-08-30 — Pending loop `input_sequence` is the live queue order
+
+**What changed:** SubstreamAgent schema v34 recreates
+`pending_loop_inputs_prepared_immutable` so `input_sequence` can be updated
+while every prepared column stays frozen. Visible pending ids are permuted
+in place; `next_input_sequence` is not consumed and loop revision does not
+move.
+
+**Why:** Promotion order has to be a live, multi-viewer queue. Minting a new
+pending row to "move" one would duplicate an immutable prepared payload.
+Bumping loop revision would trip the in-flight execution fence.
+
+**Considered and rejected:** Editing shipped v33 to drop `input_sequence`
+from the original trigger. Existing objects have already hashed that
+migration. Also rejected: assigning fresh sequences from
+`next_input_sequence`, which would change the values promotion already
+reserved behind a preparing mailbox head.
+
+**Consequences:** A drag is a content-preserving sequence permute of the
+currently visible set. Hidden pending rows keep the sequences they already
+hold. Prepared-field updates still abort.
 
 ### 2026-08-29 — Memory vectors move to a versioned OpenRouter embedding space
 
