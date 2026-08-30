@@ -160,12 +160,13 @@ export interface WorkstreamSummary {
   /**
    * Who may read it, the same way a note says it. `personal` means only the
    * people in it. Workspace-scoped rows show a public marker; personal rows
-   * show a facepile of `participantUserIds`.
+   * show a facepile of the other people in `participantUserIds`.
    */
   scope: VisibilityScope;
   /**
    * People in a personal work stream, newest first, capped for the sidebar
-   * facepile. Empty when the row is workspace-scoped.
+   * facepile. Empty when the row is workspace-scoped. The desktop omits the
+   * current viewer when painting, so a pile of only that viewer is not shown.
    */
   participantUserIds: string[];
   /** How many participants sit past the three ids in `participantUserIds`. */
