@@ -168,6 +168,9 @@ async function openWorkstream(
   options: {
     workstreamId?: string;
     title?: string;
+    objective?: string;
+    descriptionSource?: "authored" | "derived";
+    titleStatus?: "naming" | "settled";
     participantUserIds?: readonly string[];
     openingMessage?: string;
     mentions?: readonly {
@@ -195,9 +198,9 @@ async function openWorkstream(
       workstreamId,
       generation: 1,
       title: options.title ?? "Quarterly planning",
-      objective: "Draft the quarterly plan",
-      descriptionSource: "authored",
-      titleStatus: "settled",
+      objective: options.objective ?? "Draft the quarterly plan",
+      descriptionSource: options.descriptionSource ?? "authored",
+      titleStatus: options.titleStatus ?? "settled",
       scope: options.scope ?? "personal",
       emailAddress: null,
       creatorUserId: CREATOR_ID,
@@ -1148,28 +1151,15 @@ describe("who a create is allowed to tell", () => {
     // What `POST /workstreams` actually sends: the desktop client supplies no
     // title, so creation writes the opening message's first line and leaves
     // `titleStatus` at `naming` until the naming pass lands.
-    const opened = await product(stub, {
-      operation: "initialize",
-      auth: AUTH,
-      input: {
-        workspaceId: WORKSPACE_ID,
-        workstreamId: CREATE_NAMING_ID,
-        generation: 1,
-        title: "Can someone dig into why the self-serve funnel dropped this week",
-        objective: "Can someone dig into why the self-serve funnel dropped this week",
-        descriptionSource: "derived",
-        titleStatus: "naming",
-        emailAddress: null,
-        creatorUserId: CREATOR_ID,
-        openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
-        clientMessageId: `participant-open-${CREATE_NAMING_ID}`,
-        participantUserIds: [INVITEE_ID],
-        notifyParticipants: true,
-        attachmentIds: [],
-        modelOverride: null,
-        executionPrincipal: { type: "user", userId: CREATOR_ID },
-        reason: "user_message",
-      },
+    const opened = await openWorkstream(stub, {
+      workstreamId: CREATE_NAMING_ID,
+      title: "Can someone dig into why the self-serve funnel dropped this week",
+      objective: "Can someone dig into why the self-serve funnel dropped this week",
+      descriptionSource: "derived",
+      titleStatus: "naming",
+      openingMessage: "Can someone dig into why the self-serve funnel dropped this week",
+      participantUserIds: [INVITEE_ID],
+      notifyParticipants: true,
     });
     expect(opened.status).toBe(200);
 
