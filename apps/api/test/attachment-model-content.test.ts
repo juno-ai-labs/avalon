@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import * as UTIF from "utif2";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
 import { buildAttachmentManifestPart, buildAttachmentModelParts } from "../src/services/attachment-model-content";
+import {
+  buildGifStoryboard,
+  decodeTiffToPng,
+  extractPdfText,
+} from "../src/services/document-processing-codecs";
+import type { DocumentProcessingRpcBinding } from "../src/services/document-processing-contract";
 import { reapDeletedResourceObjects } from "../src/services/resource-object-cleanup";
 import {
   createCloudflareTestBinding,
@@ -15,6 +21,11 @@ import { workspaceObjectSqliteDatabase } from "./helpers/workspace-object-tables
 import { workspaceResourceMaintenanceBinding } from "./helpers/workspace-object-rpcs";
 
 const encoder = new TextEncoder();
+const documentProcessor = {
+  extractText: extractPdfText,
+  buildGifStoryboard: async (bytes: Uint8Array) => buildGifStoryboard(bytes),
+  decodeTiffToPng: async (bytes: Uint8Array) => decodeTiffToPng(bytes),
+} satisfies DocumentProcessingRpcBinding;
 
 describe("attachment model content", () => {
   it("renders stable natural-kind manifests as untrusted JSON data", () => {
@@ -288,7 +299,7 @@ describe("attachment model content", () => {
       fileName: "status.gif",
       mimeType: "image/gif",
       contentRef: "original",
-    }], { database });
+    }], { database, documentProcessor });
 
     expect(parts).toHaveLength(3);
     expect(parts[1]).toMatchObject({
@@ -373,7 +384,7 @@ describe("attachment model content", () => {
     ]), 2, 2));
     const parts = await buildAttachmentModelParts(fakeBucket({ image: tiff }), [
       { id: "image", fileName: "scan.tiff", mimeType: "image/tiff", contentRef: "image" },
-    ]);
+    ], { documentProcessor });
     const url = parts[1]?.type === "image_url" ? parts[1].image_url.url : "";
     expect(url).toMatch(/^data:image\/png;base64,/u);
   });

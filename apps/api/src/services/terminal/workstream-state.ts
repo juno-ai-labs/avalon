@@ -15,7 +15,7 @@ import {
   telemetryJourneyDuration,
 } from "../../telemetry/product-usage";
 import { parseTerminalRegionConfiguration } from "./contract";
-import type { TerminalSandboxProvider } from "./daytona-provider";
+import type { TerminalSandboxProvider } from "./provider-contract";
 import { withAuthorizedConnection } from "../connector-connection-access";
 import { decryptVersionedConnectorCredentials } from "../connector-credential-envelope";
 import { WorkstreamDirectoryService } from "../workstream-directory-service";
