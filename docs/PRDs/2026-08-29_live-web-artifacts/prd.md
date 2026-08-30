@@ -306,7 +306,15 @@ The pane is a fixed region of the detail view with a reload control;
 interacting with the site inside it is interacting with the artifact, so
 the signups page can be searched without leaving the rail. **Pop out** opens the same
 artifact in the dedicated artifact window when the rail is too small for
-the site. **Copy link** copies the canonical artifact URL. **Open in
+the site. **Copy link** copies the canonical artifact URL — which carries no
+session, deliberately, and is useful precisely because of that: a
+recipient who follows it lands on the neutral page, and a recipient
+inside Rally opens it through the ordinary authorized flow, since the
+canonical form is the same
+`https://rallywith.ai/app/workstreams/<uuid>`-shaped link the rest of
+the product already resolves. A recipient without work-stream
+visibility gets the same denial they would get anywhere else in Rally.
+**Open in
 browser** mints a fresh access code and hands the system browser the
 open URL that carries it in a fragment (decision 6).
 The canonical URL always serves the most recent version, and so does every
@@ -582,7 +590,14 @@ None yet.
    `https://<label>-<region>.rallyusercontent.com/__rally/open#<code>`,
    where a tiny Rally-served bootstrap page — not artifact code — reads
    `location.hash`, `POST`s the code to `/__rally/redeem` in the request
-   body, and replaces the URL before anything else loads. A fragment is
+   body. **That endpoint never serves artifact content**: it consumes
+   the code, sets the cookie, and answers with a redirect to the
+   canonical artifact URL, so no artifact document is ever loaded at a
+   location that held the code — nothing lands in history, in a copied
+   URL, or in a screenshot, and same-origin model code has no
+   `location` to read it from. Artifact responses also carry
+   `Referrer-Policy: no-referrer`, and the redeem endpoint's own
+   request is excluded from request logging. A fragment is
    never sent to a server, so the proof stays out of Cloudflare's
    invocation log, the Logpush export, and trace spans. This is
    `security.md`'s standing rule — *a new ticket audience never issues a
@@ -776,7 +791,21 @@ None yet.
       prior-version mount is therefore served at a trailing slash with
       an injected `<base href="/__rally/v3/">`, and the skill's path
       rule widens from relative *assets* to relative *everything,
-      including the page's own API calls*. What renders depends on what the
+      including the page's own API calls*.
+    - *And the mount is enforced, not merely encouraged.* `<base>` and
+      relative paths fix well-behaved pages; they do not stop old code
+      from reaching the live artifact deliberately or by accident, and
+      an old page shares an origin — cookies, storage, service-worker
+      scope — with the current one. So under a version mount the
+      serving Worker refuses any request that escapes the prefix,
+      refuses unsafe methods outright (a historical render has nothing
+      to write), and refuses service-worker registration, whose scope
+      would outlive the view and interpose on the canonical origin.
+      "Read-only" then describes what the request path enforces rather
+      than what frozen bytes are assumed to do — the same reasoning
+      non-goal 13 applies to stateful artifacts, which are source-only
+      because no request-path rule can make old code safe against a
+      live schema. What renders depends on what the
     version was: a prior *static* version serves its frozen assets
     exactly, and a prior *stateless-active* version runs its frozen
     module over its frozen assets — nothing shared exists for old code
@@ -804,12 +833,26 @@ None yet.
     code never defined: a schema describe
     (tables, columns, row counts, sampled values), a read-only query
     that executes SQL **inside a transaction that always rolls back**
-    (structural read-only, no SELECT-sniffing), a table page/CSV stream
+    (see below — the rollback is the last line, not the only one), a
+    table page/CSV stream
     for the rail's Data view and export, and a database-size read for
-    the storage quota (**100 MB per artifact**, a team-set value —
-    orders of magnitude above any legitimate V1 artifact, small enough
-    to contain a runaway writer — enforced as a loud serve-time refusal
-    of further writes, never silent truncation). One
+    the storage quota. That quota is **100 MB per artifact**, a
+    team-set value — orders of magnitude above any legitimate V1
+    artifact, small enough to contain a runaway writer — and it is
+    honestly a **threshold, not a hard cap**: the model's class holds
+    the native `ctx.storage` handle, so Rally observes size between
+    requests rather than intercepting each write, and a single request
+    can overshoot by whatever it manages to write before the next
+    check. Crossing it refuses *further writes* loudly at serve time,
+    never truncating and never blocking reads — the page keeps
+    rendering what it already stored, and the rail says why writing
+    stopped. Bounding the overshoot rather than the total is what the
+    platform actually permits today; a genuine cap would mean taking
+    the native handle away and mediating every write through Rally,
+    which buys a smaller number at the cost of the whole reason facets
+    were chosen. The workerd proofs therefore include a single
+    threshold-crossing write and a constructor-time write, so the
+    overshoot is measured rather than assumed. One
     read path, three consumers — the two agent tools, the Data view,
     and the export — so they can never disagree. The host class is the
     load-bearing mechanism of the whole stateful design and is proven
@@ -991,7 +1034,29 @@ stay Global, as with the document rollout.
 
 The new trust surface is the point of this PRD, so it is stated in full.
 
-- **Artifact code is untrusted, and the sandbox is capability-based.**
+- **Two sandboxes, not one — the server fence does not reach the
+  page.** `globalOutbound: null` fences the *server module*; it says
+  nothing about the HTML and JavaScript that module serves, which run
+  in a browser with ordinary network access. Model-authored page code
+  could otherwise `fetch` any host, load a remote script, beacon, open
+  a WebSocket, or point a form off-origin — carrying whatever the page
+  can see with it. So the serving Worker attaches a **platform-owned
+  Content-Security-Policy to every artifact response**, static and
+  active alike, which the artifact cannot relax (a page's own
+  `<meta>` CSP can only further restrict, and a conflicting header
+  loses to the stricter policy): `default-src 'self'`, `connect-src
+  'self'`, `form-action 'self'`, `base-uri 'self'`, `object-src
+  'none'`, and `frame-ancestors` naming only Rally's own viewing
+  surfaces. This is what actually makes the skill's "no network" and
+  "carry your own assets" rules true rather than merely advisory, and
+  it is why the skill forbids CDN links: under this policy they would
+  not load anyway. The inline `<script>`/`<style>` the skill's examples
+  use are permitted by the V1 policy — nonces would be the tighter
+  design and are a deliberate follow-up, since the threat here is
+  egress rather than injection into a page whose author is already the
+  model.
+- **Artifact code is untrusted, and the server sandbox is
+  capability-based.**
   `globalOutbound: null` — `fetch()` and `connect()` throw. The module's
   `env` contains exactly one injected entrypoint stub (`ASSETS`), whose
   `props` (artifact id, region) are set by the serving side and
@@ -1003,8 +1068,10 @@ The new trust surface is the point of this PRD, so it is stated in full.
   credential is reachable; stubs cannot be forged, only received. CPU,
   memory, and isolate lifetime are the platform's own limits — platform
   numbers, not Rally's to restate; the facet database's size is Rally's
-  one added guard, 100 MB per artifact (team-set), enforced as a loud
-  write refusal.
+  one added guard, 100 MB per artifact (team-set), enforced between
+  requests as a loud refusal of further writes — a threshold with
+  bounded overshoot rather than a hard cap, for the reason decision 12
+  states plainly.
 - **Origin isolation, three ways — plus the same-site gap it does not
   close on its own.** Every artifact has its own origin on a domain that
   is not `rallywith.ai`; artifacts are therefore never same-origin with
@@ -1283,9 +1350,22 @@ Both are backed by the facet wrapper of key design decision 12.
   never saw the schema it is about to query. `mode: "read"`,
   `idempotency: "safe"`.
 - `query_artifact_data`: strict input `{ resource: string, sql: string,
-  params?: (string | number | null)[] }`. Executes read-only — the
-  wrapper runs the statement inside a transaction that always rolls
-  back — and returns `{ columns, rows, rowCount, truncated }`, bounded
+  params?: (string | number | null)[] }`. **Read-only is enforced on
+  the statement, not by the transaction**, because an always-rollback
+  transaction is not an authorization boundary: caller-supplied SQL
+  can end or subvert the very transaction meant to contain it, and
+  SQLite's exec surface accepts more than one statement at a time. So
+  admission is positive rather than subtractive — the tool accepts
+  **exactly one statement**, which must parse as a `SELECT` (a leading
+  `WITH` whose body is a `SELECT` included), and rejects everything
+  else outright: multiple statements, transaction control (`BEGIN`,
+  `COMMIT`, `ROLLBACK`, `SAVEPOINT`), any DML or DDL, `PRAGMA`, and
+  `ATTACH`. The rollback stays as the second line of defence, not the
+  first, and where the platform offers a storage-level read-only
+  authorizer that is preferred to parsing outright. Adversarial tests
+  cover the escape shapes, not merely a bare `INSERT`: a statement
+  sequence that commits mid-payload, a `PRAGMA`, and a CTE wrapping a
+  write. Returns `{ columns, rows, rowCount, truncated }`, bounded
   by row and byte caps with a visible truncation marker (both caps and
   the query-time bound are open limits). `mode: "read"`,
   `idempotency: "safe"`. Failures, designed as loop repairs:
