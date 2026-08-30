@@ -606,6 +606,7 @@ does not own the subsystems on either side of them:
 | Telemetry contracts, opt-out, identities, crash lifecycle, and destinations | [`telemetry.md`](telemetry.md) |
 | Public-site anonymous identity, event surface, and handoff negative space | [`public-site-telemetry.md`](public-site-telemetry.md) |
 | Rotating a key or responding to an incident | [`runbook.md`](runbook.md) |
+| Access Managed OAuth and destructive operator SQLite inspection | [`engineering-mcp.md`](engineering-mcp.md) |
 
 ## Failure modes and limits
 
@@ -693,6 +694,24 @@ EU rotate independently. [`runbook.md`](runbook.md) owns the procedure and the
 incident response that may prompt it.
 
 ## Changelog
+
+### 2026-08-30 — Separate operator OAuth from product identity
+
+**What changed:** `mcp.internal.rallywith.ai` is protected by its own Cloudflare
+Access application with Managed OAuth and Dynamic Client Registration. It
+copies Ace's configured identity providers and admission policy but receives a
+distinct audience, which the Worker verifies before registering raw-SQL tools.
+
+**Why:** Database-console authority must be granted as operator access, never as
+a consequence of Rally membership or a client-supplied header.
+
+**Considered and rejected:** Rally sessions, a shared bearer secret, and
+trusting Access headers without signature/issuer/audience verification all mix
+trust domains or fail open if the Access route is removed.
+
+**Consequences:** An admitted Access identity can deliberately mutate product
+SQLite in either region. Audit logs identify the actor/tool/target but must not
+contain SQL, bindings, returned rows, or SQLite error text.
 
 ### 2026-08-29 — The deep-link failure window joins the trusted-sender set
 

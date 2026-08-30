@@ -4,6 +4,7 @@ packages:
 
 allowBuilds:
   '@openrouter/sdk': false
+  core-js-pure: false
   electron: true
   electron-winstaller: true
   esbuild: true

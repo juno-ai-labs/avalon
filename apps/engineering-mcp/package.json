@@ -1,0 +1,25 @@
+{
+  "name": "@rally/engineering-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --config wrangler.jsonc --outdir dist",
+    "deploy": "node scripts/deploy.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "@rally/contracts": "workspace:*",
+    "agents": "0.22.0",
+    "jose": "6.2.9",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260827.1",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "wrangler": "4.126.0"
+  }
+}
