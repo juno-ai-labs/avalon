@@ -233,6 +233,50 @@ describe('AvatarStack', () => {
     expect(ping.compareDocumentPosition(overflow) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(overflow).toHaveTextContent('+1');
   });
+
+  it('uses a caller-supplied overflow when the stack was already truncated', () => {
+    const members = [
+      ['user-ari', 'Ari Collaborator'],
+      ['user-casey', 'Casey Observer'],
+      ['user-drew', 'Drew Participant'],
+    ].map(([id, name]) => ({
+      id: id!,
+      name: name!,
+      email: `${id}@rally.test`,
+      timezone: 'America/Los_Angeles',
+    }));
+    const { container } = render(
+      <Tooltip.Provider>
+        <AvatarStack extraCount={2} limit={3} members={members} />
+      </Tooltip.Provider>,
+    );
+
+    expect(container.querySelectorAll('.avatar-small')).toHaveLength(3);
+    expect(container.querySelector('.avatar-overflow')).toHaveTextContent('+2');
+    expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
+      'Ari Collaborator; Casey Observer; Drew Participant; and 2 more',
+    );
+  });
+
+  it('does not invent an overflow when extraCount is zero', () => {
+    const members = [
+      ['user-ari', 'Ari Collaborator'],
+      ['user-casey', 'Casey Observer'],
+      ['user-drew', 'Drew Participant'],
+    ].map(([id, name]) => ({
+      id: id!,
+      name: name!,
+      email: `${id}@rally.test`,
+      timezone: 'America/Los_Angeles',
+    }));
+    const { container } = render(
+      <Tooltip.Provider>
+        <AvatarStack extraCount={0} limit={3} members={members} />
+      </Tooltip.Provider>,
+    );
+
+    expect(container.querySelector('.avatar-overflow')).toBeNull();
+  });
 });
 
 describe('OpeningState', () => {

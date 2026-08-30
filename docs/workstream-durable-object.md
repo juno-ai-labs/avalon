@@ -776,7 +776,14 @@ envelopes by RPC to its parent `WorkstreamDO`.
 per-user projection from each child, and computes one aggregate work-stream
 view. Common state uses a deterministic state priority; last activity is the
 maximum child timestamp. Viewer unread counts sum across children, while
-participation, listability, and “You Are Mentioned” are logical ORs. Every
+participation, listability, and “You Are Mentioned” are logical ORs. The
+directory `Workstream` that WorkspaceDO pushes for the sidebar carries a
+bounded participant preview on personal rows only: at most three user ids,
+most recently added first, plus `participantExtraCount` for everyone past that.
+Workspace-scoped rows send neither. Directory and `summary()` both sort by
+`participants.added_at` (copied onto the overlay as `participant_added_at`) so
+a REST merge of the child's summary cannot swap the three faces. Overlay
+`projected_at` is not that clock: it moves on every unread. Every
 changed aggregate partition gets its own monotonic waterline and UUIDv7 event
 ID in `workstream_state_changes`; pending transitions are not coalesced. The
 UUID is carried unchanged on the direct WorkstreamDO socket and delayed
@@ -1428,6 +1435,88 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-30 — Facepile order is join time, not overlay recency
+
+**What changed:** WorkspaceDO stores `participants.added_at` on each viewer row
+as `participant_added_at` and sorts the sidebar preview by that column, matching
+WorkstreamDO `summary()`. `projected_at` is no longer the facepile clock. Adding
+or removing a participant publishes the recomputed row to every subscribed
+viewer, not only the person whose overlay changed. The preview query is loaded
+once per state push and chunked under the engine's 100-parameter bind limit.
+The desktop counts unresolved preview ids toward overflow, hides the pile from
+the row's accessible name, fills an empty control-socket seed from a later
+directory row at the same waterline, and strips leftover ids when a row is
+workspace-scoped so a public row cannot keep a personal pile.
+
+**Why:** `projected_at` is rewritten on every viewer projection (unread, mention,
+seen). A message fans out to every participant in one envelope batch applied in
+one synchronous loop, so workerd hands them the same `Date.now()` and the
+tie-break is `user_id` — three lowest UUIDs, not three newest people. The
+changelog's split-clocks rationale assumed `summary()` never wrote the field
+the sidebar reads; REST merge of the summary does, so the two clocks swapped
+faces on a read-ack. Membership was still a per-user overlay, so everyone
+else's pile stayed stale until reconnect.
+
+**Considered and rejected:** activity recency as the product meaning of "most
+recent". Join time is what both producers already have without a new clock, and
+it is stable across unread. Putting the preview on WorkstreamDO control
+metadata was rejected because `metadataForUser` cannot see
+`participants.added_at`. Clearing the pile from control `common` was already
+not happening; the remaining race is a seed that claims empty ids at a
+waterline the directory later cannot beat.
+
+**What a future change has to respect:** one clock for the field.
+`participant_added_at` is the overlay copy of `participants.added_at`; do not
+sort the preview by `projected_at`. A membership change is common state for
+everyone who can see the row. Fan-in `IN` lists must use `boundParameterChunks`.
+A control snapshot must not be the authority for ids it does not know,
+including by seeding empty ones that pin the waterline. A workspace-scoped
+row never carries a pile, including leftover ids from when it was personal.
+
+### 2026-08-30 — Sidebar facepile is the existing AvatarStack size
+
+**What changed:** The sidebar trailing slot uses `AvatarStack` at its existing
+24px size. The compact size variant added for that slot is gone. `extraCount`
+remains so a directory list truncated to three ids can still paint `+x`.
+
+**Why:** a second size was a parallel facepile, not reuse of the one the header
+already paints. The Air row is 31px; 24px faces already fit.
+
+**Considered and rejected:** CSS-shrinking only the sidebar stack. That would
+still be a second look. Padding dummy members so native overflow could fire
+would pollute the accessible name.
+
+**What a future change has to respect:** do not add an `Avatar` size for this
+slot. `AvatarStack` with `limit={3}` and `extraCount` is the facepile.
+
+### 2026-08-30 — Personal sidebar rows carry a bounded participant facepile
+
+**What changed:** Directory `Workstream` rows gained `participantUserIds` (max
+three) and `participantExtraCount`. WorkspaceDO fills them from active
+participant overlay rows ordered by `projected_at DESC, user_id`, and only for
+`scope = 'personal'`. WorkstreamDO `summary()` fills the same fields from
+`participants.added_at DESC, user_id` so a REST mutation that merges the
+summary does not drop the pile. The desktop reuses `AvatarStack` in compact
+size for the trailing slot; workspace-scoped rows paint a globe instead. Notes
+keep the lock.
+
+**Why:** a lock on every personal work-stream row said "only you", which is the
+wrong statement once more than one person is in it. The people in it are
+already on the directory overlay, so the sidebar can paint them without a
+fetch. Three faces plus `+x` is a product ceiling sized for the 30px Air row,
+not a number to guess later.
+
+**Considered and rejected:** a REST members fetch per row, or sending the full
+participant list on the directory page. Both grow with roster size; the
+sidebar only paints three faces. Also rejected: one sort key shared by the
+directory and WorkstreamDO. Overlay recency is the best signal the directory
+has; `added_at` is what the child has without a round trip, and mixing them
+would make a rename reshuffle faces for no product reason.
+
+**What a future change has to respect:** a workspace-scoped row must not carry
+ids. Raising `WORKSTREAM_SIDEBAR_FACEPILE_LIMIT` is a product decision because
+it is also the wire cap. Unresolved ids are skipped, not substituted.
 
 ### 2026-08-30 — Pre-inference notification tests no longer start model loops
 

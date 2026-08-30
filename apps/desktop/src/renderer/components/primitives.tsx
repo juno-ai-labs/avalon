@@ -192,24 +192,32 @@ export function Avatar({
 export function AvatarStack({
   members,
   limit = 4,
+  extraCount,
   presentUserIds = [],
   currentUserId = null,
 }: {
   members: WorkspaceMember[];
   limit?: number;
+  /**
+   * Overflow past `limit` when the caller already truncated `members`.
+   * Omit to derive it from `members.length`.
+   */
+  extraCount?: number;
   presentUserIds?: readonly string[];
   currentUserId?: string | null;
 }): React.JSX.Element {
   const visible = members.slice(0, limit);
-  const overflow = members.length - visible.length;
+  const overflow = extraCount ?? Math.max(0, members.length - visible.length);
   const present = new Set(presentUserIds);
+  const named = members.map((member) => (
+    present.has(member.id) && member.id !== currentUserId
+      ? `${member.name} is viewing this workstream.`
+      : member.name
+  ));
+  if (overflow > 0) named.push(`and ${overflow} more`);
   return (
     <span
-      aria-label={members.map((member) => (
-        present.has(member.id) && member.id !== currentUserId
-          ? `${member.name} is viewing this workstream.`
-          : member.name
-      )).join('; ')}
+      aria-label={named.join('; ')}
       className="avatar-stack"
     >
       {visible.map((member) => {

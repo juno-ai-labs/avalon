@@ -371,6 +371,8 @@ export function mapWorkstreamSummary(workstream: WireWorkstream): WorkstreamSumm
       ? { ...workstream.nextPendingWakeup }
       : null,
     pinPosition: workstream.pinPosition,
+    participantUserIds: [...workstream.participantUserIds],
+    participantExtraCount: workstream.participantExtraCount,
     preview: workstream.objective,
   };
 }
@@ -984,6 +986,8 @@ export class RallyApi {
       firstUnreadSequenceNumber: null,
       nextPendingWakeup: null,
       pinPosition: null,
+      participantUserIds: [],
+      participantExtraCount: 0,
     };
   }
 
