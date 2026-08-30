@@ -16,7 +16,7 @@
  * This drives the real SubstreamAgent product boundary against real Durable
  * Object SQLite, so `projection_keys`, the payload hashes, and the outbox rows
  * are the production ones rather than a description of them. Existing-room
- * cases use its provision port; create-only cases stop before run activation.
+ * cases use its system-provision port; create-only cases stop before run activation.
  */
 
 import { env } from "cloudflare:workers";
@@ -184,14 +184,14 @@ async function openWorkstream(
     /** What `POST /workstreams` sends; a connector ingress sends nothing. */
     notifyParticipants?: boolean;
   } = {},
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<void> {
   const workstreamId = options.workstreamId ?? WORKSTREAM_ID;
   // These cases assert creation's committed transcript and regional effects,
   // all of which `initialize` owns. The SubstreamAgent endpoint's next step is
   // only an execution-receipt wake. Calling the product service directly keeps
   // that unrelated model run admitted and inert, so a later `reset()` never
   // races an alarm that this file did not need to start.
-  const opened = await runInDurableObject(stub, async (instance) => {
+  await runInDurableObject(stub, async (instance) => {
     const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
     return productService.initialize(AUTH, {
       workspaceId: WORKSPACE_ID,
@@ -217,10 +217,9 @@ async function openWorkstream(
       reason: "user_message",
     });
   });
-  return { status: 200, body: opened as unknown as Record<string, unknown> };
 }
 
-/** Establish an existing user-owned room without admitting or activating a run. */
+/** Establish the system-provisioned existing-room baseline without admitting a run. */
 async function provisionWorkstream(
   stub: DurableObjectStub<SubstreamAgent>,
   workstreamId = WORKSTREAM_ID,
@@ -262,6 +261,9 @@ async function seedCompletedRun(
 ): Promise<void> {
   await runInDurableObject(stub, (_instance, state) => {
     const now = Date.now();
+    // Keep this minimal fixture aligned with the `runs` table in
+    // workstream-object-schema.ts. Successful production terminalization
+    // leaves `terminal_reason` null; that column describes exceptional exits.
     state.storage.sql.exec(
       `INSERT INTO runs (
          run_id, substream_id, workflow_instance_id, status, budget, attempt_epoch,
@@ -270,7 +272,7 @@ async function seedCompletedRun(
          tool_count, input_tokens, output_tokens, cost_micros, output_bytes,
          terminal_reason, terminalized_at, completed_at, created_at, updated_at
        ) VALUES (?, '0', NULL, 'completed', '{}', 0, 0, '', 0, 0, ?,
-                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'completed', ?, ?, ?, ?)`,
+                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, ?, ?, ?, ?)`,
       runId,
       now,
       now,
@@ -1131,11 +1133,11 @@ describe("who a create is allowed to tell", () => {
     });
     // The ambiguous-response retry, on this test's own workstream id and
     // `clientMessageId`. Other cases must not share either — initialize on an
-    // already-authoritative root is a silent replay, not a second create. It
-    // must still answer 200: the whole reason the replay branch re-enqueues the
-    // directory snapshot and nothing else is that a notification re-emitted
+    // already-authoritative root is a silent replay, not a second create. The
+    // direct product call must still complete: the replay branch re-enqueues
+    // the directory snapshot and nothing else because a notification re-emitted
     // against a moved root would be refused as a hash conflict and wedge the
-    // create. `openWorkstream` asserts the status.
+    // create. The single receipt assertion below proves no notification replayed.
     await openWorkstream(stub, {
       workstreamId: CREATE_REPLAY_ID,
       participantUserIds: [INVITEE_ID],
@@ -1151,7 +1153,7 @@ describe("who a create is allowed to tell", () => {
     // What `POST /workstreams` actually sends: the desktop client supplies no
     // title, so creation writes the opening message's first line and leaves
     // `titleStatus` at `naming` until the naming pass lands.
-    const opened = await openWorkstream(stub, {
+    await openWorkstream(stub, {
       workstreamId: CREATE_NAMING_ID,
       title: "Can someone dig into why the self-serve funnel dropped this week",
       objective: "Can someone dig into why the self-serve funnel dropped this week",
@@ -1161,8 +1163,6 @@ describe("who a create is allowed to tell", () => {
       participantUserIds: [INVITEE_ID],
       notifyParticipants: true,
     });
-    expect(opened.status).toBe(200);
-
     const notification = (await deliveredEffects(stub, CREATE_NAMING_ID))
       .flatMap((envelope) => envelope.effect.kind === "participant_notification" ? [envelope.effect] : []);
     expect(notification).toHaveLength(1);

@@ -546,8 +546,9 @@ one parent receipt was absent, and an elicitation precondition stayed
 `executing:1`. Isolating selected object ids reduced the frequency but could not
 remove a run the tests had no reason to start.
 
-Once the run *does* start, `initialize` still does not drain it in the same
-request: it writes the execution receipt and arms a +1ms alarm
+Once the endpoint *does* activate the run, it still does not drain it in the
+same request: product `initialize` commits the admitted run, then the endpoint
+writes the execution receipt and arms a +1ms alarm
 (`requestExecutionReceiptActivation`). A read-only `expect.poll` on loop SQL
 then depends on workerd auto-firing that alarm. Under a contended workers shard
 the poll's own `runInDurableObject` calls keep the input gate busy, the alarm
@@ -559,8 +560,9 @@ in [Writing a workerd test](#writing-a-workerd-test); keep the poll as the wait
 for that case.
 
 So: if what you are testing happens before inference, keep the run away from the
-model. Existing-room cases can use the real `bootstrapRuntime` plus `provision`
-path. A create-effects case can invoke the real product `initialize` mutation
+model. Existing-room cases can use the real `bootstrapRuntime` plus the
+system-provision `provision` path when that is the state shape under test. A
+create-effects case can invoke the real product `initialize` mutation
 without the endpoint's later execution-receipt activation. An elicitation-answer
 case can use a settled parent-run row when run execution is not the subject. If
 the run really has to complete, install the double.
