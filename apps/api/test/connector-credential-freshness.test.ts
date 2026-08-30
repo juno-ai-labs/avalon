@@ -12,7 +12,7 @@ import {
 } from "@rally/connectors";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { encryptString } from "../src/lib/crypto";
+import { decryptString, encryptString } from "../src/lib/crypto";
 import {
   seedWorkstreamObjectRoot,
   testSubstreamAgentsBinding,
@@ -27,6 +27,11 @@ import type {
   PluginAuthorizationInput,
 } from "../src/services/integrations";
 import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  connectionObjectFixture,
+  storedConnectionEnvelope,
+  storedConnectionStatus,
+} from "./helpers/connection-object";
 
 /**
  * A connection reaches a provider only through `withAuthorizedConnection`,
@@ -60,27 +65,31 @@ describe("the credential door", () => {
     // would have cleared the incident's own `missing_scopes: reactions:read`
     // verdict within one token lifetime and reported a connection as working
     // while every scoped call kept failing.
-    const statements: string[] = [];
-    const database = recordingLeasedDatabase(
-      await encryptString(
-        JSON.stringify({ accessToken: STALE_TOKEN, refreshToken: "refresh-token", expiresAt: EXPIRED_AT }),
-        "door-credential-key",
-        "00000000-0000-7000-8000-00000000c0de",
-      ),
-      statements,
-    );
     const connection = connectionContext({
       accessToken: STALE_TOKEN,
       refreshToken: "refresh-token",
       expiresAt: EXPIRED_AT,
     });
-
-    await withAuthorizedConnection(
-      {
-        DB: database,
+    const encrypted = await encryptString(
+      JSON.stringify(connection.credentials),
+      "door-credential-key",
+      connection.id,
+    );
+    const { env, objectDatabase } = connectionObjectFixture({
+      workspaceId: connection.workspaceId,
+      connectionId: connection.id,
+      // The row the database believes is broken.
+      status: "needs_reconnect",
+      credentials: { ciphertext: encrypted.ciphertext, iv: encrypted.iv, keyVersion: 1 },
+      env: {
         CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       },
+      register: (database) => { openStores.push(database); },
+    });
+
+    await withAuthorizedConnection(
+      env,
       {
         connection,
         adapter: {
@@ -94,14 +103,62 @@ describe("the credential door", () => {
     // The refresh reached the provider and its result is in hand — the
     // behaviour the healthy-only lease used to make impossible.
     expect(connection.credentials.accessToken).toBe(FRESH_TOKEN);
-    const persisted = statements.find((sql) => sql.includes("RETURNING id"));
-    // Asserted on the statement's own text because this fake dispatches on SQL
-    // rather than executing it. Both halves matter and only one is about the
-    // gate: no status is written at all, and the row must not be resurrected
-    // from `disabled`.
-    expect(persisted).not.toContain("SET status");
-    expect(persisted).not.toContain("error_json");
-    expect(persisted).toContain("status <> 'disabled'");
+    // The row, not the statement that wrote it. This used to assert that the
+    // settle's SQL text contained no `SET status` and did contain
+    // `status <> 'disabled'`, which is as close to the property as a fixture
+    // dispatching on SQL could get. The property is that the credential moved
+    // and the diagnosis did not.
+    const stored = storedConnectionStatus(objectDatabase, connection.id);
+    expect(stored.status).toBe("needs_reconnect");
+    expect(stored.error_json).toBeNull();
+    await expect(decryptString(
+      String(storedConnectionEnvelope(objectDatabase, connection.id).encrypted_credentials),
+      String(storedConnectionEnvelope(objectDatabase, connection.id).credential_iv),
+      "door-credential-key",
+      connection.id,
+    )).resolves.toContain(FRESH_TOKEN);
+  });
+
+  it("refuses to refresh a disabled connection, so the row is never resurrected", async () => {
+    // The other half of the gate above, which the statement-text assertion
+    // could only approximate by looking for `status <> 'disabled'` in the SQL.
+    const connection = connectionContext({
+      accessToken: STALE_TOKEN,
+      refreshToken: "refresh-token",
+      expiresAt: EXPIRED_AT,
+    });
+    const encrypted = await encryptString(
+      JSON.stringify(connection.credentials),
+      "door-credential-key",
+      connection.id,
+    );
+    const { env, objectDatabase } = connectionObjectFixture({
+      workspaceId: connection.workspaceId,
+      connectionId: connection.id,
+      status: "disabled",
+      credentials: { ciphertext: encrypted.ciphertext, iv: encrypted.iv, keyVersion: 1 },
+      env: {
+        CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      },
+      register: (database) => { openStores.push(database); },
+    });
+
+    await expect(withAuthorizedConnection(
+      env,
+      {
+        connection,
+        adapter: {
+          refreshCredentials: async () => ({ accessToken: FRESH_TOKEN }),
+        } satisfies CredentialRefreshAdapter,
+        signal: AbortSignal.timeout(2_000),
+      },
+      async () => undefined,
+    )).rejects.toBeDefined();
+
+    expect(storedConnectionStatus(objectDatabase, connection.id).status).toBe("disabled");
+    expect(storedConnectionEnvelope(objectDatabase, connection.id).encrypted_credentials)
+      .toBe(encrypted.ciphertext);
   });
 
   it("refreshes an expiring credential before the operation reaches the provider", async () => {
@@ -116,15 +173,22 @@ describe("the credential door", () => {
       refreshToken: "refresh-token",
       expiresAt: EXPIRED_AT,
     });
-    const database = credentialDatabase(await encryptString(
+    const encrypted = await encryptString(
       JSON.stringify(connection.credentials),
       secret,
       connection.id,
-    ));
+    );
+    const { env } = connectionObjectFixture({
+      workspaceId: connection.workspaceId,
+      connectionId: connection.id,
+      credentials: { ciphertext: encrypted.ciphertext, iv: encrypted.iv, keyVersion: 1 },
+      env: { CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      register: (database) => { openStores.push(database); },
+    });
     const seen: unknown[] = [];
 
     await withAuthorizedConnection(
-      { DB: database.d1, CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      env,
       {
         connection,
         adapter: { refreshCredentials } satisfies CredentialRefreshAdapter,
@@ -170,23 +234,36 @@ describe("the credential door", () => {
     // `Connector authorization is unavailable` without one call to Slack.
     const refreshCredentials = vi.fn(async () => ({ accessToken: FRESH_TOKEN }));
     const reached: unknown[] = [];
-
-    await withAuthorizedConnection(
-      {
-        DB: leasedCredentialDatabase(await encryptString(
-          JSON.stringify({ accessToken: STALE_TOKEN, refreshToken: "refresh-token", expiresAt: EXPIRED_AT }),
-          "door-credential-key",
-          "00000000-0000-7000-8000-00000000c0de",
-        ), "door-credential-key"),
+    const broken = connectionContext({
+      accessToken: STALE_TOKEN,
+      refreshToken: "refresh-token",
+      expiresAt: EXPIRED_AT,
+    });
+    const brokenEnvelope = await encryptString(
+      JSON.stringify(broken.credentials),
+      "door-credential-key",
+      broken.id,
+    );
+    const { env: brokenEnv } = connectionObjectFixture({
+      workspaceId: broken.workspaceId,
+      connectionId: broken.id,
+      status: "needs_reconnect",
+      credentials: {
+        ciphertext: brokenEnvelope.ciphertext,
+        iv: brokenEnvelope.iv,
+        keyVersion: 1,
+      },
+      env: {
         CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       },
+      register: (database) => { openStores.push(database); },
+    });
+
+    await withAuthorizedConnection(
+      brokenEnv,
       {
-        connection: connectionContext({
-          accessToken: STALE_TOKEN,
-          refreshToken: "refresh-token",
-          expiresAt: EXPIRED_AT,
-        }),
+        connection: broken,
         adapter: { refreshCredentials } satisfies CredentialRefreshAdapter,
         signal: AbortSignal.timeout(2_000),
       },
@@ -203,21 +280,23 @@ describe("the credential door", () => {
     // connection that was just rotated successfully as needing reconnection.
     const secret = "door-credential-key";
     const stale = { accessToken: STALE_TOKEN, refreshToken: "single-use-token" };
-    const database = leasedCredentialDatabase(await encryptString(
+    const encrypted = await encryptString(
       JSON.stringify(stale),
       secret,
       "00000000-0000-7000-8000-00000000c0de",
-    ), secret);
+    );
+    const { env } = connectionObjectFixture({
+      workspaceId: "00000000-0000-7000-8000-00000000ffff",
+      connectionId: "00000000-0000-7000-8000-00000000c0de",
+      credentials: { ciphertext: encrypted.ciphertext, iv: encrypted.iv, keyVersion: 1 },
+      env: { CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      register: (database) => { openStores.push(database); },
+    });
     const refreshCredentials = vi.fn(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       return { accessToken: FRESH_TOKEN, refreshToken: "next-single-use-token" };
     });
     const adapter = { refreshCredentials } satisfies CredentialRefreshAdapter;
-    const env = {
-      DB: database,
-      CONNECTOR_CREDENTIALS_KEY: secret,
-      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
-    };
 
     const call = async () => {
       let refused = false;
@@ -247,21 +326,19 @@ describe("the credential door", () => {
   });
 
   it("marks a connection the provider refuses mid-operation for reconnect", async () => {
-    const statements: string[] = [];
-    const database = createTestD1Database({
-      prepare(sql: string) {
-        statements.push(sql);
-        return {
-          bind() { return this; },
-          async run() { return { success: true, meta: { changes: 1 } }; },
-        };
-      },
+    const marked = connectionContext({ accessToken: STALE_TOKEN });
+    const { env, objectDatabase } = connectionObjectFixture({
+      workspaceId: marked.workspaceId,
+      connectionId: marked.id,
+      credentials: null,
+      env: { CONNECTOR_CREDENTIALS_KEY: "k", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      register: (database) => { openStores.push(database); },
     });
 
     await expect(withAuthorizedConnection(
-      { DB: database, CONNECTOR_CREDENTIALS_KEY: "k", CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+      env,
       {
-        connection: connectionContext({ accessToken: STALE_TOKEN }),
+        connection: marked,
         adapter: {} satisfies CredentialRefreshAdapter,
         signal: AbortSignal.timeout(2_000),
       },
@@ -273,7 +350,7 @@ describe("the credential door", () => {
       },
     )).rejects.toMatchObject({ code: "unauthorized", details: { reason: "invalid_grant" } });
 
-    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+    expect(storedConnectionStatus(objectDatabase, marked.id).status).toBe("needs_reconnect");
   });
 });
 
@@ -290,19 +367,20 @@ describe("plugin revalidation verdicts", () => {
     harnessRunId: asHarnessRunId("11c13ad0-a0c5-48ce-8479-061edb98e886"),
   } satisfies PluginAuthorizationInput;
 
-  function recordingEnv() {
-    const statements: string[] = [];
+  // A real object rather than a statement recorder: the verdict this asserts on
+  // is a row now, and `markConnectorNeedsReconnect` fences on the connection
+  // still being healthy — a fence a recorder accepted unconditionally.
+  function markedEnv() {
+    const { env, objectDatabase } = connectionObjectFixture({
+      workspaceId: frozen.workspaceId,
+      connectionId: frozen.connectionId,
+      connectorType: "granola",
+      env: { LOG_LEVEL: "error" },
+      register: (database) => { openStores.push(database); },
+    });
     return {
-      statements,
-      env: createTestEnv({
-        DB: createTestD1Database({
-          prepare(sql: string) {
-            statements.push(sql);
-            return { bind() { return this; }, async run() { return { success: true, meta: { changes: 1 } }; } };
-          },
-        }),
-        LOG_LEVEL: "error",
-      }),
+      env,
+      status: () => storedConnectionStatus(objectDatabase, frozen.connectionId).status,
     };
   }
 
@@ -310,7 +388,7 @@ describe("plugin revalidation verdicts", () => {
     // Granola and Slack answer a refused credential with `{ ok: false,
     // reconnectRequired: true }` instead of throwing, so the credential door's
     // error path never sees it. Nothing else writes the verdict down.
-    const { env, statements } = recordingEnv();
+    const { env, status } = markedEnv();
 
     await expect(__integrationTesting.pluginAuthorizationFromHealth(
       env,
@@ -319,11 +397,11 @@ describe("plugin revalidation verdicts", () => {
       { ok: false, message: "Granola authorization was revoked", reconnectRequired: true },
     )).resolves.toBe("denied");
 
-    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+    expect(status()).toBe("needs_reconnect");
   });
 
   it("leaves the connection alone when the check could not reach a decision", async () => {
-    const { env, statements } = recordingEnv();
+    const { env, status } = markedEnv();
 
     await expect(__integrationTesting.pluginAuthorizationFromHealth(
       env,
@@ -334,11 +412,11 @@ describe("plugin revalidation verdicts", () => {
 
     // An unhealthy result that says nothing about authority must not take a
     // working connection out of the desktop.
-    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+    expect(status()).toBe("healthy");
   });
 
   it("authorizes a healthy connection without writing anything", async () => {
-    const { env, statements } = recordingEnv();
+    const { env, status } = markedEnv();
 
     await expect(__integrationTesting.pluginAuthorizationFromHealth(
       env,
@@ -347,7 +425,10 @@ describe("plugin revalidation verdicts", () => {
       { ok: true, message: "healthy" },
     )).resolves.toBe("authorized");
 
-    expect(statements).toEqual([]);
+    // "Without writing anything" is now a statement about the row rather than
+    // about how many statements were issued: an authorized check leaves the
+    // connection exactly as it found it.
+    expect(status()).toBe("healthy");
   });
 });
 
@@ -395,54 +476,54 @@ describe("refresh rejection classification", () => {
 describe("what a failed refresh does to the row", () => {
   // The predicate was right in both cases the host got wrong, so these assert
   // the outcome — is the connection marked? — rather than a boolean.
-  function refreshFailingWith(error: unknown): Promise<string[]> {
-    return doorStatementsForFailedRefresh(
+  function refreshFailingWith(error: unknown): Promise<string> {
+    return doorStatusAfterFailedRefresh(
       { refreshCredentials: async () => { throw error; } } satisfies CredentialRefreshAdapter,
       { accessToken: STALE_TOKEN, refreshToken: "refresh-token" },
     );
   }
 
   it("marks the connection when the provider refused the grant", async () => {
-    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "revoked", {
+    const status = await refreshFailingWith(new ConnectorError("unauthorized", "revoked", {
       status: 400,
       providerError: "invalid_grant",
       reconnectRequired: true,
     }));
-    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+    expect(status).toBe("needs_reconnect");
   });
 
   it("leaves it alone when the failure was Avalon's own request", async () => {
     // `invalid_client` is our configuration being wrong. No member fixes that
     // by reconnecting an account that still works.
-    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "bad client", {
+    const status = await refreshFailingWith(new ConnectorError("unauthorized", "bad client", {
       status: 401,
       providerError: "invalid_client",
     }));
-    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+    expect(status).toBe("healthy");
   });
 
   it("still marks the connection when the adapter stated no verdict at all", async () => {
     // The safe default. Requiring the flag made forgetting it strand a
     // connection: healthy row, plugin dropped from every run, nobody prompted.
     // With nothing stated, the provider's own code decides.
-    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "revoked", {
+    const status = await refreshFailingWith(new ConnectorError("unauthorized", "revoked", {
       status: 400,
       providerError: "invalid_grant",
     }));
-    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+    expect(status).toBe("needs_reconnect");
   });
 
   it("marks an unclassifiable refusal rather than leaving it silent", async () => {
-    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "no", { status: 401 }));
-    expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+    const status = await refreshFailingWith(new ConnectorError("unauthorized", "no", { status: 401 }));
+    expect(status).toBe("needs_reconnect");
   });
 
   it("believes an adapter that says the grant is not the problem", async () => {
-    const statements = await refreshFailingWith(new ConnectorError("unauthorized", "transient", {
+    const status = await refreshFailingWith(new ConnectorError("unauthorized", "transient", {
       status: 401,
       reconnectRequired: false,
     }));
-    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+    expect(status).toBe("healthy");
   });
 });
 
@@ -469,12 +550,10 @@ describe("adapter conformance: a revoked grant reaches the row", () => {
     it(`${type} leaves no connection reporting healthy after its grant is revoked`, async () => {
       const fixture = CREDENTIAL_FIXTURES[type];
       if (!fixture) throw new Error(`Add a credential fixture for the ${type} connector`);
-      const statements = await doorStatementsForFailedRefresh(
-        adapter,
-        fixture.credentials,
-        fixture.scope,
-      );
-      expect(statements.some((sql) => sql.includes("status = 'needs_reconnect'"))).toBe(true);
+      // The stored status, not the SQL that set it. The statement text was
+      // only ever evidence that a write was attempted; this is the row.
+      await expect(doorStatusAfterFailedRefresh(adapter, fixture.credentials, fixture.scope))
+        .resolves.toBe("needs_reconnect");
     });
   }
 
@@ -490,12 +569,11 @@ describe("adapter conformance: a revoked grant reaches the row", () => {
         ? Response.json({ error: "invalid_client", error_description: "wrong secret" })
         : Response.json({ ok: true });
     }) as typeof fetch);
-    const statements = await doorStatementsForFailedRefresh(
+    await expect(doorStatusAfterFailedRefresh(
       registry.get("github"),
       CREDENTIAL_FIXTURES.github!.credentials,
       "personal",
-    );
-    expect(statements.some((sql) => sql.includes("needs_reconnect"))).toBe(false);
+    )).resolves.toBe("healthy");
   });
 });
 
@@ -503,40 +581,30 @@ describe("adapter conformance: a revoked grant reaches the row", () => {
  * Drives an expired credential through the door and returns every statement the
  * door issued, so a test can ask what the refusal did to the row.
  */
-async function doorStatementsForFailedRefresh(
+async function doorStatusAfterFailedRefresh(
   adapter: CredentialRefreshAdapter,
   credentials: Record<string, unknown>,
   scope: "personal" | "workspace" = "workspace",
-): Promise<string[]> {
-  const statements: string[] = [];
+): Promise<string> {
   const secret = "coordinator-key";
   const connection = connectionContext({ ...credentials, expiresAt: EXPIRED_AT }, scope);
   const encrypted = await encryptString(JSON.stringify(connection.credentials), secret, connection.id);
-  const database = createTestD1Database({
-    prepare(sql: string) {
-      statements.push(sql.replace(/\s+/gu, " ").trim());
-      return {
-        bind() { return this; },
-        async first() {
-          return sql.includes("credential_refresh_lease_id = ?")
-            ? {
-                encrypted_credentials: encrypted.ciphertext,
-                credential_iv: encrypted.iv,
-                credential_key_version: 1,
-              }
-            : null;
-        },
-        async run() { return { success: true, meta: { changes: 1 } }; },
-      };
-    },
+  const { env, objectDatabase } = connectionObjectFixture({
+    workspaceId: connection.workspaceId,
+    connectionId: connection.id,
+    scope,
+    ownerUserId: connection.ownerUserId,
+    credentials: { ciphertext: encrypted.ciphertext, iv: encrypted.iv, keyVersion: 1 },
+    env: { CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+    register: (database) => { openStores.push(database); },
   });
 
   await expect(withAuthorizedConnection(
-    { DB: database, CONNECTOR_CREDENTIALS_KEY: secret, CONNECTOR_CREDENTIALS_KEY_VERSION: "1" },
+    env,
     { connection, adapter, signal: AbortSignal.timeout(5_000) },
     async () => undefined,
   )).rejects.toBeDefined();
-  return statements;
+  return storedConnectionStatus(objectDatabase, connection.id).status;
 }
 
 describe("repairing a connection under test", () => {

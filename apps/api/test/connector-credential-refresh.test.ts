@@ -1,95 +1,75 @@
 import type { ConnectorConnectionContext } from "@rally/connectors";
-import { describe, expect, it, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { decryptString, encryptString } from "../src/lib/crypto";
 import {
   ensureFreshConnectorCredentials,
   type CredentialRefreshAdapter,
 } from "../src/services/connector-credential-refresh";
-import { createTestD1Database } from "./helpers/cloudflare-test";
+import {
+  connectionObjectFixture,
+  storedConnectionEnvelope,
+  storedConnectionLease,
+} from "./helpers/connection-object";
 
-interface CredentialRow {
-  id: string;
-  workspaceId: string;
-  encrypted: string;
-  iv: string;
-  status: string;
-  leaseId: string | null;
-  leaseExpiresAt: string | null;
+/**
+ * The refresh lease, against the object that owns it.
+ *
+ * This suite used to carry a ninety-line fake `D1Database` that dispatched on
+ * `sql.startsWith(...)` and reimplemented the lease: which claims win, when an
+ * expiry lets a rival through, whether a settle still holds its lease. That is
+ * the behaviour under test, so the fake was grading its own answer — and it had
+ * already drifted, admitting a settle from a caller whose lease had been taken.
+ * The real object decides all of it here; only the transport is doubled.
+ */
+const WORKSPACE = "00000000-0000-7000-8000-0000000f0001";
+const CONNECTION = "00000000-0000-7000-8000-0000000f0002";
+const SECRET = "test-connector-credential-key";
+
+const databases: DatabaseSync[] = [];
+afterEach(() => {
+  for (const database of databases.splice(0)) database.close();
+});
+
+async function fixture(status: "healthy" | "needs_reconnect" | "disabled" = "healthy") {
+  const stale = {
+    botAccessToken: "xoxb-old",
+    refreshToken: "xoxe-one-use",
+    expiresAt: "2020-01-01T00:00:00.000Z",
+  };
+  const encrypted = await encryptString(JSON.stringify(stale), SECRET, CONNECTION);
+  return {
+    stale,
+    ...connectionObjectFixture({
+      workspaceId: WORKSPACE,
+      connectionId: CONNECTION,
+      status,
+      credentials: { ciphertext: encrypted.ciphertext, iv: encrypted.iv, keyVersion: 1 },
+      env: {
+        CONNECTOR_CREDENTIALS_KEY: SECRET,
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
+      },
+      register: (database) => { databases.push(database); },
+    }),
+  };
 }
 
-class CredentialStatement {
-  private values: unknown[] = [];
-  constructor(private readonly database: CredentialDatabase, private readonly sql: string) {}
-  bind(...values: unknown[]) { this.values = values; return this; }
-  first<T>() { return this.database.first(this.sql, this.values) as Promise<T | null>; }
-  run<T>() { return this.database.run(this.sql, this.values) as Promise<D1Result<T>>; }
-}
-
-class CredentialDatabase {
-  constructor(readonly row: CredentialRow) {}
-  prepare(sql: string) { return new CredentialStatement(this, sql); }
-
-  async first(sql: string, values: unknown[]) {
-    if (sql.startsWith("UPDATE connector_connections SET\n         credential_refresh_lease_id")) {
-      const [leaseId, leaseExpiresAt, id, workspaceId, at] = values.map(String);
-      if (this.row.id !== id || this.row.workspaceId !== workspaceId || this.row.status !== "healthy") return null;
-      if (this.row.leaseId && String(this.row.leaseExpiresAt) >= String(at)) return null;
-      this.row.leaseId = leaseId!;
-      this.row.leaseExpiresAt = leaseExpiresAt!;
-      return { encrypted_credentials: this.row.encrypted, credential_iv: this.row.iv, credential_key_version: 1 };
-    }
-    if (sql.startsWith("SELECT encrypted_credentials")) {
-      return this.row.status === "healthy"
-        ? { encrypted_credentials: this.row.encrypted, credential_iv: this.row.iv, credential_key_version: 1 }
-        : null;
-    }
-    if (sql.includes("encrypted_credentials = ?") && sql.includes("RETURNING id")) {
-      const [encrypted, iv, , , id, workspaceId, leaseId] = values;
-      if (this.row.id !== id || this.row.workspaceId !== workspaceId || this.row.leaseId !== leaseId) return null;
-      this.row.encrypted = String(encrypted);
-      this.row.iv = String(iv);
-      this.row.leaseId = null;
-      this.row.leaseExpiresAt = null;
-      return { id: this.row.id };
-    }
-    throw new Error(`Unexpected first query: ${sql}`);
-  }
-
-  async run(sql: string, values: unknown[]) {
-    if (sql.includes("credential_refresh_lease_id = NULL")) {
-      const [id, workspaceId, leaseId] = values;
-      if (this.row.id === id && this.row.workspaceId === workspaceId && this.row.leaseId === leaseId) {
-        this.row.leaseId = null;
-        this.row.leaseExpiresAt = null;
-      }
-      return d1Result();
-    }
-    if (sql.includes("status = 'needs_reconnect'")) {
-      this.row.status = "needs_reconnect";
-      return d1Result();
-    }
-    throw new Error(`Unexpected run query: ${sql}`);
-  }
+function connection(credentials: Record<string, unknown>): ConnectorConnectionContext {
+  return {
+    id: CONNECTION,
+    workspaceId: WORKSPACE,
+    scope: "workspace",
+    ownerUserId: null,
+    grantedScopes: [],
+    credentials: { ...credentials },
+    cursor: {},
+  } as ConnectorConnectionContext;
 }
 
 describe("connector credential refresh serialization", () => {
   it("uses a rotating refresh token exactly once across concurrent callers", async () => {
-    const secret = "test-connector-credential-key";
-    const stale = {
-      botAccessToken: "xoxb-old",
-      refreshToken: "xoxe-one-use",
-      expiresAt: "2020-01-01T00:00:00.000Z",
-    };
-    const encrypted = await encryptString(JSON.stringify(stale), secret, "connection-1");
-    const database = new CredentialDatabase({
-      id: "connection-1",
-      workspaceId: "workspace-1",
-      encrypted: encrypted.ciphertext,
-      iv: encrypted.iv,
-      status: "healthy",
-      leaseId: null,
-      leaseExpiresAt: null,
-    });
+    const { env, objectDatabase, stale } = await fixture();
     const refreshCredentials = vi.fn(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       return {
@@ -101,11 +81,6 @@ describe("connector credential refresh serialization", () => {
     const adapter = { refreshCredentials } satisfies CredentialRefreshAdapter;
     const first = connection(stale);
     const second = connection(stale);
-    const env = {
-      DB: createTestD1Database(database),
-      CONNECTOR_CREDENTIALS_KEY: secret,
-      CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
-    };
 
     // Above the wait loop's own worst case: ROTATION_WAIT_ATTEMPTS = 8 backoffs
     // of 100/200/400/800/1600/2000/2000/2000ms, ~9.1s cumulative. A backoff
@@ -124,24 +99,44 @@ describe("connector credential refresh serialization", () => {
     expect(refreshCredentials).toHaveBeenCalledTimes(1);
     expect(first.credentials).toMatchObject({ botAccessToken: "xoxb-new", refreshToken: "xoxe-next" });
     expect(second.credentials).toMatchObject({ botAccessToken: "xoxb-new", refreshToken: "xoxe-next" });
-    await expect(decryptString(database.row.encrypted, database.row.iv, secret, "connection-1"))
-      .resolves.toContain("xoxe-next");
+    const stored = storedConnectionEnvelope(objectDatabase, CONNECTION);
+    await expect(decryptString(
+      String(stored.encrypted_credentials),
+      String(stored.credential_iv),
+      SECRET,
+      CONNECTION,
+    )).resolves.toContain("xoxe-next");
+  });
+
+  it("hands the lease back when the refresh fails, so the next caller can take it", async () => {
+    // The fake released on any statement mentioning `= NULL`, whoever asked.
+    // The object releases only for the holder, and this is the property that
+    // matters: a failed refresh must not strand the lease for its full expiry.
+    const { env, objectDatabase, stale } = await fixture();
+    const refreshCredentials = vi.fn(async () => {
+      throw new Error("provider refused");
+    });
+    await expect(ensureFreshConnectorCredentials(
+      env,
+      connection(stale),
+      { refreshCredentials } satisfies CredentialRefreshAdapter,
+      AbortSignal.timeout(5_000),
+    )).rejects.toThrow("provider refused");
+
+    expect(storedConnectionLease(objectDatabase, CONNECTION))
+      .toEqual({ credential_refresh_lease_id: null });
+  });
+
+  it("refuses to claim a lease on a disabled connection", async () => {
+    // `status <> 'disabled'` is on the claim, not on a check before it. A
+    // disabled row has had its envelope cleared deliberately, and reviving it
+    // through a refresh would undo that.
+    const { env, stale } = await fixture("disabled");
+    await expect(ensureFreshConnectorCredentials(
+      env,
+      connection(stale),
+      { refreshCredentials: async () => ({ botAccessToken: "xoxb-new" }) } satisfies CredentialRefreshAdapter,
+      AbortSignal.timeout(5_000),
+    )).rejects.toThrow(/unavailable|still being refreshed/);
   });
 });
-
-function connection(credentials: Record<string, unknown>): ConnectorConnectionContext {
-  return {
-    id: "connection-1",
-    workspaceId: "workspace-1",
-    scope: "workspace",
-    ownerUserId: null,
-    grantedScopes: [],
-    credentials: { ...credentials },
-    cursor: {},
-    config: {},
-  };
-}
-
-function d1Result<T = unknown>(): D1Result<T> {
-  return { success: true, results: [], meta: { changes: 1 } as D1Meta & Record<string, unknown> };
-}
