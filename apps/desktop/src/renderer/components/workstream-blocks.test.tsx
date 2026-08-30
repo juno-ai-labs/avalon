@@ -549,13 +549,17 @@ describe('MessageBlock markdown', () => {
 
     render(<MessageBlock {...actions} message={message} />);
 
-    const drive = screen.getByText('@Google Drive').closest('.mention-chip');
+    const drive = screen.getByText('Google Drive').closest('.mention-chip');
     expect(drive).toHaveAttribute('data-connector-type', 'google_drive');
+    expect(drive).toHaveAttribute('data-connector-status', 'missing');
+    expect(drive?.querySelector('.mention-chip-status')).toHaveTextContent('Not connected');
     expect(drive?.tagName).toBe('SPAN');
-    expect(screen.getByText('@Linear').closest('.mention-chip'))
+    expect(screen.getByText('Linear').closest('.mention-chip'))
       .toHaveAttribute('data-connector-type', 'linear');
-    expect(screen.queryByRole('link', { name: '@Google Drive' })).not.toBeInTheDocument();
-    expect(document.querySelector('.markdown-body')).toHaveTextContent(text);
+    expect(screen.queryByRole('link', { name: 'Google Drive' })).not.toBeInTheDocument();
+    const body = document.querySelector('.markdown-body');
+    expect(body).toHaveTextContent(/Ask.*Google Drive.*Linear.*to sync/u);
+    expect(drive?.querySelector('.mention-chip-connector-icon.provider-icon')).toBeInTheDocument();
   });
 
   it('repairs a model\'s TeX without disturbing the mention offsets beside it', () => {
@@ -576,9 +580,9 @@ describe('MessageBlock markdown', () => {
 
     render(<MessageBlock {...actions} message={message} />);
 
-    expect(screen.getByText('@Google Drive').closest('.mention-chip'))
+    expect(screen.getByText('Google Drive').closest('.mention-chip'))
       .toHaveAttribute('data-connector-type', 'google_drive');
-    expect(screen.getByText('@Linear').closest('.mention-chip'))
+    expect(screen.getByText('Linear').closest('.mention-chip'))
       .toHaveAttribute('data-connector-type', 'linear');
     expect(document.querySelector('.markdown-body')).toHaveTextContent('Backlog → Done');
     expect(document.querySelector('.markdown-body')?.textContent).not.toContain('rightarrow');
@@ -632,16 +636,16 @@ describe('MessageBlock markdown', () => {
   it('escapes connection labels and ignores overlapping or malformed ranges', () => {
     expect(withConnectorMentionLinks('Ping @Ops [beta]', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 16 },
-    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops \\[beta\\]](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops *now* & co', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 20 },
-    ], 'tok')).toBe('Ping [@Ops \\*now\\* \\& co](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops \\*now\\* \\& co](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 9 },
       { type: 'connector', connectorType: 'ops', startOffset: 6, endOffset: 9 },
-    ], 'tok')).toBe('Ping [@Ops](connector:tok:ops)');
+    ], 'tok')).toBe('Ping [@Ops](connector://tok:ops)');
 
     expect(withConnectorMentionLinks('Ping @Ops', [
       { type: 'connector', connectorType: 'ops', startOffset: 5, endOffset: 40 },

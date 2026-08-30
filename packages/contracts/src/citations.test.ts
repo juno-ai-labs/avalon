@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   citationFootnotes,
   citationScheme,
+  connectorMentionHref,
+  connectorTypeFromMentionHref,
   embeddedResourceCitations,
   parseCitationHref,
   personIdFromMentionHref,
@@ -64,7 +66,13 @@ describe("parseCitationHref", () => {
     // destination.
     expect(parseCitationHref("person:someone").scheme).toBe("person");
     expect(parseCitationHref("person://someone").scheme).toBe("person");
-    expect(parseCitationHref("connector:abc123:slack").scheme).toBe("connector");
+  });
+
+  it("does not treat a connector mention href as a citation scheme", () => {
+    // Connector chips are render-minted mentions, not citations. Classifying
+    // them here would put them in the matrix; they stay unknown to the protocol.
+    expect(parseCitationHref("connector:abc123:slack").scheme).toBe("unknown");
+    expect(parseCitationHref("connector://abc123:slack").scheme).toBe("unknown");
   });
 
   it("treats every other scheme as text, so message content reaches no protocol handler", () => {
@@ -95,6 +103,24 @@ describe("person mention hrefs", () => {
     const legacy = `Ask [@Ada](person:${id}) please.`;
     expect(house.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
     expect(legacy.replace(personMentionMarkdownPattern(), "@$1")).toBe("Ask @Ada please.");
+  });
+});
+
+describe("connector mention hrefs", () => {
+  it("emits the house connector:// form", () => {
+    expect(connectorMentionHref("tok", "ops")).toBe("connector://tok:ops");
+    expect(connectorMentionHref("tok", "google drive")).toBe("connector://tok:google%20drive");
+  });
+
+  it("reads both house and legacy tokened spellings for this render's token", () => {
+    expect(connectorTypeFromMentionHref("connector://tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("connector:tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("CONNECTOR://tok:ops", "tok")).toBe("ops");
+    expect(connectorTypeFromMentionHref("connector://tok:google%20drive", "tok")).toBe("google drive");
+    expect(connectorTypeFromMentionHref("connector://other:ops", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref("connector:ops", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref("connector:%", "tok")).toBeUndefined();
+    expect(connectorTypeFromMentionHref(undefined, "tok")).toBeUndefined();
   });
 });
 
@@ -432,7 +458,6 @@ describe("citationScheme", () => {
       "resource://ok",
       "https://example.com",
       "person:0192f3ac-1b2c-7000-8000-abcdefabcdef",
-      "connector:token:slack",
     ]) {
       expect(citationScheme(href)).toBe(parseCitationHref(href).scheme);
     }
