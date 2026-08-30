@@ -811,7 +811,7 @@ describe("Slack agent sessions", () => {
     });
   });
 
-  it("carries the delivery key and the stream pointer per session", async () => {
+  it("clears a legacy stream pointer without touching the delivery key", async () => {
     await createSession();
     await workspace().setSlackSessionDeliveryKey({
       workspaceId: WORKSPACE_ID,
@@ -819,11 +819,14 @@ describe("Slack agent sessions", () => {
       deliveryKey: "run-1:turn-2",
       at: at(5),
     });
-    await workspace().setSlackSessionStream({
-      workspaceId: WORKSPACE_ID,
-      sessionId: "session-1",
-      streamTs: "5.0",
-      at: at(5),
+    // Existing deployed rows may still carry a placeholder stream. The typed
+    // API can clear one but can no longer create a new pointer.
+    await runInDurableObject(workspace(), (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE slack_agent_sessions SET slack_stream_ts = '5.0'
+          WHERE id = 'session-1' AND workspace_id = ?`,
+        WORKSPACE_ID,
+      );
     });
     expect(WorkspaceSlackSessionResultSchema.parse(await workspace().slackSessionById({
       workspaceId: WORKSPACE_ID,

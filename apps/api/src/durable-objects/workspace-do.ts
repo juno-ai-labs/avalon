@@ -6895,7 +6895,7 @@ export class WorkspaceDO extends ScheduledDurableObject<Env> {
     setWorkspaceSlackSessionDeliveryKey(this.state.storage, request);
   }
 
-  /** Record, or clear, the Slack message this session is streaming into. */
+  /** Clear a response-stream pointer left by a pre-saved-turn-only deployment. */
   async setSlackSessionStream(
     input: WorkspaceSlackSessionStreamRequest,
   ): Promise<void> {

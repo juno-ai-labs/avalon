@@ -269,14 +269,16 @@ On a prompt Rally:
 2. sets the Slack Agent thread status;
 3. creates or resumes the durable workstream;
 4. starts the reaction rotation for that session;
-5. starts a `chat.startStream` reply when the surface supports it;
-6. executes the ordinary authorized Rally harness;
-7. appends the complete persisted final message in Slack's required 12,000-character chunks and stops the stream;
-8. falls back to complete Slack message chunks if streaming is unavailable;
-9. stops the rotation and swaps the reaction for the one naming the outcome;
-10. links to the canonical Rally workstream and offers feedback.
+5. executes the ordinary authorized Rally harness;
+6. reloads the exact canonical final turn after terminal persistence;
+7. posts that complete saved turn in Slack's required 12,000-character chunks;
+8. stops the rotation and swaps the reaction for the one naming the outcome;
+9. links to the canonical Rally workstream and offers feedback.
 
 The persisted Rally run is canonical. A Slack delivery failure never rewrites a completed run as failed.
+Rally never streams model output to Slack. A fixed status or reaction may change
+while work is running, but if terminalization has no saved turn there is no
+Slack result message.
 
 #### The status reaction
 
@@ -326,29 +328,27 @@ that an emoji name exists before using it, so a name it rejects with
 #### Rendering agent output
 
 Slack has two text dialects. The `text` field of `chat.postMessage` is **mrkdwn**
-— `*bold*`, `_italic_`, no headings, no tables — while the `markdown` block and
-the streaming `markdown_text` field take ordinary markdown, which is what the
-agent emits. Every delivery path therefore renders through the `markdown` block
-and carries `text` only as the notification and screen-reader fallback. An
+— `*bold*`, `_italic_`, no headings, no tables — while the `markdown` block
+takes ordinary markdown, which is what the agent emits. Saved-turn delivery
+therefore renders through the `markdown` block and carries `text` only as the
+notification and screen-reader fallback. An
 automation result's title is a `header` block above it rather than a line of body
 text. Long output splits at Slack's 12,000-character limit, preferring a
 paragraph seam, then a line, and closing and reopening a fenced code block rather
 than severing one.
 
-**Citations are reduced before the split, on both paths.** An agent's answer may
+**Citations are reduced before the split.** An agent's answer may
 carry `resource://` link and image targets and GFM footnotes
 ([`markdown-rendering.md`](markdown-rendering.md)); Slack renders neither, so an
 unrewritten citation lands verbatim in front of a channel — a raw internal URL,
 a broken image where an announcement belonged, and literal `[^1]` markers.
 `slackDeliveryMarkdown` reduces them to label text and one trailing source list.
 
-It is a named step rather than something folded into the chunker because Slack
-has **two** delivery paths and only one of them builds message payloads:
-`slackMarkdownMessages` calls it for the batched path, and the streaming path in
-`slack-agent-service.ts` appends chunks straight to an open stream and calls it
-itself. Both call it *before* splitting — running the footnote pass over a chunk
+It is a named step rather than something folded into the chunker because the
+reduction must run *before* splitting — running the footnote pass over a chunk
 whose definitions landed in the next one would renumber against a body it could
-not see. It is idempotent, so a path that reduces twice does not double-number.
+not see. `slackMarkdownMessages` owns that ordering. It is idempotent, so a path
+that reduces twice does not double-number.
 The transcript copy of the same answer keeps its citations; only what leaves
 Rally is reduced.
 
@@ -798,6 +798,33 @@ briefing's three/one/zero-result cases.
 The checked-in manifest passed Slack CLI 4.6.0 `slack manifest validate` on 2026-08-06. Slack later made PKCE immutable for this app. CLI 4.6.0 strips `pkce_enabled` from its validation request even when the generated manifest contains `"pkce_enabled": true`, so the API interprets the omission as an attempt to disable PKCE. Until the CLI preserves that field, validate and apply production changes through Slack's App Manifest editor instead. Validation does not replace deployment or Marketplace review.
 
 ## Changelog
+
+### 2026-08-29 — Slack result delivery becomes saved-turn-only
+
+**What changed:** Agent ingress no longer calls `chat.startStream`, and terminal
+delivery never calls `chat.appendStream`. It reloads the exact persisted final
+turn and posts it as complete `chat.postMessage` chunks. A session carrying a
+pre-deployment `slack_stream_ts` is closed without appending content, then the
+saved turn is posted normally. The typed session API can clear that legacy
+pointer but cannot set a new one. A terminal run with no saved turn clears
+status and reactions but posts no result or controls.
+
+**Why:** Opening a stream created an empty Slack shell before Rally had a result.
+One completed run then failed terminal settlement because its structured
+assistant turn ID was rejected as a UUID, so delivery never filled the shell.
+The deeper fault is the authority split: partial provider writes can outlive or
+disagree with Rally's durable transcript.
+
+**Considered and rejected:** Appending only after persistence while retaining
+the already-open stream. The empty shell is itself an external write, and an
+ambiguous append still creates a partial second transcript. Also rejected:
+special-casing only this Slack surface; [`connectors.md`](connectors.md) makes
+saved-turn-only delivery the rule for every external conversation or comment
+adapter.
+
+**What a future change has to respect:** Working status may be live; response
+content may not. Keep `chat.stopStream` only while old session rows can carry a
+stream pointer, and do not restore start or append methods to the connector API.
 
 ### 2026-08-29 — The agent-session lifecycle became typed WorkspaceDO methods
 

@@ -8,6 +8,7 @@ import {
   PersonalSocketEventSchema,
   ResourceRelationshipTypeSchema,
   SubstreamIdSchema,
+  TranscriptTurnIdSchema,
   UserIdSchema,
   type Region,
   type SubstreamId,
@@ -297,7 +298,7 @@ const RuntimeBootstrapRequestSchema = z.object({
 const RuntimeDispatchRequestSchema = WorkstreamWorkflowInputSchema;
 const AgentTerminalOutcomeSchema = z.object({
   status: z.enum(["completed", "needs_input", "failed", "stopped"]),
-  finalTurnId: z.string().min(1).max(180).optional(),
+  finalTurnId: TranscriptTurnIdSchema.optional(),
   error: z.object({ code: z.string(), message: z.string() }).optional(),
   metrics: HarnessRunMetricsSchema.optional(),
   cancellationReason: z.string().nullable().optional(),
@@ -3534,20 +3535,16 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
     outcome: AgentTerminalOutcome,
   ): Promise<void> {
     const workspaceEnv = withWorkspaceRuntimeDatabase(this.env, input.workspaceId);
-    const messages = outcome.finalTurnId
-      ? (await this.product.messagesForRuntime(250)).items
-      : [];
     const message = outcome.finalTurnId
-      ? messages.find((candidate) => candidate.id === outcome.finalTurnId)
+      ? await this.product.messageForRuntime(outcome.finalTurnId)
       : undefined;
-    const text = message?.textContent
-      ?? (outcome.status === "stopped"
-        ? "Avalon stopped this task."
-        : outcome.status === "needs_input"
-          ? "Avalon needs more information before it can continue this task."
-          : outcome.status === "failed"
-            ? outcome.error?.message ?? "Avalon could not complete this task."
-            : "Avalon completed the task without a text response.");
+    if (outcome.finalTurnId && !message) {
+      throw new Error("agent_final_turn_not_saved");
+    }
+    // External platforms are projections of durable transcript state. Status
+    // cleanup may still run without a final turn, but no adapter may invent or
+    // stream response prose that the canonical transcript does not contain.
+    const text = message?.textContent ?? null;
     if (input.digestDeliveryId) {
       await settleDigestRun(
         this.env,
@@ -3567,7 +3564,7 @@ export class SubstreamAgent extends ScheduledDurableObject<Env> {
       `${input.harnessRunId}:${outcome.status}`,
       outcome.status,
     );
-    if (!input.automationSubscriptionId) return;
+    if (!input.automationSubscriptionId || text === null) return;
     const frozen = input.automationRunContext;
     if (!frozen || frozen.automationId !== input.automationSubscriptionId) {
       throw new Error("automation_run_context_not_found");

@@ -3,6 +3,15 @@ import { HttpUrlSchema } from "./url-schemas";
 
 const UtcTimestampSchema = z.string().datetime({ offset: true });
 
+/**
+ * Stable identity for one canonical transcript turn.
+ *
+ * Participant messages use UUIDs, while assistant turns are derived from the
+ * durable loop identity and turn ordinal. Consumers must therefore treat this
+ * as an opaque transcript key instead of validating every turn as an entity ID.
+ */
+export const TranscriptTurnIdSchema = z.string().min(1).max(180);
+
 export const TranscriptIntervalSchema = z.object({
   intervalId: z.string().min(1),
   startedAtUtc: UtcTimestampSchema,
@@ -40,7 +49,7 @@ export const TranscriptPluginRunSchema = z.object({
   /** The plugin activity's id; stable across snapshots of the same run. */
   pluginRunId: z.string().min(1),
   /** The assistant turn this work belongs to, already resolved. */
-  turnId: z.string().min(1),
+  turnId: TranscriptTurnIdSchema,
   /** The plugin's canonical id, as the tool blocks carry it. */
   pluginId: z.string().min(1),
   /** The plugin's display name, or its canonical id when it carries none. */
@@ -131,7 +140,7 @@ export const TranscriptBlockSchema = z.discriminatedUnion("type", [
 
 export const TranscriptTurnSchema = z.object({
   transcriptSequence: z.number().int().positive(),
-  turnId: z.string().min(1),
+  turnId: TranscriptTurnIdSchema,
   entryKind: z.enum(["conversation", "status"]),
   actor: z.enum(["human", "assistant", "external", "system"]),
   authorUserId: z.string().nullable(),
