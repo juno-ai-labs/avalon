@@ -5,12 +5,29 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const repositoryDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const deployWorkflowPath = join(repositoryDirectory, '.github/workflows/deploy-api.yml');
+const ciWorkflowPath = join(repositoryDirectory, '.github/workflows/ci.yml');
+
+function matrixCommand(workflow, lane) {
+  const escapedLane = lane.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  // Sibling keys (currently `env:` on CI) may sit between `name` and `command`.
+  const match = workflow.match(new RegExp(
+    `^ {10}- name: ${escapedLane}\\n`
+      + `(?: {12}(?!command:)\\S.*\\n(?: {14}.+\\n)*)*`
+      + ` {12}command: (?:>-\\n(?<folded>(?:^ {14}.+\\n?)+)|(?<inline>.+))`,
+    'mu',
+  ));
+
+  assert.ok(match, `the workflow must define the ${lane} matrix lane`);
+  return match.groups.inline ?? match.groups.folded
+    .trim()
+    .split('\n')
+    .map((line) => line.trim())
+    .join(' ');
+}
 
 test('a merge to main provisions every declared Queue before either regional deploy', async () => {
-  const workflow = await readFile(
-    join(repositoryDirectory, '.github/workflows/deploy-api.yml'),
-    'utf8',
-  );
+  const workflow = await readFile(deployWorkflowPath, 'utf8');
   const ensureQueues = workflow.indexOf(
     '- name: Ensure every Queue the Wrangler configs declare exists',
   );
@@ -26,10 +43,7 @@ test('a merge to main provisions every declared Queue before either regional dep
 });
 
 test('applies destructive D1 retirements only after compatible Workers deploy', async () => {
-  const workflow = await readFile(
-    join(repositoryDirectory, '.github/workflows/deploy-api.yml'),
-    'utf8',
-  );
+  const workflow = await readFile(deployWorkflowPath, 'utf8');
   const pendingEu = workflow.indexOf('- name: List the pending remote migrations for EU');
   const ordinaryEu = workflow.indexOf('- name: Apply the remote D1 migrations to EU');
   const deployEu = workflow.indexOf('- name: Deploy the EU Worker');
@@ -67,4 +81,30 @@ test('applies destructive D1 retirements only after compatible Workers deploy', 
   );
   assert.match(workflow, /steps\.pending_eu\.outputs\.worker_first == 'true'/u);
   assert.match(workflow, /steps\.pending_global\.outputs\.worker_first == 'true'/u);
+});
+
+test('deploy verify shards workers the same way CI does', async () => {
+  const [deploy, ci] = await Promise.all([
+    readFile(deployWorkflowPath, 'utf8'),
+    readFile(ciWorkflowPath, 'utf8'),
+  ]);
+
+  for (const lane of ['api-tests-workers-1-of-n', 'api-tests-workers-2-of-n']) {
+    assert.equal(
+      matrixCommand(deploy, lane),
+      matrixCommand(ci, lane),
+      `deploy ${lane} must match CI so verify is not a second, unsharded workers run`,
+    );
+  }
+
+  const nodeShardTwo = matrixCommand(deploy, 'api-tests-2-of-2');
+  assert.equal(
+    nodeShardTwo,
+    'pnpm --filter @rally/api exec vitest run --shard=2/2',
+  );
+  assert.doesNotMatch(
+    nodeShardTwo,
+    /test:workers|vitest\.workers\.config\.ts/u,
+    'workers must not be appended unsharded onto a Node API shard',
+  );
 });
