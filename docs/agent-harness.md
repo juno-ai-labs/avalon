@@ -335,6 +335,10 @@ and only bounded resource paths travel through the structured failure allowlist.
 8. Stop on completion, elicitation, the host's safe-boundary loop stop, ambiguous
    write, limit, lease loss, or failure. Receipt-local cancellation remains a
    separate terminal signal for child and generic non-work-stream executions.
+9. Run external-platform delivery only after reloading a saved canonical turn:
+   the exact terminal turn normally, or the open elicitation turn while waiting
+   on a person. Status cleanup and suppressed-delivery receipts may run without
+   one; reply or comment content may not.
 
 Web discovery and page reading are bounded Firecrawl tools. Search returns ranked links and page fetch returns clean markdown. Both are omitted without `FIRECRAWL_API_KEY` and from inbound-email runs.
 
@@ -1050,6 +1054,34 @@ Nothing pins `breakerScope`, so deleting that one property from `routePlan` woul
 silently return every test to the shared key while each still passes alone.
 
 ## Changelog
+
+### 2026-08-29 — External delivery reads the exact saved terminal turn
+
+**What changed:** Work-stream terminal side effects reload `finalTurnId`
+directly from the canonical transcript instead of fetching the latest 250
+messages and searching them. For `needs_input`, they reload the oldest open
+elicitation through its canonical transcript turn so the saved structured
+prompt remains actionable externally. The shared transcript-turn schema now
+accepts the durable loop's structured assistant IDs. When no saved turn exists,
+connector status and suppressed automation receipts settle but no external
+result body is synthesized. A named-but-missing turn leaves a durable diagnostic
+without putting status cleanup behind an endless retry.
+
+**Why:** A completed assistant turn was durable under its stable structured ID,
+but generic message hydration still required a UUID. Settlement retried before
+Slack delivery on every attempt. The bounded recent-message search also made
+external delivery depend on transcript length instead of the terminal fact it
+was given.
+
+**What was rejected:** Generating fallback failure/completion prose inside the
+delivery layer, or searching a wider transcript page. The first publishes text
+that is not canonical; the second remains a page-size-dependent lookup for an
+exact key.
+
+**What a future change has to respect:** External adapters project a hydrated
+canonical turn and nothing else. A new Teams, Linear, or other conversational
+delivery branch belongs after saved-turn hydration, never on the live
+stream/checkpoint path.
 
 ### 2026-08-29 — Automation authoring preserves connector tool deadlines
 

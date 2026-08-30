@@ -124,6 +124,12 @@ and provider-boundary verification are the deliberate full-history reads. The
 suffix chain is local to the object/harness call and is not exposed through the
 transcript RPC or JSON serialization.
 
+Terminal side effects use an exact internal turn lookup against
+`canonical_conversation_turn_details`. They do not page through recent messages
+or read the active streaming checkpoint. A connector reply is therefore a
+projection of a saved participant-visible turn; when terminal state names no
+turn, external status may settle but no reply body leaves Rally.
+
 Anything that can yield while constructing a transcript payload is prepared
 before `commitRuntimeMutation`. Its callback is synchronous: it inserts the
 prepared canonical fact, advances transcript and root state, and derives the
@@ -1463,6 +1469,31 @@ That is under the 18-object threshold that timed out shard 1/2; do not add
 `waitForQuietLoop` there to recoup it. An incomplete `reset()` no longer
 fails the next `it` as `CREATE TABLE … already exists` in this file; other
 workers tests that still use plain `CREATE TABLE` can still cascade that way.
+
+### 2026-08-29 — Terminal projections read one canonical turn by identity
+
+**What changed:** `WorkstreamObjectProductService.messageForRuntime` hydrates
+one participant-visible canonical turn by its opaque transcript ID, while
+`openElicitationMessageForRuntime` resolves a pending question through the
+canonical turn it created. Agent-run settlement uses those reads before any
+external-platform delivery. A terminal outcome that names an unreadable turn
+retains `agent_final_turn_not_saved` as a diagnostic, settles provider status,
+and emits no result body instead of retrying forever.
+
+**Why:** The previous path loaded the newest 250 messages and parsed each through
+a UUID-only message schema before searching for `finalTurnId`. Structured
+assistant IDs were valid transcript identities, so the parse failed before the
+search and left terminal side effects retrying. Even with the schema corrected,
+a recent-page scan is the wrong authority query for an exact terminal key.
+
+**Considered and rejected:** Raising the page limit or looking at the live
+stream checkpoint. A limit only moves the transcript-length failure, while the
+checkpoint is transient output and cannot authorize an external write.
+
+**What a future change has to respect:** A hydrated canonical turn is the only
+source of participant-visible external content. External replies, comments,
+notifications, and automation result bodies must remain downstream of that
+saved-turn read.
 
 ### 2026-08-29 — The origin label is a question to WorkspaceDO, not SQL through the facade
 

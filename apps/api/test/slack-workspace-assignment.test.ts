@@ -926,6 +926,113 @@ describe("Slack connector principal delivery", () => {
     });
   }
 
+  it("closes a legacy empty stream and posts only the complete saved outcome", async () => {
+    const database = migratedDatabase();
+    const credentialsKey = "test-connector-credentials-key";
+    const { instance, objectDatabase } = await linkedSlackMemberFixture(database, credentialsKey);
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         slack_stream_ts, opening_client_message_id, workstream_id, invocation_kind,
+         channel_type, context_json, created_at, updated_at)
+      VALUES ('session-saved-outcome', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '1.0', '2.0', 'event:saved-outcome',
+              '7a000000-0000-4000-8000-0000000000ab', 'app_mention', 'public',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+      const method = url.pathname.split("/").at(-1)!;
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      calls.push({ method, body });
+      if (method === "chat.stopStream") {
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "2.0" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "assistant.threads.setStatus") {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (method === "chat.postMessage") {
+        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "3.0" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected Slack request ${url}`);
+    }));
+
+    const clearLegacyStream = vi.spyOn(instance, "setSlackSessionStream");
+    const service = new SlackAgentService(slackMembershipEnvironment(
+      database,
+      instance,
+      credentialsKey,
+      vi.fn(async () => undefined),
+      undefined,
+      { PUBLIC_WEB_BASE_URL: "https://rallywith.ai" },
+    ));
+    await service.deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000ab",
+      "The saved final answer",
+      "run-saved:completed",
+      "completed",
+    );
+
+    expect(calls.map((call) => call.method)).toEqual([
+      "chat.stopStream",
+      "chat.postMessage",
+      "chat.postMessage",
+      "assistant.threads.setStatus",
+    ]);
+    expect(calls.some((call) => call.method === "chat.startStream" || call.method === "chat.appendStream"))
+      .toBe(false);
+    expect(calls[1]?.body).toMatchObject({
+      channel: "C123",
+      thread_ts: "1.0",
+      text: "The saved final answer",
+    });
+    expect(objectDatabase.prepare(
+      "SELECT slack_stream_ts, last_delivery_key FROM slack_agent_sessions WHERE id = 'session-saved-outcome'",
+    ).get()).toEqual({ slack_stream_ts: null, last_delivery_key: "run-saved:completed" });
+    expect(clearLegacyStream).toHaveBeenCalledTimes(1);
+
+    objectDatabase.exec(`
+      INSERT INTO slack_agent_sessions
+        (id, workspace_id, connection_id, linked_user_id, execution_scope,
+         slack_team_id, slack_user_id, slack_channel_id, slack_thread_ts,
+         opening_client_message_id, workstream_id, invocation_kind, channel_type,
+         context_json, created_at, updated_at)
+      VALUES ('session-no-saved-turn', '22222222-2222-4222-8222-222222222222',
+              '11111111-1111-4111-8111-111111111111', NULL, 'workspace',
+              'T123', 'U456', 'C123', '4.0', 'event:no-saved-turn',
+              '7a000000-0000-4000-8000-0000000000ac', 'app_mention', 'public',
+              '{}', '2026-01-01', '2026-01-01');
+    `);
+    calls.length = 0;
+
+    await service.deliverWorkstreamOutcome(
+      "22222222-2222-4222-8222-222222222222",
+      "7a000000-0000-4000-8000-0000000000ac",
+      null,
+      "run-unsaved:failed",
+      "failed",
+    );
+
+    expect(calls.map((call) => call.method)).toEqual(["assistant.threads.setStatus"]);
+    expect(objectDatabase.prepare(
+      "SELECT last_delivery_key FROM slack_agent_sessions WHERE id = 'session-no-saved-turn'",
+    ).get()).toEqual({ last_delivery_key: "run-unsaved:failed" });
+    expect(clearLegacyStream).toHaveBeenCalledTimes(1);
+  });
+
   it("presents the connector principal to the work-stream object, not a login session", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
@@ -1270,7 +1377,7 @@ describe("Slack public channel membership", () => {
     expect(activityQueueSend).not.toHaveBeenCalled();
   });
 
-  it("adds eyes to the triggering message before starting Slack task processing", async () => {
+  it("adds eyes before task processing without opening a Slack response stream", async () => {
     const database = migratedDatabase();
     const credentialsKey = "test-connector-credentials-key";
     const { instance, objectDatabase } = await slackInstallationFixture(database, credentialsKey);
@@ -1312,11 +1419,6 @@ describe("Slack public channel membership", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      if (method === "chat.startStream") return new Response(JSON.stringify({
-        ok: true,
-        channel: "C123",
-        ts: "2.0",
-      }), { status: 200, headers: { "content-type": "application/json" } });
       throw new Error(`Unexpected Slack request ${url}`);
     }));
     const env = createTestEnv({
@@ -1330,6 +1432,7 @@ describe("Slack public channel membership", () => {
 
     expect(methods.indexOf("reactions.add")).toBeGreaterThan(methods.indexOf("users.info"));
     expect(methods.indexOf("reactions.add")).toBeLessThan(methods.indexOf("assistant.threads.setStatus"));
+    expect(methods).not.toContain("chat.startStream");
     expect(database.prepare("SELECT COUNT(*) AS count FROM workstreams").get()).toEqual({ count: 1 });
     expect(objectDatabase.prepare(
       "SELECT status, payload_json FROM slack_ingress_jobs WHERE id = 'event:acknowledge'",
@@ -1590,12 +1693,6 @@ describe("Slack public channel membership", () => {
           headers: { "content-type": "application/json" },
         });
       }
-      if (url.pathname.endsWith("chat.startStream")) {
-        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1.1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
       throw new Error(`Unexpected Slack request ${url}`);
     }));
 
@@ -1778,12 +1875,6 @@ describe("Slack public channel membership", () => {
       if (url.pathname.endsWith("assistant.threads.setTitle")) {
         threadTitles.push(String((JSON.parse(String(init?.body)) as Record<string, unknown>).title));
         return new Response(JSON.stringify({ ok: true }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.pathname.endsWith("chat.startStream")) {
-        return new Response(JSON.stringify({ ok: true, channel: "C123", ts: "1.3" }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -2491,11 +2582,6 @@ function slackTaskApiFetcher(
         headers: { "content-type": "application/json" },
       });
     }
-    if (method === "chat.startStream") return new Response(JSON.stringify({
-      ok: true,
-      channel: "C123",
-      ts: "2.0",
-    }), { status: 200, headers: { "content-type": "application/json" } });
     throw new Error(`Unexpected Slack request ${url}`);
   });
   return { fetcher, methods };

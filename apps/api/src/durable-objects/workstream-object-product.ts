@@ -1805,25 +1805,45 @@ export class WorkstreamObjectProductService {
     };
   }
 
-  /** Internal agent-host read; authorization was fenced when the run was admitted. */
-  async messagesForRuntime(
-    limit: number,
-  ): Promise<{ items: Message[]; nextCursor: string | null; newerCursor: string | null }> {
+  /** Exact internal read used by terminal side effects after a turn is saved. */
+  async messageForRuntime(turnId: string): Promise<Message | null> {
+    const row = this.storage.sql.exec<PartRow>(
+      `SELECT id, sequence_number, attention_ordinal, author_type, author_user_id, external_actor_json,
+              message_type, content, structured_content_json, client_message_id,
+              edited_at, created_at
+         FROM canonical_conversation_turn_details
+        WHERE substream_id = '0' AND visibility IN ('people', 'both') AND id = ?
+        LIMIT 1`,
+      turnId,
+    ).toArray()[0];
+    return row ? this.hydrateMessageRow(this.runtimeAuth(), row) : null;
+  }
+
+  /** The oldest blocking question, read through the canonical turn it created. */
+  async openElicitationMessageForRuntime(): Promise<Message | null> {
+    const row = this.storage.sql.exec<PartRow>(
+      `SELECT turn.id, turn.sequence_number, turn.attention_ordinal, turn.author_type,
+              turn.author_user_id, turn.external_actor_json, turn.message_type, turn.content,
+              turn.structured_content_json, turn.client_message_id, turn.edited_at, turn.created_at
+         FROM elicitation_requests request
+         JOIN canonical_conversation_turn_details turn
+           ON turn.client_message_id = 'elicitation:' || request.elicitation_id
+        WHERE request.status = 'pending' AND turn.substream_id = '0'
+          AND turn.visibility IN ('people', 'both')
+        ORDER BY request.created_at, request.elicitation_id
+        LIMIT 1`,
+    ).toArray()[0];
+    return row ? this.hydrateMessageRow(this.runtimeAuth(), row) : null;
+  }
+
+  private runtimeAuth(): AuthContext {
     const root = this.root();
-    const auth: AuthContext = {
+    return {
       sessionId: "substream-agent-runtime",
       userId: asUserId(root.created_by_user_id ?? root.workstream_key),
       workspaceId: asWorkspaceId(root.parent_workspace_key),
       region: this.env.AVALON_REGION,
       role: "owner",
-    };
-    const items = await this.messageRows(auth, Math.max(1, Math.min(limit, 250)) + 1, "before");
-    const hasMore = items.length > limit;
-    if (hasMore) items.shift();
-    return {
-      items,
-      nextCursor: hasMore ? String(items[0]?.sequenceNumber ?? "") : null,
-      newerCursor: null,
     };
   }
 

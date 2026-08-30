@@ -244,6 +244,37 @@ Messaging-agent and native-agent adapters share `ConnectorAgentAdapter`. An adap
 
 The hook is deliberately optional. Slack uses an `eyes` reaction on the exact triggering message and treats Slack's `already_reacted` result as success. Its operational host logs provider-side reaction failures and continues the admitted request so a supplemental acknowledgement cannot discard user work. Linear uses a `👀` reaction only when the current activation includes a source comment. A future message-oriented Teams, Discord, or GitHub agent can opt in when it has an unambiguous source object and a lightweight reaction API. Email, file, calendar, database, and ordinary resource-webhook connectors should not acknowledge activation: they have no conversational source message, and manufacturing a reply or mutation would be noisy or misleading.
 
+### External result delivery
+
+An external conversation, issue, or comment thread is a projection of Rally's
+durable transcript, never a live model-output surface. A connector may show a
+fixed acknowledgement, status label, or reaction while work is running, but it
+must not start a provider response stream, append model deltas, or construct
+reply prose from an in-memory accumulator. Slack, a future Microsoft Teams
+agent, and a future Linear comment-back path all follow the same rule.
+
+The terminal delivery boundary receives the final transcript turn identity and
+reloads that exact canonical turn from the owning work-stream object. A
+`needs_input` outcome instead prefers the oldest open elicitation's canonical
+turn, because its prompt is saved in structured turn content rather than the
+text column. Only text rendered from one of those hydrated turns may become an
+external message or comment. If no saved turn can be read, the adapter may
+clear status and apply an outcome reaction, but it sends no result body. A
+named-but-missing turn is retained as a settlement diagnostic rather than
+retrying provider status forever; transcript persistence is awaited before
+terminalization, so a null exact read is not a late-write race. Provider
+idempotency keys remain required because the saved projection can be retried
+after an ambiguous network response.
+
+Automation destinations obey the same content rule. An absent or whitespace-only
+saved result performs no external write, but each frozen target still receives
+a durable `skipped` / `delivery_suppressed` receipt so suppression cannot be
+confused with a settlement path that never ran.
+
+This boundary is intentionally above individual adapters. Adding another
+message-oriented connector means branching after the exact saved-turn read,
+not adding a second path from streaming checkpoints or terminal error objects.
+
 ### Google
 
 Google identity and connector authorization are separate. Connector authorization uses the web-server code flow, PKCE, offline access, and incremental scopes. Settings presents two product-facing presets, but both create ordinary `google` connections backed by the same adapter, credential lifecycle, OAuth callback, and tool registry. They are authorization bundles, not separate backend connector types, and a user may connect either or both.
@@ -817,6 +848,7 @@ about which providers can deliver is written into the API or the client.
 | `packages/connectors/src/digestibility-doc.test.ts` | That every declared activity type has a row in [`connector-digestibility.md`](connector-digestibility.md). |
 | `packages/connectors/src/agent-plugin.test.ts` | That each descriptor's provider type and tool order match its manifest. |
 | `packages/connectors/src/observability.test.ts` | The shared adapter and provider-request log layers, level selection, identifier retention, content exclusion, and fail-open observer contract. |
+| `apps/api/test-workers/message-to-output-pipeline.test.ts`, `apps/api/test/slack-workspace-assignment.test.ts` | A completed composite-id transcript turn is reloaded before terminal side effects settle; Slack never opens or appends a response stream, posts only the complete saved turn, and emits no result message when no saved turn exists. |
 
 Run one with
 `pnpm --filter @rally/api exec vitest run test/connector-credential-freshness.test.ts`
@@ -828,6 +860,36 @@ one to a fixture list to make a new adapter pass — declare the exemption in th
 fixture table instead, where it is reviewable.
 
 ## Changelog
+
+### 2026-08-29 — External platforms receive saved turns, never model streams
+
+**What changed:** External result delivery now has one connector-wide rule: a
+fixed status signal may be live, but a reply or comment is posted only from a
+canonical turn after it is saved. Terminal results use the exact named turn;
+`needs_input` uses the saved open-elicitation turn. Slack no longer starts or
+appends response streams; its connector API contract no longer exposes those
+methods. The retained `chat.stopStream` method exists only to close placeholder
+streams left by an older deployed version. Empty automation projections still
+record suppressed receipts, and a named turn that is missing settles status
+without a body while retaining a durable diagnostic.
+
+**Why:** A Slack run completed at the model boundary but terminal settlement
+could not hydrate its structured assistant turn ID through a UUID-only message
+schema. The already-open provider stream therefore remained as an empty shell,
+while retrying settlement never reached result delivery. More generally,
+streaming partial model output to a provider creates a second visible transcript
+whose partial writes cannot be retracted or reconciled with Rally's authority.
+
+**Considered and rejected:** Keeping provider streaming and appending the whole
+saved answer at the end. Opening the stream is already an externally visible
+write before Rally has a saved answer, and a lost append response leaves an
+ambiguous partial result. Also rejected: adapter-specific policy. Teams, Linear
+comments, Slack, and later message connectors have the same authority boundary.
+
+**What a future change has to respect:** Branch to a new external adapter only
+after saved-turn hydration. With no saved turn, settle status and send no reply
+body; do not leave a provider surface looking busy forever. Never expose a
+provider streaming primitive merely because its API offers one.
 
 ### 2026-08-29 — OAuth attempts and webhook receipt claims become typed WorkspaceDO methods
 
