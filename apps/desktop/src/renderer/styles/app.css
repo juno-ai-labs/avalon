@@ -1175,11 +1175,6 @@ pre {
 .region-option-copy span { color: var(--av-sys-color-text-muted); font-size: 11px; }
 .region-check { color: var(--av-sys-color-brand-ink); }
 .region-note { color: var(--av-ref-color-neutral-9); font-size: 10.5px; line-height: 1.45; }
-.region-availability-note { color: var(--av-ref-color-neutral-10); font-size: 10px; line-height: 1.45; margin: 8px 0 0; }
-.region-availability-note:empty { display: none; }
-.region-availability-note p { margin: 0; }
-.region-availability-note ul { list-style: disc; margin: 4px 0 0; padding-left: 16px; }
-.region-availability-note li::marker { color: var(--av-ref-color-neutral-10); }
 .onboarding-continue { margin-top: 20px; width: 100%; }
 
 .signin-card { text-align: center; width: min(400px, 100%); }

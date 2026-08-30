@@ -80,7 +80,7 @@ The same Worker source is deployed twice:
 | GitHub App ingress | signature verification and installation-to-region directory | exact signed delivery forwarded through named Worker RPC only when connected in EU |
 | Notion connection ingress | one redirect URI and one webhook subscription, plus the Notion-workspace-to-region directory | authorization code and exact signed delivery forwarded through named Worker RPC; token exchange, credentials, and payloads stay in EU |
 | Work-stream email registry | one authoritative, case-insensitive reservation table for every region | no local allocator; reservations and status changes use the Global named RPC binding |
-| Terminal workspaces | independently gated Daytona target; regional D1/R2/GitHub App services | independently gated Daytona target; no Global fallback or bridge |
+| Terminal workspaces | independently gated; Daytona `us` target; regional D1/R2/GitHub App services | independently gated on the same Daytona `us` environment; Rally records stay in EU |
 | Product-flag delivery | Ace reads Global D1 and sends opaque workspace IDs to the Global product-flag Queue | Ace reads EU D1 and sends opaque workspace IDs to the EU product-flag Queue; the EU Worker alone addresses EU WorkspaceDOs |
 
 Queues and Workflows carry region plus opaque record IDs, never sensitive payload
@@ -248,9 +248,10 @@ See [`public-site-telemetry.md`](public-site-telemetry.md).
   validated event projection. EU-to-Global carries only opaque preference
   mutation or capability authorization/closure commands; it never carries an EU
   event, dump, regional analytics identity, or destination credential.
-- **Terminal capability is declared and probed independently per region.** An
-  unavailable EU Daytona target cannot fall back to Global without moving
-  repository/resource bytes across the workspace boundary.
+- **Terminal capability is declared independently per Rally region against one
+  Daytona environment.** Both checked-in Workers use `DAYTONA_TARGET=us`. Rally
+  Terminal rows, resource bytes, and GitHub tokens still do not cross regions;
+  sandbox files run on that shared Daytona fleet.
 
 ## Boundary
 
@@ -304,10 +305,12 @@ here.
 - **Enterprise-dedicated Workers, databases, buckets, keys, retention, and
   observability** remain an extension point in the repository and service
   interfaces, not a V1 feature.
-- **A region whose Daytona target, residency assurance, snapshot, egress, or
-  lifecycle acceptance has not passed remains `unsupported`.** Settings reports
-  that state and Bind omits Terminal; another region's passing probe changes
-  nothing.
+- **A region whose Daytona target, snapshot, egress, or lifecycle acceptance
+  has not passed remains `unsupported`.** Settings reports that state and Bind
+  omits Terminal; another region's passing probe changes nothing. The
+  checked-in Global and EU Workers are both `supported` on the same Daytona
+  `us` environment. Sandbox files therefore share that fleet; Rally Terminal
+  records do not cross regions.
 
 ## Testing
 
@@ -734,6 +737,29 @@ region blob but shares the same account-level Analytics Engine boundary and
 three-month retention. Regional D1 and R2 Logpush remain the exact sources; a
 future jurisdiction requirement must replace or contractually validate this
 aggregate path.
+
+### 2026-08-30 — EU Terminal uses the same Daytona environment as Global
+
+**What changed:** The EU Worker is now `TERMINAL_REGION_CAPABILITY=supported`
+with `DAYTONA_TARGET=us`, matching Global. Onboarding no longer lists Terminal
+as unavailable for an EU workspace.
+
+**Why:** EU workspaces needed the sandbox, and Rally operates Daytona as one
+environment rather than a second regional fleet. Keeping EU `unsupported` was
+the honest state only while Terminal itself was withheld; once it is on, the
+target has to be the environment that actually exists.
+
+**Considered and rejected:** Declaring `DAYTONA_TARGET=eu` from Daytona's
+published region list. That would have advertised a Daytona region Rally does
+not run. Also rejected was a Rally-side cross-region sandbox control plane:
+EU Terminal records, resource bytes, and GitHub tokens still stay in the EU
+Worker.
+
+**Consequences:** EU sandbox files run on the same Daytona `us` fleet as
+Global. That is a subprocessor exception, not a Rally data bridge. EU reuses
+the Global Daytona project key as its own Worker secret; Cloudflare cannot
+copy it across Workers. Runtime still degrades to `unsupported` if that EU
+secret (or another required Daytona value) is missing.
 
 ### 2026-08-13 — Terminal availability is a regional provider gate
 
