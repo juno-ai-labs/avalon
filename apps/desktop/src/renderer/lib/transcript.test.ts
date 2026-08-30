@@ -63,6 +63,7 @@ describe('transcript messages', () => {
         covered: { startInclusive: 1, endExclusive: 2 },
         turns: [envelope],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [],
       activeActivities: [],
@@ -408,6 +409,7 @@ describe('ordered turn rendering', () => {
           turn(4, 'question-answer', 'answered', 'human'),
         ],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
@@ -461,6 +463,7 @@ describe('ordered turn rendering', () => {
           }],
           activityId: null,        }],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
@@ -515,6 +518,7 @@ describe('ordered turn rendering', () => {
         purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
         covered: { startInclusive: 1, endExclusive: 2 },
         turns: [invalid], activities: [],
+        pluginRuns: [],
       }],
       activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
@@ -544,6 +548,7 @@ describe('ordered turn rendering', () => {
           ],
           activityId: null,        }],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
@@ -578,6 +583,7 @@ describe('ordered turn rendering', () => {
           }],
           activityId: null,        }],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
@@ -639,6 +645,7 @@ describe('ordered turn rendering', () => {
           },
         ],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [],
       activeActivities: [],
@@ -715,6 +722,7 @@ describe('ordered turn rendering', () => {
           createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1, blocks,
           activityId: 'turn-large:activity',        }],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [
         {
@@ -781,6 +789,7 @@ describe('ordered turn rendering', () => {
             activityId: null,          },
         ],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [
         {
@@ -838,6 +847,7 @@ describe('ordered turn rendering', () => {
           activityId: 'turn-active:activity',
         }],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [
         {
@@ -951,12 +961,14 @@ describe('canonical elicitation presentation', () => {
       covered: { startInclusive: 1, endExclusive: 5 },
       turns: [turn],
       activities: [],
+      pluginRuns: [],
     }, {
       purpose: 'requested' as const,
       requested: { startInclusive: 4, endExclusive: 5 },
       covered: { startInclusive: 4, endExclusive: 5 },
       turns: [turn],
       activities: [],
+      pluginRuns: [],
     }],
     activities: [],
     activeActivities: [],
@@ -993,9 +1005,9 @@ describe('explicit transcript range coverage', () => {
     unreadAnchorSequence: null,
     unreadReason: 'no_unread',
     ranges: [
-      { purpose: 'requested', requested: { startInclusive: 10, endExclusive: 20 }, covered: { startInclusive: 10, endExclusive: 20 }, turns: [], activities: [] },
-      { purpose: 'requested', requested: { startInclusive: 15, endExclusive: 25 }, covered: { startInclusive: 15, endExclusive: 25 }, turns: [], activities: [] },
-      { purpose: 'latest', requested: { startInclusive: 46, endExclusive: 51 }, covered: { startInclusive: 46, endExclusive: 51 }, turns: [], activities: [] },
+      { purpose: 'requested', requested: { startInclusive: 10, endExclusive: 20 }, covered: { startInclusive: 10, endExclusive: 20 }, turns: [], activities: [], pluginRuns: [] },
+      { purpose: 'requested', requested: { startInclusive: 15, endExclusive: 25 }, covered: { startInclusive: 15, endExclusive: 25 }, turns: [], activities: [], pluginRuns: [] },
+      { purpose: 'latest', requested: { startInclusive: 46, endExclusive: 51 }, covered: { startInclusive: 46, endExclusive: 51 }, turns: [], activities: [], pluginRuns: [] },
     ],
     activities: [],
     activeActivities: [],
@@ -1057,6 +1069,7 @@ describe('explicit transcript range coverage', () => {
         covered: { startInclusive: 1, endExclusive: 21 },
         turns: [historicalTurn, retractedTurn, staleTurn],
         activities: [],
+        pluginRuns: [],
       }],
     };
     const incoming = {
@@ -1069,6 +1082,7 @@ describe('explicit transcript range coverage', () => {
         covered: { startInclusive: 10, endExclusive: 20 },
         turns: [authoritativeTurn],
         activities: [],
+        pluginRuns: [],
       }],
     };
 
@@ -1134,6 +1148,7 @@ describe('explicit transcript range coverage', () => {
         covered: { startInclusive: 51, endExclusive: 52 },
         turns: [provisional],
         activities: [],
+        pluginRuns: [],
       }],
     };
     const authoritative = {
@@ -1227,6 +1242,7 @@ describe('explicit transcript range coverage', () => {
       covered: { startInclusive: 1, endExclusive: 10 },
       turns: [],
       activities: [activity],
+      pluginRuns: [],
     });
     expect(merged.activities).toContainEqual(activity);
   });
@@ -1237,8 +1253,8 @@ describe('explicit transcript range coverage', () => {
         for (let rightStart = 1; rightStart <= 5; rightStart += 1) {
           for (let rightEnd = rightStart; rightEnd <= 6; rightEnd += 1) {
             const ranges = [
-              { purpose: 'requested' as const, requested: { startInclusive: leftStart, endExclusive: leftEnd }, covered: { startInclusive: leftStart, endExclusive: leftEnd }, turns: [], activities: [] },
-              { purpose: 'requested' as const, requested: { startInclusive: rightStart, endExclusive: rightEnd }, covered: { startInclusive: rightStart, endExclusive: rightEnd }, turns: [], activities: [] },
+              { purpose: 'requested' as const, requested: { startInclusive: leftStart, endExclusive: leftEnd }, covered: { startInclusive: leftStart, endExclusive: leftEnd }, turns: [], activities: [], pluginRuns: [] },
+              { purpose: 'requested' as const, requested: { startInclusive: rightStart, endExclusive: rightEnd }, covered: { startInclusive: rightStart, endExclusive: rightEnd }, turns: [], activities: [], pluginRuns: [] },
             ];
             const generated = { ...snapshot, snapshotThrough: 5, ranges };
             const reversed = { ...generated, ranges: [...ranges].reverse() };
@@ -1486,6 +1502,7 @@ describe('orderedTranscriptMessages plugin runs', () => {
         activityId: null,
       }],
       activities: [],
+      pluginRuns: [],
     }],
     activities: [],
     activeActivities: [],
@@ -1563,7 +1580,7 @@ describe('orderedTranscriptMessages plugin runs', () => {
     expect(rows[0]!.pluginActivity?.durationMs).toBeNull();
   });
 
-  it('ignores the activity tree entirely once the server reports runs', () => {
+  it('lets a live activity supersede the run the snapshot was taken with', () => {
     const snapshot = brokenJoinSnapshot([run({ toolCallIds: ['call-0', 'call-1'] })]);
     const messages = orderedTranscriptMessages({
       ...snapshot,
@@ -1589,9 +1606,12 @@ describe('orderedTranscriptMessages plugin runs', () => {
     }, 'workstream-one');
     const rows = groupPluginToolMessages(messages)
       .filter((message) => message.messageType === 'plugin_activity');
-    // One row, timed by the server's run rather than doubled by the tree.
+    // Still one row, not two: the two sources are the same run and compose
+    // rather than competing. The tree wins the timing because realtime keeps
+    // it current while the snapshot's copy is frozen at the moment it was
+    // taken -- which is what stops a completed plugin ticking forever.
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.pluginActivity?.durationMs).toBe(4_000);
+    expect(rows[0]!.pluginActivity?.durationMs).toBe(9_000);
   });
 });
 
@@ -1647,5 +1667,110 @@ describe('foldSettledWorkIntoMessages', () => {
   it('carries an unknown total as unknown', () => {
     const folded = foldSettledWorkIntoMessages([answer('turn-1'), work('turn-1', { durationMs: null })]);
     expect(folded[0]!.workSummary).toEqual({ durationMs: null });
+  });
+});
+
+describe('plugin runs stay current as the transcript changes', () => {
+  const turn = (turnId: string) => ({
+    transcriptSequence: 1, turnId, entryKind: 'conversation' as const,
+    actor: 'assistant' as const, authorUserId: null, authorSnapshot: null,
+    attentionOrdinal: null, createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+    blocks: [{
+      type: 'tool' as const, blockId: 'b0', blockIndex: 0, toolCallId: 'call-0',
+      pluginId: 'rally:memory', toolName: 'memory_search', callIndex: 0,
+      status: 'completed' as const, participantSafeInput: null, participantSafeResult: null,
+      error: null, activityId: null,
+    }],
+    activityId: null,
+  });
+  const runningRun = {
+    pluginRunId: 't1:plugin:rally:memory', turnId: 't1', pluginId: 'rally:memory',
+    displayName: 'rally:memory', state: 'active' as const, durationMs: 0,
+    elapsedMsAtSnapshot: 2_000, timingAccuracy: 'observed' as const, toolCallIds: ['call-0'],
+  };
+  const snapshotWith = (
+    over: Partial<WorkstreamTranscriptSnapshot> = {},
+  ): WorkstreamTranscriptSnapshot => ({
+    snapshotId: 's', snapshotThrough: 1, eventSequence: 1,
+    snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+    unreadReason: 'no_unread',
+    ranges: [{
+      purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+      covered: { startInclusive: 1, endExclusive: 2 },
+      turns: [turn('t1')], activities: [], pluginRuns: [],
+    }],
+    activities: [], activeActivities: [], pluginRuns: [runningRun],
+    activeTurns: [], pendingInputs: [],
+    ...over,
+  });
+
+  it('settles a running row when its completion arrives over the socket', () => {
+    // The snapshot's run says `active`; realtime only ever updates `activities`,
+    // so a row taking its state from the snapshot alone would tick forever.
+    const completed = mergeRealtimeTranscriptActivity(snapshotWith(), {
+      activityId: 't1:plugin:rally:memory', parentActivityId: 't1:activity', scope: 'plugin',
+      subjectId: 'rally:memory', callIndex: 0, label: 'rally:memory', state: 'completed',
+      intervals: [{
+        intervalId: 'i0', startedAtUtc: '2026-08-26T12:00:00.000Z',
+        stoppedAtUtc: '2026-08-26T12:00:06.770Z', durationMs: 6_770,
+        elapsedMsAtSnapshot: null, boundarySource: 'rally', timingAccuracy: 'observed', revision: 2,
+      }],
+      revision: 2,
+    }, 2, '2026-08-26T12:00:11.000Z');
+    // The turn activity has to be present for the tree to name the run's turn.
+    const withParent = {
+      ...completed,
+      activities: [...completed.activities, {
+        activityId: 't1:activity', parentActivityId: null, scope: 'assistant_turn' as const,
+        subjectId: 't1', callIndex: 0, label: 'Assistant turn', state: 'completed' as const,
+        intervals: [], revision: 2,
+      }],
+    };
+    const row = orderedTranscriptMessages(withParent, 'w')
+      .find((message) => message.messageType === 'plugin_activity');
+    expect(row?.pluginActivity).toMatchObject({ active: false, durationMs: 6_770 });
+  });
+
+  it('keeps a snapshot run when the tree cannot name its turn', () => {
+    // The production shape: no activities at all. The server's run stands.
+    const row = orderedTranscriptMessages(snapshotWith(), 'w')
+      .find((message) => message.messageType === 'plugin_activity');
+    expect(row?.pluginActivity).toMatchObject({ active: true });
+  });
+
+  it('carries runs in on a loaded range', () => {
+    const merged = mergeTranscriptRange(snapshotWith({ pluginRuns: [] }), {
+      purpose: 'requested', requested: { startInclusive: 2, endExclusive: 3 },
+      covered: { startInclusive: 2, endExclusive: 3 },
+      turns: [], activities: [],
+      pluginRuns: [{ ...runningRun, pluginRunId: 't2:plugin:rally:memory', turnId: 't2' }],
+    });
+    expect(merged.pluginRuns.map((run) => run.pluginRunId)).toEqual(['t2:plugin:rally:memory']);
+  });
+
+  it('retains the runs of turns a reconcile keeps', () => {
+    // History above the incoming snapshot's coverage survives the reconcile, so
+    // its timing has to survive with it or those rows blank out.
+    const current = snapshotWith({
+      ranges: [{
+        purpose: 'requested', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [turn('t1')], activities: [], pluginRuns: [runningRun],
+      }],
+      pluginRuns: [runningRun],
+    });
+    const incoming = snapshotWith({
+      snapshotThrough: 5,
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 3, endExclusive: 6 },
+        covered: { startInclusive: 3, endExclusive: 6 },
+        turns: [], activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [],
+    });
+    const merged = mergeCanonicalTranscriptSnapshot(current, incoming);
+    expect(merged.pluginRuns.map((run) => run.pluginRunId)).toContain('t1:plugin:rally:memory');
+    expect(merged.ranges.flatMap((range) => range.pluginRuns).map((run) => run.turnId))
+      .toContain('t1');
   });
 });

@@ -293,6 +293,45 @@ projection, composition, grouping, and render path from real inputs.
 
 ## Changelog
 
+### 2026-08-30 — The two run sources compose instead of one shadowing the other
+
+**What changed:** The client no longer chooses between the snapshot's
+`pluginRuns` and the activity tree. `pluginRunsFromActivities` derives runs from
+the tree and `resolvePluginRuns` overlays them onto the server's, per run,
+keeping the server's `toolCallIds` when the tree reports none. `pluginRuns` now
+also travels on a `TranscriptRangeResult`, survives `mergeTranscriptRange`, and
+is retained for the turns a `mergeCanonicalTranscriptSnapshot` keeps. The
+separate activity-tree emission loop is gone; derivation replaced it.
+
+**Why:** Review found two holes in the first cut, both created by making a
+non-empty `pluginRuns` suppress the fallback wholesale. A plugin active when the
+snapshot was taken completes over the socket as a `transcript_activity_upserted`
+frame, which `mergeRealtimeTranscriptActivity` applies to `activities` only — so
+its run stayed `active` and its timer ran forever. And the server resolved runs
+only for opening and active turns, so history paged in later arrived with none;
+because any run anywhere disabled the fallback, those older turns lost their
+duration or their row entirely. The first cut turned a bug that showed a wrong
+number into one that showed a number climbing without end.
+
+The fix is not a third code path but the removal of the choice. The snapshot's
+run is the one that exists when the tree cannot reach the activity — the case
+this contract was built for — and the tree is the one realtime keeps current.
+Neither is authoritative alone, so both are read and the fresher field wins.
+
+**Considered and rejected:** Patching `mergeRealtimeTranscriptActivity` to
+rewrite the matching run. It fixes the ticking timer and nothing else: a plugin
+that starts after the snapshot still has no run to rewrite, and paged history
+still arrives with none. Deriving at render time covers all three because it
+reads whatever the tree currently holds.
+
+**Consequences:** `toolCallIds` is the one field where empty means "not known"
+rather than "none", because it is what positions the row; a run with none falls
+back to matching a tool block's `pluginId`, which is how positioning worked
+before runs existed and is why a tree carrying no `tool_call` activities still
+produces a row. Any new path that adds turns to a snapshot has to carry their
+runs too — ranges and reconciliation both do now, and a test pins each.
+
+
 ### 2026-08-29 — The server says which plugin ran, and for how long
 
 **What changed:** `WorkstreamTranscriptSnapshot` gained `pluginRuns`: per plugin
