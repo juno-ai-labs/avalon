@@ -663,6 +663,27 @@ Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-30 — Terra Light's row hover sits on raised-hover, not subtle
+
+**What changed:** Terra Light now sets `cmp.row.background-hover` to
+`sys.color.surface.raised-hover` instead of inheriting the default theme's
+alias to `surface.subtle`. The command-shortcut scrim reads the same hover and
+selected tokens as the row fill.
+
+**Why:** Subtle in Terra Light (`#faf9f6`) is *lighter* than the solid sidebar
+(`#f7f6f2`), so a hovered or current row painted as a near-white wash. The
+project accordion had already been using raised-hover (`#eae8e1`) for the
+same job, which is the direction a hover fill has to go on a light ground.
+
+**Considered and rejected:** Darkening `surface.subtle` itself. That token is
+the quiet fill behind many other surfaces; changing it to repair navigation
+rows would have moved those too. Pairing the row hover with raised-hover
+matches the popover-row pairing from 2026-08-26 and leaves subtle alone.
+
+**What a future change has to respect:** a light theme's row hover must be
+darker than the sidebar it sits on, not lighter. Selected stays
+`ref.color.neutral.4`, which is a step darker than that hover.
+
 ### 2026-08-27 — Projects add a closed semantic color palette
 
 **What changed:** Added twelve `--av-sys-color-project-*` tokens used by the

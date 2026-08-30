@@ -48,6 +48,9 @@ function renderSection(props: Partial<React.ComponentProps<typeof ProjectSidebar
           onReorder={async () => undefined}
           onRestore={async () => undefined}
           projects={[hiring]}
+          renderWorkstream={(workstream) => (
+            <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}{workstream.preview ?? ''}</NavLink>
+          )}
           workstreams={[]}
           {...props}
         />
@@ -77,6 +80,9 @@ function CreateFlowHarness({
         onReorder={async () => undefined}
         onRestore={async () => undefined}
         projects={projects}
+        renderWorkstream={(workstream) => (
+          <NavLink to={`/workstreams/${workstream.id}`}>{workstream.title}</NavLink>
+        )}
         workstreams={[]}
       />
       <Location />
@@ -250,6 +256,39 @@ describe('the Projects sidebar section', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
     const links = screen.getAllByRole('link').filter((link) => ['Older', 'Newer'].includes(link.textContent ?? ''));
     expect(links.map((link) => link.textContent)).toEqual(['Newer', 'Older']);
+  });
+
+  it('given a project row, when it is idle, then only its plus is the hover-revealed action', () => {
+    renderSection();
+
+    expect(screen.getByRole('button', { name: 'New work stream in Hiring' })).toHaveClass('project-sidebar-row-action');
+    expect(screen.getByRole('button', { name: 'New project' })).not.toHaveClass('project-sidebar-row-action');
+    expect(screen.getByRole('link', { name: /Hiring/u }).closest('.project-sidebar-row')).toHaveClass('sidebar-row');
+  });
+
+  it('given member work streams, when the project expands, then children render through the shared work-stream row', () => {
+    const member = {
+      id: '00000000-0000-7000-8000-0000000000e1',
+      title: 'Ship the launch',
+      lastActivityAt: '2026-08-27T01:00:00.000Z',
+      preview: 'Draft the announcement',
+    } as WorkstreamSummary;
+    renderSection({
+      projects: [{ ...hiring, workstreamIds: [member.id] }],
+      renderWorkstream: (workstream) => (
+        <NavLink className="sidebar-row workstream-row" to={`/workstreams/${workstream.id}`}>
+          <span className="sidebar-row-title">{workstream.title}</span>
+          <span className="sidebar-row-hint">{workstream.preview}</span>
+        </NavLink>
+      ),
+      workstreams: [member],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    const row = screen.getByRole('link', { name: /Ship the launch/u });
+    expect(row).toHaveClass('sidebar-row', 'workstream-row');
+    expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
+    expect(row.querySelector('.sidebar-row-hint')).toHaveTextContent('Draft the announcement');
   });
 
   it('given a member outside the loaded sidebar page, when the project expands, then it does not claim to be empty', () => {
