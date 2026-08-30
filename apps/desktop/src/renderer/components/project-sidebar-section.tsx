@@ -29,7 +29,7 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState, type ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   PROJECT_COLOR_KEYS,
@@ -145,6 +145,8 @@ interface ProjectSidebarSectionProps {
   onAddWorkstream: (projectId: string, workstreamId: string) => Promise<void>;
   onReorder: (projectIds: string[]) => Promise<void>;
   onRestore: (projectId: string) => Promise<void>;
+  /** Nested members use the same row the rest of the sidebar does. */
+  renderWorkstream: (workstream: WorkstreamSummary) => ReactNode;
 }
 
 export function ProjectSidebarSection({
@@ -156,6 +158,7 @@ export function ProjectSidebarSection({
   onAddWorkstream,
   onReorder,
   onRestore,
+  renderWorkstream,
 }: ProjectSidebarSectionProps): React.JSX.Element {
   const location = useLocation();
   const navigate = useNavigate();
@@ -271,7 +274,14 @@ export function ProjectSidebarSection({
                     event.dataTransfer.setData('application/x-rally-project-id', project.id);
                   }}
                 >
-                  <div className="project-sidebar-row">
+                  <div
+                    className={clsx(
+                      'sidebar-row project-sidebar-row',
+                      (location.pathname === `/projects/${project.id}`
+                        || location.pathname.startsWith(`/projects/${project.id}/`))
+                        && 'is-active',
+                    )}
+                  >
                     <button
                       aria-expanded={isExpanded}
                       aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${project.name}`}
@@ -312,7 +322,7 @@ export function ProjectSidebarSection({
                       <span />
                     </NavLink>
                     <IconButton
-                      className="project-sidebar-action"
+                      className="project-sidebar-action project-sidebar-row-action"
                       label={`New work stream in ${project.name}`}
                       onClick={() => void navigate(`/projects/${project.id}/workstreams/new`)}
                     >
@@ -330,9 +340,7 @@ export function ProjectSidebarSection({
                     return project.workstreamIds.length === 0
                       ? <p className="project-sidebar-empty">No work streams</p>
                       : <div className="project-sidebar-workstreams">{members.map((workstream) => (
-                        <NavLink className="project-sidebar-workstream" key={workstream.id} to={`/workstreams/${workstream.id}`}>
-                          {workstream.title}
-                        </NavLink>
+                        <Fragment key={workstream.id}>{renderWorkstream(workstream)}</Fragment>
                       ))}{missing > 0 && <p className="project-sidebar-empty">{project.workstreamIds.length} work streams; load more to see all</p>}</div>;
                   })()}
                 </div>

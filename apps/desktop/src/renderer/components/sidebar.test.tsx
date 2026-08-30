@@ -3,7 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip';
 import { useState } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
+import { ProjectSummarySchema, WORKSTREAM_NAMING_GRACE_MS } from '@rally/contracts';
 import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { AutomationSummary, NoteSummary, Workspace, WorkstreamSummary } from '../lib/types';
 import { formatDateTime } from '../lib/format';
@@ -256,6 +256,52 @@ describe('Sidebar work-stream markers', () => {
 
     expect(screen.getByText('Tracks competitor positioning and campaign changes.'))
       .toBeVisible();
+  });
+
+  it('given a project member, when the accordion opens, then the child is the same work-stream row as the recent list', () => {
+    const memberId = '00000000-0000-7000-8000-0000000000e1';
+    const member = {
+      ...workstream(memberId, 'Ship the launch', 'completed'),
+      preview: 'Draft the announcement',
+    };
+    const project = ProjectSummarySchema.parse({
+      id: '00000000-0000-7000-8000-0000000000f2',
+      name: 'Hiring',
+      iconKey: 'briefcase',
+      colorKey: 'blue',
+      scope: 'personal',
+      status: 'active',
+      presentationRevision: 1,
+      audienceGeneration: 1,
+      lifecycleGeneration: 1,
+      participants: [{ userId: '00000000-0000-7000-8000-0000000000f1', state: 'active', generation: 1 }],
+      createdAt: '2026-08-27T00:00:00.000Z',
+      updatedAt: '2026-08-27T00:00:00.000Z',
+      workstreamIds: [memberId],
+    });
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[]}
+            onSignOut={vi.fn()}
+            projects={[project]}
+            workspace={workspace}
+            workstreams={[member]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Hiring' }));
+    const rows = screen.getAllByRole('link', { name: /Ship the launch/u });
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of rows) {
+      expect(row).toHaveClass('sidebar-row', 'workstream-row');
+      expect(row.querySelector('.sidebar-row-title')).toHaveTextContent('Ship the launch');
+      expect(row.querySelector('.sidebar-row-hint')).toHaveTextContent('Draft the announcement');
+    }
   });
 
   it('does not start navigation telemetry when the active work-stream row is clicked again', () => {
@@ -820,6 +866,26 @@ describe('Sidebar work-stream markers', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('gives automation rows the same sidebar-row chrome as work streams', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /Daily product brief/u });
+    expect(row).toHaveClass('sidebar-row', 'automation-row');
+    expect(row.querySelector('.scope-badge')).toHaveTextContent('You');
   });
 
   it('marks an automation that cannot run instead of promising it a next run', async () => {

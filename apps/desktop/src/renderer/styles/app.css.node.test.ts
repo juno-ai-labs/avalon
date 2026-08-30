@@ -252,6 +252,59 @@ describe('raised popover interaction states', () => {
   });
 });
 
+describe('sidebar project rows', () => {
+  // Project rows wear `.sidebar-row` so they pick up the shared hover fill,
+  // radius, and padding. A private hover colour on `.project-sidebar-row`
+  // would win on specificity and split the two kinds again — which is how
+  // they looked before this guard.
+  it('does not give project rows a private hover fill', () => {
+    expect(rule('.project-sidebar-row:hover')).toBeNull();
+    expect(rule('.project-sidebar-workstream')).toBeNull();
+    expect(rule('.project-sidebar-workstream:hover')).toBeNull();
+  });
+
+  it('hides the project-row plus until the row is hovered or focused', () => {
+    expect(rule('.project-sidebar-row .project-sidebar-row-action')).toContain('opacity: 0;');
+    const reveal = rule(
+      '.project-sidebar-row:hover .project-sidebar-row-action,\n'
+      + '.project-sidebar-row:focus-within .project-sidebar-row-action',
+    );
+    expect(reveal).toContain('opacity: 1;');
+  });
+
+  it('starts nested work-stream rows where the accordion control ends', () => {
+    expect(rule('.sidebar-row.project-sidebar-row')).toContain('grid-template-columns: 18px minmax(0, 1fr) 28px;');
+    expect(rule('.project-accordion-control')).toContain('width: 18px;');
+    expect(rule('.project-sidebar-workstreams')).toContain('padding-left: 18px;');
+  });
+
+  it('paints the command-shortcut scrim from the same hover and selected fills as the row', () => {
+    expect(stylesheet).toContain(
+      '.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }',
+    );
+    expect(stylesheet).toContain(
+      '.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }',
+    );
+  });
+});
+
+describe('sidebar automation rows', () => {
+  it('does not give automation rows a private hover fill', () => {
+    expect(rule('.automation-row:hover')).toBeNull();
+    expect(rule('.workstream-row,\n.automation-row')).toContain('min-height: var(--av-cmp-row-height-dense);');
+  });
+
+  it('drops the scope-badge fill while the row is hovered or current', () => {
+    const ghost = rule(
+      '.sidebar-row:hover .scope-badge,\n'
+      + '.sidebar-row.is-active .scope-badge,\n'
+      + '.sidebar-row:focus-within .scope-badge',
+    );
+    expect(ghost).toContain('background: transparent;');
+    expect(ghost).toContain('border-color: transparent;');
+  });
+});
+
 describe('work-stream participant presence', () => {
   it('finishes the arrival pop before pulsing every ten seconds and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');
