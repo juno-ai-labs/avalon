@@ -3219,7 +3219,13 @@ pre {
    window has capped. Each breakpoint that changes the room available restates
    it. */
 .workspace-shell { --rail-slot: min(var(--rail-width), calc(100vw - var(--av-cmp-sidebar-width) - 24px)); transition: --rail-width 190ms cubic-bezier(.32, .72, 0, 1); }
-.rail-surface { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); bottom: 8px; box-shadow: var(--av-sys-elevation-shadow-rail); display: grid; grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
+/* The column is named `minmax(0, 1fr)` rather than left implicit. An `auto`
+   column's minimum is the items' min-content, and a markdown document's
+   min-content is its longest unwrapped line — so the panel grew with the file
+   and `.rail-scroll`'s `overflow-x: hidden` clipped the prose instead of
+   wrapping it to the slot. HyperSight already set `min-width: 0` on
+   `.block-dashboard-panel`; the inspector document never got the equivalent. */
+.rail-surface { background: var(--av-sys-color-surface-subtle); border: 1px solid var(--av-ref-color-line-3); border-radius: var(--av-sys-size-radius-lg); bottom: 8px; box-shadow: var(--av-sys-elevation-shadow-rail); display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 45px minmax(0, 1fr); min-width: 320px; outline: 0; overflow: hidden; position: fixed; right: 8px; top: 8px; width: var(--rail-slot); z-index: 40; }
 /* The panel that just lost the slot dissolves over the one that took it. Only
    the outgoing panel animates: the incoming one is already opaque underneath,
    so the frame itself never thins out mid-hand-off. */
@@ -3253,7 +3259,7 @@ pre {
 .rail-title { flex: 1; min-width: 0; }
 .rail-title h2 { color: var(--av-sys-color-text-subtle); font-size: 12px; margin: 0 0 0 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-header-actions { flex-shrink: 0; }
-.rail-scroll { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.rail-scroll { min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .rail-inline-error { padding: 9px 11px 0; }
 .rail-inline-error .inline-error { margin: 0; }
 .rail-sections { padding: 3px 11px 20px; }
@@ -3371,7 +3377,7 @@ pre {
 .run-rail-copy { display: flex; flex-direction: column; min-width: 0; }
 .run-rail-copy strong { color: var(--av-ref-color-neutral-12); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-rail-copy small { color: var(--av-ref-color-neutral-9); font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inspector-detail { padding: 16px 18px 28px; }
+.inspector-detail { min-width: 0; padding: 16px 18px 28px; }
 .inspector-detail-updated { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0 0 12px; }
 .inspector-detail-updated time { font-variant-numeric: tabular-nums; }
 .inspector-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
@@ -3387,7 +3393,11 @@ pre {
 /* The document itself, not a card of it: last-updated and the markdown share
    the rail's scroll, so a long file does not trap the timestamp in a box above
    a second scroller. Hosts may size the body; they may not restyle its
-   elements — see markdown-rendering.md. */
+   elements — see markdown-rendering.md. Width is the other allowed sizing:
+   without `max-width: 100%` and `min-width: 0` the host grows with the
+   markdown's max-content even after the rail's column can shrink, and the
+   scroller clips the unwrapped lines. */
+.inspector-detail-document { max-width: 100%; min-width: 0; }
 .inspector-detail-document .markdown-body { font-size: 13px; }
 .inspector-detail-image { display: block; height: auto; max-width: 100%; }
 .inspector-detail-preview-status { align-items: center; color: var(--av-sys-color-text-muted); display: flex; font-size: 11.5px; gap: 6px; margin-bottom: 18px; }
