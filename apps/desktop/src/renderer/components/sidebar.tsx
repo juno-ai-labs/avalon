@@ -1469,6 +1469,7 @@ export function Sidebar({
   const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
     <WorkstreamRow
       debugEnabled={debugEnabled}
+      members={roster}
       onArchive={setArchiveWorkstreamTarget}
       onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
       onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
