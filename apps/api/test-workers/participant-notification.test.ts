@@ -95,46 +95,50 @@ const AUTH: AuthContext = {
 
 beforeEach(async () => {
   await reset();
+  // Idempotent: `reset()` is supposed to drop D1's schema, but an incomplete
+  // wipe — a sibling file's interleave, or a hung poll that broke the input
+  // gate — leaves these tables standing. Plain `CREATE TABLE` then fails as
+  // `already exists` and hides the original timeout (33290369991).
   await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE workstream_authority_control (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,
       serving_contract_version INTEGER NOT NULL
     )`),
-    env.DB.prepare(`INSERT INTO workstream_authority_control
+    env.DB.prepare(`INSERT OR REPLACE INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
-    env.DB.prepare(`CREATE TABLE workspaces (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT NOT NULL, analytics_workspace_id TEXT
     )`),
-    env.DB.prepare(`INSERT INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE workspace_members (
+    env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'owner', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, CREATOR_ID),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, INVITEE_ID),
-    env.DB.prepare(`CREATE TABLE sessions (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
       region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(SESSION_ID, CREATOR_ID, WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE users (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
     )`),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(CREATOR_ID),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'invitee@example.com', 'Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(INVITEE_ID),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, SECOND_INVITEE_ID),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'second@example.com', 'Second Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(SECOND_INVITEE_ID),
   ]);

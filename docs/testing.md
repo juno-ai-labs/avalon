@@ -282,9 +282,9 @@ beforeEach(async () => {
   so a later create that reuses a workstream id / `clientMessageId` looks like
   a silent product miss (`[]` where the named people should have been told).
   Tests that are not *about* that replay must not share an id with a
-  neighbour that already opened that object; the notify-create, mention-
-  confirmation, and elicitation cases in `participant-notification.test.ts`
-  each have their own. Do not mint a fresh
+  neighbour that already opened that object; the notify-create,
+  mention-confirmation, and elicitation cases in
+  `participant-notification.test.ts` each have their own. Do not mint a fresh
   id for every test in the file: that leaves a live draining object per case,
   and under a sharded workers run the promotion polls time out.
 - **Set up in `beforeEach`. No `beforeAll` in this directory.** A `beforeAll`
