@@ -674,7 +674,7 @@ export function MarkdownBody({
     for (const identifier of referenced) {
       if (definitions.has(identifier)) numbers.set(identifier, numbers.size + 1);
     }
-    return { ...(citations ? { citations } : {}), footnotes: found, numbers, prefix, still };
+    return { ...(citations ? { citations } : {}), PreviewBody: CitationPreviewBody, footnotes: found, numbers, prefix, still };
   }, [citations, footnoteSource, prefix, still]);
   // Stable across commits that change nothing they depend on, for two reasons:
   // the settled segments' memo compares them by identity, and the memoised
@@ -790,6 +790,18 @@ export function MarkdownBody({
       <div className="markdown-body">{rendered}</div>
     </CitationsProvider>
   );
+}
+
+/**
+ * The embed card's preview, fed through this same renderer so a Word file's
+ * `**Author:**` bolds here the way it bolds in the rail one click away.
+ *
+ * No citations: a document that cites another resource would otherwise draw a
+ * card inside this card. Verbatim: the text is the file's, and the model-text
+ * repair is a repair of what a model wrote.
+ */
+function CitationPreviewBody({ children }: { children: string }): React.JSX.Element {
+  return <MarkdownBody verbatim>{children}</MarkdownBody>;
 }
 
 /**
