@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -104,5 +105,22 @@ describe("Terminal plugin contract", () => {
       snapshot: "daytona-small",
       emergencyDisabled: false,
     });
+  });
+
+  it("deploys Terminal in both regions against the same Daytona us environment", () => {
+    const stripJsoncComments = (raw: string): string => raw.replace(/^\s*\/\/.*$/gmu, "");
+    const vars = (fileName: string): Record<string, string> => {
+      const raw = readFileSync(new URL(`../${fileName}`, import.meta.url), "utf8");
+      return (JSON.parse(stripJsoncComments(raw)) as { vars?: Record<string, string> }).vars ?? {};
+    };
+    const globalVars = vars("wrangler.global.jsonc");
+    const euVars = vars("wrangler.eu.jsonc");
+
+    expect(globalVars.TERMINAL_REGION_CAPABILITY).toBe("supported");
+    expect(euVars.TERMINAL_REGION_CAPABILITY).toBe("supported");
+    expect(globalVars.DAYTONA_TARGET).toBe("us");
+    expect(euVars.DAYTONA_TARGET).toBe("us");
+    expect(globalVars.DAYTONA_TERMINAL_SNAPSHOT).toBe("daytona-small");
+    expect(euVars.DAYTONA_TERMINAL_SNAPSHOT).toBe("daytona-small");
   });
 });
