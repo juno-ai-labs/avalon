@@ -845,24 +845,14 @@ pre {
   z-index: 2;
 }
 
+/* Size, colour, and border come from `.badge.scope-badge` — the same chip an
+   automation row uses for You / Workspace. Only the overlay-specific extras
+   live here; restating chrome would let the two pills drift apart again. */
 .command-shortcut-pill {
-  align-items: center;
   animation: fade-in 80ms ease-out;
-  background: var(--av-ref-color-neutral-5);
-  border: 1px solid var(--av-sys-color-border-highlight);
-  border-radius: var(--av-sys-size-radius-pill);
-  box-shadow: var(--av-sys-elevation-shadow-sm);
-  color: var(--av-ref-color-neutral-11);
-  display: inline-flex;
-  font-size: 11px;
   font-variant-numeric: tabular-nums;
-  font-weight: 550;
   gap: 1px;
-  height: 22px;
   justify-content: center;
-  line-height: 1;
-  min-width: 34px;
-  padding: 0 7px;
 }
 
 .command-shortcut-pill svg { flex: 0 0 auto; }
