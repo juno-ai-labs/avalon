@@ -397,7 +397,8 @@ export const WorkspaceSlackSessionDeliveryKeyRequestSchema = z.object({
 export const WorkspaceSlackSessionStreamRequestSchema = z.object({
   workspaceId: IdSchema,
   sessionId: z.string().min(1),
-  streamTs: z.string().min(1).nullable(),
+  /** Legacy compatibility pointer may only be cleared; new streams are forbidden. */
+  streamTs: z.null(),
   at: TimestampSchema,
 }).strict();
 
