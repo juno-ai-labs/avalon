@@ -1860,8 +1860,9 @@ describe('private work streams', () => {
     );
 
     const row = screen.getByRole('link', { name: /Staffing/u });
-    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari');
+    expect(row.querySelector('.avatar-stack')).toHaveAccessibleName('Ari; and 1 more');
     expect(row.querySelectorAll('.avatar-stack-item')).toHaveLength(1);
+    expect(within(row).getByText('+1')).toBeInTheDocument();
   });
 
   it('closes a work stream to the people in it from the right-click menu', async () => {
