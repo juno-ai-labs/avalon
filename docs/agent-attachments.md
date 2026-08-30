@@ -615,6 +615,20 @@ cheap discovery and continuation paths.
 
 ## Changelog
 
+### 2026-08-30 — Resource versions move behind a header control
+
+**What changed:** The inspector rail's resource detail no longer lists versions
+under the document. **Versions** in the header opens them, grouped by sparse
+relative dates. **Archive** replaces **Remove** and confirms before unlinking.
+
+**Why:** Once the body became the document, an inline history under it was a
+second pane competing with the file. A header control keeps the document the
+default, and an unconfirmed unlink next to that document was the wrong weight.
+
+**What a future change has to respect:** the version list is still newest-first
+and still marks current by list position, not by the detail's cached number.
+Sparse dates are calendar buckets, not `formatRelative`'s "3 hours ago".
+
 ### 2026-08-29 — Resource statements become typed WorkspaceDO methods
 
 **What changed:** Every statement that named only resource-owned tables —

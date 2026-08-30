@@ -2301,7 +2301,7 @@ export function WorkstreamScreen(): React.JSX.Element {
         onRefreshResource={(resource) => refreshResource.mutate(resource)}
         onToggleWatch={(resource, enabled) => watchResource.mutate({ resource, enabled })}
         refreshingResourceId={refreshResource.isPending ? refreshResource.variables?.id ?? null : null}
-        resourceVersions={resourceVersions.data ?? []}
+        resourceVersions={resourceVersions.data}
         resourceVersionsError={resourceVersions.error?.message}
         workstream={displayedDetail}
       />
