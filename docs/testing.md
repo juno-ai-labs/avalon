@@ -281,8 +281,11 @@ beforeEach(async () => {
   path — 200, directory snapshot re-enqueued, notifications not re-emitted —
   so a later create that reuses a workstream id / `clientMessageId` looks like
   a silent product miss (`[]` where the named people should have been told).
-  Tests that are not *about* that replay must not share an id;
-  `participant-notification.test.ts` gives each case its own.
+  Tests that are not *about* that replay must not share an id with a
+  neighbour that already opened that object; the notify-create cases in
+  `participant-notification.test.ts` each have their own. Do not mint a fresh
+  id for every test in the file: that leaves a live draining object per case,
+  and under a sharded workers run the promotion polls time out.
 - **Set up in `beforeEach`. No `beforeAll` in this directory.** A `beforeAll`
   that opens an object while a sibling file is resetting waits until it times
   out, and a wipe landing mid-file is then inherited by every test after it
