@@ -18,6 +18,7 @@ behavior is in the approved [Projects design](PRDs/2026-08-26_projects/prd.md).
 | `apps/api/src/durable-objects/workspace-project-storage.ts` | Synchronous project transactions, visibility filtering, and per-person ordering. |
 | `apps/api/src/services/project-service.ts` | Cross-object audience effects, membership settlement, and Queue publication. |
 | `apps/api/src/queues/activity-consumer.ts` | Fenced default-resource attachment through the regional activity Queue. |
+| `apps/desktop/src/renderer/screens/project-space.tsx` | Project dashboard: work-stream list, default resources, inline presentation and audience controls. The Work streams heading plus opens the same **New project work stream** route as the sidebar row plus. |
 | `apps/desktop/src/renderer/components/project-sidebar-section.tsx` | Creation, fixed ordering, accordion membership, drag targets, and recovery. Nested members render through the sidebar's work-stream row. |
 
 ## How it works
@@ -145,11 +146,19 @@ real migration ledger to SQLite and proves constraints through version 17.
 `apps/api/test-workers/project-authority.test.ts` runs the RPC behavior
 on workerd with real Durable Object storage and D1 membership rows.
 
+`apps/desktop/src/renderer/screens/project-space-screen.test.tsx` covers the
+Work streams heading plus and the other inline project-space mutations.
+`apps/api/test/workstream-project-start.test.ts` proves project-start audience
+resolution, including that a personal project seats its full roster and that
+current default resources are attached in the initialize payload.
+
 Run the focused checks with:
 
 ```bash
 pnpm --filter @rally/contracts test -- projects.test.ts
 pnpm --filter @rally/api exec vitest run test/workspace-project-schema.test.ts
+pnpm --filter @rally/api exec vitest run test/workstream-project-start.test.ts
+pnpm --filter @rally/desktop exec vitest run src/renderer/screens/project-space-screen.test.tsx
 pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts test-workers/project-authority.test.ts
 ```
 
@@ -204,6 +213,16 @@ send leaves them pending for a later alarm; accepted messages remain safe to
 duplicate because the consumer rechecks target generations.
 
 ## Changelog
+
+### 2026-08-30 — Project space starts a work stream from its Work streams heading
+
+**What changed:** The project-space **Work streams** heading now carries a right-justified plus that opens `/projects/:id/workstreams/new`, the same **New project work stream** page as the plus on that project's sidebar row. Starting there still seats every active personal-project participant and attaches the project's current default resources in the initialize transaction that admits the first run.
+
+**Why:** The empty table told people to use the sidebar plus, so starting a work stream from the dashboard they were already looking at required leaving the page. The inheritance path was already the project-start create; this change only makes that path reachable from the section that lists the members.
+
+**Considered and rejected:** A labeled **New work stream** button matching **Add resource** on the section below. The request was specifically the compact plus used on the sidebar row, including its accessible name, so a second labeled control would have been a different object next to the one people already know.
+
+**Consequences:** An archived project's plus is disabled, matching the other mutations on that space. The empty-state copy now points at this heading rather than the sidebar.
 
 ### 2026-08-30 — Nested project work streams use the sidebar's own row
 

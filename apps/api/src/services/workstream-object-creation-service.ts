@@ -114,6 +114,19 @@ export function resolveProjectWorkstreamAudience(
   return { scope: "personal", participantUserIds: projectParticipantUserIds };
 }
 
+/** Audience plus the current defaults, written in the same initialize transaction. */
+export function resolveProjectWorkstreamStart(
+  project: ProjectSummary,
+  requestedParticipantUserIds: readonly string[],
+  existingOriginResourceIds: readonly string[] = [],
+): { scope: Scope; participantUserIds: string[]; originResourceIds: string[] } {
+  const audience = resolveProjectWorkstreamAudience(project, requestedParticipantUserIds);
+  return {
+    ...audience,
+    originResourceIds: [...new Set([...existingOriginResourceIds, ...project.defaultResourceIds])],
+  };
+}
+
 interface ReplayProjectWorkspace {
   prepareProjectMembership(input: {
     workspaceId: AuthContext["workspaceId"];
@@ -313,10 +326,14 @@ export class WorkstreamObjectCreationService {
       if (!plan.ok) {
         throw new ApiError(404, plan.code, "The project is unavailable");
       }
-      const projectAudience = resolveProjectWorkstreamAudience(plan.project, body.participantUserIds);
-      scope = projectAudience.scope;
-      participantUserIds = projectAudience.participantUserIds;
-      originResourceIds = [...new Set([...originResourceIds, ...plan.project.defaultResourceIds])];
+      const projectStart = resolveProjectWorkstreamStart(
+        plan.project,
+        body.participantUserIds,
+        originResourceIds,
+      );
+      scope = projectStart.scope;
+      participantUserIds = projectStart.participantUserIds;
+      originResourceIds = projectStart.originResourceIds;
       projectSettle = {
         workspaceId: this.auth.workspaceId,
         userId: this.auth.userId,
