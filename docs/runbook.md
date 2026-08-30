@@ -128,15 +128,16 @@ Configure the Azure values in every region where dictation is enabled. `AZURE_OP
 
 ### Terminal provider activation and recovery
 
-Terminal is fail-closed per region. Global is enabled for the configured Daytona
-`us` target and `daytona-small` snapshot; EU remains checked in with
-`TERMINAL_REGION_CAPABILITY=unsupported` even though its provider values are
-preconfigured. Presence of provider values never implies availability. Leave
-any unverified region unsupported until its Daytona data residency,
-private-sandbox isolation, managed snapshot bootstrap, native domain policy,
-secret-host restriction, stop/archive/restore, and deletion behavior have
-passed for that exact target and provider version. There is no cross-region
-fallback.
+Terminal is fail-closed per region. Global and EU are both enabled against the
+same Daytona environment: `DAYTONA_TARGET=us` and `daytona-small`. Rally does
+not run a separate EU Daytona fleet. Presence of provider values never implies
+availability: a region whose `TERMINAL_REGION_CAPABILITY` is `unsupported`, or
+whose Daytona values are incomplete, omits the plugin. Leave any unverified
+region unsupported until private-sandbox isolation, managed snapshot
+bootstrap, native domain policy, secret-host restriction, stop/archive/restore,
+and deletion behavior have passed for that exact target and provider version.
+There is no Rally cross-region fallback; Daytona itself is the shared
+subprocessor.
 
 An activated region requires:
 
