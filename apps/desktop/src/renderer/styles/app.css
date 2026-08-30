@@ -3019,22 +3019,30 @@ pre {
   border-radius: var(--av-sys-size-radius-sm);
   color: var(--av-sys-color-text-muted);
   cursor: grab;
-  display: flex;
+  display: inline-flex;
   flex: 0 0 auto;
-  height: 22px;
+  height: 16px;
   justify-content: center;
+  line-height: 0;
   opacity: 0;
   padding: 0;
-  width: 18px;
+  width: 16px;
 }
+.composer-queue-grip svg { display: block; }
 .composer-queue-row:hover .composer-queue-grip,
 .composer-queue-row:focus-within .composer-queue-grip,
 .composer-queue-row.is-dragging .composer-queue-grip { opacity: 1; }
 .composer-queue-grip:disabled { cursor: default; visibility: hidden; }
 .composer-queue-grip:active { cursor: grabbing; }
-.composer-queue-avatar,
-.composer-queue-avatar .avatar-small {
+.composer-queue-avatar {
+  align-items: center;
+  display: inline-flex;
   flex: 0 0 auto;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+.composer-queue-avatar .avatar-small {
   height: 16px;
   width: 16px;
 }
@@ -3043,7 +3051,7 @@ pre {
   color: var(--av-sys-color-text-subtle);
   flex: 1 1 auto;
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 16px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
