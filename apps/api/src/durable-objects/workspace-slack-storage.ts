@@ -681,6 +681,15 @@ export function assignWorkspaceSlackSessions(
   });
 }
 
+/**
+ * Stamp the delivery key, and the streaming pointer below it, on a session the
+ * caller has already read.
+ *
+ * Neither reports whether a row matched. Both callers reached these having just
+ * loaded the session they name, so a miss would mean the session was deleted
+ * mid-turn — and there is no better answer to that than the no-op these give.
+ * A witness here would only be checked to be ignored.
+ */
 export function setWorkspaceSlackSessionDeliveryKey(
   storage: DurableObjectStorage,
   request: WorkspaceSlackSessionDeliveryKeyRequest,

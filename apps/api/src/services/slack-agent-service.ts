@@ -106,6 +106,11 @@ import {
   WorkspaceSlackSessionExistsResultSchema,
   WorkspaceSlackSessionReactionResultSchema,
   WorkspaceSlackSessionResultSchema,
+  // The session row itself, rather than a structural copy of it here: every
+  // read parses through `WorkspaceSlackSessionResultSchema`, so a second
+  // hand-maintained declaration could only ever drift from the one the object
+  // actually answers with.
+  type WorkspaceSlackSession,
 } from "../durable-objects/workspace-slack-protocol";
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
@@ -141,29 +146,6 @@ interface SlackLinkedAccount {
 
 interface SlackIdentity extends SlackLinkedAccount {
   token: string;
-}
-
-interface SlackSessionRow {
-  id: string;
-  workspace_id: string;
-  connection_id: string;
-  slack_team_id: string;
-  slack_user_id: string;
-  slack_channel_id: string;
-  slack_thread_ts: string;
-  slack_stream_ts: string | null;
-  workstream_id: string;
-  last_delivery_key: string | null;
-  opening_client_message_id: string;
-  invocation_kind: SlackPromptSource["kind"];
-  channel_type: SlackPromptSource["channelType"];
-  assigned_user_id: string | null;
-  /** The triggering message Avalon's status reaction sits on, not the root. */
-  reaction_channel_id: string | null;
-  reaction_message_ts: string | null;
-  /** Only what Avalon placed itself, so a transition never takes a member's. */
-  reaction_current: string | null;
-  reaction_cursor: number;
 }
 
 type SlackPromptSource = {
@@ -2010,7 +1992,7 @@ export class SlackAgentService {
     source: SlackPromptSource;
     slackOrigin: SlackOriginContext;
     slackSearchAuthorization?: SlackSearchAuthorization;
-  }): Promise<SlackSessionRow> {
+  }): Promise<WorkspaceSlackSession> {
     const originResource = await this.slackSessionOrigin(input.connection, {
       teamId: input.teamId,
       // `channel` and `thread` rather than the origin context's own pair: a DM
@@ -2198,7 +2180,7 @@ export class SlackAgentService {
     connection: SlackConnectionRow,
     channelId: string,
     threadTs: string,
-  ): Promise<SlackSessionRow | null> {
+  ): Promise<WorkspaceSlackSession | null> {
     return WorkspaceSlackSessionResultSchema.parse(
       await (await this.workspaceDirectory(connection.workspace_id)).slackSessionByThread({
         workspaceId: connection.workspace_id,
@@ -2792,7 +2774,7 @@ export class SlackAgentService {
     connection: SlackConnectionRow,
     channelId: string,
     threadTs: string,
-  ): Promise<SlackSessionRow | null> {
+  ): Promise<WorkspaceSlackSession | null> {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       // Through `loadSession` rather than restating its query: the two were the
       // same statement written twice, and only one of them would have been
@@ -3150,7 +3132,7 @@ export class SlackAgentService {
    * so a failure leaves whatever is on the message and says so in the log.
    */
   private async applyOutcomeReaction(
-    session: SlackSessionRow,
+    session: WorkspaceSlackSession,
     connection: SlackConnectionRow,
     token: string,
     outcome: SlackReactionOutcome,
@@ -3294,7 +3276,7 @@ export class SlackAgentService {
 
   /** Starts or stops the rotation for a session, never failing the run for it. */
   private async signalReactionTicker(
-    session: SlackSessionRow,
+    session: WorkspaceSlackSession,
     action: "start" | "stop",
     intervalMs = SLACK_DEFAULT_REACTIONS.workingIntervalMs,
   ): Promise<void> {
