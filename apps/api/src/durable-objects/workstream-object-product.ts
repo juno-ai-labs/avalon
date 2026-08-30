@@ -16,6 +16,7 @@ import {
   WorkstreamDetailSchema,
   WorkstreamSchema,
   WorkstreamWorkflowInputSchema,
+  workstreamParticipantPreview,
   type Elicitation,
   type ActivitySuggestion,
   type Message,
@@ -1306,6 +1307,13 @@ export class WorkstreamObjectProductService {
     ).toArray().map((row) => row.user_id);
   }
 
+  /** Recency-sorted active participants for the sidebar facepile preview. */
+  private recentParticipantUserIds(): string[] {
+    return this.storage.sql.exec<{ user_id: string }>(
+      `SELECT user_id FROM participants WHERE status = 'active' ORDER BY added_at DESC, user_id`,
+    ).toArray().map((row) => row.user_id);
+  }
+
   private locallyAuthorizedRoot(auth: AuthContext, includeArchived = false): RootRow {
     const root = this.root();
     if (root.parent_workspace_key !== auth.workspaceId || root.workstream_key === "") {
@@ -1409,6 +1417,9 @@ export class WorkstreamObjectProductService {
         promptPreview: truncateUtf16Safe(wakeup.prompt.replace(/\s+/gu, " ").trim(), 40),
       } : null,
       pinPosition: pin?.position ?? null,
+      ...(root.scope === "personal"
+        ? workstreamParticipantPreview(this.recentParticipantUserIds())
+        : { participantUserIds: [], participantExtraCount: 0 }),
     });
   }
 

@@ -416,6 +416,27 @@ export const WorkstreamOriginSchema = z.enum(["ad_hoc", "automation"]);
 export const WORKSTREAM_WAKEUP_PROMPT_PREVIEW_LENGTH = 40;
 
 /**
+ * The most faces a sidebar work-stream row paints before the overflow circle.
+ *
+ * The directory carries only this many participant ids per personal row, newest
+ * overlay first; `participantExtraCount` is everyone past the cap. Raising it
+ * is a product decision, not a layout tweak — the sidebar's dense row is what
+ * the number was sized for.
+ */
+export const WORKSTREAM_SIDEBAR_FACEPILE_LIMIT = 3;
+
+/** Cap a recency-sorted participant id list for the sidebar facepile. */
+export function workstreamParticipantPreview(userIds: readonly string[]): {
+  participantUserIds: string[];
+  participantExtraCount: number;
+} {
+  return {
+    participantUserIds: userIds.slice(0, WORKSTREAM_SIDEBAR_FACEPILE_LIMIT),
+    participantExtraCount: Math.max(0, userIds.length - WORKSTREAM_SIDEBAR_FACEPILE_LIMIT),
+  };
+}
+
+/**
  * The most text one message from a person may carry — an opening message that
  * starts a work stream, or a reply sent into one.
  *
@@ -565,7 +586,19 @@ export const WorkstreamSchema = z.object({
    * relative to the reader's other pins and changes whenever they rearrange
    * them. Sort by it; do not store it as an identity.
    */
-  pinPosition: z.number().int().nonnegative().nullable().default(null)
+  pinPosition: z.number().int().nonnegative().nullable().default(null),
+  /**
+   * People in a personal work stream, for the sidebar facepile. At most
+   * {@link WORKSTREAM_SIDEBAR_FACEPILE_LIMIT} ids, newest first, with
+   * `participantExtraCount` for everyone past that. Empty on a workspace-scoped
+   * row: that surface paints a public marker rather than a pile, and the
+   * directory must not carry what it does not paint.
+   *
+   * Defaulted because a payload written before this field existed is a row
+   * whose sidebar showed a lock instead.
+   */
+  participantUserIds: z.array(IdSchema).max(WORKSTREAM_SIDEBAR_FACEPILE_LIMIT).default([]),
+  participantExtraCount: z.number().int().nonnegative().default(0),
 });
 
 export const ExternalActorSchema = z.object({

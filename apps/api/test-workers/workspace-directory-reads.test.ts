@@ -42,6 +42,9 @@ const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000008a0");
 
 const OWNER = asUserId("00000000-0000-7000-8000-0000000008a1");
 const OUTSIDER = asUserId("00000000-0000-7000-8000-0000000008a2");
+const MEMBER_A = asUserId("00000000-0000-7000-8000-0000000008a3");
+const MEMBER_B = asUserId("00000000-0000-7000-8000-0000000008a4");
+const MEMBER_C = asUserId("00000000-0000-7000-8000-0000000008a5");
 const AUTOMATION = "00000000-0000-7000-8000-0000000008b1";
 const PLANNED_FOR = "2026-08-20T09:00:00.000Z";
 
@@ -551,6 +554,84 @@ describe("what the workspace object answers about its work streams", () => {
         shared,
         privateWorkstream,
       ]));
+    });
+  });
+
+  describe("listWorkstreams — sidebar participant preview", () => {
+    const extraMembers = [MEMBER_A, MEMBER_B, MEMBER_C];
+
+    async function admitExtraMembers(): Promise<void> {
+      await env.DB.batch(extraMembers.map((userId) => env.DB.prepare(
+        `INSERT OR REPLACE INTO workspace_members
+           (workspace_id, user_id, status, role) VALUES (?, ?, 'active', 'member')`,
+      ).bind(WORKSPACE_ID, userId)));
+    }
+
+    async function stampViewerRecency(
+      workstreamId: WorkstreamId,
+      recency: ReadonlyArray<readonly [UserId, number]>,
+    ): Promise<void> {
+      await runInDurableObject(workspace(), (_instance, state) => {
+        for (const [userId, projectedAt] of recency) {
+          state.storage.sql.exec(
+            `UPDATE workspace_workstream_viewers
+                SET projected_at = ?
+              WHERE workstream_id = ? AND user_id = ?`,
+            projectedAt,
+            workstreamId,
+            userId,
+          );
+        }
+      });
+    }
+
+    it("caps a personal row at three newest participant ids and an overflow", async () => {
+      await admitExtraMembers();
+      const workstreamId = await seedWorkstream({
+        title: "Staffing",
+        lastActivityAt: "2026-08-19T09:00:00.000Z",
+        scope: "personal",
+        participants: [OWNER, OUTSIDER, MEMBER_A, MEMBER_B, MEMBER_C],
+      });
+      await stampViewerRecency(workstreamId, [
+        [MEMBER_C, 5_000],
+        [MEMBER_B, 4_000],
+        [MEMBER_A, 3_000],
+        [OUTSIDER, 2_000],
+        [OWNER, 1_000],
+      ]);
+
+      const page = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        includeSystem: false,
+        limit: 50,
+      });
+      const row = page.items.find((item) => item.id === workstreamId);
+
+      expect(row?.participantUserIds).toEqual([MEMBER_C, MEMBER_B, MEMBER_A]);
+      expect(row?.participantExtraCount).toBe(2);
+    });
+
+    it("does not carry participant ids on a workspace-scoped row", async () => {
+      await admitExtraMembers();
+      const workstreamId = await seedWorkstream({
+        title: "Shared planning",
+        lastActivityAt: "2026-08-19T10:00:00.000Z",
+        scope: "workspace",
+        participants: [OWNER, OUTSIDER, MEMBER_A, MEMBER_B, MEMBER_C],
+      });
+
+      const page = await workspace().listWorkstreams({
+        workspaceId: WORKSPACE_ID,
+        userId: OWNER,
+        includeSystem: false,
+        limit: 50,
+      });
+      const row = page.items.find((item) => item.id === workstreamId);
+
+      expect(row?.participantUserIds).toEqual([]);
+      expect(row?.participantExtraCount).toBe(0);
     });
   });
 

@@ -207,8 +207,11 @@ Connecting a workspace socket should deliver, without being asked:
   the viewer's own preferences and effective feature gates. Nothing paints
   correctly before these.
 - **Sidebar metadata** — the first page of the work-stream directory with each
-  row's common and viewer state, plus the pinned section, and the automation and
-  note sections the sidebar renders. A cursor for the rest.
+  row's common and viewer state, including a bounded participant preview on
+  personal rows (at most three ids, newest overlay first, plus an overflow
+  count) so the sidebar can paint a facepile without a second fetch, plus the
+  pinned section, and the automation and note sections the sidebar renders. A
+  cursor for the rest.
 - **The initial suggested actions** — the current suggestion set for this viewer.
   It is computed in the background by the scheduler and already resident in
   WorkspaceDO; the home screen should never be the thing that asks for it.

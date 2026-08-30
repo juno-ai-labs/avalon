@@ -67,6 +67,8 @@ const detail = {
   modelOverride: null,
   nextPendingWakeup: null,
   pinPosition: null,
+  participantUserIds: [],
+  participantExtraCount: 0,
   participants: [{ user, participationReason: 'creator' as const, joinedAt: timestamp }],
   viewers: [{ user, connectedAt: timestamp }],
   resources: [],
