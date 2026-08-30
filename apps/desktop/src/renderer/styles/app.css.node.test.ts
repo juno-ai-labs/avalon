@@ -288,6 +288,23 @@ describe('sidebar project rows', () => {
   });
 });
 
+describe('sidebar automation rows', () => {
+  it('does not give automation rows a private hover fill', () => {
+    expect(rule('.automation-row:hover')).toBeNull();
+    expect(rule('.workstream-row,\n.automation-row')).toContain('min-height: var(--av-cmp-row-height-dense);');
+  });
+
+  it('drops the scope-badge fill while the row is hovered or current', () => {
+    const ghost = rule(
+      '.sidebar-row:hover .scope-badge,\n'
+      + '.sidebar-row.is-active .scope-badge,\n'
+      + '.sidebar-row:focus-within .scope-badge',
+    );
+    expect(ghost).toContain('background: transparent;');
+    expect(ghost).toContain('border-color: transparent;');
+  });
+});
+
 describe('work-stream participant presence', () => {
   it('finishes the arrival pop before pulsing every ten seconds and preserves a static reduced-motion state', () => {
     const ping = rule('.avatar-presence-ping');

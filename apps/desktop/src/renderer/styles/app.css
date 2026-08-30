@@ -961,7 +961,17 @@ pre {
 .sidebar-row-icon.is-attention { color: var(--av-sys-color-warning-base); }
 .sidebar-row-hint.is-attention { color: var(--av-sys-color-warning-base); }
 .scope-badge { flex: 0 0 auto; font-size: 9px; line-height: 16px; max-width: 68px; padding: 0 4px; }
-.workstream-row { min-height: var(--av-cmp-row-height-dense); }
+/* The chip fill is the selected-row token. On hover or current it would
+   punch a second pill through the row's own fill, so the badge drops its
+   fill and lets the shared row speak. */
+.sidebar-row:hover .scope-badge,
+.sidebar-row.is-active .scope-badge,
+.sidebar-row:focus-within .scope-badge {
+  background: transparent;
+  border-color: transparent;
+}
+.workstream-row,
+.automation-row { min-height: var(--av-cmp-row-height-dense); }
 .note-row { background: transparent; border: 0; min-height: var(--av-cmp-row-height-dense); text-align: left; width: 100%; }
 .mini-state { background: var(--av-ref-color-neutral-7); border-radius: 50%; height: 6px; width: 6px; }
 .mini-state.active,

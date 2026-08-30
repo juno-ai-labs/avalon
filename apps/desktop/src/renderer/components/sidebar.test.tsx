@@ -868,6 +868,26 @@ describe('Sidebar work-stream markers', () => {
     }
   });
 
+  it('gives automation rows the same sidebar-row chrome as work streams', () => {
+    render(
+      <MemoryRouter>
+        <Tooltip.Provider>
+          <Sidebar
+            {...defaultActions}
+            automations={[automation]}
+            onSignOut={vi.fn()}
+            workspace={workspace}
+            workstreams={[]}
+          />
+        </Tooltip.Provider>
+      </MemoryRouter>,
+    );
+
+    const row = screen.getByRole('link', { name: /Daily product brief/u });
+    expect(row).toHaveClass('sidebar-row', 'automation-row');
+    expect(row.querySelector('.scope-badge')).toHaveTextContent('You');
+  });
+
   it('marks an automation that cannot run instead of promising it a next run', async () => {
     render(
       <MemoryRouter>
