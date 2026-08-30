@@ -20,7 +20,7 @@
     "DAYTONA_API_URL": "https://app.daytona.io/api",
     "DAYTONA_TARGET": "us",
     "DAYTONA_TERMINAL_SNAPSHOT": "daytona-small",
-    "TERMINAL_REGION_CAPABILITY": "unsupported",
+    "TERMINAL_REGION_CAPABILITY": "supported",
     "TERMINAL_EMERGENCY_DISABLED": "false",
     "LINEAR_NATIVE_AGENT_ENABLED": "false",
     "ALLOWED_ORIGINS": "app://rallywithai,app://avalon",
