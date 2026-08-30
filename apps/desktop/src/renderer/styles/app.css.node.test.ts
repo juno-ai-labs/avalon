@@ -587,6 +587,9 @@ describe('markdown list markers', () => {
     expect(body).toContain('font-size: inherit');
     expect(descendants).not.toBeNull();
     expect(descendants).toContain('color: inherit');
+    expect(descendants).toContain('margin: 0');
+    expect(rule('.citation-card .citation-card-preview div.markdown-body ::marker'))
+      .toContain('color: inherit');
     expect(headings).toEqual([
       '.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6)',
     ]);

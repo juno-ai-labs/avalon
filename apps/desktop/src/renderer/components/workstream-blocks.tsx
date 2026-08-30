@@ -165,8 +165,9 @@ interface MessageCopyTelemetry {
   workstreamId: string;
 }
 
-function MarkdownCodeBlock({ code, language, telemetry }: {
+function MarkdownCodeBlock({ code, glance, language, telemetry }: {
   code: string;
+  glance?: boolean;
   language: string;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
@@ -198,12 +199,14 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
 
   return (
     <div className="markdown-code-block" data-language={normalizedLanguage}>
-      <div className="markdown-code-block-header">
-        <span className="markdown-code-language">{languageLabel}</span>
-        <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
-          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
-        </button>
-      </div>
+      {glance ? null : (
+        <div className="markdown-code-block-header">
+          <span className="markdown-code-language">{languageLabel}</span>
+          <button aria-label={copied ? 'Code copied' : 'Copy code'} onClick={() => void copy()} type="button">
+            {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+          </button>
+        </div>
+      )}
       <Highlight code={code} language={highlightedLanguage} theme={markdownCodeTheme}>
         {({ className, getLineProps, getTokenProps, style, tokens }) => (
           <pre className={className} style={style}>
@@ -224,7 +227,8 @@ function MarkdownCodeBlock({ code, language, telemetry }: {
   );
 }
 
-function MarkdownCode({ children, className, telemetry }: React.ComponentProps<'code'> & {
+function MarkdownCode({ children, className, glance, telemetry }: React.ComponentProps<'code'> & {
+  glance?: boolean;
   telemetry?: MessageCopyTelemetry;
 }): React.JSX.Element {
   const source = String(children ?? '');
@@ -236,6 +240,7 @@ function MarkdownCode({ children, className, telemetry }: React.ComponentProps<'
   return (
     <MarkdownCodeBlock
       code={source.replace(/\n$/u, '')}
+      glance={glance}
       language={languageMatch?.[1]?.toLowerCase() ?? ''}
       telemetry={telemetry}
     />
@@ -609,6 +614,7 @@ const NO_MENTIONS: MessageMention[] = [];
 export function MarkdownBody({
   children,
   citations,
+  glance = false,
   mentions = NO_MENTIONS,
   still = false,
   streaming = false,
@@ -623,6 +629,14 @@ export function MarkdownBody({
    * carried.
    */
   citations?: CitationContext;
+  /**
+   * This body is a glance inside an embed card, not a reader. Links, images,
+   * and code-block copy controls stay out of the DOM so the card remains one
+   * button: an `<a>` or a nested `<button>` inside it is invalid HTML, and an
+   * external image would fetch from a URL the document chose merely because
+   * the card painted.
+   */
+  glance?: boolean;
   mentions?: MessageMention[];
   /**
    * This body is being rendered into a picture rather than onto the screen.
@@ -682,15 +696,20 @@ export function MarkdownBody({
   const { components, urlTransform } = useMemo(() => ({
     components: {
       a: ({ children: linkChildren, href, node, ...props }) => (
-        <CitationLink
-          anchor={{ ...props, href }}
-          footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
-          href={href}
-          identity={() => renderIdentity(href, linkChildren, mentions, token)}
-        >{linkChildren}</CitationLink>
+        glance
+          ? <>{linkChildren}</>
+          : (
+            <CitationLink
+              anchor={{ ...props, href }}
+              footnoteRef={node?.properties?.dataFootnoteRef !== undefined}
+              href={href}
+              identity={() => renderIdentity(href, linkChildren, mentions, token)}
+            >{linkChildren}</CitationLink>
+          )
       ),
       img: ({ alt, node, src, ...props }) => {
         void node;
+        if (glance) return <>{alt}</>;
         return <CitationImage alt={alt} image={{ ...props, alt, src }} src={src} />;
       },
       li: ({ children: itemChildren, node, ...props }) => {
@@ -707,6 +726,7 @@ export function MarkdownBody({
       code: (properties) => (
         <MarkdownCode
           {...properties}
+          glance={glance}
           telemetry={messageId !== undefined && workstreamId !== undefined ? { messageId, workstreamId } : undefined}
         />
       ),
@@ -726,7 +746,7 @@ export function MarkdownBody({
         ? url
         : defaultUrlTransform(url)
     )) satisfies MarkdownUrlTransform,
-  }), [mentions, messageId, token, workstreamId]);
+  }), [glance, mentions, messageId, token, workstreamId]);
   // A settled body's element is reused whenever the markdown has not changed,
   // so a commit elsewhere on the screen — another message streaming at 60
   // commits a second included — skips this subtree instead of re-parsing it.
@@ -796,12 +816,14 @@ export function MarkdownBody({
  * The embed card's preview, fed through this same renderer so a Word file's
  * `**Author:**` bolds here the way it bolds in the rail one click away.
  *
- * No citations: a document that cites another resource would otherwise draw a
+ * Glance: a fence or a link cannot nest a control inside the card's button,
+ * and an external image cannot fetch from a URL the document chose. No
+ * citations: a document that cites another resource would otherwise draw a
  * card inside this card. Verbatim: the text is the file's, and the model-text
  * repair is a repair of what a model wrote.
  */
 function CitationPreviewBody({ children }: { children: string }): React.JSX.Element {
-  return <MarkdownBody verbatim>{children}</MarkdownBody>;
+  return <MarkdownBody glance verbatim>{children}</MarkdownBody>;
 }
 
 /**
