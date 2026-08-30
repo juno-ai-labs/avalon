@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { WorkstreamTranscriptSnapshot } from '@rally/contracts';
 import type { Message } from './types';
 import {
+  foldSettledWorkIntoMessages,
   createElicitationMessage,
   adjacentTranscriptRange,
   createTextMessage,
@@ -62,9 +63,11 @@ describe('transcript messages', () => {
         covered: { startInclusive: 1, endExclusive: 2 },
         turns: [envelope],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [],
       activeActivities: [],
+      pluginRuns: [],
       activeTurns: [],
       pendingInputs: [],
     };
@@ -406,8 +409,9 @@ describe('ordered turn rendering', () => {
           turn(4, 'question-answer', 'answered', 'human'),
         ],
         activities: [],
+        pluginRuns: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one', [{
@@ -459,8 +463,9 @@ describe('ordered turn rendering', () => {
           }],
           activityId: null,        }],
         activities: [],
+        pluginRuns: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
     const members = [{
       id: 'user-morgan', name: 'Morgan', email: 'morgan@example.com',
@@ -513,8 +518,9 @@ describe('ordered turn rendering', () => {
         purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
         covered: { startInclusive: 1, endExclusive: 2 },
         turns: [invalid], activities: [],
+        pluginRuns: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     expect(() => orderedTranscriptMessages(snapshot, 'workstream-one', [{
@@ -542,8 +548,9 @@ describe('ordered turn rendering', () => {
           ],
           activityId: null,        }],
         activities: [],
+        pluginRuns: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
@@ -576,8 +583,9 @@ describe('ordered turn rendering', () => {
           }],
           activityId: null,        }],
         activities: [],
+        pluginRuns: [],
       }],
-      activities: [], activeActivities: [], activeTurns: [], pendingInputs: [],
+      activities: [], activeActivities: [], pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     expect(orderedTranscriptMessages(snapshot, 'workstream-one')[0]).toMatchObject({
@@ -637,9 +645,11 @@ describe('ordered turn rendering', () => {
           },
         ],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [],
       activeActivities: [],
+      pluginRuns: [],
       activeTurns: [], pendingInputs: [],
     };
 
@@ -712,6 +722,7 @@ describe('ordered turn rendering', () => {
           createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1, blocks,
           activityId: 'turn-large:activity',        }],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [
         {
@@ -725,7 +736,8 @@ describe('ordered turn rendering', () => {
           intervals: [], revision: 2,
         },
       ],
-      activeActivities: [], activeTurns: [], pendingInputs: [],
+      activeActivities: [],
+      pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     const messages = orderedTranscriptMessages(snapshot, 'workstream-one');
@@ -777,6 +789,7 @@ describe('ordered turn rendering', () => {
             activityId: null,          },
         ],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [
         {
@@ -794,7 +807,8 @@ describe('ordered turn rendering', () => {
           intervals: [], revision: 1,
         },
       ],
-      activeActivities: [], activeTurns: [], pendingInputs: [],
+      activeActivities: [],
+      pluginRuns: [], activeTurns: [], pendingInputs: [],
     };
 
     const composed = composeTranscript(orderedTranscriptMessages(snapshot, 'workstream-one'), []);
@@ -833,6 +847,7 @@ describe('ordered turn rendering', () => {
           activityId: 'turn-active:activity',
         }],
         activities: [],
+        pluginRuns: [],
       }],
       activities: [
         {
@@ -868,6 +883,7 @@ describe('ordered turn rendering', () => {
         },
       ],
       activeActivities: [],
+      pluginRuns: [],
       activeTurns: [], pendingInputs: [],
     };
 
@@ -945,15 +961,18 @@ describe('canonical elicitation presentation', () => {
       covered: { startInclusive: 1, endExclusive: 5 },
       turns: [turn],
       activities: [],
+      pluginRuns: [],
     }, {
       purpose: 'requested' as const,
       requested: { startInclusive: 4, endExclusive: 5 },
       covered: { startInclusive: 4, endExclusive: 5 },
       turns: [turn],
       activities: [],
+      pluginRuns: [],
     }],
     activities: [],
     activeActivities: [],
+    pluginRuns: [],
     activeTurns: [turn], pendingInputs: [],
   } satisfies WorkstreamTranscriptSnapshot;
 
@@ -986,12 +1005,13 @@ describe('explicit transcript range coverage', () => {
     unreadAnchorSequence: null,
     unreadReason: 'no_unread',
     ranges: [
-      { purpose: 'requested', requested: { startInclusive: 10, endExclusive: 20 }, covered: { startInclusive: 10, endExclusive: 20 }, turns: [], activities: [] },
-      { purpose: 'requested', requested: { startInclusive: 15, endExclusive: 25 }, covered: { startInclusive: 15, endExclusive: 25 }, turns: [], activities: [] },
-      { purpose: 'latest', requested: { startInclusive: 46, endExclusive: 51 }, covered: { startInclusive: 46, endExclusive: 51 }, turns: [], activities: [] },
+      { purpose: 'requested', requested: { startInclusive: 10, endExclusive: 20 }, covered: { startInclusive: 10, endExclusive: 20 }, turns: [], activities: [], pluginRuns: [] },
+      { purpose: 'requested', requested: { startInclusive: 15, endExclusive: 25 }, covered: { startInclusive: 15, endExclusive: 25 }, turns: [], activities: [], pluginRuns: [] },
+      { purpose: 'latest', requested: { startInclusive: 46, endExclusive: 51 }, covered: { startInclusive: 46, endExclusive: 51 }, turns: [], activities: [], pluginRuns: [] },
     ],
     activities: [],
     activeActivities: [],
+    pluginRuns: [],
     activeTurns: [], pendingInputs: [],
   } satisfies WorkstreamTranscriptSnapshot;
 
@@ -1049,6 +1069,7 @@ describe('explicit transcript range coverage', () => {
         covered: { startInclusive: 1, endExclusive: 21 },
         turns: [historicalTurn, retractedTurn, staleTurn],
         activities: [],
+        pluginRuns: [],
       }],
     };
     const incoming = {
@@ -1061,6 +1082,7 @@ describe('explicit transcript range coverage', () => {
         covered: { startInclusive: 10, endExclusive: 20 },
         turns: [authoritativeTurn],
         activities: [],
+        pluginRuns: [],
       }],
     };
 
@@ -1126,6 +1148,7 @@ describe('explicit transcript range coverage', () => {
         covered: { startInclusive: 51, endExclusive: 52 },
         turns: [provisional],
         activities: [],
+        pluginRuns: [],
       }],
     };
     const authoritative = {
@@ -1219,6 +1242,7 @@ describe('explicit transcript range coverage', () => {
       covered: { startInclusive: 1, endExclusive: 10 },
       turns: [],
       activities: [activity],
+      pluginRuns: [],
     });
     expect(merged.activities).toContainEqual(activity);
   });
@@ -1229,8 +1253,8 @@ describe('explicit transcript range coverage', () => {
         for (let rightStart = 1; rightStart <= 5; rightStart += 1) {
           for (let rightEnd = rightStart; rightEnd <= 6; rightEnd += 1) {
             const ranges = [
-              { purpose: 'requested' as const, requested: { startInclusive: leftStart, endExclusive: leftEnd }, covered: { startInclusive: leftStart, endExclusive: leftEnd }, turns: [], activities: [] },
-              { purpose: 'requested' as const, requested: { startInclusive: rightStart, endExclusive: rightEnd }, covered: { startInclusive: rightStart, endExclusive: rightEnd }, turns: [], activities: [] },
+              { purpose: 'requested' as const, requested: { startInclusive: leftStart, endExclusive: leftEnd }, covered: { startInclusive: leftStart, endExclusive: leftEnd }, turns: [], activities: [], pluginRuns: [] },
+              { purpose: 'requested' as const, requested: { startInclusive: rightStart, endExclusive: rightEnd }, covered: { startInclusive: rightStart, endExclusive: rightEnd }, turns: [], activities: [], pluginRuns: [] },
             ];
             const generated = { ...snapshot, snapshotThrough: 5, ranges };
             const reversed = { ...generated, ranges: [...ranges].reverse() };
@@ -1271,7 +1295,13 @@ describe('grouping tool calls by plugin', () => {
   const activityRow = (id: string, group: { groupKey: string; name: string; icon: 'plug' | 'rally' | 'slack' }, durationMs: number, active = false): Message =>
     row(id, {
       messageType: 'plugin_activity',
-      pluginActivity: { ...group, active, durationMs },
+      pluginActivity: {
+        ...group,
+        active,
+        durationMs,
+        activeVerb: `${group.name} is working`,
+        completedVerb: `${group.name} worked`,
+      },
     });
 
   const slack = { groupKey: 'name:Slack', name: 'Slack', icon: 'slack' } as const;
@@ -1382,6 +1412,7 @@ describe('grouping tool calls by plugin', () => {
         messageType: 'plugin_activity',
         pluginActivity: {
           groupKey: 'rally', name: 'Rally', icon: 'rally',
+          activeVerb: 'Rally is working', completedVerb: 'Rally worked',
           active: true, durationMs: 3_000, monotonicStartedAt: [monotonicStartedAt],
         },
       });
@@ -1398,6 +1429,7 @@ describe('grouping tool calls by plugin', () => {
         messageType: 'plugin_activity',
         pluginActivity: {
           groupKey: 'name:Slack', name: 'Slack', icon: 'slack',
+          activeVerb: 'Slack is working', completedVerb: 'Slack worked',
           active: true, durationMs: 2_000, monotonicStartedAt: [500],
         },
       }),
@@ -1427,5 +1459,403 @@ describe('grouping tool calls by plugin', () => {
     ]);
 
     expect(grouped.map((message) => message.sequenceNumber)).toEqual([1, 2]);
+  });
+});
+
+describe('orderedTranscriptMessages plugin runs', () => {
+  /**
+   * The shape that produced "Rally worked for 0ms" in production.
+   *
+   * The turn carries tool blocks and nothing else: `turn.activityId` is null,
+   * every block's `activityId` is null, and `activities` is empty. Those are
+   * exactly the two nullable seeds the snapshot's upward activity walk needs,
+   * so a client rebuilding the row from the activity tree finds no plugin
+   * activity, no tool-call duration, and reports zero for work that happened.
+   */
+  const brokenJoinSnapshot = (
+    pluginRuns: WorkstreamTranscriptSnapshot['pluginRuns'],
+  ): WorkstreamTranscriptSnapshot => ({
+    snapshotId: 'snapshot-plugin-runs', snapshotThrough: 1, eventSequence: 1,
+    snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+    unreadReason: 'no_unread',
+    ranges: [{
+      purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+      covered: { startInclusive: 1, endExclusive: 2 },
+      turns: [{
+        transcriptSequence: 1, turnId: 'turn-tools', entryKind: 'conversation',
+        actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+        createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+        blocks: [
+          {
+            type: 'tool', blockId: 'b0', blockIndex: 0, toolCallId: 'call-0',
+            pluginId: 'rally:core', toolName: 'core_current_time', callIndex: 0,
+            status: 'completed', participantSafeInput: null, participantSafeResult: null,
+            error: null, activityId: null,
+          },
+          {
+            type: 'tool', blockId: 'b1', blockIndex: 1, toolCallId: 'call-1',
+            pluginId: 'rally:memory', toolName: 'memory_search', callIndex: 1,
+            status: 'completed', participantSafeInput: null, participantSafeResult: null,
+            error: null, activityId: null,
+          },
+        ],
+        activityId: null,
+      }],
+      activities: [],
+      pluginRuns: [],
+    }],
+    activities: [],
+    activeActivities: [],
+    pluginRuns,
+    activeTurns: [],
+    pendingInputs: [],
+  });
+
+  const run = (
+    over: Partial<WorkstreamTranscriptSnapshot['pluginRuns'][number]>,
+  ): WorkstreamTranscriptSnapshot['pluginRuns'][number] => ({
+    pluginRunId: 'turn-tools:plugin:rally:core',
+    turnId: 'turn-tools',
+    pluginId: 'rally:core',
+    displayName: 'rally:core',
+    state: 'completed',
+    durationMs: 4_000,
+    elapsedMsAtSnapshot: null,
+    timingAccuracy: 'observed',
+    toolCallIds: ['call-0'],
+    ...over,
+  });
+
+  it('times a row from the server when every activity-tree join is missing', () => {
+    const messages = orderedTranscriptMessages(
+      brokenJoinSnapshot([
+        run({}),
+        run({
+          pluginRunId: 'turn-tools:plugin:rally:memory',
+          pluginId: 'rally:memory',
+          displayName: 'rally:memory',
+          durationMs: 2_770,
+          toolCallIds: ['call-1'],
+        }),
+      ]),
+      'workstream-one',
+    );
+    const grouped = groupPluginToolMessages(messages);
+    const rows = grouped.filter((message) => message.messageType === 'plugin_activity');
+    expect(rows).toHaveLength(1);
+    // Both first-party plugins share the Rally row, and its total is the sum
+    // the server measured — not the zero the activity tree could produce here.
+    expect(rows[0]!.pluginActivity).toMatchObject({ name: 'Rally', durationMs: 6_770 });
+  });
+
+  it('reports an unmeasurable run as unknown rather than as zero', () => {
+    const messages = orderedTranscriptMessages(
+      brokenJoinSnapshot([run({ durationMs: null, toolCallIds: ['call-0', 'call-1'] })]),
+      'workstream-one',
+    );
+    const grouped = groupPluginToolMessages(messages);
+    const rows = grouped.filter((message) => message.messageType === 'plugin_activity');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pluginActivity?.durationMs).toBeNull();
+  });
+
+  it('lets one unmeasurable plugin make the whole row unknown', () => {
+    const messages = orderedTranscriptMessages(
+      brokenJoinSnapshot([
+        run({ durationMs: 4_000 }),
+        run({
+          pluginRunId: 'turn-tools:plugin:rally:memory',
+          pluginId: 'rally:memory',
+          displayName: 'rally:memory',
+          durationMs: null,
+          toolCallIds: ['call-1'],
+        }),
+      ]),
+      'workstream-one',
+    );
+    const grouped = groupPluginToolMessages(messages);
+    const rows = grouped.filter((message) => message.messageType === 'plugin_activity');
+    // Summing only the half that reported would understate the work by exactly
+    // the half that did not, and present the shortfall as certain.
+    expect(rows[0]!.pluginActivity?.durationMs).toBeNull();
+  });
+
+  it('lets a live activity supersede the run the snapshot was taken with', () => {
+    const snapshot = brokenJoinSnapshot([run({ toolCallIds: ['call-0', 'call-1'] })]);
+    const messages = orderedTranscriptMessages({
+      ...snapshot,
+      activities: [
+        {
+          activityId: 'turn-tools:activity', parentActivityId: null, scope: 'assistant_turn',
+          subjectId: 'turn-tools', callIndex: 0, label: 'Assistant turn', state: 'completed',
+          intervals: [], revision: 2,
+        },
+        {
+          activityId: 'turn-tools:plugin:rally:core', parentActivityId: 'turn-tools:activity',
+          scope: 'plugin', subjectId: 'rally:core', callIndex: 0, label: 'rally:core',
+          state: 'completed',
+          intervals: [{
+            intervalId: 'i0', startedAtUtc: '2026-08-26T12:00:00.000Z',
+            stoppedAtUtc: '2026-08-26T12:00:09.000Z', durationMs: 9_000,
+            elapsedMsAtSnapshot: null, boundarySource: 'rally',
+            timingAccuracy: 'observed', revision: 2,
+          }],
+          revision: 2,
+        },
+      ],
+    }, 'workstream-one');
+    const rows = groupPluginToolMessages(messages)
+      .filter((message) => message.messageType === 'plugin_activity');
+    // Still one row, not two: the two sources are the same run and compose
+    // rather than competing. The tree wins the timing because realtime keeps
+    // it current while the snapshot's copy is frozen at the moment it was
+    // taken -- which is what stops a completed plugin ticking forever.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pluginActivity?.durationMs).toBe(9_000);
+  });
+});
+
+describe('foldSettledWorkIntoMessages', () => {
+  const base = {
+    workstreamId: 'workstream-one', sequenceNumber: 0, attentionSequenceNumber: null,
+    createdAt: '2026-08-26T12:00:00.000Z', transcriptSequence: 1,
+  } as const;
+  const answer = (turnId: string): Message => ({
+    ...base, id: `${turnId}:text`, transcriptTurnId: turnId,
+    authorType: 'agent', messageType: 'text', text: 'Answer',
+  });
+  const work = (turnId: string, over: Partial<NonNullable<Message['thoughtEvent']>> = {}): Message => ({
+    ...base, id: `${turnId}:work`, transcriptTurnId: turnId,
+    authorType: 'agent', messageType: 'thought',
+    thoughtEvent: {
+      status: 'completed', durationMs: 172_000, activeVerb: 'working',
+      completedVerb: 'worked', ...over,
+    },
+  });
+
+  it('moves a settled response total into the message it produced', () => {
+    const folded = foldSettledWorkIntoMessages([answer('turn-1'), work('turn-1')]);
+    expect(folded).toHaveLength(1);
+    expect(folded[0]!.messageType).toBe('text');
+    expect(folded[0]!.workSummary).toEqual({ durationMs: 172_000 });
+  });
+
+  it('leaves a running total as its own row, because it is still progress', () => {
+    const folded = foldSettledWorkIntoMessages([answer('turn-1'), work('turn-1', { status: 'started' })]);
+    expect(folded).toHaveLength(2);
+    expect(folded[1]!.messageType).toBe('thought');
+    expect(folded[0]!.workSummary).toBeUndefined();
+  });
+
+  it('leaves a turn thinking row alone', () => {
+    // Thinking annotates one step inside the run; only the response's own
+    // total is a fact about the finished message.
+    const folded = foldSettledWorkIntoMessages([
+      answer('turn-1'),
+      work('turn-1', { activeVerb: 'thinking', completedVerb: 'thought' }),
+    ]);
+    expect(folded).toHaveLength(2);
+    expect(folded[0]!.workSummary).toBeUndefined();
+  });
+
+  it('keeps the row when its turn produced no answer to carry it', () => {
+    const folded = foldSettledWorkIntoMessages([answer('turn-1'), work('turn-2')]);
+    expect(folded).toHaveLength(2);
+    expect(folded[0]!.workSummary).toBeUndefined();
+  });
+
+  it('carries an unknown total as unknown', () => {
+    const folded = foldSettledWorkIntoMessages([answer('turn-1'), work('turn-1', { durationMs: null })]);
+    expect(folded[0]!.workSummary).toEqual({ durationMs: null });
+  });
+});
+
+describe('plugin runs stay current as the transcript changes', () => {
+  const turn = (turnId: string) => ({
+    transcriptSequence: 1, turnId, entryKind: 'conversation' as const,
+    actor: 'assistant' as const, authorUserId: null, authorSnapshot: null,
+    attentionOrdinal: null, createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+    blocks: [{
+      type: 'tool' as const, blockId: 'b0', blockIndex: 0, toolCallId: 'call-0',
+      pluginId: 'rally:memory', toolName: 'memory_search', callIndex: 0,
+      status: 'completed' as const, participantSafeInput: null, participantSafeResult: null,
+      error: null, activityId: null,
+    }],
+    activityId: null,
+  });
+  const runningRun = {
+    pluginRunId: 't1:plugin:rally:memory', turnId: 't1', pluginId: 'rally:memory',
+    displayName: 'rally:memory', state: 'active' as const, durationMs: 0,
+    elapsedMsAtSnapshot: 2_000, timingAccuracy: 'observed' as const, toolCallIds: ['call-0'],
+  };
+  const snapshotWith = (
+    over: Partial<WorkstreamTranscriptSnapshot> = {},
+  ): WorkstreamTranscriptSnapshot => ({
+    snapshotId: 's', snapshotThrough: 1, eventSequence: 1,
+    snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+    unreadReason: 'no_unread',
+    ranges: [{
+      purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+      covered: { startInclusive: 1, endExclusive: 2 },
+      turns: [turn('t1')], activities: [], pluginRuns: [],
+    }],
+    activities: [], activeActivities: [], pluginRuns: [runningRun],
+    activeTurns: [], pendingInputs: [],
+    ...over,
+  });
+
+  it('settles a running row when its completion arrives over the socket', () => {
+    // The snapshot's run says `active`; realtime only ever updates `activities`,
+    // so a row taking its state from the snapshot alone would tick forever.
+    const completed = mergeRealtimeTranscriptActivity(snapshotWith(), {
+      activityId: 't1:plugin:rally:memory', parentActivityId: 't1:activity', scope: 'plugin',
+      subjectId: 'rally:memory', callIndex: 0, label: 'rally:memory', state: 'completed',
+      intervals: [{
+        intervalId: 'i0', startedAtUtc: '2026-08-26T12:00:00.000Z',
+        stoppedAtUtc: '2026-08-26T12:00:06.770Z', durationMs: 6_770,
+        elapsedMsAtSnapshot: null, boundarySource: 'rally', timingAccuracy: 'observed', revision: 2,
+      }],
+      revision: 2,
+    }, 2, '2026-08-26T12:00:11.000Z');
+    // The turn activity has to be present for the tree to name the run's turn.
+    const withParent = {
+      ...completed,
+      activities: [...completed.activities, {
+        activityId: 't1:activity', parentActivityId: null, scope: 'assistant_turn' as const,
+        subjectId: 't1', callIndex: 0, label: 'Assistant turn', state: 'completed' as const,
+        intervals: [], revision: 2,
+      }],
+    };
+    const row = orderedTranscriptMessages(withParent, 'w')
+      .find((message) => message.messageType === 'plugin_activity');
+    expect(row?.pluginActivity).toMatchObject({ active: false, durationMs: 6_770 });
+  });
+
+  it('keeps a snapshot run when the tree cannot name its turn', () => {
+    // The production shape: no activities at all. The server's run stands.
+    const row = orderedTranscriptMessages(snapshotWith(), 'w')
+      .find((message) => message.messageType === 'plugin_activity');
+    expect(row?.pluginActivity).toMatchObject({ active: true });
+  });
+
+  it('carries runs in on a loaded range', () => {
+    const merged = mergeTranscriptRange(snapshotWith({ pluginRuns: [] }), {
+      purpose: 'requested', requested: { startInclusive: 2, endExclusive: 3 },
+      covered: { startInclusive: 2, endExclusive: 3 },
+      turns: [], activities: [],
+      pluginRuns: [{ ...runningRun, pluginRunId: 't2:plugin:rally:memory', turnId: 't2' }],
+    });
+    expect(merged.pluginRuns.map((run) => run.pluginRunId)).toEqual(['t2:plugin:rally:memory']);
+  });
+
+  it('retains the runs of turns a reconcile keeps', () => {
+    // History above the incoming snapshot's coverage survives the reconcile, so
+    // its timing has to survive with it or those rows blank out.
+    const current = snapshotWith({
+      ranges: [{
+        purpose: 'requested', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [turn('t1')], activities: [], pluginRuns: [runningRun],
+      }],
+      pluginRuns: [runningRun],
+    });
+    const incoming = snapshotWith({
+      snapshotThrough: 5,
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 3, endExclusive: 6 },
+        covered: { startInclusive: 3, endExclusive: 6 },
+        turns: [], activities: [], pluginRuns: [],
+      }],
+      pluginRuns: [],
+    });
+    const merged = mergeCanonicalTranscriptSnapshot(current, incoming);
+    expect(merged.pluginRuns.map((run) => run.pluginRunId)).toContain('t1:plugin:rally:memory');
+    expect(merged.ranges.flatMap((range) => range.pluginRuns).map((run) => run.turnId))
+      .toContain('t1');
+  });
+});
+
+describe('a tool row takes its plugin name from the run', () => {
+  it('groups a connector block the activity tree could not name', () => {
+    // The production shape for a connector: `connection:<uuid>` on the block,
+    // no plugin activity, no `turn.activityId`. Without a name `pluginGroup`
+    // returns null and the row is dropped, so the connector vanishes from the
+    // feed entirely — the run is the only thing that can name it.
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 's', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 't1', entryKind: 'conversation',
+          actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+          createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+          blocks: [{
+            type: 'tool', blockId: 'b0', blockIndex: 0, toolCallId: 'call-0',
+            pluginId: 'connection:9c1f0000-0000-4000-8000-000000000001',
+            toolName: 'slack_read_thread', callIndex: 0, status: 'completed',
+            participantSafeInput: null, participantSafeResult: null, error: null,
+            activityId: null,
+          }],
+          activityId: null,
+        }],
+        activities: [], pluginRuns: [],
+      }],
+      activities: [], activeActivities: [],
+      pluginRuns: [{
+        pluginRunId: 't1:plugin:connection', turnId: 't1',
+        pluginId: 'connection:9c1f0000-0000-4000-8000-000000000001',
+        displayName: 'Slack', state: 'completed', durationMs: 5_000,
+        elapsedMsAtSnapshot: null, timingAccuracy: 'observed', toolCallIds: ['call-0'],
+      }],
+      activeTurns: [], pendingInputs: [],
+    };
+    const messages = orderedTranscriptMessages(snapshot, 'w');
+    expect(messages.find((message) => message.messageType === 'tool_event')?.toolEvent?.pluginName)
+      .toBe('Slack');
+    const rows = groupPluginToolMessages(messages)
+      .filter((message) => message.messageType === 'plugin_activity');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pluginActivity).toMatchObject({ name: 'Slack', durationMs: 5_000 });
+  });
+});
+
+describe('a reported run always gets a row', () => {
+  it('places a run whose calls have no blocks yet at the end of its turn', () => {
+    // Reported by the authority, so the work happened; the blocks that would
+    // anchor it may simply not have streamed in. Dropping the row loses real
+    // information, and anchoring only decides where it sits.
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 's', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 't1', entryKind: 'conversation',
+          actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+          createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+          blocks: [{
+            type: 'text', blockId: 'text-0', blockIndex: 0, text: 'Answer', streaming: false,
+          }],
+          activityId: null,
+        }],
+        activities: [], pluginRuns: [],
+      }],
+      activities: [], activeActivities: [],
+      pluginRuns: [{
+        pluginRunId: 't1:plugin:rally:memory', turnId: 't1', pluginId: 'rally:memory',
+        displayName: 'rally:memory', state: 'completed', durationMs: 4_000,
+        elapsedMsAtSnapshot: null, timingAccuracy: 'observed', toolCallIds: ['call-0'],
+      }],
+      activeTurns: [], pendingInputs: [],
+    };
+    const rows = orderedTranscriptMessages(snapshot, 'w')
+      .filter((message) => message.messageType === 'plugin_activity');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pluginActivity).toMatchObject({ name: 'Rally', durationMs: 4_000 });
   });
 });

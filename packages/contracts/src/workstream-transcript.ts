@@ -14,6 +14,47 @@ export const TranscriptIntervalSchema = z.object({
   revision: z.number().int().positive(),
 });
 
+/**
+ * One plugin's work inside one assistant turn, resolved by the server.
+ *
+ * The transcript already carries plugin work as an activity tree, but a reader
+ * of that tree has to rebuild the relationship: find the plugin-scope activity,
+ * walk to its `assistant_turn` parent, match that parent's subject to a turn,
+ * and match the activity's subject to a tool block's `pluginId`. Every one of
+ * those joins is derived separately, two of the keys they join on are nullable,
+ * and a snapshot only carries the activities one upward walk happens to reach.
+ * When any link missed, the client had no way to tell "took no time" from "I
+ * cannot see the timing", and rendered the second as `0ms`.
+ *
+ * This is that answer computed once, by the authority that owns the data. The
+ * server states which plugin ran, in which turn, for how long, and which calls
+ * it made; a client joins on `toolCallIds` and renders what it is told.
+ *
+ * `durationMs` is nullable on purpose. Null means the timing is genuinely
+ * unknown — no interval, or one closed without a duration by code that ran
+ * before this field existed — and a client must render that as an absent
+ * duration rather than as zero. Zero means the work really took no measurable
+ * time.
+ */
+export const TranscriptPluginRunSchema = z.object({
+  /** The plugin activity's id; stable across snapshots of the same run. */
+  pluginRunId: z.string().min(1),
+  /** The assistant turn this work belongs to, already resolved. */
+  turnId: z.string().min(1),
+  /** The plugin's canonical id, as the tool blocks carry it. */
+  pluginId: z.string().min(1),
+  /** The plugin's display name, or its canonical id when it carries none. */
+  displayName: z.string().min(1),
+  state: z.enum(["active", "completed", "failed", "cancelled", "abandoned", "ambiguous"]),
+  /** Total measured work. Null when the timing cannot be established. */
+  durationMs: z.number().int().nonnegative().nullable(),
+  /** Set while the plugin is still running, for a live-ticking client. */
+  elapsedMsAtSnapshot: z.number().int().nonnegative().nullable(),
+  timingAccuracy: z.enum(["observed", "upper_bound"]),
+  /** The calls this run made, in the order they were placed. */
+  toolCallIds: z.array(z.string().min(1)),
+});
+
 export const TranscriptActivitySchema = z.object({
   activityId: z.string().min(1),
   parentActivityId: z.string().min(1).nullable(),
@@ -172,6 +213,14 @@ export const TranscriptRangeResultSchema = z.object({
   covered: TranscriptRangeSchema,
   turns: z.array(TranscriptTurnSchema),
   activities: z.array(TranscriptActivitySchema),
+  /**
+   * Plugin work for the turns in this range, on the same terms as the opening
+   * snapshot's. A range loaded later covers turns the opening snapshot never
+   * did, and those turns need their runs resolved by the authority for the same
+   * reason the opening ones do — the activity tree they ship with is subject to
+   * exactly the nullable joins `pluginRuns` exists to stop depending on.
+   */
+  pluginRuns: z.array(TranscriptPluginRunSchema).default([]),
 });
 
 /**
@@ -246,6 +295,16 @@ export const WorkstreamTranscriptSnapshotSchema = z.object({
   ranges: z.array(TranscriptRangeResultSchema),
   activities: z.array(TranscriptActivitySchema),
   activeActivities: z.array(TranscriptActivitySchema),
+  /**
+   * Plugin work for the turns this snapshot carries, resolved server-side.
+   *
+   * Defaulted rather than required because a desktop build updates on its own
+   * schedule: a new client must still parse a snapshot from an API that
+   * predates this field. An empty array therefore means "this server does not
+   * report plugin runs", not "no plugin ran", and a client falls back to the
+   * activity tree for that case.
+   */
+  pluginRuns: z.array(TranscriptPluginRunSchema).default([]),
   activeTurns: z.array(TranscriptTurnSchema),
   /** Server-authoritative presentation overlays, never canonical turns. */
   pendingInputs: z.array(PendingTranscriptInputSchema),
@@ -283,6 +342,7 @@ export type TranscriptTurn = z.infer<typeof TranscriptTurnSchema>;
 export type TranscriptRange = z.infer<typeof TranscriptRangeSchema>;
 export type TranscriptRangeResult = z.infer<typeof TranscriptRangeResultSchema>;
 export type PendingTranscriptInput = z.infer<typeof PendingTranscriptInputSchema>;
+export type TranscriptPluginRun = z.infer<typeof TranscriptPluginRunSchema>;
 export type WorkstreamTranscriptSnapshot = z.infer<typeof WorkstreamTranscriptSnapshotSchema>;
 export type WorkstreamTranscriptRangeRequest = z.infer<typeof WorkstreamTranscriptRangeRequestSchema>;
 export type WorkstreamTranscriptEvent = z.infer<typeof WorkstreamTranscriptEventSchema>;

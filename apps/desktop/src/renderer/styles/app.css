@@ -2564,9 +2564,18 @@ pre {
 .virtual-message-row { display: flow-root; }
 .message-block { margin: 0 0 var(--av-sys-space-stack-gap); }
 .message-block > header { align-items: center; display: flex; gap: 8px; margin-bottom: 6px; }
+/* The header mixes three type sizes, and each one's line box is taller than its
+   glyphs by a different amount, so centring the boxes leaves the text looking
+   off-centre. Collapsing the children to their glyph height makes the flex
+   centring act on what a reader actually sees. */
+.message-block > header > * { line-height: 1; }
 .message-author { font-size: var(--av-sys-font-size-author); font-weight: var(--av-sys-font-weight-emphasis); }
 .human-message .message-author { color: var(--person-accent); }
-.message-block time { color: var(--av-ref-color-neutral-8); font-size: var(--av-sys-font-size-meta); }
+/* The time and a settled response's total are the same kind of thing — meta
+   about the message, not part of it — so they share one rule rather than two
+   that have to be kept equal by hand. */
+.message-block time,
+.message-block .message-work-summary { color: var(--av-ref-color-neutral-8); font-size: var(--av-sys-font-size-meta); }
 .markdown-body { color: var(--av-ref-color-neutral-13); font-size: var(--av-sys-font-size-prose); line-height: var(--av-sys-font-leading-prose); overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
