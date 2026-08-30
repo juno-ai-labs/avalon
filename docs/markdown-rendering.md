@@ -34,7 +34,7 @@ Nine call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
-| A resource's readable content in the rail's detail | `inspector-rail.tsx` |
+| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -102,7 +102,33 @@ when it cannot. What it adds is a second syntax form and a second position.
 `[Title](resource://<id>)` renders as an inline chip.
 `![Title](resource://<id>)` renders as a block embed card — image syntax, because
 models place an image on its own line by training, so the card lands between
-sentences with no renderer heuristic guessing where a block belongs. A GFM
+sentences with no renderer heuristic guessing where a block belongs. A run of
+consecutive embeds — adjacent embed-only paragraphs, or several in one
+paragraph — is merged by `rehypeCitationEmbedRows` into a single
+`.citation-card-row` that scrolls sideways; a lone embed keeps its paragraph.
+**The pass groups only what this render will actually draw as a card**: it is
+given a predicate over the citation context's own resolver, so a surface with no
+context, or a target this work stream does not carry, keeps the paragraphs it
+already had rather than becoming a horizontal scroller full of sentences. It
+also rewrites the root's children alone, so embeds inside a blockquote or a list
+item stay a column — deliberately, because the placement bet is that models put
+an image on a line of its own, and a pass that walked the whole tree would start
+grouping across prose that happens to sit between them.
+While a message streams, embeds in different settled segments stay separate
+cards, and the whole-body re-render at completion merges them — the same
+healing every other cross-segment construct gets.
+
+An embed card also shows a **preview** of the resource's own text between its
+badge and its title, when the host offers one: `CitationContext.preview` reads
+the same `/resources/:id/preview` derivative the rail's detail panel shows — a
+Word file's markdown, a PDF's OCR — so the card and the panel it opens onto
+cannot disagree about a document. It is a glance, not a reader: the stylesheet
+clamps it to four lines and it scrolls in neither axis, because the whole card
+is one button and a scrollable box inside it would swallow the click. While the
+derivative is still being converted the card shows a shimmering skeleton, and
+every terminal answer — unconvertible, gone, retries spent — leaves the card's
+empty room rather than an error inside a control. A still never asks at all.
+A GFM
 footnote whose definition is one paragraph carrying exactly one link becomes an
 inline numbered pill with a hover popover, and its entry is dropped from the
 trailing list; a definition that does not fit that grammar keeps classic
@@ -444,6 +470,159 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — The preview reader leaves the rail, and the row's class joins the export guard
+
+**What changed:** `readResourcePreviewText`, its retry predicate, its `wait`,
+and `MAX_RESOURCE_PREVIEW_WAIT_MS` moved from `components/inspector-rail.tsx` to
+`lib/resource-preview.ts`, which both the rail and `useCitations` import. The
+export's class-coverage scanner also reads `className: ['citation-…']` arrays,
+not only JSX string literals. The excerpt strips a heading's own hashes, the row
+takes `scrollbar-width: thin` and `overscroll-behavior-x: contain`, and the
+preview carries a `max-height` beside its line clamp.
+
+**Why:** a hook in `lib/` was importing a screen-sized component module for four
+protocol-level exports — no cycle today, since the rail imports `ResourceIcon`
+from the citation module rather than the hook, but one import away from one, and
+it pulled the rail's chrome into every test that touched the reader.
+
+**Why the scanner mattered more than it looks:** it is the mechanism that makes
+"a class the renderer can emit has an answer in the export" true by
+construction, and it only saw JSX. `.citation-card-row` is built as hast by the
+rehype pass, so the one class added by this whole change was the one class
+outside the guard. The export's wrap rule could have been deleted with CI green.
+
+**Smaller things, each with a reason:** `## Revenue` printed its hashes at label
+size and spent one of four clamped lines on them; the row could chain a swipe
+outward into a back gesture and drew a full-size overlay scrollbar into the gap
+under the tiles; and `-webkit-line-clamp` beside `white-space: pre-wrap` is a
+known Chromium pairing, so the clamp now has a height that bounds it if it ever
+fails to apply.
+
+**What a future change has to respect:** the excerpt strips heading markers and
+nothing else. Emphasis, links and list markers stay, because the next step is a
+markdown renderer inside a button — and the rail, one click away, already
+renders the same bytes properly.
+
+### 2026-08-30 — The row groups only what becomes a card
+
+**What changed:** `rehypeCitationEmbedRows` takes a predicate saying which
+`resource://` targets this render will draw as cards, and groups nothing else.
+`MarkdownBody` builds it from the citation context's resolver, and passes a
+hoisted empty plugin list when there is no context at all. The transcript's
+wheel handler also ignores a predominantly horizontal gesture.
+
+**Why:** the pass grouped on the scheme alone, but five surfaces render
+`MarkdownBody` with no citations — the block dashboard, note detail, meeting
+notes, the automation draft — and there every `resource://` image is *label
+text*. A run of them was being laid side by side inside an `overflow-x` strip,
+turning a block of sentences into a horizontal scroller. The single-image case
+in the original reasoning was sound and the run case was not, which is the kind
+of gap a design note can hide.
+
+**Why the wheel handler moved with it:** the row is the first horizontal
+scroller inside the transcript, and `useTranscriptFollow` reads any upward
+`deltaY` as the reader leaving the end. A trackpad swipe across a row of cards
+carries enough vertical drift to look like that, which would drop a reader out
+of follow mid-stream. A horizontal-dominant wheel is now not read as vertical
+intent at all.
+
+**What a future change has to respect:** the row is a rendering decision that
+depends on what the *matrix* does, and the matrix's answer depends on the host's
+context — so anything that widens what renders as a card has to widen the
+predicate with it, or the two disagree in exactly one direction: prose in a
+scroll strip. Both were review findings; the grouping one had a test the same
+day, the wheel one is guarded by the handler's own comment.
+
+### 2026-08-29 — The embed card previews the document it names
+
+**What changed:** `CitationContext` gained `preview`, and the embed card draws
+the opening lines of the resource's markdown-converted text between its badge
+and its title, at the kind label's size and weight, clamped to four lines and
+scrollable in neither axis. While the derivative is still being prepared the
+card shows a shimmering three-bar skeleton on the preview's own grid, so the
+card does not resize when the text lands. `useCitations` supplies the reader,
+and every read is shared per resource and cached across mounts.
+
+**Why:** the tile said what a resource *is* and nothing about what it *says*,
+so a run of three cards was three identical grey boxes distinguishable only by
+title. A few lines of the document is what makes one card worth clicking over
+another — and it is free of a new route, because the rail's detail already
+reads exactly this derivative.
+
+**Why the read is shared and cached:** the preview route materializes the
+derivative *inside the request*, so each read causes the conversion. A per-card
+read would convert a Word file once per citation and again every time the reader
+scrolled it back into view. The promise is cached rather than the text, so a card
+mounting mid-flight joins the read already running.
+
+**What the key is, and which rejections survive it.** Reads are keyed by id
+*and* `currentVersion`: a watched source re-ingested in place keeps its id, so
+an id-only key served version N's excerpt on a card the work stream had already
+moved to N+1 — a citation substantiating a claim with the wrong revision, and
+the same defect the rail's own preview effect keys on `currentVersion` to avoid.
+Only a rejection that is a verdict about the document is cached — 4xx other than
+408 and 429, so gone, forbidden and unconvertible are remembered. A dropped
+connection or a 5xx evicts itself, because caching it meant a card that failed
+once never showed a preview again however long the reader stayed in the room.
+Both were review findings on the pull request, and neither had a test until they
+were fixed.
+
+**Why the reads are built lazily rather than in an effect:** React runs a
+child's effect before its parent's, so a card mounting in the same commit as
+the hook asked before an effect-initialized ref existed, was told there is no
+preview, and — its own effect depending on a stable callback — never asked
+again. Found in a real window: every card rendered its empty room and no
+request was ever made, with every test passing.
+
+**Why the preview's tone comes off the neutral ramp:** `ref.color.neutral.9`
+sits one step below `text.muted` and one above `text.disabled`, which is the
+tone this wants and neither of those is. The card is a button, and preview type
+dark enough to read comfortably competes with the title for the click;
+`text.disabled` would say something untrue about a control that is enabled.
+Because the ramp is ordered by contrast rather than lightness, one token dims
+correctly in a light theme and in a dark one — measured in all four.
+
+**What a future change has to respect:** the preview is presentation — it is
+`aria-hidden`, the button's accessible name stays the title, and nothing inside
+the card may become independently focusable or scrollable while the card is a
+button. A still (`render.still`) must never ask: a picture serialized
+mid-skeleton would keep that skeleton forever.
+
+### 2026-08-29 — The embed card becomes a file tile, and runs of them a row
+
+**What changed:** `ResourceEmbedCard` reshaped from a one-line row — icon,
+title, kind, trailing chevron — into a fixed-width tile: the kind badge (a
+bordered square holding the resource icon) at the head, the title and kind at
+the foot, empty room between. The chevron is gone. In `app.css` the card now
+draws from `surface-elevated`, `radius-lg` and the line ramp, and the kind
+label takes the theme's own label voice (`sys.label.*`) instead of a hardcoded
+size. `rehypeCitationEmbedRows` — a hast pass run by every `MarkdownBody`
+render — merges consecutive embed-only paragraphs into one `.citation-card-row`
+that scrolls horizontally, so a run of announced resources costs one card's
+height instead of a column.
+
+**Why:** The row form read as another line of the sentence; the announcement
+form exists to say "a thing was produced here", and the file-tile shape —
+the one attachment cards across chat products have converged on — says that at
+a glance. Styling stayed entirely in semantic tokens rather than per-theme
+rules, which is what lets one rule land as a white sheet with a hairline border
+on Terra Light, a raised dark panel on Terra, and a near-borderless warm card
+in Air's letterspaced label voice, with no component knowing which theme is
+running.
+
+**Considered and rejected:** a `cmp.citation-card.*` token group. Every value
+the card needs already has a semantic answer (`surface-elevated`, the line
+ramp, `sys.label.*`), and a component group would be twelve values restated in
+four themes to express decisions the vocabulary already makes.
+
+**What a future change has to respect:** the exported message card mirrors this
+markup with its own fixed-light rules in `message-export.ts` — a reshape here
+is a redraw there, in the same change. The kind label's transform belongs to
+the theme; hardcoding a `text-transform` here would overwrite Air's voice. The
+row pass groups only the `resource:` scheme and only runs of two or more: a
+lone embed keeps the paragraph every existing assertion and surface expects,
+and a real image or identity card beside an embed keeps the run ungrouped.
 
 ### 2026-08-28 — A preview still being prepared is not a preview that failed
 

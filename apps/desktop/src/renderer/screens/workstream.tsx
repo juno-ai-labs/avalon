@@ -1079,11 +1079,6 @@ export function WorkstreamScreen(): React.JSX.Element {
     readSocketOpenContext,
     workstreamId: id,
   });
-  // Citations resolve against the loaded work stream's resources, and the
-  // transcript needs this before the screen has decided it has a work stream to
-  // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
-  // which keeps the identity stable while there is nothing loaded.
-  const citations = useCitations({ resources: routedDetail?.resources ?? NO_RESOURCES });
   // The rail's detail reads through the *preview* route, exactly as the
   // attachment lightbox does: it materializes readable text for a file that is
   // not already text, which is what makes a cited Word file or PDF worth
@@ -1096,6 +1091,16 @@ export function WorkstreamScreen(): React.JSX.Element {
     },
     [api],
   );
+  // Citations resolve against the loaded work stream's resources, and the
+  // transcript needs this before the screen has decided it has a work stream to
+  // draw at all — hence `routedDetail?`, and hence the hoisted empty array,
+  // which keeps the identity stable while there is nothing loaded. It is
+  // declared after the preview read because it now takes it: the embed card's
+  // excerpt is the same derivative the rail's panel shows.
+  const citations = useCitations({
+    loadResourceContent,
+    resources: routedDetail?.resources ?? NO_RESOURCES,
+  });
   const automationSubscriptionId = routedDetail?.automationSubscriptionId;
   const deferredContext = useQuery({
     queryKey: ['workstream-context', id, automationSubscriptionId ?? null],
@@ -2106,7 +2111,17 @@ export function WorkstreamScreen(): React.JSX.Element {
         // The transcript reads scrolling intent from the wheel as well as from
         // the scroll it causes, because the two do not arrive in the same frame.
         // `useTranscriptFollow` holds the reasoning.
-        onWheel={(event) => onTranscriptWheel(event.currentTarget, event.deltaY)}
+        //
+        // A predominantly horizontal gesture is not that intent, and since the
+        // embed-card row a run of citations renders into scrolls sideways
+        // inside the transcript, one now reaches this handler: a trackpad swipe
+        // across a row of cards carries enough vertical drift to look like a
+        // scroll up, which would drop the reader out of follow and raise Jump
+        // to latest in the middle of a streaming turn.
+        onWheel={(event) => {
+          if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+          onTranscriptWheel(event.currentTarget, event.deltaY);
+        }}
         onScroll={(event) => {
           const element = event.currentTarget;
           onTranscriptScroll(element);

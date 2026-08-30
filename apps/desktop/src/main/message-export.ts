@@ -392,27 +392,53 @@ ${syntax}
   .citation-chip-icon { color: #6b6d5e; display: inline-flex; }
   .markdown-body .citation-chip-icon svg { height: 0.95em; width: 0.95em; }
   .citation-chip-label { display: inline; }
+  /* The same file-tile shape the app draws — badge at the head, title and kind
+     at the foot, room between — in this card's fixed light palette. */
+  /* Composed exactly as the app composes it: the same gap, and the title block
+     pushed to the foot by its own margin-top auto rather than by a
+     space-between that would only agree with the app while the card has
+     exactly two children. */
   .citation-card {
-    align-items: center;
-    background: #f1efe5;
+    background: #ffffff;
     border: 1px solid #dcd9c9;
-    border-radius: 10px;
+    border-radius: 12px;
     color: #3d3f33;
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    gap: 9px;
     margin: 16px 0;
-    padding: 11px 13px;
+    min-height: 170px;
+    padding: 11px;
     text-align: left;
-    width: 100%;
+    width: 176px;
   }
-  .citation-card-icon { color: #6b6d5e; display: inline-flex; }
-  .citation-card-text { display: flex; flex-direction: column; gap: 2px; }
-  .citation-card-title { font-size: 0.97em; font-weight: 640; }
+  .citation-card-badge {
+    align-items: center;
+    align-self: flex-start;
+    border: 1px solid #dcd9c9;
+    border-radius: 7px;
+    color: #6b6d5e;
+    display: inline-flex;
+    height: 27px;
+    justify-content: center;
+    width: 27px;
+  }
+  /* A run of embeds shares a row in the app and scrolls; a still cannot
+     scroll, so here the row wraps and every card stays in the picture. */
+  .citation-card-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+  .citation-card-row .citation-card { margin: 0; }
+  /* A still renders with MarkdownBody's still flag, which never asks for a
+     preview at all — so neither of these can appear in a saved card. They are
+     declared because a class the renderer can emit must have an answer here,
+     and the honest answer for a live-loading affordance in a picture is that
+     it is not drawn. */
+  .citation-card-preview, .citation-card-preview-skeleton { display: none; }
+  .citation-card-text { display: flex; flex-direction: column; gap: 3px; margin-top: auto; }
+  .citation-card-title { font-size: 0.97em; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* No text-transform: the renderer already turns the system identifier into
      words, and capitalizing each of them made the card say "Github Pull
      Request" where the app says "Github pull request". */
-  .citation-card-kind { color: #6b6d5e; font-size: 0.82em; }
-  .citation-card-chevron { display: none; }
+  .citation-card-kind { color: #6b6d5e; font-size: 10px; }
   /* Sized and raised exactly as the app's is, and for the same reason: GFM's
      sup wrapper applies its own smaller and its own super, and stacking the
      pill's on top of those left a digit too small to read. The card is the
