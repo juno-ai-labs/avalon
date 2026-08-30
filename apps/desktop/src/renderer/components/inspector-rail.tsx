@@ -1,3 +1,4 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   Archive,
   ArrowLeft,
@@ -15,7 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { formatDateTime, formatRelative, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 import { desktopBridge } from '../lib/platform';
@@ -496,100 +497,98 @@ function groupVersionsBySparseDate(
   return groups;
 }
 
-function ResourceVersions({ resource, versions, error, onOpenResourceVersion, participants }: {
+function ResourceVersionsMenu({
+  resource,
+  versions,
+  error,
+  onOpenResourceVersion,
+  participants,
+  returnFocus,
+}: {
   resource: WorkstreamResource;
   versions: ResourceVersion[] | undefined;
   error?: string | undefined;
   onOpenResourceVersion?: InspectorRailProps['onOpenResourceVersion'];
   participants: WorkstreamDetail['participants'];
+  returnFocus: RefObject<HTMLButtonElement | null>;
 }): React.JSX.Element {
   const currentVersion = versions?.[0]?.version;
 
+  let body: React.ReactNode;
+  if (error) {
+    body = <DropdownMenu.Item className="menu-item" disabled>{error}</DropdownMenu.Item>;
+  } else if (versions === undefined) {
+    body = (
+      <DropdownMenu.Item className="menu-item" disabled>
+        <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading versions…
+      </DropdownMenu.Item>
+    );
+  } else if (versions.length === 0) {
+    body = <DropdownMenu.Item className="menu-item" disabled>No versions yet.</DropdownMenu.Item>;
+  } else {
+    body = groupVersionsBySparseDate(versions).map((group) => (
+      <DropdownMenu.Group key={group.label}>
+        <DropdownMenu.Label className="menu-label inspector-version-group-label">
+          <time dateTime={group.versions[0]?.capturedAt}>{group.label}</time>
+        </DropdownMenu.Label>
+        {group.versions.map((version) => {
+          const isCurrent = version.version === currentVersion;
+          return (
+            <DropdownMenu.Item
+              className="menu-item inspector-version-item"
+              disabled={isCurrent || !versionIsOpenable(version)}
+              key={version.version}
+              onSelect={() => {
+                const trigger = returnFocus.current;
+                if (trigger) onOpenResourceVersion?.(resource, version, trigger);
+              }}
+            >
+              <span className="inspector-version-label">V{version.version}</span>
+              <span className="inspector-version-author">{versionAuthorLabel(version, resource, participants)}</span>
+              {/* Newest-first and authoritative about itself. The detail's
+                  version number comes from another cache, and the two
+                  disagree exactly while a swap is settling — which is when
+                  putting "Current" on a superseded row does most harm. */}
+              {isCurrent ? <Badge>Current</Badge> : null}
+            </DropdownMenu.Item>
+          );
+        })}
+      </DropdownMenu.Group>
+    ));
+  }
+
   return (
-    <div aria-label="Versions" className="inspector-versions" role="region">
-      <h3 className="sr-only">Versions</h3>
-      {error
-        ? <p className="inspector-detail-preview-status">{error}</p>
-        : versions === undefined
-          ? (
-            <p className="inspector-detail-preview-status" role="status">
-              <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading versions…
-            </p>
-          )
-          : versions.length === 0
-            ? <p className="inspector-detail-preview-status">No versions yet.</p>
-            : groupVersionsBySparseDate(versions).map((group) => (
-              <section key={group.label}>
-                <h4 className="inspector-version-group-label">
-                  <time dateTime={group.versions[0]?.capturedAt}>{group.label}</time>
-                </h4>
-                <ul>
-                  {group.versions.map((version) => (
-                    <li key={version.version}>
-                      <span className="inspector-version-label">V{version.version}</span>
-                      <span className="inspector-version-meta">
-                        <span className="inspector-version-author">{versionAuthorLabel(version, resource, participants)}</span>
-                      </span>
-                      {/* Newest-first and authoritative about itself. The detail's
-                          version number comes from another cache, and the two
-                          disagree exactly while a swap is settling — which is when
-                          putting "Current" on a superseded row does most harm. */}
-                      {version.version === currentVersion
-                        ? <Badge>Current</Badge>
-                        : versionIsOpenable(version) && (
-                          <IconButton
-                            label={`Open version ${version.version}`}
-                            onClick={(event) => onOpenResourceVersion?.(resource, version, event.currentTarget)}
-                            tooltipSide="left"
-                          >
-                            <Eye size={14} />
-                          </IconButton>
-                        )}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-    </div>
+    <DropdownMenu.Content
+      align="end"
+      aria-label="Versions"
+      className="menu-content inspector-versions-menu"
+      sideOffset={8}
+    >
+      {body}
+    </DropdownMenu.Content>
   );
 }
 
 function InspectorDetail({
   loadResourceContent,
   workstream,
-  onOpenResourceVersion,
   onRefreshResource,
   refreshingResourceId,
-  resourceVersions,
-  resourceVersionsError,
-  versionsOpen,
 }: Pick<
   InspectorRailProps,
-  'loadResourceContent' | 'workstream' | 'onOpenResourceVersion'
-  | 'onRefreshResource' | 'refreshingResourceId' | 'resourceVersions' | 'resourceVersionsError'
-> & { versionsOpen: boolean }): React.JSX.Element | null {
+  'loadResourceContent' | 'workstream' | 'onRefreshResource' | 'refreshingResourceId'
+>): React.JSX.Element | null {
   const inspector = useUiStore((state) => state.inspector);
   if (!inspector || !workstream) return null;
   const resource = inspector.type === 'resource' ? workstream.resources.find((item) => item.id === inspector.id) : undefined;
 
   if (resource) {
-    if (versionsOpen) {
-      return (
-        <ResourceVersions
-          error={resourceVersionsError}
-          onOpenResourceVersion={onOpenResourceVersion}
-          participants={workstream.participants}
-          resource={resource}
-          versions={resourceVersions}
-        />
-      );
-    }
-
     // Direction says whether this work stream consumed or produced the
     // resource; the server-computed adapter capability says whether its
     // connector can actually fulfill a re-fetch.
     const refreshable = resource.direction === 'source' && resource.refreshSupported;
     const sourceActions = Boolean(resource.canonicalUrl || (refreshable && onRefreshResource));
+    const showDocument = Boolean(loadResourceContent && readableAsText(resource));
     return (
       <div className="inspector-detail">
         {resource.updatedAt && (
@@ -610,7 +609,8 @@ function InspectorDetail({
             )}
           </div>
         )}
-        {loadResourceContent && readableAsText(resource) && (
+        {showDocument && resource.updatedAt && <hr className="inspector-detail-rule" />}
+        {showDocument && loadResourceContent && (
           <ResourceContentPreview loadResourceContent={loadResourceContent} resource={resource} />
         )}
       </div>
@@ -642,11 +642,10 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const inspect = useUiStore((state) => state.inspect);
   const runs = props.runs ?? props.workstream?.automationRuns ?? [];
   const resource = inspectedResource(inspector, props.workstream);
-  const [versionsOpen, setVersionsOpen] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const versionsTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    setVersionsOpen(false);
     setArchiveConfirmOpen(false);
   }, [inspector?.id]);
 
@@ -672,11 +671,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         <div className="rail-title window-no-drag">
           {inspector && (
             <IconButton
-              label={versionsOpen ? 'Back to document' : 'Back to context'}
-              onClick={() => {
-                if (versionsOpen) setVersionsOpen(false);
-                else inspect(null);
-              }}
+              label="Back to context"
+              onClick={() => inspect(null)}
             >
               <ArrowLeft size={15} />
             </IconButton>
@@ -686,14 +682,28 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         <div className="rail-header-actions window-no-drag">
           {resource && (
             <>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton label="Versions" ref={versionsTriggerRef}>
+                    <History size={15} />
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <ResourceVersionsMenu
+                    error={props.resourceVersionsError}
+                    onOpenResourceVersion={props.onOpenResourceVersion}
+                    participants={props.workstream?.participants ?? []}
+                    resource={resource}
+                    returnFocus={versionsTriggerRef}
+                    versions={props.resourceVersions}
+                  />
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
               <IconButton
-                aria-pressed={versionsOpen}
-                label="Versions"
-                onClick={() => setVersionsOpen((open) => !open)}
+                className="icon-button-danger"
+                label="Archive"
+                onClick={() => setArchiveConfirmOpen(true)}
               >
-                <History size={15} />
-              </IconButton>
-              <IconButton label="Archive" onClick={() => setArchiveConfirmOpen(true)}>
                 <Archive size={15} />
               </IconButton>
             </>
@@ -706,12 +716,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         {inspector ? (
           <InspectorDetail
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
-            onOpenResourceVersion={props.onOpenResourceVersion}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
-            resourceVersions={props.resourceVersions}
-            resourceVersionsError={props.resourceVersionsError}
-            versionsOpen={versionsOpen}
             workstream={props.workstream}
           />
         ) : railVariant === 'context' ? (

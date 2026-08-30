@@ -514,6 +514,21 @@ The traps, both of which have bitten:
 
 ## Changelog
 
+### 2026-08-30 — A hairline separates last-updated from the document
+
+**What changed:** The inspector detail draws `.inspector-detail-rule` between
+last-updated and `.inspector-detail-document`. It is host chrome — a hairline
+using `sys.size.border.hairline` and `sys.color.border.subtle` — not a restyle
+of `.markdown-body`.
+
+**Why:** Last-updated and the body share one scroll, and without a rule they
+read as one caption. Putting the line *inside* the markdown host would have
+been a second opinion about `hr`, which this renderer already owns.
+
+**What a future change has to respect:** the rule stays outside `.markdown-body`.
+Sizing the document host is still the allowed exception; restyling markdown
+elements is not.
+
 ### 2026-08-30 — The rail renders a resource as a document, not a card of one
 
 **What changed:** `ResourceContentPreview` in `inspector-rail.tsx` dropped the

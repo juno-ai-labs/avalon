@@ -376,6 +376,23 @@ step the ingress has to remember.
 
 ## Changelog
 
+### 2026-08-30 — Versions is a header dropdown; Archive stays a confirm modal
+
+**What changed:** The inspector's **Versions** control opens the standard header
+dropdown (`DropdownMenu` from the header `IconButton`) rather than swapping the
+document pane for a versions region. Sparse-date groups and current-by-list-position
+are unchanged. **Archive** stays the continue/cancel modal, and the icon is painted
+in the danger colour. A hairline (`sys.size.border.hairline` on
+`sys.color.border.subtle`) sits between last-updated and the document.
+
+**Why:** A pane swap hid the file the person opened the rail to read. The header
+already has a dropdown pattern for overflow actions; versions belong in that
+shape. Replacing the archive modal with a one-click menu item would drop the
+confirm the unlink still needs — Rally has no restore.
+
+**What a future change has to respect:** do not put versions back in
+`.rail-scroll`. The document stays on screen while the menu is open.
+
 ### 2026-08-30 — Resource detail is the document, with Versions and Archive in the header
 
 **What changed:** Opening a resource puts its title in the rail header in place
