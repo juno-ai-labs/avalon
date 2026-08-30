@@ -11,6 +11,14 @@ interface TerminalRpcTestBinding {
   invokeCallback(
     callback: () => Promise<TerminalProviderRpcCallbackResult>,
   ): Promise<TerminalProviderRpcCallbackResult>;
+  createCounterSession(): Promise<{
+    next(): Promise<number>;
+    [Symbol.dispose](): void;
+  }>;
+  createCallbackSession(callback: (value: string) => Promise<string>): Promise<{
+    call(value: string): Promise<string>;
+    [Symbol.dispose](): void;
+  }>;
 }
 
 declare global {

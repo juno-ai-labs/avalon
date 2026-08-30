@@ -15,6 +15,7 @@ Cloudflare's platform contracts are the [one-second startup
 limit](https://developers.cloudflare.com/workers/platform/limits/#worker-limits),
 [zero-overhead Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/),
 the [WorkerEntrypoint RPC model](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/),
+[RPC lifecycle and disposal](https://developers.cloudflare.com/workers/runtime-apis/rpc/lifecycle/),
 and [Versions and gradual deployments](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/gradual-deployments/).
 
 ## Where the code lives
@@ -38,9 +39,14 @@ each call still counts as one Worker invocation and one subrequest.
 Document RPC transfers bounded `Uint8Array` values and typed results. Existing
 source limits stay below Cloudflare RPC's serialized payload limit. Terminal RPC
 passes the already parsed regional provider configuration, including the
-caller's secret value, only across the private binding for the duration of the
-call; the service stores nothing. Instrumentation and authority callbacks use
-Workers RPC callbacks. Cancellation is a typed long-lived callback: the
+caller's secret value, only across the private binding for the lifetime of one
+harness run; the service stores nothing durably. The binding returns a typed
+`RpcTarget` session that owns one Daytona client and its sandbox-object cache,
+matching the provider lifetime the in-process implementation had. Cloudflare
+automatically disposes the session when the calling execution context ends.
+Instrumentation callbacks are duplicated into that session and released by its
+disposer; authority and cancellation callbacks live only for one method call.
+Cancellation is a typed long-lived callback: the
 provider Worker creates its own `AbortController`, observes the caller's signal,
 and closes the callback before returning. A pre-aborted input is carried
 explicitly so the provider-side signal is aborted before Daytona I/O begins.
@@ -116,7 +122,9 @@ selected product regions.
 - Attachment tests run the same statically imported codec implementation behind
   an injected document-processing contract.
 - Terminal provider tests continue to prove Daytona behavior directly; RPC
-  client tests prove callback, cancellation, and argument delegation.
+  client tests prove session reuse, callback, cancellation, and argument
+  delegation. A real-workerd auxiliary Service Binding proves `RpcTarget`
+  state and retained callbacks survive the entrypoint call that created them.
 - `node --test scripts/deploy-api-workflow.test.mjs` proves service-first
   upload, EU-before-Global health, and migration placement.
 - CI retains every startup profile on success or failure.
@@ -153,7 +161,7 @@ The failed monolith uploaded about 12.3 MiB and had no dependable startup
 margin. With Wrangler 4.126.0, the static service split makes the API graph
 about 7.3 MiB, the document graph about 2.8 MiB, and the Terminal graph about
 2.3 MiB. Repeated local active-startup samples varied from 93–190 ms for the
-API, 8–14 ms for documents, and 19–28 ms for Terminal; these values diagnose
+API, 7–14 ms for documents, and 18–28 ms for Terminal; these values diagnose
 graph shape and are not predictions of Cloudflare CPU time.
 
 Service Bindings add no monetary charge or network hop by default. A document
@@ -167,7 +175,8 @@ to the capability that uses it and is visible as a platform invocation.
 
 **What changed:** PDF/image codecs and the Daytona SDK moved into two private,
 statically imported Workers per region. The API calls them through typed RPC,
-all six artifacts receive startup profiles, and deployment uploads or deploys
+Terminal keeps one disposable `RpcTarget` provider session per harness run, all
+six artifacts receive startup profiles, and deployment uploads or deploys
 services before each regional API with an EU health barrier before Global.
 
 **Why:** An unchanged, fully verified API bundle alternated between successful
@@ -186,4 +195,6 @@ only the private call boundary.
 **Consequences:** The API now has two internal regional deployment dependencies.
 Their contracts must remain backward-compatible through service-first rollout,
 local development starts three Workers per region, and each service has its own
-startup evidence. Product storage and authority remain unchanged.
+startup evidence. Terminal's provider-side object cache is session-local rather
+than global or reconstructed per operation. Product storage and authority remain
+unchanged.
