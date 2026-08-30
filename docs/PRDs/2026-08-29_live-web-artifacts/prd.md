@@ -188,16 +188,22 @@ motivation is structural, and stated as such.
    document PRD: generation requires the Terminal sandbox, which is
    explicitly `unsupported` in the EU today. The serving surface deploys
    to both regions in parity (staged, like the EU Daytona bindings), and
-   EU artifacts arrive with EU Terminal support, not before.
-10. **Defensive numbers.** None are picked here. Bundle size, file count,
-    per-request body size, viewer-session lifetime, the per-session
-    request-rate ceiling (the guard that bounds a buggy or hostile poll
-    loop — key design decision 6), per-artifact storage quota,
-    query-tool row and time bounds, and error-log retention are all
-    real guards this design names — each ships open under the
-    open-limit rule, with the handover arithmetic (for the compute
-    guards: rate ceiling × session lifetime × concurrent viewers is the
-    worst-case burn per artifact), for the team to set.
+   EU artifacts arrive with EU Terminal support, not before. The team
+   has directed that **enabling EU Terminal is pursued as its own
+   workstream now** rather than left indefinite — so this deferral is
+   expected to be short-lived, and nothing in this PRD needs to change
+   when it lands: EU artifacts follow automatically.
+10. **Defensive numbers are the team's, and two are already set.** Per
+    the open-limit rule, the guards this design names ship open with
+    the handover arithmetic — bundle size, file count, per-request body
+    size, the per-session request-rate ceiling (the guard that bounds a
+    buggy or hostile poll loop — key design decision 6, with rate
+    ceiling × session lifetime × concurrent viewers as the worst-case
+    burn per artifact), query-tool row and time bounds, and error-log
+    retention. Two were handed over and answered during this PRD's
+    review, so they ship as values rather than open: the viewer-session
+    lifetime is 24 hours (decision 6) and the per-artifact storage
+    quota is 100 MB (decision 12).
 11. **Any artifact storage mechanism other than the facet.** Rejected for
     V1: no Rally-mediated key-value binding (a curated `STORAGE` API was
     designed and dropped — with a real database available, a KV facade in
@@ -207,12 +213,20 @@ motivation is structural, and stated as such.
     The facet is the one place artifact state lives, and the platform tie
     V1 ships is the read side: the rail's Data view, CSV export, and the
     agent's read-only query tools over the same rows.
-12. **An agent write tool into artifact data.** Deferred. The agent
-    changes artifact data by revising the artifact, or data changes
-    through the artifact's own request paths; a typed write into a
-    model-designed schema is its own authorization and receipt problem,
-    deferred exactly the way the versioning layer deferred model-visible
-    history.
+12. **External write paths into artifact data — agent tool and rail
+    edits alike.** Deferred, as the team's explicit call: in V1 the
+    *only* thing that writes artifact data is the artifact's own
+    request paths. The agent changes data by revising the artifact
+    (adding an admin route to the page when moderation is needed), and
+    the rail's Data view stays browse-and-export. Both alternatives
+    were put to the team and declined for V1: *a row-delete action in
+    the Data view* (human-fast moderation, but a Rally-authored write
+    authority into model-designed schemas with its own audit story)
+    and *a typed agent write tool* (the same problem plus receipts, as
+    the versioning layer's deferral precedent). The accepted cost is
+    that fixing a rude RSVP is a model round-trip; if dogfooding shows
+    that cost is real, the rail row-delete is the first path to
+    revisit.
 13. **Live rendering of prior versions of a *stateful* artifact.**
     Accepted limitation, not a choice to revisit lightly: one facet runs
     one class, so serving V3's code would mean aborting the live facet
@@ -514,8 +528,12 @@ None yet.
    **fixed from mint, never sliding** — and that shape, not just its
    number, is the artifact platform's sleep guarantee: nothing about an
    artifact executes without a viewer request (non-goal 6), so compute
-   per open is bounded by rate ceiling × session lifetime, both open
-   limits, whatever a page's client code does. A well-behaved page goes
+   per open is bounded by rate ceiling × session lifetime, whatever a
+   page's client code does. The lifetime is **24 hours** — a team-set
+   value, not an author's guess: one re-open per day at most for a
+   person actually working, and an abandoned-but-visible page burns at
+   most a day of modest polling. The rate ceiling ships open under the
+   limit rule. A well-behaved page goes
    quiet at expiry (the skill's polling rules stop on auth failure); a
    buggy or hostile one is bounded by the per-session request-rate
    ceiling answering 429 (non-goal 10). Re-minting is the desktop's
@@ -675,8 +693,10 @@ None yet.
     that executes SQL **inside a transaction that always rolls back**
     (structural read-only, no SELECT-sniffing), a table page/CSV stream
     for the rail's Data view and export, and a database-size read for
-    the storage quota (an open limit measured here, enforced as a loud
-    serve-time refusal of further writes, never silent truncation). One
+    the storage quota (**100 MB per artifact**, a team-set value —
+    orders of magnitude above any legitimate V1 artifact, small enough
+    to contain a runaway writer — enforced as a loud serve-time refusal
+    of further writes, never silent truncation). One
     read path, three consumers — the two agent tools, the Data view,
     and the export — so they can never disagree. The wrapper is the
     load-bearing mechanism of the whole stateful design and is proven
@@ -851,7 +871,8 @@ The new trust surface is the point of this PRD, so it is stated in full.
   credential is reachable; stubs cannot be forged, only received. CPU,
   memory, and isolate lifetime are the platform's own limits — platform
   numbers, not Rally's to restate; the facet database's size is Rally's
-  one added guard, an open limit enforced as a loud write refusal.
+  one added guard, 100 MB per artifact (team-set), enforced as a loud
+  write refusal.
 - **Origin isolation, three ways.** Every artifact has its own origin on
   a domain that is not `rallywith.ai`; artifacts are therefore never
   same-origin with the application, the API, or each other (goal 6), and
