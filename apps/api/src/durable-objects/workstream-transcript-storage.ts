@@ -2267,6 +2267,9 @@ export class WorkstreamTranscriptStorage {
       activities: includeActivities
         ? this.activitiesForTurns(turns, snapshotAt)
         : [],
+      pluginRuns: includeActivities
+        ? this.pluginRunsForTurns(turns, snapshotAt)
+        : [],
     };
   }
 

@@ -213,6 +213,14 @@ export const TranscriptRangeResultSchema = z.object({
   covered: TranscriptRangeSchema,
   turns: z.array(TranscriptTurnSchema),
   activities: z.array(TranscriptActivitySchema),
+  /**
+   * Plugin work for the turns in this range, on the same terms as the opening
+   * snapshot's. A range loaded later covers turns the opening snapshot never
+   * did, and those turns need their runs resolved by the authority for the same
+   * reason the opening ones do — the activity tree they ship with is subject to
+   * exactly the nullable joins `pluginRuns` exists to stop depending on.
+   */
+  pluginRuns: z.array(TranscriptPluginRunSchema).default([]),
 });
 
 /**
