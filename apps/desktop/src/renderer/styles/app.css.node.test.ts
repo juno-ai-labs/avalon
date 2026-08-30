@@ -567,6 +567,57 @@ describe('markdown list markers', () => {
     expect(preview).toContain('var(--av-sys-color-text-disabled)');
     expect(preview).not.toContain('--av-ref-color-neutral-9');
   });
+
+  // The feed paints `.markdown-body` at (0,3,0). A host written as
+  // `.citation-card-preview .markdown-body` is (0,2,0) and loses, so inherit
+  // never lands and the glance keeps the turn's type. Naming the card and the
+  // wrapper's element is (0,3,1). `*` carries the tone into `strong` without
+  // naming a markdown element.
+  it('wins the embed-card preview tone on specificity rather than source order', () => {
+    const body = rule('.citation-card .citation-card-preview div.markdown-body');
+    const descendants = rule('.citation-card .citation-card-preview div.markdown-body *');
+    const headings = preludes()
+      .filter((prelude) => prelude.includes('.citation-card-preview'))
+      .filter((prelude) => elementsIn(prelude).some((element) => /^h[1-6]$/u.test(element)));
+
+    expect(body).not.toBeNull();
+    expect(body).toContain('color: inherit');
+    expect(body).toContain('font-size: inherit');
+    expect(descendants).not.toBeNull();
+    expect(descendants).toContain('color: inherit');
+    expect(headings).toEqual([
+      '.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6)',
+    ]);
+  });
+
+  // The preview's inherit is a nested-MarkdownBody fix. If it ever leaked onto
+  // the shared group, a note, a briefing, or a turn would recede with the
+  // glance — the failure this test exists to make red. Every `.markdown-body`
+  // rule that inherits has to name the card preview; the shared paints below
+  // are the ones the other hosts still need.
+  it('leaves shared markdown paint alone outside the embed-card preview', () => {
+    const markdownInherit = preludes().filter((prelude) => {
+      if (!prelude.includes('.markdown-body')) return false;
+      return /(^|;|\s)color\s*:\s*inherit/u.test(rule(prelude) ?? '');
+    });
+
+    expect(markdownInherit.length).toBeGreaterThan(0);
+    for (const prelude of markdownInherit) {
+      expect(prelude).toContain('.citation-card-preview');
+    }
+
+    expect(rule('.markdown-body strong')).toContain('var(--av-ref-color-neutral-14)');
+    expect(rule('.markdown-body a')).toContain('var(--av-sys-color-accent-soft)');
+    expect(rule('.markdown-body h1')).toContain('var(--av-cmp-markdown-heading-1)');
+    expect(rule('.note-detail-article .markdown-body h1')).toContain(
+      'var(--av-cmp-markdown-article-heading-1)',
+    );
+    expect(rule('.meeting-notes-body .markdown-body :is(h1, h2, h3, h4, h5, h6)')).toContain(
+      'font-size: 15px',
+    );
+    expect(rule(':is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body'))
+      .toContain('14.5px');
+  });
 });
 
 /**
