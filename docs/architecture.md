@@ -38,6 +38,7 @@ docs/                      Product, architecture, security, setup, runbooks
 | `apps/desktop/src/preload` | The packaged CommonJS preload — the only channel between a sandboxed renderer and main. |
 | `apps/desktop/src/renderer` | Both React surfaces. Talks only to the configured regional API. |
 | `apps/api/src/app.ts`, `apps/api/src/routes` | The Hono application and its REST and upgrade routes. |
+| `apps/api/src/index.ts`, `apps/api/src/worker-events.ts` | The regional API's statically imported HTTP/event graph and platform exports. Heavy stateless providers run in the typed document and Terminal service Workers owned by [`api-worker-deployment.md`](api-worker-deployment.md). |
 | `apps/api/src/services` | Business rules. Route handlers hold none. |
 | `apps/api/src/services/terminal` | Deferred Terminal plugin, Daytona adapter, authority-fenced sandbox control plane, resources, and trusted GitHub publication. |
 | `apps/api/src/durable-objects` | `WorkspaceDO`, model-free `WorkstreamDO`, `SubstreamAgent`, per-block `BlockDashboardAgent`, the shared `MigratableDurableObject` schema base and the `ScheduledDurableObject` alarm base above it, and their SQL-only migration/storage layers. |
@@ -75,11 +76,14 @@ docs/                      Product, architecture, security, setup, runbooks
    over that bridge. A renderer combines them with its own window focus and
    active work-stream route before reporting ephemeral presence to WorkspaceDO;
    pooled work-stream sockets are never treated as attention.
-2. **`apps/api`** is a Hono application deployed as the same Cloudflare Worker
-   code in Global and EU environments. It owns authentication, authorization,
+2. **`apps/api`** is a Hono application deployed as three statically imported
+   Cloudflare Worker graphs in each of Global and EU: the regional API plus
+   private document-processing and Terminal-provider services reached through
+   typed Service Bindings. The API owns authentication, authorization,
    REST endpoints, WebSocket upgrades, D1 repositories, R2 objects, Queue
    production and consumption, Workflows, scheduling, connector execution, and
-   the OpenRouter harness.
+   the OpenRouter harness. The private services isolate heavyweight stateless
+   SDKs without request-time module loading or another product authority.
 3. **Shared packages** contain runtime-validated contracts, database schema and
    repositories, connector adapters, agent-loop code, UI primitives, and test
    fixtures. Business rules live here or in services, never in route handlers.
@@ -805,6 +809,34 @@ access and no-egress symbolication.
 [`security.md`](security.md) owns these boundaries.
 
 ## Changelog
+
+### 2026-08-30 — Heavy provider graphs move behind typed Worker services
+
+**What changed:** Each region now deploys three statically imported Workers:
+the regional API, a document processor for PDF/image codecs, and a Terminal
+provider for the Daytona SDK. The API reaches the latter two through explicit
+typed Service Binding RPC methods. Deployment builds and profiles all six
+regional artifacts, establishes services before callers, and retains the EU
+health barrier before Global.
+
+**Why:** Cloudflare evaluates a Worker's static module graph before serving it,
+and the monolithic graph crossed the platform startup CPU limit. The controllable
+unit is a Worker graph, so heavyweight stateless capabilities need independent
+graphs rather than conditional evaluation inside the API.
+
+**Considered and rejected:** Dynamic imports were rejected because Rally's
+dependency graph must remain visible to TypeScript and deployment tooling before
+execution; request-time loading merely transfers initialization to product
+traffic. Splitting Durable Objects was rejected because it would add authority
+and namespace migration without isolating the relevant provider libraries.
+Retry and minification were rejected because they preserve the timing race.
+
+**Consequences:** Product authority and object identities remain in the API,
+while two private compute services become regional deployment dependencies.
+Their RPC contracts must remain compatible through service-first rollout, all
+imports remain static, and every Worker graph has independent startup evidence.
+[`api-worker-deployment.md`](api-worker-deployment.md) owns the detailed build,
+test, failure, and rollout contract.
 
 ### 2026-08-28 — An automation becomes its own Durable Object
 

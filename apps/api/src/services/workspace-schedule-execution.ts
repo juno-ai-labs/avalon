@@ -55,7 +55,7 @@ import { SlackAgentService } from "./slack-agent-service";
 import { refreshSlackWorkstreamUnfurls } from "./slack-unfurl-refresh";
 import { createTerminalPortFactory } from "./terminal/object-port";
 import { parseTerminalRegionConfiguration } from "./terminal/contract";
-import { createDaytonaTerminalProvider } from "./terminal/daytona-provider";
+import { createTerminalProviderRpcClient } from "./terminal/provider-rpc-client";
 import { createTerminalFinalDiffPreserver, reconcileDueTerminalSandbox } from "./terminal/lifecycle";
 import { emitProductUsageTelemetry } from "../telemetry/product-usage";
 import type { ScheduledAlarmOutcome } from "../durable-objects/scheduled-alarms";
@@ -524,7 +524,7 @@ async function reconcileTerminalSandbox(
 ): Promise<ScheduledAlarmOutcome> {
   const configuration = parseTerminalRegionConfiguration(ctx.env);
   if (configuration.capability !== "supported") throw new Error("terminal_provider_unavailable");
-  const provider = createDaytonaTerminalProvider(configuration);
+  const provider = createTerminalProviderRpcClient(ctx.env.TERMINAL_PROVIDER, configuration);
   const executionEnv = ctx.workspaceEnv;
   const port = createTerminalPortFactory(executionEnv);
   const result = await reconcileDueTerminalSandbox(

@@ -9,6 +9,7 @@ import {
   requireWebSocketTicketRule,
 } from "./scripts/eslint-rules/inference-boundaries.mjs";
 import { noBareZodUrlRule } from "./scripts/eslint-rules/no-bare-zod-url.mjs";
+import { noDynamicImportRule } from "./scripts/eslint-rules/no-dynamic-import.mjs";
 import { thesvgSubpathImportsRule } from "./scripts/eslint-rules/thesvg-subpath-imports.mjs";
 import { noRawEntryPointCheckRule } from "./scripts/eslint-rules/no-raw-entry-point-check.mjs";
 import { providerJsonSchemaComplexityRule } from "./scripts/eslint-rules/provider-json-schema-complexity.mjs";
@@ -47,6 +48,7 @@ export default tseslint.config(
       rally: {
         rules: {
           "no-bare-zod-url": noBareZodUrlRule,
+          "no-dynamic-import": noDynamicImportRule,
           "thesvg-subpath-imports": thesvgSubpathImportsRule,
           "no-raw-entry-point-check": noRawEntryPointCheckRule,
           "no-direct-model-env-read": noDirectModelEnvReadRule,
@@ -75,6 +77,20 @@ export default tseslint.config(
       "rally/no-raw-entry-point-check": "error",
       "rally/thesvg-subpath-imports": "error",
       "rally/provider-json-schema-complexity": "error",
+    },
+  },
+  {
+    // A Worker, renderer, or main-process request must never discover a module
+    // for the first time. Legacy test and operator-script imports are migration
+    // debt recorded in docs/coding-practices-and-style.md; production source
+    // has no exception.
+    files: [
+      "apps/**/src/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+      "packages/**/src/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    ],
+    ignores: ["**/*.test.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"],
+    rules: {
+      "rally/no-dynamic-import": "error",
     },
   },
   {

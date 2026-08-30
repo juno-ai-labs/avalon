@@ -1604,7 +1604,7 @@ async function loadAutomationDraftAttachmentParts(
   const parts = await buildAttachmentModelParts(
     env.PAYLOADS,
     ids.map((id) => sources.get(id)!),
-    { database: env.DB, images: env.IMAGES },
+    { database: env.DB, images: env.IMAGES, documentProcessor: env.DOCUMENT_PROCESSOR },
   );
   return { parts, frozenResourceIds: ids };
 }

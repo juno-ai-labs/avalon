@@ -17,7 +17,7 @@ import {
   telemetryJourneyDuration,
 } from "../../telemetry/product-usage";
 import type { TerminalSandboxCoordinator } from "./coordinator";
-import type { TerminalSandboxProvider } from "./daytona-provider";
+import type { TerminalSandboxProvider } from "./provider-contract";
 import { createTerminalWorkspaceBackup, type TerminalWorkspaceBackup } from "./lifecycle";
 import { admitTerminalPublicationGrant } from "./repository";
 import type {

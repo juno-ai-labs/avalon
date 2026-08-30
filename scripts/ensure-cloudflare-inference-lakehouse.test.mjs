@@ -340,6 +340,9 @@ test('the deploy provisions bindings before migration or Worker deployment', asy
   const migrations = workflow.indexOf('List the pending remote migrations for EU');
   const deploy = workflow.indexOf('Deploy the EU Worker');
   assert.ok(provision > 0 && provision < migrations && migrations < deploy);
-  assert.match(workflow, /wrangler deploy --config \.wrangler\.lakehouses\.eu\.json/u);
-  assert.match(workflow, /wrangler deploy --config \.wrangler\.lakehouses\.global\.json/u);
+  assert.match(workflow, /build:deployed:eu/u);
+  assert.match(workflow, /build:deployed/u);
+  assert.match(workflow, /--config "\$config"/u);
+  assert.match(workflow, /\.wrangler\.lakehouses\.eu\.json/u);
+  assert.match(workflow, /\.wrangler\.lakehouses\.global\.json/u);
 });

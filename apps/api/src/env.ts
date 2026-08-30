@@ -28,6 +28,8 @@ import type { BlockDashboardAgent } from "./durable-objects/block-dashboard-agen
 import type { AutomationAgent } from "./durable-objects/automation-agent";
 import type { DurableObjectMigrationReport } from "@rally/contracts/durable-object-migrations";
 import type { TelemetryOperatorPrincipal } from './telemetry/operator-auth';
+import type { DocumentProcessingRpcBinding } from './services/document-processing-contract';
+import type { TerminalProviderRpcBinding } from './services/terminal/provider-rpc-contract';
 
 export const BLOCK_DASHBOARD_MODEL = "x-ai/grok-4.3";
 
@@ -40,6 +42,8 @@ export interface Env {
   MEMORY_INDEX: VectorizeIndex;
   RUN_ANALYTICS: AnalyticsEngineDataset;
   TERMINAL_ANALYTICS: AnalyticsEngineDataset;
+  DOCUMENT_PROCESSOR: DocumentProcessingRpcBinding;
+  TERMINAL_PROVIDER: TerminalProviderRpcBinding;
   // Optional because a Worker may run without the binding. Note that
   // `wrangler dev --local` still provides the object — it is every *call* that
   // throws `Binding FLAGS needs to be run remotely`, so readers must handle
@@ -293,6 +297,8 @@ const EnvContractSchema = z.object({
   MEMORY_INDEX: binding<VectorizeIndex>(),
   RUN_ANALYTICS: binding<AnalyticsEngineDataset>(),
   TERMINAL_ANALYTICS: binding<AnalyticsEngineDataset>(),
+  DOCUMENT_PROCESSOR: binding<DocumentProcessingRpcBinding>().optional(),
+  TERMINAL_PROVIDER: binding<TerminalProviderRpcBinding>().optional(),
   SUBSTREAM_AGENTS: binding<DurableObjectNamespace<SubstreamAgent>>(),
   AUTOMATION_AGENTS: binding<DurableObjectNamespace<AutomationAgent>>(),
   BLOCK_DASHBOARD_AGENTS: binding<DurableObjectNamespace<BlockDashboardAgent>>(),
@@ -416,6 +422,8 @@ const productionOnlySecrets = [
 ] as const satisfies readonly { key: keyof Env; regions: readonly Region[] }[];
 
 const productionOnlyBindings = [
+  { key: "DOCUMENT_PROCESSOR", regions: ["global", "eu"] },
+  { key: "TERMINAL_PROVIDER", regions: ["global", "eu"] },
   { key: "INFERENCE_LAKEHOUSE_QUEUE", regions: ["global"] },
   { key: "INFERENCE_LAKEHOUSE", regions: ["global"] },
   { key: "ANALYTICS_LAKEHOUSE_QUEUE", regions: ["global"] },

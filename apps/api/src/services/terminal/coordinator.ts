@@ -10,7 +10,7 @@ import {
   type TerminalSandboxProvider,
   type TerminalSandboxSnapshot,
   type TerminalSandboxState,
-} from "./daytona-provider";
+} from "./provider-contract";
 import {
   compileTerminalNetworkPolicy,
   TERMINAL_NETWORK_MANIFEST_VERSION,

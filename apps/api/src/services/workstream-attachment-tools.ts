@@ -20,7 +20,6 @@ import {
   type WorkstreamWorkflowInput,
 } from "@rally/contracts";
 import { z } from "zod";
-import { extractText, getDocumentProxy } from "unpdf";
 import type { Env } from "../env";
 import { AttachmentCursorError, openAttachmentCursor, sealAttachmentCursor } from "../lib/attachment-cursor";
 import { logStructuredEvent } from "../observability/logger";
@@ -446,6 +445,7 @@ export function createWorkstreamAttachmentTools(
             }, {
               database: env.DB,
               images: env.IMAGES,
+              documentProcessor: env.DOCUMENT_PROCESSOR,
               maxDimension,
               maxBytes: MAX_TOTAL_MODEL_IMAGE_BYTES - deliveredImageBytes,
             });
@@ -613,6 +613,7 @@ export async function rehydrateWorkstreamViewReceipt(
     }, {
       database: env.DB,
       images: env.IMAGES,
+      documentProcessor: env.DOCUMENT_PROCESSOR,
       maxDimension: parsedInput.data.maxDimension ?? DEFAULT_IMAGE_MAX_DIMENSION,
       maxBytes: MAX_TOTAL_MODEL_IMAGE_BYTES - deliveredImageBytes,
     });
@@ -719,7 +720,7 @@ async function ensureReadyTextDerivative(
 ): Promise<Extract<MaterializedAttachmentDerivative, { status: "ready" }>> {
   const result = await materializeAttachmentDerivative(env.DB, env.PAYLOADS, authorizedDerivativeResource(row), {
     signal: context.signal,
-    pdfExtractor: extractPdfText,
+    pdfExtractor: (bytes) => env.DOCUMENT_PROCESSOR.extractText(bytes),
     ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(env.AI, row.title, bytes, pageCount, context.signal),
     onPhase: (event) => logStructuredEvent(env, "info", "attachment_derivative_phase_finished", {
       workspace_id: context.workspaceId,
@@ -742,13 +743,6 @@ async function ensureReadyTextDerivative(
     result.status === "unsupported" ? "This resource format is unsupported" : "The resource could not be converted",
     { reason: result.errorCode },
   );
-}
-
-async function extractPdfText(bytes: Uint8Array) {
-  const pdf = await getDocumentProxy(bytes);
-  if (pdf.numPages > 200) return { pageCount: pdf.numPages, pages: [] };
-  const extracted = await extractText(pdf);
-  return { pageCount: extracted.totalPages, pages: Array.isArray(extracted.text) ? extracted.text : [extracted.text] };
 }
 
 function authorizedDerivativeResource(row: VisibleWorkstreamResourceRow): AuthorizedDerivativeResource {

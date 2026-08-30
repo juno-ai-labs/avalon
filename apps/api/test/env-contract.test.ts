@@ -83,6 +83,16 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(env)).toThrow(/TELEMETRY_PAYLOADS is missing/u);
   });
 
+  it("requires both private capability service bindings", () => {
+    const withoutDocuments = contractCompleteEnv();
+    delete (withoutDocuments as Partial<Env>).DOCUMENT_PROCESSOR;
+    expect(() => assertEnvContract(withoutDocuments)).toThrow(/DOCUMENT_PROCESSOR is missing/u);
+
+    const withoutTerminal = contractCompleteEnv();
+    delete (withoutTerminal as Partial<Env>).TERMINAL_PROVIDER;
+    expect(() => assertEnvContract(withoutTerminal)).toThrow(/TERMINAL_PROVIDER is missing/u);
+  });
+
   it("rejects a numeric deadline that would silently fall back to its default", () => {
     expect(() => assertEnvContract(contractCompleteEnv({ CONNECTOR_POLL_TIMEOUT_MS: "20s" })))
       .toThrow(/CONNECTOR_POLL_TIMEOUT_MS is invalid/u);
