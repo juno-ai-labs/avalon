@@ -350,7 +350,7 @@ function AutomationRow({
           {/* AutomationScreen dispatches the same durable route to either the
               draft conversation or accepted home from lifecycle state. */}
           <NavLink
-            className={({ isActive }) => clsx('sidebar-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
+            className={({ isActive }) => clsx('sidebar-row automation-row', (isDraft ? draftActive : isActive) && 'is-active', isDraft && 'is-draft')}
             onClick={() => markSurfaceEntrypoint('sidebar_automation')}
             to={`/automations/${automation.id}`}
           >
@@ -1409,6 +1409,22 @@ export function Sidebar({
     },
   });
 
+  const renderWorkstream = (workstream: WorkstreamSummary): React.JSX.Element => (
+    <WorkstreamRow
+      debugEnabled={debugEnabled}
+      onArchive={setArchiveWorkstreamTarget}
+      onChangeScope={(target, scope) => void changeWorkstreamScope(target, scope)}
+      onMarkUnread={(target) => void markWorkstreamUnread(target).catch(() => undefined)}
+      onAddToProject={(projectId, workstreamId) => void onAddWorkstreamToProject(projectId, workstreamId)}
+      onRename={openRename}
+      onTogglePin={(target, pin) => void togglePin(target, pin)}
+      pinPending={pinPendingWorkstreamId === workstream.id}
+      projects={projects}
+      scopePending={scopePendingWorkstreamId === workstream.id}
+      workstream={workstream}
+    />
+  );
+
   const closeRename = (): void => {
     if (renaming) return;
     setRenameTarget(null);
@@ -1582,6 +1598,7 @@ export function Sidebar({
             onReorder={onReorderProjects}
             onRestore={onRestoreProject}
             projects={projects}
+            renderWorkstream={renderWorkstream}
             workstreams={workstreams}
           />
 

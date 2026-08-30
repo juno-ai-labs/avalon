@@ -697,14 +697,24 @@ pre {
 .project-sidebar-action.icon-button:hover:not(:disabled) { background: transparent; border-color: transparent; color: inherit; }
 .project-sidebar-item { border-radius: var(--av-sys-size-radius-sm); }
 .project-sidebar-item[draggable='true'] { cursor: grab; }
-.project-sidebar-row {
+/* Shares `.sidebar-row` for hover fill, radius, and padding so a project
+   and a work stream read as the same kind of row. The grid is the extra
+   accordion and plus columns; `height-dense` matches a single-line work
+   stream. Two classes so `display` and `gap` beat the later `.sidebar-row`
+   flex rule rather than racing it on source order. */
+.sidebar-row.project-sidebar-row {
   align-items: center;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) 28px;
+  gap: 0;
   min-height: var(--av-cmp-row-height-dense);
-  padding: 0 4px;
 }
-.project-sidebar-row:hover { background: var(--av-sys-color-surface-raised-hover); }
+/* The section heading's plus stays put. The per-row plus is the same
+   control, shown only while the row is the one being pointed at or tabbed
+   into, so a list of projects does not grow a column of idle pluses. */
+.project-sidebar-row .project-sidebar-row-action { opacity: 0; }
+.project-sidebar-row:hover .project-sidebar-row-action,
+.project-sidebar-row:focus-within .project-sidebar-row-action { opacity: 1; }
 .project-accordion-control {
   align-items: center;
   background: transparent;
@@ -731,11 +741,13 @@ pre {
 }
 .project-row-link > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-row-link.is-active { color: var(--av-sys-color-text-default); font-weight: 600; }
-.project-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 2px 8px 7px 42px; }
-.project-sidebar-workstreams { display: grid; gap: 1px; padding: 2px 4px 6px 34px; }
-.project-sidebar-workstream { border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-subtle); font-size: 12px; overflow: hidden; padding: 5px 8px; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
-.project-sidebar-workstream:hover,
-.project-sidebar-workstream.is-active { background: var(--av-sys-color-surface-raised-hover); color: var(--av-sys-color-text-default); }
+.project-sidebar-empty { color: var(--av-sys-color-text-muted); font-size: 11px; margin: 0; padding: 6px 8px 6px 18px; }
+/* Nested members start where the accordion column ends, so they share a
+   leading edge with the project icon rather than sitting under the name.
+   The 18px is the accordion column in `.project-sidebar-row`; keep them
+   equal. Font, hover, and the title/description pair come from the shared
+   work-stream row, not a second style. */
+.project-sidebar-workstreams { display: grid; gap: var(--av-sys-space-row-gap); padding-left: 18px; }
 .project-icon-pile { align-items: center; display: inline-flex; flex: 0 0 auto; margin-left: 2px; }
 .project-icon-pile-item { align-items: center; background: var(--av-sys-color-surface-default); border: 1px solid var(--av-sys-color-border-subtle); border-radius: 50%; display: inline-flex; height: 20px; justify-content: center; width: 20px; }
 .project-icon-pile-item + .project-icon-pile-item { margin-left: -6px; }
@@ -826,8 +838,8 @@ pre {
   position: relative;
 }
 
-.sidebar-row:hover { --sidebar-row-background: var(--av-sys-color-surface-subtle); }
-.sidebar-row.is-active { --sidebar-row-background: var(--av-ref-color-neutral-4); }
+.sidebar-row:hover { --sidebar-row-background: var(--av-cmp-row-background-hover); }
+.sidebar-row.is-active { --sidebar-row-background: var(--av-cmp-row-background-selected); }
 
 /* Command-number hints are an overlay, not another column in the row. The
    scrim softly restores the row's own background before the pill, so a long
@@ -941,7 +953,17 @@ pre {
 .sidebar-row-icon.is-attention { color: var(--av-sys-color-warning-base); }
 .sidebar-row-hint.is-attention { color: var(--av-sys-color-warning-base); }
 .scope-badge { flex: 0 0 auto; font-size: 9px; line-height: 16px; max-width: 68px; padding: 0 4px; }
-.workstream-row { min-height: var(--av-cmp-row-height-dense); }
+/* The chip fill is the selected-row token. On hover or current it would
+   punch a second pill through the row's own fill, so the badge drops its
+   fill and lets the shared row speak. */
+.sidebar-row:hover .scope-badge,
+.sidebar-row.is-active .scope-badge,
+.sidebar-row:focus-within .scope-badge {
+  background: transparent;
+  border-color: transparent;
+}
+.workstream-row,
+.automation-row { min-height: var(--av-cmp-row-height-dense); }
 .note-row { background: transparent; border: 0; min-height: var(--av-cmp-row-height-dense); text-align: left; width: 100%; }
 .mini-state { background: var(--av-ref-color-neutral-7); border-radius: 50%; height: 6px; width: 6px; }
 .mini-state.active,
