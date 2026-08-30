@@ -8,7 +8,11 @@ import { desktopHandoffUrl } from "../src/lib/desktop-handoff";
 import { __connectionServiceTesting, ConnectionService } from "../src/services/connection-service";
 import { createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestWorkspaceDO, testWorkspaceObjectBinding } from "./helpers/workspace-object-rpcs";
+import {
+  CONNECTION_WORKSPACE_OBJECT_METHODS,
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000001");
 const OTHER_USER_ID = asUserId("00000000-0000-4000-8000-000000000002");
@@ -26,6 +30,11 @@ afterEach(() => {
  * `executeRuntimeSql` — only the transport is doubled. `oauth_states` and the
  * ingress-route projection stay on the regional database, as in production.
  */
+/** The workspace object an env is bound to, for a test that sets state up. */
+function workspaceObjectOf(env: Env) {
+  return env.WORKSPACE_DOS.get(env.WORKSPACE_DOS.idFromName("workspace"));
+}
+
 function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; auth: AuthContext } {
   const regional = new DatabaseSync(":memory:");
   databases.push(regional);
@@ -69,15 +78,14 @@ function fixture(): { regional: DatabaseSync; object: DatabaseSync; env: Env; au
       PUBLIC_WEB_BASE_URL: "https://with-avalon.com",
       DESKTOP_DEEP_LINK_URI: "avalon://auth/complete",
       OAUTH_STATE_ENCRYPTION_KEY: "test-oauth-state-encryption-key",
-      WORKSPACE_DOS: testWorkspaceObjectBinding(workspace.instance, [
-        "startConnectorOAuthAttempt",
-        "abandonConnectorOAuthAttempt",
-        "extendConnectorOAuthAttempt",
-        "finishConnectorOAuthAttempt",
-        "connectorOAuthAttempt",
-        "bindConnectorOAuthAttemptTelemetry",
-        "executeRuntimeSql",
-      ]),
+      // The connection methods ride with the attempt methods now: a completion
+      // settles its attempt inside the same `transactionSync` that writes the
+      // connection, so binding one without the other would serve half a
+      // critical section from a different store.
+      WORKSPACE_DOS: testWorkspaceObjectBinding(
+        workspace.instance,
+        CONNECTION_WORKSPACE_OBJECT_METHODS,
+      ),
     }),
     auth: {
       sessionId: "session",
@@ -261,28 +269,27 @@ describe("connector OAuth handoff", () => {
       expiresAt: "2099-01-01T00:00:00.000Z",
     });
     const service = new ConnectionService(env, auth);
-    // Prepared on the service's own routed database, as every production
-    // caller does: the facade refuses a statement prepared on a foreign port.
-    const routed = (service as unknown as { env: Env }).env;
-    await (service as unknown as {
-      persistConnectionMutation(
-        statement: D1PreparedStatement,
-        id: string,
-        connectionIdValue: string,
-      ): Promise<D1Result<unknown>>;
-    }).persistConnectionMutation(
-      routed.DB.prepare(
-        `INSERT INTO connector_connections
-         (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
-          display_name, granted_scopes_json, status, cursor_json, config_json,
-          created_at, updated_at, model_plugin_id)
-         VALUES (?, ?, 'linear', 'workspace', NULL, NULL, 'Linear', '[]', 'healthy',
-                 '{}', '{}', '2026-08-18T00:00:00.000Z', '2026-08-18T00:00:00.000Z',
-                 'plugin_linear')`,
-      ).bind(connectionId, WORKSPACE_ID),
-      attemptId,
+    // The typed write, with its attempt bind — what the completion paths call.
+    // This used to reach through the service into `persistConnectionMutation`
+    // and hand it a hand-prepared statement, because the connection write and
+    // the attempt bind were a D1 batch the test had to assemble. They are one
+    // method now, so the setup is the same call production makes.
+    await workspaceObjectOf(env).createConnection({
+      workspaceId: WORKSPACE_ID,
       connectionId,
-    );
+      connectorType: "linear",
+      scope: "workspace",
+      ownerUserId: null,
+      providerAccountId: null,
+      displayName: "Linear",
+      credentials: null,
+      grantedScopesJson: "[]",
+      modelPluginId: "plugin_linear",
+      configJson: "{}",
+      nextPollAt: null,
+      at: "2026-08-18T00:00:00.000Z",
+      bindAttempt: { attemptId, region: "global" },
+    });
     const sealedState = await sealString(
       JSON.stringify({ attemptId }),
       env.OAUTH_STATE_ENCRYPTION_KEY,

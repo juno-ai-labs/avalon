@@ -172,6 +172,9 @@ export const CONNECTION_WORKSPACE_OBJECT_METHODS = [
   "finishConnectorOAuthAttempt",
   "bindConnectorOAuthAttemptTelemetry",
   "claimWebhookReceipt",
+  // A connection write refreshes the workspace schedule after it, because a
+  // disabled connection's polls have to stop being due.
+  "refreshSchedule",
 ] as const satisfies readonly (keyof WorkspaceDO)[];
 
 /**

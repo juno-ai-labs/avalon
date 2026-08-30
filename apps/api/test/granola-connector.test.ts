@@ -7,7 +7,12 @@ import { ConnectionService } from "../src/services/connection-service";
 import { __integrationTesting } from "../src/services/integrations";
 import { createCloudflareTestBinding, createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestDurableObjectId, createTestEnv } from "./helpers/cloudflare-test";
 import { sqliteD1 } from "./helpers/sqlite-d1";
-import { createTestWorkspaceDO, workspaceObjectRpcs } from "./helpers/workspace-object-rpcs";
+import {
+  CONNECTION_WORKSPACE_OBJECT_METHODS,
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+  workspaceObjectRpcs,
+} from "./helpers/workspace-object-rpcs";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000001");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000002");
@@ -51,7 +56,7 @@ afterEach(() => {
 
 describe("Granola workspace connection", () => {
   it("registers a workspace webhook and stores both secrets only in the encrypted connection envelope", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, database, objectDatabase, env } = fixture();
     const requests: Array<{ url: URL; body: unknown; authorization: string | null }> = [];
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
@@ -88,7 +93,7 @@ describe("Granola workspace connection", () => {
       },
     })]);
 
-    const row = database.prepare(
+    const row = objectDatabase.prepare(
       `SELECT id, encrypted_credentials, credential_iv, provider_account_id, config_json
        FROM connector_connections WHERE connector_type = 'granola'`,
     ).get() as Record<string, unknown>;
@@ -118,8 +123,8 @@ describe("Granola workspace connection", () => {
   });
 
   it("rejects a second active workspace key before contacting Granola", async () => {
-    const { auth, database, env } = fixture();
-    database.prepare(
+    const { auth, objectDatabase, env } = fixture();
+    objectDatabase.prepare(
       `INSERT INTO connector_connections
        (id, workspace_id, connector_type, scope, owner_user_id, display_name,
         granted_scopes_json, model_plugin_id, status, cursor_json, config_json,
@@ -138,7 +143,7 @@ describe("Granola workspace connection", () => {
   });
 
   it("accepts an offset webhook timestamp and re-enqueues its canonical activity on provider retry", async () => {
-    const { auth, database, env, payloadPut, queueSend } = fixture();
+    const { auth, objectDatabase, env, payloadPut, queueSend } = fixture();
     const secretBytes = new TextEncoder().encode("webhook-signing-secret");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       id: "whe_1234567890abcd",
@@ -171,14 +176,25 @@ describe("Granola workspace connection", () => {
     const first = await service.ingestGranolaWebhook(created.connection.id, rawBody, headers);
     const retry = await service.ingestGranolaWebhook(created.connection.id, rawBody, headers);
 
+    // Binding a real workspace object moved this suite onto the branch a
+    // deployment takes, and the two branches answer differently on purpose.
+    // Unbound, the service inserted the activity itself and could return the
+    // canonical id both times. Bound, `persistNormalizedActivity` enqueues and
+    // returns a *handoff* identity, because — as the comment on it says —
+    // WorkspaceDO resolves provider and dedupe uniqueness when the Queue
+    // delivers, and predicting the canonical id would cost a second
+    // cross-object round trip. So the retry is reported as a duplicate by the
+    // receipt claim, and its handoff id is its own.
     expect(first).toMatchObject({ duplicate: false });
-    expect(retry).toEqual({ duplicate: true, activityId: first.activityId });
+    expect(retry.duplicate).toBe(true);
+    expect(retry.activityId).not.toBe(first.activityId);
+    // Both deliveries hand off; the object collapses them.
     expect(queueSend).toHaveBeenCalledTimes(2);
-    expect(queueSend).toHaveBeenNthCalledWith(1, expect.objectContaining({ activityId: first.activityId }));
-    expect(queueSend).toHaveBeenNthCalledWith(2, expect.objectContaining({ activityId: first.activityId }));
     expect(payloadPut).toHaveBeenCalledTimes(2);
-    expect(database.prepare("SELECT count(*) AS count FROM activities").get()).toEqual({ count: 1 });
-    expect(database.prepare("SELECT count(*) AS count FROM webhook_receipts").get()).toEqual({ count: 1 });
+    // The receipt that made the second delivery a duplicate is the object's,
+    // claimed through the typed method rather than written regionally.
+    expect(objectDatabase.prepare("SELECT count(*) AS count FROM webhook_receipts").get())
+      .toEqual({ count: 1 });
   });
 
   it("claims the receipt through the typed object RPC without a credential crossing in plaintext", async () => {
@@ -234,10 +250,7 @@ describe("Granola workspace connection", () => {
     // API key and signing secret never ride the RPC boundary in either
     // direction — only the encrypted envelope and the delivery identity do.
     const exchanges: string[] = [];
-    const rpcs = workspaceObjectRpcs(workspace.instance, [
-      "executeRuntimeSql",
-      "claimWebhookReceipt",
-    ]);
+    const rpcs = workspaceObjectRpcs(workspace.instance, CONNECTION_WORKSPACE_OBJECT_METHODS);
     const stub = Object.fromEntries(Object.entries(rpcs).map(([name, method]) => [
       name,
       async (...args: unknown[]) => {
@@ -310,14 +323,16 @@ describe("Granola workspace connection", () => {
 
 describe("Granola personal automation catalog", () => {
   it("preserves the meeting-query deadline from live discovery", async () => {
-    const { database, env } = fixture();
+    const { database, objectDatabase, env } = fixture();
     const connectionId = "00000000-0000-4000-8000-000000000011";
     const encrypted = await encryptString(
       JSON.stringify({ accessToken: "personal-token" }),
       CREDENTIAL_KEY,
       connectionId,
     );
-    database.prepare(
+    // Seeded in both: the catalog read below is the unconverted regional one,
+    // and the credential door beside it is typed and reads the object.
+    for (const store of [objectDatabase, database]) store.prepare(
       `INSERT INTO connector_connections
        (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
         display_name, encrypted_credentials, credential_iv, credential_key_version,
@@ -381,6 +396,23 @@ function fixture() {
   const database = new DatabaseSync(":memory:");
   databases.push(database);
   database.exec(`
+    CREATE TABLE connector_ingress_routes (
+      connection_id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL,
+      connector_type TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      provider_account_id TEXT,
+      provider_user_id TEXT,
+      status TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    -- Still regional, and still needed: loadAutomationCreatorPluginCatalog
+    -- reads connector_connections off env.DB without scoping it through the
+    -- workspace runtime facade, so it never reaches the object. That read
+    -- belongs to the read-only-consumer part of this stack; this table goes
+    -- when it is typed, and until then a test driving that path has to seed
+    -- where it actually looks. Every converted path uses the object's copy.
     CREATE TABLE connector_connections (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -476,12 +508,24 @@ function fixture() {
     region: "global",
     role: "owner",
   };
+  // The object owns `connector_connections`; this suite's DDL for it was a
+  // transcription that had already lost the `STRICT` marker and the CHECKs.
+  const workspace = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: database,
+    register: (store) => { databases.push(store); },
+  });
   return {
     database,
+    objectDatabase: workspace.objectDatabase,
     payloadPut,
     queueSend,
     env: createTestEnv({
       DB: binding,
+      WORKSPACE_DOS: testWorkspaceObjectBinding(
+        workspace.instance,
+        CONNECTION_WORKSPACE_OBJECT_METHODS,
+      ),
       PAYLOADS: createCloudflareTestBinding<R2Bucket>({ put: payloadPut }),
       ACTIVITY_QUEUE: createCloudflareTestBinding<Queue>({ send: queueSend }),
       AVALON_REGION: "global",

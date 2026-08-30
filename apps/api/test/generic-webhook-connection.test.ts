@@ -5,6 +5,11 @@ import type { AuthContext } from "../src/env";
 import { decryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  CONNECTION_WORKSPACE_OBJECT_METHODS,
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const USER_ID = asUserId("00000000-0000-4000-8000-000000000001");
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-4000-8000-000000000002");
@@ -46,7 +51,7 @@ afterEach(() => {
 
 describe("generic webhook connection lifecycle", () => {
   it("replays idempotent creation and rotates the endpoint secret", async () => {
-    const { auth, database, env } = fixture();
+    const { auth, database, objectDatabase, env } = fixture();
     const service = new ConnectionService(env, auth);
     const input = {
       displayName: "Support intake",
@@ -60,7 +65,7 @@ describe("generic webhook connection lifecycle", () => {
     expect(replay).toEqual(first);
     await expect(service.createWebhook({ ...input, displayName: "Different intake" }))
       .rejects.toMatchObject({ status: 409, code: "idempotency_key_reused" });
-    expect(database.prepare("SELECT count(*) AS count FROM connector_connections").get())
+    expect(objectDatabase.prepare("SELECT count(*) AS count FROM connector_connections").get())
       .toEqual({ count: 1 });
     expect(database.prepare("SELECT count(*) AS count FROM audit_events WHERE action = 'connector.authorized'").get())
       .toEqual({ count: 1 });
@@ -69,7 +74,7 @@ describe("generic webhook connection lifecycle", () => {
     const rotated = await service.rotateWebhookSecret(connectionId);
     expect(rotated.endpoint).toBe(first.endpoint);
     expect(rotated.signingSecret).not.toBe(first.signingSecret);
-    const row = database.prepare(
+    const row = objectDatabase.prepare(
       "SELECT encrypted_credentials, credential_iv FROM connector_connections WHERE id = ?",
     ).get(connectionId) as { encrypted_credentials: string; credential_iv: string };
     await expect(decryptString(
@@ -86,35 +91,19 @@ function fixture() {
   databases.push(database);
   database.exec(`
     CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL);
-    CREATE TABLE connector_connections (
-      id TEXT PRIMARY KEY,
+    -- Written after a connection commits, now that the object is bound: the
+    -- route is the recoverable control-plane edge and lives regionally.
+    CREATE TABLE connector_ingress_routes (
+      connection_id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
+      region TEXT NOT NULL,
       connector_type TEXT NOT NULL,
       scope TEXT NOT NULL,
-      owner_user_id TEXT,
       provider_account_id TEXT,
-      display_name TEXT NOT NULL,
-      encrypted_credentials TEXT,
-      credential_iv TEXT,
-      credential_key_version INTEGER,
-      granted_scopes_json TEXT NOT NULL,
-      model_plugin_id TEXT NOT NULL,
+      provider_user_id TEXT,
       status TEXT NOT NULL,
-      cursor_json TEXT NOT NULL,
-      config_json TEXT NOT NULL,
-      last_sync_at TEXT,
-      created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE UNIQUE INDEX active_model_plugin
-      ON connector_connections(workspace_id, model_plugin_id) WHERE status != 'disabled';
-    CREATE UNIQUE INDEX generic_webhook_creation_idempotency_idx
-      ON connector_connections(
-        workspace_id, scope, COALESCE(owner_user_id, ''),
-        json_extract(config_json, '$.creationIdempotencyKey')
-      )
-      WHERE connector_type = 'generic_webhook' AND status != 'disabled'
-        AND json_extract(config_json, '$.creationIdempotencyKey') IS NOT NULL;
     CREATE TABLE audit_events (
       id TEXT PRIMARY KEY,
       workspace_id TEXT NOT NULL,
@@ -138,11 +127,25 @@ function fixture() {
     region: "global",
     role: "owner",
   };
+  // The connection table's DDL came from this fixture before, hand-copied
+  // including the creation-idempotency index the replay test depends on. It
+  // comes from the object's own migration ledger now, so the index the test
+  // relies on is the one production has rather than a transcription of it.
+  const workspace = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: database,
+    register: (store) => { databases.push(store); },
+  });
   return {
     database,
+    objectDatabase: workspace.objectDatabase,
     auth,
     env: createTestEnv({
       DB: binding,
+      WORKSPACE_DOS: testWorkspaceObjectBinding(
+        workspace.instance,
+        CONNECTION_WORKSPACE_OBJECT_METHODS,
+      ),
       AVALON_REGION: "global",
       PUBLIC_API_BASE_URL: "https://api.example.test",
       CONNECTOR_CREDENTIALS_KEY: CREDENTIAL_KEY,

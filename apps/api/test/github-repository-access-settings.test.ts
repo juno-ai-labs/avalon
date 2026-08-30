@@ -16,6 +16,11 @@ import {
   workstreamObjectRun,
 } from "./helpers/durable-authority";
 import { legacyProductSqliteDatabase, sqliteD1 } from "./helpers/sqlite-d1";
+import {
+  CONNECTION_WORKSPACE_OBJECT_METHODS,
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 
 const CONNECTION_ID = "00000000-0000-7000-8000-000000000041";
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-000000000042");
@@ -122,9 +127,7 @@ describe("GitHub repository access settings", () => {
         { repositoryFullName: "with-avalon/docs", remoteAccess: null },
       ],
     });
-    const config = JSON.parse(String(database.prepare(
-      "SELECT config_json FROM connector_connections WHERE id = ?",
-    ).get(CONNECTION_ID)?.config_json)) as Record<string, unknown>;
+    const config = JSON.parse(String(storedConnection(database).config_json)) as Record<string, unknown>;
     expect(config).toMatchObject({
       installationId: "9001",
       githubRepositoryAccess: {
@@ -185,7 +188,7 @@ describe("GitHub repository access settings", () => {
     const database = migratedDatabase();
     await seedConnection(database);
     vi.mocked(fetch).mockImplementationOnce(async () => {
-      database.prepare(
+      workspaceObjectFor(database).objectDatabase.prepare(
         "UPDATE connector_connections SET config_json = json_set(config_json, '$.pollCursor', 'new-cursor') WHERE id = ?",
       ).run(CONNECTION_ID);
       return jsonResponse({ total_count: 0, repositories: [] });
@@ -199,9 +202,7 @@ describe("GitHub repository access settings", () => {
       repositories: [],
     });
 
-    expect(JSON.parse(String(database.prepare(
-      "SELECT config_json FROM connector_connections WHERE id = ?",
-    ).get(CONNECTION_ID)?.config_json))).toMatchObject({
+    expect(JSON.parse(String(storedConnection(database).config_json))).toMatchObject({
       installationId: "9001",
       pollCursor: "new-cursor",
       githubRepositoryAccess: { revision: 1, defaultAccess: "read_only" },
@@ -226,7 +227,7 @@ describe("GitHub repository access settings", () => {
     // SubstreamAgent: the object row is immutable provenance and every
     // bootstrap rechecks the connector, which is now disabled and stripped of
     // credentials — the state that makes the selection unusable.
-    expect(database.prepare(
+    expect(workspaceObjectFor(database).objectDatabase.prepare(
       "SELECT status, encrypted_credentials FROM connector_connections WHERE id = ?",
     ).get(CONNECTION_ID)).toEqual({ status: "disabled", encrypted_credentials: null });
     expect(workstreamObjectGet(
@@ -258,7 +259,7 @@ describe("GitHub repository access settings", () => {
     async (scope) => {
       const database = migratedDatabase();
       await seedConnection(database);
-      database.prepare(
+      workspaceObjectFor(database).objectDatabase.prepare(
         "UPDATE connector_connections SET scope = ?, owner_user_id = ?, status = 'disabled' WHERE id = ?",
       ).run(scope, scope === "personal" ? USER_ID : null, CONNECTION_ID);
       const service = new ConnectionService(environment(database), authorization());
@@ -305,7 +306,7 @@ async function seedConnection(database: DatabaseSync): Promise<void> {
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('${WORKSPACE_ID}', '${USER_ID}', 'owner', 'active', '2026-01-01');
   `);
-  database.prepare(
+  workspaceObjectFor(database).objectDatabase.prepare(
     `INSERT INTO connector_connections
      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
       display_name, encrypted_credentials, credential_iv, credential_key_version,
@@ -318,9 +319,42 @@ async function seedConnection(database: DatabaseSync): Promise<void> {
   ).run(CONNECTION_ID, WORKSPACE_ID, encrypted.ciphertext, encrypted.iv);
 }
 
+/** The stored connection, for a test asserting on what a write left behind. */
+function storedConnection(database: DatabaseSync): Record<string, unknown> {
+  return workspaceObjectFor(database).objectDatabase.prepare(
+    `SELECT * FROM connector_connections WHERE id = ?`,
+  ).get(CONNECTION_ID) as Record<string, unknown>;
+}
+
+/**
+ * The workspace object this suite's connection lives in.
+ *
+ * `connector_connections` is WorkspaceDO's table, so the repository-access
+ * compare-and-set writes there. Seeding the row into the regional fixture and
+ * reading it back from the object would be asserting on a database the write
+ * never reaches — it passes only until something reads the row.
+ */
+const workspaceObjects = new Map<DatabaseSync, ReturnType<typeof createTestWorkspaceDO>>();
+
+function workspaceObjectFor(database: DatabaseSync) {
+  const existing = workspaceObjects.get(database);
+  if (existing) return existing;
+  const created = createTestWorkspaceDO({
+    workspaceId: WORKSPACE_ID,
+    regionalDatabase: database,
+    register: (store) => { databases.push(store); },
+  });
+  workspaceObjects.set(database, created);
+  return created;
+}
+
 function environment(database: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(database),
+    WORKSPACE_DOS: testWorkspaceObjectBinding(
+      workspaceObjectFor(database).instance,
+      CONNECTION_WORKSPACE_OBJECT_METHODS,
+    ),
     AVALON_REGION: "global",
     CONNECTOR_CREDENTIALS_KEY: CREDENTIALS_KEY,
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",

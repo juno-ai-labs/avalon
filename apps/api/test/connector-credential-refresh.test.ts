@@ -1,5 +1,5 @@
 import type { ConnectorConnectionContext } from "@rally/connectors";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { decryptString, encryptString } from "../src/lib/crypto";
@@ -64,7 +64,8 @@ function connection(credentials: Record<string, unknown>): ConnectorConnectionCo
     grantedScopes: [],
     credentials: { ...credentials },
     cursor: {},
-  } as ConnectorConnectionContext;
+    config: {},
+  };
 }
 
 describe("connector credential refresh serialization", () => {

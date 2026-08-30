@@ -12,6 +12,7 @@ import {
 } from "@rally/connectors";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Env } from "../src/env";
 import { decryptString, encryptString } from "../src/lib/crypto";
 import {
   seedWorkstreamObjectRoot,
@@ -26,7 +27,11 @@ import type {
   PluginAuthorizationConnection,
   PluginAuthorizationInput,
 } from "../src/services/integrations";
-import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  createCloudflareTestBinding,
+  createTestD1Database,
+  createTestEnv,
+} from "./helpers/cloudflare-test";
 import {
   connectionObjectFixture,
   storedConnectionEnvelope,
@@ -209,12 +214,11 @@ describe("the credential door", () => {
       expiresAt: "2099-01-01T00:00:00.000Z",
     });
 
+    // A credential with time left must not be looked up at all, so the object
+    // is one that throws if it is reached. It was an unusable `D1Database`
+    // before; the storage the door would touch is the object's now.
     await withAuthorizedConnection(
-      {
-        DB: unusableDatabase(),
-        CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
-        CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
-      },
+      unreachableObjectEnv(),
       {
         connection,
         adapter: { refreshCredentials } satisfies CredentialRefreshAdapter,
@@ -1119,84 +1123,25 @@ function connectionContext(
   };
 }
 
-function credentialDatabase(encrypted: { ciphertext: string; iv: string }) {
-  const row = { ...encrypted, leaseId: null as string | null };
-  const d1 = createTestD1Database({
-    prepare(sql: string) {
-      return {
-        bind(...values: unknown[]) {
-          return {
-            async first() {
-              if (sql.includes("credential_refresh_lease_id = ?")) {
-                row.leaseId = String(values[0]);
-                return {
-                  encrypted_credentials: row.ciphertext,
-                  credential_iv: row.iv,
-                  credential_key_version: 1,
-                };
-              }
-              if (sql.includes("RETURNING id")) return { id: "connection" };
-              return null;
-            },
-            async run() { return { success: true, meta: { changes: 1 } }; },
-          };
-        },
-      };
-    },
-  });
-  return { d1 };
-}
 
 /**
  * Models the one part of D1 the rotation coordinator depends on: a lease only
  * one caller can hold, and a credential blob that changes when the holder
  * rotates it. Everything else is a no-op.
  */
-function leasedCredentialDatabase(
-  encrypted: { ciphertext: string; iv: string },
-  secret: string,
-): D1Database {
-  const row = { ...encrypted, leaseId: null as string | null };
-  void secret;
-  return createTestD1Database({
-    prepare(sql: string) {
-      return {
-        bind(...values: unknown[]) {
-          return {
-            async first() {
-              if (sql.includes("credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?")) {
-                if (row.leaseId) return null;
-                row.leaseId = String(values[0]);
-                return {
-                  encrypted_credentials: row.ciphertext,
-                  credential_iv: row.iv,
-                  credential_key_version: 1,
-                };
-              }
-              if (sql.includes("SELECT encrypted_credentials")) {
-                return {
-                  encrypted_credentials: row.ciphertext,
-                  credential_iv: row.iv,
-                  credential_key_version: 1,
-                };
-              }
-              if (sql.includes("RETURNING id")) {
-                if (row.leaseId !== String(values[6])) return null;
-                row.ciphertext = String(values[0]);
-                row.iv = String(values[1]);
-                row.leaseId = null;
-                return { id: "connection" };
-              }
-              return null;
-            },
-            async run() {
-              if (sql.includes("credential_refresh_lease_id = NULL")) row.leaseId = null;
-              return { success: true, meta: { changes: 1 } };
-            },
-          };
-        },
-      };
-    },
+
+function unreachableObjectEnv(): Env {
+  const refuse = () => { throw new Error("the workspace object must not be reached"); };
+  const binding = createCloudflareTestBinding<Env["WORKSPACE_DOS"]>({
+    idFromName: refuse,
+    get: refuse,
+  });
+  return createTestEnv({
+    DB: unusableDatabase(),
+    WORKSPACE_DOS: binding,
+    AVALON_REGION: "global",
+    CONNECTOR_CREDENTIALS_KEY: "door-credential-key",
+    CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
   });
 }
 
@@ -1216,15 +1161,3 @@ const GITHUB_TEST_PRIVATE_KEY = [
 ].join("\n");
 
 /** `leasedCredentialDatabase`, plus a record of the SQL it was asked to run. */
-function recordingLeasedDatabase(
-  encrypted: { ciphertext: string; iv: string },
-  statements: string[],
-): D1Database {
-  const inner = leasedCredentialDatabase(encrypted, "door-credential-key");
-  return createTestD1Database({
-    prepare(sql: string) {
-      statements.push(sql);
-      return inner.prepare(sql);
-    },
-  });
-}

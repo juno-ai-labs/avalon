@@ -3100,7 +3100,10 @@ function verifiedIdentityConfig(
 }
 
 function reconcileGoogleAccount(
-  existing: StoredConnection | null,
+  // Only the account identity is read, so that is what it asks for. Taking a
+  // whole `StoredConnection` made every caller — the test above all — build a
+  // twenty-two column row to answer a question about one of them.
+  existing: Pick<StoredConnection, "provider_account_id"> | null,
   existingCredentials: Record<string, unknown>,
   incomingCredentials: Record<string, unknown>,
 ): {

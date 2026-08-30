@@ -30,7 +30,12 @@ import {
 import { __resourceServiceTesting } from "../src/services/resource-service";
 import { __workstreamServiceTesting } from "../src/services/workstream-service";
 import { __originResourceTesting } from "../src/services/workstream-origin-resource";
-import { createTestD1Database, createTestEnv } from "./helpers/cloudflare-test";
+import { createTestEnv } from "./helpers/cloudflare-test";
+import {
+  connectionObjectFixture,
+  storedConnectionEnvelope,
+  storedConnectionStatus,
+} from "./helpers/connection-object";
 
 describe("API security utilities", () => {
   it("round-trips authenticated encrypted values without exposing plaintext", async () => {
@@ -361,51 +366,30 @@ describe("API security utilities", () => {
   });
 
   it("persists credentials mutated by a reactive connector refresh with connection-bound encryption", async () => {
-    const updates: Array<{ sql: string; values: unknown[] }> = [];
     const encryptionKey = randomToken(32);
-    // A mid-call rejection rotates under the credential-refresh lease, so this
-    // stub answers the lease claim and the write-back the coordinator performs.
-    const database = createTestD1Database({
-      prepare(sql: string) {
-        const update = { sql, values: [] as unknown[] };
-        return {
-          bind(...values: unknown[]) {
-            update.values = values;
-            return {
-              async first() {
-                if (sql.includes("credential_refresh_lease_id = ?, credential_refresh_lease_expires_at = ?")) {
-                  const encrypted = await encryptString(
-                    JSON.stringify({
-                      accessToken: "expired-access-token",
-                      refreshToken: "offline-refresh-token",
-                    }),
-                    encryptionKey,
-                    String(values[2]),
-                  );
-                  return {
-                    encrypted_credentials: encrypted.ciphertext,
-                    credential_iv: encrypted.iv,
-                    credential_key_version: 7,
-                  };
-                }
-                if (sql.includes("RETURNING id")) {
-                  updates.push(update);
-                  return { id: "connection" };
-                }
-                return null;
-              },
-              async run() {
-                if (sql.includes("encrypted_credentials = ?")) updates.push(update);
-                return { success: true, meta: { changes: 1 } };
-              },
-            };
-          },
-        };
-      },
-    });
     const connection = connectorContext({
       accessToken: "expired-access-token",
       refreshToken: "offline-refresh-token",
+    });
+    // A real object rather than a stub answering the lease claim and the
+    // write-back by substring. The rotation happens under the lease, and the
+    // lease is the object's; a stub of it grades its own answer.
+    const seeded = await encryptString(
+      JSON.stringify({
+        accessToken: "expired-access-token",
+        refreshToken: "offline-refresh-token",
+      }),
+      encryptionKey,
+      connection.id,
+    );
+    const { env: doorEnv, objectDatabase } = connectionObjectFixture({
+      workspaceId: connection.workspaceId,
+      connectionId: connection.id,
+      credentials: { ciphertext: seeded.ciphertext, iv: seeded.iv, keyVersion: 7 },
+      env: {
+        CONNECTOR_CREDENTIALS_KEY: encryptionKey,
+        CONNECTOR_CREDENTIALS_KEY_VERSION: "7",
+      },
     });
     const requestedTokens: string[] = [];
     const adapter = createGoogleConnector({
@@ -433,11 +417,7 @@ describe("API security utilities", () => {
     });
 
     await expect(withAuthorizedConnection(
-      {
-        DB: database,
-        CONNECTOR_CREDENTIALS_KEY: encryptionKey,
-        CONNECTOR_CREDENTIALS_KEY_VERSION: "7",
-      },
+      doorEnv,
       {
         connection,
         adapter: adapter as ResolvedConnectorAdapter,
@@ -458,49 +438,38 @@ describe("API security utilities", () => {
       "Bearer expired-access-token",
       "Bearer rotated-access-token",
     ]);
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.sql).toContain("WHERE id = ? AND workspace_id = ?");
-    const [ciphertext, iv, keyVersion, , persistedConnectionId, persistedWorkspaceId] = updates[0]!.values;
-    expect(keyVersion).toBe(7);
-    expect(persistedConnectionId).toBe(connection.id);
-    expect(persistedWorkspaceId).toBe(connection.workspaceId);
-    expect(String(ciphertext)).not.toContain("rotated-access-token");
+    // The stored row, not the bindings of a recorded statement. The identity
+    // half of the old assertion — that the write named this connection and this
+    // workspace — is now structural: the object it reached holds one workspace,
+    // and the method fences on both.
+    const stored = storedConnectionEnvelope(objectDatabase, connection.id);
+    expect(stored.credential_key_version).toBe(7);
+    expect(String(stored.encrypted_credentials)).not.toContain("rotated-access-token");
     await expect(decryptString(
-      String(ciphertext),
-      String(iv),
+      String(stored.encrypted_credentials),
+      String(stored.credential_iv),
       encryptionKey,
       connection.id,
     )).resolves.toContain("rotated-access-token");
   });
 
   it("marks revoked connector grants for reconnect and stores only a sanitized reason", async () => {
-    const updates: Array<{ sql: string; values: unknown[] }> = [];
-    const database = createTestD1Database({
-      prepare(sql: string) {
-        const update = { sql, values: [] as unknown[] };
-        updates.push(update);
-        return {
-          bind(...values: unknown[]) {
-            update.values = values;
-            return this;
-          },
-          async run() {
-            return { success: true, meta: { changes: 1 } };
-          },
-        };
-      },
-    });
     const connection = connectorContext({
       accessToken: "expired-access-token",
       refreshToken: "must-never-be-persisted-in-an-error",
     });
-
-    await expect(withAuthorizedConnection(
-      {
-        DB: database,
+    const { env: markEnv, objectDatabase: marked } = connectionObjectFixture({
+      workspaceId: connection.workspaceId,
+      connectionId: connection.id,
+      credentials: null,
+      env: {
         CONNECTOR_CREDENTIALS_KEY: randomToken(32),
         CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
       },
+    });
+
+    await expect(withAuthorizedConnection(
+      markEnv,
       {
         connection,
         adapter: {} as ResolvedConnectorAdapter,
@@ -518,13 +487,14 @@ describe("API security utilities", () => {
       details: { reconnectRequired: true, reason: "invalid_grant" },
     });
 
-    expect(updates).toHaveLength(1);
-    expect(updates[0]!.sql).toContain("status = 'needs_reconnect'");
-    expect(updates[0]!.sql).toContain("WHERE id = ? AND workspace_id = ?");
-    const serializedError = String(updates[0]!.values[0]);
+    // The stored diagnosis, not the binding a recorder captured. The point of
+    // the test is what a person and a log can see afterwards, and that is the
+    // row: the reason is there, the refresh token is not.
+    const stored = storedConnectionStatus(marked, connection.id);
+    expect(stored.status).toBe("needs_reconnect");
+    const serializedError = String(stored.error_json);
     expect(serializedError).toContain("invalid_grant");
     expect(serializedError).not.toContain("must-never-be-persisted-in-an-error");
-    expect(updates[0]!.values.slice(-2)).toEqual([connection.id, connection.workspaceId]);
   });
 });
 

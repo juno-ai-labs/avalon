@@ -7,6 +7,11 @@ import type { AuthContext, Env } from "../src/env";
 import { decryptString, encryptString } from "../src/lib/crypto";
 import { ConnectionService } from "../src/services/connection-service";
 import { createTestD1Database, createTestD1PreparedStatement, createTestD1Result, createTestD1Results, createTestEnv } from "./helpers/cloudflare-test";
+import {
+  CONNECTION_WORKSPACE_OBJECT_METHODS,
+  createTestWorkspaceDO,
+  testWorkspaceObjectBinding,
+} from "./helpers/workspace-object-rpcs";
 import { legacyProductSqliteDatabase } from "./helpers/sqlite-d1";
 
 const connectionId = "00000000-0000-7000-8000-000000000031";
@@ -49,9 +54,7 @@ describe("Slack connection health", () => {
       .resolves.toEqual({ ok: true, message: "Slack authorization is healthy" });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
-    const row = database.prepare(
-      "SELECT encrypted_credentials, credential_iv, status, error_json FROM connector_connections WHERE id = ?",
-    ).get(connectionId) as Record<string, unknown>;
+    const row = storedConnection(database);
     expect(row).toMatchObject({ status: "healthy", error_json: null });
     const credentials = JSON.parse(await decryptString(
       String(row.encrypted_credentials),
@@ -81,9 +84,7 @@ describe("Slack connection health", () => {
         reconnectRequired: true,
       });
 
-    const row = database.prepare(
-      "SELECT status, error_json FROM connector_connections WHERE id = ?",
-    ).get(connectionId) as { status: string; error_json: string };
+    const row = storedConnection(database) as { status: string; error_json: string };
     expect(row.status).toBe("needs_reconnect");
     expect(JSON.parse(row.error_json)).toMatchObject({ reconnectRequired: true });
   });
@@ -114,7 +115,7 @@ async function seedSlackConnection(database: DatabaseSync, refreshToken: string)
     INSERT INTO workspace_members (workspace_id, user_id, role, status, joined_at)
     VALUES ('${workspaceId}', '${userId}', 'owner', 'active', '2026-01-01');
   `);
-  database.prepare(
+  workspaceObjectFor(database).objectDatabase.prepare(
     `INSERT INTO connector_connections
      (id, workspace_id, connector_type, scope, owner_user_id, provider_account_id,
       display_name, encrypted_credentials, credential_iv, credential_key_version,
@@ -126,9 +127,41 @@ async function seedSlackConnection(database: DatabaseSync, refreshToken: string)
   ).run(connectionId, workspaceId, encrypted.ciphertext, encrypted.iv);
 }
 
+/**
+ * The workspace object holding this suite's connection.
+ *
+ * `connector_connections` is WorkspaceDO's, so the refresh lease, the
+ * credential settle, and the reconnect marker all land there. Seeding the row
+ * regionally and reading it back would assert on a database the writes never
+ * reach.
+ */
+const workspaceObjects = new Map<DatabaseSync, ReturnType<typeof createTestWorkspaceDO>>();
+
+function workspaceObjectFor(database: DatabaseSync) {
+  const existing = workspaceObjects.get(database);
+  if (existing) return existing;
+  const created = createTestWorkspaceDO({
+    workspaceId,
+    regionalDatabase: database,
+    register: (store) => { databases.push(store); },
+  });
+  workspaceObjects.set(database, created);
+  return created;
+}
+
+function storedConnection(database: DatabaseSync): Record<string, unknown> {
+  return workspaceObjectFor(database).objectDatabase.prepare(
+    `SELECT * FROM connector_connections WHERE id = ?`,
+  ).get(connectionId) as Record<string, unknown>;
+}
+
 function environment(database: DatabaseSync): Env {
   return createTestEnv({
     DB: sqliteD1(database),
+    WORKSPACE_DOS: testWorkspaceObjectBinding(
+      workspaceObjectFor(database).instance,
+      CONNECTION_WORKSPACE_OBJECT_METHODS,
+    ),
     AVALON_REGION: "global",
     CONNECTOR_CREDENTIALS_KEY: credentialsKey,
     CONNECTOR_CREDENTIALS_KEY_VERSION: "1",
