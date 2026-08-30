@@ -48,6 +48,18 @@ const CREATE_WITHOUT_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000
 const CREATE_WITH_NOTIFY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b2");
 const CREATE_REPLAY_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b3");
 const CREATE_NAMING_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b4");
+/**
+ * Mention-confirmation and elicitation cases wait on promotion or a quiet loop.
+ * They must not share `WORKSTREAM_ID` with a neighbour's `openWorkstream`: an
+ * incomplete `reset()` leaves the object executing, and `waitForCanonicalTurn`
+ * / `waitForQuietLoop` then time out — the macOS release `pnpm test` failure
+ * on 33290369991. Do not extend this to every test in the file; a live
+ * draining object per case is what timed out CI shard 1/2 on #428's first cut.
+ */
+const WORKSPACE_VISIBLE_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b5");
+const CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b6");
+const REJECTED_CONFIRMED_MENTION_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b7");
+const ELICITATION_ANSWER_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006b8");
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
@@ -83,46 +95,50 @@ const AUTH: AuthContext = {
 
 beforeEach(async () => {
   await reset();
+  // Idempotent: `reset()` is supposed to drop D1's schema, but an incomplete
+  // wipe — a sibling file's interleave, or a hung poll that broke the input
+  // gate — leaves these tables standing. Plain `CREATE TABLE` then fails as
+  // `already exists` and hides the original timeout (33290369991).
   await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE workstream_authority_control (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workstream_authority_control (
       id INTEGER PRIMARY KEY, phase TEXT NOT NULL, generation INTEGER NOT NULL,
       required_serving_contract_version INTEGER NOT NULL,
       serving_contract_version INTEGER NOT NULL
     )`),
-    env.DB.prepare(`INSERT INTO workstream_authority_control
+    env.DB.prepare(`INSERT OR REPLACE INTO workstream_authority_control
       (id, phase, generation, required_serving_contract_version, serving_contract_version)
       VALUES (1, 'durable_object_open', 1, 1, 1)`),
-    env.DB.prepare(`CREATE TABLE workspaces (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspaces (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, region TEXT NOT NULL, analytics_workspace_id TEXT
     )`),
-    env.DB.prepare(`INSERT INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE workspace_members (
+    env.DB.prepare(`INSERT OR REPLACE INTO workspaces(id, name, region) VALUES (?, 'Notification test', 'global')`).bind(WORKSPACE_ID),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS workspace_members (
       workspace_id TEXT NOT NULL, user_id TEXT NOT NULL, status TEXT NOT NULL,
       role TEXT NOT NULL, last_seen_at TEXT, PRIMARY KEY (workspace_id, user_id)
     )`),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'owner', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, CREATOR_ID),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, INVITEE_ID),
-    env.DB.prepare(`CREATE TABLE sessions (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
       region TEXT NOT NULL, revoked_at TEXT, expires_at TEXT NOT NULL
     )`),
-    env.DB.prepare(`INSERT INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO sessions (id, user_id, workspace_id, region, revoked_at, expires_at)
       VALUES (?, ?, ?, 'global', NULL, '2099-01-01T00:00:00.000Z')`)
       .bind(SESSION_ID, CREATOR_ID, WORKSPACE_ID),
-    env.DB.prepare(`CREATE TABLE users (
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY, email TEXT, name TEXT, avatar_url TEXT, timezone TEXT, created_at TEXT
     )`),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'creator@example.com', 'Creator', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(CREATOR_ID),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'invitee@example.com', 'Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(INVITEE_ID),
-    env.DB.prepare(`INSERT INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO workspace_members(workspace_id, user_id, status, role, last_seen_at)
       VALUES (?, ?, 'active', 'member', '2026-08-22T20:00:00.000Z')`).bind(WORKSPACE_ID, SECOND_INVITEE_ID),
-    env.DB.prepare(`INSERT INTO users(id, email, name, avatar_url, timezone, created_at)
+    env.DB.prepare(`INSERT OR REPLACE INTO users(id, email, name, avatar_url, timezone, created_at)
       VALUES (?, 'second@example.com', 'Second Invitee', NULL, 'UTC', '2026-01-01T00:00:00.000Z')`)
       .bind(SECOND_INVITEE_ID),
   ]);
@@ -778,8 +794,8 @@ describe("naming somebody when the work stream is created", () => {
 
 describe("confirming a nonparticipant mention on an existing work stream", () => {
   it("persists a workspace-visible mention without seating or confirming the recipient", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub, { scope: "workspace" });
+    const stub = agentStub(WORKSPACE_VISIBLE_MENTION_ID);
+    await openWorkstream(stub, { workstreamId: WORKSPACE_VISIBLE_MENTION_ID, scope: "workspace" });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -810,7 +826,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, WORKSPACE_VISIBLE_MENTION_ID);
     expect(envelopes.filter((envelope) => (
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
@@ -818,8 +834,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
   });
 
   it("seats the accepted target and emits only the specific mention notification", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub);
+    const stub = agentStub(CONFIRMED_MENTION_ID);
+    await openWorkstream(stub, { workstreamId: CONFIRMED_MENTION_ID });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -849,7 +865,7 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
         (sent.body.turn as { turnId: string }).turnId,
       ).one().target_user_id).toBe(INVITEE_ID);
     });
-    const envelopes = await deliveredEffects(stub);
+    const envelopes = await deliveredEffects(stub, CONFIRMED_MENTION_ID);
     expect(envelopes.filter((envelope) => (
       envelope.effect.kind === "mention_notification"
       && envelope.effect.recipientUserId === INVITEE_ID
@@ -861,8 +877,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
   });
 
   it("does not let confirmation seat the raw target of a rejected mention", async () => {
-    const stub = agentStub();
-    await openWorkstream(stub);
+    const stub = agentStub(REJECTED_CONFIRMED_MENTION_ID);
+    await openWorkstream(stub, { workstreamId: REJECTED_CONFIRMED_MENTION_ID });
     const sent = await product(stub, {
       operation: "create_message",
       auth: AUTH,
@@ -898,8 +914,8 @@ describe("confirming a nonparticipant mention on an existing work stream", () =>
 
 describe("answering an elicitation in the ordered transcript", () => {
   it("keeps the attributed response pending until the loop can promote it", async () => {
-    const stub = agentStub();
-    const opened = await openWorkstream(stub);
+    const stub = agentStub(ELICITATION_ANSWER_ID);
+    const opened = await openWorkstream(stub, { workstreamId: ELICITATION_ANSWER_ID });
     const runId = String(opened.body.harnessRunId);
     // Settle the opening run before writing the elicitation. The activation
     // request below exists only for a loop at rest with nothing left to run,
@@ -914,7 +930,7 @@ describe("answering an elicitation in the ordered transcript", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         workspaceId: WORKSPACE_ID,
-        workstreamId: WORKSTREAM_ID,
+        workstreamId: ELICITATION_ANSWER_ID,
         operation: "openElicitation",
         args: [{
           elicitationId,
@@ -931,7 +947,7 @@ describe("answering an elicitation in the ordered transcript", () => {
             kind: "elicitation",
             elicitation: {
               id: elicitationId,
-              workstreamId: WORKSTREAM_ID,
+              workstreamId: ELICITATION_ANSWER_ID,
               harnessRunId: runId,
               prompt: "Which environment?",
               responseType: "text",
