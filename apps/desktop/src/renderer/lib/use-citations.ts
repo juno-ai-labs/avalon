@@ -1,8 +1,8 @@
 import type { CitationTarget } from '@rally/contracts/citations';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../components/inspector-rail';
 import type { CitationContext, CitationResource } from '../components/markdown-citations';
 import { ApiError } from './api';
+import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './resource-preview';
 import { desktopBridge } from './platform';
 import type { WorkstreamResource } from './types';
 import { useUiStore } from './ui-store';

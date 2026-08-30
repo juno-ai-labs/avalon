@@ -98,6 +98,20 @@ describe('resource citations', () => {
     expect(document.querySelector('.citation-card')).toBeNull();
   });
 
+  it('stops a run at a neighbour the matrix draws as something else', () => {
+    render(
+      <MarkdownBody citations={context()}>
+        {'![The deck](resource://board-deck)\n\n![A chart](https://example.com/c.png)\n\n![The deck again](resource://board-deck)'}
+      </MarkdownBody>,
+    );
+
+    // A real image between two embeds is not part of the run: grouping across
+    // it would put an `img` inside a row of cards and reorder the message.
+    expect(document.querySelector('.citation-card-row')).toBeNull();
+    expect(document.querySelectorAll('.citation-card')).toHaveLength(2);
+    expect(screen.getByRole('img')).toHaveAttribute('src', 'https://example.com/c.png');
+  });
+
   it('reads a resource kind as words rather than as its system identifier', () => {
     render(
       <MarkdownBody citations={context({ resolve: () => ({ ...DECK, resourceType: 'github_pull_request' }) })}>
@@ -172,6 +186,10 @@ describe('resource citations', () => {
     const excerpt = document.querySelector('.citation-card-preview');
     expect(excerpt).not.toBeNull();
     expect(excerpt).toHaveTextContent('Up 14% on the quarter.');
+    // The heading's words survive; its hashes do not. At label size they are
+    // two characters of noise spending one of four clamped lines.
+    expect(excerpt).toHaveTextContent('Revenue');
+    expect(excerpt!.textContent).not.toContain('#');
     expect(document.querySelector('.citation-card-preview-skeleton')).toBeNull();
     // A preview is presentation: the button still announces the title alone.
     expect(excerpt).toHaveAttribute('aria-hidden', 'true');
