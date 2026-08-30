@@ -121,6 +121,20 @@ export const SLACK_WORKSPACE_OBJECT_METHODS = [
   "clearSlackPendingPrompt",
   "claimSlackThread",
   "releaseSlackThreadClaim",
+  // The agent-session lifecycle, converted alongside the ingress spine.
+  "slackSessionById",
+  "slackSessionByThread",
+  "slackSessionByWorkstream",
+  "slackSessionExists",
+  "createSlackSession",
+  "assignSlackSessions",
+  "setSlackSessionDeliveryKey",
+  "setSlackSessionStream",
+  "settleSlackSessionReaction",
+  "anchorSlackSessionReaction",
+  "slackAppContext",
+  "storeSlackAppContext",
+  "recordSlackFeedback",
 ] as const satisfies readonly (keyof WorkspaceDO)[];
 
 /**
