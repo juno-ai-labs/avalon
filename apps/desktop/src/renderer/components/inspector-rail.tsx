@@ -1,4 +1,6 @@
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
+  Archive,
   ArrowLeft,
   Check,
   ChevronRight,
@@ -6,16 +8,16 @@ import {
   Copy,
   ExternalLink,
   Eye,
+  History,
   LoaderCircle,
   Plus,
   RefreshCcw,
-  Trash2,
   UserPlus,
   X,
 } from 'lucide-react';
 import { classifyAttachmentKind } from '@rally/contracts';
-import { useEffect, useState } from 'react';
-import { formatDateTime, formatRelative } from '../lib/format';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { formatDateTime, formatRelative, formatSparseRelativeDate } from '../lib/format';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 import { desktopBridge } from '../lib/platform';
 import { reportTelemetryProductIntent } from '../lib/telemetry';
@@ -25,10 +27,10 @@ import type {
   WorkstreamDetail,
   WorkstreamResource,
 } from '../lib/types';
-import { type RailVariant, useUiStore } from '../lib/ui-store';
+import { type RailInspector, type RailVariant, useUiStore } from '../lib/ui-store';
 import { useDebugEnabled } from '../lib/use-debug-enabled';
 import { ResourceIcon } from './markdown-citations';
-import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, StatusDot } from './primitives';
+import { Avatar, Badge, Button, EmptyState, IconButton, InlineError, Modal, StatusDot } from './primitives';
 import { MarkdownBody } from './workstream-blocks';
 import { RailSurface } from './rail-surface';
 
@@ -46,9 +48,13 @@ interface InspectorRailProps {
   runs?: AutomationRunSummary[];
   onAddParticipant?: () => void;
   onAddResource?: () => void;
-  onDetachResource?: (resource: WorkstreamResource) => void;
+  onDetachResource?: (resource: WorkstreamResource) => void | Promise<void>;
   onToggleWatch?: (resource: WorkstreamResource, enabled: boolean) => void;
-  /** History for whichever resource the detail is showing, newest first. */
+  /**
+   * History for whichever resource the detail is showing, newest first.
+   * `undefined` is still loading; `[]` is genuinely none. Do not coerce a
+   * pending fetch to `[]`, or opening Versions says there is no history.
+   */
   resourceVersions?: ResourceVersion[];
   /** Set when the history could not be loaded, so absence is not read as none. */
   resourceVersionsError?: string | undefined;
@@ -374,21 +380,28 @@ function RunsContent({ runs = [], onOpenRun }: Pick<InspectorRailProps, 'runs' |
  * showing nothing for the most commonly attached document there is.
  *
  * What stays local is the one thing the rail decides for itself: an image is
- * not prose. The rail is 360 pixels wide and this is the readable half of a
- * detail card, not a lightbox.
+ * not prose. It still belongs in this host — as an `img` sized to the rail —
+ * because the detail *is* the document now, and leaving it on last-updated
+ * alone is an empty panel. The lightbox remains the full-size reader.
  */
 function readableAsText(resource: WorkstreamResource): boolean {
   if (!resource.contentAvailable) return false;
   return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) !== 'image';
 }
 
+function isImageResource(resource: WorkstreamResource): boolean {
+  if (!resource.contentAvailable) return false;
+  return classifyAttachmentKind({ fileName: resource.title, mimeType: resource.mimeType }) === 'image';
+}
+
 /**
  * What the resource says, under what the record says about it.
  *
- * The rail's detail was metadata only — type, direction, version, remove — and
- * a citation that opened onto it landed on a card describing a document without
- * showing any of it. This is the missing half, and it is the reason a citation
- * is worth clicking.
+ * The rail's detail used to be metadata only — type, direction, version, remove —
+ * and a citation that opened onto it landed on a card describing a document
+ * without showing any of it. The body is the reason a citation is worth
+ * clicking: last-updated and the rendered markdown share one scroll, with no
+ * inner box, so the panel reads as the document itself.
  *
  * It renders `verbatim`, which is the one thing here that is not a preference:
  * the model-text repair exists to fix what a *model* wrote on its way to a
@@ -399,32 +412,54 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
   loadResourceContent: NonNullable<InspectorRailProps['loadResourceContent']>;
   resource: WorkstreamResource;
 }): React.JSX.Element | null {
-  const [state, setState] = useState<{ text?: string; failed?: boolean }>({});
+  const [state, setState] = useState<{ text?: string; src?: string; failed?: boolean }>({});
+  const image = isImageResource(resource);
 
   useEffect(() => {
     const controller = new AbortController();
+    let objectUrl: string | undefined;
     setState({});
-    void readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_WAIT_MS)
-      .then((text) => {
-        if (!controller.signal.aborted) setState({ text });
-      })
-      .catch(() => {
-        // A resource whose content was never hydrated, whose object has since
-        // gone, or whose format the server will not convert is not an error the
-        // reader can act on — the metadata above is still true, and saying so
-        // beats an empty panel. A preview still being prepared is not one of
-        // these, and no longer arrives here until the retries are spent.
-        if (!controller.signal.aborted) setState({ failed: true });
-      });
-    return () => controller.abort();
+    const load = image
+      ? Promise.resolve(loadResourceContent(resource.id, controller.signal)).then((blob) => {
+          const url = URL.createObjectURL(blob);
+          if (controller.signal.aborted) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          objectUrl = url;
+          setState({ src: url });
+        })
+      : readResourcePreviewText(loadResourceContent, resource.id, controller.signal, MAX_RESOURCE_PREVIEW_WAIT_MS)
+        .then((text) => {
+          if (!controller.signal.aborted) setState({ text });
+        });
+    void load.catch(() => {
+      // A resource whose content was never hydrated, whose object has since
+      // gone, or whose format the server will not convert is not an error the
+      // reader can act on — last-updated above is still true, and saying so
+      // beats an empty panel. A preview still being prepared is not one of
+      // these, and no longer arrives here until the retries are spent.
+      if (!controller.signal.aborted) setState({ failed: true });
+    });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
     // `currentVersion` as well as the id: a watched source re-ingested in place
-    // keeps its id, and the metadata above this preview shows the new version
-    // number. Without it the panel put version 3's number over version 2's
-    // text, which is a citation substantiating a claim with the wrong revision.
-  }, [loadResourceContent, resource.currentVersion, resource.id]);
+    // keeps its id, and last-updated above this body shows the new revision.
+    // Without it the panel put a new timestamp over version 2's text, which is
+    // a citation substantiating a claim with the wrong revision.
+  }, [image, loadResourceContent, resource.currentVersion, resource.id]);
 
   if (state.failed) {
     return <p className="inspector-detail-preview-status">This preview is not available.</p>;
+  }
+  if (state.src) {
+    return (
+      <article className="inspector-detail-document">
+        <img alt={resource.title} className="inspector-detail-image" src={state.src} />
+      </article>
+    );
   }
   if (state.text === undefined) {
     return (
@@ -434,7 +469,7 @@ function ResourceContentPreview({ loadResourceContent, resource }: {
     );
   }
   return (
-    <article className="inspector-detail-preview">
+    <article className="inspector-detail-document">
       <MarkdownBody verbatim>{state.text}</MarkdownBody>
     </article>
   );
@@ -480,69 +515,100 @@ function versionIsOpenable(version: ResourceVersion): boolean {
   return kind === 'image' || kind === 'markdown' || kind === 'text';
 }
 
-function ResourceVersions({ resource, versions, error, onOpenResourceVersion, participants }: {
+function groupVersionsBySparseDate(
+  versions: ResourceVersion[],
+  now = new Date(),
+): Array<{ label: string; versions: ResourceVersion[] }> {
+  const groups: Array<{ label: string; versions: ResourceVersion[] }> = [];
+  for (const version of versions) {
+    const label = formatSparseRelativeDate(version.capturedAt, now);
+    const current = groups.at(-1);
+    if (current?.label === label) current.versions.push(version);
+    else groups.push({ label, versions: [version] });
+  }
+  return groups;
+}
+
+function ResourceVersionsMenu({
+  resource,
+  versions,
+  error,
+  onOpenResourceVersion,
+  participants,
+  returnFocus,
+}: {
   resource: WorkstreamResource;
-  versions: ResourceVersion[];
+  versions: ResourceVersion[] | undefined;
   error?: string | undefined;
   onOpenResourceVersion?: InspectorRailProps['onOpenResourceVersion'];
   participants: WorkstreamDetail['participants'];
-}): React.JSX.Element | null {
-  // One entry is not history — it is the resource, which the detail above
-  // already describes. The section appears the moment something changes, and
-  // whenever the history is owed but could not be read: a resource that never
-  // changed and a resource whose history failed to load are different answers,
-  // and collapsing them tells the reader the wrong one.
-  if (!error && versions.length < 2) return null;
+  returnFocus: RefObject<HTMLButtonElement | null>;
+}): React.JSX.Element {
+  const currentVersion = versions?.[0]?.version;
+
+  let body: React.ReactNode;
+  if (error) {
+    body = <DropdownMenu.Item className="menu-item" disabled>{error}</DropdownMenu.Item>;
+  } else if (versions === undefined) {
+    body = (
+      <DropdownMenu.Item className="menu-item" disabled>
+        <LoaderCircle aria-hidden="true" className="spin" size={14} /> Loading versions…
+      </DropdownMenu.Item>
+    );
+  } else if (versions.length === 0) {
+    body = <DropdownMenu.Item className="menu-item" disabled>No versions yet.</DropdownMenu.Item>;
+  } else {
+    body = groupVersionsBySparseDate(versions).map((group) => (
+      <DropdownMenu.Group key={`${group.label}-${group.versions[0]?.version}`}>
+        <DropdownMenu.Label className="menu-label inspector-version-group-label">
+          <time dateTime={group.versions[0]?.capturedAt}>{group.label}</time>
+        </DropdownMenu.Label>
+        {group.versions.map((version) => {
+          const isCurrent = version.version === currentVersion;
+          return (
+            <DropdownMenu.Item
+              className="menu-item inspector-version-item"
+              disabled={isCurrent || !versionIsOpenable(version)}
+              key={version.version}
+              onSelect={() => {
+                const trigger = returnFocus.current;
+                if (trigger) onOpenResourceVersion?.(resource, version, trigger);
+              }}
+            >
+              <span className="inspector-version-label">V{version.version}</span>
+              <span className="inspector-version-author">{versionAuthorLabel(version, resource, participants)}</span>
+              {/* Newest-first and authoritative about itself. The detail's
+                  version number comes from another cache, and the two
+                  disagree exactly while a swap is settling — which is when
+                  putting "Current" on a superseded row does most harm. */}
+              {isCurrent ? <Badge>Current</Badge> : null}
+            </DropdownMenu.Item>
+          );
+        })}
+      </DropdownMenu.Group>
+    ));
+  }
+
   return (
-    <section className="rail-section inspector-versions">
-      <header className="rail-section-header"><h3>Versions</h3></header>
-      {error
-        ? <p className="inspector-detail-preview-status">{error}</p>
-        : (
-          <ul>
-            {versions.map((version, index) => (
-              <li key={version.version}>
-                <span className="inspector-version-label">V{version.version}</span>
-                <span className="inspector-version-meta">
-                  <span className="inspector-version-author">{versionAuthorLabel(version, resource, participants)}</span>
-                  <time dateTime={version.capturedAt}>{formatDateTime(version.capturedAt)}</time>
-                </span>
-                {/* The list is newest-first and authoritative about itself. The
-                    detail's version number comes from another cache, and the
-                    two disagree exactly while a swap is settling — which is
-                    when putting "Current" on a superseded row does most harm. */}
-                {index === 0
-                  ? <Badge>Current</Badge>
-                  : versionIsOpenable(version) && (
-                    <IconButton
-                      label={`Open version ${version.version}`}
-                      onClick={(event) => onOpenResourceVersion?.(resource, version, event.currentTarget)}
-                      tooltipSide="left"
-                    >
-                      <Eye size={14} />
-                    </IconButton>
-                  )}
-              </li>
-            ))}
-          </ul>
-        )}
-    </section>
+    <DropdownMenu.Content
+      align="end"
+      aria-label="Versions"
+      className="menu-content inspector-versions-menu"
+      sideOffset={8}
+    >
+      {body}
+    </DropdownMenu.Content>
   );
 }
 
 function InspectorDetail({
   loadResourceContent,
   workstream,
-  onDetachResource,
-  onOpenResourceVersion,
   onRefreshResource,
   refreshingResourceId,
-  resourceVersions,
-  resourceVersionsError,
 }: Pick<
   InspectorRailProps,
-  'loadResourceContent' | 'workstream' | 'onDetachResource' | 'onOpenResourceVersion'
-  | 'onRefreshResource' | 'refreshingResourceId' | 'resourceVersions' | 'resourceVersionsError'
+  'loadResourceContent' | 'workstream' | 'onRefreshResource' | 'refreshingResourceId'
 >): React.JSX.Element | null {
   const inspector = useUiStore((state) => state.inspector);
   if (!inspector || !workstream) return null;
@@ -553,44 +619,46 @@ function InspectorDetail({
     // resource; the server-computed adapter capability says whether its
     // connector can actually fulfill a re-fetch.
     const refreshable = resource.direction === 'source' && resource.refreshSupported;
+    const sourceActions = Boolean(resource.canonicalUrl || (refreshable && onRefreshResource));
+    const showDocument = Boolean(
+      loadResourceContent && (readableAsText(resource) || isImageResource(resource)),
+    );
     return (
       <div className="inspector-detail">
-        <span className="inspector-hero-icon"><ResourceIcon type={resource.resourceType} /></span>
-        <h3>{resource.title}</h3>
-        <p>{resource.provider ?? resource.resourceType}</p>
-        <dl className="detail-list">
-          <div><dt>Type</dt><dd>{resource.resourceType}</dd></div>
-          <div><dt>Direction</dt><dd>{resource.direction === 'artifact' ? 'Artifact' : 'Source'}</dd></div>
-          <div><dt>Version</dt><dd>{resource.currentVersion}</dd></div>
-          {resource.direction === 'source' && <div><dt>Watch status</dt><dd>{resource.watchStatus === 'unsupported' ? 'Not supported' : resource.watchStatus === 'error' ? 'Needs attention' : resource.watchEnabled ? 'Watching for changes' : 'Not watched'}</dd></div>}
-          {resource.updatedAt && <div><dt>Last updated</dt><dd>{formatDateTime(resource.updatedAt)}</dd></div>}
-        </dl>
-        {loadResourceContent && readableAsText(resource) && (
+        {resource.updatedAt && (
+          <p className="inspector-detail-updated">
+            Last updated <time dateTime={resource.updatedAt}>{formatDateTime(resource.updatedAt)}</time>
+          </p>
+        )}
+        {sourceActions && (
+          <div className="inspector-detail-actions">
+            {resource.canonicalUrl && <Button onClick={() => void window.rally?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
+            {refreshable && onRefreshResource && (
+              <Button
+                disabled={refreshingResourceId === resource.id}
+                onClick={() => onRefreshResource(resource)}
+              >
+                <RefreshCcw size={14} /> Refresh from source
+              </Button>
+            )}
+          </div>
+        )}
+        {showDocument && resource.updatedAt && <hr className="inspector-detail-rule" />}
+        {showDocument && loadResourceContent && (
           <ResourceContentPreview loadResourceContent={loadResourceContent} resource={resource} />
         )}
-        <div className="inspector-detail-actions">
-          {resource.canonicalUrl && <Button onClick={() => void window.rally?.openExternal(resource.canonicalUrl!)}><ExternalLink size={14} /> Open source</Button>}
-          {refreshable && onRefreshResource && (
-            <Button
-              disabled={refreshingResourceId === resource.id}
-              onClick={() => onRefreshResource(resource)}
-            >
-              <RefreshCcw size={14} /> Refresh from source
-            </Button>
-          )}
-          {onDetachResource && <Button onClick={() => onDetachResource(resource)}><Trash2 size={14} /> Remove</Button>}
-        </div>
-        <ResourceVersions
-          error={resourceVersionsError}
-          onOpenResourceVersion={onOpenResourceVersion}
-          participants={workstream.participants}
-          resource={resource}
-          versions={resourceVersions ?? []}
-        />
       </div>
     );
   }
   return <EmptyState title="Item unavailable" description="It may have been removed or changed in another session." />;
+}
+
+function inspectedResource(
+  inspector: RailInspector | null,
+  workstream: WorkstreamDetail | undefined,
+): WorkstreamResource | undefined {
+  if (!inspector || inspector.type !== 'resource' || !workstream) return undefined;
+  return workstream.resources.find((item) => item.id === inspector.id);
 }
 
 const railTitle: Record<RailVariant, string> = {
@@ -607,10 +675,46 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
   const setRailWidth = useUiStore((state) => state.setRailWidth);
   const inspect = useUiStore((state) => state.inspect);
   const runs = props.runs ?? props.workstream?.automationRuns ?? [];
+  const resource = inspectedResource(inspector, props.workstream);
+  const [archiveTarget, setArchiveTarget] = useState<WorkstreamResource | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const versionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const closeInspectorRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    setArchiveTarget(null);
+    setArchiveError(null);
+    setArchiving(false);
+  }, [inspector?.id]);
+
+  const closeArchive = (): void => {
+    if (archiving) return;
+    setArchiveTarget(null);
+    setArchiveError(null);
+  };
+
+  const submitArchive = async (): Promise<void> => {
+    if (!archiveTarget || !props.onDetachResource) return;
+    setArchiving(true);
+    setArchiveError(null);
+    try {
+      await props.onDetachResource(archiveTarget);
+      setArchiveTarget(null);
+      inspect(null);
+      closeInspectorRef.current?.focus();
+    } catch (error) {
+      setArchiveError(error instanceof Error ? error.message : 'The resource could not be archived.');
+    } finally {
+      setArchiving(false);
+    }
+  };
 
   // The rail is already closed while it fades out under HyperSight, so the
   // hand-off keeps it on screen for exactly as long as that fade lasts.
   if (!railOpen && !props.leaving) return null;
+
+  const headerTitle = resource?.title ?? (inspector ? 'Details' : railTitle[railVariant]);
 
   return (
     <RailSurface
@@ -626,11 +730,51 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
     >
       <header className="rail-header window-drag">
         <div className="rail-title window-no-drag">
-          {inspector && <IconButton label="Back to context" onClick={() => inspect(null)}><ArrowLeft size={15} /></IconButton>}
-          <h2>{inspector ? 'Details' : railTitle[railVariant]}</h2>
+          {inspector && (
+            <IconButton
+              label="Back to context"
+              onClick={() => inspect(null)}
+            >
+              <ArrowLeft size={15} />
+            </IconButton>
+          )}
+          <h2 title={headerTitle}>{headerTitle}</h2>
         </div>
         <div className="rail-header-actions window-no-drag">
-          <IconButton label="Close inspector" onClick={closeRail}><X size={15} /></IconButton>
+          {resource && (
+            <>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <IconButton label="Versions" ref={versionsTriggerRef}>
+                    <History size={15} />
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <ResourceVersionsMenu
+                    error={props.resourceVersionsError}
+                    onOpenResourceVersion={props.onOpenResourceVersion}
+                    participants={props.workstream?.participants ?? []}
+                    resource={resource}
+                    returnFocus={versionsTriggerRef}
+                    versions={props.resourceVersions}
+                  />
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+              {props.onDetachResource && (
+                <IconButton
+                  className="icon-button-danger"
+                  label="Archive"
+                  onClick={() => {
+                    setArchiveError(null);
+                    setArchiveTarget(resource);
+                  }}
+                >
+                  <Archive size={15} />
+                </IconButton>
+              )}
+            </>
+          )}
+          <IconButton label="Close inspector" onClick={closeRail} ref={closeInspectorRef}><X size={15} /></IconButton>
         </div>
       </header>
       <div className="rail-scroll">
@@ -638,12 +782,8 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
         {inspector ? (
           <InspectorDetail
             {...(props.loadResourceContent ? { loadResourceContent: props.loadResourceContent } : {})}
-            onDetachResource={props.onDetachResource}
-            onOpenResourceVersion={props.onOpenResourceVersion}
             onRefreshResource={props.onRefreshResource}
             refreshingResourceId={props.refreshingResourceId}
-            resourceVersions={props.resourceVersions}
-            resourceVersionsError={props.resourceVersionsError}
             workstream={props.workstream}
           />
         ) : railVariant === 'context' ? (
@@ -652,6 +792,28 @@ export function InspectorRail(props: InspectorRailProps): React.JSX.Element | nu
           <RunsContent onOpenRun={props.onOpenRun} runs={runs} />
         )}
       </div>
+      <Modal
+        description={`${archiveTarget?.title ?? 'This resource'} will leave this work stream. Rally has no way to bring it back yet.`}
+        footer={(
+          <>
+            <Button disabled={archiving} onClick={closeArchive}>Cancel</Button>
+            <Button
+              className="button-danger"
+              disabled={archiving}
+              onClick={() => void submitArchive()}
+            >
+              Continue
+            </Button>
+          </>
+        )}
+        onOpenChange={(open) => {
+          if (!open) closeArchive();
+        }}
+        open={Boolean(archiveTarget)}
+        title="Archive this resource?"
+      >
+        {archiveError ? <InlineError>{archiveError}</InlineError> : null}
+      </Modal>
     </RailSurface>
   );
 }
