@@ -33,7 +33,7 @@ describe("canonical person mention Markdown", () => {
     ]));
 
     expect(prepared.text).toBe(
-      `Ask [@Ada Lovelace](person:${adaId}) and [@Grace Hopper](person:${graceId}).`,
+      `Ask [@Ada Lovelace](person://${adaId}) and [@Grace Hopper](person://${graceId}).`,
     );
     expect(prepared.mentions).toHaveLength(2);
     expect(prepared.mentions[0]).toMatchObject({
@@ -45,8 +45,18 @@ describe("canonical person mention Markdown", () => {
     expect(prepared.text.slice(
       prepared.mentions[1]!.startOffset,
       prepared.mentions[1]!.endOffset,
-    )).toBe(`[@Grace Hopper](person:${graceId})`);
+    )).toBe(`[@Grace Hopper](person://${graceId})`);
     expect(isCanonicalPersonMention(prepared.text, prepared.mentions[1]!)).toBe(true);
+  });
+
+  it("still recognizes a stored bare person: link as canonical", () => {
+    const text = `Ask [@Ada Lovelace](person:${adaId}).`;
+    expect(isCanonicalPersonMention(text, {
+      type: "person",
+      userId: adaId,
+      startOffset: 4,
+      endOffset: text.length - 1,
+    })).toBe(true);
   });
 
   it("drops spoofed, missing, and duplicate identities without changing visible text", () => {
@@ -77,7 +87,7 @@ describe("canonical person mention Markdown", () => {
       [adaId, { id: adaId, name: "Ada Lovelace", avatarUrl: null }],
     ]));
 
-    expect(prepared.text).toBe(`Ask [@Ada Lovelace](person:${adaId}).`);
+    expect(prepared.text).toBe(`Ask [@Ada Lovelace](person://${adaId}).`);
     expect(prepared.mentions.map((mention) => mention.userId)).toEqual([adaId]);
   });
 
@@ -86,12 +96,12 @@ describe("canonical person mention Markdown", () => {
       id: adaId,
       name: "Ada \\] Lovelace",
       avatarUrl: null,
-    })).toBe(`[@Ada ${"\\".repeat(3)}] Lovelace](person:${adaId})`);
+    })).toBe(`[@Ada ${"\\".repeat(3)}] Lovelace](person://${adaId})`);
 
     expect(renderPersonMentionMarkdown({
       id: graceId,
       name: "Grace [Compiler] Hopper",
       avatarUrl: null,
-    })).toBe(`[@Grace \\[Compiler\\] Hopper](person:${graceId})`);
+    })).toBe(`[@Grace \\[Compiler\\] Hopper](person://${graceId})`);
   });
 });
