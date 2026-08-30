@@ -1,5 +1,5 @@
 import { embeddedResourceCitations, type CitationTarget } from '@rally/contracts/citations';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { Message } from './types';
 import { useUiStore } from './ui-store';
 
@@ -13,39 +13,67 @@ import { useUiStore } from './ui-store';
 export const EMBEDDED_RESOURCE_AUTOPEN_LOOKBACK = 2;
 
 export interface LatestEmbeddedResource {
-  readonly messageId: string;
+  /**
+   * The turn this announcement belongs to. Canonical blocks and the live
+   * stream overlay share `transcriptTurnId`; falling back to `id` covers a
+   * row that has not been given one yet.
+   */
+  readonly announcementId: string;
   /** The resource's own id, after resolving any alias the citation used. */
   readonly resourceId: string;
+}
+
+type TranscriptRow = Pick<Message, 'authorType' | 'id' | 'messageType' | 'text' | 'transcriptTurnId'>;
+
+function announcementId(message: TranscriptRow): string {
+  return message.transcriptTurnId ?? message.id;
 }
 
 /**
  * The most recent resolvable embed card in the last two text turns.
  *
- * Plugin, thought, and tool rows are not messages in this sense — they sit
- * between turns without announcing a document — so the lookback counts only
- * `text` rows. An unresolved citation is skipped the same way the renderer
- * skips it: there is no card, and the rail would open onto an unavailable
- * detail. When two cards qualify, the later one wins, including a second
- * card that finishes streaming into the same turn.
+ * The window is **turns**, not flattened text blocks: one assistant turn can
+ * be several `text` rows, and counting rows would let the later blocks of
+ * that turn push its own first-block card out of the window. Plugin, thought,
+ * and tool rows sit between turns without announcing a document, so they are
+ * not counted.
+ *
+ * Only agent text is scanned. Human and external turns render markdown
+ * verbatim, without the citation context, so `![Title](resource://id)` there
+ * is label text, not a card — auto-opening would steal the rail for a
+ * document the transcript never announced.
+ *
+ * An unresolved citation is skipped the same way the renderer skips it.
+ * When two cards qualify, the later one wins.
  */
 export function latestEmbeddedResource(
-  messages: readonly Pick<Message, 'id' | 'messageType' | 'text'>[],
+  messages: readonly TranscriptRow[],
   resolve: (resourceId: string) => { id: string } | undefined,
   lookback = EMBEDDED_RESOURCE_AUTOPEN_LOOKBACK,
 ): LatestEmbeddedResource | null {
-  const recent: Pick<Message, 'id' | 'messageType' | 'text'>[] = [];
-  for (let index = messages.length - 1; index >= 0 && recent.length < lookback; index -= 1) {
+  const recent: TranscriptRow[] = [];
+  const seenTurns: string[] = [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
-    if (message?.messageType === 'text') recent.push(message);
+    if (message?.messageType !== 'text') continue;
+    const turn = announcementId(message);
+    const latestTurn = seenTurns[seenTurns.length - 1];
+    if (turn === latestTurn) {
+      recent.push(message);
+      continue;
+    }
+    if (seenTurns.length === lookback) break;
+    seenTurns.push(turn);
+    recent.push(message);
   }
   recent.reverse();
 
   let latest: LatestEmbeddedResource | null = null;
   for (const message of recent) {
-    if (!message.text) continue;
+    if (message.authorType !== 'agent' || !message.text) continue;
     for (const citation of embeddedResourceCitations(message.text)) {
       const resource = resolve(citation.resourceId);
-      if (resource) latest = { messageId: message.id, resourceId: resource.id };
+      if (resource) latest = { announcementId: announcementId(message), resourceId: resource.id };
     }
   }
   return latest;
@@ -56,9 +84,10 @@ export function latestEmbeddedResource(
  *
  * Fires when a work stream's feed belongs to the current route — open,
  * reconnect, a snapshot refresh that first makes the turns available — and
- * again when a streamed turn announces a *different* document. Closing the
- * rail for the same announcement does not reopen it; leaving the work stream
- * and coming back does, because that is a new visit.
+ * again when a streamed turn announces a document this visit has not already
+ * opened. Closing the rail for that announcement does not reopen it, including
+ * when the live overlay is later replaced by its canonical block. Leaving the
+ * work stream and coming back does, because that is a new visit.
  */
 export function useAutoOpenLatestEmbeddedResource({
   enabled,
@@ -70,28 +99,32 @@ export function useAutoOpenLatestEmbeddedResource({
   enabled: boolean;
   open: (target: CitationTarget) => void;
   resolve: (resourceId: string) => { id: string } | undefined;
-  transcript: readonly Pick<Message, 'id' | 'messageType' | 'text'>[];
+  transcript: readonly TranscriptRow[];
   workstreamId: string;
 }): void {
   const opened = useRef<{ workstreamId: string; key: string } | null>(null);
   const railOpen = useUiStore((state) => state.railOpen);
   const inspector = useUiStore((state) => state.inspector);
+  const found = useMemo(
+    () => (enabled ? latestEmbeddedResource(transcript, resolve) : null),
+    [enabled, resolve, transcript],
+  );
+  const announcement = found?.announcementId ?? null;
+  const resourceId = found?.resourceId ?? null;
 
   useEffect(() => {
     // A new visit starts when the route's work stream changes, even if this
     // feed has no embed yet — otherwise coming back to a document we already
     // auto-opened would see the old key and stay closed.
     if (opened.current?.workstreamId !== workstreamId) opened.current = null;
-    if (!enabled) return;
-    const found = latestEmbeddedResource(transcript, resolve);
-    if (!found) return;
-    const key = `${found.messageId}:${found.resourceId}`;
+    if (announcement === null || resourceId === null) return;
+    const key = `${announcement}:${resourceId}`;
     if (opened.current?.key === key) return;
     opened.current = { workstreamId, key };
     // Already showing this document: record the announcement so a later
     // close does not reopen it, and skip `open` because that path clears
     // the inspector before selecting, which would flash the list.
-    if (railOpen && inspector?.type === 'resource' && inspector.id === found.resourceId) return;
-    open({ scheme: 'resource', resourceId: found.resourceId });
-  }, [enabled, inspector, open, railOpen, resolve, transcript, workstreamId]);
+    if (railOpen && inspector?.type === 'resource' && inspector.id === resourceId) return;
+    open({ scheme: 'resource', resourceId });
+  }, [announcement, inspector, open, railOpen, resourceId, workstreamId]);
 }

@@ -369,6 +369,19 @@ describe("embeddedResourceCitations", () => {
     expect(embeddedResourceCitations("Published, and\n    ![the deck](resource://abc)"))
       .toEqual([{ resourceId: "abc" }]);
   });
+
+  it("does not treat an escaped bang as a card", () => {
+    // The renderer draws a chip; auto-opening here would open a document the
+    // transcript never announced as one.
+    expect(embeddedResourceCitations("See \\![the deck](resource://board-deck).")).toEqual([]);
+  });
+
+  it("does not treat a footnote definition as a card", () => {
+    // The rewrite strips definitions before it scans; this has to agree, or a
+    // pill that never became a card would still open the inspector.
+    expect(embeddedResourceCitations("A claim.[^1]\n\n[^1]: ![Deck](resource://board-deck)")).toEqual([]);
+    expect(embeddedResourceCitations("A claim.[^1]\n\n[^1]: [Deck](resource://board-deck)")).toEqual([]);
+  });
 });
 
 describe("citationScheme", () => {
