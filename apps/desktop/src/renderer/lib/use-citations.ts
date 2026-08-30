@@ -2,6 +2,7 @@ import type { CitationTarget } from '@rally/contracts/citations';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../components/inspector-rail';
 import type { CitationContext, CitationResource } from '../components/markdown-citations';
+import { ApiError } from './api';
 import { desktopBridge } from './platform';
 import type { WorkstreamResource } from './types';
 import { useUiStore } from './ui-store';
@@ -31,6 +32,26 @@ import { useUiStore } from './ui-store';
  * tier here and a fetch in the rail in one change, so that the chip and the
  * panel it opens agree about what exists.
  */
+/**
+ * Whether a failed preview read is the route's answer *about this document*,
+ * and so worth remembering, as against a failure of the moment.
+ *
+ * The route answers 404 for a resource that is gone, 403 for one this viewer
+ * may not read, and 422 for one it will not convert. Each is stable: asking
+ * again on the next scroll would drive the route for as long as the reader
+ * stays in the room and get the same answer every time. Everything else — a
+ * dropped connection, a 5xx, a request that timed out or was rate-limited, an
+ * abort — says nothing about the document, and a cached copy of it would
+ * outlive the condition that caused it.
+ *
+ * 408 and 429 are excluded despite being 4xx: both are the server asking for
+ * the request again, which is the opposite of a verdict.
+ */
+function documentVerdict(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  return error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+}
+
 export function useCitations({ loadResourceContent, resources }: {
   /**
    * The preview route, or absent on a surface that has none. It is the same
@@ -54,17 +75,23 @@ export function useCitations({ loadResourceContent, resources }: {
    * degradation it can lean on.
    */
   const local = useMemo(() => {
-    const byToken = new Map<string, CitationResource>();
+    const byToken = new Map<string, { citation: CitationResource; version: number }>();
     for (const resource of resources) {
-      const citation = { id: resource.id, resourceType: resource.resourceType, title: resource.title };
-      byToken.set(resource.id, citation);
-      if (resource.slug) byToken.set(resource.slug, citation);
+      // The version rides beside the citation rather than inside it: a chip is
+      // dressed from the record's name and kind, and which revision it names is
+      // the host's business, not the renderer's.
+      const entry = {
+        citation: { id: resource.id, resourceType: resource.resourceType, title: resource.title },
+        version: resource.currentVersion,
+      };
+      byToken.set(resource.id, entry);
+      if (resource.slug) byToken.set(resource.slug, entry);
     }
     return byToken;
   }, [resources]);
 
   const resolve = useCallback(
-    (token: string): CitationResource | undefined => local.get(token),
+    (token: string): CitationResource | undefined => local.get(token)?.citation,
     [local],
   );
 
@@ -80,10 +107,21 @@ export function useCitations({ loadResourceContent, resources }: {
    * than the text, so cards that mount mid-flight join the read in progress
    * instead of starting a second one.
    *
-   * A rejection is cached too. Every terminal answer here — unconvertible,
-   * gone, retries spent — is a verdict about the document, and re-asking on
-   * the next scroll would drive the route for as long as somebody reads the
-   * room.
+   * Reads are keyed by **id and version together**. A watched source re-ingested
+   * in place keeps its id while `currentVersion` advances, so an id-only key
+   * served version N's excerpt from a card the work stream had already moved to
+   * N+1 — a citation substantiating a claim with the wrong revision, which is
+   * the same defect the rail's own preview effect keys on `currentVersion` to
+   * avoid. The new version misses the cache and reads again; the card asks for
+   * it because this callback's identity changes with the resource list.
+   *
+   * A rejection is cached only when it is a **verdict about the document** —
+   * unconvertible, gone, forbidden, retries spent. A transient failure is not:
+   * `readResourcePreviewText` waits out `resource_processing` and nothing else,
+   * so a dropped connection or a 5xx propagates like any other rejection, and
+   * caching it would mean a card that failed once never showed a preview again
+   * however long the reader stayed in the room. Those evict themselves, so the
+   * next ask — a scroll back, a re-render — retries.
    */
   const reads = useRef<{
     loader: unknown;
@@ -113,21 +151,26 @@ export function useCitations({ loadResourceContent, resources }: {
   }, []);
 
   const preview = useCallback((resourceId: string): Promise<string> | undefined => {
-    const resource = local.get(resourceId);
-    if (!loadResourceContent || !resource) return undefined;
+    const entry = local.get(resourceId);
+    if (!loadResourceContent || !entry) return undefined;
     const state = previewReads(loadResourceContent);
-    const cached = state.inFlight.get(resource.id);
+    const key = `${entry.citation.id}@${entry.version}`;
+    const cached = state.inFlight.get(key);
     if (cached) return cached;
     const read = readResourcePreviewText(
       loadResourceContent,
-      resource.id,
+      entry.citation.id,
       state.controller.signal,
       MAX_RESOURCE_PREVIEW_WAIT_MS,
     );
     // Nothing else awaits this copy, and an unhandled rejection on a cached
-    // promise is reported even though every consumer handles its own.
-    read.catch(() => undefined);
-    state.inFlight.set(resource.id, read);
+    // promise is reported even though every consumer handles its own. The
+    // eviction is guarded on identity because a later ask may already have
+    // replaced this entry with a fresh read nobody would want dropped.
+    read.catch((error: unknown) => {
+      if (!documentVerdict(error) && state.inFlight.get(key) === read) state.inFlight.delete(key);
+    });
+    state.inFlight.set(key, read);
     return read;
   }, [loadResourceContent, local]);
 
@@ -143,12 +186,12 @@ export function useCitations({ loadResourceContent, resources }: {
     // detail is keyed by the resource's own id, and a citation may name it by
     // its alias instead. An unresolved target opens nothing — the renderer
     // already leaves it as label text, and this is the same answer.
-    const resource = local.get(target.resourceId);
-    if (!resource) return;
+    const entry = local.get(target.resourceId);
+    if (!entry) return;
     // The order is the contract. `openRail` clears the inspector deliberately,
     // so selecting the resource first would leave the rail showing its list.
     openRail('context');
-    inspect({ type: 'resource', id: resource.id });
+    inspect({ type: 'resource', id: entry.citation.id });
   }, [inspect, local, openRail]);
 
   return useMemo(() => ({ open, preview, resolve }), [open, preview, resolve]);

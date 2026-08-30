@@ -479,13 +479,23 @@ title. A few lines of the document is what makes one card worth clicking over
 another — and it is free of a new route, because the rail's detail already
 reads exactly this derivative.
 
-**Why the read is shared and cached, including its rejections:** the preview
-route materializes the derivative *inside the request*, so each read causes the
-conversion. A per-card read would convert a Word file once per citation and
-again every time the reader scrolled it back into view; a re-asked rejection
-would drive the route for as long as somebody had the room open. The promise is
-cached rather than the text, so a card mounting mid-flight joins the read
-already running.
+**Why the read is shared and cached:** the preview route materializes the
+derivative *inside the request*, so each read causes the conversion. A per-card
+read would convert a Word file once per citation and again every time the reader
+scrolled it back into view. The promise is cached rather than the text, so a card
+mounting mid-flight joins the read already running.
+
+**What the key is, and which rejections survive it.** Reads are keyed by id
+*and* `currentVersion`: a watched source re-ingested in place keeps its id, so
+an id-only key served version N's excerpt on a card the work stream had already
+moved to N+1 — a citation substantiating a claim with the wrong revision, and
+the same defect the rail's own preview effect keys on `currentVersion` to avoid.
+Only a rejection that is a verdict about the document is cached — 4xx other than
+408 and 429, so gone, forbidden and unconvertible are remembered. A dropped
+connection or a 5xx evicts itself, because caching it meant a card that failed
+once never showed a preview again however long the reader stayed in the room.
+Both were review findings on the pull request, and neither had a test until they
+were fixed.
 
 **Why the reads are built lazily rather than in an effect:** React runs a
 child's effect before its parent's, so a card mounting in the same commit as
@@ -493,6 +503,14 @@ the hook asked before an effect-initialized ref existed, was told there is no
 preview, and — its own effect depending on a stable callback — never asked
 again. Found in a real window: every card rendered its empty room and no
 request was ever made, with every test passing.
+
+**Why the preview's tone comes off the neutral ramp:** `ref.color.neutral.9`
+sits one step below `text.muted` and one above `text.disabled`, which is the
+tone this wants and neither of those is. The card is a button, and preview type
+dark enough to read comfortably competes with the title for the click;
+`text.disabled` would say something untrue about a control that is enabled.
+Because the ramp is ordered by contrast rather than lightness, one token dims
+correctly in a light theme and in a dark one — measured in all four.
 
 **What a future change has to respect:** the preview is presentation — it is
 `aria-hidden`, the button's accessible name stays the title, and nothing inside
