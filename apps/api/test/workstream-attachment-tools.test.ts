@@ -6,6 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import { __integrationTesting } from "../src/services/integrations";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "../src/services/attachment-derivative-service";
+import {
+  buildGifStoryboard,
+  decodeTiffToPng,
+  extractPdfText,
+} from "../src/services/document-processing-codecs";
+import type { DocumentProcessingRpcBinding } from "../src/services/document-processing-contract";
 import { createAutomationDraftAttachmentTools } from "../src/services/automation-draft-attachment-tools";
 import {
   createWorkstreamAttachmentTools,
@@ -31,6 +37,11 @@ const WORKSTREAM_ID = asWorkstreamId("00000000-0000-4000-8000-000000000002");
 const HARNESS_RUN_ID = asHarnessRunId("00000000-0000-4000-8000-000000000003");
 const SOURCE_HASH = "a".repeat(64);
 const DERIVATIVE_HASH = "b".repeat(64);
+const documentProcessor = {
+  extractText: extractPdfText,
+  buildGifStoryboard: async (bytes: Uint8Array) => buildGifStoryboard(bytes),
+  decodeTiffToPng: async (bytes: Uint8Array) => decodeTiffToPng(bytes),
+} satisfies DocumentProcessingRpcBinding;
 
 class MemoryBucket {
   readonly objects = new Map<string, Uint8Array>();
@@ -86,6 +97,7 @@ function fixture(options: { images?: ImagesBinding; ai?: Ai } = {}) {
   const baseEnv = createTestEnv({
     DB: sqliteD1(database),
     PAYLOADS: createCloudflareTestBinding<R2Bucket>(bucket),
+    DOCUMENT_PROCESSOR: documentProcessor,
     ...(options.images ? { IMAGES: options.images } : {}),
     ...(options.ai ? { AI: options.ai } : {}),
     SESSION_SIGNING_KEY: "attachment-test-session-signing-key", AVALON_REGION: "global", APP_ENV: "test",
