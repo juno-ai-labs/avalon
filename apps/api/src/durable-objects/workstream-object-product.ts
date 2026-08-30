@@ -1309,7 +1309,6 @@ export class WorkstreamObjectProductService {
 
   /** Active participants, newest join first, for the sidebar facepile preview. */
   private recentParticipantUserIds(): string[] {
-  private recentParticipantUserIds(): string[] {
     return this.storage.sql.exec<{ user_id: string }>(
       `SELECT user_id FROM participants WHERE status = 'active' ORDER BY added_at DESC, user_id`,
     ).toArray().map((row) => row.user_id);
