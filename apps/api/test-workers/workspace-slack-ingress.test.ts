@@ -521,7 +521,7 @@ describe("workspace fencing", () => {
  * are one `transactionSync`, so the previous assignment each session travelled
  * back with was read inside the critical section that moved it; the reaction
  * compare-and-set decides `settled` from a `RETURNING` witness against an `IS`
- * predicate, so NULL — Avalon has placed nothing — is a state it can match;
+ * predicate, so NULL — Rally has placed nothing — is a state it can match;
  * the feedback insert's `ON CONFLICT … DO NOTHING RETURNING` distinguishes a
  * redelivery from a write; and the foreign key to `connector_connections` is
  * enforced rather than assumed.

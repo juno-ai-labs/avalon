@@ -105,6 +105,7 @@ import {
   WorkspaceSlackSessionAssignResultSchema,
   WorkspaceSlackSessionExistsResultSchema,
   WorkspaceSlackSessionReactionResultSchema,
+  WorkspaceSlackFeedbackResultSchema,
   WorkspaceSlackSessionResultSchema,
   // The session row itself, rather than a structural copy of it here: every
   // read parses through `WorkspaceSlackSessionResultSchema`, so a second
@@ -568,7 +569,7 @@ export class SlackAgentService {
       }
       if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
         const identity = await this.linkedAccount(teamId, slackUserId);
-        const workstreamId = typeof view.private_metadata === "string" ? view.private_metadata : "";
+        const workstreamId = slackModalWorkstreamId(view.private_metadata);
         const rating = modalSelectedValues(view.state, "rating", "value")[0];
         if (!identity || !workstreamId || (rating !== "helpful" && rating !== "needs_improvement")) return { response_action: "errors", errors: { rating: "Choose a feedback rating." } };
         // Any linked member of the installation may rate the task, not only
@@ -871,23 +872,35 @@ export class SlackAgentService {
       return;
     }
     if (canonicalSlackInteractionId(String(view.callback_id ?? "")) === "rally_feedback_submit") {
-      const workstreamId = typeof view.private_metadata === "string" ? view.private_metadata : "";
+      const workstreamId = slackModalWorkstreamId(view.private_metadata);
       const rating = modalSelectedValues(view.state, "rating", "value")[0];
       if (!workstreamId || (rating !== "helpful" && rating !== "needs_improvement")) throw new ApiError(422, "slack_feedback_invalid", "Slack feedback is invalid");
-      // The outcome is read rather than ignored: `ingress_job_id` is UNIQUE, so
-      // a redelivered submission is a replay, and the object says which it was
-      // instead of leaving a constraint violation to be inferred.
-      await (await this.workspaceDirectory(identity.auth.workspaceId)).recordSlackFeedback({
-        workspaceId: identity.auth.workspaceId,
-        feedbackId: newId(),
-        ingressJobId: jobId,
-        workstreamId,
-        userId: identity.auth.userId,
-        connectionId: identity.connection.id,
-        rating,
-        comment: modalTextValue(view.state, "comment", "value"),
-        at: nowIso(),
-      });
+      // `ingress_job_id` is UNIQUE, so a redelivered submission is a replay
+      // rather than a second rating. The insert always ignored the conflict;
+      // what is new is that the object reports which case it was, and the only
+      // thing worth doing with that is making a redelivery visible — a replay
+      // means Slack sent the same submission twice, which nothing else here
+      // would show.
+      const feedback = WorkspaceSlackFeedbackResultSchema.parse(
+        await (await this.workspaceDirectory(identity.auth.workspaceId)).recordSlackFeedback({
+          workspaceId: identity.auth.workspaceId,
+          feedbackId: newId(),
+          ingressJobId: jobId,
+          workstreamId,
+          userId: identity.auth.userId,
+          connectionId: identity.connection.id,
+          rating,
+          comment: modalTextValue(view.state, "comment", "value"),
+          at: nowIso(),
+        }),
+      );
+      if (feedback.outcome === "replayed") {
+        logInfo(this.env, "slack_feedback_replayed", {
+          workspace_id: identity.auth.workspaceId,
+          workstream_id: workstreamId,
+          ingress_job_id: jobId,
+        });
+      }
     }
   }
 
@@ -1079,19 +1092,31 @@ export class SlackAgentService {
         });
         continue;
       }
-      // Deliberately outside it. Seating is a WorkspaceDO write, and a write
-      // that fails is not a Slack lookup failure: swallowing it here returned a
-      // success count for seating that never happened, so an overloaded object
-      // or a refused request read as "this member owns nothing" with nothing
-      // logged above `warn`. The caller learns instead.
-      assigned += await this.assignWorkspaceSessions(
-        connection.workspace_id,
-        connection.id,
-        connection.provider_account_id,
-        matchedSlackUserId,
-        userId,
-        "verified_email",
-      );
+      // Seating has its own `catch` rather than sharing the lookup's above.
+      // A WorkspaceDO write that fails is not a Slack lookup failure, and
+      // reporting it as one hid an overloaded or refused object behind
+      // `slack_member_assignment_lookup_failed`. It cannot share this loop's
+      // exit either: letting it propagate would abandon every remaining
+      // connection over one transient object error, where only the failing
+      // connection used to be skipped.
+      try {
+        assigned += await this.assignWorkspaceSessions(
+          connection.workspace_id,
+          connection.id,
+          connection.provider_account_id,
+          matchedSlackUserId,
+          userId,
+          "verified_email",
+        );
+      } catch (error) {
+        logWarn(this.env, "slack_member_assignment_seating_failed", {
+          workspace_id: workspaceId,
+          connection_id: connection.id,
+          user_id: userId,
+          reason: error instanceof Error ? error.message : "unknown",
+        });
+        continue;
+      }
     }
     return assigned;
   }
@@ -4003,6 +4028,23 @@ function modalPrompt(state: unknown): string | null {
   const prompt = asRecord(values.prompt);
   const value = asRecord(prompt.value).value;
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/**
+ * The work stream a feedback modal was opened for, or null if it does not name
+ * one.
+ *
+ * Slack echoes `private_metadata` back from what Rally put there, so a
+ * malformed value is not expected in practice. It is checked anyway because the
+ * typed methods take `IdSchema`: an unparseable id would now reach the object,
+ * fail its parse, and surface as a 500 with no modal response — where the
+ * callers have a "this task is no longer available" branch that says something
+ * a person can act on. The generic statement this replaced simply matched no
+ * row and fell into that branch, and this keeps it reachable.
+ */
+function slackModalWorkstreamId(privateMetadata: unknown): string | null {
+  const parsed = z.string().uuid().safeParse(privateMetadata);
+  return parsed.success ? parsed.data : null;
 }
 
 function modalSelectedValues(state: unknown, blockId: string, actionId: string): string[] {
