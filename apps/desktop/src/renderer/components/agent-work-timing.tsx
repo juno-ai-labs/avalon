@@ -5,8 +5,15 @@ import { formatDuration } from '../lib/format';
 
 export interface AgentWorkTimingProps {
   active: boolean;
-  /** Completed time accumulated before the currently active segment. */
-  durationMs: number;
+  /**
+   * Completed time accumulated before the currently active segment.
+   *
+   * Null means the duration is unknown, and the row then reads "Slack worked"
+   * with no time at all. That is the honest rendering: the previous code had
+   * no way to distinguish a plugin that took no measurable time from one whose
+   * timing never reached the client, and printed `0ms` for both.
+   */
+  durationMs: number | null;
   /** Start of the active segment. Omit it to keep the active total paused. */
   startedAt?: number;
   /**
@@ -96,10 +103,19 @@ export function AgentWorkTiming({
       : Math.max(0, now - startedAt!)
     : 0;
   const verb = active ? activeVerb : completedVerb;
-  const duration = formatDuration(durationMs + activeDuration) ?? '0ms';
-  const label = timingAccuracy === 'upper_bound' && !active
-    ? `${verb} for at most ${duration}`
-    : `${verb} for ${duration}`;
+  // An unknown completed total silences the number whether or not the row is
+  // still going. Printing the active segment alone would read as the whole —
+  // "Rally is working for 3s" when the truth is "unknown, plus 3s" — which is
+  // the same overstatement as `0ms`, one level up, and the one this change
+  // exists to stop making.
+  const duration = durationMs === null
+    ? null
+    : formatDuration(durationMs + activeDuration) ?? '0ms';
+  const label = durationMs === null
+    ? verb
+    : timingAccuracy === 'upper_bound' && !active
+      ? `${verb} for at most ${duration}`
+      : `${verb} for ${duration}`;
   // The elapsed time changes ten times a second, so a live region carrying it
   // would read the row out continuously; `activeName` is the stable stand-in.
   const accessibleLabel = active ? activeName : label;

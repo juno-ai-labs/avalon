@@ -121,6 +121,7 @@ describe('activity suggestions over the work-stream socket', () => {
           ranges: [],
           activities: [],
           activeActivities: [],
+          pluginRuns: [],
           activeTurns: [], pendingInputs: [],
         },
         blockDashboardPreference: { visible: false, updatedAt: null },

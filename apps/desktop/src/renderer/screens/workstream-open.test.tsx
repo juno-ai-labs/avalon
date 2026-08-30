@@ -103,6 +103,7 @@ function recoveryBoot(overrides: Partial<WorkstreamBoot> = {}): WorkstreamBoot {
       ranges: [],
       activities: [],
       activeActivities: [],
+      pluginRuns: [],
       activeTurns: [],
     },
     ...overrides,
