@@ -632,10 +632,10 @@ export async function runHarnessWithBind(input: RunHarnessInput): Promise<Harnes
       signal,
     ).catch((error: unknown) => {
       if (signal.aborted) throw signal.reason ?? error;
-      // Pricing is required before an Azure candidate is valid. A cache and
-      // OpenRouter outage therefore omits Azure while preserving the existing
-      // OpenRouter route instead of failing the whole run or recording a free
-      // Azure call.
+      // Pricing is required before an Azure candidate is valid. A missing or
+      // malformed scheduled-cache record therefore omits Azure while preserving
+      // the existing OpenRouter route instead of failing the whole run or
+      // recording a free Azure call.
       return new Map();
     });
     return azureModelPricingRequest;

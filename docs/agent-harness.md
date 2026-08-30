@@ -493,10 +493,14 @@ mean of OpenRouter's published endpoint prices for that canonical model—not th
 top-level model-catalog price, which OpenRouter documents as the lowest endpoint
 price. On 2026-08-30 the four 4.3 endpoints averaged $1.875 input, $0.30 cached
 input, and $3.75 output per million tokens. The five 4.6 endpoints averaged
-$2.84 / $0.71 / $8.52. These are the binding's configured rates; update their
-fingerprints when the endpoint inventory or its prices change. Azure's Retail
-Prices API separately published 4.3 Global meters but no 4.6 meter that day;
-that API is useful corroboration, not this fallback's rate authority.
+$2.84 / $0.71 / $8.52. A dedicated Global cron refreshes those rates hourly,
+writes each model under its canonical OpenRouter ID in the shared regional KV,
+and preserves the decimal costs as strings. The inventory covers every model in
+the developer-mode manual selector plus every Monad production Azure
+deployment carried by OpenRouter: fourteen unique IDs on that date. API inference
+only reads the cache; it never fetches or writes pricing. Azure's Retail Prices
+API separately published 4.3 Global meters but no 4.6 meter that day; that API
+is useful corroboration, not this fallback's rate authority.
 
 Empty completions, truncated tool calls, and fallback-eligible failures may
 retry or traverse configured provider and model stages only before an assistant
@@ -507,10 +511,12 @@ asking another provider for a competing answer. Cancellation and host failures
 never route onward.
 
 OpenRouter reports dollars directly. Azure reports token counts, so Rally feeds
-the binding's checked-in per-million-token rates and declared disjoint Grok
-cache semantics through Bind's configured-rate billing function. Missing or
-internally inconsistent final Azure usage fails the attempt; it is never
-recorded as a zero-cost call and cannot silently bypass a run cost ceiling.
+the cached per-million-token rates and declared disjoint Grok cache semantics
+through Bind's configured-rate billing function. A missing, malformed, or
+legacy numeric-cost record removes that Azure candidate before the request;
+stale valid pricing remains usable. Missing or internally inconsistent final
+Azure usage fails the attempt; it is never recorded as a zero-cost call and
+cannot silently bypass a run cost ceiling.
 Azure Grok also reports reasoning outside `completion_tokens` while including
 it in `total_tokens`; Bind is therefore given `total_tokens - prompt_tokens` as
 the billable output count so hidden reasoning is not treated as free.
@@ -1118,9 +1124,10 @@ Azure inference endpoint/key pair enables the transport without changing model
 flags. Provider invocation names remain separate from canonical model identity
 in the inference ledger. The host resolves an unweighted average of all
 OpenRouter endpoints for each bound Grok model and gives those rates to Bind.
-One public-metadata snapshot for both models is cached in a Cloudflare KV
-namespace shared by the Global and EU Workers, using the existing one-hour
-OpenRouter catalog freshness horizon.
+One public-metadata record per canonical OpenRouter model ID is cached in a
+Cloudflare KV namespace shared by the Global and EU Workers. A dedicated Global
+cron refreshes the developer-selector and Azure-deployment union hourly; costs
+remain decimal strings in KV and are converted only at Bind's billing boundary.
 
 **Why:** Monad production carries Global Standard version-1 deployments for
 both Grok models, while Rally sent every agent turn through OpenRouter even though its
@@ -1147,11 +1154,12 @@ pair therefore omits that provider and leaves the existing OpenRouter route
 unchanged.
 
 **Consequences:** A new Azure model needs a checked-in canonical-to-deployment
-binding with proved capabilities and an entry in the host's endpoint-average
-snapshot. Pricing refreshes both models together; stale valid KV is a deliberate
-availability fallback, while no valid price omits Azure instead of treating a
-request as free. KV is eventually consistent, which is acceptable for public
-hourly pricing metadata and must not be extended to workspace state. Do not make
+binding with proved capabilities and a canonical OpenRouter identity in the
+Azure pricing inventory. The cron fetches every inventoried model before it
+writes any of them; stale valid per-model KV is a deliberate availability
+fallback, while no valid price omits Azure instead of treating a request as
+free. KV is eventually consistent, which is acceptable for public hourly
+pricing metadata and must not be extended to workspace state. Do not make
 the Azure client carry OpenRouter Broadcast fields or plugins. Keep turn
 requirements accurate: an Azure candidate that cannot serve a file parser,
 input modality, reasoning control, or tool surface must be skipped before I/O.

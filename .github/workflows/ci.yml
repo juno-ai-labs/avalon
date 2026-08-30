@@ -30,6 +30,7 @@ jobs:
               pnpm typecheck &&
               pnpm --filter @rally/api build &&
               pnpm --filter @rally/api build:eu &&
+              pnpm --filter @rally/api build:pricing &&
               pnpm --filter @rally/desktop test:release
           - name: desktop-tests-1-of-n
             command: pnpm --filter @rally/desktop exec vitest run --shard=1/2
