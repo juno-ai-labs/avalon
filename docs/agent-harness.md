@@ -219,9 +219,9 @@ Interactive multi-round work starts with a short plan and reports meaningful pha
 
 An automation run's final message is what Rally delivers, so the run is told which destinations Rally will send it to and told to drop every recipient matching one before it sends anything of its own. Without that, an automation asked to email its owner does the sending as well as Rally and the owner receives it twice. The destinations travel in the automation context as `resultDelivery`, filtered by the predicate each channel's own sender uses, and the rule is a `# Result delivery` section rendered only when that list is non-empty — as a standing bullet it was charged to every interactive run, where the list is absent and a rule about it can only be resolved and then ignored. [`workstream-email-addresses.md`](workstream-email-addresses.md#outbound-automation-results) owns the delivery itself.
 
-A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the trigger — an explicit document type, a composition past roughly three paragraphs organized with headings or a table, or a result long enough to bury the conversation — plus the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is rendered only for a run that can produce one — the region reports Terminal supported, and the run is not an automation, a scheduled digest, an inbound email, or Slack-originated, each of which delivers a final message that a rail entry is not part of. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the rule steers into.
+A document-shaped request is written as a Markdown file in the work stream's terminal workspace and published as a generated resource, rather than streamed into the transcript (`DOCUMENT_GENERATION_POLICY`, `prompts/document-generation.ts`). The section carries the trigger — an explicit document type, a composition past roughly three paragraphs organized with headings or a table, or a result long enough to bury the conversation — plus the narration discipline, the same-path revision rule with its import recovery, the participant override in both directions, and the inline fallback when the workspace cannot be reached. It names no tool: the Terminal plugin's activated system message already carries the write-beneath-the-resource-directory-then-publish mechanics, and this section renders before that plugin loads. It is standing platform policy on every work-stream run — interactive, automation, scheduled digest, and the rest — because the section's own fallback covers a sandbox that cannot be reached, and a host-side gate that omitted it for delivery-path runs charged those runs a rule about a capability they had to resolve before ignoring. [`terminal-workspaces.md`](terminal-workspaces.md) owns the publish path the rule steers into.
 
-An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. Unlike `DOCUMENT_GENERATION_POLICY` it is **not** gated, because a resource worth citing can be in context on any run — but the *announcement* rule is, and lives there: the embed form announces something the run produced, and a run that was deliberately not told it may publish has nothing to announce. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
+An answer says what it rests on, inline (`CITATION_POLICY`, `prompts/citations.ts`). The section teaches the link form for referring to a resource in a sentence, GFM footnotes for a source that backs a specific claim, and the definition grammar the renderer actually lifts — exactly one link, targeting a `resource://` identifier or an `https://` URL, with optional words around it. It says once what to do when no identifier is in context (name the thing in plain words) rather than repeating a prohibition the working-style rule and the attachment policy already carry twice; those two answer "ask a person", which a headless automation run cannot. The *announcement* rule — the embed form for a document the run just published — lives in `DOCUMENT_GENERATION_POLICY` so there is one rule for that act. Rendered for every work-stream run — interactive, automation and scheduled digest alike, since they share one system prompt; the meeting prompts compose `RESPONSE_FORMATTING_POLICY` separately and correctly do not get it. [`markdown-rendering.md`](markdown-rendering.md) owns the renderer half, and [`digests.md`](digests.md) and [`slack-integration.md`](slack-integration.md) own the reductions the two non-renderer delivery surfaces apply.
 
 Written answers are GitHub-flavoured Markdown, and TeX or math delimiters are never written — the character itself is typed instead (`RESPONSE_FORMATTING_POLICY`, composed into the work-stream system prompt and both meeting prompts). The rule exists because no Rally surface renders TeX and several routed models emit it for symbols; [`model-text-normalization.md`](model-text-normalization.md) owns the display-side repair this pairs with, and `prompts.test.ts` pins the rule's exact wording because that document depends on it.
 
@@ -1076,7 +1076,6 @@ proof.
 | `apps/api/test/model-protocol-transcript.test.ts` | Historical tool-pair reconstruction, including sanitized structured failure recovery after resume. |
 | `apps/api/test/workstream-transcript-storage.test.ts` | Atomic activation-input admission under the exact execution/Bind fence, full-provenance replay checks, pending-input suppression, ordered multi-input commits, idempotency across compaction, repair of a host reservation missing its Bind edge, and stop winning a steer-preparation race without consuming input. |
 | `apps/api/test/digest-run-context.test.ts` | A scheduled digest's hidden brief becomes an explicit derived activation input with stable logical identity instead of disappearing on loop resume. |
-| `apps/api/test/document-run-context.test.ts` | Which runs are told to write documents: an interactive run in a region with Terminal is, and a region without Terminal, an inbound-email run and a Slack-origin run are not. The automation and digest origins are pinned in their own suites, beside the delivery context each already proves. **The trap:** the gate reads the whole Terminal region configuration, so a test asserting the section's *absence* must set `TERMINAL_REGION_CAPABILITY`, all four `DAYTONA_*` variables and `TERMINAL_EMERGENCY_DISABLED` — otherwise it passes because the region is unsupported rather than because of the origin it names. |
 | `apps/api/test/block-dashboard-submission.test.ts` | The single nudge, the `block_dashboard_block_not_submitted` failure, and the discarded trailing text. |
 | `apps/api/test/workstream-wakeup.test.ts` | Both time forms, the bounds, idempotency, typed refusal codes and remediation, the pending sidebar marker, and claim-before-launch. |
 | `apps/api/test/bind-host-durability.test.ts` | Host-only boundaries around activation persistence, ambiguous halts, and attachment grounding, including the validation-versus-content-failure distinction and post-start validation receipt reuse. |
@@ -1183,6 +1182,35 @@ input modality, reasoning control, or tool surface must be skipped before I/O.
 Missing final Azure usage is a failed attempt, never a free one. Provider
 ordering remains policy, so changing Azure-first behavior belongs in the route
 registry rather than in request code.
+### 2026-08-30 — Document generation is standing policy, not a gated section
+
+**What changed:** `DOCUMENT_GENERATION_POLICY` moves into the work-stream
+`SYSTEM_PROMPT` alongside the other standing sections. `documentPublishing` and
+`runPublishesDocuments` are gone — every work-stream run sees `# Documents`,
+including automations, digests, inbound email, Slack-origin, HyperSight blocks,
+and regions without Terminal. The host-side gate tests go with them.
+
+**Why:** The section already told the model what to do when the sandbox cannot
+be reached ("answer in the chat and inform the user"). A host gate that omitted
+the section for delivery-path and unsupported-region runs was solving the same
+problem a second time, and the wrong resolution of an absent rule — promising a
+document that never appears — was exactly what the gate existed to prevent. One
+standing rule with an explicit fallback is cheaper to reason about than a
+conditional render whose absence itself needed reasoning.
+
+**Considered and rejected:** Keeping the gate for Slack-origin and automation
+runs, where a rail entry is not visible from the delivery surface — rejected
+because the participant override and the sandbox-unreachable fallback already
+cover answering in chat, and teaching a capability that may fail is preferable
+to omitting a rule the model then has to invent around. Leaving HyperSight
+blocks gated — rejected for the same reason: the block loop refuses write tools,
+and the fallback is "answer in the chat".
+
+**Consequences:** The work-stream golden hash moves. The standing prompt now
+always pays for the documents section; the 8,000-byte ceiling in
+`prompts.test.ts` is the bound that matters. A run whose delivery path cannot
+carry a resource citation still receives the guidance — obedience when the
+sandbox is missing is the section's own last bullet.
 
 ### 2026-08-29 — External delivery reads the exact saved terminal turn
 

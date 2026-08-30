@@ -89,7 +89,7 @@ describe("prompt renderers", () => {
           defaultTimezones: { personal: "America/New_York", workspace: "Europe/London" },
           messages: [{ role: "user", content: "Every Friday morning, summarize merged pull requests." }],
         }),
-        hash: "1a8f882e58c28fd4b7bb1aa7ba6f915052490249285f183fc251472b36740bc0",
+        hash: "224870495f77477b46eb8a8e8d18d760bc6aa728970ac145ab47171855e43980",
       },
       automationCompilerWithDraft: {
         actual: renderAutomationCompilerMessages({
@@ -101,22 +101,14 @@ describe("prompt renderers", () => {
             { role: "user", content: "America/Los_Angeles, and make it workspace-wide." },
           ],
         }),
-        hash: "7125ab41a782cee4d6e19b759fee4336fef089b71d601ef0c09c6f03d6bc0e7b",
+        hash: "f8331d5f1c17d92f053025977f1abec0e6a4e6deb401205f7c585c9983407312",
       },
       workstream: {
         actual: renderWorkstreamSystemPrompt({
           title: "Investigate checkout failures",
           objective: "Find the cause and create a concise incident note.",
         }),
-        hash: "f6a630ce74b05ee4ed9ea6748626ebaf0f46251cf0028848c33fe6290662cfd4",
-      },
-      workstreamWithDocuments: {
-        actual: renderWorkstreamSystemPrompt({
-          title: "Investigate checkout failures",
-          objective: "Find the cause and create a concise incident note.",
-          documentPublishing: true,
-        }),
-        hash: "2025e45135d304db80f35721944b2b18fd6d01bfc74362015b3f7aa4b96a5464",
+        hash: "87af03659a20e7680cff7d5ee7a9b2bb535fbec8c6df12c861b6859a9ec4b391",
       },
       automationWorkstream: {
         actual: renderWorkstreamSystemPrompt({
@@ -124,7 +116,7 @@ describe("prompt renderers", () => {
           objective: "Produce the scheduled weekly engineering brief.",
           automation: workstreamAutomation,
         }),
-        hash: "6a5294e17a874c938acb91d5f869a2cba0b2c38894072a06ff0348ceed22a4c9",
+        hash: "d1338aed3d2e9cad5e55a52eaba05ed923f7e244e4cd98f0cf9028187a527cad",
       },
       semanticTrigger: {
         actual: renderSemanticTriggerMessages({
@@ -222,39 +214,31 @@ describe("prompt renderers", () => {
     ));
   });
 
-  it("steers document-shaped work into the terminal workspace, and only where a run can publish one", () => {
-    const withDocuments = renderWorkstreamSystemPrompt({
-      title: "Draft the launch press release",
-      objective: "Write the press release for the launch.",
-      documentPublishing: true,
-    });
-    const withoutDocuments = renderWorkstreamSystemPrompt({
+  it("steers document-shaped work into the terminal workspace", () => {
+    const prompt = renderWorkstreamSystemPrompt({
       title: "Draft the launch press release",
       objective: "Write the press release for the launch.",
     });
 
-    expect(withDocuments).toContain("# Documents");
+    expect(prompt).toContain("# Documents");
     // The trigger, the procedure, the narration discipline, the revision rule
     // and the override are each a rule the product behavior rests on, so a
     // tidy-up rewrite has to move one deliberately rather than drop it.
-    expect(withDocuments).toContain("a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable");
-    expect(withDocuments).toContain("publish it as a work-stream resource");
-    expect(withDocuments).toContain("Never restate, summarize section by section, or quote the body of a document you just published");
-    expect(withDocuments).toContain("publishing to the same path again");
-    expect(withDocuments).toContain("under the title it already has");
-    expect(withDocuments).toContain("import the published resource back into it first");
-    expect(withDocuments).toContain('"answer in chat"');
-    expect(withDocuments).toContain('"Make that a document"');
+    expect(prompt).toContain("a PRD, contract, job description, blog, post, article, press release, plan, spec, brief, report, proposal, memo, or comparable");
+    expect(prompt).toContain("publish it as a work-stream resource");
+    expect(prompt).toContain("Never restate, summarize section by section, or quote the body of a document you just published");
+    expect(prompt).toContain("publishing to the same path again");
+    expect(prompt).toContain("under the title it already has");
+    expect(prompt).toContain("import the published resource back into it first");
+    expect(prompt).toContain('"answer in chat"');
+    expect(prompt).toContain('"Make that a document"');
     // The fallback, so a run that cannot reach the workspace answers rather
     // than stalling on a procedure it cannot follow.
-    expect(withDocuments).toContain("answer in the chat and inform the user you are unable to create a resource");
+    expect(prompt).toContain("If the terminal sandbox cannot be reached then inform the user you are unable to create a resource and stop");
     // No wire tool name in standing policy: the plugin's activated system
     // message owns the mechanics, and this section renders for runs whose
     // plugin is not loaded yet.
-    expect(withDocuments).not.toMatch(/terminal_[a-z_]+/u);
-    // Where a run cannot publish a document, the prompt is what it was.
-    expect(withoutDocuments).not.toContain("# Documents");
-    expect(withoutDocuments).not.toContain("work-stream resource");
+    expect(prompt).not.toMatch(/terminal_[a-z_]+/u);
   });
 
   it("tells an automation run that Rally delivers its result, and where", () => {
@@ -478,7 +462,7 @@ describe("prompt renderers", () => {
     const prompt = renderWorkstreamSystemPrompt({ title: "T", objective: "O" });
 
     expect(prompt).toContain("# Response formatting");
-    expect(prompt).toContain("Never write TeX or math delimiters.");
+    expect(prompt).toContain("Never write TeX or math delimiters to represent special unicode characters");
     expect(prompt).toContain("A dollar sign in ordinary prose");
   });
 
@@ -566,8 +550,8 @@ describe("prompt renderers", () => {
       objective: "Keep the launch team aligned.",
     });
 
-    expect(prompt).toContain("Person mentions use canonical Markdown");
-    expect(prompt).toContain("[@Display Name](person:<person-id>)");
+    expect(prompt).toContain("Person mentions **always** use link Markdown form");
+    expect(prompt).toContain("[@Display Name](person://<person-id>)");
   });
 
   it("requires a source for every fact in an outward-facing write, whatever the connector", () => {
@@ -662,18 +646,9 @@ describe("prompt renderers", () => {
       title: "T",
       objective: "O",
     });
-    // Measured with the document section rendered: it is charged to every
-    // interactive run in a region where Terminal is supported, so the ceiling
-    // that matters is the one that run pays.
-    const documentPrompt = renderWorkstreamSystemPrompt({
-      title: "T",
-      objective: "O",
-      documentPublishing: true,
-    });
     const compilerPrompt = renderAutomationCompilerMessages({ messages: [] })[0]!.content;
 
     expect(Buffer.byteLength(workstreamPrompt, "utf8")).toBeLessThan(8_000);
-    expect(Buffer.byteLength(documentPrompt, "utf8")).toBeLessThan(8_000);
     // The compiler's ceiling is 2 KB above the work stream's: it gained a
     // permanent `# Narration` section that the 8 KB figure predates, and then
     // the delivery rules — a destination is not a step, and the result's output
@@ -696,9 +671,8 @@ describe("prompt renderers", () => {
     for (const prompt of [workstreamPrompt, compilerPrompt]) {
       expect(prompt).toContain("refers to an attachment");
       expect(prompt).toContain("inspect the relevant attachment before answering");
-      expect(prompt).toContain("charactersBefore");
-      expect(prompt).toContain("charactersAfter");
-      expect(prompt).toContain("do not describe that page as the whole resource");
+      expect(prompt).toContain("Do not infer the contents of the attachment from the filename");
+      expect(prompt).toContain("next and previous cursor values");
     }
   });
 
@@ -872,38 +846,30 @@ describe("citation guidance", () => {
   });
 
   it("reaches a run, and teaches the chip form inside a sentence", () => {
-    // Not `toContain` on the bracket syntax: the image form's own string
-    // contains the link form's, so that assertion could not fail.
-    expect(rendered()).toMatch(/link form, inside the sentence/u);
-    expect(rendered()).toContain("[Title](resource://<resource-id>)");
+    // Not `toContain` on the bracket syntax alone: the image form's own string
+    // contains a similar shape, so a looser assertion could not fail.
+    expect(rendered()).toMatch(/inline \(markdown link form\)/u);
+    expect(rendered()).toContain("resource://");
   });
 
-  it("teaches the footnote form with a definition the renderer would lift", () => {
-    expect(rendered()).toContain("[^1]: [Q3 board deck](resource://<resource-id>)");
+  it("teaches the footnote form and the definition grammar the renderer lifts", () => {
+    expect(rendered()).toMatch(/footnote Markdown form/u);
+    expect(rendered()).toMatch(/exactly one link/u);
+    expect(rendered()).toMatch(/resource:\/\/ identifier or an https:\/\/ URL/u);
+    expect(rendered()).toMatch(/is a plain footnote, not a citation/u);
   });
 
-  it("charges the embed form only to a run that can publish a document", () => {
-    // The embed form announces something the run produced, and a run that was
-    // deliberately not told it can publish has nothing to announce — on the
-    // Slack path the delivery rewrite reduces such a line to a bare title with
-    // nothing to open, which is what that gate exists to prevent.
-    expect(rendered()).not.toContain("![Title](resource://<resource-id>)");
-    expect(renderWorkstreamSystemPrompt({
-      title: "Investigate checkout failures",
-      objective: "Find the cause and create a concise incident note.",
-      documentPublishing: true,
-    })).toContain("![Title](resource://<resource-id>)");
+  it("includes the embed form the documents section uses to announce a published resource", () => {
+    // The embed form announces something the run produced. It lives in the
+    // standing documents policy so there is one rule for that act — this
+    // section owns citing what is already in context.
+    expect(rendered()).toContain("![Title](resource://<resource-id>)");
   });
 
-  it("says what to do when no identifier is in context, which is the part that was missing", () => {
-    // Platform policy already forbids inventing an identifier, twice — in the
-    // working-style rule and in the attachment policy. Repeating the
-    // prohibition a third time only added a third, conflicting remedy: those
-    // two say ask a person, which a headless automation run cannot do. What
-    // this owes is the citation-specific action.
+  it("says to cite what the answer leans on, and nothing when it leans on nothing", () => {
     const prompt = rendered();
-    expect(prompt).toMatch(/name the thing in plain words rather than citing it/u);
-    expect(prompt).toMatch(/the identifier a tool result in this run returned/u);
+    expect(prompt).toContain("Cite the sources an answer actually leans on, not everything you touched");
+    expect(prompt).toContain("An answer that rests on nothing in this run's context carries no citations");
   });
 
   it("pins the definition grammar the renderer actually implements", () => {

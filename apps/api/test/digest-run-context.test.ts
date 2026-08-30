@@ -225,14 +225,6 @@ describe("the window a scheduled digest run is given", () => {
     });
   });
 
-  it("is not told to write the digest as a document", async () => {
-    const context = await loadRunPromptContext(envFor(seededDatabase()), workflowInput(), lease, workstream);
-
-    // The delivery sends this run's final message. A digest that named a
-    // document instead of carrying the news would arrive saying nothing.
-    expect(context.systemPrompt).not.toContain("# Documents");
-  });
-
   it("never carries the window in the system prompt", async () => {
     const env = envFor(seededDatabase());
 

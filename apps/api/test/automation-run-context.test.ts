@@ -238,17 +238,6 @@ describe("what an automation run is told about its own delivery", () => {
     );
   });
 
-  it("is not told to write its result as a document", async () => {
-    const env = envFor(seededDatabase());
-
-    const context = await loadRunPromptContext(env, workflowInput(), lease, workstream);
-
-    // Rally delivers this run's final message to the frozen destinations; a
-    // document published to the rail is not in that message, so the owner
-    // would receive a briefing that describes a document they cannot see.
-    expect(context.systemPrompt).not.toContain("# Documents");
-  });
-
   it("lists nothing when the automation has no destination beyond Avalon", async () => {
     const env = envFor(seededDatabase({ targets: "" }));
 
