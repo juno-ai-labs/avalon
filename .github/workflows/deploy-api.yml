@@ -389,30 +389,54 @@ jobs:
           echo "$selection"
 
       - name: Upload all EU Worker versions without traffic
+        id: upload_eu
         if: env.DEPLOY_EU == 'true' && steps.deploy_mode.outputs.mode == 'versioned'
         env:
           DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
         run: |
           set -euo pipefail
-          for config in wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json; do
+          upload_version() {
+            local config="$1"
+            local output_name="$2"
+            local output_file="${RUNNER_TEMP}/wrangler-${output_name}-${GITHUB_RUN_ATTEMPT}.json"
+            WRANGLER_OUTPUT_FILE_PATH="$output_file" \
             pnpm --filter @rally/api exec wrangler versions upload \
               --config "$config" \
               --tag "$DEPLOY_SHA" \
               --message "Verified GitHub deployment $DEPLOY_SHA"
-          done
+            local version_id
+            version_id="$(jq -r 'select(.type == "version-upload") | .version_id' "$output_file" | tail -n 1)"
+            test -n "$version_id" && test "$version_id" != null
+            echo "${output_name}=${version_id}" >> "$GITHUB_OUTPUT"
+          }
+          upload_version wrangler.documents.eu.jsonc eu_documents
+          upload_version wrangler.terminal.eu.jsonc eu_terminal
+          upload_version .wrangler.lakehouses.eu.json eu_api
 
       - name: Upload all Global Worker versions without traffic
+        id: upload_global
         if: env.DEPLOY_GLOBAL == 'true' && steps.deploy_mode.outputs.mode == 'versioned'
         env:
           DEPLOY_SHA: ${{ needs.verify.outputs.verified_sha }}
         run: |
           set -euo pipefail
-          for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc .wrangler.lakehouses.global.json; do
+          upload_version() {
+            local config="$1"
+            local output_name="$2"
+            local output_file="${RUNNER_TEMP}/wrangler-${output_name}-${GITHUB_RUN_ATTEMPT}.json"
+            WRANGLER_OUTPUT_FILE_PATH="$output_file" \
             pnpm --filter @rally/api exec wrangler versions upload \
               --config "$config" \
               --tag "$DEPLOY_SHA" \
               --message "Verified GitHub deployment $DEPLOY_SHA"
-          done
+            local version_id
+            version_id="$(jq -r 'select(.type == "version-upload") | .version_id' "$output_file" | tail -n 1)"
+            test -n "$version_id" && test "$version_id" != null
+            echo "${output_name}=${version_id}" >> "$GITHUB_OUTPUT"
+          }
+          upload_version wrangler.documents.global.jsonc global_documents
+          upload_version wrangler.terminal.global.jsonc global_terminal
+          upload_version .wrangler.lakehouses.global.json global_api
 
       - name: List the pending remote migrations for EU
         id: pending_eu
@@ -490,14 +514,19 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ steps.deploy_mode.outputs.mode }}" = "versioned" ]; then
-            for config in wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json; do
+            promote_version() {
+              local config="$1"
+              local version_id="$2"
               pnpm --filter @rally/api exec wrangler versions deploy \
                 --config "$config" \
-                --version-tag "$DEPLOY_SHA" \
+                --version-id "$version_id" \
                 --percentage 100 \
                 --message "Promote verified GitHub deployment $DEPLOY_SHA" \
                 --yes
-            done
+            }
+            promote_version wrangler.documents.eu.jsonc "${{ steps.upload_eu.outputs.eu_documents }}"
+            promote_version wrangler.terminal.eu.jsonc "${{ steps.upload_eu.outputs.eu_terminal }}"
+            promote_version .wrangler.lakehouses.eu.json "${{ steps.upload_eu.outputs.eu_api }}"
           else
             for config in wrangler.documents.eu.jsonc wrangler.terminal.eu.jsonc .wrangler.lakehouses.eu.json; do
               pnpm --filter @rally/api exec wrangler deploy \
@@ -518,14 +547,19 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ steps.deploy_mode.outputs.mode }}" = "versioned" ]; then
-            for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc .wrangler.lakehouses.global.json; do
+            promote_version() {
+              local config="$1"
+              local version_id="$2"
               pnpm --filter @rally/api exec wrangler versions deploy \
                 --config "$config" \
-                --version-tag "$DEPLOY_SHA" \
+                --version-id "$version_id" \
                 --percentage 100 \
                 --message "Promote verified GitHub deployment $DEPLOY_SHA" \
                 --yes
-            done
+            }
+            promote_version wrangler.documents.global.jsonc "${{ steps.upload_global.outputs.global_documents }}"
+            promote_version wrangler.terminal.global.jsonc "${{ steps.upload_global.outputs.global_terminal }}"
+            promote_version .wrangler.lakehouses.global.json "${{ steps.upload_global.outputs.global_api }}"
           else
             for config in wrangler.documents.global.jsonc wrangler.terminal.global.jsonc .wrangler.lakehouses.global.json; do
               pnpm --filter @rally/api exec wrangler deploy \

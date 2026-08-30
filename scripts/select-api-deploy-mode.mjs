@@ -38,9 +38,9 @@ export function selectApiDeployMode({ deployedShas, changedPaths }) {
   };
 }
 
-async function changedPathsSince(repositoryDirectory, sha) {
+export async function changedPathsSince(repositoryDirectory, sha) {
   await execFile('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: repositoryDirectory });
-  const { stdout } = await execFile('git', ['diff', '--name-only', `${sha}...HEAD`], {
+  const { stdout } = await execFile('git', ['diff', '--name-only', sha, 'HEAD'], {
     cwd: repositoryDirectory,
   });
   return stdout.trim().split('\n').filter(Boolean);

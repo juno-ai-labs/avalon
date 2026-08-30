@@ -60,7 +60,11 @@ test('profiles all static service artifacts and uploads both regional sets befor
   assert.ok(deployEu < euHealth && euHealth < deployGlobal);
   assert.match(workflow, /wrangler\.documents\.eu\.jsonc wrangler\.terminal\.eu\.jsonc \.wrangler\.lakehouses\.eu\.json/u);
   assert.match(workflow, /wrangler\.documents\.global\.jsonc wrangler\.terminal\.global\.jsonc \.wrangler\.lakehouses\.global\.json/u);
-  assert.match(workflow, /wrangler versions deploy[\s\S]+--version-tag "\$DEPLOY_SHA"/u);
+  assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$output_file"[\s\S]+\.version_id/u);
+  assert.match(workflow, /wrangler versions deploy[\s\S]+--version-id "\$version_id"/u);
+  assert.doesNotMatch(workflow, /versions deploy[\s\S]{0,200}--version-tag/u);
+  assert.match(workflow, /steps\.upload_eu\.outputs\.eu_documents/u);
+  assert.match(workflow, /steps\.upload_global\.outputs\.global_api/u);
   assert.match(workflow, /Preserve exact deployment startup evidence/u);
 });
 
