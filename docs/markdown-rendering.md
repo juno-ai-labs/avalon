@@ -21,7 +21,7 @@ one of them silently missed the others; the changelog records what that cost.
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
-| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), `.citation-card-preview` (inherits tone and zeros block margins so the four-line clamp spends itself on text), and `.inspector-detail-document` (sizes the body and restyles no markdown element). |
+| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the host overrides: `.note-detail-article` and `.meeting-notes-body` (heading scale), `.citation-card-preview` (inherits tone and zeros block margins so the four-line clamp spends itself on text), and `.inspector-detail-document` (sizes the body and the host width to the rail, and restyles no markdown element). |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
@@ -35,7 +35,7 @@ Ten call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
-| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane. |
+| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document. Hosted as `.inspector-detail-document` in the rail's own scroll, not in a boxed inner pane, and sized to the rail's column so long prose wraps to the panel instead of clipping. |
 | The embed card's preview of that same derivative | `markdown-citations.tsx`, via `CitationPreviewBody` in `workstream-blocks.tsx` so the card does not import the renderer it lives inside |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
@@ -513,6 +513,26 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — The rail's document wraps to the panel, not to its own max-content
+
+**What changed:** `.rail-surface` names a `minmax(0, 1fr)` column, `.rail-scroll`
+takes `min-width: 0`, and `.inspector-detail-document` is `max-width: 100%` with
+`min-width: 0`. Long markdown in the inspector wraps to the panel instead of
+laying out at max-content and being clipped by `overflow-x: hidden`.
+
+**Why:** Removing the boxed inner preview left the markdown in the rail's own
+scroll. `.rail-surface` is a grid that only named its row tracks, so the
+implicit column was `auto` and would not shrink below the document's
+max-content. The scroller then clipped the unwrapped lines. HyperSight already
+had `min-width: 0` on `.block-dashboard-panel`; the inspector document never got
+the equivalent. The changelog already said the host is sized to the rail; the
+host did not actually constrain its width.
+
+**What a future change has to respect:** do not drop the column track back to
+implicit `auto`. Sizing `.inspector-detail-document` to the rail remains the
+allowed exception; restyling markdown elements does not. A `max-width` other
+than `100%` would be a reading-measure, which this panel is not.
 
 ### 2026-08-30 — The rail shows an image resource, and the document host joins the guard
 
