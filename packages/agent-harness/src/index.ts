@@ -118,6 +118,26 @@ export interface OpenRouterConfig {
   streamIdleTimeoutMs?: number;
   /** Opaque request ownership and deployment data forwarded to OpenRouter Broadcast. */
   traceContext?: OpenRouterTraceContext;
+  /** Optional Azure OpenAI-compatible transport used by Bind's provider router. */
+  azure?: AzureOpenAIConfig;
+}
+
+export interface AzureOpenAIConfig {
+  /** Azure AI resource endpoint; the harness appends `/openai/v1/chat/completions`. */
+  endpoint: string;
+  apiKey: string;
+}
+
+/** Shared freshness horizon for OpenRouter catalog-derived metadata. */
+export const OPENROUTER_CATALOG_CACHE_TTL_MS = 60 * 60 * 1_000;
+
+/** Host-resolved token rates Bind can attach to an Azure route candidate. */
+export interface AzureModelPricing {
+  inputUsdPerM: number;
+  cachedInputUsdPerM: number;
+  outputUsdPerM: number;
+  /** Stable, secret-free identity of the source endpoint inventory and rates. */
+  sourceFingerprint: string;
 }
 
 export interface OpenRouterTraceContext {
@@ -307,6 +327,8 @@ export interface OpenRouterInferencePayload {
   tool_choice?: "auto";
   plugins?: Array<Record<string, unknown>>;
   reasoning?: { effort: "none" | "low" | "medium" | "high" };
+  /** Azure's OpenAI-compatible Chat Completions reasoning control. */
+  reasoning_effort?: "low" | "medium" | "high";
   user?: string;
   session_id?: string;
   trace?: OpenRouterTracePayload["trace"];
@@ -430,7 +452,7 @@ export interface ModelToolCall {
   function: { name: string; arguments: string };
 }
 
-interface ChatRequest {
+export interface ChatRequest {
   messages: ModelMessage[];
   tools?: ModelRequestTool[];
   toolChoice?: "auto" | "none";
@@ -492,6 +514,25 @@ export class OpenRouterRequestError extends OpenRouterError {
   constructor(message: string) {
     super(message);
     this.name = "OpenRouterRequestError";
+  }
+}
+
+export class AzureOpenAIError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly details?: unknown,
+  ) {
+    super(message);
+    this.name = "AzureOpenAIError";
+  }
+}
+
+/** A locally invalid Azure request must never traverse to another model. */
+export class AzureOpenAIRequestError extends AzureOpenAIError {
+  constructor(message: string) {
+    super(message);
+    this.name = "AzureOpenAIRequestError";
   }
 }
 
@@ -1134,6 +1175,202 @@ export class OpenRouterClient {
   }
 }
 
+/**
+ * Streaming Chat Completions client for Azure AI Foundry's OpenAI-compatible
+ * v1 endpoint. Routing and retries stay in Bind; this adapter owns only the
+ * provider-specific URL, headers, body, and response normalization.
+ */
+export class AzureOpenAIClient {
+  private readonly fetcher: typeof globalThis.fetch;
+  private readonly chatCompletionsUrl: string;
+
+  constructor(
+    private readonly config: AzureOpenAIConfig & Pick<
+      OpenRouterConfig,
+      | "fetch"
+      | "requestEstablishmentTimeoutMs"
+      | "ttftTimeoutMs"
+      | "streamIdleTimeoutMs"
+    >,
+  ) {
+    if (!config.apiKey.trim()) throw new AzureOpenAIError("AZURE_OPENAI_API_KEY is not configured");
+    this.chatCompletionsUrl = azureChatCompletionsUrl(config.endpoint);
+    this.fetcher = (config.fetch ?? globalThis.fetch).bind(globalThis);
+  }
+
+  async stream(
+    input: ChatRequest & { model: string },
+    onDelta: (delta: string) => void | Promise<void>,
+  ): Promise<StreamResult> {
+    if (input.plugins?.length || input.includeWebSearch) {
+      throw new AzureOpenAIRequestError("Azure does not support OpenRouter plugins");
+    }
+    assertAzureMessages(input.messages);
+    const requestStartedAt = Date.now();
+    let firstOutputAt: number | null = null;
+    const watchdog = createStreamWatchdog({
+      timeToFirstTokenMs: this.config.ttftTimeoutMs ?? 120_000,
+      interChunkMs: this.config.streamIdleTimeoutMs ?? 15_000,
+      maxCallDurationMs: Math.max(
+        this.config.ttftTimeoutMs ?? 120_000,
+        (this.config.ttftTimeoutMs ?? 120_000) + (this.config.streamIdleTimeoutMs ?? 15_000),
+      ),
+      external: input.signal ?? null,
+    });
+    const establishment = new AbortController();
+    let establishmentTimedOut = false;
+    const establishmentTimer = setTimeout(() => {
+      establishmentTimedOut = true;
+      establishment.abort(new DOMException("Azure request establishment timed out", "TimeoutError"));
+    }, this.config.requestEstablishmentTimeoutMs ?? 30_000);
+    try {
+      const payload = {
+        model: input.model,
+        messages: input.messages,
+        stream: true as const,
+        stream_options: { include_usage: true as const },
+        ...(input.tools?.length ? {
+          tools: input.tools,
+          tool_choice: input.toolChoice ?? "auto",
+        } : {}),
+        ...(input.reasoningEffort ? { reasoning_effort: input.reasoningEffort } : {}),
+      };
+      const response = await this.fetcher(this.chatCompletionsUrl, {
+        method: "POST",
+        headers: {
+          "api-key": this.config.apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.any([watchdog.signal, establishment.signal]),
+      });
+      clearTimeout(establishmentTimer);
+      watchdog.open();
+      if (!response.ok || !response.body) {
+        let details: unknown;
+        try {
+          details = await response.json();
+        } catch {
+          details = await response.text();
+        }
+        throw new AzureOpenAIError(`Azure stream failed (${response.status})`, response.status, {
+          headers: { "retry-after": response.headers.get("retry-after") ?? undefined },
+          providerErrorKind: typeof details === "object" && details !== null ? "structured" : "text",
+          providerError: openRouterProviderError(details),
+        });
+      }
+
+      let content = "";
+      let usage: Record<string, number> | null = null;
+      let finishReason: string | null = null;
+      let generationId: string | null = response.headers.get("x-request-id");
+      const pendingCalls = new Map<number, ModelToolCall>();
+      let deltaChain = Promise.resolve();
+      const parser = createParser({
+        onEvent: (event: EventSourceMessage) => {
+          if (event.data === "[DONE]") return;
+          const chunk = parseOpenRouterStreamChunk(event.data);
+          if (chunk.error) {
+            throw new AzureOpenAIError("Azure stream error", undefined, {
+              providerError: openRouterProviderError({ error: chunk.error }),
+            });
+          }
+          generationId ??= chunk.id || null;
+          if (chunk.usage) usage = sdkUsageRecord(chunk.usage);
+          const choice = chunk.choices?.[0];
+          if (!choice) return;
+          if (choice.finishReason) finishReason = choice.finishReason;
+          const text = choice.delta?.content;
+          const toolCallDeltas = choice.delta?.toolCalls ?? [];
+          watchdog.observedChunk(text || toolCallDeltas.length > 0 ? "answer" : "none");
+          if (text || toolCallDeltas.length > 0) firstOutputAt ??= Date.now();
+          if (text) {
+            content += text;
+            deltaChain = deltaChain.then(() => onDelta(text));
+          }
+          for (const deltaCall of toolCallDeltas) {
+            const current = pendingCalls.get(deltaCall.index) ?? {
+              id: deltaCall.id ?? `tool-${deltaCall.index}`,
+              type: "function" as const,
+              function: { name: "", arguments: "" },
+            };
+            if (deltaCall.id) current.id = deltaCall.id;
+            if (deltaCall.function?.name) current.function.name += deltaCall.function.name;
+            if (deltaCall.function?.arguments) current.function.arguments += deltaCall.function.arguments;
+            pendingCalls.set(deltaCall.index, current);
+          }
+        },
+      });
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let responseBytes = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        responseBytes += value.byteLength;
+        parser.feed(decoder.decode(value, { stream: true }));
+      }
+      parser.feed(decoder.decode());
+      await deltaChain;
+      return {
+        model: input.model,
+        content,
+        toolCalls: [...pendingCalls.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, call]) => call),
+        usage,
+        finishReason,
+        generationId,
+        ttftMs: firstOutputAt === null ? null : Math.max(0, firstOutputAt - requestStartedAt),
+        responseBytes,
+        openRouterMetadata: null,
+      };
+    } catch (error) {
+      const stall = watchdog.stall();
+      if (stall) throw new AzureOpenAIError(`Azure stream stalled (${stall.kind})`, 408, { stall });
+      if (establishmentTimedOut && !input.signal?.aborted) {
+        throw new AzureOpenAIError("Azure request establishment timed out", 408, {
+          timeoutMs: this.config.requestEstablishmentTimeoutMs ?? 30_000,
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(establishmentTimer);
+      watchdog.dispose();
+    }
+  }
+}
+
+function azureChatCompletionsUrl(endpoint: string): string {
+  let url: URL;
+  try {
+    url = new URL(endpoint.trim());
+  } catch {
+    throw new AzureOpenAIRequestError("AZURE_OPENAI_ENDPOINT must be a valid URL");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+    throw new AzureOpenAIRequestError("AZURE_OPENAI_ENDPOINT must be an HTTPS resource endpoint");
+  }
+  const path = url.pathname.replace(/\/+$/u, "");
+  if (path && path !== "/openai/v1") {
+    throw new AzureOpenAIRequestError("AZURE_OPENAI_ENDPOINT must be a resource root or end in /openai/v1");
+  }
+  url.pathname = `${path || "/openai/v1"}/chat/completions`;
+  return url.toString();
+}
+
+function assertAzureMessages(messages: ModelMessage[]): void {
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part.type === "file" || part.type === "input_audio") {
+        throw new AzureOpenAIRequestError(`Azure does not support ${part.type} message parts`);
+      }
+      if (part.type === "image_url") assertSupportedOpenRouterImageUrl(part.image_url.url);
+    }
+  }
+}
+
 function serializeOpenRouterChatRequest(input: {
   model: string;
   messages: ModelMessage[];
@@ -1363,6 +1600,23 @@ function parseOpenRouterStreamChunk(serialized: string): ChatStreamChunk {
 }
 
 function rawUsageToSdk(usage: Record<string, unknown>): ChatUsage {
+  const promptDetails = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === "object"
+    ? usage.prompt_tokens_details as Record<string, unknown>
+    : null;
+  const completionDetails = usage.completion_tokens_details
+    && typeof usage.completion_tokens_details === "object"
+    ? usage.completion_tokens_details as Record<string, unknown>
+    : null;
+  const reasoningTokens = typeof usage.reasoning_tokens === "number"
+    ? usage.reasoning_tokens
+    : typeof completionDetails?.reasoning_tokens === "number"
+      ? completionDetails.reasoning_tokens
+      : undefined;
+  const cachedInputTokens = typeof usage.cached_tokens === "number"
+    ? usage.cached_tokens
+    : typeof promptDetails?.cached_tokens === "number"
+      ? promptDetails.cached_tokens
+      : undefined;
   return {
     promptTokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0,
     completionTokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0,
@@ -1371,12 +1625,12 @@ function rawUsageToSdk(usage: Record<string, unknown>): ChatUsage {
       : (typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : 0)
         + (typeof usage.completion_tokens === "number" ? usage.completion_tokens : 0),
     ...(typeof usage.cost === "number" ? { cost: usage.cost } : {}),
-    ...(typeof usage.reasoning_tokens === "number" ? {
-      completionTokensDetails: { reasoningTokens: usage.reasoning_tokens },
-    } : {}),
-    ...(typeof usage.cached_tokens === "number" ? {
-      promptTokensDetails: { cachedTokens: usage.cached_tokens },
-    } : {}),
+    ...(reasoningTokens === undefined ? {} : {
+      completionTokensDetails: { reasoningTokens },
+    }),
+    ...(cachedInputTokens === undefined ? {} : {
+      promptTokensDetails: { cachedTokens: cachedInputTokens },
+    }),
   };
 }
 
@@ -3729,6 +3983,14 @@ export interface RunHarnessInput {
   executionPrincipal: ExecutionPrincipal;
   /** Provider-side Broadcast correlation. Hosts should supply the real surface identity. */
   traceContext?: OpenRouterTraceContext;
+  /**
+   * Resolves Azure billing rates before Bind builds a route. Production reads
+   * a shared Cloudflare KV snapshot of OpenRouter endpoint-average prices.
+   */
+  resolveAzureModelPricing?: (
+    canonicalModelIds: readonly string[],
+    signal: AbortSignal,
+  ) => Promise<ReadonlyMap<string, AzureModelPricing>>;
   systemPrompt: string;
   messages: ModelMessage[];
   /** Exact durable head to resume. Absent only when this loop has never started. */
