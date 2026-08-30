@@ -235,8 +235,9 @@ export function orderedTranscriptMessages(
   // Empty means the API predates the field, not that no plugin ran, so the
   // activity-tree derivation below stays as the fallback until every deployed
   // API reports runs.
+  const resolvedPluginRuns = resolvePluginRuns(snapshot);
   const pluginRunByToolCallId = new Map<string, TranscriptPluginRun>();
-  for (const run of snapshot.pluginRuns) {
+  for (const run of resolvedPluginRuns) {
     for (const toolCallId of run.toolCallIds) pluginRunByToolCallId.set(toolCallId, run);
   }
   const lastTurnByResponseActivityId = new Map<string, TranscriptTurn>();
@@ -455,16 +456,19 @@ export function orderedTranscriptMessages(
       tieBreaker: activity.activityId,
     });
   }
-  for (const run of snapshot.pluginRuns) {
+  for (const run of resolvedPluginRuns) {
     const lastTurn = turnsById.get(run.turnId);
     if (!lastTurn) continue;
-    // Position the row at the plugin's last call in the turn, the same place
-    // the derivation below puts it. `toolCallIds` is the server's own list, so
-    // this no longer depends on a block's `pluginId` matching an activity's
-    // subject — the join that could silently leave a plugin unrepresented.
+    // Position the row at the plugin's last call in the turn. `toolCallIds` is
+    // the precise answer and is preferred, but a run resolved from an activity
+    // tree that carries no `tool_call` activities has none — so the plugin's
+    // own id is the fallback, which is what positioning used before runs
+    // existed. Without it such a row has nowhere to sit and is dropped.
     const calls = new Set(run.toolCallIds);
-    const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) =>
-      block.type === 'tool' && calls.has(block.toolCallId) ? [block.blockIndex] : []));
+    const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) => block.type === 'tool'
+      && (calls.size > 0 ? calls.has(block.toolCallId) : block.pluginId === run.pluginId)
+      ? [block.blockIndex]
+      : []));
     if (!Number.isFinite(lastToolIndex)) continue;
     const group = pluginGroup(run.pluginId, run.displayName);
     if (!group) continue;
@@ -497,55 +501,6 @@ export function orderedTranscriptMessages(
       turnSequence: lastTurn.transcriptSequence,
       position: lastToolIndex * 2 + 1,
       tieBreaker: run.pluginRunId,
-    });
-  }
-  // Fallback for an API that predates `pluginRuns`. It rebuilds the same row
-  // from the activity tree, and is the code whose joins this change exists to
-  // stop depending on; it is kept only until every deployed API reports runs.
-  for (const activity of snapshot.pluginRuns.length > 0 ? [] : snapshot.activities) {
-    if (activity.scope !== 'plugin') continue;
-    const parent = activity.parentActivityId
-      ? activities.get(activity.parentActivityId)
-      : undefined;
-    const lastTurn = parent?.scope === 'assistant_turn'
-      ? turnsById.get(parent.subjectId)
-      : undefined;
-    if (!lastTurn) continue;
-    const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) =>
-      block.type === 'tool' && block.pluginId === activity.subjectId ? [block.blockIndex] : []));
-    if (!Number.isFinite(lastToolIndex)) continue;
-    const group = pluginGroup(activity.subjectId, activity.label);
-    if (!group) continue;
-    const timing = activityTiming(activity);
-    const activeInterval = activity.intervals.find((interval) => interval.stoppedAtUtc === null);
-    messages.push({
-      id: activity.activityId,
-      transcriptTurnId: lastTurn.turnId,
-      transcriptSequence: lastTurn.transcriptSequence,
-      workstreamId,
-      sequenceNumber: 0,
-      attentionSequenceNumber: null,
-      authorType: 'agent',
-      messageType: 'plugin_activity',
-      createdAt: activeInterval?.startedAtUtc ?? lastTurn.createdAtUtc,
-      pluginActivity: {
-        groupKey: group.key,
-        name: group.name,
-        icon: group.icon,
-        activeVerb: group.activeVerb,
-        completedVerb: group.completedVerb,
-        active: activity.state === 'active',
-        durationMs: timing.durationMs,
-        timingAccuracy: timing.timingAccuracy,
-        ...(timing.monotonicStartedAt === undefined
-          ? {}
-          : { monotonicStartedAt: [timing.monotonicStartedAt] }),
-      },
-    });
-    messageOrder.set(activity.activityId, {
-      turnSequence: lastTurn.transcriptSequence,
-      position: lastToolIndex * 2 + 1,
-      tieBreaker: activity.activityId,
     });
   }
   // Canonical blocks are not optimistic messages. In particular, every block
@@ -1125,6 +1080,7 @@ export function mergeRealtimeTranscriptTurn(
       },
       turns: [turn],
       activities: [],
+      pluginRuns: [],
     });
   }
   return {
@@ -1146,11 +1102,17 @@ export function mergeTranscriptRange(
     if (!current || current.revision < activity.revision) activities.set(activity.activityId, activity);
   }
   const mergedActivities = [...activities.values()];
+  // Runs come with the range for the same reason activities do: the turns it
+  // brings in were never covered by the opening snapshot, so their timing has
+  // to arrive with them or those rows have nothing to render from.
+  const pluginRuns = new Map(snapshot.pluginRuns.map((run) => [run.pluginRunId, run]));
+  for (const run of range.pluginRuns) pluginRuns.set(run.pluginRunId, run);
   return {
     ...snapshot,
     ranges: [...snapshot.ranges, range],
     activities: mergedActivities,
     activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
+    pluginRuns: [...pluginRuns.values()],
   };
 }
 
@@ -1217,12 +1179,17 @@ export function mergeCanonicalTranscriptSnapshot(
       const turns = range.turns.filter((turn) =>
         turn.transcriptSequence >= covered.startInclusive
         && turn.transcriptSequence < covered.endExclusive);
+      const retainedTurnIds = new Set(turns.map((turn) => turn.turnId));
       return {
         purpose: 'requested' as const,
         requested: covered,
         covered,
         turns,
         activities: activitiesForTurns(range.activities, turns),
+        // The turns survive the reconcile, so their timing has to survive with
+        // them. Dropping the runs here would blank the duration on every row
+        // above the incoming snapshot's coverage the first time one arrived.
+        pluginRuns: range.pluginRuns.filter((run) => retainedTurnIds.has(run.turnId)),
       };
     }));
 
@@ -1239,12 +1206,19 @@ export function mergeCanonicalTranscriptSnapshot(
     }
   }
   const mergedActivities = [...activities.values()];
+  // Same rule for the snapshot-level list: the incoming snapshot is
+  // authoritative for the turns it covers, and the runs it does not cover are
+  // the ones the retained ranges still need.
+  const pluginRuns = new Map(retainedRanges.flatMap((range) =>
+    range.pluginRuns.map((run) => [run.pluginRunId, run] as const)));
+  for (const run of incoming.pluginRuns) pluginRuns.set(run.pluginRunId, run);
 
   return {
     ...incoming,
     ranges: [...retainedRanges, ...incoming.ranges],
     activities: mergedActivities,
     activeActivities: mergedActivities.filter((activity) => activity.state === 'active'),
+    pluginRuns: [...pluginRuns.values()],
   };
 }
 
@@ -1267,6 +1241,94 @@ export function mergeRealtimeTranscriptActivity(
     activities,
     activeActivities: activities.filter((candidate) => candidate.state === 'active'),
   };
+}
+
+/**
+ * The plugin runs the activity tree can account for.
+ *
+ * The server's `pluginRuns` is resolved once, when a snapshot is taken. The
+ * activity tree, by contrast, is kept current by realtime: a plugin that
+ * completes mid-run arrives as `transcript_activity_upserted` and lands in
+ * `activities`. So where the tree *can* account for a run, it is the fresher of
+ * the two, and a row built only from the snapshot's copy would tick forever
+ * because its `state` never leaves `active`.
+ *
+ * Where the tree cannot account for one — the parent chain that names the turn
+ * is exactly what the nullable seeds fail to deliver — this returns nothing for
+ * it and the snapshot's own run stands. That is the case this whole contract
+ * exists for, and the two sources compose rather than competing:
+ * `resolvePluginRuns` overlays what the tree knows onto what the server said.
+ */
+function pluginRunsFromActivities(
+  activities: readonly TranscriptActivity[],
+): Map<string, TranscriptPluginRun> {
+  const byId = new Map(activities.map((activity) => [activity.activityId, activity]));
+  const callsByPlugin = new Map<string, string[]>();
+  for (const activity of activities) {
+    if (activity.scope !== 'tool_call' || !activity.parentActivityId) continue;
+    const current = callsByPlugin.get(activity.parentActivityId) ?? [];
+    current.push(activity.subjectId);
+    callsByPlugin.set(activity.parentActivityId, current);
+  }
+  const runs = new Map<string, TranscriptPluginRun>();
+  for (const activity of activities) {
+    if (activity.scope !== 'plugin' || !activity.parentActivityId) continue;
+    const parent = byId.get(activity.parentActivityId);
+    if (parent?.scope !== 'assistant_turn') continue;
+    let completedMs = 0;
+    let elapsedMsAtSnapshot: number | null = null;
+    // The same rule the server folds by: a stopped interval that recorded no
+    // duration makes the total unknowable, not smaller.
+    let durationKnown = activity.intervals.length > 0;
+    let upperBound = false;
+    for (const interval of activity.intervals) {
+      if (interval.timingAccuracy === 'upper_bound') upperBound = true;
+      if (interval.stoppedAtUtc === null) {
+        elapsedMsAtSnapshot = (elapsedMsAtSnapshot ?? 0) + (interval.elapsedMsAtSnapshot ?? 0);
+        continue;
+      }
+      if (interval.durationMs === null) durationKnown = false;
+      else completedMs += interval.durationMs;
+    }
+    runs.set(activity.activityId, {
+      pluginRunId: activity.activityId,
+      turnId: parent.subjectId,
+      pluginId: activity.subjectId,
+      displayName: activity.label,
+      state: activity.state,
+      durationMs: durationKnown ? completedMs : null,
+      elapsedMsAtSnapshot,
+      timingAccuracy: upperBound ? 'upper_bound' : 'observed',
+      toolCallIds: callsByPlugin.get(activity.activityId) ?? [],
+    });
+  }
+  return runs;
+}
+
+/**
+ * One list of runs from the two sources, newest fact winning per field.
+ *
+ * The snapshot's run is the base, because it is the one that exists even when
+ * the tree cannot reach the activity. The tree's view is overlaid on top when
+ * it has one, because realtime keeps it current. `toolCallIds` is the exception
+ * to "newest wins": an empty list there is the tree failing to see the calls
+ * rather than the plugin having made none, and an empty list leaves the row
+ * with nowhere to sit.
+ */
+function resolvePluginRuns(snapshot: WorkstreamTranscriptSnapshot): TranscriptPluginRun[] {
+  const derived = pluginRunsFromActivities(snapshot.activities);
+  const resolved = snapshot.pluginRuns.map((run) => {
+    const fresh = derived.get(run.pluginRunId);
+    derived.delete(run.pluginRunId);
+    if (!fresh) return run;
+    return {
+      ...run,
+      ...fresh,
+      toolCallIds: fresh.toolCallIds.length > 0 ? fresh.toolCallIds : run.toolCallIds,
+    };
+  });
+  // A plugin that started after the snapshot was taken has no server run yet.
+  return [...resolved, ...derived.values()];
 }
 
 /**

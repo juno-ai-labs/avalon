@@ -397,6 +397,16 @@ describe("work-stream transcript on workerd SQLite", () => {
         durationMs: 6_770,
         toolCallIds: ["call-0"],
       })]);
+
+      // A range loaded later covers turns the opening snapshot never did, so it
+      // has to carry their runs too: the client cannot re-derive them from the
+      // activities a range ships for exactly the reason above.
+      const range = transcript.range(snapshot, { startInclusive: 1, endExclusive: 2 });
+      expect(range.pluginRuns).toEqual([expect.objectContaining({
+        pluginRunId: `${turnId}:plugin:rally:memory`,
+        turnId,
+        durationMs: 6_770,
+      })]);
     });
   });
 
