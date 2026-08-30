@@ -779,11 +779,11 @@ maximum child timestamp. Viewer unread counts sum across children, while
 participation, listability, and “You Are Mentioned” are logical ORs. The
 directory `Workstream` that WorkspaceDO pushes for the sidebar carries a
 bounded participant preview on personal rows only: at most three user ids,
-newest first, plus `participantExtraCount` for everyone past that.
-Workspace-scoped rows send neither. The directory sorts by overlay
-`projected_at`; WorkstreamDO `summary()` sorts by `participants.added_at` so a
-rename or scope write that merges the child's summary does not wipe the pile
-with a different order. Every
+most recently added first, plus `participantExtraCount` for everyone past that.
+Workspace-scoped rows send neither. Directory and `summary()` both sort by
+`participants.added_at` (copied onto the overlay as `participant_added_at`) so
+a REST merge of the child's summary cannot swap the three faces. Overlay
+`projected_at` is not that clock: it moves on every unread. Every
 changed aggregate partition gets its own monotonic waterline and UUIDv7 event
 ID in `workstream_state_changes`; pending transitions are not coalesced. The
 UUID is carried unchanged on the direct WorkstreamDO socket and delayed
@@ -1435,6 +1435,42 @@ changes rather than token rate or number of connected viewers. D1 receives no
 directory write at all.
 
 ## Changelog
+
+### 2026-08-30 — Facepile order is join time, not overlay recency
+
+**What changed:** WorkspaceDO stores `participants.added_at` on each viewer row
+as `participant_added_at` and sorts the sidebar preview by that column, matching
+WorkstreamDO `summary()`. `projected_at` is no longer the facepile clock. Adding
+or removing a participant publishes the recomputed row to every subscribed
+viewer, not only the person whose overlay changed. The preview query is loaded
+once per state push and chunked under the engine's 100-parameter bind limit.
+The desktop counts unresolved preview ids toward overflow, hides the pile from
+the row's accessible name, and fills an empty control-socket seed from a later
+directory row at the same waterline.
+
+**Why:** `projected_at` is rewritten on every viewer projection (unread, mention,
+seen). A message fans out to every participant in one envelope batch applied in
+one synchronous loop, so workerd hands them the same `Date.now()` and the
+tie-break is `user_id` — three lowest UUIDs, not three newest people. The
+changelog's split-clocks rationale assumed `summary()` never wrote the field
+the sidebar reads; REST merge of the summary does, so the two clocks swapped
+faces on a read-ack. Membership was still a per-user overlay, so everyone
+else's pile stayed stale until reconnect.
+
+**Considered and rejected:** activity recency as the product meaning of "most
+recent". Join time is what both producers already have without a new clock, and
+it is stable across unread. Putting the preview on WorkstreamDO control
+metadata was rejected because `metadataForUser` cannot see
+`participants.added_at`. Clearing the pile from control `common` was already
+not happening; the remaining race is a seed that claims empty ids at a
+waterline the directory later cannot beat.
+
+**What a future change has to respect:** one clock for the field.
+`participant_added_at` is the overlay copy of `participants.added_at`; do not
+sort the preview by `projected_at`. A membership change is common state for
+everyone who can see the row. Fan-in `IN` lists must use `boundParameterChunks`.
+A control snapshot must not be the authority for ids it does not know,
+including by seeding empty ones that pin the waterline.
 
 ### 2026-08-30 — Sidebar facepile is the existing AvatarStack size
 

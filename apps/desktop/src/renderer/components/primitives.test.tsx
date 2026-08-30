@@ -253,6 +253,9 @@ describe('AvatarStack', () => {
 
     expect(container.querySelectorAll('.avatar-small')).toHaveLength(3);
     expect(container.querySelector('.avatar-overflow')).toHaveTextContent('+2');
+    expect(container.querySelector('.avatar-stack')).toHaveAccessibleName(
+      'Ari Collaborator; Casey Observer; Drew Participant; and 2 more',
+    );
   });
 
   it('does not invent an overflow when extraCount is zero', () => {

@@ -686,6 +686,23 @@ preview does *not* reproduce on its own.
 
 ## Changelog
 
+### 2026-08-30 — Facepile order is join time
+
+**What changed:** The three faces on a digest (and every other personal)
+sidebar row are the most recently added participants, not the most recently
+rewritten overlay rows. Overflow counts unresolved ids, and the pile is hidden
+from the row's accessible name.
+
+**Why:** overlay `projected_at` is not join recency, and the original entry's
+"newest" reading collapsed to UUID order after a message. Join time is the
+clock both directory and `summary()` already share.
+
+**Considered and rejected:** a digest-specific clock. Digests are personal work
+streams; they take the same preview as every other personal row.
+
+**What a future change has to respect:** do not sort this pile by overlay
+`projected_at`.
+
 ### 2026-08-30 — Sidebar facepile is the existing AvatarStack, not a compact variant
 
 **What changed:** Digest (and every other personal) sidebar rows use `AvatarStack`
