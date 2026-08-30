@@ -42,8 +42,16 @@ caller's secret value, only across the private binding for the duration of the
 call; the service stores nothing. Instrumentation and authority callbacks use
 Workers RPC callbacks. Cancellation is a typed long-lived callback: the
 provider Worker creates its own `AbortController`, observes the caller's signal,
-and closes the callback before returning. The Daytona implementation therefore
-keeps its command quiescence and submission-fence behavior.
+and closes the callback before returning. A pre-aborted input is carried
+explicitly so the provider-side signal is aborted before Daytona I/O begins.
+
+RPC exceptions are not a product protocol: Cloudflare preserves standard error
+names and messages but not custom own properties. Every Terminal method
+therefore returns a discriminated success/error value. The provider Worker
+classifies Daytona not-found failures before they cross the boundary, and
+submission callbacks return typed `TerminalToolError` refusals by value. The API
+reconstructs the local error types that existing cleanup, recovery, and tool
+logic consumes.
 
 Local development starts each region's three configs in one Wrangler
 multi-Worker session. Tests inject contract implementations where a provider
@@ -66,6 +74,8 @@ cannot run, while build checks compile and profile every real entrypoint.
   EU services and API promote and pass health before Global promotion.
 - Every successful version is tagged with the immutable Git SHA that passed the
   workflow's complete verification matrix.
+- Promotion uses the unique version IDs captured from that workflow attempt,
+  never the non-unique Git SHA tag. A retry can safely upload another set.
 
 ## Boundaries and non-goals
 
@@ -126,8 +136,9 @@ selected service graphs, materializes Global lakehouse bindings, discovers the
 active source tags, and selects one mode:
 
 - **Versioned:** upload every selected document, Terminal, and API version with
-  no traffic; apply migration-first D1 changes; promote the EU set service-first;
-  prove EU health; promote Global; apply Worker-first retirements; prove both.
+  no traffic and capture its immutable version ID; apply migration-first D1
+  changes; promote those exact EU IDs service-first; prove EU health; promote
+  the exact Global IDs; apply Worker-first retirements; prove both.
 - **Direct:** for first creation, Wrangler or Container state changes, or an
   unknown/divergent baseline, deploy each regional service before its API and
   retain the same health barriers.
@@ -142,7 +153,7 @@ The failed monolith uploaded about 12.3 MiB and had no dependable startup
 margin. With Wrangler 4.126.0, the static service split makes the API graph
 about 7.3 MiB, the document graph about 2.8 MiB, and the Terminal graph about
 2.3 MiB. Repeated local active-startup samples varied from 93–190 ms for the
-API, 8–13 ms for documents, and 19–28 ms for Terminal; these values diagnose
+API, 8–14 ms for documents, and 19–28 ms for Terminal; these values diagnose
 graph shape and are not predictions of Cloudflare CPU time.
 
 Service Bindings add no monetary charge or network hop by default. A document
