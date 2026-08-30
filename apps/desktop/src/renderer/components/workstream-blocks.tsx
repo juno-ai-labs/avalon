@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Children, Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Highlight, Prism, type Language, type PrismTheme } from 'prism-react-renderer';
-import { citationFootnotes, citationScheme } from '@rally/contracts/citations';
+import { citationFootnotes, citationScheme, personIdFromMentionHref } from '@rally/contracts/citations';
 import { markdownLineKinds } from '@rally/contracts/markdown-code';
 import { normalizeModelMarkdown, normalizeModelText } from '@rally/contracts/model-markdown';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
@@ -279,11 +279,10 @@ function MarkdownTable({ children, node, style, ...props }: React.ComponentProps
   );
 }
 
-const PERSON_LINK_PATTERN = /^person:([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
 const CONNECTOR_LINK_PATTERN = /^connector:([0-9a-z]+):(.+)$/u;
 
 function personIdFromHref(href: string | undefined): string | undefined {
-  return href?.match(PERSON_LINK_PATTERN)?.[1]?.toLowerCase();
+  return personIdFromMentionHref(href);
 }
 
 /**
@@ -330,11 +329,12 @@ function linkLabelText(children: React.ReactNode): string | undefined {
 }
 
 /**
- * Person mentions arrive as durable `[@Name](person:<id>)` Markdown, but a
- * connection mention stays human-readable text because Rally has no
- * identity-bearing connector reference yet. Its stored offsets are still
- * authoritative, so this turns them into the same link shape at render time —
- * presentation only, leaving the message text models and Slack see untouched.
+ * Person mentions arrive as durable `[@Name](person://<id>)` Markdown — bare
+ * `person:<id>` still resolves — but a connection mention stays human-readable
+ * text because Rally has no identity-bearing connector reference yet. Its
+ * stored offsets are still authoritative, so this turns them into the same link
+ * shape at render time — presentation only, leaving the message text models and
+ * Slack see untouched.
  *
  * Each emitted link carries `token`, which is what makes it authoritative: a
  * `connector:` link already present in the message text is something a person or
