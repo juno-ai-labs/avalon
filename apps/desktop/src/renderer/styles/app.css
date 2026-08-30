@@ -2651,10 +2651,12 @@ pre {
    is very much enabled; `ref.color.neutral.9` is a contrast step, and the ramp
    is ordered by contrast, so it dims the same way in a light theme as in a
    dark one. */
-.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-ref-color-neutral-9); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
-/* What stands in for it while the derivative is still being converted. Three
-   bars on the preview's own grid, so the card does not resize when the text
-   lands. */
+.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-ref-color-neutral-9); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+/* What stands in for it while the derivative is still being converted. The
+   card does not resize when the text lands because of its own `min-height` and
+   the title block's `margin-top: auto`, not because these bars measure the
+   same as the lines they stand in for — they do not, and saying so here would
+   be a claim the next edit could quietly break. */
 .citation-card-preview-skeleton { display: flex; flex-direction: column; gap: 5px; overflow: hidden; }
 .citation-card-preview-skeleton > span { animation: citation-card-shimmer 1.8s ease-in-out infinite; background: var(--av-sys-color-shimmer-default); border-radius: var(--av-sys-size-radius-pill); height: 7px; }
 .citation-card-preview-skeleton > span:nth-child(1) { width: 100%; }
@@ -2675,8 +2677,14 @@ pre {
 .citation-card-kind { color: var(--av-sys-color-text-muted); font-size: var(--av-sys-label-font-size); letter-spacing: var(--av-sys-label-tracking); text-transform: var(--av-sys-label-transform); }
 /* A run of embeds, merged by the rehype pass into one row that scrolls
    sideways — a column of tiles between two sentences reads as the transcript
-   stalling, and the row spends one card's height however many were announced. */
-.citation-card-row { display: flex; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; overflow-x: auto; }
+   stalling, and the row spends one card's height however many were announced.
+
+   `overscroll-behavior-x: contain` stops a swipe that reaches the end of the
+   row from chaining outward, where the window would take it as a back
+   gesture; `scrollbar-width: thin` matches the settings icon shelf, the other
+   horizontal scroller in this file, and keeps a full-size overlay bar out of
+   the 10px gap beneath 170px tiles. */
+.citation-card-row { display: flex; gap: 10px; margin: var(--av-sys-space-prose-gap) 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .citation-card-row .citation-card { flex: 0 0 auto; margin: 0; }
 
 /* The grounding pill. It costs one character of line width and no vertical

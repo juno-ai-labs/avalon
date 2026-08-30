@@ -34,7 +34,7 @@ Nine call sites, all passing a markdown string as `children`:
 | The Control Tower meeting briefing | `screens/meeting-notes.tsx` |
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
-| A resource's readable content in the rail's detail | `inspector-rail.tsx` |
+| A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -109,7 +109,11 @@ paragraph — is merged by `rehypeCitationEmbedRows` into a single
 **The pass groups only what this render will actually draw as a card**: it is
 given a predicate over the citation context's own resolver, so a surface with no
 context, or a target this work stream does not carry, keeps the paragraphs it
-already had rather than becoming a horizontal scroller full of sentences.
+already had rather than becoming a horizontal scroller full of sentences. It
+also rewrites the root's children alone, so embeds inside a blockquote or a list
+item stay a column — deliberately, because the placement bet is that models put
+an image on a line of its own, and a pass that walked the whole tree would start
+grouping across prose that happens to sit between them.
 While a message streams, embeds in different settled segments stay separate
 cards, and the whole-body re-render at completion merges them — the same
 healing every other cross-segment construct gets.
@@ -466,6 +470,39 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — The preview reader leaves the rail, and the row's class joins the export guard
+
+**What changed:** `readResourcePreviewText`, its retry predicate, its `wait`,
+and `MAX_RESOURCE_PREVIEW_WAIT_MS` moved from `components/inspector-rail.tsx` to
+`lib/resource-preview.ts`, which both the rail and `useCitations` import. The
+export's class-coverage scanner also reads `className: ['citation-…']` arrays,
+not only JSX string literals. The excerpt strips a heading's own hashes, the row
+takes `scrollbar-width: thin` and `overscroll-behavior-x: contain`, and the
+preview carries a `max-height` beside its line clamp.
+
+**Why:** a hook in `lib/` was importing a screen-sized component module for four
+protocol-level exports — no cycle today, since the rail imports `ResourceIcon`
+from the citation module rather than the hook, but one import away from one, and
+it pulled the rail's chrome into every test that touched the reader.
+
+**Why the scanner mattered more than it looks:** it is the mechanism that makes
+"a class the renderer can emit has an answer in the export" true by
+construction, and it only saw JSX. `.citation-card-row` is built as hast by the
+rehype pass, so the one class added by this whole change was the one class
+outside the guard. The export's wrap rule could have been deleted with CI green.
+
+**Smaller things, each with a reason:** `## Revenue` printed its hashes at label
+size and spent one of four clamped lines on them; the row could chain a swipe
+outward into a back gesture and drew a full-size overlay scrollbar into the gap
+under the tiles; and `-webkit-line-clamp` beside `white-space: pre-wrap` is a
+known Chromium pairing, so the clamp now has a height that bounds it if it ever
+fails to apply.
+
+**What a future change has to respect:** the excerpt strips heading markers and
+nothing else. Emphasis, links and list markers stay, because the next step is a
+markdown renderer inside a button — and the rail, one click away, already
+renders the same bytes properly.
 
 ### 2026-08-30 — The row groups only what becomes a card
 
