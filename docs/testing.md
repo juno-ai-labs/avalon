@@ -529,6 +529,18 @@ an unrelated change let the run actually be claimed. A test that lets a run
 start and does not control the model is asserting on whichever of those two it
 happens to get.
 
+Once the run *does* start, `initialize` still does not drain it in the same
+request: it writes the execution receipt and arms a +1ms alarm
+(`requestExecutionReceiptActivation`). A read-only `expect.poll` on loop SQL
+then depends on workerd auto-firing that alarm. Under a contended workers shard
+the poll's own `runInDurableObject` calls keep the input gate busy, the alarm
+never gets a slot, and the wait expires on `executing:1`. Force the wake with
+`runDurableObjectAlarm` before polling, the same way
+`message-to-output-pipeline.test.ts`'s `settledRunForTrigger` does. The
+helper returning false (no alarm, or auto-fire already in flight) is the race
+in [Writing a workerd test](#writing-a-workerd-test); keep the poll as the wait
+for that case.
+
 So: if what you are testing happens before inference, keep the run away from the
 model. If the run has to complete, install the double.
 

@@ -19,7 +19,7 @@
  */
 
 import { env } from "cloudflare:workers";
-import { reset, runInDurableObject } from "cloudflare:test";
+import { reset, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { asUserId, asWorkspaceId, asWorkstreamId } from "@rally/contracts";
@@ -253,10 +253,21 @@ async function waitForCanonicalTurn(stub: DurableObjectStub, turnId: string): Pr
  * was `executing` — the instrumented reproduction reported exactly that
  * (`loopBefore.status = "executing"`, no pending elicitation left). So this
  * waits on both: no run still admitted or running, and a loop back at rest.
- * Together they are a state the loop cannot leave on its own. Read-only, so
- * the probe cannot advance what it is waiting on.
+ * Together they are a state the loop cannot leave on its own.
+ *
+ * `initialize` does not drain that run in the same request: it writes the
+ * execution receipt and arms a +1ms alarm
+ * (`requestExecutionReceiptActivation`). A read-only poll then watches SQL
+ * and hopes workerd auto-fires. Under a contended workers shard the object's
+ * input gate stays busy with the poll itself, the alarm never gets a slot,
+ * and the wait expires on `executing:1`. Forcing the wake first is the same
+ * lever `message-to-output-pipeline.test.ts` uses (`settledRunForTrigger`). The helper returning false — no alarm, or
+ * auto-fire already in flight — is the documented race in `docs/testing.md`;
+ * the poll below is the wait for that case, and it stays read-only so it
+ * cannot start a second drain.
  */
 async function waitForQuietLoop(stub: DurableObjectStub): Promise<void> {
+  await runDurableObjectAlarm(stub);
   await expect.poll(
     () => runInDurableObject(stub, (_instance, state) => {
       const active = Number(state.storage.sql.exec<{ n: number }>(
@@ -880,6 +891,11 @@ describe("answering an elicitation in the ordered transcript", () => {
     const stub = agentStub();
     const opened = await openWorkstream(stub);
     const runId = String(opened.body.harnessRunId);
+    // Settle the opening run before writing the elicitation. The activation
+    // request below exists only for a loop at rest with nothing left to run,
+    // and posting `needs_input` while that run is still draining is the
+    // interleave `waitForQuietLoop` used to lose under shard load.
+    await waitForQuietLoop(stub);
     const elicitationId = "00000000-0000-7000-8000-0000000006aa";
     const messageId = "00000000-0000-7000-8000-0000000006ab";
     const createdAt = "2026-08-26T12:00:00.000Z";
@@ -925,10 +941,6 @@ describe("answering an elicitation in the ordered transcript", () => {
       }),
     });
     expect(question.status).toBe(200);
-
-    // The activation request below exists only for a loop at rest with nothing
-    // left to run, and the run `openWorkstream` started may still be settling.
-    await waitForQuietLoop(stub);
 
     await runInDurableObject(stub, async (instance, state) => {
       const productService = (instance as unknown as { product: WorkstreamObjectProductService }).product;
