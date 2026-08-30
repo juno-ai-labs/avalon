@@ -443,7 +443,7 @@ function CommandShortcutHint({
       {/* Same Badge + scope-badge chrome as an automation's You / Workspace
           pill, so holding Command does not introduce a second, chunkier chip. */}
       <Badge className="scope-badge command-shortcut-pill">
-        <Command size={9} strokeWidth={2} />
+        <Command size={9} />
         <span>{shortcut}</span>
       </Badge>
     </span>
