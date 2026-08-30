@@ -88,7 +88,15 @@ export interface TerminalSandboxProvider {
   cleanupCommand?(idOrName: string, taskName: string): Promise<"deleted" | "missing" | void>;
 }
 
+export class TerminalProviderNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TerminalProviderNotFoundError";
+  }
+}
+
 export function isTerminalProviderNotFound(error: unknown): boolean {
+  if (error instanceof TerminalProviderNotFoundError) return true;
   if (typeof error !== "object" || error === null) return false;
   const value = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } };
   return value.status === 404 || value.statusCode === 404 || value.response?.status === 404;

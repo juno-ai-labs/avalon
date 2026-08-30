@@ -2,11 +2,57 @@ import type {
   TerminalProviderInstrumentation,
   TerminalSandboxProvider,
 } from "./provider-contract";
+import { TerminalProviderNotFoundError } from "./provider-contract";
 import type {
   SupportedTerminalConfiguration,
   TerminalProviderRpcBinding,
   TerminalProviderRpcCallbacks,
+  TerminalProviderRpcCallbackResult,
+  TerminalProviderRpcResult,
 } from "./provider-rpc-contract";
+import { TerminalToolError } from "./tools";
+
+async function callbackResult(callback: () => Promise<void>): Promise<TerminalProviderRpcCallbackResult> {
+  try {
+    await callback();
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof TerminalToolError) {
+      return {
+        ok: false,
+        error: {
+          kind: "terminal_tool",
+          code: error.code,
+          message: error.message,
+          ...(error.details ? { details: error.details } : {}),
+        },
+      };
+    }
+    return {
+      ok: false,
+      error: {
+        kind: "callback",
+        message: error instanceof Error ? error.message : "Terminal callback failed",
+      },
+    };
+  }
+}
+
+async function unwrap<T>(result: PromiseLike<TerminalProviderRpcResult<T>>): Promise<T> {
+  const settled = await result;
+  if (settled.ok) return settled.value;
+  if (settled.error.kind === "not_found") {
+    throw new TerminalProviderNotFoundError(settled.error.message);
+  }
+  if (settled.error.kind === "terminal_tool") {
+    throw new TerminalToolError(
+      settled.error.code,
+      settled.error.message,
+      settled.error.details,
+    );
+  }
+  throw new Error(settled.error.message);
+}
 
 export function createTerminalProviderRpcClient(
   binding: TerminalProviderRpcBinding,
@@ -18,58 +64,68 @@ export function createTerminalProviderRpcClient(
     assertSubmissionAuthority?: () => Promise<void>;
     onSubmitted?: (providerTaskId: string) => Promise<void>;
   }): TerminalProviderRpcCallbacks => {
+    const signal = input?.signal;
+    const assertSubmissionAuthority = input?.assertSubmissionAuthority;
+    const onSubmitted = input?.onSubmitted;
     let finishAbortWait: (() => void) | undefined;
-    const waitForAbort = input?.signal
+    const waitForAbort = signal
       ? () => new Promise<"aborted" | "finished">((resolve) => {
-          if (input.signal!.aborted) {
+          if (signal.aborted) {
             resolve("aborted");
             return;
           }
           const onAbort = () => resolve("aborted");
           finishAbortWait = () => {
-            input.signal!.removeEventListener("abort", onAbort);
+            signal.removeEventListener("abort", onAbort);
             resolve("finished");
           };
-          input.signal!.addEventListener("abort", onAbort, { once: true });
+          signal.addEventListener("abort", onAbort, { once: true });
         })
       : undefined;
     return {
       ...(instrumentation.observe ? { observe: instrumentation.observe } : {}),
       ...(instrumentation.observeRequest ? { observeRequest: instrumentation.observeRequest } : {}),
-      ...(input?.assertSubmissionAuthority ? { assertSubmissionAuthority: input.assertSubmissionAuthority } : {}),
-      ...(input?.onSubmitted ? { onSubmitted: input.onSubmitted } : {}),
+      ...(assertSubmissionAuthority ? {
+        assertSubmissionAuthority: () => callbackResult(assertSubmissionAuthority),
+      } : {}),
+      ...(onSubmitted ? {
+        onSubmitted: (providerTaskId: string) => callbackResult(
+          () => onSubmitted(providerTaskId),
+        ),
+      } : {}),
+      ...(signal?.aborted ? { initiallyAborted: true } : {}),
       ...(waitForAbort ? { waitForAbort } : {}),
       ...(waitForAbort ? { finishAbortWait: async () => finishAbortWait?.() } : {}),
     };
   };
 
   return {
-    createSandbox: (input) => binding.createSandbox(configuration, input, callbacks()),
-    prepareSandbox: (idOrName, allowList) => binding.prepareSandbox(configuration, idOrName, allowList, callbacks()),
-    getSandbox: (idOrName) => binding.getSandbox(configuration, idOrName, callbacks()),
-    startSandbox: (idOrName) => binding.startSandbox(configuration, idOrName, callbacks()),
-    stopSandbox: (idOrName) => binding.stopSandbox(configuration, idOrName, callbacks()),
-    archiveSandbox: (idOrName) => binding.archiveSandbox(configuration, idOrName, callbacks()),
-    deleteSandbox: (idOrName) => binding.deleteSandbox(configuration, idOrName, callbacks()),
-    updateNetworkPolicy: (idOrName, allowList) => binding.updateNetworkPolicy(configuration, idOrName, allowList, callbacks()),
-    configureGitHubReadAccess: (idOrName, input) => binding.configureGitHubReadAccess(configuration, idOrName, input, callbacks()),
-    clearGitHubReadAccess: (idOrName) => binding.clearGitHubReadAccess(configuration, idOrName, callbacks()),
-    readFile: (idOrName, path) => binding.readFile(configuration, idOrName, path, callbacks()),
-    writeFile: (idOrName, path, bytes, signal) => binding.writeFile(configuration, idOrName, path, bytes, callbacks({ signal })),
+    createSandbox: (input) => unwrap(binding.createSandbox(configuration, input, callbacks())),
+    prepareSandbox: (idOrName, allowList) => unwrap(binding.prepareSandbox(configuration, idOrName, allowList, callbacks())),
+    getSandbox: (idOrName) => unwrap(binding.getSandbox(configuration, idOrName, callbacks())),
+    startSandbox: (idOrName) => unwrap(binding.startSandbox(configuration, idOrName, callbacks())),
+    stopSandbox: (idOrName) => unwrap(binding.stopSandbox(configuration, idOrName, callbacks())),
+    archiveSandbox: (idOrName) => unwrap(binding.archiveSandbox(configuration, idOrName, callbacks())),
+    deleteSandbox: (idOrName) => unwrap(binding.deleteSandbox(configuration, idOrName, callbacks())),
+    updateNetworkPolicy: (idOrName, allowList) => unwrap(binding.updateNetworkPolicy(configuration, idOrName, allowList, callbacks())),
+    configureGitHubReadAccess: (idOrName, input) => unwrap(binding.configureGitHubReadAccess(configuration, idOrName, input, callbacks())),
+    clearGitHubReadAccess: (idOrName) => unwrap(binding.clearGitHubReadAccess(configuration, idOrName, callbacks())),
+    readFile: (idOrName, path) => unwrap(binding.readFile(configuration, idOrName, path, callbacks())),
+    writeFile: (idOrName, path, bytes, signal) => unwrap(binding.writeFile(configuration, idOrName, path, bytes, callbacks({ signal }))),
     runUtilityCommand: (idOrName, input) => {
       const { signal, ...rpcInput } = input;
-      return binding.runUtilityCommand(configuration, idOrName, rpcInput, callbacks({
+      return unwrap(binding.runUtilityCommand(configuration, idOrName, rpcInput, callbacks({
         ...(signal ? { signal } : {}),
-      }));
+      })));
     },
     runCommand: (idOrName, input) => {
       const { signal, assertSubmissionAuthority, onSubmitted, ...rpcInput } = input;
-      return binding.runCommand(configuration, idOrName, rpcInput, callbacks({
+      return unwrap(binding.runCommand(configuration, idOrName, rpcInput, callbacks({
         ...(signal ? { signal } : {}),
         ...(assertSubmissionAuthority ? { assertSubmissionAuthority } : {}),
         ...(onSubmitted ? { onSubmitted } : {}),
-      }));
+      })));
     },
-    cleanupCommand: (idOrName, taskName) => binding.cleanupCommand(configuration, idOrName, taskName, callbacks()),
+    cleanupCommand: (idOrName, taskName) => unwrap(binding.cleanupCommand(configuration, idOrName, taskName, callbacks())),
   };
 }

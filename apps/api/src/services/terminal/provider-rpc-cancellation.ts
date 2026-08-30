@@ -5,6 +5,9 @@ export async function withTerminalProviderRpcAbort<T>(
   operation: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
+  if (callbacks?.initiallyAborted) {
+    controller.abort(new Error("Terminal operation cancelled"));
+  }
   let operationActive = true;
   const abortObservation = callbacks?.waitForAbort?.().then(
     (outcome) => {
