@@ -7,7 +7,7 @@ import {
 } from '@rally/contracts/citations';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { File, FileText, Link2 } from 'lucide-react';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, type ComponentType } from 'react';
 
 /**
  * Citations, as the desktop draws them.
@@ -98,6 +98,16 @@ export interface CitationRender {
    * bare numbers over nothing, which is worse than either form on its own.
    */
   readonly still?: boolean;
+  /**
+   * How the embed card's preview renders the derivative's markdown.
+   *
+   * Lives here rather than as an import of `MarkdownBody` because that module
+   * already imports this one for the citation matrix; a reverse import would
+   * cycle. The body supplies itself — verbatim, no citations — so the preview
+   * uses the one renderer without mounting a second `react-markdown`, and a
+   * document that cites another resource cannot draw a card inside this card.
+   */
+  readonly PreviewBody?: ComponentType<{ children: string }>;
 }
 
 export const CitationsProvider = CitationsContext.Provider;
@@ -169,9 +179,9 @@ function ResourceChip({ label, resource, onOpen }: {
  * markdown-converted text, the card shows the opening lines of it between the
  * badge and the title, clipped by the stylesheet — never scrolled — and shows
  * a shimmering skeleton for exactly as long as the derivative is still being
- * prepared. The preview is presentation, so it is `aria-hidden` and the
- * button's label stays the title alone. A still render skips it entirely:
- * a picture serialized mid-skeleton would keep the skeleton forever.
+ * prepared. The preview is presentation, so it is `aria-hidden` and `inert`,
+ * and the button's label stays the title alone. A still render skips it
+ * entirely: a picture serialized mid-skeleton would keep the skeleton forever.
  */
 function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   label: React.ReactNode;
@@ -179,6 +189,7 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
   onOpen: () => void;
   preview?: ((resourceId: string) => Promise<string> | undefined) | undefined;
 }): React.JSX.Element {
+  const { PreviewBody } = useCitationRender();
   const [excerpt, setExcerpt] = useState<{ for: string; text?: string; open?: boolean }>({ for: '' });
   useEffect(() => {
     const request = preview?.(resource.id);
@@ -225,7 +236,9 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
         </span>
       )}
       {settled.text !== undefined && settled.text !== '' && (
-        <span aria-hidden="true" className="citation-card-preview">{settled.text}</span>
+        <span aria-hidden="true" className="citation-card-preview" inert>
+          {PreviewBody ? <PreviewBody>{settled.text}</PreviewBody> : settled.text}
+        </span>
       )}
       <span className="citation-card-text">
         <strong className="citation-card-title">{label}</strong>
@@ -242,17 +255,12 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
  * on paragraph seams, and the tail beyond a few times the visible clamp is not
  * put in the DOM at all — the stylesheet clips at four lines, so shipping a
  * whole document into the box would render the same pixels at many times the
- * node weight.
+ * node weight. The markdown itself is left intact: `MarkdownBody` consumes
+ * heading hashes and emphasis, which is why this no longer strips them.
  */
 function previewExcerpt(text: string): string {
   return text
     .replace(/\r\n/gu, '\n')
-    // A heading's own hashes, and nothing else. The preview is plain text at
-    // label size, so `## Revenue` printed its markers as two characters of
-    // noise and spent one of four clamped lines on them. Stripping more than
-    // this — emphasis, links, list markers — would be a markdown renderer
-    // inside a button, and the rail is one click away and renders it properly.
-    .replace(/^ {0,3}#{1,6}[ \t]+/gmu, '')
     .replace(/\n{2,}/gu, '\n')
     .trim()
     .slice(0, 600);
