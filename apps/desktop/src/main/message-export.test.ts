@@ -147,6 +147,17 @@ function citationClassesTheRendererEmits(): string[] {
   for (const [, value] of source.matchAll(/className="([^"]*)"/gu)) {
     for (const name of value!.split(/\s+/u)) if (name.startsWith('citation-')) classes.add(name);
   }
+  // The renderer also builds nodes by hand — the embed row is hast the rehype
+  // pass constructs, whose class arrives as `className: ['citation-card-row']`
+  // rather than as a JSX string. Scanning only the JSX form left that class
+  // outside the guard entirely, which is exactly the drift this function is
+  // here to prevent: the export could have lost its rule for the row without
+  // any test noticing.
+  for (const [, value] of source.matchAll(/className:\s*\[([^\]]*)\]/gu)) {
+    for (const [, name] of value!.matchAll(/['"]([^'"]+)['"]/gu)) {
+      if (name!.startsWith('citation-')) classes.add(name!);
+    }
+  }
   if (classes.size === 0) throw new Error('No citation classes found — has the renderer moved?');
   return [...classes].sort();
 }
@@ -267,12 +278,10 @@ describe('the exported document', () => {
     expect(html).toMatch(/\.sr-only\b[^{]*\{[^}]*(?:display:\s*none|clip-path)/u);
   });
 
-  it('drops the popover and the chevron, which are affordances a still card cannot offer', () => {
+  it('drops the popover, an affordance a still card cannot offer', () => {
     const html = messageExportDocument({ format: 'image', contentHtml: '<p>x</p>', logoDataUrl: LOGO });
 
-    for (const className of ['citation-pill-popover', 'citation-card-chevron']) {
-      expect(html).toMatch(new RegExp(`\\.${className}\\b[^{]*\\{[^}]*display:\\s*none;`, 'u'));
-    }
+    expect(html).toMatch(/\.citation-pill-popover\b[^{]*\{[^}]*display:\s*none;/u);
   });
 
   it('splashes two different messages differently and the same message the same way', () => {
