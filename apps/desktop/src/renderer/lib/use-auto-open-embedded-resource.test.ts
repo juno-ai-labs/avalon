@@ -181,6 +181,7 @@ describe('useAutoOpenLatestEmbeddedResource', () => {
   });
 
   it('waits until the work stream carries the resource, then opens', () => {
+    const unresolved = (_resourceId: string): { id: string } | undefined => undefined;
     const { rerender } = renderHook(
       ({ resolve: nextResolve }) => useAutoOpenLatestEmbeddedResource({
         enabled: true,
@@ -189,7 +190,7 @@ describe('useAutoOpenLatestEmbeddedResource', () => {
         transcript: [text('rally', '![Memo](resource://pricing-memo)')],
         workstreamId: 'workstream-one',
       }),
-      { initialProps: { resolve: () => undefined } },
+      { initialProps: { resolve: unresolved } },
     );
 
     expect(open).not.toHaveBeenCalled();
