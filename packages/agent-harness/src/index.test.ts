@@ -1563,6 +1563,7 @@ describe("agent harness", () => {
 
   it("keeps the intended model in structured fallback trace metadata", async () => {
     const requestBodies: Array<Record<string, unknown>> = [];
+    const diagnostics: StructuredModelDiagnostic[] = [];
     const fetcher = vi.fn(async (_request: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       requestBodies.push(body);
@@ -1597,6 +1598,9 @@ describe("agent harness", () => {
         additionalProperties: false,
       },
       parse: (value) => value as { ok: boolean },
+      onDiagnostic: (diagnostic) => {
+        diagnostics.push(diagnostic);
+      },
     })).resolves.toEqual({ ok: true });
 
     expect(requestBodies.map((body) => body.trace)).toEqual([
@@ -1609,6 +1613,13 @@ describe("agent harness", () => {
         model: "fallback/model",
       }),
     ]);
+    const traceIds = requestBodies.map((body) =>
+      (body.trace as { trace_id?: string }).trace_id);
+    expect(traceIds[0]).toEqual(expect.any(String));
+    expect(traceIds[1]).toBe(traceIds[0]);
+    expect(new Set(diagnostics.map((diagnostic) => diagnostic.traceId))).toEqual(
+      new Set([traceIds[0]]),
+    );
   });
 
   it("uses the OpenRouter embeddings contract and preserves intended-model diagnostics across fallback", async () => {
@@ -1716,6 +1727,28 @@ describe("agent harness", () => {
     })).rejects.toThrow("unexpected shape");
   });
 
+  it("restores embedding response order from provider indices", async () => {
+    const client = new OpenRouterClient({
+      apiKey: "test-key",
+      primaryModel: "test/embedding",
+      sameModelRetries: 0,
+      fetch: vi.fn(async () => Response.json({
+        data: [
+          { embedding: [0, 1], index: 1, object: "embedding" },
+          { embedding: [1, 0], index: 0, object: "embedding" },
+        ],
+        model: "test/embedding",
+        object: "list",
+      })) as typeof fetch,
+    });
+
+    await expect(client.embed({
+      input: ["first", "second"],
+      dimensions: 2,
+      generationName: "ordered_embeddings",
+    })).resolves.toMatchObject({ embeddings: [[1, 0], [0, 1]] });
+  });
+
   it("emits a failure diagnostic for every failed structured provider attempt", async () => {
     const diagnostics: StructuredModelDiagnostic[] = [];
     const fetcher = vi.fn(async () => new Response("unavailable", { status: 503 })) as unknown as typeof fetch;
@@ -1772,7 +1805,6 @@ describe("agent harness", () => {
     const failure = diagnostics.find((diagnostic) => diagnostic.success === false);
     expect(failure?.providerError).toEqual({
       code: 400,
-      message: "Provider returned error",
       providerName: "Google",
     });
     // The envelope's classification is kept; the provider's echo of the request
@@ -1780,8 +1812,9 @@ describe("agent harness", () => {
     expect(JSON.stringify(failure)).not.toContain("verbatim echo");
   });
 
-  it("bounds a padded provider error message", () => {
-    expect(openRouterProviderError({ error: { message: "x".repeat(5_000) } })?.message).toHaveLength(300);
+  it("drops provider-controlled prose from error classifications", () => {
+    expect(openRouterProviderError({ error: { code: 400, message: "x".repeat(5_000) } }))
+      .toEqual({ code: 400 });
     expect(openRouterProviderError({ error: { message: 12 } })).toBeUndefined();
     expect(openRouterProviderError("not an envelope")).toBeUndefined();
     expect(openRouterProviderError({ choices: [] })).toBeUndefined();
@@ -1803,7 +1836,7 @@ describe("agent harness", () => {
         name: "OpenRouterError",
         status: 400,
         details: {
-          providerError: { code: "model_not_found", message: "No endpoints found", providerName: "xAI" },
+          providerError: { code: "model_not_found", providerName: "xAI" },
         },
       });
   });
@@ -1861,6 +1894,7 @@ describe("agent harness", () => {
     const client = new OpenRouterClient({
       apiKey: "test-key",
       primaryModel: "test/model",
+      fallbackModels: ["fallback/model"],
       fetch: fetcher,
     });
 
@@ -1886,7 +1920,7 @@ describe("agent harness", () => {
     });
 
     await expect(client.stream({ messages: [{ role: "user", content: "test" }] }, () => {}))
-      .rejects.toThrow("provider stream broke");
+      .rejects.toThrow("OpenRouter stream error");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 

@@ -405,6 +405,8 @@ export type StructuredModelDiagnostic = {
   repairAttempt: number;
   /** Stable for one provider request, including its validation outcome. */
   inferenceRequestId?: string;
+  /** Stable across retries, repairs, and fallback models for one structured call. */
+  traceId?: string;
   latencyMs?: number;
   responseBytes?: number;
   inputTokens?: number;
@@ -485,6 +487,14 @@ export class OpenRouterError extends Error {
   }
 }
 
+/** A locally invalid request must never be retried or sent to a fallback model. */
+export class OpenRouterRequestError extends OpenRouterError {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenRouterRequestError";
+  }
+}
+
 export class OpenRouterClient {
   private readonly fetcher: typeof globalThis.fetch;
 
@@ -531,14 +541,19 @@ export class OpenRouterClient {
                 providerInvocationModel: requestedModel,
               })
             : undefined;
-          const requestPayload = JSON.parse(createEmbeddingsRequestBodyToJSON({
-            model: requestedModel,
-            input: input.input,
-            ...(input.dimensions === undefined ? {} : { dimensions: input.dimensions }),
-            encodingFormat: "float",
-            ...(input.inputType ? { inputType: input.inputType } : {}),
-            ...(tracePayload?.user ? { user: tracePayload.user } : {}),
-          })) as Record<string, unknown>;
+          let requestPayload: Record<string, unknown>;
+          try {
+            requestPayload = JSON.parse(createEmbeddingsRequestBodyToJSON({
+              model: requestedModel,
+              input: input.input,
+              ...(input.dimensions === undefined ? {} : { dimensions: input.dimensions }),
+              encodingFormat: "float",
+              ...(input.inputType ? { inputType: input.inputType } : {}),
+              ...(tracePayload?.user ? { user: tracePayload.user } : {}),
+            })) as Record<string, unknown>;
+          } catch {
+            throw new OpenRouterRequestError("Invalid OpenRouter embeddings request");
+          }
           const response = await this.fetcher("https://openrouter.ai/api/v1/embeddings", {
             method: "POST",
             headers: this.headers(tracePayload?.session_id),
@@ -549,7 +564,7 @@ export class OpenRouterClient {
           if (!response.ok) {
             const providerError = openRouterProviderError(payload);
             throw new OpenRouterError(
-              providerError?.message ?? `OpenRouter embeddings request failed (${response.status})`,
+              `OpenRouter embeddings request failed (${response.status})`,
               response.status,
               { providerError },
             );
@@ -559,9 +574,16 @@ export class OpenRouterClient {
           if (!parsed.ok || typeof parsed.value === "string") {
             throw new OpenRouterError("OpenRouter returned an invalid embeddings response");
           }
-          const embeddings = parsed.value.data.map((entry) => entry.embedding);
+          const orderedEntries = [...parsed.value.data].sort(
+            (left, right) => (left.index ?? -1) - (right.index ?? -1),
+          );
+          const indicesAreComplete = orderedEntries.every(
+            (entry, index) => entry.index === index,
+          );
+          const embeddings = orderedEntries.map((entry) => entry.embedding);
           if (
             embeddings.length !== expectedCount
+            || !indicesAreComplete
             || embeddings.some((embedding) => !Array.isArray(embedding) || embedding.length === 0)
             || (input.dimensions !== undefined
               && embeddings.some((embedding) => embedding.length !== input.dimensions))
@@ -648,6 +670,12 @@ export class OpenRouterClient {
     );
     let lastError: unknown;
     let repaired = false;
+    const traceId = this.config.traceContext?.requestId
+      ?? this.config.traceContext?.harnessRunId
+      ?? crypto.randomUUID();
+    const emitDiagnostic = async (event: StructuredModelDiagnostic): Promise<void> => {
+      await input.onDiagnostic?.({ ...event, traceId });
+    };
     for (const [fallbackAttempt, model] of models.entries()) {
       let repairMessages: ModelMessage[] | null = null;
       let repairAttempt = 0;
@@ -665,7 +693,7 @@ export class OpenRouterClient {
           | "cachedInputTokens"
         >> | undefined;
         try {
-          const tracePayload = this.config.traceContext
+          const builtTracePayload = this.config.traceContext
             ? buildOpenRouterTracePayload(this.config.traceContext, {
                 inferenceRequestId,
                 generationName: input.schemaName,
@@ -674,6 +702,12 @@ export class OpenRouterClient {
                 model,
                 providerInvocationModel: model,
               })
+            : undefined;
+          const tracePayload = builtTracePayload
+            ? {
+                ...builtTracePayload,
+                trace: { ...builtTracePayload.trace, trace_id: traceId },
+              }
             : undefined;
           const requestPayload = serializeOpenRouterChatRequest({
             model,
@@ -697,7 +731,7 @@ export class OpenRouterClient {
               trace: toSdkTrace(tracePayload.trace),
             } : {}),
           });
-          await input.onDiagnostic?.({
+          await emitDiagnostic({
             stage: "model_request",
             schemaName: input.schemaName,
             model,
@@ -722,7 +756,7 @@ export class OpenRouterClient {
           }>(response);
           if (!response.ok) {
             throw new OpenRouterError(
-              payload?.error?.message ?? `OpenRouter request failed (${response.status})`,
+              `OpenRouter request failed (${response.status})`,
               response.status,
               // The envelope's classification, not the body: `payload` can carry
               // the provider's echo of the request that was rejected.
@@ -751,7 +785,7 @@ export class OpenRouterClient {
             ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
             ...(cachedInputTokens === null ? {} : { cachedInputTokens }),
           };
-          await input.onDiagnostic?.({
+          await emitDiagnostic({
             stage: "model_response",
             schemaName: input.schemaName,
             model,
@@ -777,7 +811,7 @@ export class OpenRouterClient {
                   content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
                 },
               ];
-              await input.onDiagnostic?.({
+              await emitDiagnostic({
                 stage: "repair",
                 schemaName: input.schemaName,
                 model,
@@ -792,11 +826,11 @@ export class OpenRouterClient {
             }
             throw new OpenRouterError("OpenRouter returned invalid structured JSON");
           }
-          await input.onDiagnostic?.({ stage: "normalize", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
+          await emitDiagnostic({ stage: "normalize", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
           try {
             const parsed = input.parse(parsedJson);
-            await input.onDiagnostic?.({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
-            await input.onDiagnostic?.({
+            await emitDiagnostic({ stage: "validate", schemaName: input.schemaName, model, attempt, fallbackAttempt, repairAttempt, inferenceRequestId });
+            await emitDiagnostic({
               stage: "complete",
               schemaName: input.schemaName,
               model,
@@ -824,7 +858,7 @@ export class OpenRouterClient {
                   content: `Return a corrected response matching the JSON schema. Validation issues: ${JSON.stringify(validationIssues)}`,
                 },
               ];
-              await input.onDiagnostic?.({
+              await emitDiagnostic({
                 stage: "repair",
                 schemaName: input.schemaName,
                 model,
@@ -838,7 +872,7 @@ export class OpenRouterClient {
               continue;
             }
             if (error instanceof z.ZodError) {
-              await input.onDiagnostic?.({
+              await emitDiagnostic({
                 stage: "validate",
                 schemaName: input.schemaName,
                 model,
@@ -858,7 +892,7 @@ export class OpenRouterClient {
           const providerError = error instanceof OpenRouterError
             ? (error.details as { providerError?: OpenRouterProviderError } | undefined)?.providerError
             : undefined;
-          await input.onDiagnostic?.({
+          await emitDiagnostic({
             stage: "complete",
             schemaName: input.schemaName,
             model,
@@ -1011,14 +1045,12 @@ export class OpenRouterClient {
     const parser = createParser({
       onEvent: (event: EventSourceMessage) => {
         if (event.data === "[DONE]") return;
-        let rawChunk: unknown;
-        try {
-          rawChunk = JSON.parse(event.data) as unknown;
-        } catch {
-          return;
+        const chunk = parseOpenRouterStreamChunk(event.data);
+        if (chunk.error) {
+          throw new OpenRouterError("OpenRouter stream error", undefined, {
+            providerError: openRouterProviderError({ error: chunk.error }),
+          });
         }
-        const chunk = parseOpenRouterStreamChunk(rawChunk);
-        if (chunk.error) throw new OpenRouterError(chunk.error.message ?? "OpenRouter stream error", undefined, chunk.error);
         generationId ??= chunk.id || null;
         if (chunk.openrouterMetadata) openRouterMetadata = openRouterMetadataRecord(chunk.openrouterMetadata);
         if (chunk.usage) usage = sdkUsageRecord(chunk.usage);
@@ -1116,21 +1148,26 @@ function serializeOpenRouterChatRequest(input: {
   sessionId?: string;
   trace?: ReturnType<typeof toSdkTrace>;
 }): Record<string, unknown> {
-  const sdkRequest: OpenRouterChatRequest = {
-    model: input.model,
-    messages: toSdkMessages(input.messages),
-    stream: input.stream,
-    ...(input.streamOptions ? { streamOptions: input.streamOptions } : {}),
-    ...(input.tools ? { tools: toSdkTools(input.tools) } : {}),
-    ...(input.toolChoice ? { toolChoice: input.toolChoice } : {}),
-    ...(input.plugins ? { plugins: toSdkPlugins(input.plugins) } : {}),
-    ...(input.reasoning ? { reasoning: input.reasoning } : {}),
-    ...(input.responseFormat ? { responseFormat: input.responseFormat } : {}),
-    ...(input.user ? { user: input.user } : {}),
-    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-    ...(input.trace ? { trace: input.trace } : {}),
-  };
-  return JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>;
+  try {
+    const sdkRequest: OpenRouterChatRequest = {
+      model: input.model,
+      messages: toSdkMessages(input.messages),
+      stream: input.stream,
+      ...(input.streamOptions ? { streamOptions: input.streamOptions } : {}),
+      ...(input.tools ? { tools: toSdkTools(input.tools) } : {}),
+      ...(input.toolChoice ? { toolChoice: input.toolChoice } : {}),
+      ...(input.plugins ? { plugins: toSdkPlugins(input.plugins) } : {}),
+      ...(input.reasoning ? { reasoning: input.reasoning } : {}),
+      ...(input.responseFormat ? { responseFormat: input.responseFormat } : {}),
+      ...(input.user ? { user: input.user } : {}),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      ...(input.trace ? { trace: input.trace } : {}),
+    };
+    return JSON.parse(chatRequestToJSON(sdkRequest)) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof OpenRouterRequestError) throw error;
+    throw new OpenRouterRequestError("Invalid OpenRouter chat request");
+  }
 }
 
 function toSdkTools(tools: ModelRequestTool[]): NonNullable<OpenRouterChatRequest["tools"]> {
@@ -1165,7 +1202,7 @@ function toSdkPlugins(
         && engine !== "mistral-ocr"
         && engine !== "cloudflare-ai"
         && engine !== "pdf-text") {
-        throw new OpenRouterError(`Unsupported OpenRouter PDF parser engine: ${String(engine)}`);
+        throw new OpenRouterRequestError(`Unsupported OpenRouter PDF parser engine: ${String(engine)}`);
       }
       return {
         id: "file-parser" as const,
@@ -1173,7 +1210,7 @@ function toSdkPlugins(
         ...(engine ? { pdf: { engine } } : {}),
       };
     }
-    throw new OpenRouterError(`Unsupported OpenRouter plugin: ${String(plugin.id)}`);
+    throw new OpenRouterRequestError(`Unsupported OpenRouter plugin: ${String(plugin.id)}`);
   });
 }
 
@@ -1239,8 +1276,7 @@ const OPENROUTER_IMAGE_DATA_URL = /^data:(image\/(?:png|jpeg|webp|gif));base64,/
  */
 function assertSupportedOpenRouterImageUrl(url: string): void {
   if (OPENROUTER_IMAGE_DATA_URL.test(url)) return;
-  const declared = /^data:([^;,]+)/iu.exec(url)?.[1] ?? "unknown";
-  throw new OpenRouterError(`Unsupported OpenRouter image content type: ${declared}`);
+  throw new OpenRouterRequestError("Unsupported OpenRouter image content type");
 }
 
 function toSdkTrace(trace: OpenRouterTracePayload["trace"]): {
@@ -1265,12 +1301,16 @@ function parseOpenRouterChatResult(payload: unknown): ChatResult | null {
   return parsed.ok ? parsed.value : null;
 }
 
-function parseOpenRouterStreamChunk(payload: unknown): ChatStreamChunk {
-  const parsed = chatStreamChunkFromJSON(JSON.stringify(payload));
+function parseOpenRouterStreamChunk(serialized: string): ChatStreamChunk {
+  const parsed = chatStreamChunkFromJSON(serialized);
   if (parsed.ok) return parsed.value;
-  const raw = payload && typeof payload === "object"
-    ? payload as Record<string, unknown>
-    : {};
+  let raw: Record<string, unknown> = {};
+  try {
+    const payload = JSON.parse(serialized) as unknown;
+    if (payload && typeof payload === "object") raw = payload as Record<string, unknown>;
+  } catch {
+    // An unparseable event has no answer or tool-call bytes and is ignored.
+  }
   const rawChoices = Array.isArray(raw.choices) ? raw.choices : [];
   return {
     id: typeof raw.id === "string" ? raw.id : "",
@@ -1363,6 +1403,7 @@ type OpenRouterFailureDisposition = "retry" | "fallback" | "terminal";
 
 function openRouterFailureDisposition(error: unknown): OpenRouterFailureDisposition {
   if (isAbortError(error)) return "terminal";
+  if (error instanceof OpenRouterRequestError) return "terminal";
   if (error instanceof OpenRouterError) {
     const status = error.status;
     if (status === 401 || status === 402 || status === 403) return "terminal";
@@ -1383,6 +1424,7 @@ function structuredFailureKind(error: unknown, signal?: AbortSignal): string {
       : "aborted";
   }
   if (error instanceof z.ZodError) return "validation_error";
+  if (error instanceof OpenRouterRequestError) return "request_error";
   if (error instanceof OpenRouterError) {
     if (error.status === 408) return "timeout";
     if (error.status === 429) return "rate_limit";
@@ -1474,18 +1516,11 @@ function withExpectedJsonSchema(
  * indistinguishable from any other failure: the status code alone cannot tell a
  * bad model id from an over-long context from a provider outage.
  *
- * **`message` is in-memory only and must never be logged.** It is the provider's
- * free text, which for some upstreams quotes the request back — bounding it to
- * 300 characters limits its size, not what it can disclose, and the host's
- * key-based redactor has no way to recognise it. It exists for a debugger and
- * for the thrown `OpenRouterError`; the two fields above are what the host
- * records. Anything that wants the message belongs behind the same opt-in as
- * the payload ledger.
+ * Provider free text is deliberately excluded because some upstreams quote the
+ * request back and the host's key-based redactor cannot recognize those echoes.
  */
 export interface OpenRouterProviderError {
   code?: string | number;
-  /** In-memory only. See the note above before recording this anywhere. */
-  message?: string;
   providerName?: string;
 }
 
@@ -1493,15 +1528,13 @@ export function openRouterProviderError(payload: unknown): OpenRouterProviderErr
   if (typeof payload !== "object" || payload === null) return undefined;
   const error = (payload as { error?: unknown }).error;
   if (typeof error !== "object" || error === null) return undefined;
-  const { code, message, metadata } = error as {
+  const { code, metadata } = error as {
     code?: unknown;
-    message?: unknown;
     metadata?: { provider_name?: unknown };
   };
   const providerName = metadata?.provider_name;
   const captured: OpenRouterProviderError = {
     ...(typeof code === "string" || typeof code === "number" ? { code } : {}),
-    ...(typeof message === "string" ? { message: message.slice(0, 300) } : {}),
     ...(typeof providerName === "string" ? { providerName } : {}),
   };
   return Object.keys(captured).length > 0 ? captured : undefined;

@@ -36,6 +36,7 @@ export async function runEmbeddingInference(
     context: {
       workspaceId: string;
       workstreamId?: string;
+      substreamId?: string;
       userId?: string;
     };
     text: string;
@@ -49,6 +50,9 @@ export async function runEmbeddingInference(
     signal?: AbortSignal;
   },
 ): Promise<EmbeddingResult> {
+  const substreamId = input.context.workstreamId
+    ? input.context.substreamId ?? "0"
+    : undefined;
   const client = new OpenRouterClient({
     apiKey: env.OPENROUTER_API_KEY,
     primaryModel: MEMORY_EMBEDDING_MODEL,
@@ -62,8 +66,8 @@ export async function runEmbeddingInference(
       environment: env.APP_ENV,
       ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
       ...(input.context.workspaceId ? { workspaceId: input.context.workspaceId } : {}),
-      ...(input.context.workstreamId
-        ? { workstreamId: input.context.workstreamId, substreamId: "0" }
+      ...(input.context.workstreamId && substreamId
+        ? { workstreamId: input.context.workstreamId, substreamId }
         : {}),
       ...(input.context.userId ? { contextUserId: input.context.userId } : {}),
       ...(input.harnessRunId ? { harnessRunId: input.harnessRunId } : {}),
@@ -82,7 +86,7 @@ export async function runEmbeddingInference(
     : deadline.signal;
   const onDiagnostic = (diagnostic: EmbeddingDiagnostic): void => {
     const sessionId = input.context.workstreamId
-      ? `${input.context.workstreamId}-0`
+      ? `${input.context.workstreamId}-${substreamId}`
       : undefined;
     logStructuredEvent(
       env,
@@ -93,7 +97,7 @@ export async function runEmbeddingInference(
         user_id: input.context.workspaceId,
         context_user_id: input.context.userId,
         workstream_id: input.context.workstreamId,
-        substream_id: input.context.workstreamId ? "0" : undefined,
+        substream_id: substreamId,
         trace_id: input.requestId ?? input.harnessRunId ?? diagnostic.inferenceRequestId,
         session_id: sessionId,
         inference_request_id: diagnostic.inferenceRequestId,
@@ -187,7 +191,7 @@ export async function runStructuredInference<T>(
         session_id: input.context.workstreamId
           ? `${input.context.workstreamId}-0`
           : undefined,
-        trace_id: diagnostic.inferenceRequestId,
+        trace_id: diagnostic.traceId,
         inference_request_id: diagnostic.inferenceRequestId,
         role: input.role,
         feature: AGENT_MODEL_FLAG_KEYS[input.role],
@@ -215,6 +219,7 @@ export async function runStructuredInference<T>(
       ...(input.context.workspaceId ? { workspaceId: input.context.workspaceId } : {}),
       ...(input.context.userId ? { userId: input.context.userId } : {}),
       ...(input.context.workstreamId ? { workstreamId: input.context.workstreamId } : {}),
+      ...(diagnostic.traceId ? { traceId: diagnostic.traceId } : {}),
     }, diagnostic);
   };
   try {
