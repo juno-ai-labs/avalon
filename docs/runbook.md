@@ -812,8 +812,9 @@ For ordinary releases after both entrypoints exist:
    bucket, Data Catalog, sink, stream, Pipeline, and generated binding. EU has no
    inference analytics resources in its Worker config. Scoped
    memory still requires `avalon-global-memory` and `avalon-eu-memory` Vectorize
-   indexes with 1,024 dimensions and cosine distance, plus the Workers AI
-   binding declared by each API Worker.
+   indexes with 1,024 dimensions and cosine distance. Memory embeddings use
+   OpenRouter `qwen/qwen3-embedding-8b` with an explicit 1,024-dimension
+   request; the Workers AI binding remains for Cloudflare-backed PDF OCR.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
@@ -1524,7 +1525,7 @@ buckets as credential-adjacent: bucket-scoped write-only delivery credentials,
 no wider dashboard access than a responder needs. Moving those two secrets off
 the query string is the only fix that removes them from the capture.
 
-Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs: some upstreams quote the request back inside it, these lines are written for every workspace into Workers Logs and 90-day Logpush storage, and the key-based redactor has no way to recognise it. For Global inference, the sensitive lakehouse retains the bounded provider failure beside the exact request instead; EU inference has no analytical archive, so the message is not available for later analysis. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
+Every OpenRouter call that the provider refuses records `provider_error_code` and `provider_error_provider` — the provider's own classification of the rejection, which is what separates a bad model id from a provider outage. The provider's free-text message is deliberately **not** recorded in Workers Logs or the Global lakehouse: some upstreams quote the request back inside it, and the key-based redactor has no way to recognise member content arriving inside provider prose. The Global lakehouse keeps the exact request and the bounded classification; EU inference has no analytical archive. A `request_failed` at `error_name = ZodError` is a response that failed *its own* contract before it left the Worker — the log carries the route and the offending field paths, so fix the row or the schema rather than the caller.
 
 Account-level `workers_trace_events` Logpush jobs route `avalon-api-global` to the `avalon-global-observability` R2 bucket and `avalon-api-eu` to the EU-jurisdiction `avalon-eu-observability` bucket. Both buckets use an automatic 90-day object-expiration rule. Keep the destination credentials bucket-scoped and write-only. The configuration command also reconciles bucket retention and verifies each existing job's filter, fields, destination bucket, and redacted delivery state. The read-only release check must report all saved-query drift at once so a partial repair cannot make the next release discover one definition at a time.
 

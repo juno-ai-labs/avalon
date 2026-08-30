@@ -216,7 +216,10 @@ export async function loadModelImageForTool(
   };
 }
 
-export function modelImageDataUri(bytes: Uint8Array, mimeType: string): string {
+export function modelImageDataUri(
+  bytes: Uint8Array,
+  mimeType: NormalizedModelImage["mimeType"],
+): string {
   return dataUri(bytes, mimeType);
 }
 
@@ -234,6 +237,7 @@ async function loadPersistedModelImage(
       if (persisted.size > MAX_MODEL_IMAGE_BYTES) return null;
       const bytes = new Uint8Array(await persisted.arrayBuffer());
       if (bytes.byteLength > 0 && bytes.byteLength <= MAX_MODEL_IMAGE_BYTES) {
+        if (detectedModelImageMime(bytes) !== persistedMime) return null;
         return { bytes, mimeType: persistedMime, ...(metadata ? { metadata } : {}) };
       }
     }
@@ -477,6 +481,15 @@ function supportedModelImageMime(value: string): NormalizedImage["mimeType"] | n
   return normalized === "image/jpeg" || normalized === "image/png" || normalized === "image/gif" || normalized === "image/webp"
     ? normalized
     : null;
+}
+
+function detectedModelImageMime(bytes: Uint8Array): NormalizedImage["mimeType"] | null {
+  const detected = detectImageFormat(bytes);
+  return detected === "jpeg" ? "image/jpeg"
+    : detected === "png" ? "image/png"
+      : detected === "webp" ? "image/webp"
+        : detected === "gif" ? "image/gif"
+          : null;
 }
 
 function isGifHint(mimeType: string, fileName: string): boolean {

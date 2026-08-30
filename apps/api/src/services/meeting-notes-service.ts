@@ -13,7 +13,7 @@ import { countEnv, numericEnv } from "../env";
 import { ApiError } from "../lib/api-error";
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
-import { resolveAgentModelRouting } from "./agent-model-flags";
+import { AGENT_MODEL_FLAG_KEYS, resolveAgentModelRouting } from "./agent-model-flags";
 import { resolveControlTowerRefreshSeconds } from "./control-tower-flags";
 
 type HarnessRunner = (input: RunHarnessInput) => ReturnType<typeof runHarness>;
@@ -284,6 +284,19 @@ export class MeetingNotesService {
       loopId,
       harnessRunId: requestId,
       executionPrincipal: { type: "user", userId: this.auth.userId },
+      traceContext: {
+        source: "meeting_notes",
+        feature: AGENT_MODEL_FLAG_KEYS.meeting_notes,
+        workspaceId: this.auth.workspaceId,
+        contextUserId: this.auth.userId,
+        requestId,
+        harnessRunId: requestId,
+        region: this.env.AVALON_REGION,
+        environment: this.env.APP_ENV,
+        ...(this.env.BUILD_SHA ? { buildSha: this.env.BUILD_SHA } : {}),
+        executionPrincipalType: "user",
+        executionPrincipalId: this.auth.userId,
+      },
       systemPrompt: final ? FINAL_MEETING_SUMMARY_SYSTEM_PROMPT : CONTROL_TOWER_SYSTEM_PROMPT,
       messages: [
         ...(final ? FINAL_SUMMARY_EXAMPLE_MESSAGES : CONTROL_TOWER_EXAMPLE_MESSAGES),

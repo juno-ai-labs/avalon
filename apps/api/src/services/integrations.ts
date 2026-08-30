@@ -133,7 +133,11 @@ import {
 import { logStructuredEvent } from "../observability/logger";
 import { createAgentInferenceLogger } from "./agent-inference-logging";
 import { captureStructuredInferenceDiagnostic } from "./inference-lakehouse";
-import { resolveAgentModelRouting, resolveWorkstreamModelRouting } from "./agent-model-flags";
+import {
+  AGENT_MODEL_FLAG_KEYS,
+  resolveAgentModelRouting,
+  resolveWorkstreamModelRouting,
+} from "./agent-model-flags";
 import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
@@ -1489,6 +1493,7 @@ export async function classifyWorkstreamMessage(
     // rest of its workspace ran on a rolled-out variant.
     workspaceId: string;
     workstreamId: string;
+    userId: string;
   },
 ): Promise<AddressingClassification> {
   const routing = await resolveAgentModelRouting(env, "addressing_classifier", {
@@ -1503,6 +1508,17 @@ export async function classifyWorkstreamMessage(
     activeTask: input.activeTask,
     connectorMentions: input.connectorMentions,
     recentMessages: input.recentMessages,
+    traceContext: {
+      source: "addressing_classifier",
+      feature: AGENT_MODEL_FLAG_KEYS.addressing_classifier,
+      workspaceId: input.workspaceId,
+      workstreamId: input.workstreamId,
+      substreamId: "0",
+      contextUserId: input.userId,
+      region: env.AVALON_REGION,
+      environment: env.APP_ENV,
+      ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
+    },
     // Without this the classifier is the one model caller that leaves no trace:
     // a provider rejection here is silently absorbed into the heuristic result.
     onDiagnostic: async (diagnostic) => {
@@ -1719,6 +1735,19 @@ export async function compileAutomationDraft(
       loopId: `automation-draft:${input.draftId ?? input.userId}:loop`,
       workspaceId: input.workspaceId,
       userId: input.userId,
+      traceContext: {
+        source: "automation_compiler",
+        feature: AGENT_MODEL_FLAG_KEYS.automation_compiler,
+        workspaceId: input.workspaceId,
+        contextUserId: input.userId,
+        requestId: input.requestId,
+        ...(input.draftId ? { draftId: input.draftId } : {}),
+        region: env.AVALON_REGION,
+        environment: env.APP_ENV,
+        ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
+        executionPrincipalType: "user",
+        executionPrincipalId: input.userId,
+      },
       fallbackModels: routing.fallbackModels,
       transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       messages: input.messages,
@@ -2737,6 +2766,27 @@ export async function runWorkstreamHarness(
       loopId: input.loopId,
       harnessRunId: input.harnessRunId,
       executionPrincipal: input.executionPrincipal,
+      traceContext: {
+        source: blockDashboardRun ? "block_dashboard" : "workstream",
+        feature: blockDashboardRun
+          ? AGENT_MODEL_FLAG_KEYS.block_dashboard
+          : AGENT_MODEL_FLAG_KEYS.workstream,
+        workspaceId: input.workspaceId,
+        workstreamId: input.workstreamId,
+        substreamId: input.substreamId ?? "0",
+        ...(input.executionPrincipal.type === "user"
+          ? { contextUserId: input.executionPrincipal.userId }
+          : {}),
+        requestId: input.harnessRunId,
+        harnessRunId: input.harnessRunId,
+        region: env.AVALON_REGION,
+        environment: env.APP_ENV,
+        ...(env.BUILD_SHA ? { buildSha: env.BUILD_SHA } : {}),
+        executionPrincipalType: input.executionPrincipal.type,
+        executionPrincipalId: input.executionPrincipal.type === "user"
+          ? input.executionPrincipal.userId
+          : input.executionPrincipal.workspaceId,
+      },
       systemPrompt: blockDashboardRun
         ? `${promptContext.systemPrompt}\n\n${BLOCK_DASHBOARD_SYSTEM_PROMPT}`
         : promptContext.systemPrompt,
@@ -4516,6 +4566,26 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
           loopId: childInput.loopId,
           harnessRunId: childInput.harnessRunId,
           executionPrincipal: childInput.executionPrincipal,
+          traceContext: {
+            source: "inline_child",
+            feature: AGENT_MODEL_FLAG_KEYS.inline_child,
+            workspaceId: childInput.workspaceId,
+            workstreamId: childInput.workstreamId,
+            substreamId: childInput.substreamId ?? "0",
+            ...(childInput.executionPrincipal.type === "user"
+              ? { contextUserId: childInput.executionPrincipal.userId }
+              : {}),
+            requestId: childInput.harnessRunId,
+            parentRequestId: parentInput.harnessRunId,
+            harnessRunId: childInput.harnessRunId,
+            region: options.env.AVALON_REGION,
+            environment: options.env.APP_ENV,
+            ...(options.env.BUILD_SHA ? { buildSha: options.env.BUILD_SHA } : {}),
+            executionPrincipalType: childInput.executionPrincipal.type,
+            executionPrincipalId: childInput.executionPrincipal.type === "user"
+              ? childInput.executionPrincipal.userId
+              : childInput.executionPrincipal.workspaceId,
+          },
           systemPrompt: INLINE_CHILD_SYSTEM_PROMPT,
           messages: [{ role: "user", content: args.objective }],
           // Same offer the parent gets, for the same reason: a catalog line is

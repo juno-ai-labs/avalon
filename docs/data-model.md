@@ -880,6 +880,31 @@ perform the regional audit/control write explicitly through
 
 ## Changelog
 
+### 2026-08-29 — Memory vectors move to a versioned OpenRouter embedding space
+
+**What changed:** WorkspaceDO migration 23 requeues each active memory item's
+current vector projection after durable-memory embeddings move from Workers AI
+to the fixed `qwen/qwen3-embedding-8b` OpenRouter model. The projection writes
+into a namespace derived from the model, dimension contract, and an explicit
+space version, so old vectors are never queried while the new corpus rebuilds.
+
+**Why:** Equal vector dimensions do not make embeddings from independently
+trained models comparable. Reusing the existing 1,024-dimensional Vectorize
+indexes avoids destructive index replacement, but it requires a hard boundary
+between the old and new coordinate spaces and a durable way to wake existing
+workspace objects for reconstruction.
+
+**Considered and rejected:** Mixing vectors because both providers return
+1,024 values, and exposing the embedding model through Flagship. The first
+silently corrupts retrieval; the second can change query embeddings without an
+atomic corpus rebuild. A future model change therefore requires another schema
+migration or an equivalent explicit rebuild and cutover.
+
+**Consequences:** The requeue preserves invalidated, expired, and historical
+revisions as retired. Until an active row is re-embedded, vector retrieval
+misses it and hybrid search degrades to FTS rather than matching it in the wrong
+space.
+
 ### 2026-08-29 — The runtime router answers for `automation_directory`, and every object table is now a decision
 
 **What changed:** `automation_directory` joins `WORKSPACE_LOCAL_TABLES`, so the

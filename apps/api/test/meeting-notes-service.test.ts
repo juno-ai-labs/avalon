@@ -74,6 +74,10 @@ describe("MeetingNotesService", () => {
       onInferenceRequest: expect.any(Function),
       onInferenceAttempt: expect.any(Function),
       executionPrincipal: { type: "user", userId: auth.userId },
+      traceContext: {
+        source: "meeting_notes",
+        feature: "agent-model-meeting-notes",
+      },
       config: {
         maxIterations: 1,
         maxToolCalls: 0,

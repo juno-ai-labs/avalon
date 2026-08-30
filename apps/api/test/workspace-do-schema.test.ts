@@ -22,6 +22,7 @@ const VERSION_PROVENANCE_VERSION = 18;
 const RESOURCE_SLUG_VERSION = 19;
 const DRAFT_RESERVATION_VERSION = 20;
 const RESOURCE_PUBLICATION_FENCE_VERSION = 21;
+const OPENROUTER_MEMORY_EMBEDDING_VERSION = 23;
 
 /** Apply the ledger's versions in `(after, through]`, the way a deploy does. */
 function apply(database: DatabaseSync, through: number, after = 0): void {
@@ -535,5 +536,60 @@ describe("the WorkspaceDO pending attachment reservation migration", () => {
     database.exec("DELETE FROM resources WHERE id = '00000000-0000-7000-8000-0000000000b1'");
     expect(database.prepare("SELECT COUNT(*) AS count FROM resources").get()).toEqual({ count: 0 });
     database.close();
+  });
+});
+
+describe("the WorkspaceDO memory-embedding migration", () => {
+  it("requeues only current active memories and wakes an existing workspace", () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    apply(database, OPENROUTER_MEMORY_EMBEDDING_VERSION - 1);
+    seedIdentity(database);
+    database.prepare(
+      `INSERT INTO memory_scopes
+         (memory_scope_id, workspace_id, kind, owner_id, created_at)
+       VALUES ('scope-1', ?, 'workspace', ?, '2026-08-27T00:00:00.000Z')`,
+    ).run(WORKSPACE_ID, WORKSPACE_ID);
+    database.exec(
+      `INSERT INTO memory_items
+         (memory_item_id, memory_scope_id, workspace_id, text, revision, expires_at,
+          provenance_json, invalidated_at, invalidated_by_principal_json,
+          invalidation_reason, last_mutation_id, created_at, updated_at)
+       VALUES
+         ('active', 'scope-1', '${WORKSPACE_ID}', 'active memory', 2, NULL,
+          '{}', NULL, NULL, NULL, 'mutation-active', '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z'),
+         ('invalidated', 'scope-1', '${WORKSPACE_ID}', 'invalidated memory', 1, NULL,
+          '{}', '2026-08-27T00:00:00.000Z', '{}', 'retired', 'mutation-invalid',
+          '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z'),
+         ('expired', 'scope-1', '${WORKSPACE_ID}', 'expired memory', 1, '2020-01-01T00:00:00.000Z',
+          '{}', NULL, NULL, NULL, 'mutation-expired', '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO memory_index_outbox
+         (outbox_id, memory_item_id, memory_scope_id, workspace_id, revision,
+          operation, status, attempt_count, available_at, completed_at, created_at, updated_at)
+       VALUES
+         ('outbox-active', 'active', 'scope-1', '${WORKSPACE_ID}', 2, 'upsert',
+          'completed', 3, '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:01.000Z',
+          '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:01.000Z'),
+         ('outbox-invalid', 'invalidated', 'scope-1', '${WORKSPACE_ID}', 1, 'upsert',
+          'completed', 1, '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:01.000Z',
+          '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:01.000Z'),
+         ('outbox-expired', 'expired', 'scope-1', '${WORKSPACE_ID}', 1, 'upsert',
+          'completed', 1, '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:01.000Z',
+          '2026-08-27T00:00:00.000Z', '2026-08-27T00:00:01.000Z')`,
+    );
+
+    apply(database, OPENROUTER_MEMORY_EMBEDDING_VERSION, OPENROUTER_MEMORY_EMBEDDING_VERSION - 1);
+
+    expect(database.prepare(
+      `SELECT memory_item_id, status, attempt_count, completed_at
+         FROM memory_index_outbox ORDER BY memory_item_id`,
+    ).all()).toEqual([
+      { memory_item_id: "active", status: "pending", attempt_count: 0, completed_at: null },
+      { memory_item_id: "expired", status: "completed", attempt_count: 1, completed_at: "2026-08-27T00:00:01.000Z" },
+      { memory_item_id: "invalidated", status: "completed", attempt_count: 1, completed_at: "2026-08-27T00:00:01.000Z" },
+    ]);
+    expect(bootstrapEntries(database)).toHaveLength(1);
   });
 });
