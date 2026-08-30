@@ -89,8 +89,12 @@ jobs:
   # The lanes mirror ci.yml's, deliberately: the same split is already balanced
   # against this repository's suites, and two workflows that verify the same
   # revision differently is a way to have one of them pass on something the
-  # other would have caught. The Wrangler dry-run builds live here rather than
-  # in `deploy` because they validate the revision, not the deployment — and a
+  # other would have caught. Workers in particular must stay on their own two
+  # shards (`api-tests-workers-1-of-n` / `2-of-n`) rather than being dumped
+  # unsharded onto a Node lane: `reset()` takes every object's input gate
+  # run-wide, and an unsharded full-suite Miniflare is more interleave than PR
+  # CI ever sees. The Wrangler dry-run builds live here rather than in `deploy`
+  # because they validate the revision, not the deployment — and a
   # config error should fail beside lint, minutes earlier, instead of after the
   # deploy job has re-installed dependencies.
   checks:
@@ -116,9 +120,11 @@ jobs:
           - name: api-tests-1-of-2
             command: pnpm --filter @rally/api exec vitest run --shard=1/2
           - name: api-tests-2-of-2
-            command: >-
-              pnpm --filter @rally/api exec vitest run --shard=2/2 &&
-              pnpm --filter @rally/api test:workers
+            command: pnpm --filter @rally/api exec vitest run --shard=2/2
+          - name: api-tests-workers-1-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=1/2
+          - name: api-tests-workers-2-of-n
+            command: pnpm --filter @rally/api exec vitest run --config vitest.workers.config.ts --shard=2/2
           - name: crash-symbolicator-container
             command: pnpm --filter @rally/api test:crash-symbolicator-container
           - name: remaining-tests

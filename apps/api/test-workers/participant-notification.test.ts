@@ -36,8 +36,18 @@ import { processWorkstreamNotificationIntent } from "../src/services/workstream-
 import { useOpenRouterDouble } from "./helpers/openrouter-double";
 
 const WORKSPACE_ID = asWorkspaceId("00000000-0000-7000-8000-0000000006a1");
-const WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
-const SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a6");
+/**
+ * Reassigned per test. `initialize` on an already-authoritative root is the
+ * documented replay path: it re-enqueues the directory snapshot, returns 200,
+ * and does not re-emit notifications. `reset()` is supposed to isolate tests,
+ * but it takes every object's input gate run-wide — one Miniflare, sibling
+ * files included. An incomplete wipe then turns a later notify-true create
+ * on the same workstream id into a silent replay with `[]`. Giving each test
+ * its own id means only the replay case below can share one on purpose.
+ */
+let WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a2");
+let SECOND_WORKSTREAM_ID = asWorkstreamId("00000000-0000-7000-8000-0000000006a6");
+let workstreamOrdinal = 0;
 const CREATOR_ID = asUserId("00000000-0000-7000-8000-0000000006a3");
 const SESSION_ID = "00000000-0000-7000-8000-0000000006a4";
 const INVITEE_ID = "00000000-0000-7000-8000-0000000006a5";
@@ -72,6 +82,13 @@ const AUTH: AuthContext = {
 };
 
 beforeEach(async () => {
+  workstreamOrdinal += 1;
+  WORKSTREAM_ID = asWorkstreamId(
+    `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}000006a2`,
+  );
+  SECOND_WORKSTREAM_ID = asWorkstreamId(
+    `00000000-0000-7000-8000-${String(workstreamOrdinal).padStart(4, "0")}000006a6`,
+  );
   await reset();
   await env.DB.batch([
     env.DB.prepare(`CREATE TABLE workstream_authority_control (
@@ -1067,8 +1084,10 @@ describe("who a create is allowed to tell", () => {
   it("replays the create without telling the person a second time", async () => {
     const stub = agentStub();
     await openWorkstream(stub, { participantUserIds: [INVITEE_ID], notifyParticipants: true });
-    // The ambiguous-response retry, on the same `clientMessageId`. It must
-    // still answer 200: the whole reason the replay branch re-enqueues the
+    // The ambiguous-response retry, on this test's own workstream id and
+    // `clientMessageId`. Other cases must not share either — initialize on an
+    // already-authoritative root is a silent replay, not a second create. It
+    // must still answer 200: the whole reason the replay branch re-enqueues the
     // directory snapshot and nothing else is that a notification re-emitted
     // against a moved root would be refused as a hash conflict and wedge the
     // create. `openWorkstream` asserts the status.
