@@ -21,11 +21,11 @@ one of them silently missed the others; the changelog records what that cost.
 | `packages/contracts/src/markdown-code.ts` | Which lines of a markdown string are code, which `splitStreamingMarkdown` and the citation rewrite both read rather than each deciding. See [`markdown-code.md`](markdown-code.md). |
 | `apps/desktop/src/renderer/lib/use-citations.ts` | What a cited resource resolves to and where clicking one goes. |
 | `apps/desktop/src/renderer/lib/use-auto-open-embedded-resource.ts` | Auto-opening the inspector onto the latest embed card in the last two text turns of a work stream. |
-| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the two host overrides, `.note-detail-article` and `.meeting-notes-body`, each of which states a heading scale and nothing else. |
+| `apps/desktop/src/renderer/styles/app.css` | The `.markdown-body` group: every element style markdown gets. Also the three host overrides, `.note-detail-article`, `.meeting-notes-body`, and `.citation-card-preview`. Notes and briefings each state a heading scale. The preview also inherits tone and zeros block margins so the four-line clamp spends itself on text. |
 | `apps/desktop/src/renderer/styles/app.css.node.test.ts` | The stylesheet guards: the list markers Tailwind's preflight removes, and the assertion that no host restyles a markdown element. |
 | `apps/desktop/src/renderer/components/markdown-renderer.node.test.ts` | The guards that `react-markdown` stays mounted in one place, and that it and `remark-gfm` stay pinned to exact versions. |
 
-Nine call sites, all passing a markdown string as `children`:
+Ten call sites, all passing a markdown string as `children`:
 
 | Surface | Call site |
 | --- | --- |
@@ -36,6 +36,7 @@ Nine call sites, all passing a markdown string as `children`:
 | A note's body | `screens/note-detail.tsx` |
 | A Markdown or converted document attachment in the full-window lightbox | `attachment-lightbox.tsx` |
 | A resource's readable content in the rail's detail | `inspector-rail.tsx`, reading through `lib/resource-preview.ts` — which the embed card's preview shares, so the two cannot disagree about a document |
+| The embed card's preview of that same derivative | `markdown-citations.tsx`, via `CitationPreviewBody` in `workstream-blocks.tsx` so the card does not import the renderer it lives inside |
 | A turn being saved as a picture or a PDF | `workstream-blocks.tsx` builds it; `lib/message-export.ts` renders it off-screen for its markup |
 
 ## How it works
@@ -123,12 +124,24 @@ An embed card also shows a **preview** of the resource's own text between its
 badge and its title, when the host offers one: `CitationContext.preview` reads
 the same `/resources/:id/preview` derivative the rail's detail panel shows — a
 Word file's markdown, a PDF's OCR — so the card and the panel it opens onto
-cannot disagree about a document. It is a glance, not a reader: the stylesheet
-clamps it to four lines and it scrolls in neither axis, because the whole card
-is one button and a scrollable box inside it would swallow the click. While the
-derivative is still being converted the card shows a shimmering skeleton, and
-every terminal answer — unconvertible, gone, retries spent — leaves the card's
-empty room rather than an error inside a control. A still never asks at all.
+cannot disagree about a document. The preview is itself a `MarkdownBody`
+(glance, verbatim, no citations), so `**Author:**` bolds and a heading is a
+heading rather than printed markers, a fence or a link cannot nest a control
+inside the card's button, and an external image cannot fetch from a URL the
+document chose merely because the card painted. It is a glance, not a reader:
+the stylesheet clamps it to four lines, scales every heading to the kind
+label's size, zeros block margins so the clamp spends its lines on text rather
+than on paragraph seams, and it scrolls in neither axis, because the whole
+card is one button and a scrollable box inside it would swallow the click.
+The preview is `aria-hidden` and `inert` as a backstop; the glance renderer
+is what keeps the nested controls out of the DOM. The excerpt leaves blank
+lines intact — they are the block grammar — and only normalises `\r\n` and
+caps at 600 characters. While the derivative is still being converted the
+card shows a shimmering skeleton, and every terminal answer — unconvertible,
+gone, retries spent — leaves the card's empty room rather than an error
+inside a control. A still never asks at all. The preview draws in
+`sys.color.text.disabled`, the faintest typographic tone, so it recedes from
+the title beneath it.
 
 On a work stream, the latest embed card in the last two **text** turns also
 opens the inspector onto that document without a click. The window is those
@@ -161,9 +174,12 @@ The dispatch is a **matrix, not an if-chain**: three
 protocol is a type error until somebody has decided what it looks like as a
 link, as an embed, and as a source. Two cells are worth knowing about:
 
-- **`image` × `https` is a real image**, deliberately. Markdown images render
-  today and the CSP permits them, so hijacking that syntax as a web-citation
-  card would collide with the model legitimately embedding an image.
+- **`image` × `https` is a real image**, deliberately — except in the embed
+  card's glance, which reduces it to alt text. Markdown images render today
+  and the CSP permits them, so hijacking that syntax as a web-citation card
+  would collide with the model legitimately embedding an image. The glance is
+  a four-line hint inside a button, and loading the URL would tell the host
+  the card painted.
 - **`link` × unknown keeps react-markdown's default.** That cell is where
   `mailto:`, `tel:` and relative targets live; rendering it as text would be a
   regression dressed as a degradation.
@@ -261,17 +277,23 @@ in list ancestors of either kind so that an `ol` holding a `ul` is a second leve
 
 A surface hosting `MarkdownBody` may override typography — a heading scale, a
 measure — because that is a property of the surface. It may not restyle a
-markdown element. Two surfaces take the exemption: a note reads as a document
-page and steps its headings 22/17/14, and the meeting briefing sits in a narrow
-rail beside a transcript and holds every level at 15px.
+markdown element. Three surfaces take the exemption: a note reads as a document
+page and steps its headings 22/17/14, the meeting briefing sits in a narrow
+rail beside a transcript and holds every level at 15px, and the embed card's
+preview holds every level at the kind label's size so a glance does not spend
+its four lines on a title.
 
-Both write the exemption as `<host> .markdown-body :is(h1, …)`, naming the shared
-container even though the host alone would select the same elements. That is
-deliberate. `.note-detail-article h1` ties `.markdown-body h1` at (0,1,1) and
-wins only by sitting lower in the file, so the override would survive exactly as
-long as nobody split the stylesheet or moved a block. With `.markdown-body` in
-the selector it is (0,2,1) and the question does not arise. A host override that
-cannot be written this way is a sign it is not a typography override.
+Each writes the heading exemption as `<host> .markdown-body :is(h1, …)`, naming
+the shared container even though the host alone would select the same elements.
+That is deliberate. `.note-detail-article h1` ties `.markdown-body h1` at
+(0,1,1) and wins only by sitting lower in the file, so the override would
+survive exactly as long as nobody split the stylesheet or moved a block. With
+`.markdown-body` in the selector it is (0,2,1) and the question does not arise.
+The embed card goes one step further: the feed already paints `.markdown-body`
+at (0,3,0), so the preview names `.citation-card` and the wrapper's `div` to
+sit at (0,3,1). Block margins and list markers recede through `*` and
+`::marker` rather than by naming `p` or `li`. A host override that cannot be
+written this way is a sign it is not a typography override.
 
 ## Invariants
 
@@ -347,9 +369,10 @@ cannot be written this way is a sign it is not a typography override.
 
 This module owns how a markdown string becomes DOM in the renderer, and how that
 DOM is styled. It exposes `MarkdownBody` — taking a markdown string, an optional
-`mentions` array and an optional `citations` context — plus the citation matrix
-and `ResourceIcon`, which the inspector rail renders too so that one resource
-kind draws one glyph everywhere.
+`mentions` array, an optional `citations` context, and `glance` / `verbatim` /
+`still` / `streaming` flags — plus the citation matrix and `ResourceIcon`, which
+the inspector rail renders too so that one resource kind draws one glyph
+everywhere.
 
 **It does not own where a citation goes.** The host supplies resolution and
 click routing as `CitationContext` (`lib/use-citations.ts` builds the
@@ -490,6 +513,117 @@ The traps, both of which have bitten:
   exercises none of the `ol` selectors.
 
 ## Changelog
+
+### 2026-08-30 — The embed card glance leaves the markdown intact and nests no controls
+
+**What changed:** `previewExcerpt` no longer collapses blank lines. The nested
+body is `MarkdownBody glance`, which renders links as their text, images as
+their alt, and fenced blocks without a copy button. Block margins zero through
+the existing descendant `*`, and `::marker` inherits the glance's tone.
+
+**Why:** collapsing blank lines was a plain-text trick. Once the string is
+parsed, those blanks *are* the block grammar — two paragraphs became one,
+a paragraph above `---` became a heading, and the sentence after a list was
+swallowed into its last item. The clamp's seams belong in CSS (`margin: 0`),
+not in the source. `inert` on an `aria-hidden` glance also made the "no nested
+control" tests unable to fail: `queryAllByRole` ignores hidden subtrees, while
+a fence still put a real `<button>` inside the card's `<button>`. Glance keeps
+those nodes out of the DOM. An external image in the derivative would fetch
+from a URL the document chose merely because the card painted; alt text does
+not.
+
+**Why not name `p` / `ul` / `ol` for the margin reset:** a host may override
+typography, not markdown elements, and the stylesheet guard exists to keep
+that from quietly coming back. `*` is a measure of the four-line box, the
+same way it already carries colour.
+
+**What a future change has to respect:** do not reintroduce the blank-line
+collapse to "spend the clamp on text"; the seams are CSS. Do not assert
+absence of nested controls with `queryAllByRole` on an `aria-hidden` node.
+A glance must not grow a copy control, an `<a href>`, or an `<img src>`
+for a URL the derivative named.
+
+### 2026-08-30 — The embed card kind is the file, and the preview type is normal weight
+
+**What changed:** a generated or uploaded file's kind label classifies from MIME
+and filename (`Document`, `Deck`, `Spreadsheet`, …) instead of printing
+`Generated file`. The preview's weight moved from `sys.label.weight` (560) to
+`normal` (400).
+
+**Why:** `generated_file` is provenance, not a kind a person can tell cards
+apart by — every published file is one. The attachment-kind vocabulary already
+answers "what is this file", and "Deck" is the word the rest of the product
+uses for a slide deck rather than "Presentation". The preview sat on
+`sys.label.weight`, which is the same 560 as the title's `sys.font.weight.strong`,
+so the glance competed with the line it is meant to recede from. The named
+weights only go up from `strong`; `normal` is the step down that exists without
+inventing a number. Headings inherit it, so `**Author:**` (markdown's own 660)
+actually reads as emphasis against the glance.
+
+**What a future change has to respect:** do not relabel a connector type
+(`github_pull_request`) from MIME — those identifiers are the kind. Do not put
+the preview back on `sys.label.weight` to "match the kind label"; the kind
+label is a caption, the preview is body type at caption size.
+
+### 2026-08-30 — The embed card preview wins its tone on specificity, not source order
+
+**What changed:** the preview's inherit and heading scale are now
+`.citation-card .citation-card-preview div.markdown-body`, and a descendant `*`
+carries `color: inherit` so `strong` (and `a`, `th`) recede with the glance.
+
+**Why:** the feed already paints `.markdown-body` at (0,3,0) —
+`:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
+and the human-bubble twin. The host written as
+`.citation-card-preview .markdown-body` was (0,2,0) and lost, so inherit never
+landed: headings kept the shared scale, `**Author:**` stayed `text.default`, and
+the four-line clamp spent itself on the title. The card is a nested
+`MarkdownBody` inside a turn, so a wrapper that only beats the shared group is
+not enough.
+
+**Why not restyle `p` or `strong` on the host:** a host may override typography,
+not markdown elements, and the stylesheet guard exists to keep that from
+quietly coming back. `*` inherits the tone without naming those elements.
+Naming the card and the wrapper's element is the same move the heading-scale
+guard already requires: win on specificity, not on sitting lower in the file.
+
+**What a future change has to respect:** a selector that drops `.citation-card`
+or `div` falls back to losing against the feed. Do not "fix" the glance by
+painting `p` or `strong` on `.citation-card-preview`.
+
+### 2026-08-30 — The embed card preview renders markdown, in the faintest text tone
+
+**What changed:** the embed card's preview is a nested `MarkdownBody` — verbatim,
+no citations — rather than a plain-text slice that stripped heading hashes and
+left `**Author:**` as characters. The preview node is `inert` as well as
+`aria-hidden`. Its colour moved from `ref.color.neutral.9` to
+`sys.color.text.disabled`. The card's heading scale collapses every level to the
+kind label's size.
+
+**Why:** the derivative *is* markdown — a Word file's conversion, a PDF's OCR —
+and printing its markers made the glance noisier than the document it was
+hinting at. The rail one click away already renders the same bytes through
+`MarkdownBody`; a second parser inside the button would be the copy that
+drifts. The earlier excerpt's own changelog named this as the next step.
+
+**Why not import `MarkdownBody` from the citation module:** that module is
+already imported by the renderer for the matrix, so a reverse import is a cycle.
+`CitationRender.PreviewBody` is the body handing itself in, the same way the
+citation context already travels. No citations on that nested body: a document
+that cites another resource would otherwise draw a card inside this card.
+
+**Why `text.disabled`, having previously refused it:** `sys.color.text` is
+strongest to faintest, and the preview is the layer that should recede from the
+title. `text.muted` is already the kind label. The previous ramp step sat
+between those two because `text.disabled` was read as a claim about the button;
+the token names a contrast, not the control's state, and the button stays
+enabled. The number on the ramp was the team's, and this replaces it with the
+vocabulary that already means "this type is not the thing to read."
+
+**What a future change has to respect:** the preview is presentation — `inert`
+and `aria-hidden`, the button's accessible name stays the title, and nothing
+inside the card may become independently focusable or scrollable while the card
+is a button. Nested `MarkdownBody` must not receive the outer citation context.
+A still must never ask.
 
 ### 2026-08-30 — An embed card in the last two turns opens the inspector
 

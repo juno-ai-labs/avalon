@@ -81,7 +81,12 @@ export function useCitations({ loadResourceContent, resources }: {
       // dressed from the record's name and kind, and which revision it names is
       // the host's business, not the renderer's.
       const entry = {
-        citation: { id: resource.id, resourceType: resource.resourceType, title: resource.title },
+        citation: {
+          id: resource.id,
+          resourceType: resource.resourceType,
+          title: resource.title,
+          ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+        },
         version: resource.currentVersion,
       };
       byToken.set(resource.id, entry);

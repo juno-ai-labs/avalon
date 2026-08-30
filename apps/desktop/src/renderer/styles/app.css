@@ -2684,22 +2684,54 @@ pre {
 .citation-card-badge { align-items: center; align-self: flex-start; border: 1px solid var(--av-ref-color-line-4); border-radius: var(--av-sys-size-radius-sm); color: var(--av-sys-color-text-muted); display: inline-flex; height: 27px; justify-content: center; width: 27px; }
 /* The opening lines of the resource's own text, filling the room between the
    badge and the title. It is a *glance*, not a reader: the clamp cuts it at
-   four lines, `pre-wrap` keeps the derivative's own line breaks, and nothing
-   here scrolls in either axis — a scrollable box inside a card the whole of
-   which is one button would swallow the click it advertises. The kind label's
-   size and weight, deliberately, so the preview reads as the card's quietest
-   layer rather than competing with the title beneath it.
+   four lines, and nothing here scrolls in either axis — a scrollable box
+   inside a card the whole of which is one button would swallow the click it
+   advertises. The kind label's size, and `font-weight: normal` rather than
+   `sys.label.weight`: that token is 560, the same as the title's
+   `sys.font.weight.strong`, so the glance competed with the line it is
+   meant to recede from. The named weights only go up from `strong`; `normal`
+   (400) is the step down that exists without inventing a number. Headings
+   inherit it; `strong` keeps markdown's own weight, so `**Author:**` actually
+   reads as emphasis. `pointer-events: none` plus `inert` on the node keep nested
+   markdown (a link, a code-block copy control) from becoming a second target
+   inside the card.
 
-   It is the one piece of text on the card that draws from the neutral ramp
-   rather than a `text.*` tone: a step below `text.muted` and a step above
-   `text.disabled`, which is the tone this wants and neither of those is. The
-   preview exists to hint at the document, not to be read here — the card is a
-   button, and type dark enough to read comfortably competes with the title for
-   the click. `text.disabled` would say something untrue about a control that
-   is very much enabled; `ref.color.neutral.9` is a contrast step, and the ramp
-   is ordered by contrast, so it dims the same way in a light theme as in a
-   dark one. */
-.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-ref-color-neutral-9); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: var(--av-sys-label-weight); line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+   The tone is `text.disabled`, the faintest step on `sys.color.text`
+   (strongest to faintest). The preview exists to hint at the document, not
+   to be read here — type as dark as `text.muted` (the kind label) competes
+   with the title for the click. The token names a contrast, not the button's
+   state: the card stays enabled, and this layer is the one that should recede.
+   `.markdown-body` restates the colour on itself because a colour on the host
+   does not inherit into that wrapper. The card and the wrapper's element are
+   named so this is (0,3,1): the feed's
+   `:is(.workstream-screen, .automation-chat-surface) .agent-message .markdown-body`
+   (and the human-bubble twin) is (0,3,0), and a host written as
+   `.citation-card-preview .markdown-body` lost, so inherit never landed and the
+   glance painted at the turn's size and colour. `*` carries the tone into
+   descendants that `.markdown-body strong` (and `a`, `th`) paint themselves,
+   without naming a markdown element a host may not restyle. It also zeros
+   block margins: blank lines stay in the excerpt (they are the block grammar)
+   and the clamp's seams belong here rather than in a source rewrite. */
+.citation-card-preview { -webkit-box-orient: vertical; -webkit-line-clamp: 4; color: var(--av-sys-color-text-disabled); display: -webkit-box; font-size: var(--av-sys-label-font-size); font-weight: normal; line-height: 1.5; max-height: calc(var(--av-sys-label-font-size) * 1.5 * 4); overflow: hidden; pointer-events: none; word-break: break-word; }
+.citation-card .citation-card-preview div.markdown-body { color: inherit; font-size: inherit; font-weight: inherit; line-height: inherit; }
+.citation-card .citation-card-preview div.markdown-body * { color: inherit; margin: 0; }
+/* `*` does not match `::marker`, so the shared `.markdown-body li::marker`
+   colour would otherwise keep the bullets at the turn's ink beside faint
+   text. Inherit here the same way `*` carries the tone, without naming a
+   markdown element. */
+.citation-card .citation-card-preview div.markdown-body ::marker { color: inherit; }
+/* A heading scale of one size: the shared scale's h1 is larger than this
+   tile, and a glance that spent its four lines on a title would hide the
+   sentence that distinguishes one card from another. The same (0,3,1)-plus
+   element that wins the wrapper's inherit wins the scale, so a heading does
+   not keep the shared size while the wrapper's type recedes. */
+.citation-card .citation-card-preview div.markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+}
 /* What stands in for it while the derivative is still being converted. The
    card does not resize when the text lands because of its own `min-height` and
    the title block's `margin-top: auto`, not because these bars measure the
