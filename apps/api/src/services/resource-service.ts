@@ -342,6 +342,7 @@ export class ResourceService {
       authorizedDerivativeResource(resource),
       {
         signal,
+        pdfExtractor: (bytes) => this.env.DOCUMENT_PROCESSOR.extractText(bytes),
         ocr: (bytes, pageCount) => ocrPdfWithWorkersAi(this.env.AI, fileName, bytes, pageCount, signal),
       },
     );

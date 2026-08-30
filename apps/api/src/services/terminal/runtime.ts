@@ -7,7 +7,7 @@ import {
   DAYTONA_REQUEST_TIMEOUT_MS,
   isTerminalProviderNotFound,
   type TerminalSandboxProvider,
-} from "./daytona-provider";
+} from "./provider-contract";
 import type {
   TerminalCommandOutput,
   TerminalImportResourceOutput,

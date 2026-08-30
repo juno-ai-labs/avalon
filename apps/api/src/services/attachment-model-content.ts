@@ -4,15 +4,13 @@ import {
   type AttachmentManifestEntry,
   type DerivativeStatus,
 } from "@rally/contracts";
-import UPNG from "upng-js";
-import * as UTIF from "utif2";
 import { ATTACHMENT_TEXT_EXTRACTOR_VERSION } from "./attachment-derivative-service";
+import type { DocumentProcessingRpcBinding } from "./document-processing-contract";
 import {
-  buildGifStoryboard,
   describeGifModelMetadata,
-  type GifModelMetadata,
   parseGifModelMetadata,
-} from "./gif-storyboard";
+  type GifModelMetadata,
+} from "./gif-metadata";
 import { putStagedResourceObject, releaseStagedResourceObject } from "./resource-object-cleanup";
 
 const MAX_INLINE_IMAGES = 8;
@@ -44,6 +42,7 @@ export interface LoadedModelImage {
 export interface AttachmentModelContentOptions {
   database?: D1Database;
   images?: ImagesBinding;
+  documentProcessor?: DocumentProcessingRpcBinding;
   maxBytes?: number;
 }
 
@@ -228,8 +227,10 @@ async function loadPersistedModelImage(
   attachment: ModelAttachmentSource,
 ): Promise<NormalizedImage | null> {
   const persistedMime = supportedModelImageMime(attachment.modelMimeType ?? "");
-  const metadata = parseGifModelMetadata(attachment.modelMetadataJson);
   const expectsGifStoryboard = isGifHint(attachment.mimeType, attachment.fileName);
+  const metadata = expectsGifStoryboard
+    ? parseGifModelMetadata(attachment.modelMetadataJson)
+    : null;
   if (expectsGifStoryboard && !metadata) return null;
   if (attachment.modelContentRef && persistedMime) {
     const persisted = await payloads.get(attachment.modelContentRef);
@@ -259,7 +260,7 @@ async function loadAndCreateModelImage(
   if (originalBytes.byteLength > MAX_IMAGE_SOURCE_BYTES) return null;
   const detected = detectImageFormat(originalBytes);
   if (!detected) return null;
-  const normalized = await normalizeImage(originalBytes, detected, options.images);
+  const normalized = await normalizeImage(originalBytes, detected, options.images, options.documentProcessor);
   if (!normalized || normalized.bytes.byteLength === 0 || normalized.bytes.byteLength > MAX_MODEL_IMAGE_BYTES) return null;
   if (normalized.bytes.byteLength > (options.maxBytes ?? MAX_TOTAL_MODEL_IMAGE_BYTES)) return null;
 
@@ -337,9 +338,11 @@ async function normalizeImage(
   bytes: Uint8Array,
   format: DetectedImageFormat,
   images: ImagesBinding | undefined,
+  documentProcessor: DocumentProcessingRpcBinding | undefined,
 ): Promise<NormalizedImage | null> {
   if (format === "gif") {
-    const storyboard = buildGifStoryboard(bytes);
+    if (!documentProcessor) return null;
+    const storyboard = await documentProcessor.buildGifStoryboard(bytes);
     if (!storyboard) return null;
     const transformed = images ? await transformWithImages(storyboard.bytes, images) : null;
     return transformed
@@ -353,7 +356,11 @@ async function normalizeImage(
     if (transformed) return transformed;
   }
 
-  if (format === "tiff") return decodeTiffToPng(bytes);
+  if (format === "tiff") {
+    if (!documentProcessor) return null;
+    const png = await documentProcessor.decodeTiffToPng(bytes);
+    return png ? { bytes: png, mimeType: "image/png" } : null;
+  }
   // HEIF decoding is admitted only through the bounded Images service. The
   // prior in-isolate fallback allocated the full decoded pixel buffer before
   // dimensions could be checked.
@@ -445,24 +452,6 @@ function modelImageDimensions(
     return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
   }
   return null;
-}
-
-function decodeTiffToPng(bytes: Uint8Array): NormalizedImage | null {
-  const buffer = exactArrayBuffer(bytes);
-  const ifd = UTIF.decode(buffer)[0];
-  if (!ifd) return null;
-  const width = tiffTagNumber(ifd.width, ifd.t256);
-  const height = tiffTagNumber(ifd.height, ifd.t257);
-  assertSafePixelCount(width, height);
-  UTIF.decodeImage(buffer, ifd);
-  const rgba = UTIF.toRGBA8(ifd);
-  return { bytes: new Uint8Array(UPNG.encode([exactArrayBuffer(rgba)], width, height, 0)), mimeType: "image/png" };
-}
-
-function tiffTagNumber(decoded: number, tag: unknown): number {
-  if (Number.isSafeInteger(decoded) && decoded > 0) return decoded;
-  if (Array.isArray(tag) && typeof tag[0] === "number") return tag[0];
-  return Number.NaN;
 }
 
 function detectImageFormat(bytes: Uint8Array): DetectedImageFormat | null {

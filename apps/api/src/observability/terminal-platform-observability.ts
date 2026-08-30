@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import type { TerminalProviderOperationMeasurement } from "../services/terminal/daytona-provider";
+import type { TerminalProviderOperationMeasurement } from "../services/terminal/provider-contract";
 import { logStructuredEvent } from "./logger";
 
 /**
