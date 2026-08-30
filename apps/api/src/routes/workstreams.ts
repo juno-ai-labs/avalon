@@ -16,6 +16,8 @@ import {
   ParticipantSchema,
   PreviewWorkstreamBatchRequestSchema,
   ReorderWorkstreamPinsRequestSchema,
+  ReorderPendingLoopInputsRequestSchema,
+  ReorderPendingLoopInputsResultSchema,
   WorkstreamResourceSchema,
   UpdateBlockDashboardPreferenceRequestSchema,
   UpdateBlockDashboardRequestSchema,
@@ -316,6 +318,17 @@ workstreamRoutes.post("/:id/messages", zValidator("param", idParam), requireSend
     return c.json(CreatedMessageSchema.parse(result), 201);
   });
 });
+workstreamRoutes.put(
+  "/:id/pending-inputs",
+  zValidator("param", idParam),
+  zValidator("json", ReorderPendingLoopInputsRequestSchema),
+  async (c) => {
+    const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
+    return c.json(ReorderPendingLoopInputsResultSchema.parse(
+      await client.reorderPendingInputs(c.req.valid("json").inputIds),
+    ));
+  },
+);
 workstreamRoutes.post("/:id/participants", zValidator("param", idParam), zValidator("json", AddParticipantRequestSchema), async (c) => {
   const client = await authoritativeWorkstreamClient(c, c.req.valid("param").id);
   return c.json(ParticipantSchema.parse(await client.addParticipant(c.req.valid("json").userId)), 201);
