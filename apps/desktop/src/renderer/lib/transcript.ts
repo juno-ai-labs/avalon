@@ -473,11 +473,18 @@ export function orderedTranscriptMessages(
     // own id is the fallback, which is what positioning used before runs
     // existed. Without it such a row has nowhere to sit and is dropped.
     const calls = new Set(run.toolCallIds);
-    const lastToolIndex = Math.max(...lastTurn.blocks.flatMap((block) => block.type === 'tool'
+    const anchored = Math.max(...lastTurn.blocks.flatMap((block) => block.type === 'tool'
       && (calls.size > 0 ? calls.has(block.toolCallId) : block.pluginId === run.pluginId)
       ? [block.blockIndex]
       : []));
-    if (!Number.isFinite(lastToolIndex)) continue;
+    // A run the authority reported is work that happened, so it gets a row even
+    // when nothing in the turn anchors it — the blocks may not have streamed in
+    // yet, or the turn may be an omitted-blocks placeholder. Anchoring decides
+    // *where* the row sits, not whether it exists, and an unanchored one goes
+    // last in its turn, which is where the response's own total already sits.
+    const lastToolIndex = Number.isFinite(anchored)
+      ? anchored
+      : Math.max(-1, ...lastTurn.blocks.map((block) => block.blockIndex)) + 1;
     const group = pluginGroup(run.pluginId, run.displayName);
     if (!group) continue;
     const timing = pluginRunTiming(run);
