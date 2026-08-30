@@ -12,7 +12,7 @@ import {
   attachWorkstreamRuntimeResource,
   type WorkstreamRuntimeResourceAttacher,
 } from "../workstream-object-client";
-import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./daytona-provider";
+import { isTerminalProviderNotFound, type TerminalSandboxProvider } from "./provider-contract";
 import { TerminalToolError } from "./tools";
 import type { HarnessRunPortFactory } from "../../runtime/harness-run-port";
 import { putStagedResourceObject } from "../resource-object-cleanup";

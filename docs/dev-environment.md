@@ -107,6 +107,10 @@ pnpm dev:api:local       # both regions, remote bindings disabled
 
 `scripts/dev-regional-api.mjs` starts Global first and waits for Wrangler's
 ready signal before starting EU. The Workers then run concurrently as before.
+Each regional command supplies the API, document-processing, and Terminal
+provider configs to one Wrangler multi-Worker session, so local calls use the
+same typed Service Bindings as production without loading provider modules from
+a request handler.
 This short serialization is required because both regional configs build the
 same crash-symbolicator Container image; concurrent Wrangler image builds can
 remove one another's transient local tag and leave both Workers unable to start.

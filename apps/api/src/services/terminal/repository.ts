@@ -12,7 +12,7 @@ import type { Env } from "../../env";
 import { githubConnectorConfig } from "../../lib/connector-registry";
 import { createMessageObjectPort } from "../../runtime/message-port";
 import { executionPrincipalKey } from "../workstream-resource-visibility";
-import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./daytona-provider";
+import { terminalGitCaSetupCommands, type TerminalSandboxProvider } from "./provider-contract";
 import type { AcquiredTerminalSandbox } from "./coordinator";
 import type { TerminalRepositoryPublisher } from "./runtime";
 import { requireTerminalEffectIntent, TerminalToolError, type TerminalPublishedBranchAndPrOutput } from "./tools";

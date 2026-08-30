@@ -5,6 +5,16 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: "./wrangler.test.jsonc" },
+      miniflare: {
+        serviceBindings: {
+          TERMINAL_RPC_TEST: { name: "terminal-rpc-test-service" },
+        },
+        workers: [{
+          name: "terminal-rpc-test-service",
+          scriptPath: "./test-workers/fixtures/terminal-rpc-service.mjs",
+          modules: true,
+        }],
+      },
     }),
   ],
   test: {

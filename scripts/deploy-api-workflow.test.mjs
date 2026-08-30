@@ -42,6 +42,44 @@ test('a merge to main provisions every declared Queue before either regional dep
   assert.ok(ensureQueues < deployGlobal, 'Queue provisioning must precede the Global deploy');
 });
 
+test('profiles all static service artifacts and uploads both regional sets before promotion', async () => {
+  const workflow = await readFile(deployWorkflowPath, 'utf8');
+  const buildEu = workflow.indexOf('- name: Build and profile the exact EU Worker artifact');
+  const buildGlobal = workflow.indexOf('- name: Build and profile the exact Global Worker artifact');
+  const uploadEu = workflow.indexOf('- name: Upload all EU Worker versions without traffic');
+  const uploadGlobal = workflow.indexOf('- name: Upload all Global Worker versions without traffic');
+  const deployEu = workflow.indexOf('- name: Deploy the EU Worker');
+  const euHealth = workflow.indexOf('- name: Verify EU health before Global promotion');
+  const deployGlobal = workflow.indexOf('- name: Deploy the Global Worker');
+
+  for (const position of [buildEu, buildGlobal, uploadEu, uploadGlobal, deployEu, euHealth, deployGlobal]) {
+    assert.notEqual(position, -1);
+  }
+  assert.ok(buildEu < uploadEu && buildGlobal < uploadEu);
+  assert.ok(uploadEu < deployEu && uploadGlobal < deployEu);
+  assert.ok(deployEu < euHealth && euHealth < deployGlobal);
+  assert.match(workflow, /wrangler\.documents\.eu\.jsonc wrangler\.terminal\.eu\.jsonc \.wrangler\.lakehouses\.eu\.json/u);
+  assert.match(workflow, /wrangler\.documents\.global\.jsonc wrangler\.terminal\.global\.jsonc \.wrangler\.lakehouses\.global\.json/u);
+  assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$output_file"[\s\S]+\.version_id/u);
+  assert.match(workflow, /wrangler versions deploy[\s\S]+--version-id "\$version_id"/u);
+  assert.doesNotMatch(workflow, /versions deploy[\s\S]{0,200}--version-tag/u);
+  assert.match(workflow, /steps\.upload_eu\.outputs\.eu_documents/u);
+  assert.match(workflow, /steps\.upload_global\.outputs\.global_api/u);
+  assert.match(workflow, /Preserve exact deployment startup evidence/u);
+});
+
+test('a missing capability Worker selects the service-first direct bootstrap', async () => {
+  const workflow = await readFile(deployWorkflowPath, 'utf8');
+
+  assert.match(
+    workflow,
+    /if ! deployment="\$\(pnpm --filter @rally\/api exec wrangler deployments status[\s\S]+echo unknown/u,
+  );
+  assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.documents\.eu\.jsonc\)"\)/u);
+  assert.match(workflow, /args\+=\(--deployed-sha "\$\(deployed_sha wrangler\.terminal\.global\.jsonc\)"\)/u);
+  assert.match(workflow, /if \[ "\$\{\{ steps\.deploy_mode\.outputs\.mode \}\}" = "versioned" \]; then/u);
+});
+
 test('applies destructive D1 retirements only after compatible Workers deploy', async () => {
   const workflow = await readFile(deployWorkflowPath, 'utf8');
   const pendingEu = workflow.indexOf('- name: List the pending remote migrations for EU');
