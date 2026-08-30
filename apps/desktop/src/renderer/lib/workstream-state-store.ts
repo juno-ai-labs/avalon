@@ -133,11 +133,26 @@ export function applyVersionedWorkstreamState(
     return { commonApplied, viewerApplied };
   }
 
-  const merge = <T extends WorkstreamSummary>(value: T): T => withDerivedUnread({
-    ...value,
-    ...(commonApplied ? input.common : {}),
-    ...(viewerApplied ? input.viewer : {}),
-  }) as T;
+  const merge = <T extends WorkstreamSummary>(value: T): T => {
+    const patched = {
+      ...value,
+      ...(commonApplied ? input.common : {}),
+      ...(viewerApplied ? input.viewer : {}),
+    };
+    // Control-socket seeds claim an empty pile at a waterline the later
+    // directory page often shares. Without this, that page is rejected and
+    // the row stays empty for the session. Workspace-scoped `[]` does not
+    // fill — only a non-empty directory preview replacing an empty cache.
+    if (
+      !commonApplied
+      && (patched.participantUserIds?.length ?? 0) === 0
+      && (input.common.participantUserIds?.length ?? 0) > 0
+    ) {
+      patched.participantUserIds = input.common.participantUserIds;
+      patched.participantExtraCount = input.common.participantExtraCount ?? 0;
+    }
+    return withDerivedUnread(patched) as T;
+  };
   setCachedWorkstreams(queryClient, (items) => {
     if (!items) return input.seed ? [merge(input.seed)] : items;
     const index = items.findIndex((item) => item.id === input.workstreamId);

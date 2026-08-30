@@ -126,4 +126,66 @@ describe('applyVersionedWorkstreamState', () => {
     expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]?.pinPosition)
       .toBe(2);
   });
+
+  it('fills an empty control-socket pile from a later directory row at the same waterline', () => {
+    const queryClient = new QueryClient();
+    const empty = summary({
+      title: 'Staffing',
+      scope: 'personal',
+      participantUserIds: [],
+      participantExtraCount: 0,
+    });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: { title: 'Staffing' },
+      viewer: empty,
+      seed: empty,
+      visible: true,
+    });
+
+    const result = applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: {
+        title: 'Staffing',
+        participantUserIds: ['user-a', 'user-b'],
+        participantExtraCount: 1,
+      },
+      viewer: {},
+      visible: true,
+    });
+
+    expect(result.commonApplied).toBe(false);
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
+      participantUserIds: ['user-a', 'user-b'],
+      participantExtraCount: 1,
+    });
+  });
+
+  it('does not invent a pile from an empty directory preview at a pinned waterline', () => {
+    const queryClient = new QueryClient();
+    const empty = summary({ title: 'Public room', scope: 'workspace' });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: { title: 'Public room' },
+      viewer: empty,
+      seed: empty,
+      visible: true,
+    });
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: { title: 'Public room', participantUserIds: [], participantExtraCount: 0 },
+      viewer: {},
+      visible: true,
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
+      participantUserIds: [],
+      participantExtraCount: 0,
+    });
+  });
 });
