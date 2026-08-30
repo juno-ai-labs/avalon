@@ -103,12 +103,15 @@ export function AgentWorkTiming({
       : Math.max(0, now - startedAt!)
     : 0;
   const verb = active ? activeVerb : completedVerb;
-  // A running row always has something true to show — the time since it
-  // started — so an unknown completed total only silences the label once the
-  // work has settled.
-  const measurable = durationMs !== null || running;
-  const duration = formatDuration((durationMs ?? 0) + activeDuration) ?? '0ms';
-  const label = !measurable
+  // An unknown completed total silences the number whether or not the row is
+  // still going. Printing the active segment alone would read as the whole —
+  // "Rally is working for 3s" when the truth is "unknown, plus 3s" — which is
+  // the same overstatement as `0ms`, one level up, and the one this change
+  // exists to stop making.
+  const duration = durationMs === null
+    ? null
+    : formatDuration(durationMs + activeDuration) ?? '0ms';
+  const label = durationMs === null
     ? verb
     : timingAccuracy === 'upper_bound' && !active
       ? `${verb} for at most ${duration}`

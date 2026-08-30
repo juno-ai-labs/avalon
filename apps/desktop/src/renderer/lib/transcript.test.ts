@@ -1774,3 +1774,50 @@ describe('plugin runs stay current as the transcript changes', () => {
       .toContain('t1');
   });
 });
+
+describe('a tool row takes its plugin name from the run', () => {
+  it('groups a connector block the activity tree could not name', () => {
+    // The production shape for a connector: `connection:<uuid>` on the block,
+    // no plugin activity, no `turn.activityId`. Without a name `pluginGroup`
+    // returns null and the row is dropped, so the connector vanishes from the
+    // feed entirely — the run is the only thing that can name it.
+    const snapshot: WorkstreamTranscriptSnapshot = {
+      snapshotId: 's', snapshotThrough: 1, eventSequence: 1,
+      snapshotAtUtc: '2026-08-26T12:00:10.000Z', unreadAnchorSequence: null,
+      unreadReason: 'no_unread',
+      ranges: [{
+        purpose: 'latest', requested: { startInclusive: 1, endExclusive: 2 },
+        covered: { startInclusive: 1, endExclusive: 2 },
+        turns: [{
+          transcriptSequence: 1, turnId: 't1', entryKind: 'conversation',
+          actor: 'assistant', authorUserId: null, authorSnapshot: null, attentionOrdinal: null,
+          createdAtUtc: '2026-08-26T12:00:00.000Z', revision: 1,
+          blocks: [{
+            type: 'tool', blockId: 'b0', blockIndex: 0, toolCallId: 'call-0',
+            pluginId: 'connection:9c1f0000-0000-4000-8000-000000000001',
+            toolName: 'slack_read_thread', callIndex: 0, status: 'completed',
+            participantSafeInput: null, participantSafeResult: null, error: null,
+            activityId: null,
+          }],
+          activityId: null,
+        }],
+        activities: [], pluginRuns: [],
+      }],
+      activities: [], activeActivities: [],
+      pluginRuns: [{
+        pluginRunId: 't1:plugin:connection', turnId: 't1',
+        pluginId: 'connection:9c1f0000-0000-4000-8000-000000000001',
+        displayName: 'Slack', state: 'completed', durationMs: 5_000,
+        elapsedMsAtSnapshot: null, timingAccuracy: 'observed', toolCallIds: ['call-0'],
+      }],
+      activeTurns: [], pendingInputs: [],
+    };
+    const messages = orderedTranscriptMessages(snapshot, 'w');
+    expect(messages.find((message) => message.messageType === 'tool_event')?.toolEvent?.pluginName)
+      .toBe('Slack');
+    const rows = groupPluginToolMessages(messages)
+      .filter((message) => message.messageType === 'plugin_activity');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.pluginActivity).toMatchObject({ name: 'Slack', durationMs: 5_000 });
+  });
+});
