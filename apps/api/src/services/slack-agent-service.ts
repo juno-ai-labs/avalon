@@ -12,10 +12,8 @@ import {
   slackAgentActivationAcknowledgement,
   slackAgentReactionSource,
   slackDefaultReactionFor,
-  slackDeliveryMarkdown,
   slackMarkdownMessages,
   slackWorkingReaction,
-  splitSlackMarkdown,
   SLACK_DEFAULT_REACTIONS,
   type ConnectorConnectionContext,
   type SlackAgentReactionCommand,
@@ -1222,7 +1220,7 @@ export class SlackAgentService {
   async deliverWorkstreamOutcome(
     workspaceId: string,
     workstreamId: string,
-    text: string,
+    text: string | null,
     deliveryKey: string,
     outcomeStatus: "completed" | "needs_input" | "failed" | "stopped",
     triggeringSlackUserId: string | null = null,
@@ -1238,77 +1236,52 @@ export class SlackAgentService {
     if (session.last_delivery_key === deliveryKey) return;
     const connection = await this.connectionById(session.connection_id);
     const token = await this.botToken(connection);
+    // Empty or absent canonical text creates no external reply. Status and
+    // reaction cleanup still settle below.
+    const responseText = text?.trim() || null;
     // Only a run waiting on a person can have an open elicitation to deliver.
     // This used to build a routed execution environment and read through it;
     // the port needs no such handle, so what is left is the condition that
     // environment was standing in for.
-    const openElicitation = outcomeStatus === "needs_input"
+    const openElicitation = responseText && outcomeStatus === "needs_input"
       ? await createSchedulingObjectPort(this.env, workspaceId, workstreamId)
         .oldestOpenElicitation()
       : null;
-    // Trimmed rather than merely non-empty: whitespace-only text splits into no
-    // chunks at all, which would close the stream having appended nothing.
-    const responseText = openElicitation?.prompt.trim() || text.trim() || SLACK_EMPTY_RESULT_TEXT;
     // The session row names the person who opened the thread. Runs no longer
     // belong to that one person, so delivery follows the member whose message
     // triggered this run. Old workflow payloads lack the field and safely fall
     // back to the opener while they drain during deployment.
     const deliverySlackUserId = triggeringSlackUserId ?? session.slack_user_id;
-    const deliveryUserLinked = await this.slackUserIsLinked(
-      session.connection_id,
-      workspaceId,
-      session.slack_team_id,
-      deliverySlackUserId,
-    );
-    let delivered = false;
-    let streamContentComplete = false;
+    const deliveryUserLinked = responseText && outcomeStatus === "needs_input"
+      ? await this.slackUserIsLinked(
+        session.connection_id,
+        workspaceId,
+        session.slack_team_id,
+        deliverySlackUserId,
+      )
+      : true;
     let deliveryError: unknown;
-    try {
-      if (session.slack_stream_ts) {
-        // The streaming path builds no message payload, so it does not pass
-        // through `slackMarkdownMessages` — it has to reduce citations itself
-        // or an answer delivered by stream leaks the syntax the batched one
-        // does not.
-        for (const chunk of splitSlackMarkdown(slackDeliveryMarkdown(responseText))) {
-          await slackApi(token, "chat.appendStream", { channel: session.slack_channel_id, ts: session.slack_stream_ts, markdown_text: chunk }, AbortSignal.timeout(10_000));
-        }
-        streamContentComplete = true;
+    if (session.slack_stream_ts) {
+      try {
+        // Compatibility for sessions admitted before saved-turn-only delivery
+        // shipped. Close their placeholder, but never append run output to it;
+        // the complete canonical turn is posted below as an ordinary message.
         await slackApi(token, "chat.stopStream", {
           channel: session.slack_channel_id,
           ts: session.slack_stream_ts,
-          blocks: responseActionBlocks(workstreamId, this.env.PUBLIC_WEB_BASE_URL),
-        }, AbortSignal.timeout(10_000));
-        delivered = true;
-      }
-    } catch (error) {
-      logWarn(this.env, "slack_stream_delivery_failed", { fallback: "thread_reply", workspace_id: workspaceId, workstream_id: workstreamId, reason: error instanceof Error ? error.message : "unknown" });
-      try {
-        // An append may have reached Slack even when its response was lost.
-        // Close the known stream before posting the idempotent full fallback so
-        // the Agent UI never remains indefinitely in a streaming state.
-        await slackApi(token, "chat.stopStream", {
-          channel: session.slack_channel_id,
-          ts: session.slack_stream_ts!,
         }, AbortSignal.timeout(5_000));
-        // If every append was acknowledged, this retry finalized the complete
-        // stream and a fallback reply would only duplicate the result.
-        if (streamContentComplete) delivered = true;
-      } catch (stopError) {
-        if (stopError instanceof ConnectorError && stopError.message === "message_not_in_streaming_state") {
-          // This is conclusive only when all append responses were received;
-          // otherwise the closed stream may contain a partial result.
-          if (streamContentComplete) delivered = true;
-        } else {
+      } catch (error) {
+        if (!(error instanceof ConnectorError && error.message === "message_not_in_streaming_state")) {
           logWarn(this.env, "slack_stream_close_failed", {
             workspace_id: workspaceId,
             workstream_id: workstreamId,
-            reason: stopError instanceof Error ? stopError.message : "unknown",
+            reason: error instanceof Error ? error.message : "unknown",
           });
         }
       }
     }
     try {
-      if (!delivered) {
+      if (responseText) {
         await postSlackTextChunks(token, session.slack_channel_id, responseText, session.slack_thread_ts, `${session.id}:${deliveryKey}:result`);
         await slackApi(token, "chat.postMessage", {
           channel: session.slack_channel_id,
@@ -1323,7 +1296,7 @@ export class SlackAgentService {
       // to *claim* any more — the reply itself carries whoever sends it — so
       // this is a nudge to connect and an invitation to answer, not a gate in
       // front of the thread.
-      if (outcomeStatus === "needs_input" && !deliveryUserLinked) {
+      if (responseText && outcomeStatus === "needs_input" && !deliveryUserLinked) {
         const dmChannel = await this.openDm(token, deliverySlackUserId);
         // A button rather than a minted URL: this DM is a notification a member
         // may open hours later, and a challenge embedded in it would be long
@@ -1368,12 +1341,14 @@ export class SlackAgentService {
       // this runs on every terminal status, so the message ends up correct even
       // when the ticker never started or was lost mid-run.
       await this.applyOutcomeReaction(session, connection, token, outcomeStatus);
-      await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
-        workspaceId,
-        sessionId: session.id,
-        streamTs: null,
-        at: nowIso(),
-      });
+      if (session.slack_stream_ts) {
+        await (await this.workspaceDirectory(workspaceId)).setSlackSessionStream({
+          workspaceId,
+          sessionId: session.id,
+          streamTs: null,
+          at: nowIso(),
+        });
+      }
     }
     if (deliveryError) throw deliveryError;
   }
@@ -1975,28 +1950,6 @@ export class SlackAgentService {
             await workspaceService.createMessage(session.workstream_id, externalInput);
           }
         }
-      }
-    }
-    if (session && !session.slack_stream_ts) {
-      try {
-        const started = await slackApi(token, "chat.startStream", {
-          channel,
-          thread_ts: thread,
-          markdown_text: "",
-          recipient_user_id: slackUserId,
-          recipient_team_id: teamId,
-          task_display_mode: "plan",
-        }, AbortSignal.timeout(5_000));
-        if (typeof started.ts === "string") {
-          await (await this.workspaceDirectory(connection.workspace_id)).setSlackSessionStream({
-            workspaceId: connection.workspace_id,
-            sessionId: session.id,
-            streamTs: started.ts,
-            at: nowIso(),
-          });
-        }
-      } catch {
-        // A final ordinary thread reply is the compatibility fallback.
       }
     }
   }
@@ -3165,8 +3118,8 @@ export class SlackAgentService {
     if (!session.reaction_channel_id || !session.reaction_message_ts) return;
     try {
       // Re-read rather than trusting the snapshot `deliverWorkstreamOutcome`
-      // took at the top. Between that read and this call the stream appends,
-      // `chat.stopStream`, a possible full fallback post, the needs-input DMs,
+      // took at the top. Between that read and this call a legacy stream close,
+      // the complete saved-turn post, the needs-input DMs,
       // and the status clear have all run on 5-10s timeouts, and the ticker has
       // been rewriting `reaction_current` every six seconds throughout. Removing
       // the stale emoji answers `no_reaction`, which is swallowed as success —

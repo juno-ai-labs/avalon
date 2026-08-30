@@ -336,8 +336,7 @@ function stubSlack(options: {
       }
     }
     if (method === "conversations.history") return body({ messages: [], has_more: false });
-    if (method === "chat.startStream") return body({ channel: "C123", ts: "2.0" });
-    if (method === "chat.appendStream" || method === "chat.stopStream" || method === "chat.postMessage") {
+    if (method === "chat.stopStream" || method === "chat.postMessage") {
       return body({ channel: "C123", ts: "2.0" });
     }
     return body({ channel: { id: "C123" }, ts: "1.1" });

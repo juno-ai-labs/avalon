@@ -184,6 +184,27 @@ describe("boundary contracts", () => {
     });
   });
 
+  it("accepts structured assistant turn IDs as message identity", () => {
+    const turnId = `${id}:turn:3`;
+    const message = MessageSchema.parse({
+      id: turnId,
+      clientMessageId: null,
+      workspaceId: id,
+      workstreamId: id,
+      author: { type: "agent" },
+      messageType: "text",
+      textContent: "Saved answer",
+      structuredContent: null,
+      mentions: [],
+      attachments: [],
+      sequenceNumber: 3,
+      createdAt: "2026-08-29T00:00:00.000Z",
+      editedAt: null,
+    });
+
+    expect(message.id).toBe(turnId);
+  });
+
   it("allows a new work stream to start with text, attachments, or both", () => {
     const base = {
       clientMessageId: id,

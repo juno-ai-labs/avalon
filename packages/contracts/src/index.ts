@@ -4,6 +4,7 @@ import {
   TranscriptActivitySchema,
   PendingTranscriptInputSchema,
   TranscriptRangeResultSchema,
+  TranscriptTurnIdSchema,
   TranscriptTurnSchema,
   WorkstreamTranscriptRangeRequestSchema,
   WorkstreamTranscriptSnapshotSchema,
@@ -602,7 +603,7 @@ export const MessageAttachmentSchema = z.object({
 });
 
 export const MessageSchema = z.object({
-  id: IdSchema,
+  id: TranscriptTurnIdSchema,
   clientMessageId: z.string().max(120).nullable(),
   workspaceId: IdSchema,
   workstreamId: IdSchema,
@@ -1020,7 +1021,7 @@ export const BackgroundTaskSchema = z.object({
   completedAt: TimestampSchema.nullable(),
   tokenCount: z.number().int().nonnegative().nullable(),
   toolUses: z.number().int().nonnegative().nullable(),
-  transcriptTurnId: z.string().min(1).max(180).nullable()
+  transcriptTurnId: TranscriptTurnIdSchema.nullable()
 });
 
 export const ElicitationOptionSchema = z.object({
@@ -2287,7 +2288,7 @@ export type WorkstreamControlSocketEvent = z.infer<typeof WorkstreamControlSocke
 export const WorkstreamMessageDeliveryStateSchema = z.enum(["canonical", "pending"]);
 export const WorkstreamMessageAdmissionReceiptSchema = z.object({
   turn: z.object({
-    turnId: IdSchema,
+    turnId: TranscriptTurnIdSchema,
     clientMessageId: z.string().min(1).max(120),
     createdAt: TimestampSchema,
   }).strict(),
@@ -2320,7 +2321,7 @@ const ServerEventBaseSchema = z.object({
 });
 const StreamEventBaseSchema = ServerEventBaseSchema.extend({
   /** Stable identity for one model turn, across retries and route fallbacks. */
-  turnId: z.string().min(1).max(180),
+  turnId: TranscriptTurnIdSchema,
   /** Canonical position reserved before the provider request begins. */
   transcriptSequence: z.number().int().positive(),
   /** Increments whenever a turn restarts on the same or a fallback route. */
@@ -2337,10 +2338,10 @@ const ActiveStreamCheckpointBaseSchema = z.object({
   /** Transient identity for one run's streamed output; never a transcript turn. */
   streamId: IdSchema,
   harnessRunId: IdSchema,
-  turnId: z.string().min(1).max(180),
+  turnId: TranscriptTurnIdSchema,
   epoch: z.number().int().nonnegative(),
   streamSeq: z.number().int().nonnegative(),
-  seenTurnIds: z.array(z.string().min(1).max(180)),
+  seenTurnIds: z.array(TranscriptTurnIdSchema),
   text: z.string(),
   turnStartOffset: z.number().int().nonnegative(),
   roomSequence: z.number().int().nonnegative(),
