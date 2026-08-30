@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvatarStack, RallyMark, DropdownSelect, Modal, OpeningState, SocketStatusIndicator, StatusDot } from './primitives';
@@ -171,15 +171,9 @@ describe('AvatarStack', () => {
     const items = [...container.querySelectorAll('.avatar-stack-item')];
     const currentItem = items[0];
     const collaboratorItem = items[1];
-    const observerItem = items[2];
-    if (!currentItem || !collaboratorItem || !observerItem) {
+    if (!currentItem || !collaboratorItem || !items[2]) {
       throw new Error('avatar stack item missing');
     }
-
-    fireEvent.pointerMove(currentItem, { pointerType: 'mouse' });
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('Current User');
-    fireEvent.pointerLeave(currentItem);
-    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
 
     fireEvent.pointerMove(collaboratorItem, { pointerType: 'mouse' });
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
@@ -193,19 +187,37 @@ describe('AvatarStack', () => {
     if (!ping || !collaboratorAvatar) {
       throw new Error('three-avatar presence stack missing');
     }
-    expect(items[0].compareDocumentPosition(ping) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(currentItem.compareDocumentPosition(ping) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(ping.compareDocumentPosition(collaboratorAvatar) & Node.DOCUMENT_POSITION_FOLLOWING)
       .not.toBe(0);
-    expect(ping.compareDocumentPosition(observerItem) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(ping.compareDocumentPosition(items[2]) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(currentItem).not.toHaveClass('is-present');
     expect(currentItem).not.toHaveAttribute('tabindex');
     expect(collaboratorItem).not.toHaveAttribute('tabindex');
     expect(screen.queryByTitle('Current User')).not.toBeInTheDocument();
     expect(screen.queryByTitle('Ari Collaborator')).not.toBeInTheDocument();
+  });
 
-    fireEvent.pointerLeave(collaboratorItem);
-    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
-    fireEvent.pointerMove(observerItem, { pointerType: 'mouse' });
+  it('names a person who is not viewing the work stream', async () => {
+    stubResizeObserver();
+    const { container } = render(
+      <Tooltip.Provider delayDuration={0}>
+        <AvatarStack
+          members={[{
+            id: 'user-observer',
+            name: 'Casey Observer',
+            email: 'casey@rally.test',
+            timezone: 'America/Los_Angeles',
+          }]}
+        />
+      </Tooltip.Provider>,
+    );
+
+    const item = container.querySelector('.avatar-stack-item');
+    if (!item) throw new Error('avatar stack item missing');
+    fireEvent.pointerMove(item, { pointerType: 'mouse' });
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Casey Observer');
+    expect(screen.queryByTitle('Casey Observer')).not.toBeInTheDocument();
   });
 
   it('keeps a final visible participant ping below the overflow badge', () => {
