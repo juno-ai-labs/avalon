@@ -138,6 +138,7 @@ import {
   resolveAgentModelRouting,
   resolveWorkstreamModelRouting,
 } from "./agent-model-flags";
+import { createAzureModelPricingResolver } from "./openrouter-pricing-cache";
 import {
   emitAgentToolStartedTelemetry,
   emitAgentToolTerminalTelemetry,
@@ -2746,6 +2747,7 @@ export async function runWorkstreamHarness(
         fallbackModels: modelRouting.fallbackModels,
         appUrl: env.PUBLIC_API_BASE_URL,
         appName: "Rally",
+        ...azureInferenceConfig(env),
         ...runLimits,
         toolTimeoutMs: numericEnv(env, "TOOL_DEFAULT_TIMEOUT_MS", 30_000),
         maxWebResults: numericEnv(env, "WEB_SEARCH_MAX_RESULTS", 8),
@@ -2762,6 +2764,7 @@ export async function runWorkstreamHarness(
         transportRetries: countEnv(env, "HARNESS_TRANSPORT_RETRIES", 1),
       },
       workspaceId: input.workspaceId,
+      resolveAzureModelPricing: createAzureModelPricingResolver(env),
       workstreamId: input.workstreamId,
       loopId: input.loopId,
       harnessRunId: input.harnessRunId,
@@ -4135,6 +4138,16 @@ function delayWithSignal(milliseconds: number, signal: AbortSignal): Promise<voi
   });
 }
 
+function azureInferenceConfig(env: Env): Pick<RunHarnessInput["config"], "azure"> | Record<never, never> {
+  const endpoint = env.AZURE_INFERENCE_ENDPOINT?.trim();
+  const apiKey = env.AZURE_INFERENCE_API_KEY?.trim();
+  if (!endpoint && !apiKey) return {};
+  if (!endpoint || !apiKey) {
+    throw new Error("AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together");
+  }
+  return { azure: { endpoint, apiKey } };
+}
+
 function childRunLimits(env: Env) {
   return {
     maxIterations: Math.min(8, numericEnv(env, "HARNESS_CHILD_MAX_MODEL_ITERATIONS", 4)),
@@ -4548,6 +4561,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             fallbackModels: childModelRouting.fallbackModels,
             appUrl: options.env.PUBLIC_API_BASE_URL,
             appName: "Rally",
+            ...azureInferenceConfig(options.env),
             maxIterations: limits.maxIterations,
             maxToolCalls: limits.maxToolCalls,
             maxWallClockMs: limits.maxWallClockMs,
@@ -4562,6 +4576,7 @@ function createInlineChildAgentTool(options: InlineChildToolOptions): HarnessToo
             transportRetries: countEnv(options.env, "HARNESS_TRANSPORT_RETRIES", 1),
           },
           workspaceId: childInput.workspaceId,
+          resolveAzureModelPricing: createAzureModelPricingResolver(options.env),
           workstreamId: childInput.workstreamId,
           loopId: childInput.loopId,
           harnessRunId: childInput.harnessRunId,

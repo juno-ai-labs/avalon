@@ -60,6 +60,7 @@ type CloudflareBinding =
   | ImagesBinding
   | Env["ANALYTICS_LAKEHOUSE"]
   | Env["INFERENCE_LAKEHOUSE"]
+  | KVNamespace
   | Queue
   | R2Bucket
   | SqlStorage

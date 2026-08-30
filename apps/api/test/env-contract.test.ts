@@ -93,6 +93,13 @@ describe("environment contract", () => {
     expect(() => assertEnvContract(withoutTerminal)).toThrow(/TERMINAL_PROVIDER is missing/u);
   });
 
+  it("requires the shared inference-pricing KV binding", () => {
+    const env = contractCompleteEnv();
+    delete (env as Partial<Env>).INFERENCE_PRICING_CACHE;
+
+    expect(() => assertEnvContract(env)).toThrow(/INFERENCE_PRICING_CACHE is missing/u);
+  });
+
   it("rejects a numeric deadline that would silently fall back to its default", () => {
     expect(() => assertEnvContract(contractCompleteEnv({ CONNECTOR_POLL_TIMEOUT_MS: "20s" })))
       .toThrow(/CONNECTOR_POLL_TIMEOUT_MS is invalid/u);
@@ -121,6 +128,19 @@ describe("environment contract", () => {
     const env = contractCompleteEnv();
     delete (env as Partial<Env>).CONNECTOR_POLL_TIMEOUT_MS;
     expect(() => assertEnvContract(env)).not.toThrow();
+  });
+
+  it("requires the optional Azure inference endpoint and key as a pair", () => {
+    expect(() => assertEnvContract(contractCompleteEnv({
+      AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
+      AZURE_INFERENCE_API_KEY: "azure-key",
+    }))).not.toThrow();
+    expect(() => assertEnvContract(contractCompleteEnv({
+      AZURE_INFERENCE_ENDPOINT: "https://monad-prod-resource.services.ai.azure.com",
+    }))).toThrow(/AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together/u);
+    expect(() => assertEnvContract(contractCompleteEnv({
+      AZURE_INFERENCE_API_KEY: "azure-key",
+    }))).toThrow(/AZURE_INFERENCE_ENDPOINT and AZURE_INFERENCE_API_KEY must be configured together/u);
   });
 
   it("reports every offending key at once", () => {
