@@ -1742,7 +1742,7 @@ describe('private work streams', () => {
     renderWith([workstream('00000000-4000-4000-8000-000000000022', 'Launch', 'completed')]);
 
     const row = screen.getByRole('link', { name: /Launch/u });
-    expect(within(row).getByLabelText('Public to workspace')).toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-public')).not.toBeNull();
     expect(screen.queryByLabelText('Private work stream')).not.toBeInTheDocument();
     expect(within(row).queryByTitle('Adam')).not.toBeInTheDocument();
   });
@@ -1762,7 +1762,7 @@ describe('private work streams', () => {
     expect(within(row).queryByTitle('Ari')).not.toBeInTheDocument();
     expect(within(row).getByText('+2')).toBeInTheDocument();
     expect(within(row).queryByLabelText('Private work stream')).not.toBeInTheDocument();
-    expect(within(row).queryByLabelText('Public to workspace')).not.toBeInTheDocument();
+    expect(row.querySelector('.sidebar-workstream-public')).toBeNull();
   });
 
   it('skips participant ids the roster has not resolved', () => {

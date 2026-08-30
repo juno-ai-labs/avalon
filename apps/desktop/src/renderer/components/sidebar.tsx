@@ -736,8 +736,8 @@ function PrivacyMarker({ label }: { label: string }): React.JSX.Element {
 
 function PublicMarker(): React.JSX.Element {
   return (
-    <span aria-label="Public to workspace" className="sidebar-note-privacy" role="img">
-      <Globe2 aria-hidden="true" size={15} />
+    <span aria-hidden="true" className="sidebar-note-privacy sidebar-workstream-public" title="Public to workspace">
+      <Globe2 size={15} />
     </span>
   );
 }
