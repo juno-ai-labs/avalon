@@ -924,6 +924,12 @@ pre {
   width: 16px;
 }
 
+.sidebar-workstream-facepile {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-left: 3px;
+}
+
 .sidebar-workstream-timer {
   align-items: center;
   color: var(--av-ref-color-neutral-9);
