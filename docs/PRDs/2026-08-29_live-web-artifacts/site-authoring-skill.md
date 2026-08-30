@@ -350,13 +350,25 @@ shape of `index.js`.
    the request calls for it: an attendance sheet stores who came; a
    feedback box that was asked to be anonymous stores no id even
    though it has one.
-8. **Freshness comes from polling, not push.** Nothing pushes updates
-   into an open page; another viewer's vote appears when the page asks
-   again. For shared-state pages, have the client re-fetch its own API
-   on a modest interval (a few seconds is plenty for a poll — this is
-   a workplace tool, not a game engine) and after every submission, so
-   the page feels live without hammering the server. The page may only
-   fetch its own origin; there is nowhere else to poll.
+8. **Freshness comes from polling, not push — and every poll loop must
+   know when to stop.** Nothing pushes updates into an open page;
+   another viewer's vote appears when the page asks again. For
+   shared-state pages, re-fetch the page's own API on a modest interval
+   (a few seconds is plenty for a poll — this is a workplace tool, not
+   a game engine) and after every submission. Three rules make the loop
+   a good citizen, and all three are mandatory:
+   - Poll only while visible: pause on `visibilitychange` to hidden and
+     on `pagehide`, resume with an immediate fetch when visible again.
+     A backgrounded tab asks for nothing.
+   - Stop permanently on an auth failure (401/403): the viewer's
+     session has ended; show the page's "reopen this from Rally" state
+     and make no further requests. Never retry past an auth failure.
+   - Back off on transient errors with jitter rather than retrying at
+     the same interval, and never poll faster because a request failed.
+   The page may only fetch its own origin; there is nowhere else to
+   poll — and the platform enforces a per-session request-rate ceiling,
+   so a loop that ignores these rules gets `429` responses, not more
+   freshness.
 
 ### Anti-patterns (stateful)
 
