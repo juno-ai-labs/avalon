@@ -160,4 +160,16 @@ describe('project space appearance', () => {
 
     await waitFor(() => expect(api.addProjectDefaultResource).toHaveBeenCalledWith(project.id, 'resource-1'));
   });
+
+  it('exposes archive as a danger-colored header icon and confirms before applying', async () => {
+    renderProject();
+
+    const archive = screen.getByRole('button', { name: 'Archive project' });
+    expect(archive).toHaveClass('icon-button', 'icon-button-danger');
+    expect(archive).not.toHaveTextContent('Archive project');
+
+    fireEvent.click(archive);
+    const dialog = screen.getByRole('dialog', { name: 'Archive project?' });
+    expect(within(dialog).getByRole('button', { name: 'Archive project' })).toHaveClass('button-danger');
+  });
 });
