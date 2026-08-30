@@ -2704,13 +2704,133 @@ pre {
 .markdown-body a:hover { color: var(--av-sys-color-accent-strong); text-decoration: underline; }
 /* A sent mention wears the same brand as the draft it was typed in. */
 .mention-chip { align-items: center; background: color-mix(in srgb, var(--av-sys-color-brand-base) 12%, transparent); border: 1px solid color-mix(in srgb, var(--av-sys-color-brand-base) 26%, transparent); border-radius: var(--av-sys-size-radius-pill); box-sizing: border-box; color: var(--av-sys-color-brand-ink); display: inline-flex; font-size: 0.92em; font-weight: 580; gap: 4px; height: 1.55em; line-height: 1; max-width: 100%; padding: 1px 6px 1px 2px; vertical-align: middle; white-space: nowrap; }
-.mention-chip-connector { padding: 1px 7px; }
+.mention-chip-connector {
+  background: var(--av-sys-color-surface-raised);
+  border-color: var(--av-ref-color-line-4);
+  color: var(--av-sys-color-text-default);
+  gap: 5px;
+  padding: 1px 1px 1px 5px;
+}
 .mention-chip-avatar { align-items: center; background: var(--av-ref-color-neutral-6); border-radius: var(--av-sys-size-radius-pill); color: var(--av-ref-color-neutral-14); display: inline-flex; flex: 0 0 auto; font-size: 6.5px; font-weight: 700; height: 16px; justify-content: center; letter-spacing: -0.02em; overflow: hidden; position: relative; width: 16px; }
 /* Cap-height centring, as on .avatar-fallback above. */
 .mention-chip-avatar > span { text-box: trim-both cap alphabetic; }
 .markdown-body .mention-chip-avatar img { border-radius: inherit; display: block; height: 100%; inset: 0; margin: 0; max-width: none; object-fit: cover; position: absolute; width: 100%; }
 .markdown-body .mention-chip-avatar img[hidden] { display: none; }
+.mention-chip-icon { align-items: center; color: inherit; display: inline-flex; flex: 0 0 auto; height: 14px; justify-content: center; width: 14px; }
+.markdown-body .mention-chip-icon .connector-mark { height: 12px; width: 12px; }
+/* Connector mentions keep the company mark but not Settings' citron control
+   treatment. In transcript prose, only connection state carries colour. */
+.mention-chip-connector-icon.provider-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  height: 14px;
+  width: 14px;
+}
+.mention-chip-connector-icon.provider-icon .connector-mark { height: 11px; width: 11px; }
 .mention-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mention-chip-status {
+  align-items: center;
+  border-radius: var(--av-sys-size-radius-pill);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78em;
+  font-weight: 560;
+  gap: 2px;
+  line-height: 1;
+  margin-left: 1px;
+  padding: 2px 5px 2px 3px;
+}
+.mention-chip-status-healthy {
+  background: color-mix(in srgb, var(--av-sys-color-success-base) 16%, transparent);
+  color: var(--av-sys-color-success-base);
+}
+.mention-chip-status-reconnect_required {
+  background: color-mix(in srgb, var(--av-sys-color-warning-base) 18%, transparent);
+  color: var(--av-sys-color-warning-base);
+}
+.mention-chip-status-disabled,
+.mention-chip-status-missing {
+  background: color-mix(in srgb, var(--av-sys-color-text-muted) 14%, transparent);
+  color: var(--av-sys-color-text-muted);
+}
+
+/* Connector embed: citation-card tokens in a horizontal provider-style layout. */
+.citation-connector-card {
+  align-items: start;
+  background: var(--av-sys-color-surface-elevated);
+  border: 1px solid var(--av-ref-color-line-3);
+  border-radius: var(--av-sys-size-radius-lg);
+  color: var(--av-sys-color-text-default);
+  display: flex;
+  gap: 10px;
+  margin: var(--av-sys-space-prose-gap) 0;
+  max-width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  width: min(100%, 420px);
+}
+.citation-connector-card > .provider-icon {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--av-sys-color-text-muted);
+  flex: 0 0 auto;
+  height: 22px;
+  margin-top: 1px;
+  width: 22px;
+}
+.citation-connector-card-body { display: flex; flex: 1 1 auto; flex-direction: column; gap: 1px; min-width: 0; }
+.citation-connector-card-title { font-size: 12.5px; font-weight: 560; line-height: 1.25; }
+.markdown-body .citation-connector-card-description {
+  color: var(--av-sys-color-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+}
+.markdown-body .citation-connector-card-meta {
+  color: var(--av-sys-color-text-disabled);
+  font-size: 10px;
+  line-height: 1.35;
+  margin: 2px 0 0;
+}
+.markdown-body .citation-connector-card-scopes {
+  align-self: start;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 3px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.markdown-body .citation-connector-status {
+  align-items: center;
+  border-radius: var(--av-sys-size-radius-pill);
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 560;
+  gap: 4px;
+  line-height: 1;
+  margin: 0;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.citation-connector-status-healthy {
+  background: color-mix(in srgb, var(--av-sys-color-success-base) 14%, transparent);
+  color: var(--av-sys-color-success-base);
+}
+.citation-connector-status-reconnect_required {
+  background: color-mix(in srgb, var(--av-sys-color-warning-base) 16%, transparent);
+  color: var(--av-sys-color-warning-base);
+}
+.citation-connector-status-disabled,
+.citation-connector-status-missing {
+  background: color-mix(in srgb, var(--av-sys-color-text-muted) 12%, transparent);
+  color: var(--av-sys-color-text-muted);
+}
 
 /* Citations. A chip is a mention chip's sibling in shape and its opposite in
    behaviour: a mention names an identity and never navigates, a citation names
