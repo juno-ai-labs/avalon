@@ -663,6 +663,31 @@ Air, and Rally's chartreuse mark on white — passed every assertion above.
 
 ## Changelog
 
+### 2026-08-30 — Automation rows use the same hover pill as work streams
+
+**What changed:** Sidebar automation rows now wear `.automation-row` and
+`--row-height-dense`, the same floor as work-stream, note, and project rows.
+The scope badge drops its chip fill while the row is hovered, focused, or
+current so it cannot punch the selected-row colour through the shared pill.
+
+**Why:** Project rows had been brought onto `.sidebar-row` so hover fill,
+radius, and padding matched a work stream. Automations already used that
+class, but they still sat on `--row-height` (3px taller in Terra Light) and
+kept a `neutral-4` chip on the trailing badge — the same token as the
+selected fill. Hovering one therefore read as a taller, two-tone pill rather
+than the same navigation row.
+
+**Considered and rejected:** Hiding the You / Workspace badge until hover, the
+way a project's plus appears. Scope is something you scan the list for, not an
+action that only matters on the row you are pointing at. Ghosting the chip on
+the hovered and current states keeps the information and the uniform fill.
+
+**What a future change has to respect:** a new sidebar row kind should pick
+`--row-height-dense` when it lives in the same list as work streams, and must
+not give itself a private hover colour. Trailing chrome that paints a fill
+must drop that fill on `.sidebar-row:hover` and `.is-active` or it will
+compete with the row.
+
 ### 2026-08-30 — Terra Light's row hover sits on raised-hover, not subtle
 
 **What changed:** Terra Light now sets `cmp.row.background-hover` to
