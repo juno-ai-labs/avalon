@@ -1092,7 +1092,8 @@ ticket replay, and the read-only child socket.
 `test-workers/participant-notification.test.ts` covers what seating somebody
 enqueues, on both the create and the add-afterwards paths, plus identity-bearing
 mentions and attachment descriptors in an opening message, and member-authored
-elicitation answers. Existing-room cases use runtime bootstrap plus `provision`;
+elicitation answers. Existing-room cases use runtime bootstrap plus the
+system-provision `provision` path;
 create-effect cases invoke `initialize` without activating its admitted run; and
 the elicitation case seeds a settled parent run. The distinct create ids still
 prevent accidental replay, while the replay case reuses `CREATE_REPLAY_ID`

@@ -1819,12 +1819,10 @@ describe('Workspace settings', () => {
 
     // The settings shell renders disabled controls while its bridge read is in
     // flight, so another switch merely existing does not prove availability
-    // has loaded. Wait on the claim this test makes: the unavailable control
-    // must disappear after the application-settings answer is applied.
-    await waitFor(
-      () => expect(screen.queryByRole('switch', { name: 'Show Rally in the menu bar' })).toBeNull(),
-      { timeout: 5_000 },
-    );
+    // has loaded. First observe a control become interactive as the positive
+    // readiness signal, then assert that the unavailable control disappeared.
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Lockdown mode' })).toBeEnabled());
+    expect(screen.queryByRole('switch', { name: 'Show Rally in the menu bar' })).toBeNull();
   });
 
   it('toggles the Developer debug preference and leaves it off by default', async () => {

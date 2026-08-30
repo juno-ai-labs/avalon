@@ -2136,7 +2136,6 @@ describe('pinned work streams', () => {
     fireEvent.keyDown(screen.getByRole('link', { name: /Bravo/u }), { key: 'ArrowUp', altKey: true });
     await waitFor(
       () => expect(onReorderPinnedWorkstreams).toHaveBeenCalledWith(['ws-b', 'ws-a']),
-      { timeout: 5_000 },
     );
 
     // Observing the async save is not the same as observing its `finally`.
@@ -2149,7 +2148,6 @@ describe('pinned work streams', () => {
         expect.stringContaining('Alpha'),
         expect.stringContaining('Bravo'),
       ]),
-      { timeout: 5_000 },
     );
 
     // The top row has nowhere further to go, and saying so costs a request.
