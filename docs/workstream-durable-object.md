@@ -1456,10 +1456,13 @@ under the threshold that timed out shard 1/2 (a draining object per all 18
 `WORKSTREAM_ID` can fail the same poll timeouts on an unsharded workers run
 (release `pnpm test`, or a future deploy lane). Isolate that case; do not mint
 a unique id for the whole file. The isolation rule lives in
-[`testing.md`](testing.md#writing-a-workerd-test). An incomplete `reset()` no
-longer fails the next `it` as `CREATE TABLE … already exists` in this file;
-other workers tests that still use plain `CREATE TABLE` can still cascade that
-way.
+[`testing.md`](testing.md#writing-a-workerd-test). The three
+mention-confirmation cases still return with their loops possibly executing —
+they poll the turn row only — so isolation costs three extra draining objects.
+That is under the 18-object threshold that timed out shard 1/2; do not add
+`waitForQuietLoop` there to recoup it. An incomplete `reset()` no longer
+fails the next `it` as `CREATE TABLE … already exists` in this file; other
+workers tests that still use plain `CREATE TABLE` can still cascade that way.
 
 ### 2026-08-29 — The origin label is a question to WorkspaceDO, not SQL through the facade
 
