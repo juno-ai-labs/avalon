@@ -245,7 +245,17 @@ function ResourceEmbedCard({ label, resource, onOpen, preview }: {
  * node weight.
  */
 function previewExcerpt(text: string): string {
-  return text.replace(/\r\n/gu, '\n').replace(/\n{2,}/gu, '\n').trim().slice(0, 600);
+  return text
+    .replace(/\r\n/gu, '\n')
+    // A heading's own hashes, and nothing else. The preview is plain text at
+    // label size, so `## Revenue` printed its markers as two characters of
+    // noise and spent one of four clamped lines on them. Stripping more than
+    // this — emphasis, links, list markers — would be a markdown renderer
+    // inside a button, and the rail is one click away and renders it properly.
+    .replace(/^ {0,3}#{1,6}[ \t]+/gmu, '')
+    .replace(/\n{2,}/gu, '\n')
+    .trim()
+    .slice(0, 600);
 }
 
 /**
@@ -277,7 +287,10 @@ function embedImages(node: EmbedRowNode, rendersCard: (resourceId: string) => bo
   for (const child of node.children) {
     if (isWhitespaceNode(child)) continue;
     const src = child.type === 'element' && child.tagName === 'img' ? String(child.properties?.src ?? '') : undefined;
-    if (src !== undefined && citationScheme(src) === 'resource') {
+    // One condition, not two: the parse already says whether this is a
+    // resource target, and a second scheme test beside it would be a guard no
+    // break could reach — which is to say a guard no test could cover.
+    if (src !== undefined) {
       const target = parseCitationHref(src);
       if (target.scheme === 'resource' && rendersCard(target.resourceId)) {
         images.push(child);

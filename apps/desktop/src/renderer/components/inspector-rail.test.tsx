@@ -6,7 +6,8 @@ import type { DesktopApplicationSettings } from '../../common/desktop';
 import type { ResourceVersion, WorkstreamDetail, WorkstreamResource } from '../lib/types';
 import { useUiStore } from '../lib/ui-store';
 import { ApiError } from '../lib/api';
-import { InspectorRail, MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from './inspector-rail';
+import { InspectorRail } from './inspector-rail';
+import { MAX_RESOURCE_PREVIEW_WAIT_MS, readResourcePreviewText } from '../lib/resource-preview';
 
 const copyText = vi.hoisted(() => vi.fn());
 const applicationSettings = vi.hoisted(() => ({
