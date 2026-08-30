@@ -188,4 +188,36 @@ describe('applyVersionedWorkstreamState', () => {
       participantExtraCount: 0,
     });
   });
+
+  it('does not put a facepile on a workspace-scoped row', () => {
+    const queryClient = new QueryClient();
+    const personal = summary({
+      title: 'Launch',
+      scope: 'personal',
+      participantUserIds: ['user-a', 'user-b'],
+      participantExtraCount: 1,
+    });
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(4, 4),
+      common: personal,
+      viewer: personal,
+      seed: personal,
+      visible: true,
+    });
+
+    applyVersionedWorkstreamState(queryClient, {
+      workstreamId: id,
+      stateVersion: version(5, 5),
+      common: { title: 'Launch', scope: 'workspace' },
+      viewer: {},
+      visible: true,
+    });
+
+    expect(queryClient.getQueryData<WorkstreamSummary[]>(WORKSTREAMS_QUERY_KEY)?.[0]).toMatchObject({
+      scope: 'workspace',
+      participantUserIds: [],
+      participantExtraCount: 0,
+    });
+  });
 });
