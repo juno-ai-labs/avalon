@@ -3985,7 +3985,7 @@ export interface RunHarnessInput {
   traceContext?: OpenRouterTraceContext;
   /**
    * Resolves Azure billing rates before Bind builds a route. Production reads
-   * a shared Cloudflare KV snapshot of OpenRouter endpoint-average prices.
+   * per-model OpenRouter endpoint-average records from a shared Cloudflare KV.
    */
   resolveAzureModelPricing?: (
     canonicalModelIds: readonly string[],

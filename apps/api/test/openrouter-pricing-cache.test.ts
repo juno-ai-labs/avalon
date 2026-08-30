@@ -1,163 +1,284 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { inferencePricingWorker } from "../src/inference-pricing-worker";
 import {
+  AZURE_DEPLOYED_OPENROUTER_MODEL_IDS,
   createAzureModelPricingResolver,
-  OPENROUTER_ENDPOINT_AVERAGE_CACHE_KEY,
+  OPENROUTER_PRICING_MODEL_IDS,
+  refreshOpenRouterPricingCache,
 } from "../src/services/openrouter-pricing-cache";
 import { createCloudflareTestBinding } from "./helpers/cloudflare-test";
 
 const NOW = Date.UTC(2026, 7, 30, 12);
+const EXPECTED_MODEL_IDS = [
+  "x-ai/grok-4.3",
+  "x-ai/grok-4.5",
+  "google/gemini-3.6-flash",
+  "google/gemini-3.5-flash",
+  "google/gemini-3-flash-preview",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-luna",
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash-0731",
+  "x-ai/grok-4.6",
+  "openai/gpt-5.6-sol",
+  "openai/text-embedding-3-large",
+  "openai/gpt-image-2",
+  "black-forest-labs/flux.2-flex",
+];
 
 describe("OpenRouter endpoint-average pricing cache", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  it("serves a fresh shared KV snapshot without fetching OpenRouter", async () => {
-    const get = vi.fn(async () => snapshotJson(NOW - 1_000));
+  it("covers every developer choice and every Azure deployment with an OpenRouter id", () => {
+    expect(OPENROUTER_PRICING_MODEL_IDS).toEqual(EXPECTED_MODEL_IDS);
+    expect(AZURE_DEPLOYED_OPENROUTER_MODEL_IDS).toEqual([
+      "x-ai/grok-4.3",
+      "x-ai/grok-4.6",
+      "openai/gpt-5.6-sol",
+      "openai/gpt-5.6-terra",
+      "deepseek/deepseek-v4-pro",
+      "deepseek/deepseek-v4-flash-0731",
+      "openai/text-embedding-3-large",
+      "openai/gpt-image-2",
+      "black-forest-labs/flux.2-flex",
+    ]);
+  });
+
+  it("reads a model-id KV key and converts decimal strings at the billing boundary", async () => {
+    const get = vi.fn(async () => pricingJson("x-ai/grok-4.6", NOW - 1_000));
     const put = vi.fn(async (key: string, value: string) => {
       void key;
       void value;
     });
-    const fetcher = vi.fn<typeof fetch>();
-    const resolver = createAzureModelPricingResolver(
-      { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get, put }) },
-      { fetch: fetcher, now: () => NOW },
-    );
+    const resolver = createAzureModelPricingResolver({
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get, put }),
+    });
 
     const prices = await resolver(["x-ai/grok-4.6"], new AbortController().signal);
 
+    expect(get).toHaveBeenCalledWith("x-ai/grok-4.6");
     expect(prices.get("x-ai/grok-4.6")).toEqual({
       inputUsdPerM: 2.84,
       cachedInputUsdPerM: 0.71,
       outputUsdPerM: 8.52,
       sourceFingerprint: "openrouter-endpoint-average:v1:x-ai/grok-4.6:5:2.84:0.71:8.52",
     });
-    expect(fetcher).not.toHaveBeenCalled();
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("averages every endpoint for both models and stores one shared snapshot", async () => {
-    const get = vi.fn(async () => null);
+  it("writes one string-valued KV record per canonical OpenRouter model id", async () => {
     const put = vi.fn(async (key: string, value: string) => {
       void key;
       void value;
     });
-    const fetcher = vi.fn<typeof fetch>(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/x-ai/grok-4.3/endpoints")) {
-        return endpointResponse([
-          [1.25, 0.2, 2.5],
-          [2.5, 0.4, 5],
-        ]);
-      }
-      if (url.endsWith("/x-ai/grok-4.6/endpoints")) {
-        return endpointResponse([
-          [2, 0.5, 6],
-          [4, 1, 12],
-          [2.2, 0.55, 6.6],
-        ]);
-      }
-      throw new Error(`Unexpected endpoint: ${url}`);
-    });
-    const resolver = createAzureModelPricingResolver(
-      { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get, put }) },
+    const fetcher = catalogFetcher();
+
+    const result = await refreshOpenRouterPricingCache(
+      { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ put }) },
       { fetch: fetcher, now: () => NOW },
     );
 
-    const prices = await resolver(
-      ["x-ai/grok-4.3", "x-ai/grok-4.6"],
-      new AbortController().signal,
-    );
-
-    expect(prices.get("x-ai/grok-4.3")?.inputUsdPerM).toBeCloseTo(1.875);
-    expect(prices.get("x-ai/grok-4.3")?.cachedInputUsdPerM).toBeCloseTo(0.3);
-    expect(prices.get("x-ai/grok-4.3")?.outputUsdPerM).toBeCloseTo(3.75);
-    expect(prices.get("x-ai/grok-4.6")?.inputUsdPerM).toBeCloseTo(2.7333333333333334);
-    expect(prices.get("x-ai/grok-4.6")?.cachedInputUsdPerM).toBeCloseTo(0.6833333333333333);
-    expect(prices.get("x-ai/grok-4.6")?.outputUsdPerM).toBeCloseTo(8.2);
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(put).toHaveBeenCalledTimes(1);
-    expect(put).toHaveBeenCalledWith(
-      OPENROUTER_ENDPOINT_AVERAGE_CACHE_KEY,
-      expect.any(String),
-    );
-    const stored = JSON.parse(put.mock.calls[0]![1] as string) as {
-      fetchedAtMs: number;
-      models: Record<string, { endpointCount: number }>;
-    };
-    expect(stored.fetchedAtMs).toBe(NOW);
-    expect(stored.models["x-ai/grok-4.3"]?.endpointCount).toBe(2);
-    expect(stored.models["x-ai/grok-4.6"]?.endpointCount).toBe(3);
+    expect(fetcher).toHaveBeenCalledTimes(EXPECTED_MODEL_IDS.length);
+    expect(put).toHaveBeenCalledTimes(EXPECTED_MODEL_IDS.length);
+    expect(put.mock.calls.map(([key]) => key)).toEqual(EXPECTED_MODEL_IDS);
+    const grok43Call = put.mock.calls.find(([key]) => key === "x-ai/grok-4.3");
+    expect(grok43Call).toBeDefined();
+    const stored = JSON.parse(String(grok43Call![1])) as Record<string, unknown>;
+    expect(stored).toEqual({
+      version: 1,
+      fetchedAtMs: NOW,
+      inputUsdPerM: "1.875",
+      cachedInputUsdPerM: "0.3",
+      outputUsdPerM: "3.75",
+      endpointCount: 2,
+      sourceFingerprint: "openrouter-endpoint-average:v1:x-ai/grok-4.3:2:1.875:0.3:3.75",
+    });
+    expect(stored).not.toHaveProperty("models");
+    expect(result.models["x-ai/grok-4.6"]).toMatchObject({
+      inputUsdPerM: "2.7333333333333334",
+      cachedInputUsdPerM: "0.6833333333333333",
+      outputUsdPerM: "8.2",
+    });
+    expect(result.models["deepseek/deepseek-v4-flash-0731"]).toMatchObject({
+      cachedInputUsdPerM: "1",
+    });
+    expect(result.models["openai/gpt-image-2"]).toMatchObject({
+      costs: [
+        { billable: "input_image", unit: "token", costUsd: "0.000008", endpointCount: 1 },
+        { billable: "input_text", unit: "token", costUsd: "0.000005", endpointCount: 1 },
+        { billable: "output_image", unit: "token", costUsd: "0.00003", endpointCount: 1 },
+      ],
+    });
+    expect(result.models["black-forest-labs/flux.2-flex"]).toMatchObject({
+      costs: [
+        { billable: "input_image", unit: "megapixel", costUsd: "0.06", endpointCount: 1 },
+        { billable: "output_image", unit: "megapixel", costUsd: "0.06", endpointCount: 1 },
+      ],
+    });
   });
 
-  it("uses a stale KV snapshot when OpenRouter cannot refresh it", async () => {
-    const get = vi.fn(async () => snapshotJson(0));
-    const put = vi.fn(async (key: string, value: string) => {
-      void key;
-      void value;
+  it("continues to use stale valid pricing without performing a refresh", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetcher);
+    const get = vi.fn(async () => pricingJson("x-ai/grok-4.3", 0));
+    const resolver = createAzureModelPricingResolver({
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get }),
     });
-    const fetcher = vi.fn<typeof fetch>(async () => {
-      throw new Error("catalog unavailable");
-    });
-    const resolver = createAzureModelPricingResolver(
-      { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get, put }) },
-      { fetch: fetcher, now: () => NOW },
-    );
 
     const prices = await resolver(["x-ai/grok-4.3"], new AbortController().signal);
 
     expect(prices.get("x-ai/grok-4.3")?.inputUsdPerM).toBe(1.875);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for a missing or legacy numeric-price record", async () => {
+    const missingResolver = createAzureModelPricingResolver({
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({
+        get: vi.fn(async () => null),
+      }),
+    });
+    await expect(missingResolver(["x-ai/grok-4.3"], new AbortController().signal))
+      .rejects.toThrow("Azure model pricing cache is unavailable for x-ai/grok-4.3");
+
+    const numericResolver = createAzureModelPricingResolver({
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({
+        get: vi.fn(async () => pricingJson("x-ai/grok-4.3", NOW, true)),
+      }),
+    });
+    await expect(numericResolver(["x-ai/grok-4.3"], new AbortController().signal))
+      .rejects.toThrow("Azure model pricing cache is unavailable for x-ai/grok-4.3");
+  });
+
+  it("does not write any records unless every catalog response succeeds", async () => {
+    const put = vi.fn(async (key: string, value: string) => {
+      void key;
+      void value;
+    });
+    const fetcher = catalogFetcher("google/gemini-3.5-flash");
+
+    await expect(refreshOpenRouterPricingCache(
+      { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ put }) },
+      { fetch: fetcher, now: () => NOW },
+    )).rejects.toThrow("OpenRouter endpoint catalog failed for google/gemini-3.5-flash (503)");
     expect(put).not.toHaveBeenCalled();
   });
 
-  it("fails closed when neither KV nor OpenRouter has pricing", async () => {
-    const get = vi.fn(async () => null);
-    const fetcher = vi.fn<typeof fetch>(async () => new Response("unavailable", { status: 503 }));
-    const resolver = createAzureModelPricingResolver(
-      { INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ get }) },
-      { fetch: fetcher, now: () => NOW },
-    );
+  it("refreshes all model records from the dedicated scheduled handler", async () => {
+    const put = vi.fn(async (key: string, value: string) => {
+      void key;
+      void value;
+    });
+    const fetcher = catalogFetcher();
+    vi.stubGlobal("fetch", fetcher);
+    const controller = createCloudflareTestBinding<ScheduledController>({
+      cron: "0 * * * *",
+      scheduledTime: NOW,
+      noRetry: vi.fn(),
+    });
 
-    await expect(resolver(["x-ai/grok-4.3"], new AbortController().signal))
-      .rejects.toThrow("OpenRouter endpoint catalog failed (503)");
+    await inferencePricingWorker.scheduled(controller, {
+      INFERENCE_PRICING_CACHE: createCloudflareTestBinding<KVNamespace>({ put }),
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(EXPECTED_MODEL_IDS.length);
+    expect(put).toHaveBeenCalledTimes(EXPECTED_MODEL_IDS.length);
   });
 });
 
-function endpointResponse(rates: ReadonlyArray<readonly [number, number, number]>): Response {
+function catalogFetcher(failingModelId?: string) {
+  return vi.fn<typeof fetch>(async (input) => {
+    const url = String(input);
+    const modelId = EXPECTED_MODEL_IDS.find((candidate) => url.endsWith(`/${candidate}/endpoints`));
+    if (!modelId) throw new Error(`Unexpected endpoint: ${url}`);
+    if (modelId === failingModelId) return new Response("unavailable", { status: 503 });
+    if (modelId === "x-ai/grok-4.3") {
+      return endpointResponse([
+        ["0.00000125", "0.0000002", "0.0000025"],
+        ["0.0000025", "0.0000004", "0.000005"],
+      ]);
+    }
+    if (modelId === "x-ai/grok-4.6") {
+      return endpointResponse([
+        ["0.000002", "0.0000005", "0.000006"],
+        ["0.000004", "0.000001", "0.000012"],
+        ["0.0000022", "0.00000055", "0.0000066"],
+      ]);
+    }
+    if (modelId === "deepseek/deepseek-v4-flash-0731") {
+      return endpointResponse([["0.000001", null, "0.000002"]]);
+    }
+    if (modelId === "openai/gpt-image-2") {
+      return imageEndpointResponse([
+        ["input_image", "token", 0.000008],
+        ["input_text", "token", 0.000005],
+        ["output_image", "token", 0.00003],
+      ]);
+    }
+    if (modelId === "black-forest-labs/flux.2-flex") {
+      return imageEndpointResponse([
+        ["input_image", "megapixel", 0.06],
+        ["output_image", "megapixel", 0.06],
+      ]);
+    }
+    return endpointResponse([["0.000001", "0.0000001", "0.000002"]]);
+  });
+}
+
+function endpointResponse(
+  rates: ReadonlyArray<readonly [string, string | null, string]>,
+): Response {
   return Response.json({
     data: {
       endpoints: rates.map(([input, cachedInput, output]) => ({
         pricing: {
-          prompt: String(input / 1_000_000),
-          input_cache_read: String(cachedInput / 1_000_000),
-          completion: String(output / 1_000_000),
+          prompt: input,
+          ...(cachedInput === null
+            ? {}
+            : { input_cache_read: cachedInput }),
+          completion: output,
         },
       })),
     },
   });
 }
 
-function snapshotJson(fetchedAtMs: number): string {
+function imageEndpointResponse(
+  rates: ReadonlyArray<readonly [string, string, number]>,
+): Response {
+  return Response.json({
+    endpoints: [{
+      pricing: rates.map(([billable, unit, costUsd]) => ({
+        billable,
+        unit,
+        cost_usd: costUsd,
+      })),
+    }],
+  });
+}
+
+function pricingJson(modelId: string, fetchedAtMs: number, numeric = false): string {
+  const values = modelId === "x-ai/grok-4.6"
+    ? ["2.84", "0.71", "8.52", 5]
+    : ["1.875", "0.3", "3.75", 4];
+  const [inputUsdPerM, cachedInputUsdPerM, outputUsdPerM, endpointCount] = values;
   return JSON.stringify({
     version: 1,
     fetchedAtMs,
-    models: {
-      "x-ai/grok-4.3": {
-        inputUsdPerM: 1.875,
-        cachedInputUsdPerM: 0.3,
-        outputUsdPerM: 3.75,
-        endpointCount: 4,
-        sourceFingerprint: "openrouter-endpoint-average:v1:x-ai/grok-4.3:4:1.875:0.3:3.75",
-      },
-      "x-ai/grok-4.6": {
-        inputUsdPerM: 2.84,
-        cachedInputUsdPerM: 0.71,
-        outputUsdPerM: 8.52,
-        endpointCount: 5,
-        sourceFingerprint: "openrouter-endpoint-average:v1:x-ai/grok-4.6:5:2.84:0.71:8.52",
-      },
-    },
+    inputUsdPerM: numeric ? Number(inputUsdPerM) : inputUsdPerM,
+    cachedInputUsdPerM: numeric ? Number(cachedInputUsdPerM) : cachedInputUsdPerM,
+    outputUsdPerM: numeric ? Number(outputUsdPerM) : outputUsdPerM,
+    endpointCount,
+    sourceFingerprint: [
+      "openrouter-endpoint-average:v1",
+      modelId,
+      endpointCount,
+      inputUsdPerM,
+      cachedInputUsdPerM,
+      outputUsdPerM,
+    ].join(":"),
   });
 }
