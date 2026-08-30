@@ -11,10 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@openrouter/sdk": "1.2.54",
     "@rally/contracts": "workspace:*",
     "@juno-ai/bind": "13.0.0",
     "eventsource-parser": "latest",
-    "openai": "^6.49.0",
     "zod": "catalog:"
   },
   "devDependencies": {

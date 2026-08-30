@@ -17,19 +17,20 @@ import {
 import { createIdentityObjectPort } from "../runtime/identity-port";
 
 /**
- * Every distinct model-using task is declared in the shared contract above.
- * Each one owns a Flagship flag carrying the OpenRouter model it runs on and
- * the OpenRouter models it may route onward to, so a model swap is a flag
- * change rather than a deploy.
+ * Every model-using task whose output does not define a persistent semantic
+ * space is declared in the shared contract above. Each one owns a Flagship flag
+ * carrying the OpenRouter model it runs on and the OpenRouter models it may
+ * route onward to, so a model swap is a flag change rather than a deploy.
  *
  * The first five names match `AgentInferenceSource` in
  * `agent-inference-logging.ts`, so a lakehouse record and a flag key describe
  * the same agent. The rest are the standalone structured-output agents, which
  * call OpenRouter directly rather than through the harness.
  *
- * A new model-using service belongs in that shared catalog and in the default
- * resolver below. One that reads `OPENROUTER_*` directly cannot be retargeted
- * or rolled out, and nothing in the type system will point that out.
+ * Durable-memory embeddings are the deliberate exception: their fixed model
+ * defines the Vectorize coordinate space, so they cannot be retargeted or
+ * given fallbacks without a corpus rebuild. Other new model-using services
+ * belong in this catalog and the default resolver below.
  */
 export { AGENT_MODEL_FLAG_KEYS, AGENT_MODEL_ROLES };
 export type { AgentModelRole, AgentModelRouting };

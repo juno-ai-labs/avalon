@@ -812,8 +812,9 @@ For ordinary releases after both entrypoints exist:
    bucket, Data Catalog, sink, stream, Pipeline, and generated binding. EU has no
    inference analytics resources in its Worker config. Scoped
    memory still requires `avalon-global-memory` and `avalon-eu-memory` Vectorize
-   indexes with 1,024 dimensions and cosine distance, plus the Workers AI
-   binding declared by each API Worker.
+   indexes with 1,024 dimensions and cosine distance. Memory embeddings use
+   OpenRouter `qwen/qwen3-embedding-8b` with an explicit 1,024-dimension
+   request; the Workers AI binding remains for Cloudflare-backed PDF OCR.
 3. Confirm each configured D1 ID belongs to the intended region.
 4. Set the regional Worker secrets.
 5. Apply the D1 migration remotely to EU and Global with `pnpm db:migrate:remote:eu` and `pnpm db:migrate:remote`. Inspect the pending set first with `pnpm db:migrate:remote:list:eu` and `pnpm db:migrate:remote:list`. The unsuffixed `pnpm db:migrate` targets local Wrangler state only and never touches a hosted database.
