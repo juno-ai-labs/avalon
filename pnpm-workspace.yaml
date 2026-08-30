@@ -3,6 +3,7 @@ packages:
   - packages/*
 
 allowBuilds:
+  '@openrouter/sdk': false
   electron: true
   electron-winstaller: true
   esbuild: true

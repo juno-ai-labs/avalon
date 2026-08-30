@@ -460,12 +460,47 @@ failure terminalizes the step, removes its transient preview, and materializes
 the reserved failure status instead of asking another provider for a competing
 answer. Cancellation and host failures never route onward.
 
-The Bind/OpenAI/OpenRouter boundary is converted member by member rather than
-asserted through `unknown`. Model content parts and function tools are mapped to
-Rally's wire types, unsupported tool variants fail at the boundary, and input
-audio admits only the `wav` and `mp3` formats the SDK contract supports. This
-keeps an SDK union or return-shape change visible to the compiler instead of
-letting it emerge later in a provider request.
+The Bind/OpenRouter boundary is converted member by member rather than asserted
+through `unknown`. Bind's OpenAI-wire-compatible structural messages remain an
+internal loop contract, but Rally has no direct OpenAI SDK dependency: the
+official `@openrouter/sdk` schemas own provider request serialization and
+successful response/chunk parsing. Model content parts and function tools are
+mapped to Rally's wire types, unsupported tool variants fail at the boundary,
+and input audio admits only the `wav` and `mp3` formats the OpenRouter SDK
+contract supports. This keeps an SDK union or return-shape change visible to the
+compiler instead of letting it emerge later in a provider request.
+
+Every OpenRouter request opts into router metadata and carries a Broadcast trace
+envelope. One harness loop has one `trace_id`, fixed to its durable request/run
+ID across every model turn, including tool call, tool result, and final-answer
+turns. Every model turn has its own `span_name`; the OpenRouter request is the
+generation inside that span. `turn_id`, inference request, and route cursor
+fields distinguish the individual generations and retries.
+For work-stream inference, `session_id` is exactly
+`<workstream_id>-<substream_id>`. Both OpenRouter's top-level `user` and trace
+`user_id` are the opaque Rally workspace ID, giving Broadcast and PostHog one
+stable tenant identity for user- and system-initiated runs. A relevant person,
+when one exists, is kept separately as `context_user_id`. The trace also carries
+source, workspace, work-stream, substream, request, parent request, harness run,
+draft, region, environment, build, principal, invocation type, provider/model,
+inference-request, and route-cursor metadata when each value exists. `feature`
+is the authoritative Flagship model-category key (for example,
+`agent-model-workstream`), `source` is the inference surface, and `product` is
+`rally`. `intended_model` is the primary model Rally selected before route
+traversal; `model` is the candidate used for that request, so a mismatch (or a
+nonzero `route_stage_index`) identifies application-level fallback.
+OpenRouter's PostHog Broadcast
+mapping therefore receives the workspace as `distinct_id`, the work-stream
+session as `$ai_session_id`, the loop trace as `$ai_trace_id`, the turn
+generation name as `$ai_span_name`, and the remaining fields as `metadata_*`
+properties. One-shot structured calls use their provider request ID as the trace
+ID and their schema name as the generation name.
+OpenRouter's returned
+`openrouter_metadata` is retained with successful streaming attempts so routing
+and pipeline decisions join the same lakehouse evidence. Broadcast destination
+enablement and content/privacy policy remain OpenRouter account configuration;
+the request path supplies trace data but does not silently alter that account
+setting.
 
 Every classified provider attempt appends an immutable operational
 `inference_attempts` row in the owning `SubstreamAgent` or
@@ -620,7 +655,7 @@ should start owning a work-stream scope once people are talking in it is a
 second. Neither is the memory union's to decide on its own, and neither writes a
 row today, so both stay open.
 
-Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; Workers AI embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
+Memory items retain structured provenance, access metadata, expiry, revisions, and reversible invalidation, but no confidence field. Agents add by scope kind and update or invalidate by item ID plus expected revision. Workspace writes require a workspace principal or an owner/admin user. WorkspaceDO FTS is synchronous; OpenRouter `qwen/qwen3-embedding-8b` embeddings and the regional Vectorize projection advance through a replayable WorkspaceDO outbox. Requests explicitly ask for 1,024 dimensions—supported by Qwen3 Embedding 8B's Matryoshka representation—to match the immutable Vectorize index shape and distinguish query from document input. The model is a fixed inference-gateway constant with no Flagship role, Worker override, or model fallback. A model-and-dimension-derived namespace prevents embeddings from different semantic spaces from ever being compared; changing that constant requires a code change paired with requeueing active memories, and retrieval safely falls back to FTS until that rebuild completes. Hybrid hits are always reloaded from WorkspaceDO before exposure and rechecked against current D1 membership, and each root run stores an immutable admission-recall snapshot and hash.
 
 Root runs also receive the separate stable `rally_tables` plugin for large structured collections that should not enter prompt context as prose memories. Tables inherit the same work-stream, automation, user, and workspace authorization union. Reads accept a reauthorized table ID plus typed filter/search/projection/order/cursor arguments or an exact `memoryTableRowIds` selector for conflict recovery; they never accept scope or owner selectors and expose no raw SQL. Rows use typed columns, a declared natural key, synchronous WorkspaceDO FTS for searchable text, typed cell indexes, revision compare-and-swap, reversible invalidation, and receipt-backed append-only mutation records.
 
@@ -1611,6 +1646,72 @@ acceptance criterion — a rail entry that opens to the formatted document —
 cannot be met until the rail can show one. That is a client change the PRD
 deliberately excluded ("no desktop release"), so it is named here rather than
 smuggled in.
+### 2026-08-27 — Durable-memory embeddings move to OpenRouter
+
+**What changed:** Memory query and document embeddings now use OpenRouter's
+native embeddings endpoint through the shared inference gateway, with
+`qwen/qwen3-embedding-8b` as a fixed route with no model fallbacks and explicit 1,024
+dimensions. Query/document input types remain distinct. Vector namespaces are
+derived from the resolved model and dimension contract, and WorkspaceDO
+migration 23 requeues every current active memory while keeping old Qwen
+vectors unreachable during the rebuild.
+
+**Why:** Memory embeddings were the remaining language-model inference path
+calling Workers AI directly, outside the shared provider and observability
+boundary. Reusing the existing 1,024-dimensional indexes avoids a destructive
+Vectorize replacement, but equal vector length is not semantic compatibility,
+so the old and new spaces need a hard query boundary.
+
+**Considered and rejected:** Mixing the previous Workers AI Qwen3 0.6B and new
+OpenRouter Qwen3 8B vectors because both are 1,024-dimensional, replacing both
+regional Vectorize indexes, and using a
+metadata filter that would require provisioning another metadata index. A
+versioned namespace is supported without extra index configuration and makes a
+partial rebuild fail toward FTS rather than false semantic matches.
+
+**Consequences:** The static `memory_embedding` feature label identifies this
+category in diagnostics, but no Flagship rule or Ace edit can change its model.
+Changing the fixed model requires a code change paired with an active-memory
+requeue.
+The current OpenRouter embeddings request schema does not accept Broadcast's
+custom `trace` object. It receives workspace `user` plus `X-Session-ID`; Rally
+keeps feature, trace, intended/requested/resolved model, fallback, and latency
+as content-free regional diagnostics.
+
+### 2026-08-27 — OpenRouter SDK serialization and loop-wide provider traces
+
+**What changed:** Rally's provider boundary now uses the official OpenRouter SDK
+schemas instead of a direct OpenAI SDK type dependency. Every structured and
+streaming request enables router metadata and sends `user`, a stable
+`session_id`, and a Broadcast `trace` envelope. A harness loop keeps one
+`trace_id` across all of its turns, and each model turn is a separate named span
+containing its OpenRouter generation; inference and route fields distinguish
+retries. `feature` carries the model category's exact Flagship key while
+`source` retains the execution surface. Provider `user` and trace `user_id`
+both use the workspace ID; a relevant person remains separate as
+`context_user_id`. `intended_model` retains the primary model selected before
+route traversal while `model` records each attempted candidate, making fallback
+requests directly queryable. Successful streaming attempts retain returned router
+metadata.
+
+**Why:** The local inference lakehouse proves what Rally sent and received, but
+provider-side diagnosis previously had no complete way to join a routed request
+back to its workspace, conversation, relevant person, run, deployment, or exact
+loop turn. Changing trace IDs per turn would also fragment one agent execution
+into unrelated traces.
+
+**Considered and rejected:** Using one trace per model turn, overloading
+`session_id` with a host request ID, deriving product identity from synthetic
+harness plumbing, and treating OpenRouter Broadcast as a replacement for the
+Global-only Rally lakehouse. Those respectively lose loop topology, break
+conversation grouping, mislabel one-shot surfaces such as meeting notes, or
+weaken Rally's exact regional evidence.
+
+**Consequences:** New inference surfaces must provide an explicit trace context
+when the generic harness IDs are not product IDs. Work-stream sessions remain
+`<workstream_id>-<substream_id>`, trace IDs remain stable for a loop, workspace
+IDs are the provider/PostHog identity, and OpenRouter account owners must
+configure Broadcast destinations and privacy policy separately.
 
 ### 2026-08-27 — Explicit plugin activation may prepare convergent runtime state
 

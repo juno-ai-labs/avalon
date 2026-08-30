@@ -1,7 +1,7 @@
 import { asHarnessRunId, asUserId, asWorkstreamId } from "@rally/contracts";
 import { asWorkspaceId } from "@rally/contracts";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WorkstreamWorkflowInput } from "@rally/contracts";
 import type { Env } from "../src/env";
@@ -89,19 +89,35 @@ function sqliteD1(database: DatabaseSync): D1Database {
 
 function embeddingFor(text: string): number[] {
   const normalized = text.toLowerCase();
-  if (normalized.includes("crimson") || normalized.includes("red")) return [1, 0, 0];
-  if (normalized.includes("azure") || normalized.includes("blue")) return [0, 1, 0];
-  return [0, 0, 1];
+  const embedding = Array.from({ length: 1_024 }, () => 0);
+  if (normalized.includes("crimson") || normalized.includes("red")) embedding[0] = 1;
+  else if (normalized.includes("azure") || normalized.includes("blue")) embedding[1] = 1;
+  else embedding[2] = 1;
+  return embedding;
 }
 
-class FakeAi {
+class FakeOpenRouterEmbeddings {
   fail = false;
+  readonly requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
 
-  async run(_model: string, input: { queries?: string[]; documents?: string[] }) {
+  readonly fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (this.fail) throw new Error("embedding unavailable");
-    const values = input.queries ?? input.documents ?? [];
-    return { data: values.map(embeddingFor), shape: [values.length, 3] };
-  }
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    const headers = new Headers(init?.headers);
+    this.requests.push({ body, headers });
+    const rawInput = body.input;
+    const values = Array.isArray(rawInput) ? rawInput.map(String) : [String(rawInput)];
+    return Response.json({
+      data: values.map((value, index) => ({
+        embedding: embeddingFor(value),
+        index,
+        object: "embedding",
+      })),
+      model: String(body.model),
+      object: "list",
+      usage: { prompt_tokens: values.length, total_tokens: values.length },
+    });
+  });
 }
 
 class FakeVectorIndex {
@@ -141,6 +157,7 @@ const openDatabases: DatabaseSync[] = [];
 const objectStores = new Map<string, DatabaseSync>();
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   objectStores.clear();
   for (const database of openDatabases.splice(0)) database.close();
 });
@@ -188,7 +205,7 @@ function fixture(): {
   /** The real WorkspaceDO's own database — where memory rows now live. */
   objectDatabase: DatabaseSync;
   env: Env;
-  ai: FakeAi;
+  embeddings: FakeOpenRouterEmbeddings;
   vector: FakeVectorIndex;
   /**
    * An env whose named WorkspaceDO method runs `mutate` first, once — the
@@ -279,7 +296,8 @@ function fixture(): {
       heartbeatAt: Date.parse("2026-01-01") });
     objectStores.set(workstreamId, store);
   }
-  const ai = new FakeAi();
+  const embeddings = new FakeOpenRouterEmbeddings();
+  vi.stubGlobal("fetch", embeddings.fetch);
   const vector = new FakeVectorIndex();
   // Memory rows live in WorkspaceDO now, so the suite stands up the real
   // object over its own schema and exposes its typed methods as stub RPCs.
@@ -293,7 +311,6 @@ function fixture(): {
   const memoryRpcs = workspaceObjectRpcs(workspaceObject.instance, MEMORY_OBJECT_METHODS);
   const envWith = (rpcs: Record<string, unknown>): Env => createTestEnv({
     DB: sqliteD1(database),
-    AI: createCloudflareTestBinding<Ai>(ai),
     MEMORY_INDEX: createCloudflareTestBinding<VectorizeIndex>(vector),
     // Freezing a run's recall now goes through the harness-run authority, so
     // this fixture needs the object namespace as well as the SQL callback
@@ -302,11 +319,14 @@ function fixture(): {
     WORKSPACE_DOS: testSubstreamAgentsBinding(database, { extra: rpcs }),
     AVALON_REGION: "global",
     APP_ENV: "test",
+    LOG_LEVEL: "error",
+    PUBLIC_WEB_BASE_URL: "https://rallywith.ai",
+    OPENROUTER_API_KEY: "test-openrouter-key",
   });
   return {
     database,
     objectDatabase: workspaceObject.objectDatabase,
-    ai,
+    embeddings,
     vector,
     env: envWith(memoryRpcs),
     withMethodRace: (method, mutate) => {
@@ -626,20 +646,37 @@ describe("scoped agent memory", () => {
     });
   });
 
-  it("uses hybrid retrieval, rejects stale vectors, and degrades to FTS", async () => {
-    const { objectDatabase, env, ai, vector } = fixture();
+  it("uses one fixed embedding space, rejects stale vectors, and degrades to FTS", async () => {
+    const { objectDatabase, env, embeddings, vector } = fixture();
+    const getObjectDetails = vi.fn<Flagship["getObjectDetails"]>();
+    env.FLAGS = createCloudflareTestBinding<Flagship>({ getObjectDetails });
     const runInput = input("owner");
     const added = await memoryTool(env, runInput, "add").execute(
       { scopeKind: "user", text: "The report palette is crimson", rationale: "Durable style" },
       toolContext(runInput, "vector-add"),
     );
     expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(1);
+    expect(embeddings.requests[0]?.body).toMatchObject({
+      model: "qwen/qwen3-embedding-8b",
+      dimensions: 1_024,
+      input_type: "search_document",
+      user: WORKSPACE_ID,
+    });
+    expect(getObjectDetails).not.toHaveBeenCalled();
+    expect(embeddings.requests[0]?.headers.get("x-session-id")).toBeNull();
     expect(objectDatabase.prepare(
       "SELECT status FROM memory_index_outbox WHERE memory_item_id = ?",
     ).get((added.output as { memoryItemId: string }).memoryItemId)).toEqual({ status: "completed" });
     expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(0);
 
     const semantic = await memorySearch(routedEnv(env, runInput), runInput, "red");
+    expect(embeddings.requests.at(-1)?.body).toMatchObject({
+      dimensions: 1_024,
+      input_type: "search_query",
+      user: WORKSPACE_ID,
+    });
+    expect(embeddings.requests.at(-1)?.headers.get("x-session-id"))
+      .toBe(`${WORKSTREAM_ONE}-0`);
     expect(semantic.retrievalMode).toBe("hybrid");
     expect(semantic.results).toEqual([expect.objectContaining({ text: "The report palette is crimson" })]);
 
@@ -651,7 +688,7 @@ describe("scoped agent memory", () => {
     expect(vector.vectors.has(`${memoryItemId}:1`)).toBe(true);
     expect((await memorySearch(routedEnv(env, runInput), runInput, "red")).results).toEqual([]);
 
-    ai.fail = true;
+    embeddings.fail = true;
     const degraded = await memorySearch(routedEnv(env, runInput), runInput, "azure palette");
     expect(degraded.retrievalMode).toBe("fts_only");
     expect(degraded.results).toEqual([expect.objectContaining({ revision: 2, text: "The report palette is azure" })]);
@@ -662,16 +699,29 @@ describe("scoped agent memory", () => {
     ).get(memoryItemId)).toMatchObject({
       status: "pending",
       attempt_count: 1,
-      last_error: "embedding unavailable",
+      last_error: "embedding_failure",
     });
 
-    ai.fail = false;
+    embeddings.fail = false;
     objectDatabase.prepare(
       "UPDATE memory_index_outbox SET available_at = '2020-01-01' WHERE memory_item_id = ? AND revision = 2",
     ).run(memoryItemId);
     expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(1);
     expect(vector.vectors.has(`${memoryItemId}:2`)).toBe(true);
     expect(vector.vectors.has(`${memoryItemId}:1`)).toBe(false);
+  });
+
+  it("uses the owning workstream as the document-embedding session", async () => {
+    const { env, embeddings } = fixture();
+    const runInput = input("owner");
+    await memoryTool(env, runInput, "add").execute(
+      { scopeKind: "workstream", text: "This task prefers terse reports", rationale: "Task style" },
+      toolContext(runInput, "vector-add-workstream"),
+    );
+
+    expect(await processMemoryIndexOutbox(env, 50, WORKSPACE_ID)).toBe(1);
+    expect(embeddings.requests).toHaveLength(1);
+    expect(embeddings.requests[0]?.headers.get("x-session-id")).toBe(`${WORKSTREAM_ONE}-0`);
   });
 
   it("freezes recalled results and the context hash for deterministic retries", async () => {

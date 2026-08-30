@@ -2176,6 +2176,47 @@ export const WORKSPACE_DO_SCHEMA_MIGRATIONS: readonly DurableObjectSqliteMigrati
       WHEN NEW.workspace_id IS NOT (SELECT workspace_id FROM workspace_identity WHERE id = 1)
       BEGIN SELECT RAISE(ABORT, 'workspace_identity_mismatch'); END`,
   ],
+}, {
+  version: 23,
+  description: "rebuild durable-memory vectors with the OpenRouter embedding space",
+  statements: [
+    // The existing 1,024-dimensional Vectorize indexes can store a reduced
+    // Qwen3 Embedding 8B output, but the Workers AI 0.6B and OpenRouter 8B
+    // coordinates are not comparable.
+    // Requeue only each active item's current upsert; invalidated, expired, and
+    // historical revisions stay retired. The projection writes a model-derived
+    // namespace, so old vectors are unreachable throughout the rebuild.
+    `UPDATE memory_index_outbox
+        SET status = 'pending', attempt_count = 0,
+            available_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
+            completed_at = NULL,
+            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      WHERE operation = 'upsert'
+        AND EXISTS (
+          SELECT 1
+            FROM memory_items item
+           WHERE item.memory_item_id = memory_index_outbox.memory_item_id
+             AND item.memory_scope_id = memory_index_outbox.memory_scope_id
+             AND item.workspace_id = memory_index_outbox.workspace_id
+             AND item.revision = memory_index_outbox.revision
+             AND item.invalidated_at IS NULL
+             AND (item.expires_at IS NULL OR item.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )`,
+    // Existing objects may otherwise have no reason to wake after the rows are
+    // requeued. The one-shot bootstrap reconciles the memory maintenance target
+    // into the shared alarm index; fresh objects have no identity and pay no
+    // empty wake-up.
+    `INSERT INTO _internal_durable_alarms
+       (kind, alarm_key, due_at, repeat_every_ms, retry_at, attempt, payload_json,
+        created_at, updated_at)
+     SELECT 'schedule_bootstrap', 'workspace', unixepoch() * 1000, NULL, 0, 0, NULL,
+            unixepoch() * 1000, unixepoch() * 1000
+      WHERE EXISTS (SELECT 1 FROM workspace_identity WHERE id = 1)
+     ON CONFLICT(kind, alarm_key) DO UPDATE SET
+       due_at = MIN(due_at, excluded.due_at), retry_at = 0, attempt = 0,
+       updated_at = excluded.updated_at`,
+  ],
 }];
 
 function compareProjectionCoordinate(

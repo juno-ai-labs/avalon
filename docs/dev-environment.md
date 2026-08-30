@@ -141,10 +141,11 @@ healthy region is torn down with the failed one, so the symptom is "no server at
 all" rather than "no AI binding". `wrangler dev --local` disables remote bindings
 and both regions start in about two seconds.
 
-What that costs: `env.AI` is unavailable, so the memory-embedding paths in
-`apps/api/src/services/memory-service.ts` cannot run. `env.MEMORY_INDEX`
+What that costs: `env.AI` is unavailable, so Cloudflare-backed PDF OCR cannot
+run. Memory embeddings use OpenRouter instead, but `env.MEMORY_INDEX`
 (Vectorize) is reported as `not supported` by `wrangler dev` in every local run,
-remote bindings or not, so nothing is lost there. `env.FLAGS` (Flagship) is also
+remote bindings or not, so end-to-end hybrid retrieval is still unavailable.
+`env.FLAGS` (Flagship) is also
 reported `not supported`, because Flagship bindings are always remote — but
 unlike the others the binding object is still present, and it is each *call*
 that rejects with `Binding FLAGS needs to be run remotely`. Every agent then
@@ -216,7 +217,7 @@ workspace with its work streams, automations, and onboarding checklist.
 
 ## What cannot be verified in a sandbox
 
-- **Workers AI** (`env.AI`), **Vectorize** (`env.MEMORY_INDEX`), and **Flagship**
+- **Workers AI PDF OCR** (`env.AI`), **Vectorize** (`env.MEMORY_INDEX`), and **Flagship**
   (`env.FLAGS`), per above. Served flag values cannot be exercised locally; the
   Worker-variable fallback they resolve to can.
 - **Real OAuth callbacks.** Providers require a public HTTPS redirect; a local

@@ -336,6 +336,25 @@ describe("attachment model content", () => {
     expect(parts[2]?.type === "image_url" ? parts[2].image_url.url : "").toMatch(/^data:image\/png;base64,/u);
   });
 
+  it("rejects a persisted derivative whose bytes do not match its supported MIME", async () => {
+    const parts = await buildAttachmentModelParts(trackedBucket({
+      derivative: jpegHeader(32, 24),
+    }).binding, [{
+      id: "mismatched-resource",
+      fileName: "diagram.png",
+      mimeType: "image/png",
+      contentRef: "missing-original",
+      modelContentRef: "derivative",
+      modelMimeType: "image/png",
+    }]);
+
+    expect(parts.some((part) => part.type === "image_url")).toBe(false);
+    expect(manifestEntries(parts)[0]).toMatchObject({
+      inlined: false,
+      errorCode: "image_conversion_failed",
+    });
+  });
+
   it("does not trust an image extension or MIME type when the bytes are not an image", async () => {
     const parts = await buildAttachmentModelParts(fakeBucket({ image: encoder.encode("not an image") }), [
       { id: "image", fileName: "spoofed.png", mimeType: "image/png", contentRef: "image" },
