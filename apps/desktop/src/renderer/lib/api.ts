@@ -58,7 +58,9 @@ import {
   type GitHubRepositoryAccessSettings as WireGitHubRepositoryAccessSettings,
   ProjectDirectorySchema as WireProjectDirectorySchema,
   ProjectSummarySchema as WireProjectSummarySchema,
+  ReorderPendingLoopInputsResultSchema,
   type CreateProjectRequest,
+  type PendingTranscriptInput,
   type ProjectDirectory,
   type ProjectSummary,
   type UpdateProjectPresentationRequest,
@@ -1604,6 +1606,26 @@ export class RallyApi {
 
   async stopHarness(id: string): Promise<void> {
     await this.requestVoid(`/workstreams/${encodeURIComponent(id)}/stop`, { method: 'POST' });
+  }
+
+  /**
+   * Send the visible pending-input queue's new order after a drag.
+   *
+   * The whole arrangement travels, not the row that moved: the object
+   * permutes existing `input_sequence` values. Ids that have already been
+   * delivered are ignored rather than refused, and visible pending inputs
+   * the caller does not name keep their relative order behind the ones it
+   * did.
+   */
+  async reorderPendingLoopInputs(
+    id: string,
+    inputIds: string[],
+  ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
+    return this.request(`/workstreams/${encodeURIComponent(id)}/pending-inputs`, {
+      method: 'PUT',
+      body: { inputIds },
+      schema: ReorderPendingLoopInputsResultSchema,
+    });
   }
 
   async retryHarness(id: string): Promise<{ harnessRunId: string }> {

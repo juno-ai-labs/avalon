@@ -27,6 +27,7 @@ import {
   type WorkstreamDetail,
   type WorkstreamWorkflowInput,
   type WorkstreamMessageAdmissionReceipt,
+  type PendingTranscriptInput,
   WorkspaceIdSchema,
   WorkstreamIdSchema,
   WORKSTREAM_NAMING_GRACE_MS,
@@ -3821,7 +3822,7 @@ export class WorkstreamObjectProductService {
         const result = this.loops.completeInputPreparation({
           inputId: messageId,
           preparedTurnId: messageId,
-          mode: input.runMode ?? "steer",
+          mode: input.runMode ?? "queue",
           actor: "human",
           authorUserId: auth.userId,
           authorNameSnapshot: transcriptMessage.input.authorSnapshot?.displayName ?? null,
@@ -4336,6 +4337,20 @@ export class WorkstreamObjectProductService {
     ) {
       throw new ApiError(422, "invalid_selection_count", "The answer has an invalid number of selections");
     }
+  }
+
+  async reorderPendingInputs(
+    auth: AuthContext,
+    inputIds: readonly string[],
+  ): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
+    const root = await this.authorize(auth);
+    const loop = this.loops.loop();
+    if (!loop) throw new Error("substream_loop_not_initialized");
+    if (loop.loop_id !== substreamLoopId(asWorkstreamId(root.workstream_key))) {
+      throw new Error("substream_loop_identity_mismatch");
+    }
+    this.loops.reorderPendingInputs({ inputIds, now: Date.now() });
+    return { pendingInputs: this.transcript.pendingTranscriptInputs() };
   }
 
   async stop(auth: AuthContext): Promise<void> {

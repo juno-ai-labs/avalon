@@ -1758,6 +1758,29 @@ export const ReorderWorkstreamPinsRequestSchema = z.object({
   workstreamIds: z.array(IdSchema),
 });
 
+/**
+ * The visible pending-input queue in its new promotion order, not a move of
+ * one row.
+ *
+ * A drag produces a complete arrangement. Sending that arrangement lets the
+ * object permute the existing `input_sequence` values without inferring a
+ * gap from a list state the client may no longer share. Ids that have
+ * already been delivered are ignored rather than rejected, and visible
+ * pending inputs the caller does not name keep their relative order behind
+ * the ones it did.
+ *
+ * Deliberately unbounded. Nothing limits how many messages may wait on a
+ * loop, so any count this array could be capped at would refuse a drag and
+ * leave the queue unreorderable for as long as the person stayed above it.
+ */
+export const ReorderPendingLoopInputsRequestSchema = z.object({
+  inputIds: z.array(IdSchema),
+});
+
+export const ReorderPendingLoopInputsResultSchema = z.object({
+  pendingInputs: z.array(PendingTranscriptInputSchema),
+});
+
 export const CreateMessageRequestSchema = z.object({
   text: z.string().max(MESSAGE_MAX_CHARACTERS),
   clientMessageId: z.string().min(1).max(120),

@@ -8,6 +8,7 @@ import {
   WorkstreamTranscriptSnapshotSchema,
   WorkstreamSchema,
   WorkstreamMessageAdmissionReceiptSchema,
+  ReorderPendingLoopInputsResultSchema,
   type Elicitation,
   asSubstreamId,
   asWorkspaceId,
@@ -17,6 +18,7 @@ import {
   type WorkstreamDetail,
   type WorkstreamTranscriptSnapshot,
   type WorkstreamMessageAdmissionReceipt,
+  type PendingTranscriptInput,
 } from "@rally/contracts";
 import type {
   AcknowledgeWorkstreamReadRequestSchema,
@@ -254,6 +256,12 @@ export class WorkstreamObjectClient {
     input: WorkstreamObjectCreateMessageInput,
   ): Promise<WorkstreamMessageAdmissionReceipt> {
     return CreatedMessageSchema.parse(await this.request({ operation: "create_message", input }));
+  }
+
+  async reorderPendingInputs(inputIds: string[]): Promise<{ pendingInputs: PendingTranscriptInput[] }> {
+    return ReorderPendingLoopInputsResultSchema.parse(
+      await this.request({ operation: "reorder_pending_inputs", inputIds }),
+    );
   }
 
   async addParticipant(userId: string): Promise<WorkstreamDetail["participants"][number]> {
